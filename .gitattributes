@@ -1,0 +1,9 @@
+# Normalize line endings: store text as LF in the repo, check out native on each OS.
+* text=auto
+
+# Filter and doc files are text.
+*.filter text
+*.md     text
+
+# Treat audio as binary (no EOL conversion, no diff).
+*.mp3 binary

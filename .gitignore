@@ -1,0 +1,9 @@
+# Old/stale filters kept locally for reference only — not version-controlled.
+reference-old-filters/
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+*~

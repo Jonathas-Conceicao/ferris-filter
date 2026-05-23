@@ -66,6 +66,19 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 | poe.ninja as price source | Author choice | — Pending |
 | Price-tier valuable uniques; untracked uniques fall through | Only relevant-value uniques deserve rules | — Pending |
 | Both `generate` and `sync` in v1 | Author wants the full loop usable from the start | — Pending |
+| Milestone git workflow (branch per milestone) | Clean, reviewable history per milestone | — Pending |
+
+## Git Workflow
+
+`git.branching_strategy = "milestone"` (config.json). Per-milestone flow:
+
+1. **Start of milestone** → work happens on a dedicated branch `milestone/{milestone}-{slug}` (GSD creates it at the milestone's first `execute-phase`).
+2. **On `complete-milestone`**, in this exact order:
+   1. **Push the milestone branch to remote** (preserves full development history).
+   2. **Squash-merge** the branch into `main` with a single clean commit message summarizing the milestone.
+   3. **Tag** the resulting merge commit on `main` (annotated `vX.Y`), then push the tag.
+
+GSD's `complete-milestone` natively does the squash-merge and tag; the branch push and tag-on-main ordering are enforced as this project convention.
 
 ## Evolution
 

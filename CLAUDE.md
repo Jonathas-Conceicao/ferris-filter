@@ -1,7 +1,15 @@
-# CLAUDE.md — PoE2 Loot Filter Repository
+# CLAUDE.md — FerrisFilter
 
-This repo stores **Path of Exile 2 loot filters** (not application code). The goal is to
-author, version, and iterate on `.filter` files.
+This repo is **FerrisFilter**: a Rust CLI that compiles a human-editable config into a
+Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja (`sync`).
+
+- **Project plan & workflow:** managed with GSD in `.planning/` — see `.planning/PROJECT.md`
+  (context), `.planning/ROADMAP.md` (4 phases), `.planning/REQUIREMENTS.md`, and
+  `.planning/STATE.md`. Git uses a **milestone branching** workflow (see PROJECT.md → Git Workflow).
+- **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
+  philosophy. `filter-model.json` (→ to be renamed `config.json`) + `universal.filter` are the
+  **executable spec and byte-for-byte acceptance baseline** the `generate` command must reproduce.
+  Everything from "Repository layout" down is that reference — keep it accurate.
 
 ## Repository layout
 

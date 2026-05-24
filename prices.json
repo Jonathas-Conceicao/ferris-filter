@@ -1,0 +1,10 @@
+{
+  "league": "Standard",
+  "fetchedAt": "2026-05-23T00:00:00Z",
+  "items": [
+    { "name": "Exalted Orb",  "exalt": 1.0,  "chaos": 4.5,   "div": null },
+    { "name": "Chaos Orb",    "exalt": null, "chaos": 1.0,   "div": null },
+    { "name": "Divine Orb",   "exalt": null, "chaos": 220.0, "div": 1.0  },
+    { "name": "Mirror of Kalandra", "baseType": "Mirror of Kalandra", "exalt": null, "chaos": null, "div": 8000.0 }
+  ]
+}

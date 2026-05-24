@@ -35,7 +35,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `ferrisfilter generate` with a missing or malformed `config.json` exits non-zero and prints a message containing the bad field path and expected type
   4. `tiers.json` is validated on load and produces an actionable error when a cutoff is missing or out of order
   5. `ferrisfilter nonexistent` exits non-zero with a clear unknown-command message
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 01-01-PLAN.md — Cargo crate skeleton + clap CLI shell (generate/sync) + miette/thiserror error type + loader helper
+- [ ] 01-02-PLAN.md — Rename filter-model.json→config.json, extract currency.json, model Config + CurrencyData (deny_unknown_fields, round-trip)
+- [ ] 01-03-PLAN.md — Model + validate tiers.json (TryFrom) and prices.json; wire generate to load/validate; assert_cmd CLI tests
 
 ### Phase 2: Static Generate
 **Goal**: `ferrisfilter generate` compiles the existing `config.json` and curated currency lists into a `universal.filter` that is byte-identical to the hand-built original — confirmed by an insta snapshot test
@@ -78,7 +81,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/TBD | Not started | - |
+| 1. Foundation | 0/3 | Not started | - |
 | 2. Static Generate | 0/TBD | Not started | - |
 | 3. Pricing Layer | 0/TBD | Not started | - |
 | 4. Sync | 0/TBD | Not started | - |

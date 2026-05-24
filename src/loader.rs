@@ -1,4 +1,5 @@
 use crate::error::JsonLoadError;
+use crate::models::tiers::{TierEntry, ValidatedTiers};
 use miette::SourceOffset;
 
 /// Generic JSON loader that wraps `serde_path_to_error` for field-path-aware errors.
@@ -28,4 +29,20 @@ pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> miette::Result<T
         }
         .into()
     })
+}
+
+/// Load and validate `tiers.json`.
+///
+/// Deserializes the file into `Vec<TierEntry>` via the generic `load_json` helper,
+/// then applies `ValidatedTiers::try_from` which enforces:
+/// 1. All 7 tiers S–F are present.
+/// 2. Within each unit group, `min` values are strictly ascending.
+///
+/// # Errors
+///
+/// - If the file cannot be read or parsed, returns a `JsonLoadError` (field-path aware).
+/// - If tier validation fails, returns the `TierValidationError` as a `miette::Error`.
+pub fn load_tiers(path: &str) -> miette::Result<ValidatedTiers> {
+    let entries: Vec<TierEntry> = load_json(path)?;
+    ValidatedTiers::try_from(entries).map_err(miette::Error::from)
 }

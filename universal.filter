@@ -1,5 +1,5 @@
 # universal.filter
-# GENERATED FROM filter-model.json — edit the model, not this file (then regenerate).
+# GENERATED FROM config.json — edit the model, not this file (then regenerate).
 #
 # Block tags link each rule back to the model:
 #   [alwaysShow.K]          -> a level-independent highlight
@@ -18,11 +18,11 @@
 Show # recycle: sockets + quality salvage  [alwaysShow.recycle -> styles.Recycle]
   Sockets >= 1
   Quality >= 1
-  SetTextColor 80 250 123 255
-  SetBorderColor 80 250 123 255
-  SetBackgroundColor 40 42 54 255
-  MinimapIcon 2 Green Cross
   PlayEffect Green
+  MinimapIcon 2 Green Cross
+  SetTextColor 80 250 123 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 80 250 123 255
 
 #============================================================
 # areaLevelBands — gear

@@ -7,6 +7,7 @@ mod models;
 use cli::{Cli, Commands};
 use clap::Parser;
 use models::config::Config;
+use models::currency::CurrencyData;
 
 fn main() -> miette::Result<()> {
     let cli = Cli::parse();
@@ -18,19 +19,28 @@ fn main() -> miette::Result<()> {
 }
 
 fn cmd_generate(output: &str) -> miette::Result<()> {
-    // Load and validate config.json into the typed `Config` model. serde_path_to_error +
-    // miette surface the dotted field path and expected type for any malformed field
-    // (e.g. a non-numeric `styles.S.font` -> "styles.S.font: invalid type ... expected u8"),
-    // satisfying ROADMAP success criterion 3. Actual filter generation is Phase 2.
+    // Load and validate config.json into the typed Config model.
+    // serde_path_to_error + miette surface the dotted field path and expected type
+    // for any malformed field (satisfies ROADMAP success criterion 3).
     let config: Config = loader::load_json("config.json")?;
 
-    // Load and validate tiers.json (completeness of S-F + within-unit ascending check).
-    let tiers = loader::load_tiers("tiers.json")?;
+    // Load and validate currency.json (curated tier base lists).
+    let currency: CurrencyData = loader::load_json("currency.json")?;
 
-    println!(
-        "generate not yet implemented (output: {output}, {} tiers)",
-        tiers.0.len()
-    );
+    // Load and validate tiers.json (completeness of S-F + within-unit ascending check).
+    // Phase 3 consumes this for price-driven tiering; we keep the load for validation.
+    let _tiers = loader::load_tiers("tiers.json")?;
+
+    // Generate the filter text (pure function — no I/O inside).
+    let generated = emitter::generate(&config, &currency);
+
+    // Write LF-only content to the output path.
+    // T-02-03: write exactly the user-supplied --output path (no traversal, no shell);
+    // surface fs errors via miette rather than panicking.
+    std::fs::write(output, &generated)
+        .map_err(|e| miette::miette!("Cannot write `{output}`: {e}"))?;
+
+    println!("wrote {} bytes to {output}", generated.len());
     Ok(())
 }
 

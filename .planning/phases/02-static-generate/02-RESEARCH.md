@@ -1078,7 +1078,20 @@ workflow. CI uses `INSTA_UPDATE=no` (default in CI environments via `auto` setti
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> **RESOLVED (plan-phase, 2026-05-24):**
+> 1. **Band 1-5 weapons** — RESOLVED: do NOT emit a band-1-5 weapons block; the `AreaLevel <= 25`
+>    weapons block covers that zone. Plan 02-02 hardcodes the block set accordingly.
+> 2. **`build.armour_types` HashMap** — RESOLVED: leave as a HashMap for Phase 2; the emitter uses
+>    key lookups (`anyNonEvasion`/`esHybrid`/`pureES`), never iteration, so determinism holds.
+> 3. **config.json formatting** — RESOLVED: preserve existing style/key order; only structural
+>    changes appear in the D-14 config diff.
+>
+> Additional item surfaced in plan-check (not in original research): config.json `otherGear` uses
+> the bare string `"Rare"` (a SIXTH rarity-rule value the inventory missed). RESOLVED: `RarityRule`
+> gives `RareOnly` a `#[serde(alias = "Rare")]` so `"Rare"` and `"Rare only"` both map to `RareOnly`
+> and emit `Rarity == Rare` (verified identical in universal.filter). See Plans 02-01/02-02.
 
 1. **Band 1-5 weapons: is the fall-through intentional?**
    - What we know: band 1-5 in config.json has `weapons: "any rarity"` as a key, but universal.filter does NOT emit a band-1-5 weapons block. Weapons in the 1-5 zone fall through to game default.

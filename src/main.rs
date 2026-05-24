@@ -1,4 +1,5 @@
 mod cli;
+mod emitter;
 mod error;
 mod loader;
 mod models;

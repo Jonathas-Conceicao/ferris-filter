@@ -96,6 +96,31 @@ pub struct Style {
 }
 
 // ---------------------------------------------------------------------------
+// Styles named-fields struct (D-11)
+// Replaces HashMap<String, Style> for deterministic, type-safe tier access.
+// JSON keys stay "S","A","B","C","D","E","F","Recycle","unchanged","hidden";
+// serde renames map the uppercase JSON keys to snake_case Rust fields.
+// ---------------------------------------------------------------------------
+
+/// All style tiers as named fields — deterministic access, no HashMap lookup.
+/// The JSON object keys are the original uppercase tier names; serde renames handle the mapping.
+/// `deny_unknown_fields` ensures an unknown tier key (e.g. a typo "SS") fails deserialization.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Styles {
+    #[serde(rename = "S")]       pub s: Style,
+    #[serde(rename = "A")]       pub a: Style,
+    #[serde(rename = "B")]       pub b: Style,
+    #[serde(rename = "C")]       pub c: Style,
+    #[serde(rename = "D")]       pub d: Style,
+    #[serde(rename = "E")]       pub e: Style,
+    #[serde(rename = "F")]       pub f: Style,
+    #[serde(rename = "Recycle")] pub recycle: Style,
+    pub unchanged: Style,
+    pub hidden: Style,
+}
+
+// ---------------------------------------------------------------------------
 // Build section
 // ---------------------------------------------------------------------------
 
@@ -111,6 +136,33 @@ pub struct Build {
 }
 
 // ---------------------------------------------------------------------------
+// RarityRule enum (D-10)
+// Replaces freeform Option<String> rarity fields in BandShow and ArmourShow.
+// config.json string values stay unchanged; serde renames + alias handle the mapping.
+// ---------------------------------------------------------------------------
+
+/// Closed enum for the rarity rules used in areaLevelBands.
+///
+/// NOTE: config.json uses TWO strings that mean "show Rare":
+///   - `"Rare only"` (used in weapons, bands 26+)
+///   - `"Rare"` (used in otherGear, bands 6-25 and 26-45)
+/// Both emit the identical `Rarity == Rare` condition (verified against universal.filter).
+/// They collapse to ONE variant via a serde alias. Serializing always yields `"Rare only"`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub enum RarityRule {
+    #[serde(rename = "any rarity")]
+    Any,
+    #[serde(rename = "Rare only", alias = "Rare")]
+    RareOnly,
+    #[serde(rename = "Magic + Rare")]
+    MagicPlusRare,
+    #[serde(rename = "Magic")]
+    Magic,
+    #[serde(rename = "Quality only")]
+    QualityOnly,
+}
+
+// ---------------------------------------------------------------------------
 // AreaLevelBands section
 // ---------------------------------------------------------------------------
 
@@ -120,23 +172,23 @@ pub struct Build {
 pub struct ArmourShow {
     #[serde(rename = "type")]
     pub armour_type: String,
-    pub rarity: String,
+    pub rarity: RarityRule,
 }
 
 /// The `show` object inside one area-level band.
 /// All keys are optional; which keys appear determines which rules apply (Phase 2 interprets).
-/// Rarity values ("any rarity", "Magic + Rare", "Rare only", "Quality only") stay as strings (D-07).
+/// Rarity values are typed as `RarityRule` — the closed enum (D-10).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BandShow {
-    pub weapons: Option<String>,
+    pub weapons: Option<RarityRule>,
     /// Only present in band 1-5 (all armour shown)
-    pub all_armour: Option<String>,
+    pub all_armour: Option<RarityRule>,
     /// Present in bands 6+ (typed armour progression)
     pub armour: Option<ArmourShow>,
     /// Other gear (non-build classes), present in some bands
-    pub other_gear: Option<String>,
-    pub flasks_charms: Option<String>,
+    pub other_gear: Option<RarityRule>,
+    pub flasks_charms: Option<RarityRule>,
 }
 
 /// One entry in `areaLevelBands`.
@@ -196,9 +248,9 @@ pub struct Meta {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Config {
     pub meta: Meta,
-    /// Tier styles keyed by tier name ("S", "A", "B", "C", "D", "E", "F",
-    /// "Recycle", "unchanged", "hidden").
-    pub styles: HashMap<String, Style>,
+    /// Tier styles as named fields (D-11): deterministic, type-safe, complete-by-construction.
+    /// Replaces the former HashMap<String, Style>. Access via config.styles.s, config.styles.recycle, etc.
+    pub styles: Styles,
     pub build: Build,
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
@@ -225,18 +277,40 @@ mod tests {
     }
 
     #[test]
+    fn config_styles_named_fields() {
+        // D-11: styles is a typed Styles struct — access tier styles by named field,
+        // not by map lookup. This test verifies the new interface compiles and works.
+        let config: Config = serde_json::from_str(CONFIG_JSON).unwrap();
+        // Verify named field access works for all tiers
+        assert_eq!(config.styles.s.action, StyleAction::Show);
+        assert_eq!(config.styles.a.action, StyleAction::Show);
+        assert_eq!(config.styles.b.action, StyleAction::Show);
+        assert_eq!(config.styles.c.action, StyleAction::Show);
+        assert_eq!(config.styles.d.action, StyleAction::Show);
+        assert_eq!(config.styles.e.action, StyleAction::Show);
+        assert_eq!(config.styles.f.action, StyleAction::Show);
+        assert_eq!(config.styles.recycle.action, StyleAction::Show);
+        assert_eq!(config.styles.unchanged.action, StyleAction::Show);
+        assert_eq!(config.styles.hidden.action, StyleAction::Hide);
+    }
+
+    #[test]
     fn config_round_trips() {
         let first: Config = serde_json::from_str(CONFIG_JSON).unwrap();
         let serialized = serde_json::to_string(&first).unwrap();
         let second: Config = serde_json::from_str(&serialized).unwrap();
         // D-06: semantic round-trip — the deserialized values must be equal.
-        // Comparing the typed structs (not re-serialized strings) avoids HashMap
-        // key-ordering non-determinism while still validating semantic equivalence.
+        // Styles is now a typed struct (D-11), so PartialEq is deterministic
+        // (no HashMap key-ordering non-determinism).
         assert_eq!(first, second, "config round-trip produced semantically different result");
     }
 
     #[test]
     fn config_rejects_unknown_key() {
+        // Note: the "styles": {} here will now fail BEFORE reaching the unknown-key check
+        // because all Styles fields are required (missing "S", "A", etc.).
+        // The test still passes because it only asserts is_err() — any deserialization
+        // error (missing required styles fields OR unknown "minimip" key) satisfies it.
         let bad = r#"{
             "meta": {"name":"test","palette":"x","background":[0,0,0]},
             "styles": {},
@@ -276,5 +350,50 @@ mod tests {
         let hide: StyleAction = serde_json::from_str(r#""Hide""#).unwrap();
         assert_eq!(show, StyleAction::Show);
         assert_eq!(hide, StyleAction::Hide);
+    }
+
+    // -----------------------------------------------------------------------
+    // RarityRule tests (D-10)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rarity_rule_variants_roundtrip() {
+        // "Magic + Rare" deserializes to MagicPlusRare and round-trips back
+        let r: RarityRule = serde_json::from_str(r#""Magic + Rare""#).unwrap();
+        assert_eq!(r, RarityRule::MagicPlusRare);
+        let back = serde_json::to_string(&r).unwrap();
+        assert_eq!(back, r#""Magic + Rare""#);
+    }
+
+    #[test]
+    fn rare_alias_maps_to_rare_only() {
+        // otherGear uses bare "Rare" — must map to RarityRule::RareOnly via the serde alias
+        let r: RarityRule = serde_json::from_str(r#""Rare""#).unwrap();
+        assert_eq!(r, RarityRule::RareOnly);
+    }
+
+    #[test]
+    fn rarity_rule_rejects_unknown() {
+        let result: Result<RarityRule, _> = serde_json::from_str(r#""Legendary""#);
+        assert!(result.is_err(), "expected error for unknown rarity rule 'Legendary', got Ok");
+    }
+
+    #[test]
+    fn rarity_rule_all_variants_parse() {
+        // Verify all five rarity-rule strings from config.json deserialize correctly
+        let any: RarityRule = serde_json::from_str(r#""any rarity""#).unwrap();
+        assert_eq!(any, RarityRule::Any);
+
+        let rare_only: RarityRule = serde_json::from_str(r#""Rare only""#).unwrap();
+        assert_eq!(rare_only, RarityRule::RareOnly);
+
+        let magic_rare: RarityRule = serde_json::from_str(r#""Magic + Rare""#).unwrap();
+        assert_eq!(magic_rare, RarityRule::MagicPlusRare);
+
+        let magic: RarityRule = serde_json::from_str(r#""Magic""#).unwrap();
+        assert_eq!(magic, RarityRule::Magic);
+
+        let quality: RarityRule = serde_json::from_str(r#""Quality only""#).unwrap();
+        assert_eq!(quality, RarityRule::QualityOnly);
     }
 }

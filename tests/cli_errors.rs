@@ -23,16 +23,28 @@ fn make_temp_dir(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
+/// The repo's real, valid `config.json` — a complete `Config`. Used as the passing
+/// config in tests that intend to exercise *tiers* validation, not config validation.
+fn valid_config() -> String {
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.json"))
+        .expect("read repo config.json")
+}
+
+/// The repo's real, valid `tiers.json`. Used as the passing tiers fixture in tests that
+/// intend to exercise *config* validation.
+fn valid_tiers() -> String {
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"))
+        .expect("read repo tiers.json")
+}
+
 /// A missing `config.json` (cwd has no config.json) must produce a non-zero exit
 /// with a "Cannot read" / not-found message.
 ///
-/// Satisfies CFG-02 / ROADMAP success criterion 3.
+/// Satisfies CFG-02 / ROADMAP success criterion 3 (missing config).
 #[test]
 fn missing_config_json_exits_nonzero_with_message() {
     // Temp dir has tiers.json but NO config.json.
-    let tiers_src =
-        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"))
-            .expect("read tiers.json");
+    let tiers_src = valid_tiers();
     let dir = make_temp_dir("missing_cfg", &[("tiers.json", &tiers_src)]);
 
     Command::cargo_bin("ferrisfilter")
@@ -44,21 +56,25 @@ fn missing_config_json_exits_nonzero_with_message() {
         .stderr(contains("Cannot read"));
 }
 
-/// A `config.json` containing invalid JSON syntax must produce a non-zero exit.
-/// The error output must reference `config.json` (from the `JsonLoadError` message).
-///
-/// Satisfies CFG-02 / ROADMAP success criterion 3.
+/// A `config.json` that is valid JSON but has a TYPE-MALFORMED field must exit non-zero
+/// and print BOTH the dotted field path AND the expected type. This is the core of
+/// ROADMAP success criterion 3: the typed `Config` model + serde_path_to_error surface
+/// `styles.S.font: invalid type: string ..., expected u8`.
 #[test]
-fn malformed_config_json_exits_nonzero_with_file_ref() {
-    let tiers_src =
-        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"))
-            .expect("read tiers.json");
+fn malformed_config_json_reports_field_path_and_expected_type() {
+    let tiers_src = valid_tiers();
 
-    // JSON with a syntax error (trailing comma + bad token); serde will fail with path info.
-    let bad_config = r#"{"styles": {"S": {"font": "not-a-number"}, bad_key}}"#;
+    // Take the real config and break exactly one numeric field's type: the first
+    // `"font": 37` (style "S") becomes a string. Everything else stays valid, so
+    // deserialization fails specifically at styles.S.font with an expected-type message.
+    let bad_config = valid_config().replacen("\"font\": 37", "\"font\": \"BROKEN\"", 1);
+    assert!(
+        bad_config.contains("\"font\": \"BROKEN\""),
+        "fixture setup: expected to break a font field"
+    );
 
-    let dir = make_temp_dir("bad_cfg", &[
-        ("config.json", bad_config),
+    let dir = make_temp_dir("bad_cfg_type", &[
+        ("config.json", &bad_config),
         ("tiers.json", &tiers_src),
     ]);
 
@@ -68,11 +84,17 @@ fn malformed_config_json_exits_nonzero_with_file_ref() {
         .arg("generate")
         .assert()
         .failure()
-        .stderr(contains("config.json"));
+        // file reference
+        .stderr(contains("config.json"))
+        // bad field path
+        .stderr(contains("styles.S.font"))
+        // expected type
+        .stderr(contains("expected u8"));
 }
 
 /// A `tiers.json` missing a required tier must produce a non-zero exit with a
-/// "missing required tier" validation message.
+/// "missing required tier" validation message. Config is the real valid config so the
+/// failure is unambiguously the tiers validation, not config loading.
 ///
 /// Satisfies CFG-03 / ROADMAP success criterion 4.
 #[test]
@@ -87,11 +109,9 @@ fn missing_tier_in_tiers_json_exits_nonzero() {
         { "tier": "C", "min": 10.0, "unit": "chaos" }
     ]"#;
 
-    // Minimal valid-JSON config so config loading passes; tiers loading should fail.
-    let minimal_config = r#"{"styles": {}}"#;
-
+    let cfg = valid_config();
     let dir = make_temp_dir("missing_tier", &[
-        ("config.json", minimal_config),
+        ("config.json", &cfg),
         ("tiers.json", bad_tiers),
     ]);
 
@@ -121,10 +141,9 @@ fn non_ascending_tiers_json_exits_nonzero() {
         { "tier": "B", "min": 30.0, "unit": "chaos" }
     ]"#;
 
-    let minimal_config = r#"{"styles": {}}"#;
-
+    let cfg = valid_config();
     let dir = make_temp_dir("bad_order", &[
-        ("config.json", minimal_config),
+        ("config.json", &cfg),
         ("tiers.json", bad_tiers),
     ]);
 

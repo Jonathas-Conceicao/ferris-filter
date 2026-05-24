@@ -5,6 +5,7 @@ mod models;
 
 use cli::{Cli, Commands};
 use clap::Parser;
+use models::config::Config;
 
 fn main() -> miette::Result<()> {
     let cli = Cli::parse();
@@ -16,23 +17,18 @@ fn main() -> miette::Result<()> {
 }
 
 fn cmd_generate(output: &str) -> miette::Result<()> {
-    // Load and validate config.json (field-path errors via serde_path_to_error + miette).
-    // NOTE: In Phase 1 the config is loaded as a generic JSON value so the loader/error
-    // path is exercisable end-to-end. Phase 2 will replace serde_json::Value with the
-    // full typed Config model once plan 01-02 models are merged.
-    let config: serde_json::Value = loader::load_json("config.json")?;
+    // Load and validate config.json into the typed `Config` model. serde_path_to_error +
+    // miette surface the dotted field path and expected type for any malformed field
+    // (e.g. a non-numeric `styles.S.font` -> "styles.S.font: invalid type ... expected u8"),
+    // satisfying ROADMAP success criterion 3. Actual filter generation is Phase 2.
+    let config: Config = loader::load_json("config.json")?;
 
-    // Load and validate tiers.json (completeness + within-unit ascending check).
+    // Load and validate tiers.json (completeness of S-F + within-unit ascending check).
     let tiers = loader::load_tiers("tiers.json")?;
 
-    let n_styles = config
-        .get("styles")
-        .and_then(|s| s.as_object())
-        .map(|m| m.len())
-        .unwrap_or(0);
-
     println!(
-        "generate not yet implemented (output: {output}, {n_styles} styles, {} tiers)",
+        "generate not yet implemented (output: {output}, {} styles, {} tiers)",
+        config.styles.len(),
         tiers.0.len()
     );
     Ok(())

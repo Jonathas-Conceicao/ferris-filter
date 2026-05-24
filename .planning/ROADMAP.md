@@ -60,7 +60,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. When a unique base type is shared by multiple priced uniques, the generated block uses the highest tier among them
   3. Running `generate` without `prices.json` present emits a warning to stderr and produces a valid filter without price-tiered blocks (no crash)
   4. Running `generate` when Exalt, Chaos, or Divine has a null or zero price in `prices.json` aborts with a clear error naming the missing currency
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 03-01-PLAN.md — Extend PriceItem schema (class + category) + seed_prices migration binary + regenerate committed prices.json from currency.json
+- [ ] 03-02-PLAN.md — src/pricer.rs: cross-rate (TIER-01), tier assignment (TIER-02), TIER-04 abort, unique base-collision (TIER-03), grouping + fixture tests
+- [ ] 03-03-PLAN.md — Emitter rework to PricedData + load_prices_optional (GEN-05) + rewire cmd_generate, drop currency.json from generate path
+- [ ] 03-04-PLAN.md — One-time snapshot re-baseline + regenerate universal.filter + guardrail diff (only 5 Currency blocks) + human review/in-game spot-check (checkpoint)
 
 ### Phase 4: Sync
 **Goal**: `ferrisfilter sync` fetches live PoE2 economy data from poe.ninja and writes a well-formed `prices.json`; the poe.ninja PoE2 API surface is confirmed via a spike before any HTTP code is written
@@ -83,5 +87,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Foundation | 3/3 | Complete | 2026-05-24 |
 | 2. Static Generate | 3/3 | Complete | 2026-05-24 |
-| 3. Pricing Layer | 0/TBD | Not started | - |
+| 3. Pricing Layer | 0/4 | Planned | - |
 | 4. Sync | 0/TBD | Not started | - |

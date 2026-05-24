@@ -767,17 +767,19 @@ where
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`Sound` modeling: struct-with-two-optionals vs tagged enum**
    - What we know: `filter-model.json` uses `{ "custom": "uwu.mp3", "vol": 300 }` for custom sounds and `{ "id": 2, "vol": 200 }` for built-in. The two fields are mutually exclusive in practice.
    - What's unclear: Whether a tagged enum (e.g., `#[serde(untagged)] Sound { Custom { custom: String, vol: u16 }, Alert { id: u8, vol: u16 } }`) is worth the added complexity for Phase 1 validation, given that enforcement of mutual exclusivity happens at generate-time (Phase 2).
    - Recommendation: Use the simple struct with two `Option` fields for Phase 1. Add a typed enum in Phase 2 when the generator needs to dispatch on it. The semantic round-trip test will catch any modeling issues.
+   - **RESOLVED (plan-phase, 2026-05-23):** Adopt the struct-with-two-`Option`-fields model for Phase 1. Plan 01-02 (Task 2) implements exactly this. Mutual-exclusivity enforcement is deferred to generate-time (Phase 2).
 
 2. **`currency.json` tier field: String vs Tier enum**
    - What we know: Seven tiers (S/A/B/C/D/E/F). A `Tier` enum would catch typos at load time.
    - What's unclear: Whether Phase 3 will extend the tier vocabulary or change the enum.
    - Recommendation: Use a `Tier` enum (same one used for tiers.json) for currency entries. If Phase 3 changes things, the enum is in one place.
+   - **RESOLVED (plan-phase, 2026-05-23):** Split decision for Phase 1, driven by the wave structure. The `Tier` enum IS introduced for `tiers.json` (Plan 01-03, `src/models/tiers.rs`), where it powers the closed-vocabulary validation that the ascending/completeness check needs (consistent with D-07). For `currency.json` (Plan 01-02), the `tier` field stays a plain `String` in Phase 1 — Plans 01-02 and 01-03 run in PARALLEL in Wave 2, so making `currency.rs` import a `Tier` owned by `tiers.rs` would introduce a cross-plan dependency inside one wave and break the disjoint-file-ownership property the plan-checker verified. Currency tiering is not consumed until Phase 3 (price-driven), so `String` is an acceptable transitional representation. Unify `currency.json`'s tier onto the shared `Tier` enum in a later phase (move `Tier` to a Wave-1 / shared module first so both models can depend on it without a same-wave conflict).
 
 ---
 

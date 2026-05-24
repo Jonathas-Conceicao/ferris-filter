@@ -36,9 +36,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `tiers.json` is validated on load and produces an actionable error when a cutoff is missing or out of order
   5. `ferrisfilter nonexistent` exits non-zero with a clear unknown-command message
 **Plans**: 3 plans
-- [ ] 01-01-PLAN.md — Cargo crate skeleton + clap CLI shell (generate/sync) + miette/thiserror error type + loader helper
-- [ ] 01-02-PLAN.md — Rename filter-model.json→config.json, extract currency.json, model Config + CurrencyData (deny_unknown_fields, round-trip)
-- [ ] 01-03-PLAN.md — Model + validate tiers.json (TryFrom) and prices.json; wire generate to load/validate; assert_cmd CLI tests
+- [x] 01-01-PLAN.md — Cargo crate skeleton + clap CLI shell (generate/sync) + miette/thiserror error type + loader helper
+- [x] 01-02-PLAN.md — Rename filter-model.json→config.json, extract currency.json, model Config + CurrencyData (deny_unknown_fields, round-trip)
+- [x] 01-03-PLAN.md — Model + validate tiers.json (TryFrom) and prices.json; wire generate to load/validate; assert_cmd CLI tests
 
 ### Phase 2: Static Generate
 **Goal**: `ferrisfilter generate` compiles the existing `config.json` and curated currency lists into a `universal.filter` that is byte-identical to the hand-built original — confirmed by an insta snapshot test

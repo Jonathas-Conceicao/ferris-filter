@@ -18,7 +18,7 @@ surface (spike), then builds the `sync` subcommand on top of that confirmed inte
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation** - Cargo crate + CLI shell + serde models for all JSON inputs
+- [x] **Phase 1: Foundation** - Cargo crate + CLI shell + serde models for all JSON inputs
 - [ ] **Phase 2: Static Generate** - Deterministic filter emitter that reproduces universal.filter byte-for-byte
 - [ ] **Phase 3: Pricing Layer** - Cross-rate math, tier assignment, price-tiered unique highlights
 - [ ] **Phase 4: Sync** - poe.ninja API spike + sync subcommand that fetches and writes prices.json
@@ -81,7 +81,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/3 | Not started | - |
+| 1. Foundation | 3/3 | Complete | 2026-05-24 |
 | 2. Static Generate | 0/TBD | Not started | - |
 | 3. Pricing Layer | 0/TBD | Not started | - |
 | 4. Sync | 0/TBD | Not started | - |

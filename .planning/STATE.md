@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01 (Styles+RarityRule refactor)
-last_updated: "2026-05-24T16:04:24.799Z"
+stopped_at: Completed 02-02-PLAN.md (static filter emitter + regenerated universal.filter)
+last_updated: "2026-05-24T16:11:52.876Z"
 last_activity: 2026-05-24
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-23)
 ## Current Position
 
 Phase: 02 (Static Generate) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-05-24
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [███████░░░] 67%
 
 *Updated after each plan completion*
 | Phase 02-static-generate P01 | 15 | 3 tasks | 3 files |
+| Phase 02-static-generate P02 | 45 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - Planning: insta snapshot of generated universal.filter is the Phase 2 acceptance criterion; byte-identical reproduction is non-negotiable.
 - D-11: Styles named-fields struct replaces HashMap<String, Style> for deterministic tier access
 - D-10: RarityRule closed enum replaces freeform rarity strings; serde alias covers otherGear bare 'Rare' value
+- D-03 canonical action order: PlayEffect→MinimapIcon→SetTextColor→SetBackgroundColor→SetBorderColor→SetFontSize→Sound→DisableDropSound — applied to all 85 blocks via single emit_style_actions function
+- Re-baseline D-01 complete: universal.filter regenerated as golden master; only header source-indicator + recycle action reorder changed (D-02 behavioral equivalence confirmed)
 
 ### Pending Todos
 
@@ -82,8 +85,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-24T16:04:24.792Z
-Stopped at: Completed 02-01 (Styles+RarityRule refactor)
+Last session: 2026-05-24T16:11:52.871Z
+Stopped at: Completed 02-02-PLAN.md (static filter emitter + regenerated universal.filter)
 Resume file: None
 
 **Planned Phase:** 2 () — 0 plans — 2026-05-24T15:54:34.630Z

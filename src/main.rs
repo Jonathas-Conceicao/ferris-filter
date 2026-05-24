@@ -27,8 +27,7 @@ fn cmd_generate(output: &str) -> miette::Result<()> {
     let tiers = loader::load_tiers("tiers.json")?;
 
     println!(
-        "generate not yet implemented (output: {output}, {} styles, {} tiers)",
-        config.styles.len(),
+        "generate not yet implemented (output: {output}, {} tiers)",
         tiers.0.len()
     );
     Ok(())

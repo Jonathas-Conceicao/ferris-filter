@@ -1,4 +1,37 @@
-// populated in plan 02 — tests added in RED phase, implementation in GREEN phase
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Currency models
+// ---------------------------------------------------------------------------
+
+/// One tier entry within a category. `tier` is a plain String ("S"/"A"/"B"/…)
+/// for Phase 1 — will unify with a shared Tier enum in a later phase.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CurrencyEntry {
+    pub tier: String,
+    pub class: String,
+    pub bases: Vec<String>,
+}
+
+/// One named currency category (e.g. "Currency", "Runes", "Omens").
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CurrencyCategory {
+    pub name: String,
+    pub entries: Vec<CurrencyEntry>,
+}
+
+/// Top-level deserialized representation of `currency.json`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CurrencyData {
+    pub categories: Vec<CurrencyCategory>,
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -18,9 +51,8 @@ mod tests {
         let first: CurrencyData = serde_json::from_str(CURRENCY_JSON).unwrap();
         let serialized = serde_json::to_string(&first).unwrap();
         let second: CurrencyData = serde_json::from_str(&serialized).unwrap();
-        let first_s = serde_json::to_string(&first).unwrap();
-        let second_s = serde_json::to_string(&second).unwrap();
-        assert_eq!(first_s, second_s, "currency round-trip produced different result");
+        // D-06: semantic round-trip — compare deserialized values for structural equality.
+        assert_eq!(first, second, "currency round-trip produced semantically different result");
     }
 
     #[test]

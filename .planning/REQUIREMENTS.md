@@ -23,7 +23,8 @@ Requirements for initial release. Each maps to a roadmap phase.
 
 ### Generate
 
-- [ ] **GEN-01**: `generate` deterministically compiles `config.json` (+ `tiers.json` + `prices.json`) into `universal.filter` — identical inputs always produce byte-identical output
+- [x] **GEN-01
+**: `generate` deterministically compiles `config.json` (+ `tiers.json` + `prices.json`) into `universal.filter` — identical inputs always produce byte-identical output
 - [ ] **GEN-02**: The generated filter reproduces the established structure: style tiers, build-weapon/armour area-level bands, flask/charm ladder, recycle, currency tiers, gear-hide fallthrough — matching the existing hand-built `universal.filter`
 - [ ] **GEN-03**: Each generated block carries a comment linking it to its config source (model path tag)
 - [ ] **GEN-04**: Uniques (untracked), gems, jewels, jewellery, quest items, waystones, trials, and unidentified items receive no rules and fall through to game default

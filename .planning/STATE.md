@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 2 context gathered
-last_updated: "2026-05-24T15:54:34.636Z"
+status: executing
+stopped_at: Completed 02-01 (Styles+RarityRule refactor)
+last_updated: "2026-05-24T16:04:24.799Z"
 last_activity: 2026-05-24
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 3
-  percent: 50
+  completed_plans: 4
+  percent: 67
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-23)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 01 — Foundation
+**Current focus:** Phase 02 — Static Generate
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Ready to plan
+Phase: 02 (Static Generate) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-05-24
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 02-static-generate P01 | 15 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,8 @@ Recent decisions affecting current work:
 
 - Planning: poe.ninja PoE2 API surface is UNRESOLVED — spike is the first task of Phase 4 (sync), not a separate phase (granularity = coarse).
 - Planning: insta snapshot of generated universal.filter is the Phase 2 acceptance criterion; byte-identical reproduction is non-negotiable.
+- D-11: Styles named-fields struct replaces HashMap<String, Style> for deterministic tier access
+- D-10: RarityRule closed enum replaces freeform rarity strings; serde alias covers otherGear bare 'Rare' value
 
 ### Pending Todos
 
@@ -79,8 +82,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 2 context gathered
-Resume file: --resume-file
+Last session: 2026-05-24T16:04:24.792Z
+Stopped at: Completed 02-01 (Styles+RarityRule refactor)
+Resume file: None
 
 **Planned Phase:** 2 () — 0 plans — 2026-05-24T15:54:34.630Z

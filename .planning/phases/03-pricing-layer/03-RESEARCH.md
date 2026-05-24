@@ -832,7 +832,11 @@ against the actual `currency.json`, `tiers.json`, and `prices.json` files in the
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> **RESOLVED (plan-phase, 2026-05-24):** Both adopted in the plans.
+> 1. Empty uniques section — **omit the header entirely** when `unique_blocks` is empty (Plan 03-03 T1).
+> 2. `load_prices_optional` — use a **`std::path::Path::new(path).exists()` check first** (Plan 03-03 T1).
 
 1. **Unique block section header when zero uniques**
    - What we know: seeded `prices.json` has no uniques; the uniques section should emit nothing

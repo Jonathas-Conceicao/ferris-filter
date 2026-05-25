@@ -811,3 +811,30 @@ let fetched_at = std::time::SystemTime::now()
 
 **Research date:** 2026-05-25
 **Valid until:** 2026-06-25 (poe.ninja API paths are undocumented; re-probe if poe.ninja updates)
+
+---
+
+## Spike Resolution — Metadata Source (plan-phase, 2026-05-25)
+
+The poe2db `/sp/pob` blocker (above) was resolved with the user via a focused re-spike:
+
+- **poe2db.tw** — REJECTED: HTML-only. Per-class pages (`/us/Stackable_Currency`, `/us/Unique_item`,
+  …) are scrapable item-card grids (~169 currency bases listed) but expose no JSON API / no embedded
+  data block. Scraping would add a brittle HTML-parser dependency.
+- **poedb.tw `/us/Developer_API`** — REJECTED: it only wraps GGG's official OAuth API
+  (accounts/characters/stash/trade/leagues) + the unofficial POESESSID site API; no static
+  item-metadata JSON, and no PoE2-specific endpoint.
+- **CHOSEN — RePoE-fork PoE2 JSON exports** (user-provided, live-confirmed):
+  - `https://repoe-fork.github.io/poe2/base_items.json` — valid JSON keyed by metadata path; each
+    entry has `name` + `item_class` (e.g. "Divine Orb" → `StackableCurrency`), `drop_level`, `tags`,
+    `release_state`. Source for the base-item → class map (currency confirmed present).
+  - `https://repoe-fork.github.io/poe2/uniques.json` — valid JSON, ~400 uniques keyed by numeric id;
+    each has `id`, `name`, `item_class` (Amulet/Belt/…). No explicit base_type (poe.ninja supplies a
+    unique's baseType when economy data exists).
+  - `sync metadata` normalizes RePoE `item_class` (PascalCase) → filter `Class==` (spaced).
+  - `category` (Currency/Breach/Vault Keys/…) comes from poe.ninja's overview `type`, not RePoE.
+  - Initial map may be bootstrapped from `currency.json` (already has class/category/baseType for the
+    358 curated items); `sync metadata` then refreshes/extends it from RePoE — same committed shape.
+
+**Gem ≥18 + uniques (off-season):** implement leniently against the documented shapes, prove with
+recorded fixtures, handle live-empty gracefully (skip, never fail); activate when poe.ninja has data.

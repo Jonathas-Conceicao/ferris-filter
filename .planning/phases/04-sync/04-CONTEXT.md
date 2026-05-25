@@ -28,9 +28,13 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
 
 ### sync command structure
 - **D-01:** `sync` has two modes: **`sync prices`** (the default — bare `ferrisfilter sync` runs it)
-  fetches poe.ninja economy and writes `prices.json`; **`sync metadata`** fetches poe2db
-  (`https://poe2db.tw/sp/pob`) and builds/refreshes the committed category/class/baseType **mapping
-  artifact** in the repo. League flags apply to `prices`; `metadata` is league-agnostic.
+  fetches poe.ninja economy and writes `prices.json`; **`sync metadata`** fetches the **RePoE-fork
+  PoE2 JSON exports** (`base_items.json` + `uniques.json`, see D-04) and builds/refreshes the committed
+  category/class/baseType **mapping artifact** in the repo. League flags apply to `prices`;
+  `metadata` is league-agnostic.
+  > **CORRECTION (plan-phase spike, 2026-05-25):** the original poe2db `/sp/pob` source was found
+  > invalid (it is a Path-of-Building code-sharing page, not an item API; poe2db offers HTML only,
+  > and poedb's "Developer API" is just a GGG-OAuth wrapper). Replaced with the RePoE-fork exports.
 - **D-02:** Implement CLI-02 (`sync` runnable) and CLI-04 (combinable `--standard` + `--hc`; neither
   → current **softcore trade** league) on the `prices` mode. Each subcommand keeps `--help`.
 
@@ -40,10 +44,19 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
   category/class from their overview + `baseType`. This DISCOVERS new valuable items + uniques
   automatically (activating Phase 3's dormant unique-block highlighting). The curated Phase-3 seed was
   the bootstrap; `sync prices` replaces it with live, mapped data.
-- **D-04 (mapping source):** The mapping is a **committed repo artifact**, but NOT hand-typed —
-  `sync metadata` populates/refreshes it from **poe2db `/sp/pob`** (item class/baseType/category).
-  `sync prices` reads ONLY the committed map + poe.ninja (single runtime price API; deterministic;
-  poe2db touched only by `metadata`). The map also drives WHICH poe.ninja overviews `prices` fetches.
+- **D-04 (mapping source — REVISED after spike):** The mapping is a **committed repo artifact**, but
+  NOT hand-typed — `sync metadata` builds it from the **RePoE-fork PoE2 JSON exports**:
+  - `https://repoe-fork.github.io/poe2/base_items.json` — every base item → `item_class` (e.g. "Divine
+    Orb" → `StackableCurrency`); the source of the `class` field. Keyed by metadata path.
+  - `https://repoe-fork.github.io/poe2/uniques.json` — uniques → `name` + `item_class` (~400 entries).
+  These are clean structured JSON (unlike poe2db, which is HTML-only). `sync metadata` must **normalize
+  RePoE's `item_class`** (PascalCase, e.g. `StackableCurrency`) to the filter's `Class==` string
+  (spaced, e.g. `Stackable Currency`). The **`category`** (Currency / Breach / Vault Keys …) comes from
+  **poe.ninja's overview `type`** at `prices` time (not from RePoE). `sync prices` reads ONLY the
+  committed map + poe.ninja (single runtime price API; deterministic; RePoE touched only by `metadata`).
+  - Bootstrap note: the existing `currency.json` already holds class+category+baseType for the 358
+    curated items, so the initial committed map can be seeded from it; `sync metadata` then refreshes/
+    extends it from RePoE. Either path produces the same committed artifact shape.
 
 ### HTTP / dependencies
 - **D-05:** **Async** HTTP (not blocking). Dependency choice is **weighted by WASM-compatibility** for
@@ -53,12 +66,16 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
   guideline*, not a Phase 4 target (native is the deliverable).
 
 ### Spike (criterion 1 — gates all HTTP code)
-- **D-06:** **Live-probe spike** of BOTH surfaces before any HTTP client code: actually hit
-  poe.ninja (base URL, league-resolution endpoint, per-overview `type`/`overviewName`, response
-  field names like `chaosValue`/`primaryValue`, `baseType`) and poe2db `/sp/pob` (format, the
-  class/baseType/category fields, query shape). Capture confirmed findings in a SPIKE/RESEARCH
-  artifact in the phase dir. No fetch/HTTP code is written until that doc exists; the plan's HTTP
-  tasks depend on it.
+- **D-06:** **Live-probe spike — DONE during plan-phase** (captured in `04-RESEARCH.md`). Confirmed:
+  - **poe.ninja PoE2:** `GET https://poe.ninja/poe2/api/economy/exchange/current/overview?league={name}&type={type}`
+    (21 type values); values via `primaryValue` (in primary currency = Divine) + `core.rates` for
+    chaos/exalt conversion (NO direct `chaosValue`); league resolution via `/poe2/api/data/index-state`
+    (do NOT use the GGG leagues API — it returns PoE1). Uniques + UncutGem currently return empty.
+  - **RePoE-fork:** `base_items.json` + `uniques.json` confirmed valid JSON with name→item_class (D-04).
+  - **poe2db / poedb Developer API: rejected** (HTML-only / GGG-OAuth wrapper, no item-metadata JSON).
+  Remaining live-confirmation the executor must still do (LOW-confidence, off-season): the exact gem
+  level field + unique `baseType` shape, once poe.ninja has data — handle leniently + fixture-test (D-09).
+  No HTTP client code beyond what the spike confirmed; treat `04-RESEARCH.md` as the authoritative surface.
 
 ### Failure-safety & league resolution
 - **D-07:** **Atomic, failure-safe writes (SYNC-04):** fetch fully, validate the response is non-empty
@@ -77,9 +94,10 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
   first three items** (SYNC-02) and currency/uniques/other tracked drops included (SYNC-03).
 
 ### Claude's Discretion
-- Exact async crate(s) + TLS backend (research-selected, wasm-aware); poe.ninja/poe2db rate-limiting
-  + User-Agent etiquette; clap modeling of the default `prices` subcommand; the mapping artifact's
-  file name/shape; how overviews are enumerated; retry/timeout policy.
+- Exact async crate(s) + TLS backend (research-selected, wasm-aware); poe.ninja/RePoE-fork
+  rate-limiting + User-Agent etiquette; clap modeling of the default `prices` subcommand; the mapping
+  artifact's file name/shape; the RePoE `item_class` → filter `Class==` normalization table; how
+  overviews are enumerated; retry/timeout policy.
 
 </decisions>
 
@@ -102,11 +120,13 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
 - `.planning/phases/03-pricing-layer/03-CONTEXT.md` + `03-VERIFICATION.md` — the prices.json schema,
   the dormant unique-block capability that sync activates, and the "Notes for Phase 4".
 
-### External (the spike confirms these — criterion 1)
-- poe.ninja PoE2 economy API — base URL, league endpoint, per-overview `type`/`overviewName`,
-  response fields (`chaosValue`/`primaryValue`/`divineValue`), `baseType`, gem level field.
-- `https://poe2db.tw/sp/pob` — item metadata (class/baseType/category) for the mapping.
-- `CLAUDE.md` external refs (poe2db.tw, pathofexile.com/item-filter) and the "price source = poe.ninja" decision.
+### External (spike-confirmed — see 04-RESEARCH.md, criterion 1)
+- **poe.ninja PoE2 economy API** — `https://poe.ninja/poe2/api/economy/exchange/current/overview?league={name}&type={type}`;
+  `primaryValue` + `core.rates` (no direct `chaosValue`); league via `/poe2/api/data/index-state`.
+- **RePoE-fork PoE2 metadata** — `https://repoe-fork.github.io/poe2/base_items.json` (name→item_class)
+  and `https://repoe-fork.github.io/poe2/uniques.json` (uniques → name+item_class). The `sync metadata` source.
+- ~~poe2db `/sp/pob`~~ / poedb Developer API — **rejected** (HTML-only / GGG-OAuth wrapper; no item JSON).
+- `CLAUDE.md` external refs and the "price source = poe.ninja" decision.
 
 </canonical_refs>
 
@@ -139,12 +159,13 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
 <specifics>
 ## Specific Ideas
 
-- User's design: split sync into `prices` (poe.ninja, default) and `metadata` (poe2db → committed map)
-  so the map isn't hand-maintained but is still a deterministic committed artifact.
-- poe2db source confirmed: `https://poe2db.tw/sp/pob`.
+- User's design: split sync into `prices` (poe.ninja, default) and `metadata` (RePoE-fork → committed
+  map) so the map isn't hand-maintained but is still a deterministic committed artifact.
+- Metadata source (after spike): **RePoE-fork PoE2 exports** (`base_items.json` + `uniques.json`),
+  found by the user — chosen over poe2db (HTML-only) and poedb's Developer API (GGG-OAuth wrapper).
 - Prioritize async, and choose the HTTP stack with a future WASM build in mind (research to confirm
   wasm32-viable crates; reqwest's wasm backend is a likely fit).
-- The spike is a hard gate — live-probe both APIs and document before writing any HTTP code.
+- The spike was a hard gate and is now DONE (04-RESEARCH.md) — poe.ninja + RePoE surfaces confirmed.
 
 </specifics>
 
@@ -155,8 +176,10 @@ dependency selection now (see D-04), it is not a Phase 4 deliverable.
   not a Phase 4 deliverable.
 - **SYNX-01** multiple build profiles, **SYNX-02** alternate price source (poe2scout fallback),
   **GENX-04** stale-price warning — v2, out of scope.
-- Live per-item poe2db lookups during `sync prices` — rejected in favor of the offline `sync metadata`
+- Live per-item metadata lookups during `sync prices` — rejected in favor of the offline `sync metadata`
   map-build (single runtime price API).
+- **poe2db scraping** and **poedb Developer API** as metadata sources — rejected after the spike
+  (HTML-only / GGG-OAuth wrapper); RePoE-fork JSON exports chosen instead.
 
 </deferred>
 

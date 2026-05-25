@@ -705,7 +705,7 @@ let fetched_at = std::time::SystemTime::now()
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — see "Spike Resolution — Metadata Source" section below)
 
 1. **poe2db `/sp/pob` source for `sync metadata`**
    - What we know: `/sp/pob` is a PoB code-sharing page. No JSON item API exists at that URL.

@@ -163,12 +163,18 @@ pub fn build_prices(
                 }
             }
 
-            let base_type = if base_type_is_name {
-                name.clone()
-            } else {
-                // For uniques: use name as baseType (best available from poe.ninja)
-                name.clone()
-            };
+            // For most categories the poe.ninja display `name` IS the filter base type
+            // (currency, gems, etc.), so we use it directly.
+            //
+            // NOTE: uniques (base_type_is_name == false) are NOT yet supported. For a
+            // unique, `name` is the unique's display name (e.g. "Voidforge"), not its
+            // filter BaseType (e.g. "Infernal Sword"); emitting it would produce a
+            // `BaseType ==` that never matches the dropped item. The current seed
+            // contains no uniques, so this path is latent. When uniques are added, the
+            // true base type must be resolved from the metadata mapping before relying
+            // on `base_type_is_name`. Until then, both cases fall back to `name`.
+            let _ = base_type_is_name;
+            let base_type = name.clone();
 
             let (chaos, div, exalt) = compute_prices(line.primary_value);
 

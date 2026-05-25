@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-02-PLAN.md (pricer.rs — cross-rate, tier assignment, grouping, unique collision)
-last_updated: "2026-05-25T02:30:38.372Z"
+stopped_at: Completed 03-03-PLAN.md — emitter refactor + cmd_generate rewire
+last_updated: "2026-05-25T02:38:26.419Z"
 last_activity: 2026-05-25
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 10
-  completed_plans: 8
-  percent: 80
+  completed_plans: 9
+  percent: 90
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-23)
 ## Current Position
 
 Phase: 03 (Pricing Layer) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-05-25
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [████████░░] 80%
 | Phase 02-static-generate P03 | 20 | 2 tasks | 3 files |
 | Phase 03-pricing-layer P01 | 200 | 3 tasks | 4 files |
 | Phase 03-pricing-layer P02 | 155 | 2 tasks | 2 files |
+| Phase 03-pricing-layer P03 | 326 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - seed_prices duplicates minimal currency structs locally (no lib target in crate)
 - pricer.rs: HashMap for O(1) accumulation + Vec+TIER_ORDER const for deterministic emission (no HashMap iteration at output time)
 - PriceRateError lives in pricer.rs (only caller); PricedData::empty() for GEN-05 no-prices.json path
+- emitter::generate now takes &PricedData instead of &CurrencyData
+- load_prices_optional: Path::exists() check first; absent=Ok(None), malformed=Err
+- currency.json removed from generate path; src/models/currency.rs kept for tests
 
 ### Pending Todos
 
@@ -96,8 +100,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-25T02:30:38.367Z
-Stopped at: Completed 03-02-PLAN.md (pricer.rs — cross-rate, tier assignment, grouping, unique collision)
+Last session: 2026-05-25T02:38:26.414Z
+Stopped at: Completed 03-03-PLAN.md — emitter refactor + cmd_generate rewire
 Resume file: None
 
 **Planned Phase:** 3 () — 0 plans — 2026-05-24T23:25:19.802Z

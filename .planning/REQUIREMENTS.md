@@ -31,7 +31,8 @@ Requirements for initial release. Each maps to a roadmap phase.
 **: Each generated block carries a comment linking it to its config source (model path tag)
 - [x] **GEN-04
 **: Uniques (untracked), gems, jewels, jewellery, quest items, waystones, trials, and unidentified items receive no rules and fall through to game default
-- [ ] **GEN-05**: `generate` runs without `prices.json` present — it warns and skips price-tiered rules rather than failing
+- [x] **GEN-05
+**: `generate` runs without `prices.json` present — it warns and skips price-tiered rules rather than failing
 
 ### Tiering
 

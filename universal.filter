@@ -121,7 +121,7 @@ Hide # flasks/charms fallback  [styles.hidden]
 # --- Currency ---
 Show # Currency S
   Class == "Stackable Currency"
-  BaseType == "Perfect Chaos Orb" "Mirror of Kalandra" "Hinekora's Lock" "Perfect Exalted Orb" "Divine Orb" "Fracturing Orb" "Albino Rhoa Feather" "Vaal Cultivation Orb"
+  BaseType == "Perfect Chaos Orb" "Mirror of Kalandra" "Hinekora's Lock" "Perfect Exalted Orb" "Fracturing Orb" "Albino Rhoa Feather" "Vaal Cultivation Orb"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -132,7 +132,7 @@ Show # Currency S
 
 Show # Currency A
   Class == "Stackable Currency"
-  BaseType == "Perfect Jeweller's Orb" "Core Destabiliser" "Vaal Infuser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
+  BaseType == "Divine Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Vaal Infuser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
   PlayEffect Purple
   MinimapIcon 1 Purple Circle
   SetTextColor 189 147 249 255
@@ -154,7 +154,7 @@ Show # Currency B
 
 Show # Currency C
   Class == "Stackable Currency"
-  BaseType == "Chaos Orb" "Orb of Chance" "Exalted Orb" "Greater Exalted Orb" "Perfect Orb of Augmentation"
+  BaseType == "Orb of Chance" "Greater Exalted Orb" "Perfect Orb of Augmentation"
   PlayEffect Yellow
   MinimapIcon 2 Yellow Circle
   SetTextColor 241 250 140 255
@@ -164,7 +164,7 @@ Show # Currency C
 
 Show # Currency D
   Class == "Stackable Currency"
-  BaseType == "Arcanist's Etcher" "Armourer's Scrap" "Orb of Alchemy" "Perfect Orb of Transmutation" "Greater Regal Orb" "Glassblower's Bauble" "Gemcutter's Prism" "Chance Shard" "Vaal Orb"
+  BaseType == "Exalted Orb" "Arcanist's Etcher" "Armourer's Scrap" "Orb of Alchemy" "Perfect Orb of Transmutation" "Greater Regal Orb" "Glassblower's Bauble" "Gemcutter's Prism" "Chance Shard" "Vaal Orb"
   PlayEffect White
   MinimapIcon 2 White Circle
   SetTextColor 139 233 253 255
@@ -173,7 +173,7 @@ Show # Currency D
 
 Show # Currency E
   Class == "Stackable Currency"
-  BaseType == "Blacksmith's Whetstone" "Lesser Jeweller's Orb" "Greater Jeweller's Orb" "Artificer's Orb"
+  BaseType == "Chaos Orb" "Blacksmith's Whetstone" "Lesser Jeweller's Orb" "Greater Jeweller's Orb" "Artificer's Orb"
   SetTextColor 248 248 242 255
   SetBackgroundColor 40 42 54 255
   SetBorderColor 248 248 242 255

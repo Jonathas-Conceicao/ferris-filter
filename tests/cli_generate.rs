@@ -53,6 +53,10 @@ fn unknown_subcommand_exits_code_2() {
 /// exist) must exit successfully.
 ///
 /// Satisfies ROADMAP success criterion — generate + valid inputs → exit 0.
+///
+/// Uses `--output <tmpfile>` to avoid clobbering the committed `universal.filter`
+/// during test runs (which would make artifact_guard compare the test's output
+/// against itself, defeating its purpose).
 #[test]
 fn generate_in_repo_root_succeeds() {
     // The test binary's cwd is the Cargo manifest directory, which is the repo root.
@@ -67,10 +71,12 @@ fn generate_in_repo_root_succeeds() {
         return;
     }
 
+    let out_path = std::env::temp_dir().join("ferrisfilter_repo_root_test.filter");
+
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .arg("generate")
+        .args(["generate", "--output", out_path.to_str().unwrap()])
         .assert()
         .success();
 }

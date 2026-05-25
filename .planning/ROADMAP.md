@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation** - Cargo crate + CLI shell + serde models for all JSON inputs
 - [x] **Phase 2: Static Generate** - Deterministic filter emitter that reproduces universal.filter byte-for-byte
-- [ ] **Phase 3: Pricing Layer** - Cross-rate math, tier assignment, price-tiered unique highlights
+- [x] **Phase 3: Pricing Layer** - Cross-rate math, tier assignment, price-tiered unique highlights
 - [ ] **Phase 4: Sync** - poe.ninja API spike + sync subcommand that fetches and writes prices.json
 
 ## Phase Details
@@ -61,10 +61,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Running `generate` without `prices.json` present emits a warning to stderr and produces a valid filter without price-tiered blocks (no crash)
   4. Running `generate` when Exalt, Chaos, or Divine has a null or zero price in `prices.json` aborts with a clear error naming the missing currency
 **Plans**: 4 plans
-- [ ] 03-01-PLAN.md — Extend PriceItem schema (class + category) + seed_prices migration binary + regenerate committed prices.json from currency.json
-- [ ] 03-02-PLAN.md — src/pricer.rs: cross-rate (TIER-01), tier assignment (TIER-02), TIER-04 abort, unique base-collision (TIER-03), grouping + fixture tests
-- [ ] 03-03-PLAN.md — Emitter rework to PricedData + load_prices_optional (GEN-05) + rewire cmd_generate, drop currency.json from generate path
-- [ ] 03-04-PLAN.md — One-time snapshot re-baseline + regenerate universal.filter + guardrail diff (only 5 Currency blocks) + human review/in-game spot-check (checkpoint)
+- [x] 03-01-PLAN.md — Extend PriceItem schema (class + category) + seed_prices migration binary + regenerate committed prices.json from currency.json
+- [x] 03-02-PLAN.md — src/pricer.rs: cross-rate (TIER-01), tier assignment (TIER-02), TIER-04 abort, unique base-collision (TIER-03), grouping + fixture tests
+- [x] 03-03-PLAN.md — Emitter rework to PricedData + load_prices_optional (GEN-05) + rewire cmd_generate, drop currency.json from generate path
+- [x] 03-04-PLAN.md — One-time snapshot re-baseline + regenerate universal.filter + guardrail diff (only 5 Currency blocks) + human review/in-game spot-check (checkpoint)
 
 ### Phase 4: Sync
 **Goal**: `ferrisfilter sync` fetches live PoE2 economy data from poe.ninja and writes a well-formed `prices.json`; the poe.ninja PoE2 API surface is confirmed via a spike before any HTTP code is written

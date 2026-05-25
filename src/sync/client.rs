@@ -3,7 +3,15 @@
 // without making any live network calls.
 
 pub trait HttpClient {
-    async fn get_json(&self, url: &str, query: &[(&str, &str)]) -> miette::Result<String>;
+    // Desugared from `async fn` to an explicit `impl Future` to silence the
+    // `async_fn_in_trait` lint (auto trait bounds like `Send` cannot be expressed on a
+    // bare `async fn` in a trait). The futures here are driven on a single `block_on`,
+    // so no `Send` bound is required.
+    fn get_json(
+        &self,
+        url: &str,
+        query: &[(&str, &str)],
+    ) -> impl std::future::Future<Output = miette::Result<String>>;
 }
 
 pub struct ReqwestClient {

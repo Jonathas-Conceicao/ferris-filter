@@ -148,8 +148,19 @@ pub fn build_prices(
             let name = match item_index.get(line.id.as_str()) {
                 Some(n) => n.to_string(),
                 None => {
-                    // Fallback: use id as display name when core.items is missing this id
-                    line.id.clone()
+                    // poe.ninja occasionally returns a `lines` entry whose `id` is absent
+                    // from `core.items`. The only thing we have for it is the `id` itself —
+                    // a kebab-case slug (e.g. "vaal-cultivation-orb"). That slug is NOT a
+                    // valid PoE2 `BaseType`, so emitting it would produce a filter rule that
+                    // can never match. Skip it rather than poison the filter with a slug;
+                    // real base types come from `core.items[].name` (baseType == name for
+                    // currency-class items).
+                    eprintln!(
+                        "Warning: poe.ninja type '{}' line id '{}' has no entry in core.items \
+                         — skipping (cannot resolve a valid BaseType)",
+                        type_value, line.id
+                    );
+                    continue;
                 }
             };
 
@@ -785,6 +796,38 @@ mod tests {
         assert_eq!(exalt_count, 1, "Exalted Orb should appear exactly once");
         assert_eq!(chaos_count, 1, "Chaos Orb should appear exactly once");
         assert_eq!(divine_count, 1, "Divine Orb should appear exactly once");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: a `lines` entry whose id is missing from core.items is skipped, NOT
+    // emitted with the kebab-case slug as its baseType. Regression for the bug
+    // where "vaal-cultivation-orb" (a slug) leaked into the filter as a BaseType.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn unresolved_line_id_is_skipped_not_emitted_as_slug() {
+        let overview = make_overview(
+            "divine",
+            &[("chaos", 32.24), ("exalted", 149.0)],
+            // core.items has "Some Orb" but NOT "vaal-cultivation-orb"
+            &[("item-a", "Some Orb")],
+            &[("item-a", 0.5), ("vaal-cultivation-orb", 0.5)],
+        );
+        let mapping = minimal_mapping();
+        let items = super::build_prices(&[("Currency".to_string(), overview)], &mapping)
+            .expect("build_prices should succeed");
+
+        // The resolvable item is present...
+        assert!(items.iter().any(|i| i.name == "Some Orb"));
+        // ...and the unresolved slug never appears as a name OR a baseType.
+        assert!(
+            !items.iter().any(|i| i.name.contains('-') || i.base_type.contains('-')),
+            "no kebab-case slug should leak into name/baseType: {:?}",
+            items.iter().map(|i| &i.base_type).collect::<Vec<_>>()
+        );
+        assert!(
+            !items.iter().any(|i| i.base_type == "vaal-cultivation-orb"),
+            "the unresolved slug must be skipped, not emitted as a BaseType"
+        );
     }
 
     // -----------------------------------------------------------------------

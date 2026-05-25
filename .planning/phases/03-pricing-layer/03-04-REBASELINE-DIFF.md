@@ -101,4 +101,34 @@ index 22fd767..abf7c72 100644
 
 ## Guardrail Verification
 
-_(Added in Task 2 — see below)_
+**Status: PASSED**
+
+### Mechanical check (git diff analysis)
+
+The diff above contains exactly **10 changed lines** (5 removals + 5 additions), all of type
+`  BaseType == ...`. Every changed line falls within the `# --- Currency ---` section.
+
+Verified line-by-line:
+- `-  BaseType == "... "Divine Orb" ..."` / `+  BaseType == "..."` → Currency S: Divine Orb removed ✓
+- `-  BaseType == "Perfect Jeweller's Orb" ...` / `+  BaseType == "Divine Orb" "Perfect Jeweller's Orb" ...` → Currency A: Divine Orb prepended ✓
+- `-  BaseType == "Chaos Orb" "Orb of Chance" "Exalted Orb" ...` / `+  BaseType == "Orb of Chance" ...` → Currency C: Chaos + Exalted removed ✓
+- `-  BaseType == "Arcanist's Etcher" ...` / `+  BaseType == "Exalted Orb" "Arcanist's Etcher" ...` → Currency D: Exalted Orb prepended ✓
+- `-  BaseType == "Blacksmith's Whetstone" ...` / `+  BaseType == "Chaos Orb" "Blacksmith's Whetstone" ...` → Currency E: Chaos Orb prepended ✓
+
+No changed lines belong to: Currency B, Currency F, Abyssal Eyes, Ancient Bones, Breach,
+Delirium, Essences, Expedition, Idols, Incubators, Map Fragments & Pinnacle Keys, Omens,
+Runes, Soul Cores, Tablets, Vault Keys, gear AreaLevel bands, flask/charm bands, recycle,
+header/footer.
+
+### Automated assertion (currency_retiering_present test)
+
+A new test `currency_retiering_present` in `tests/cli_generate.rs` was added and passes.
+It generates the filter to a temp file and asserts:
+- Currency A BaseType contains `"Divine Orb"` ✓
+- Currency S BaseType does NOT contain `"Divine Orb"` ✓
+- Currency D BaseType contains `"Exalted Orb"` ✓
+- Currency E BaseType contains `"Chaos Orb"` ✓
+- Currency C BaseType does NOT contain `"Chaos Orb"` ✓
+- Currency C BaseType does NOT contain `"Exalted Orb"` ✓
+
+Full suite result: **8/8 cli_generate tests pass; 0 failures across all tests.**

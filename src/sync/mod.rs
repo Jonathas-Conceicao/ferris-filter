@@ -3,6 +3,7 @@ pub mod league;
 pub mod mapping;
 pub mod metadata;
 pub mod models;
+pub mod prices;
 
 use crate::cli::SyncSubcommand;
 use client::ReqwestClient;

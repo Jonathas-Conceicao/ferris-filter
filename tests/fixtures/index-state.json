@@ -1,0 +1,34 @@
+{
+  "economyLeagues": [
+    {
+      "name": "Fate of the Vaal",
+      "url": "vaal",
+      "displayName": "Fate of the Vaal",
+      "hardcore": false,
+      "indexed": true
+    },
+    {
+      "name": "HC Fate of the Vaal",
+      "url": "vaalhc",
+      "displayName": "HC Fate of the Vaal",
+      "hardcore": true,
+      "indexed": false
+    },
+    {
+      "name": "Standard",
+      "url": "standard",
+      "displayName": "Standard",
+      "hardcore": false,
+      "indexed": false
+    },
+    {
+      "name": "Hardcore",
+      "url": "hardcore",
+      "displayName": "Hardcore",
+      "hardcore": true,
+      "indexed": false
+    }
+  ],
+  "oldEconomyLeagues": [],
+  "snapshotVersions": []
+}

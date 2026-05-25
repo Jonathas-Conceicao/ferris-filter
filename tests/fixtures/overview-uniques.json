@@ -1,0 +1,39 @@
+{
+  "core": {
+    "items": [
+      {
+        "id": "voidforge",
+        "name": "Voidforge",
+        "image": "https://web.poecdn.com/gen/image/voidforge.png",
+        "category": "UniqueWeapon",
+        "detailsId": "voidforge"
+      },
+      {
+        "id": "shapers-touch",
+        "name": "Shaper's Touch",
+        "image": "https://web.poecdn.com/gen/image/shapers-touch.png",
+        "category": "UniqueArmour",
+        "detailsId": "shapers-touch"
+      }
+    ],
+    "rates": {
+      "chaos": 220.0,
+      "exalted": 48.89
+    },
+    "primary": "divine",
+    "secondary": "exalted"
+  },
+  "lines": [
+    {
+      "id": "voidforge",
+      "primaryValue": 5.0,
+      "volumePrimaryValue": 20.0
+    },
+    {
+      "id": "shapers-touch",
+      "primaryValue": 2.5,
+      "volumePrimaryValue": 10.0
+    }
+  ],
+  "items": []
+}

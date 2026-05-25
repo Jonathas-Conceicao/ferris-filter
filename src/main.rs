@@ -1,14 +1,15 @@
-mod cli;
-mod emitter;
-mod error;
-mod loader;
-mod models;
-mod pricer;
-mod sync;
+// FerrisFilter binary entry point.
+//
+// All module definitions live in src/lib.rs; this binary re-uses the library
+// crate so that integration tests can also call `ferrisfilter::sync::*` directly.
+use ferrisfilter::cli::{Cli, Commands};
+use ferrisfilter::loader;
+use ferrisfilter::models::config::Config;
+use ferrisfilter::pricer;
+use ferrisfilter::emitter;
+use ferrisfilter::sync;
 
-use cli::{Cli, Commands};
 use clap::Parser;
-use models::config::Config;
 
 fn main() -> miette::Result<()> {
     let cli = Cli::parse();

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 default-run = "ff"
 
+[lib]
+name = "ferrisfilter"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ferrisfilter"
 path = "src/main.rs"

@@ -10,6 +10,7 @@
 pub mod cli;
 pub mod emitter;
 pub mod error;
+pub mod install;
 pub mod loader;
 pub mod models;
 pub mod pricer;

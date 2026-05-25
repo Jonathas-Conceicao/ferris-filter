@@ -3,6 +3,7 @@
 // All module definitions live in src/lib.rs; this binary re-uses the library
 // crate so that integration tests can also call `ferrisfilter::sync::*` directly.
 use ferrisfilter::cli::{Cli, Commands};
+use ferrisfilter::install;
 use ferrisfilter::loader;
 use ferrisfilter::models::config::Config;
 use ferrisfilter::pricer;
@@ -16,6 +17,7 @@ fn main() -> miette::Result<()> {
     match cli.command {
         Commands::Generate { output } => cmd_generate(&output)?,
         Commands::Sync { sub } => sync::cmd_sync(sub)?,
+        Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
     }
     Ok(())
 }

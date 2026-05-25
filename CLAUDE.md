@@ -19,7 +19,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | `universal.filter` | **Generated** from `filter-model.json` — do not hand-edit; change the model and regenerate. Each block is tagged with its model path (e.g. `[areaLevelBands "6-25".weapons -> styles.unchanged]`). Currency base lists are curated data carried in the filter (intentionally not stored in the model). |
 | other `*.filter` (repo root) | Active, version-controlled filters we author/maintain. |
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
-| `install.bat` | Copies `universal.filter` into the in-game config folder. |
+| `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |
 | `CLAUDE.md` | This file — the filter-syntax reference so we rarely need to re-fetch the docs. |
 
 > **Design philosophy (current):** Hide what we don't want, style the few highlights, and let

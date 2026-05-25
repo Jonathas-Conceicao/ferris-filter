@@ -21,6 +21,16 @@ pub enum Commands {
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
     },
+    /// Copy a generated .filter into the PoE2 config folder so it takes effect in-game
+    Install {
+        /// Filter file to install [default: universal.filter]
+        #[arg(long, default_value = "universal.filter")]
+        input: String,
+        /// Destination PoE2 config folder
+        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        #[arg(long)]
+        dest: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

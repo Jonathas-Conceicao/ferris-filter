@@ -3,6 +3,7 @@ mod emitter;
 mod error;
 mod loader;
 mod models;
+mod pricer;
 
 use cli::{Cli, Commands};
 use clap::Parser;

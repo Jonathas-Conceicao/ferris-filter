@@ -13,7 +13,7 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 
 use crate::sync::client::HttpClient;
-use crate::sync::mapping::{Mapping, OverviewType, normalize_item_class};
+use crate::sync::mapping::{Mapping, normalize_item_class};
 
 const REPOE_BASE_ITEMS_URL: &str = "https://repoe-fork.github.io/poe2/base_items.json";
 const REPOE_UNIQUES_URL: &str = "https://repoe-fork.github.io/poe2/uniques.json";
@@ -68,50 +68,40 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
     // where a matching class is found in base_items.
     let committed = crate::sync::mapping::load_mapping(MAPPING_PATH)?;
 
-    // Collect distinct (class_normalized) values from base_items for validation.
-    let mut repoe_classes: HashMap<String, String> = HashMap::new(); // raw → normalized
+    // Validate (do not mutate) the committed overviewType class names against RePoE.
+    //
+    // The overviewTypes table is poe.ninja's curated (type→category) contract; RePoE
+    // does not provide poe.ninja type keys, so we cannot re-derive those rows from it.
+    // What we CAN do is sanity-check that each committed class value still appears in
+    // RePoE's set of known item classes, and warn on any that no longer do (a possible
+    // class-name drift). The committed rows are passed through unchanged.
+    let mut repoe_classes: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in base_items.values() {
-        let normalized = normalize_item_class(&entry.item_class);
-        repoe_classes
-            .entry(entry.item_class.clone())
-            .or_insert(normalized);
+        repoe_classes.insert(normalize_item_class(&entry.item_class));
     }
     for entry in uniques.values() {
-        let normalized = normalize_item_class(&entry.item_class);
-        repoe_classes
-            .entry(entry.item_class.clone())
-            .or_insert(normalized);
+        repoe_classes.insert(normalize_item_class(&entry.item_class));
     }
 
-    // Build refreshed overviewTypes: use committed rows, refreshing class from RePoE
-    // where the base item class resolves to a known PoE2 class.
-    let refreshed_overview_types: Vec<OverviewType> = committed
-        .overview_types
-        .into_iter()
-        .map(|ot| {
-            // For non-unique types that have a class, attempt to re-derive from RePoE.
-            // Find a base_items entry whose normalized class matches the current class value.
-            if let Some(current_class) = &ot.class {
-                // If any RePoE entry normalizes to the same class, keep it (confirms it's valid).
-                // If we find a more canonical spelling, update it.
-                let repoe_normalized: Vec<&String> = repoe_classes
-                    .values()
-                    .filter(|v| v.as_str() == current_class.as_str())
-                    .collect();
-                if !repoe_normalized.is_empty() {
-                    // Class confirmed by RePoE data — keep as-is (already in canonical form).
-                } else {
-                    // Class not confirmed by RePoE — keep committed value anyway (may be valid
-                    // PoE2 class not covered by base_items.json at this point in time).
-                }
+    let mut confirmed_classes = 0usize;
+    for ot in &committed.overview_types {
+        if let Some(current_class) = &ot.class {
+            if repoe_classes.contains(current_class.as_str()) {
+                confirmed_classes += 1;
+            } else {
+                eprintln!(
+                    "Warning: overviewType '{}' class '{}' not found among RePoE item classes \
+                     (possible class-name drift; keeping committed value)",
+                    ot.r#type, current_class
+                );
             }
-            ot
-        })
-        .collect();
+        }
+    }
 
+    // Pass committed rows through unchanged (RePoE cannot re-key poe.ninja types).
     let refreshed = Mapping {
         version: committed.version,
-        overview_types: refreshed_overview_types,
+        overview_types: committed.overview_types,
         gem_filter: committed.gem_filter,
     };
 
@@ -138,8 +128,12 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
         .map_err(|e| miette::miette!("Cannot atomically replace mapping.json: {e}"))?;
 
     eprintln!(
-        "sync metadata: mapping.json refreshed ({} overviewTypes, {} base items, {} uniques)",
+        "sync metadata: validated mapping.json against RePoE \
+         ({} overviewTypes, {}/{} class names confirmed; {} base items, {} uniques) \
+         — rewrote mapping.json (content unchanged aside from re-serialization)",
         refreshed.overview_types.len(),
+        confirmed_classes,
+        refreshed.overview_types.iter().filter(|ot| ot.class.is_some()).count(),
         base_items.len(),
         uniques.len()
     );

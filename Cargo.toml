@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "ff"
 path = "src/main.rs"
 
+[[bin]]
+name = "seed_prices"
+path = "src/bin/seed_prices.rs"
+
 [dependencies]
 clap    = { version = "4.6", features = ["derive"] }
 serde   = { version = "1.0", features = ["derive"] }

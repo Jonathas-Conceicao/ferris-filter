@@ -4,6 +4,7 @@ mod error;
 mod loader;
 mod models;
 mod pricer;
+mod sync;
 
 use cli::{Cli, Commands};
 use clap::Parser;
@@ -13,7 +14,7 @@ fn main() -> miette::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Generate { output } => cmd_generate(&output)?,
-        Commands::Sync => cmd_sync(),
+        Commands::Sync { sub } => sync::cmd_sync(sub)?,
     }
     Ok(())
 }
@@ -53,8 +54,4 @@ fn cmd_generate(output: &str) -> miette::Result<()> {
 
     println!("wrote {} bytes to {output}", generated.len());
     Ok(())
-}
-
-fn cmd_sync() {
-    println!("sync not yet implemented");
 }

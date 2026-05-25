@@ -339,7 +339,14 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
                 if chaos_val == 0.0 && c.chaos.is_some() {
                     return Err(miette::miette!("Chaos Orb chaos value is zero"));
                 }
-                let _ = (div_val, exalt_val); // non-fatal if null
+                // Divine Orb is the cross-rate anchor. A missing/zero div means the
+                // rate table was malformed; aborting preserves the existing good file.
+                if div_val == 0.0 {
+                    return Err(miette::miette!(
+                        "Divine Orb div anchor is zero/missing — aborting write to preserve existing prices.json"
+                    ));
+                }
+                let _ = exalt_val; // non-fatal if null
                 Ok(())
             }
             _ => Err(miette::miette!(

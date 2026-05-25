@@ -1,4 +1,5 @@
 pub mod client;
+pub mod league;
 pub mod mapping;
 pub mod metadata;
 pub mod models;

@@ -76,7 +76,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `ferrisfilter sync --hc` and `ferrisfilter sync --standard` (combinable) target the correct league; the fetched league name and a timestamp appear in `prices.json`
   4. Uncut gems are included in `prices.json` only at gem level >= 18
   5. A network failure or empty poe.ninja response does not overwrite or corrupt an existing `prices.json`
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 04-01-PLAN.md — Deps (reqwest/tokio/tempfile) + clap sync prices/metadata subcommands + injectable HttpClient seam + poe.ninja response models
+- [ ] 04-02-PLAN.md — Committed mapping.json (bootstrap from currency.json) + sync metadata (RePoE-fork fetch, item_class→Class== normalization, atomic write)
+- [ ] 04-03-PLAN.md — sync prices: live league resolution + fetch/join/convert + gem≥18 filter + anchors-first ordering + league/timestamp recording + atomic write
+- [ ] 04-04-PLAN.md — Integration tests: FakeClient + recorded fixtures (happy path, league resolution, gem≥18, byte-equal failure-safety, generate-loop intact)
 
 ## Progress
 
@@ -88,4 +92,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation | 3/3 | Complete | 2026-05-24 |
 | 2. Static Generate | 3/3 | Complete | 2026-05-24 |
 | 3. Pricing Layer | 4/4 | Complete | 2026-05-25 |
-| 4. Sync | 0/TBD | Not started | - |
+| 4. Sync | 0/4 | Not started | - |

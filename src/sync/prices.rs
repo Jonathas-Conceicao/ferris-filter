@@ -3,10 +3,51 @@
 
 use crate::models::prices::{PriceItem, PricesFile};
 use crate::sync::mapping::Mapping;
-use crate::sync::models::ExchangeOverview;
+use crate::sync::models::{ExchangeOverview, ItemOverview};
 
 pub const OVERVIEW_URL: &str =
     "https://poe.ninja/poe2/api/economy/exchange/current/overview";
+
+/// Stash item overview endpoint — serves uniques (and other non-fungible items),
+/// keyed by plural `type` values (e.g. `UniqueWeapons`). Different shape than the
+/// currency `exchange` overview: each line carries `name`/`baseType`/`category`.
+pub const ITEM_OVERVIEW_URL: &str =
+    "https://poe.ninja/poe2/api/economy/stash/current/item/overview";
+
+/// Convert a `primaryValue` (expressed in `core.primary`) into (chaos, div, exalt)
+/// using the overview's `core.rates`. Shared by the currency and unique pipelines.
+///
+/// Guards against a zero divisor in the `chaos`-primary branch: a present-but-zero
+/// rate would otherwise yield inf/NaN, which serde_json serializes as null and
+/// silently drops the price.
+fn convert_primary(
+    primary: &str,
+    primary_value: f64,
+    rates: &std::collections::HashMap<String, f64>,
+) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let chaos_rate = rates.get("chaos").copied();
+    let exalt_rate = rates.get("exalted").copied();
+    match primary {
+        "divine" => {
+            let chaos = chaos_rate.map(|r| primary_value * r);
+            let div = Some(primary_value);
+            let exalt = exalt_rate.map(|r| primary_value * r);
+            (chaos, div, exalt)
+        }
+        "chaos" => {
+            let chaos = Some(primary_value);
+            let divine_rate = rates.get("divine").copied();
+            let div = divine_rate.and_then(|r| (r != 0.0).then_some(primary_value / r));
+            let exalt = exalt_rate.and_then(|r| (r != 0.0).then_some(primary_value / r));
+            (chaos, div, exalt)
+        }
+        _ => {
+            // Unknown primary — try to use chaos rate if present.
+            let chaos = chaos_rate.map(|r| primary_value * r);
+            (chaos, None, None)
+        }
+    }
+}
 
 /// Parse the gem level from an item name or id slug.
 ///
@@ -101,47 +142,18 @@ pub fn build_prices(
             continue;
         }
 
-        // Build id→name index from core.items
-        let item_index: std::collections::HashMap<&str, &str> = overview
-            .core
+        // Build id→name index. The comprehensive dictionary is the TOP-LEVEL `items`
+        // array; `core.items` only holds the 3 rate-reference currencies. Merge both
+        // (top-level wins, core.items fills any gaps) so every priced line resolves to
+        // a real name/baseType instead of falling back to its kebab-case id slug.
+        let mut item_index: std::collections::HashMap<&str, &str> = overview
             .items
             .iter()
             .map(|i| (i.id.as_str(), i.name.as_str()))
             .collect();
-
-        // Price conversion factors from core.rates
-        let chaos_rate = overview.core.rates.get("chaos").copied();
-        let exalt_rate = overview.core.rates.get("exalted").copied();
-
-        let compute_prices = |primary_value: f64| -> (Option<f64>, Option<f64>, Option<f64>) {
-            // core.primary is the currency that primaryValue is expressed in
-            let (chaos, div, exalt) = match overview.core.primary.as_str() {
-                "divine" => {
-                    // primaryValue is in divine
-                    let chaos = chaos_rate.map(|r| primary_value * r);
-                    let div = Some(primary_value);
-                    let exalt = exalt_rate.map(|r| primary_value * r);
-                    (chaos, div, exalt)
-                }
-                "chaos" => {
-                    // primaryValue is in chaos
-                    let chaos = Some(primary_value);
-                    let divine_rate = overview.core.rates.get("divine").copied();
-                    // Guard the divisor: a zero rate (thin/off-season market with the
-                    // key present but zero) would yield inf/NaN, which serde_json
-                    // serializes as null and silently drops the price. Skip those.
-                    let div = divine_rate.and_then(|r| (r != 0.0).then_some(primary_value / r));
-                    let exalt = exalt_rate.and_then(|r| (r != 0.0).then_some(primary_value / r));
-                    (chaos, div, exalt)
-                }
-                _ => {
-                    // Unknown primary — try to use chaos rate if present
-                    let chaos = chaos_rate.map(|r| primary_value * r);
-                    (chaos, None, None)
-                }
-            };
-            (chaos, div, exalt)
-        };
+        for i in &overview.core.items {
+            item_index.entry(i.id.as_str()).or_insert(i.name.as_str());
+        }
 
         // Process each line
         for line in &overview.lines {
@@ -187,7 +199,8 @@ pub fn build_prices(
             let _ = base_type_is_name;
             let base_type = name.clone();
 
-            let (chaos, div, exalt) = compute_prices(line.primary_value);
+            let (chaos, div, exalt) =
+                convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
 
             let item = PriceItem {
                 name: name.clone(),
@@ -229,6 +242,68 @@ pub fn build_prices(
     items.extend(body);
 
     Ok(items)
+}
+
+/// Build `PriceItem`s from the stash/item unique overviews.
+///
+/// Each line is self-contained (`name` + `baseType` + `primaryValue`), so there is no
+/// id→core.items join. The produced items have `name != base_type` (the unique's display
+/// name vs its filter base type), which is exactly what `pricer::price_tiers` keys on to
+/// collect them into `Rarity == Unique` blocks (deduping shared base types to the highest
+/// tier). Prices convert via the same `convert_primary` helper as currency.
+///
+/// Lines with no `baseType` are skipped (a `BaseType ==` rule needs a real base to match).
+pub fn build_unique_items(
+    overviews: &[(String, crate::sync::models::ItemOverview)],
+    mapping: &Mapping,
+) -> Vec<PriceItem> {
+    let mut out: Vec<PriceItem> = Vec::new();
+
+    for (type_value, overview) in overviews {
+        // Category comes from the mapping's itemTypes entry; default to "Uniques".
+        let category = mapping
+            .item_types
+            .iter()
+            .find(|t| &t.r#type == type_value)
+            .map(|t| t.category.clone())
+            .unwrap_or_else(|| "Uniques".to_string());
+
+        if overview.lines.is_empty() {
+            continue;
+        }
+        if overview.core.rates.is_empty() {
+            eprintln!("Warning: unique type '{type_value}' has empty rates, skipping (no conversion possible)");
+            continue;
+        }
+
+        for line in &overview.lines {
+            // A unique block matches `Rarity == Unique` + `BaseType ==`, so a real base
+            // type is required. poe.ninja supplies it here (unlike the exchange endpoint).
+            if line.base_type.trim().is_empty() {
+                eprintln!(
+                    "Warning: unique '{}' ({type_value}) has no baseType — skipping",
+                    line.name
+                );
+                continue;
+            }
+
+            let (chaos, div, exalt) =
+                convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
+
+            out.push(PriceItem {
+                name: line.name.clone(),
+                base_type: line.base_type.clone(),
+                // Unique blocks match on Rarity == Unique + BaseType, not Class.
+                class: String::new(),
+                category: category.clone(),
+                exalt,
+                chaos,
+                div,
+            });
+        }
+    }
+
+    out
 }
 
 /// Atomically write `prices.json` via `NamedTempFile::persist` (same-dir).
@@ -334,8 +409,34 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         }
     }
 
-    // Step 4: build prices
-    let items = build_prices(&overviews, &mapping)?;
+    // Step 3b: fetch unique item overviews from the stash/item endpoint.
+    // This is a SEPARATE endpoint family from the currency exchange overview, with a
+    // different response shape (each line carries name + baseType directly). The
+    // unique `type` values are plural (e.g. UniqueWeapons) — see mapping.itemTypes.
+    let mut item_overviews: Vec<(String, ItemOverview)> = Vec::new();
+    for it in &mapping.item_types {
+        let query = [
+            ("league", league_name.as_str()),
+            ("type", it.r#type.as_str()),
+        ];
+        match client.get_json(ITEM_OVERVIEW_URL, &query).await {
+            Ok(body) => match serde_json::from_str::<ItemOverview>(&body) {
+                Ok(ov) => item_overviews.push((it.r#type.clone(), ov)),
+                Err(e) => {
+                    eprintln!("Warning: failed to parse item overview for type '{}': {e}", it.r#type);
+                }
+            },
+            Err(e) => {
+                eprintln!("Warning: failed to fetch item overview for type '{}': {e}", it.r#type);
+            }
+        }
+    }
+
+    // Step 4: build prices (currency/gems first, then uniques appended).
+    let mut items = build_prices(&overviews, &mapping)?;
+    let unique_items = build_unique_items(&item_overviews, &mapping);
+    let unique_count = unique_items.len();
+    items.extend(unique_items);
 
     // Validate anchors present and non-zero (SYNC-04 + T-04-11)
     let validate = || -> miette::Result<()> {
@@ -399,9 +500,10 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     write_prices_atomic("prices.json", &prices_file)?;
 
     println!(
-        "Wrote {} items to prices.json (league: {})",
+        "Wrote {} items to prices.json (league: {}, {} uniques)",
         prices_file.items.len(),
-        league_name
+        league_name,
+        unique_count
     );
 
     Ok(())
@@ -506,6 +608,9 @@ mod tests {
                 primary: primary.to_string(),
             },
             lines: lines_vec,
+            // Helper puts the dictionary in core.items; the top-level `items` array is
+            // exercised separately by `top_level_items_resolves_names`.
+            items: Vec::new(),
         }
     }
 
@@ -851,5 +956,103 @@ mod tests {
             !std::path::Path::new("prices-test-empty.json").exists(),
             "no file should be created for empty items"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: names resolve from the TOP-LEVEL `items` dictionary, not just core.items.
+    // The real poe.ninja exchange response keeps the full id→name map in the top-level
+    // `items` array while core.items carries only the rate-reference currencies. A line
+    // whose id is only in the top-level dictionary must still get its real baseType.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn top_level_items_resolves_names() {
+        use crate::sync::models::{ExchangeCore, ExchangeItem, ExchangeLine, ExchangeOverview};
+        use std::collections::HashMap;
+
+        let mut rates = HashMap::new();
+        rates.insert("chaos".to_string(), 220.0);
+        rates.insert("exalted".to_string(), 48.89);
+
+        let overview = ExchangeOverview {
+            core: ExchangeCore {
+                // Only the rate anchor lives in core.items (mirrors the real API).
+                items: vec![ExchangeItem {
+                    id: "divine".to_string(),
+                    name: "Divine Orb".to_string(),
+                    category: None,
+                }],
+                rates,
+                primary: "divine".to_string(),
+            },
+            lines: vec![
+                ExchangeLine { id: "divine".to_string(), primary_value: 1.0 },
+                ExchangeLine { id: "vaal-cultivation-orb".to_string(), primary_value: 0.5 },
+            ],
+            // The comprehensive dictionary — only here, NOT in core.items.
+            items: vec![ExchangeItem {
+                id: "vaal-cultivation-orb".to_string(),
+                name: "Vaal Cultivation Orb".to_string(),
+                category: None,
+            }],
+        };
+
+        let mapping = minimal_mapping();
+        let items = super::build_prices(&[("Currency".to_string(), overview)], &mapping)
+            .expect("build_prices should succeed");
+
+        // The slug resolved to its real base type from the top-level dictionary —
+        // NOT dropped and NOT emitted as "vaal-cultivation-orb".
+        let resolved = items.iter().find(|i| i.base_type == "Vaal Cultivation Orb");
+        assert!(
+            resolved.is_some(),
+            "top-level items dictionary must resolve the slug to its real base type"
+        );
+        assert!(
+            !items.iter().any(|i| i.base_type.contains('-')),
+            "no kebab slug should remain once the top-level dictionary is consulted"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: build_unique_items produces name != base_type items (so the pricer
+    // collects them into Rarity == Unique blocks), converts prices via core.rates,
+    // and skips lines with no baseType.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn build_unique_items_emits_uniques_with_base_type() {
+        use crate::sync::models::ItemOverview;
+        let overview_json = r#"{
+            "core": { "items": [], "rates": { "chaos": 220.0, "exalted": 48.89 }, "primary": "divine" },
+            "lines": [
+                { "name": "Temporalis", "baseType": "Silk Robe", "category": "Body Armour", "primaryValue": 100.0 },
+                { "name": "Death Articulated", "baseType": "Ornate Gauntlets", "category": "Gloves", "primaryValue": 0.5 },
+                { "name": "Nameless", "baseType": "", "category": "Gloves", "primaryValue": 1.0 }
+            ]
+        }"#;
+        let overview: ItemOverview =
+            serde_json::from_str(overview_json).expect("parse item overview");
+        // minimal_mapping has empty itemTypes → category defaults to "Uniques".
+        let mapping = minimal_mapping();
+        let items =
+            super::build_unique_items(&[("UniqueArmours".to_string(), overview)], &mapping);
+
+        // The empty-baseType line is skipped; the two real ones survive.
+        assert_eq!(items.len(), 2, "the empty-baseType unique must be skipped");
+        assert!(!items.iter().any(|i| i.name == "Nameless"));
+
+        let temp = items
+            .iter()
+            .find(|i| i.name == "Temporalis")
+            .expect("Temporalis present");
+        // The filter base type — NOT the unique name (this is the whole point).
+        assert_eq!(temp.base_type, "Silk Robe");
+        assert_ne!(
+            temp.name, temp.base_type,
+            "uniques MUST have name != base_type — the pricer keys on this to build Unique blocks"
+        );
+        assert_eq!(temp.category, "Uniques");
+        // primary=divine → div = primaryValue, chaos = primaryValue * chaos_rate.
+        assert_eq!(temp.div, Some(100.0));
+        assert!((temp.chaos.unwrap() - 100.0 * 220.0).abs() < 1.0, "chaos converted via rate");
     }
 }

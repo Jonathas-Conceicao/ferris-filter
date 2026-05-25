@@ -11,7 +11,27 @@ use serde::{Deserialize, Serialize};
 pub struct Mapping {
     pub version: u32,
     pub overview_types: Vec<OverviewType>,
+    /// Unique categories fetched from the `stash/current/item/overview` endpoint
+    /// (distinct from the currency `exchange` overview). Defaults to empty for
+    /// backward compatibility with older mapping.json files.
+    #[serde(default)]
+    pub item_types: Vec<ItemType>,
     pub gem_filter: GemFilter,
+}
+
+/// One poe.ninja stash-item overview type (uniques) → filter category.
+///
+/// These are fetched from `.../economy/stash/current/item/overview?type=<plural>`
+/// (e.g. `UniqueWeapons`). Each response line already carries `baseType`, so unlike
+/// currency types there is no `baseTypeIsName`/class rule — the base type comes from
+/// the data and the filter block matches `Rarity == Unique` + `BaseType ==`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemType {
+    /// The poe.ninja `type=` value on the stash/item endpoint (e.g. "UniqueWeapons").
+    pub r#type: String,
+    /// The PriceItem.category value to emit in prices.json (e.g. "Uniques").
+    pub category: String,
 }
 
 /// One poe.ninja overview type → filter category/class entry.
@@ -186,16 +206,36 @@ mod tests {
     }
 
     #[test]
-    fn mapping_contains_all_unique_types() {
+    fn mapping_contains_all_unique_item_types() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
+        // Uniques are fetched from the stash/item endpoint with PLURAL type values.
         let unique_types = [
-            "UniqueWeapon", "UniqueArmour", "UniqueAccessory", "UniqueFlask",
-            "UniqueCharm", "UniqueJewel", "UniqueMap", "SanctumRelic",
+            "UniqueWeapons", "UniqueArmours", "UniqueAccessories", "UniqueFlasks",
+            "UniqueCharms", "UniqueJewels", "UniqueMaps", "UniqueSanctumRelics",
         ];
         for t in unique_types {
             assert!(
-                m.lookup(t).is_some(),
-                "mapping.json must contain Unique type: {t}"
+                m.item_types.iter().any(|it| it.r#type == t),
+                "mapping.json itemTypes must contain Unique type: {t}"
+            );
+            assert!(
+                m.item_types.iter().find(|it| it.r#type == t).unwrap().category == "Uniques",
+                "{t} must map to category 'Uniques'"
+            );
+        }
+        assert_eq!(m.item_types.len(), 8, "expected exactly 8 unique item types");
+    }
+
+    #[test]
+    fn unique_types_not_in_overview_types() {
+        // The unique types must NOT be in overviewTypes (currency exchange endpoint) —
+        // they were always empty there. They belong in itemTypes (stash endpoint).
+        let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
+        for ot in &m.overview_types {
+            assert!(
+                !ot.r#type.starts_with("Unique") && ot.r#type != "SanctumRelic",
+                "overviewTypes must not contain unique type '{}' (moved to itemTypes)",
+                ot.r#type
             );
         }
     }

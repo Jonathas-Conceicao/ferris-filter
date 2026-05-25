@@ -635,6 +635,36 @@ mod tests {
         );
     }
 
+    /// Positive counterpart: when the priced data DOES contain a unique block (as it
+    /// now will once `sync` fetches the stash/item endpoint), the emitter must produce
+    /// a `Rarity == Unique` block keyed on the unique's BASE TYPE.
+    #[test]
+    fn generate_emits_unique_block_when_present() {
+        let config: Config = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/config.json"
+        )))
+        .expect("config.json parse failed");
+
+        let priced = PricedData {
+            category_blocks: vec![],
+            unique_blocks: vec![crate::pricer::UniqueBlock {
+                tier: "A".to_string(),
+                base_types: vec!["Silk Robe".to_string()],
+            }],
+        };
+
+        let output = generate(&config, &priced);
+        assert!(
+            output.contains("Rarity == Unique"),
+            "a priced unique must produce a Rarity == Unique block"
+        );
+        assert!(
+            output.contains("BaseType == \"Silk Robe\""),
+            "the unique block must match on the unique's base type"
+        );
+    }
+
     #[test]
     fn generate_is_deterministic() {
         let (config, priced) = load_inputs();

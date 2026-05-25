@@ -102,6 +102,7 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
     let refreshed = Mapping {
         version: committed.version,
         overview_types: committed.overview_types,
+        item_types: committed.item_types,
         gem_filter: committed.gem_filter,
     };
 

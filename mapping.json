@@ -72,55 +72,17 @@
       "category": "Map Fragments & Pinnacle Keys",
       "class": "Map Fragments",
       "baseTypeIsName": true
-    },
-    {
-      "type": "UniqueWeapon",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "UniqueArmour",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "UniqueAccessory",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "UniqueFlask",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "UniqueCharm",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "UniqueJewel",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "UniqueMap",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
-    },
-    {
-      "type": "SanctumRelic",
-      "category": "Uniques",
-      "class": null,
-      "baseTypeIsName": false
     }
+  ],
+  "itemTypes": [
+    { "type": "UniqueWeapons", "category": "Uniques" },
+    { "type": "UniqueArmours", "category": "Uniques" },
+    { "type": "UniqueAccessories", "category": "Uniques" },
+    { "type": "UniqueFlasks", "category": "Uniques" },
+    { "type": "UniqueCharms", "category": "Uniques" },
+    { "type": "UniqueJewels", "category": "Uniques" },
+    { "type": "UniqueMaps", "category": "Uniques" },
+    { "type": "UniqueSanctumRelics", "category": "Uniques" }
   ],
   "gemFilter": {
     "type": "UncutGem",

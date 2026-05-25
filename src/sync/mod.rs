@@ -1,7 +1,9 @@
 pub mod client;
+pub mod league;
 pub mod mapping;
 pub mod metadata;
 pub mod models;
+pub mod prices;
 
 use crate::cli::SyncSubcommand;
 use client::ReqwestClient;
@@ -16,9 +18,8 @@ pub fn cmd_sync(sub: Option<SyncSubcommand>) -> miette::Result<()> {
 async fn run(sub: SyncSubcommand) -> miette::Result<()> {
     match sub {
         SyncSubcommand::Prices { standard, hc } => {
-            // Implemented in plan 04-03.
-            let _ = (standard, hc);
-            Err(miette::miette!("sync prices not yet implemented"))
+            let client = ReqwestClient::new()?;
+            prices::run_sync_prices(&client, standard, hc).await
         }
         SyncSubcommand::Metadata => {
             let client = ReqwestClient::new()?;

@@ -1,0 +1,51 @@
+{
+  "core": {
+    "items": [
+      {
+        "id": "uncut-spirit-gem-l16",
+        "name": "Uncut Spirit Gem (Level 16)",
+        "image": "https://web.poecdn.com/gen/image/spirit-gem.png",
+        "category": "Stackable Currency",
+        "detailsId": "uncut-spirit-gem-l16"
+      },
+      {
+        "id": "uncut-spirit-gem-l18",
+        "name": "Uncut Spirit Gem (Level 18)",
+        "image": "https://web.poecdn.com/gen/image/spirit-gem.png",
+        "category": "Stackable Currency",
+        "detailsId": "uncut-spirit-gem-l18"
+      },
+      {
+        "id": "uncut-spirit-gem-l20",
+        "name": "Uncut Spirit Gem (Level 20)",
+        "image": "https://web.poecdn.com/gen/image/spirit-gem.png",
+        "category": "Stackable Currency",
+        "detailsId": "uncut-spirit-gem-l20"
+      }
+    ],
+    "rates": {
+      "chaos": 220.0,
+      "exalted": 48.89
+    },
+    "primary": "divine",
+    "secondary": "exalted"
+  },
+  "lines": [
+    {
+      "id": "uncut-spirit-gem-l16",
+      "primaryValue": 0.05,
+      "volumePrimaryValue": 30.0
+    },
+    {
+      "id": "uncut-spirit-gem-l18",
+      "primaryValue": 0.5,
+      "volumePrimaryValue": 50.0
+    },
+    {
+      "id": "uncut-spirit-gem-l20",
+      "primaryValue": 5.0,
+      "volumePrimaryValue": 20.0
+    }
+  ],
+  "items": []
+}

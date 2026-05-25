@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 3 context gathered
-last_updated: "2026-05-24T23:25:19.807Z"
-last_activity: 2026-05-24
+status: executing
+stopped_at: Completed 03-01-PLAN.md (schema+seed)
+last_updated: "2026-05-25T02:25:40.711Z"
+last_activity: 2026-05-25
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 10
-  completed_plans: 6
-  percent: 60
+  completed_plans: 7
+  percent: 70
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-23)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 02 — Static Generate
+**Current focus:** Phase 03 — Pricing Layer
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-05-24
+Phase: 03 (Pricing Layer) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-05-25
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [██████████] 100%
 | Phase 02-static-generate P01 | 15 | 3 tasks | 3 files |
 | Phase 02-static-generate P02 | 45 | 2 tasks | 5 files |
 | Phase 02-static-generate P03 | 20 | 2 tasks | 3 files |
+| Phase 03-pricing-layer P01 | 200 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,9 @@ Recent decisions affecting current work:
 - Re-baseline D-01 complete: universal.filter regenerated as golden master; only header source-indicator + recycle action reorder changed (D-02 behavioral equivalence confirmed)
 - CRLF normalization: s.replace(\"\r\n\", \"\n\") on both sides of every string comparison in tests — working-tree *.filter is CRLF on Windows, generator emits LF-only
 - Approach A for snapshot tests: drive binary via assert_cmd --output to temp path; consistent with existing test conventions
+- D-03 extended: PriceItem has required class+category+baseType (String, not Option)
+- D-09 seed: non-reference bases at tier lower-bound; Chaos=1c, Exalt=4.5c, Divine=220c committed in prices.json
+- seed_prices duplicates minimal currency structs locally (no lib target in crate)
 
 ### Pending Todos
 
@@ -89,8 +93,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 3 context gathered
-Resume file: --resume-file
+Last session: 2026-05-25T02:25:40.705Z
+Stopped at: Completed 03-01-PLAN.md (schema+seed)
+Resume file: None
 
 **Planned Phase:** 3 () — 0 plans — 2026-05-24T23:25:19.802Z

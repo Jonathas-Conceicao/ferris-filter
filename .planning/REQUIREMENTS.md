@@ -35,9 +35,12 @@ Requirements for initial release. Each maps to a roadmap phase.
 
 ### Tiering
 
-- [ ] **TIER-01**: `generate` derives currency cross-rates from the first three `prices.json` entries (Exalt, Chaos, Divine) and converts every priced item to a chaos value
-- [ ] **TIER-02**: `generate` assigns each priced item to a tier per the `tiers.json` cutoffs (chaos as the reference unit)
-- [ ] **TIER-03**: Valuable uniques present in `prices.json` are highlighted by their price tier; uniques sharing a base type resolve to the highest tier among them; untracked uniques fall through
+- [x] **TIER-01
+**: `generate` derives currency cross-rates from the first three `prices.json` entries (Exalt, Chaos, Divine) and converts every priced item to a chaos value
+- [x] **TIER-02
+**: `generate` assigns each priced item to a tier per the `tiers.json` cutoffs (chaos as the reference unit)
+- [x] **TIER-03
+**: Valuable uniques present in `prices.json` are highlighted by their price tier; uniques sharing a base type resolve to the highest tier among them; untracked uniques fall through
 - [ ] **TIER-04**: `generate` aborts with a clear error if a reference currency price (Exalt/Chaos/Divine) is missing or zero (no silent miscalculation)
 
 ### Sync

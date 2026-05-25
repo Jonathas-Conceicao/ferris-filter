@@ -241,6 +241,24 @@ mod tests {
     }
 
     #[test]
+    fn overview_types_use_correct_plural_spellings() {
+        // poe.ninja's exchange `type=` values for these are PLURAL — the singular forms
+        // return empty (verified live against "Fate of the Vaal"). This guards against
+        // regressing to the singular spellings that silently fetch nothing.
+        let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
+        let types: Vec<&str> = m.overview_types.iter().map(|t| t.r#type.as_str()).collect();
+        for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols"] {
+            assert!(types.contains(&t), "overviewTypes must use plural type '{t}'");
+        }
+        for bad in ["Essence", "Rune", "SoulCore", "Fragment"] {
+            assert!(
+                !types.contains(&bad),
+                "'{bad}' is the wrong singular spelling (returns empty) — use the plural form"
+            );
+        }
+    }
+
+    #[test]
     fn mapping_contains_uncut_gem() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         assert_eq!(m.gem_filter.r#type, "UncutGem");

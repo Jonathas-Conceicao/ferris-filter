@@ -20,7 +20,7 @@
       "baseTypeIsName": true
     },
     {
-      "type": "Essence",
+      "type": "Essences",
       "category": "Essences",
       "class": "Stackable Currency",
       "baseTypeIsName": true
@@ -32,31 +32,31 @@
       "baseTypeIsName": true
     },
     {
-      "type": "Rune",
+      "type": "Runes",
       "category": "Runes",
       "class": "Augment",
       "baseTypeIsName": true
     },
     {
-      "type": "Omen",
+      "type": "Omens",
       "category": "Omens",
       "class": "Omen",
       "baseTypeIsName": true
     },
     {
-      "type": "SoulCore",
+      "type": "SoulCores",
       "category": "Soul Cores",
       "class": "Augment",
       "baseTypeIsName": true
     },
     {
-      "type": "Waystone",
+      "type": "Waystones",
       "category": "Waystones",
       "class": "Stackable Currency",
       "baseTypeIsName": true
     },
     {
-      "type": "Talisman",
+      "type": "Talismans",
       "category": "Talismans",
       "class": "Talismans",
       "baseTypeIsName": true
@@ -68,9 +68,15 @@
       "baseTypeIsName": true
     },
     {
-      "type": "Fragment",
+      "type": "Fragments",
       "category": "Map Fragments & Pinnacle Keys",
       "class": "Map Fragments",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Idols",
+      "category": "Idols",
+      "class": "Augment",
       "baseTypeIsName": true
     }
   ],

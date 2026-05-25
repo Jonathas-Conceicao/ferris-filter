@@ -13,7 +13,7 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 
 use crate::sync::client::HttpClient;
-use crate::sync::mapping::{GemFilter, Mapping, OverviewType, normalize_item_class};
+use crate::sync::mapping::{Mapping, OverviewType, normalize_item_class};
 
 const REPOE_BASE_ITEMS_URL: &str = "https://repoe-fork.github.io/poe2/base_items.json";
 const REPOE_UNIQUES_URL: &str = "https://repoe-fork.github.io/poe2/uniques.json";
@@ -88,7 +88,7 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
     let refreshed_overview_types: Vec<OverviewType> = committed
         .overview_types
         .into_iter()
-        .map(|mut ot| {
+        .map(|ot| {
             // For non-unique types that have a class, attempt to re-derive from RePoE.
             // Find a base_items entry whose normalized class matches the current class value.
             if let Some(current_class) = &ot.class {

@@ -1,4 +1,5 @@
 use crate::error::JsonLoadError;
+use crate::models::prices::PricesFile;
 use crate::models::tiers::{TierEntry, ValidatedTiers};
 use miette::SourceOffset;
 
@@ -29,6 +30,25 @@ pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> miette::Result<T
         }
         .into()
     })
+}
+
+/// Load `prices.json` if present, returning `Ok(None)` if the file does not exist.
+///
+/// **Absence vs. malformation:**
+/// - File absent → returns `Ok(None)`. This enables GEN-05: `generate` can warn and skip
+///   the currency/category blocks rather than aborting with an I/O error.
+/// - File present but malformed → returns `Err(...)` from `load_json` (a `JsonLoadError`
+///   with the dotted field path). The caller must abort; a corrupted prices.json is not
+///   a recoverable situation.
+///
+/// Uses `std::path::Path::exists()` to distinguish absence from malformation, rather than
+/// inspecting the error kind from a failed `fs::read_to_string`, because miette wraps the
+/// underlying `io::Error` and downcasting is fragile.
+pub fn load_prices_optional(path: &str) -> miette::Result<Option<PricesFile>> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(None);
+    }
+    load_json(path).map(Some)
 }
 
 /// Load and validate `tiers.json`.

@@ -1,4 +1,4 @@
-/// Filter emitter — pure function: `generate(&Config, &CurrencyData) -> String`.
+/// Filter emitter — pure function: `generate(&Config, &PricedData) -> String`.
 ///
 /// All block emission uses a single canonical action order (D-03) via `emit_style_actions`.
 /// No HashMap iteration; all collection traversal is over Vecs or named struct fields (GEN-01).
@@ -6,23 +6,24 @@
 use std::fmt::Write;
 
 use crate::models::config::{Config, FilterColor, MinimapShape, Style};
-use crate::models::currency::CurrencyData;
+use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Generate the complete filter text from `config` and `currency`.
+/// Generate the complete filter text from `config` and `priced`.
 ///
 /// Returns a LF-only `String` ending with exactly one trailing newline.
 /// Pure function — no I/O, no side effects.
-pub fn generate(config: &Config, currency: &CurrencyData) -> String {
+pub fn generate(config: &Config, priced: &PricedData) -> String {
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out);
     emit_recycle(&mut out, config);
     emit_gear_bands(&mut out, config);
     emit_flask_charm_bands(&mut out, config);
-    emit_currency_sections(&mut out, config, currency);
+    emit_currency_sections(&mut out, config, &priced.category_blocks);
+    emit_unique_sections(&mut out, config, &priced.unique_blocks);
     debug_assert!(out.ends_with('\n'), "generate() output must end with exactly one newline");
     out
 }
@@ -126,6 +127,27 @@ fn emit_style_actions(out: &mut String, style: &Style) {
     // 8. DisableDropSound
     if style.disable_drop_sound {
         writeln!(out, "  DisableDropSound").unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Style-by-tier resolver
+// ---------------------------------------------------------------------------
+
+/// Resolve the `Style` for a tier letter from the config's `Styles`.
+///
+/// Panics with a descriptive message on unknown tier letters (invariant: pricer only
+/// produces S/A/B/C/D/E/F).
+fn style_for_tier<'a>(styles: &'a crate::models::config::Styles, tier: &str) -> &'a Style {
+    match tier {
+        "S" => &styles.s,
+        "A" => &styles.a,
+        "B" => &styles.b,
+        "C" => &styles.c,
+        "D" => &styles.d,
+        "E" => &styles.e,
+        "F" => &styles.f,
+        other => panic!("Unknown tier '{}' in priced data", other),
     }
 }
 
@@ -397,10 +419,10 @@ fn emit_flask_charm_bands(out: &mut String, config: &Config) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 5: Currency / category tier blocks (72 blocks — all Show)
+// Section 5: Currency / category tier blocks (from PricedData.category_blocks)
 // ---------------------------------------------------------------------------
 
-fn emit_currency_sections(out: &mut String, config: &Config, currency: &CurrencyData) {
+fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryBlock]) {
     writeln!(out, "#============================================================").unwrap();
     writeln!(out, "# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]").unwrap();
     writeln!(out, "# Each block's tier letter = the styles.<tier> applied. Base lists are").unwrap();
@@ -409,37 +431,23 @@ fn emit_currency_sections(out: &mut String, config: &Config, currency: &Currency
     writeln!(out, "#============================================================").unwrap();
     writeln!(out).unwrap();
 
-    for category in &currency.categories {
+    for category in blocks {
         writeln!(out, "# --- {} ---", category.name).unwrap();
 
-        for entry in &category.entries {
-            // Derive the block header label.
-            // Most blocks use "{category_name} {tier}" but a few have custom labels
-            // that are reflected in the currency.json class field (e.g. "Expedition Logbooks").
-            let label = derive_block_label(&category.name, &entry.tier, &entry.class);
-
-            // Resolve the style by tier letter
-            let style = match entry.tier.as_str() {
-                "S" => &config.styles.s,
-                "A" => &config.styles.a,
-                "B" => &config.styles.b,
-                "C" => &config.styles.c,
-                "D" => &config.styles.d,
-                "E" => &config.styles.e,
-                "F" => &config.styles.f,
-                other => panic!("Unknown tier '{}' in currency entry", other),
-            };
+        for tier_group in &category.tiers {
+            let label = derive_block_label(&category.name, &tier_group.tier, &tier_group.class);
+            let style = style_for_tier(&config.styles, &tier_group.tier);
 
             // Build BaseType list: space-separated quoted base names
-            let base_type_str = entry
-                .bases
+            let base_type_str = tier_group
+                .items
                 .iter()
-                .map(|b| format!("\"{}\"", b))
+                .map(|i| format!("\"{}\"", i.base_type))
                 .collect::<Vec<_>>()
                 .join(" ");
 
             writeln!(out, "Show # {}", label).unwrap();
-            writeln!(out, "  Class == \"{}\"", entry.class).unwrap();
+            writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();
             writeln!(out, "  BaseType == {}", base_type_str).unwrap();
             emit_style_actions(out, style);
             writeln!(out).unwrap();
@@ -451,6 +459,48 @@ fn emit_currency_sections(out: &mut String, config: &Config, currency: &Currency
     // The writeln!(out) above the loop's end adds one extra blank line after the last entry.
     // Trim it: pop the trailing '\n' from the blank line (but keep the block's own trailing '\n').
     // Strategy: after the loop, the output ends with "...\n\n"; trim the last '\n'.
+    if out.ends_with("\n\n") {
+        out.pop();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Section 6: Unique blocks (from PricedData.unique_blocks)
+//
+// Emits a dedicated section only when unique_blocks is non-empty.
+// With the committed seed (zero uniques), this function emits nothing.
+// ---------------------------------------------------------------------------
+
+fn emit_unique_sections(out: &mut String, config: &Config, blocks: &[UniqueBlock]) {
+    // Per Open Questions resolution: omit the header entirely when unique_blocks is empty.
+    if blocks.is_empty() {
+        return;
+    }
+
+    // If currency sections already trimmed the trailing blank, we need a blank separator.
+    // At this point out ends with exactly one '\n' (trimmed by emit_currency_sections).
+    // Add a blank line before the unique section header.
+    writeln!(out).unwrap();
+    writeln!(out, "# --- Uniques (price-tiered) ---").unwrap();
+
+    for block in blocks {
+        let style = style_for_tier(&config.styles, &block.tier);
+
+        let base_type_str = block
+            .base_types
+            .iter()
+            .map(|b| format!("\"{}\"", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        writeln!(out, "Show # Unique {}", block.tier).unwrap();
+        writeln!(out, "  Rarity == Unique").unwrap();
+        writeln!(out, "  BaseType == {}", base_type_str).unwrap();
+        emit_style_actions(out, style);
+        writeln!(out).unwrap();
+    }
+
+    // Trim the final trailing blank line (same pattern as emit_currency_sections).
     if out.ends_with("\n\n") {
         out.pop();
     }
@@ -498,26 +548,35 @@ fn derive_block_label(category: &str, tier: &str, class: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{config::Config, currency::CurrencyData};
+    use crate::models::config::Config;
+    use crate::models::{prices::PricesFile, tiers::TierEntry};
+    use crate::models::tiers::ValidatedTiers;
 
-    fn load_inputs() -> (Config, CurrencyData) {
+    fn load_inputs() -> (Config, PricedData) {
         let config: Config = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/config.json"
         )))
         .expect("config.json parse failed");
-        let currency: CurrencyData = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/currency.json"
-        )))
-        .expect("currency.json parse failed");
-        (config, currency)
+
+        let prices_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let prices: PricesFile = serde_json::from_str(prices_src).expect("prices.json parse failed");
+
+        let tiers_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
+        let tier_entries: Vec<TierEntry> =
+            serde_json::from_str(tiers_src).expect("tiers.json parse failed");
+        let tiers = ValidatedTiers::try_from(tier_entries).expect("tiers.json validation failed");
+
+        let rates = crate::pricer::derive_rates(&prices.items).expect("derive_rates failed");
+        let priced = crate::pricer::price_tiers(&prices, &tiers, &rates).expect("price_tiers failed");
+
+        (config, priced)
     }
 
     #[test]
     fn smoke_test_generate_starts_with_header_and_contains_recycle_tag() {
-        let (config, currency) = load_inputs();
-        let output = generate(&config, &currency);
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced);
         assert!(
             output.starts_with("# universal.filter"),
             "output must start with '# universal.filter'"
@@ -530,8 +589,8 @@ mod tests {
 
     #[test]
     fn generate_lf_only() {
-        let (config, currency) = load_inputs();
-        let output = generate(&config, &currency);
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced);
         assert!(
             !output.contains("\r\n"),
             "generate() output must not contain CRLF sequences"
@@ -540,8 +599,8 @@ mod tests {
 
     #[test]
     fn generate_ends_with_single_newline() {
-        let (config, currency) = load_inputs();
-        let output = generate(&config, &currency);
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced);
         assert!(
             output.ends_with('\n'),
             "generate() output must end with a newline"
@@ -554,8 +613,8 @@ mod tests {
 
     #[test]
     fn generate_block_counts() {
-        let (config, currency) = load_inputs();
-        let output = generate(&config, &currency);
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced);
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
         assert_eq!(show_count, 83, "expected 83 Show blocks, got {}", show_count);
@@ -564,8 +623,8 @@ mod tests {
 
     #[test]
     fn generate_no_unique_or_jewels_blocks() {
-        let (config, currency) = load_inputs();
-        let output = generate(&config, &currency);
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced);
         assert!(
             !output.contains("Rarity == Unique"),
             "GEN-04: no Rarity == Unique blocks"
@@ -578,9 +637,9 @@ mod tests {
 
     #[test]
     fn generate_is_deterministic() {
-        let (config, currency) = load_inputs();
-        let first = generate(&config, &currency);
-        let second = generate(&config, &currency);
+        let (config, priced) = load_inputs();
+        let first = generate(&config, &priced);
+        let second = generate(&config, &priced);
         assert_eq!(first, second, "generate() must be deterministic");
     }
 }

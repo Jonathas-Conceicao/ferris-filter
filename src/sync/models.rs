@@ -1,4 +1,57 @@
-// poe.ninja response models — defined in Task 3
+use std::collections::HashMap;
+
+// --- poe.ninja index-state ---
+// GET https://poe.ninja/poe2/api/data/index-state
+
+#[derive(serde::Deserialize)]
+pub struct IndexState {
+    #[serde(rename = "economyLeagues")]
+    pub economy_leagues: Vec<EconomyLeague>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct EconomyLeague {
+    pub name: String,    // e.g. "Fate of the Vaal" — USE THIS as league= query param
+    pub url: String,     // slug e.g. "vaal" / "standard" / "hardcore"
+    pub hardcore: bool,
+    pub indexed: bool,
+}
+
+// --- poe.ninja exchange overview ---
+// GET https://poe.ninja/poe2/api/economy/exchange/current/overview?league={name}&type={type}
+// NOTE: lenient parsing only — poe.ninja is undocumented (Pitfall 5 in RESEARCH.md).
+// Use #[serde(default)] on collection fields so off-season empty responses deserialize cleanly.
+
+#[derive(serde::Deserialize)]
+pub struct ExchangeOverview {
+    pub core: ExchangeCore,
+    #[serde(default)]
+    pub lines: Vec<ExchangeLine>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ExchangeCore {
+    #[serde(default)]
+    pub items: Vec<ExchangeItem>,
+    #[serde(default)]
+    pub rates: HashMap<String, f64>, // keys: "chaos", "exalted", ...
+    pub primary: String,             // e.g. "divine"
+}
+
+#[derive(serde::Deserialize)]
+pub struct ExchangeItem {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ExchangeLine {
+    pub id: String,
+    #[serde(rename = "primaryValue")]
+    pub primary_value: f64,
+}
 
 #[cfg(test)]
 mod tests {

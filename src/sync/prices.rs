@@ -127,8 +127,11 @@ pub fn build_prices(
                     // primaryValue is in chaos
                     let chaos = Some(primary_value);
                     let divine_rate = overview.core.rates.get("divine").copied();
-                    let div = divine_rate.map(|r| primary_value / r);
-                    let exalt = exalt_rate.map(|r| primary_value / r);
+                    // Guard the divisor: a zero rate (thin/off-season market with the
+                    // key present but zero) would yield inf/NaN, which serde_json
+                    // serializes as null and silently drops the price. Skip those.
+                    let div = divine_rate.and_then(|r| (r != 0.0).then_some(primary_value / r));
+                    let exalt = exalt_rate.and_then(|r| (r != 0.0).then_some(primary_value / r));
                     (chaos, div, exalt)
                 }
                 _ => {

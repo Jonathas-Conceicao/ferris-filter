@@ -1,10 +1,131 @@
 {
-  "version": 0,
-  "overviewTypes": [],
+  "version": 1,
+  "overviewTypes": [
+    {
+      "type": "Currency",
+      "category": "Currency",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Breach",
+      "category": "Breach",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Delirium",
+      "category": "Delirium",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Essence",
+      "category": "Essences",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Expedition",
+      "category": "Expedition",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Rune",
+      "category": "Runes",
+      "class": "Augment",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Omen",
+      "category": "Omens",
+      "class": "Omen",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "SoulCore",
+      "category": "Soul Cores",
+      "class": "Augment",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Waystone",
+      "category": "Waystones",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Talisman",
+      "category": "Talismans",
+      "class": "Talismans",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Abyss",
+      "category": "Abyssal Eyes",
+      "class": "Augment",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Fragment",
+      "category": "Map Fragments & Pinnacle Keys",
+      "class": "Map Fragments",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "UniqueWeapon",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "UniqueArmour",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "UniqueAccessory",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "UniqueFlask",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "UniqueCharm",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "UniqueJewel",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "UniqueMap",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    },
+    {
+      "type": "SanctumRelic",
+      "category": "Uniques",
+      "class": null,
+      "baseTypeIsName": false
+    }
+  ],
   "gemFilter": {
-    "type": "STUB",
-    "category": "STUB",
-    "class": "STUB",
-    "minLevel": 0
+    "type": "UncutGem",
+    "category": "Uncut Gems",
+    "class": "Stackable Currency",
+    "minLevel": 18
   }
 }

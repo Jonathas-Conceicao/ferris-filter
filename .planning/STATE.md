@@ -1,7 +1,7 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
+milestone: v0.1
+milestone_name: initial-release
 status: executing
 stopped_at: Phase 4 context gathered
 last_updated: "2026-05-25T07:57:53.630Z"

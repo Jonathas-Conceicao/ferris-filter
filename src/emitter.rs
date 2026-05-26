@@ -496,7 +496,13 @@ fn emit_unique_sections(out: &mut String, config: &Config, blocks: &[UniqueBlock
         writeln!(out, "Show # Unique {}", block.tier).unwrap();
         writeln!(out, "  Rarity == Unique").unwrap();
         writeln!(out, "  BaseType == {}", base_type_str).unwrap();
-        emit_style_actions(out, style);
+        // Price-tiered uniques carry a distinct background (bronze, 175 96 37 240) on top
+        // of their tier text/border/beam so they read as "valuable unique" regardless of
+        // tier color. Suppress the tier's own (Dracula) background and emit this instead.
+        let mut unique_style = style.clone();
+        unique_style.background = None;
+        emit_style_actions(out, &unique_style);
+        writeln!(out, "  SetBackgroundColor 175 96 37 240").unwrap();
         writeln!(out).unwrap();
     }
 
@@ -662,6 +668,10 @@ mod tests {
         assert!(
             output.contains("BaseType == \"Silk Robe\""),
             "the unique block must match on the unique's base type"
+        );
+        assert!(
+            output.contains("SetBackgroundColor 175 96 37 240"),
+            "price-tiered uniques must carry the distinct bronze background"
         );
     }
 

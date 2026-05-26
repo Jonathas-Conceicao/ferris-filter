@@ -178,9 +178,16 @@ green `80 250 123` · orange `255 184 108` · pink `255 121 198` · purple `189 
 red `255 85 85` · yellow `241 250 140`. (Source: dracula/dracula-theme.)
 
 **Rules:**
-- **Uniques are untouched** — always shown, native game style. A unique only gets a tier
-  style if its *specific base* is curated into a tier list (a high-value drop). Never apply a
-  blanket restyle to `Rarity == Unique`.
+- **Uniques are highlighted by price tier, never blanket-restyled.** `sync` fetches per-unique
+  prices from poe.ninja's `stash/current/item/overview` endpoint and records each with its
+  filter **base type** (e.g. `Voidforge → Infernal Sword`). `generate` groups those bases into
+  `Show # Unique <tier>` blocks (`Rarity == Unique` + `BaseType ==`, deduped per base to the
+  highest tier). Price-tiered unique blocks get the tier's text/border/beam **plus a distinct
+  bronze background `SetBackgroundColor 175 96 37 240`** so they read as "valuable unique"
+  regardless of tier color. Uniques whose base is *not* priced get no rule — they fall through
+  to native game style. There is still **no blanket restyle of all `Rarity == Unique`**; only
+  curated/priced bases are touched. (Caveat: a `BaseType` match highlights every unique on that
+  base, since PoE2 filters cannot target a unique by name.)
 - **Unwanted items are hidden, not deleted.** They drop to **tier F**, which uses `Hide` —
   off the screen by default but **revealable by holding Alt** in-game. The `Hide` blocks keep
   their style actions (native rarity color, small font 21, `DisableDropSound`) so an Alt-reveal

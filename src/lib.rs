@@ -12,6 +12,8 @@ pub mod emitter;
 pub mod error;
 pub mod install;
 pub mod loader;
+pub mod run;
+pub use run::run;
 pub mod models;
 pub mod pricer;
 pub mod sync;

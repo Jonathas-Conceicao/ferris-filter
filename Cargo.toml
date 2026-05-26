@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "ff"
-path = "src/main.rs"
+path = "src/bin/ff.rs"
 
 [[bin]]
 name = "seed_prices"

@@ -160,14 +160,18 @@ fn normalize_cutoffs(tiers: &ValidatedTiers, rates: &CrossRates) -> Vec<(String,
 
 /// Assign the highest tier whose chaos floor the item meets (inclusive ≥).
 ///
-/// Returns `None` if the item's value is below the F tier floor (0.1c).
+/// Priced items below every cutoff are floored to the LOWEST tier rather than dropped, so
+/// anything present in prices.json gets a rule (e.g. Scroll of Wisdom at 0.0018c → F).
+/// Returns `None` only when there are no cutoffs at all.
 pub fn assign_tier(chaos_value: f64, cutoffs: &[(String, f64)]) -> Option<String> {
     for (tier, min_chaos) in cutoffs {
         if chaos_value >= *min_chaos {
             return Some(tier.clone());
         }
     }
-    None
+    // Below all cutoffs → floor to the lowest tier. `cutoffs` is sorted descending by
+    // min_chaos, so the last entry has the smallest floor (tier F).
+    cutoffs.last().map(|(tier, _)| tier.clone())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -560,10 +564,11 @@ mod tests {
     }
 
     #[test]
-    fn assign_tier_sub_floor_returns_none() {
+    fn assign_tier_sub_floor_floors_to_lowest_tier() {
         let (_, cutoffs) = seeded_cutoffs();
-        // F floor = 0.1c; 0.05c is below -> None
-        assert_eq!(assign_tier(0.05, &cutoffs), None);
+        // F floor = 0.1c; 0.05c is below all cutoffs and now floors to the lowest tier (F),
+        // rather than being dropped — so a priced item like Scroll of Wisdom still gets a rule.
+        assert_eq!(assign_tier(0.05, &cutoffs).as_deref(), Some("F"));
     }
 
     #[test]

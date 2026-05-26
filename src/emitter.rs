@@ -565,7 +565,7 @@ mod tests {
         )))
         .expect("config.json parse failed");
 
-        let prices_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let prices_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(prices_src).expect("prices.json parse failed");
 
         let tiers_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));

@@ -11,3 +11,9 @@ desktop.ini
 .DS_Store
 *.swp
 *~
+
+# Generated outputs — `sync` writes prices.json, `generate` writes universal.filter.
+# These are regenerated on demand and intentionally NOT committed. The committed seed
+# used by tests lives in tests/fixtures/seed-prices.json / seed-universal.filter.
+/prices.json
+/universal.filter

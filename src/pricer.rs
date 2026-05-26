@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn seeded_prices_yields_zero_unique_blocks() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         let tiers = load_real_tiers();
         let rates = derive_rates(&prices.items).unwrap();
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn seeded_currency_category_anchor_retiers() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         let tiers = load_real_tiers();
         let rates = derive_rates(&prices.items).unwrap();

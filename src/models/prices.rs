@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn load_real_prices_json_parses() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         assert!(!prices.league.is_empty());
         assert!(!prices.fetched_at.is_empty());
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn round_trip_prices_file() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(src).unwrap();
         let serialized = serde_json::to_string(&prices).unwrap();
         let prices2: PricesFile =
@@ -101,7 +101,7 @@ mod tests {
     /// This test passes only once the seeded prices.json has been committed (Task 3).
     #[test]
     fn seeded_prices_anchors_first() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         assert!(prices.items.len() > 300, "expected ~358+ items, got {}", prices.items.len());
 
@@ -121,7 +121,7 @@ mod tests {
     /// No item in the committed seed has name != base_type (no uniques in seed — D-08).
     #[test]
     fn seeded_prices_no_uniques() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/prices.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         for item in &prices.items {
             assert_eq!(

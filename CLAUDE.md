@@ -7,8 +7,11 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
   (context), `.planning/ROADMAP.md` (4 phases), `.planning/REQUIREMENTS.md`, and
   `.planning/STATE.md`. Git uses a **milestone branching** workflow (see PROJECT.md → Git Workflow).
 - **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
-  philosophy. `filter-model.json` (→ to be renamed `config.json`) + `universal.filter` are the
-  **executable spec and byte-for-byte acceptance baseline** the `generate` command must reproduce.
+  philosophy. `config.json` is the executable spec the `generate` command compiles. The
+  **byte-for-byte acceptance baseline** is now the committed fixture
+  `tests/fixtures/seed-universal.filter` (generated from `config.json` + the seed
+  `tests/fixtures/seed-prices.json`); the `artifact_guard` test enforces it. The repo-root
+  `universal.filter` / `prices.json` are **generated, git-ignored, and not committed**.
   Everything from "Repository layout" down is that reference — keep it accurate.
 
 ## Repository layout
@@ -16,7 +19,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | Path | Purpose |
 |------|---------|
 | `filter-model.json` | **Source of truth.** Compact policy model the filter is generated from: `styles` (the Dracula tier palette + `unchanged`/`hidden`), `build` (weapon/armour classes + defence-type taper), `areaLevelBands` (per-level show logic), and `alwaysShow` (currency, recycle). Edit this, then regenerate. |
-| `universal.filter` | **Generated** from `filter-model.json` — do not hand-edit; change the model and regenerate. Each block is tagged with its model path (e.g. `[areaLevelBands "6-25".weapons -> styles.unchanged]`). Currency base lists are curated data carried in the filter (intentionally not stored in the model). |
+| `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each block is tagged with its model path (e.g. `[areaLevelBands "6-25".weapons -> styles.unchanged]`). |
+| `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. |
+| `tests/fixtures/seed-prices.json`, `tests/fixtures/seed-universal.filter` | **Committed test fixtures** — the frozen seed prices + its generated filter. These are the test oracle (`include_str!` unit tests + `generate_snapshot`/`artifact_guard`). Regenerate the `.filter` fixture only after a deliberate generator change. |
 | other `*.filter` (repo root) | Active, version-controlled filters we author/maintain. |
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
 | `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |

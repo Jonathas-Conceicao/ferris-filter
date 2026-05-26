@@ -38,7 +38,7 @@
       "baseTypeIsName": true
     },
     {
-      "type": "Omens",
+      "type": "Ritual",
       "category": "Omens",
       "class": "Omen",
       "baseTypeIsName": true
@@ -47,18 +47,6 @@
       "type": "SoulCores",
       "category": "Soul Cores",
       "class": "Augment",
-      "baseTypeIsName": true
-    },
-    {
-      "type": "Waystones",
-      "category": "Waystones",
-      "class": "Stackable Currency",
-      "baseTypeIsName": true
-    },
-    {
-      "type": "Talismans",
-      "category": "Talismans",
-      "class": "Talismans",
       "baseTypeIsName": true
     },
     {
@@ -91,7 +79,7 @@
     { "type": "UniqueSanctumRelics", "category": "Uniques" }
   ],
   "gemFilter": {
-    "type": "UncutGem",
+    "type": "UncutGems",
     "category": "Uncut Gems",
     "class": "Stackable Currency",
     "minLevel": 18

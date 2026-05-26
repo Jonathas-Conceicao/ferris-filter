@@ -249,15 +249,18 @@ fn happy_path_anchors_first_and_correct_values() {
         "Voidforge must have category 'Uniques'"
     );
 
-    // Level-18 and Level-20 gems must be present (Level-16 excluded by gem filter)
-    let gem18 = items.iter().find(|i| i.name.contains("Level 18"));
-    let gem20 = items.iter().find(|i| i.name.contains("Level 20"));
-    let gem16 = items.iter().find(|i| i.name.contains("Level 16"));
-    assert!(gem18.is_some(), "Level 18 gem must be present in output");
-    assert!(gem20.is_some(), "Level 20 gem must be present in output");
+    // Uncut gems collapse to their level-less base type; level 16 is excluded and the
+    // highest-valued surviving variant (level 20, div 5.0) is kept.
+    let gem = items.iter().find(|i| i.base_type == "Uncut Spirit Gem");
+    assert!(gem.is_some(), "uncut gem base type must be present in output");
     assert!(
-        gem16.is_none(),
-        "Level 16 gem must be EXCLUDED by gem filter"
+        !items.iter().any(|i| i.name.contains("(Level")),
+        "no (Level N) suffix should remain in gem names"
+    );
+    assert_eq!(
+        gem.unwrap().div,
+        Some(5.0),
+        "kept gem must be the highest-valued variant (level 20)"
     );
 }
 
@@ -405,27 +408,23 @@ fn gem_filter_excludes_level_16() {
     )
     .expect("build_prices with gem filter should succeed");
 
-    // Level 16 must be excluded
-    let gem16 = items.iter().find(|i| i.name.contains("Level 16"));
-    assert!(
-        gem16.is_none(),
-        "Level 16 gem must be excluded by gem filter (minLevel=18)"
-    );
-
-    // Level 18 and 20 must be present
-    let gem18 = items.iter().find(|i| i.name.contains("Level 18"));
-    let gem20 = items.iter().find(|i| i.name.contains("Level 20"));
-    assert!(gem18.is_some(), "Level 18 gem must be included (≥ minLevel)");
-    assert!(gem20.is_some(), "Level 20 gem must be included (≥ minLevel)");
-
-    // Exactly 2 gems in the output (16 excluded, 18 and 20 included)
+    // Level 16 excluded; levels 18 and 20 collapse to a single base-type entry, keeping
+    // the highest-valued variant (level 20, div 5.0). The "(Level N)" suffix is stripped.
     assert_eq!(
         items.len(),
-        2,
-        "expected exactly 2 gems (18, 20); got {} items: {:?}",
+        1,
+        "expected exactly 1 collapsed gem base type; got {} items: {:?}",
         items.len(),
         items.iter().map(|i| &i.name).collect::<Vec<_>>()
     );
+    let gem = &items[0];
+    assert_eq!(gem.base_type, "Uncut Spirit Gem");
+    assert!(
+        !gem.name.contains("(Level"),
+        "level suffix must be stripped from gem name: {}",
+        gem.name
+    );
+    assert_eq!(gem.div, Some(5.0), "kept variant must be level 20 (highest value)");
 }
 
 // ---------------------------------------------------------------------------

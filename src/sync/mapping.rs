@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn mapping_contains_uncut_gem() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
-        assert_eq!(m.gem_filter.r#type, "UncutGem");
+        assert_eq!(m.gem_filter.r#type, "UncutGems");
     }
 
     #[test]

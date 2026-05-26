@@ -78,6 +78,16 @@ pub(crate) fn parse_gem_level(s: &str) -> Option<u32> {
     None
 }
 
+/// Strip a trailing " (Level N)" suffix from an uncut-gem name to get its filter base type.
+/// "Uncut Spirit Gem (Level 18)" -> "Uncut Spirit Gem". The level is a property of the drop,
+/// not part of the `BaseType`, so all levels of a gem share one base type.
+fn strip_gem_level(name: &str) -> String {
+    match name.find(" (Level ") {
+        Some(idx) => name[..idx].trim_end().to_string(),
+        None => name.to_string(),
+    }
+}
+
 /// Join `core.items` + `lines` on `id`, convert `primaryValue` to chaos/div/exalt
 /// via `core.rates`, filter uncut gems to level ≥ minLevel, and promote
 /// Exalted/Chaos/Divine Orbs to positions [0], [1], [2].
@@ -97,6 +107,11 @@ pub fn build_prices(
     // We use a map from orb name → PriceItem for the three anchor slots.
     let anchor_names = ["Exalted Orb", "Chaos Orb", "Divine Orb"];
     let mut anchors: std::collections::HashMap<String, PriceItem> =
+        std::collections::HashMap::new();
+
+    // Uncut gems collapse across levels to one base type (e.g. "Uncut Spirit Gem"); keep the
+    // highest-valued variant per base so the emitted block lists each base exactly once.
+    let mut gem_best: std::collections::HashMap<String, PriceItem> =
         std::collections::HashMap::new();
 
     for (type_value, overview) in overviews {
@@ -176,7 +191,9 @@ pub fn build_prices(
                 }
             };
 
-            // Gem level filter
+            // Uncut gems: filter by level, then collapse to the level-less base type and
+            // keep the highest-valued variant. The "(Level N)" suffix is a drop property,
+            // not part of the filter BaseType, and all levels share one base type.
             if is_gem_type {
                 let level = parse_gem_level(&name)
                     .or_else(|| parse_gem_level(&line.id))
@@ -184,18 +201,36 @@ pub fn build_prices(
                 if level < mapping.gem_filter.min_level {
                     continue;
                 }
+                let base = strip_gem_level(&name);
+                let (chaos, div, exalt) = convert_primary(
+                    &overview.core.primary,
+                    line.primary_value,
+                    &overview.core.rates,
+                );
+                let new_div = div.unwrap_or(0.0);
+                let keep = match gem_best.get(&base) {
+                    Some(existing) => new_div > existing.div.unwrap_or(0.0),
+                    None => true,
+                };
+                if keep {
+                    gem_best.insert(
+                        base.clone(),
+                        PriceItem {
+                            name: base.clone(),
+                            base_type: base,
+                            class: class.clone(),
+                            category: category.clone(),
+                            exalt,
+                            chaos,
+                            div,
+                        },
+                    );
+                }
+                continue;
             }
 
-            // For most categories the poe.ninja display `name` IS the filter base type
-            // (currency, gems, etc.), so we use it directly.
-            //
-            // NOTE: uniques (base_type_is_name == false) are NOT yet supported. For a
-            // unique, `name` is the unique's display name (e.g. "Voidforge"), not its
-            // filter BaseType (e.g. "Infernal Sword"); emitting it would produce a
-            // `BaseType ==` that never matches the dropped item. The current seed
-            // contains no uniques, so this path is latent. When uniques are added, the
-            // true base type must be resolved from the metadata mapping before relying
-            // on `base_type_is_name`. Until then, both cases fall back to `name`.
+            // For currency-style categories the poe.ninja display `name` IS the filter base
+            // type (baseType == name). Uniques are handled separately by build_unique_items.
             let _ = base_type_is_name;
             let base_type = name.clone();
 
@@ -220,6 +255,11 @@ pub fn build_prices(
             }
         }
     }
+
+    // Add the deduped uncut gems (sorted by base type for deterministic output).
+    let mut gems: Vec<PriceItem> = gem_best.into_values().collect();
+    gems.sort_by(|a, b| a.base_type.cmp(&b.base_type));
+    body.extend(gems);
 
     // Apply explicit overrides to the three reference orbs (by definition):
     // Exalted Orb: exalt = 1.0
@@ -640,7 +680,7 @@ mod tests {
             "version": 1,
             "overviewTypes": [],
             "gemFilter": {
-                "type": "UncutGem",
+                "type": "UncutGems",
                 "category": "Uncut Gems",
                 "class": "Stackable Currency",
                 "minLevel": 18
@@ -825,23 +865,35 @@ mod tests {
         );
         let mapping = gem_mapping();
         let items = super::build_prices(
-            &[("UncutGem".to_string(), gem_overview)],
+            &[("UncutGems".to_string(), gem_overview)],
             &mapping,
         )
         .expect("build_prices with gem filter should succeed");
 
-        assert!(
-            !items.iter().any(|i| i.name.contains("Level 16")),
-            "level 16 gem must be excluded"
+        // Level 16 is excluded; levels 18 and 20 collapse to ONE base-type entry.
+        let gems: Vec<_> = items
+            .iter()
+            .filter(|i| i.base_type == "Uncut Spirit Gem")
+            .collect();
+        assert_eq!(
+            gems.len(),
+            1,
+            "uncut gem levels must collapse to a single base type"
         );
+        let gem = gems[0];
+        // No "(Level N)" suffix leaks into the name or base type.
         assert!(
-            items.iter().any(|i| i.name.contains("Level 18")),
-            "level 18 gem must be included"
+            !gem.name.contains("(Level"),
+            "level suffix must be stripped: {}",
+            gem.name
         );
-        assert!(
-            items.iter().any(|i| i.name.contains("Level 20")),
-            "level 20 gem must be included"
+        assert_eq!(gem.name, "Uncut Spirit Gem");
+        assert_eq!(
+            gem.name, gem.base_type,
+            "gem must be a category item (name == base_type), not a unique"
         );
+        // Highest-valued variant kept: level 20, primaryValue 5.0 (divine primary → div 5.0).
+        assert_eq!(gem.div, Some(5.0), "kept variant must be the highest-valued (level 20)");
     }
 
     // -----------------------------------------------------------------------

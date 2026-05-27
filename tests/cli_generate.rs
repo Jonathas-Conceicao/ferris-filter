@@ -72,6 +72,20 @@ fn generate_help_shows_output_flag() {
         .stdout(contains("--output"));
 }
 
+/// Regression: `--standard`/`--hc` are reachable from the bare `sync` command, so
+/// `ferrisfilter sync --standard` parses. They previously lived on the `prices` subcommand,
+/// which made `sync --standard` fail with "unexpected argument '--standard'".
+#[test]
+fn sync_help_shows_league_flags() {
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .args(["sync", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--standard"))
+        .stdout(contains("--hc"));
+}
+
 /// Unknown subcommand exits code 2 with an `unrecognized subcommand` message.
 ///
 /// Satisfies CLI-05 / ROADMAP success criterion 5.

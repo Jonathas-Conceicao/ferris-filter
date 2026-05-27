@@ -18,6 +18,12 @@ pub enum Commands {
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
     Sync {
+        /// Target the permanent Standard league
+        #[arg(long)]
+        standard: bool,
+        /// Target the Hardcore variant (combine with --standard for permanent Hardcore)
+        #[arg(long)]
+        hc: bool,
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
     },
@@ -35,15 +41,8 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum SyncSubcommand {
-    /// Fetch prices from poe.ninja and write prices.json (default)
-    Prices {
-        /// Target the permanent Standard league
-        #[arg(long)]
-        standard: bool,
-        /// Target the Hardcore variant
-        #[arg(long)]
-        hc: bool,
-    },
+    /// Fetch prices from poe.ninja and write prices.json (default; honors --standard/--hc)
+    Prices,
     /// Rebuild the committed item-class mapping from the RePoE-fork exports
     Metadata,
 }

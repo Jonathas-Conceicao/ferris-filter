@@ -16,7 +16,7 @@ pub fn run() -> miette::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Generate { output } => cmd_generate(&output)?,
-        Commands::Sync { sub } => sync::cmd_sync(sub)?,
+        Commands::Sync { standard, hc, sub } => sync::cmd_sync(standard, hc, sub)?,
         Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
     }
     Ok(())

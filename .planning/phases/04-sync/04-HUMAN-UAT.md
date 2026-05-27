@@ -1,5 +1,5 @@
 ---
-status: diagnosed
+status: partial
 phase: 04-sync
 source: [04-VERIFICATION.md]
 started: 2026-05-25T00:00:00Z
@@ -20,15 +20,14 @@ reason: "The temporary softcore challenge league ('Fate of the Vaal') ended — 
 
 ### 2. League flag targeting
 expected: `ferrisfilter sync --hc` and `ferrisfilter sync --standard` each write `prices.json` with the correct league name resolved from the live poe.ninja index-state.
-result: issue
-reported: "`ferrisfilter sync --standard` and `sync --hc` are rejected by clap: 'error: unexpected argument --standard found'. The flags only work as `sync prices --standard` (verified: that form wrote 318 items, league Standard). The flags are defined on the `prices` subcommand, not on `sync`, so the documented `sync --standard` UX does not parse."
-severity: major
+result: pass
+note: "Fixed in d15e82e — --standard/--hc hoisted onto the `sync` command. `sync --standard` now parses (verified via `sync --help` listing both flags + regression test sync_help_shows_league_flags). Live `sync prices --standard` previously confirmed the resolution+write (318 items, league Standard)."
 
 ## Summary
 
 total: 2
-passed: 0
-issues: 1
+passed: 1
+issues: 0
 pending: 0
 skipped: 0
 blocked: 1
@@ -36,7 +35,7 @@ blocked: 1
 ## Gaps
 
 - truth: "`ferrisfilter sync --standard` (and `--hc`) resolves the league and writes prices.json"
-  status: failed
+  status: resolved
   reason: "User-facing CLI mismatch: --standard/--hc are defined on the `prices` subcommand (SyncSubcommand::Prices), but `sync` takes an Option<subcommand>, so `sync --standard` is rejected by clap as an unexpected argument. Flags only work as `sync prices --standard`. The intended/documented UX is `sync --standard`."
   severity: major
   test: 2

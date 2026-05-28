@@ -149,6 +149,7 @@ fn normalize_cutoffs(tiers: &ValidatedTiers, rates: &CrossRates) -> Vec<(String,
             let min_chaos = match e.unit {
                 Unit::Chaos => e.min,
                 Unit::Div => e.min * rates.div_in_chaos,
+                Unit::Exalt => e.min * rates.exalt_in_chaos,
             };
             (e.tier.clone(), min_chaos)
         })
@@ -682,6 +683,51 @@ mod tests {
         assert!(
             !items_in_tier("C").contains(&"Exalted Orb".to_string()),
             "Exalted Orb must NOT be in C tier"
+        );
+    }
+
+    // ── Early-league fallback: exalt-denominated tiers pin orbs to S/A/B ──────
+    //
+    // With tiers-fallback.json in EXALT units and the orbs carrying chaos anchors
+    // (Exalt 4.5 / Chaos 11.25 / Divine 220), the divine→A coupling is gone:
+    // Divine lands S, Chaos A, Exalt B — matching the poe2filter.com export.
+    #[test]
+    fn fallback_pair_pins_orbs_to_s_a_b() {
+        let prices: PricesFile = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/prices-fallback.json"
+        )))
+        .expect("parse prices-fallback.json");
+        let entries: Vec<TierEntry> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tiers-fallback.json"
+        )))
+        .expect("parse tiers-fallback.json");
+        let tiers = ValidatedTiers::try_from(entries).expect("validate tiers-fallback.json");
+        let rates = derive_rates(&prices.items).unwrap();
+        let priced = price_tiers(&prices, &tiers, &rates).unwrap();
+
+        let currency = priced
+            .category_blocks
+            .iter()
+            .find(|b| b.name == "Currency")
+            .expect("Currency block");
+        let tier_of = |base: &str| -> Option<String> {
+            currency
+                .tiers
+                .iter()
+                .find(|g| g.items.iter().any(|i| i.base_type == base))
+                .map(|g| g.tier.clone())
+        };
+
+        assert_eq!(tier_of("Divine Orb").as_deref(), Some("S"), "Divine → S");
+        assert_eq!(tier_of("Chaos Orb").as_deref(), Some("A"), "Chaos → A");
+        assert_eq!(tier_of("Exalted Orb").as_deref(), Some("B"), "Exalt → B");
+        // A representative S-tier base (priced in exalt at the S floor) also lands S.
+        assert_eq!(
+            tier_of("Mirror of Kalandra").as_deref(),
+            Some("S"),
+            "Mirror → S"
         );
     }
 }

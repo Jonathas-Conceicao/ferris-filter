@@ -15,30 +15,55 @@ use crate::{emitter, install, loader, pricer, sync};
 pub fn run() -> miette::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Generate { output } => cmd_generate(&output)?,
+        Commands::Generate { output, early_game } => cmd_generate(&output, early_game)?,
         Commands::Sync { standard, hc, sub } => sync::cmd_sync(standard, hc, sub)?,
         Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
     }
     Ok(())
 }
 
-fn cmd_generate(output: &str) -> miette::Result<()> {
+fn cmd_generate(output: &str, early_game: bool) -> miette::Result<()> {
     // Load and validate config.json into the typed Config model.
     // serde_path_to_error + miette surface the dotted field path and expected type
     // for any malformed field.
     let config: Config = loader::load_json("config.json")?;
 
-    // Load and validate tiers.json (completeness of S-F + within-unit ascending check).
-    let tiers = loader::load_tiers("tiers.json")?;
-
-    // GEN-05: load prices.json if present, warn + skip currency/category blocks if absent.
-    let prices_opt = loader::load_prices_optional("prices.json")?;
+    // Pick the (prices, tiers) source pair. The early-league fallback always pairs
+    // prices-fallback.json with tiers-fallback.json — their values are calibrated to each
+    // other (exalt-denominated cutoffs), so they must travel together.
+    let (prices_opt, tiers) = if early_game {
+        eprintln!("note: --early-game — using prices-fallback.json + tiers-fallback.json");
+        let prices = loader::load_prices_optional("prices-fallback.json")?
+            .ok_or_else(|| miette::miette!("--early-game requires prices-fallback.json, which is missing"))?;
+        (Some(prices), loader::load_tiers("tiers-fallback.json")?)
+    } else {
+        match loader::load_prices_optional("prices.json")? {
+            // Live prices present and non-empty → normal path.
+            Some(prices) if !prices.items.is_empty() => {
+                (Some(prices), loader::load_tiers("tiers.json")?)
+            }
+            // Absent or empty → fall back to the committed early-league pair (with a warning).
+            _ => {
+                eprintln!(
+                    "warning: prices.json absent or empty — falling back to \
+                     prices-fallback.json + tiers-fallback.json"
+                );
+                match loader::load_prices_optional("prices-fallback.json")? {
+                    Some(prices) => (Some(prices), loader::load_tiers("tiers-fallback.json")?),
+                    None => {
+                        eprintln!(
+                            "warning: prices-fallback.json not found — \
+                             currency/category blocks will be omitted"
+                        );
+                        (None, loader::load_tiers("tiers.json")?)
+                    }
+                }
+            }
+        }
+    };
 
     let priced = match prices_opt {
-        None => {
-            eprintln!("warning: prices.json not found — currency/category blocks will be omitted");
-            pricer::PricedData::empty()
-        }
+        None => pricer::PricedData::empty(),
         Some(prices) => {
             // TIER-04: abort on bad reference rates (names the offending currency).
             let rates = pricer::derive_rates(&prices.items)?;

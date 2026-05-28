@@ -10,6 +10,10 @@ const ALL_TIERS: &[&str] = &["S", "A", "B", "C", "D", "E", "F"];
 pub enum Unit {
     Chaos,
     Div,
+    /// Exalt-denominated cutoff. Used by `tiers-fallback.json` so the early-league fallback
+    /// can tier currency relative to Exalted Orb (like poe2filter.com) instead of Divine —
+    /// this frees Divine from being pinned to the A floor. See `prices-fallback.json`.
+    Exalt,
 }
 
 /// A single lower-bound entry in `tiers.json`.
@@ -69,7 +73,7 @@ impl TryFrom<Vec<TierEntry>> for ValidatedTiers {
         // 2. Within each unit group, min values must be strictly ascending.
         // NOTE: Cross-unit comparison is intentionally skipped (Pitfall 6 — units are
         // incommensurable in Phase 1; normalization is Phase 3's job).
-        for unit in [Unit::Chaos, Unit::Div] {
+        for unit in [Unit::Chaos, Unit::Div, Unit::Exalt] {
             let group: Vec<&TierEntry> =
                 entries.iter().filter(|e| e.unit == unit).collect();
             for pair in group.windows(2) {
@@ -120,6 +124,20 @@ mod tests {
         let entries: Vec<TierEntry> = serde_json::from_str(src).expect("parse tiers.json");
         let validated = ValidatedTiers::try_from(entries).expect("validate tiers.json");
         assert_eq!(validated.0.len(), 7);
+    }
+
+    #[test]
+    fn load_real_tiers_fallback_json_parses_and_validates() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-fallback.json"));
+        let entries: Vec<TierEntry> =
+            serde_json::from_str(src).expect("parse tiers-fallback.json");
+        let validated =
+            ValidatedTiers::try_from(entries).expect("validate tiers-fallback.json");
+        assert_eq!(validated.0.len(), 7);
+        assert!(
+            validated.0.iter().all(|e| e.unit == Unit::Exalt),
+            "tiers-fallback.json should be entirely exalt-denominated"
+        );
     }
 
     #[test]

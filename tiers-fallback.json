@@ -1,0 +1,9 @@
+[
+  { "tier": "F", "min": 0.001, "unit": "exalt" },
+  { "tier": "E", "min": 0.05,  "unit": "exalt" },
+  { "tier": "D", "min": 0.1,   "unit": "exalt" },
+  { "tier": "C", "min": 0.2,   "unit": "exalt" },
+  { "tier": "B", "min": 1.0,   "unit": "exalt" },
+  { "tier": "A", "min": 2.5,   "unit": "exalt" },
+  { "tier": "S", "min": 20.0,  "unit": "exalt" }
+]

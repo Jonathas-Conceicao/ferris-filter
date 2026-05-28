@@ -15,6 +15,10 @@ pub enum Commands {
         /// Output file path [default: universal.filter]
         #[arg(long, default_value = "universal.filter")]
         output: String,
+        /// Force the early-league fallback (prices-fallback.json + tiers-fallback.json)
+        /// even when a live prices.json exists
+        #[arg(long)]
+        early_game: bool,
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
     Sync {

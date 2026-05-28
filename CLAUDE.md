@@ -6,6 +6,10 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 - **Project plan & workflow:** managed with GSD in `.planning/` — see `.planning/PROJECT.md`
   (context), `.planning/ROADMAP.md` (4 phases), `.planning/REQUIREMENTS.md`, and
   `.planning/STATE.md`. Git uses a **milestone branching** workflow (see PROJECT.md → Git Workflow).
+- **Changelog:** `CHANGELOG.md` (repo root) tracks notable changes. Keep `[Unreleased]` current
+  as work lands, and **always update `CHANGELOG.md` when a milestone is completed** (e.g. via
+  `/gsd-complete-milestone`): move the `[Unreleased]` entries into a new dated version section
+  with a one-line milestone summary.
 - **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
   philosophy. `config.json` is the executable spec the `generate` command compiles. The
   **byte-for-byte acceptance baseline** is now the committed fixture

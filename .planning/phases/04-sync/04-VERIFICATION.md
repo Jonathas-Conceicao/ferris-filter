@@ -1,9 +1,11 @@
 ---
 phase: 04-sync
 verified: 2026-05-25T00:00:00Z
-status: human_needed
-score: 5/5 must-haves verified (offline); live network behavior requires human check
+status: verified
+score: 5/5 must-haves verified; live network behavior confirmed by human sign-off (2026-05-28)
 overrides_applied: 0
+human_verified: 2026-05-28T00:00:00Z
+human_verification_result: "Confirmed working. Live integration proven via `sync prices --standard` (318 items, league=Standard). Softcore no-flag path fails safe when no challenge league is active — intended behavior. Signed off by user."
 human_verification:
   - test: "Run `ferrisfilter sync` (no flags) against the live poe.ninja API"
     expected: "prices.json is written; items[0..2] are Exalted/Chaos/Divine; `league` field is the current softcore trade league display name (e.g. 'Fate of the Vaal'); `fetchedAt` is a non-empty ISO-8601 timestamp; file is non-empty"
@@ -16,8 +18,8 @@ human_verification:
 # Phase 4: Sync Verification Report
 
 **Phase Goal:** `ferrisfilter sync` fetches live PoE2 economy data from poe.ninja and writes a well-formed `prices.json`; the poe.ninja PoE2 API surface is confirmed via a spike before any HTTP code is written.
-**Verified:** 2026-05-25
-**Status:** human_needed
+**Verified:** 2026-05-25 (offline) · 2026-05-28 (human sign-off — live sync confirmed working)
+**Status:** verified
 **Re-verification:** No — initial verification
 
 ## Goal Achievement

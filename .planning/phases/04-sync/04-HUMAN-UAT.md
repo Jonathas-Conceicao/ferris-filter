@@ -1,9 +1,9 @@
 ---
-status: partial
+status: complete
 phase: 04-sync
 source: [04-VERIFICATION.md]
 started: 2026-05-25T00:00:00Z
-updated: 2026-05-26T00:00:00Z
+updated: 2026-05-28T00:00:00Z
 ---
 
 ## Current Test
@@ -14,9 +14,8 @@ updated: 2026-05-26T00:00:00Z
 
 ### 1. Live softcore sync run
 expected: `ferrisfilter sync` (no flags) against live poe.ninja writes `prices.json` with Exalt/Chaos/Divine as the first three entries, a non-empty item list, the correct softcore trade league name, and an ISO-8601 `fetchedAt` timestamp.
-result: blocked
-blocked_by: third-party
-reason: "The temporary softcore challenge league ('Fate of the Vaal') ended — poe.ninja's index-state now lists only Standard/Hardcore in economyLeagues, both indexed=false. The no-flag default requires an active indexed softcore trade league, so it fails safe with 'No active softcore trade league found' and leaves prices.json untouched (failure-safety held). The happy path cannot be demonstrated until a new league launches."
+result: pass
+note: "User sign-off (2026-05-28): live sync confirmed working. The live integration is proven end-to-end by `sync prices --standard` (318 items, league=Standard, correct Exalt/Chaos/Divine anchor ordering + ISO-8601 fetchedAt). The no-flag softcore happy path can't be exercised while no challenge league is active ('Fate of the Vaal' ended); in that state the tool fails safe (leaves prices.json untouched), which is the intended behavior. Accepted as done/working."
 
 ### 2. League flag targeting
 expected: `ferrisfilter sync --hc` and `ferrisfilter sync --standard` each write `prices.json` with the correct league name resolved from the live poe.ninja index-state.
@@ -26,11 +25,11 @@ note: "Fixed in d15e82e — --standard/--hc hoisted onto the `sync` command. `sy
 ## Summary
 
 total: 2
-passed: 1
+passed: 2
 issues: 0
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
 

@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward **v0.1.0 — Initial Release**: a Rust CLI that compiles a human-editable policy
-model into a Path of Exile 2 loot filter and prices currency from poe.ninja.
+_Nothing yet._
+
+## [0.1.0] - 2026-05-28
+
+**Initial Release** — a Rust CLI that compiles a human-editable policy model into a Path of
+Exile 2 loot filter and prices currency from poe.ninja. Tagged `v0.1`.
 
 ### Added
 
@@ -33,4 +37,5 @@ model into a Path of Exile 2 loot filter and prices currency from poe.ninja.
   --early-game` is passed. Cutoffs are exalt-denominated (`Unit::Exalt`) so currency tiers like
   the poe2filter.com export; cross-rates are derived from the anchor orbs (no stored rates).
 
-[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/main...HEAD
+[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.1...HEAD
+[0.1.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/releases/tag/v0.1

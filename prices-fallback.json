@@ -7,8 +7,8 @@
       "baseType": "Exalted Orb",
       "class": "Stackable Currency",
       "category": "Currency",
-      "exalt": null,
-      "chaos": 4.5,
+      "exalt": 1.0,
+      "chaos": null,
       "div": null
     },
     {
@@ -16,8 +16,8 @@
       "baseType": "Chaos Orb",
       "class": "Stackable Currency",
       "category": "Currency",
-      "exalt": null,
-      "chaos": 11.25,
+      "exalt": 2.5,
+      "chaos": null,
       "div": null
     },
     {
@@ -25,8 +25,8 @@
       "baseType": "Divine Orb",
       "class": "Stackable Currency",
       "category": "Currency",
-      "exalt": null,
-      "chaos": 220,
+      "exalt": 20,
+      "chaos": null,
       "div": null
     },
     {

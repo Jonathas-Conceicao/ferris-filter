@@ -67,8 +67,7 @@ impl PricedData {
 // Error type (TIER-04)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Error returned when a reference currency (Exalt/Chaos/Divine) has a null or zero
-/// chaos price, making cross-rate derivation impossible.
+/// Error returned when the reference orbs (Exalt/Chaos/Divine) can't yield cross-rates.
 #[derive(Debug, Error, Diagnostic)]
 pub enum PriceRateError {
     #[error(
@@ -77,6 +76,17 @@ pub enum PriceRateError {
     )]
     #[diagnostic(code(ferrisfilter::prices::bad_rate))]
     NullOrZero(&'static str),
+
+    /// The three anchors are quoted in different units, so their ratio is meaningless.
+    /// Rates are derived as `value(orb) / value(Chaos Orb)`, which only holds when all
+    /// three are quoted in the same unit (all chaos for live data, all exalt for the
+    /// committed fallback).
+    #[error(
+        "prices.json: the Exalt/Chaos/Divine anchors must all be quoted in the same unit \
+         (all chaos, or all exalt) to derive cross-rates"
+    )]
+    #[diagnostic(code(ferrisfilter::prices::mixed_anchor_units))]
+    MixedAnchorUnits,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,37 +99,67 @@ const TIER_ORDER: &[&str] = &["S", "A", "B", "C", "D", "E", "F"];
 // Core math functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Derive cross-rates from the first three items in `prices.json`.
-///
-/// Convention (SYNC-02/D-03): items[0]=Exalt, items[1]=Chaos, items[2]=Divine.
-/// Any of the three anchors having a null or zero chaos price triggers TIER-04 abort.
-pub fn derive_rates(items: &[PriceItem]) -> Result<CrossRates, PriceRateError> {
-    let exalt_chaos = items
-        .get(0)
-        .and_then(|i| i.chaos)
-        .ok_or(PriceRateError::NullOrZero("Exalt"))?;
-    let chaos_chaos = items
-        .get(1)
-        .and_then(|i| i.chaos)
-        .ok_or(PriceRateError::NullOrZero("Chaos"))?;
-    let div_chaos = items
-        .get(2)
-        .and_then(|i| i.chaos)
-        .ok_or(PriceRateError::NullOrZero("Divine"))?;
+/// The unit an anchor orb is quoted in (chaos > div > exalt preference).
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum AnchorUnit {
+    Chaos,
+    Div,
+    Exalt,
+}
 
-    if exalt_chaos == 0.0 {
-        return Err(PriceRateError::NullOrZero("Exalt"));
+/// Read an anchor orb's quoted value and the unit it is quoted in.
+///
+/// Returns TIER-04 `NullOrZero` (naming the orb) when the item is missing or has no
+/// non-zero price in any of chaos/div/exalt.
+fn anchor_quote(
+    item: Option<&PriceItem>,
+    name: &'static str,
+) -> Result<(f64, AnchorUnit), PriceRateError> {
+    let it = item.ok_or(PriceRateError::NullOrZero(name))?;
+    let (val, unit) = if let Some(c) = it.chaos {
+        (c, AnchorUnit::Chaos)
+    } else if let Some(d) = it.div {
+        (d, AnchorUnit::Div)
+    } else if let Some(e) = it.exalt {
+        (e, AnchorUnit::Exalt)
+    } else {
+        return Err(PriceRateError::NullOrZero(name));
+    };
+    if val == 0.0 {
+        return Err(PriceRateError::NullOrZero(name));
     }
-    if chaos_chaos == 0.0 {
-        return Err(PriceRateError::NullOrZero("Chaos"));
-    }
-    if div_chaos == 0.0 {
-        return Err(PriceRateError::NullOrZero("Divine"));
+    Ok((val, unit))
+}
+
+/// Derive cross-rates from the first three items in the prices file.
+///
+/// Convention (SYNC-02/D-03): items[0]=Exalt, items[1]=Chaos, items[2]=Divine. The rates
+/// are the orbs' own values expressed *relative to the Chaos Orb* — so they're derived from
+/// the prices file rather than stored in it:
+///
+/// ```text
+/// exalt_in_chaos = value(Exalt)  / value(Chaos)
+/// div_in_chaos   = value(Divine) / value(Chaos)
+/// ```
+///
+/// This is unit-agnostic: live data quotes the orbs in chaos (Chaos = 1c, so the divisor is
+/// a no-op and the numbers match the historical behaviour), while `prices-fallback.json`
+/// quotes them in exalt (Chaos = 2.5ex → exalt_in_chaos = 1/2.5 = 0.4, etc.). The three
+/// anchors must share one unit, or the ratio mixes units — that's rejected. A null/zero
+/// anchor triggers TIER-04 abort, naming the offending currency.
+pub fn derive_rates(items: &[PriceItem]) -> Result<CrossRates, PriceRateError> {
+    let (exalt_q, ue) = anchor_quote(items.get(0), "Exalt")?;
+    let (chaos_q, uc) = anchor_quote(items.get(1), "Chaos")?;
+    let (div_q, ud) = anchor_quote(items.get(2), "Divine")?;
+
+    if ue != uc || uc != ud {
+        return Err(PriceRateError::MixedAnchorUnits);
     }
 
     Ok(CrossRates {
-        exalt_in_chaos: exalt_chaos,
-        div_in_chaos: div_chaos,
+        // chaos_q is guaranteed non-zero by anchor_quote.
+        exalt_in_chaos: exalt_q / chaos_q,
+        div_in_chaos: div_q / chaos_q,
     })
 }
 
@@ -471,6 +511,46 @@ mod tests {
         let rates = derive_rates(&items).unwrap();
         assert_eq!(rates.exalt_in_chaos, 4.5);
         assert_eq!(rates.div_in_chaos, 220.0);
+    }
+
+    fn exalt_anchor(name: &str, exalt: f64) -> PriceItem {
+        PriceItem {
+            name: name.to_string(),
+            base_type: name.to_string(),
+            class: "Stackable Currency".to_string(),
+            category: "Currency".to_string(),
+            exalt: Some(exalt),
+            chaos: None,
+            div: None,
+        }
+    }
+
+    #[test]
+    fn derive_rates_from_exalt_quoted_anchors() {
+        // Fallback-style: orbs quoted in exalt → rates come out relative to the Chaos Orb.
+        let items = vec![
+            exalt_anchor("Exalted Orb", 1.0),
+            exalt_anchor("Chaos Orb", 2.5),
+            exalt_anchor("Divine Orb", 20.0),
+        ];
+        let rates = derive_rates(&items).unwrap();
+        assert_eq!(rates.exalt_in_chaos, 1.0 / 2.5); // 0.4 chaos per exalt
+        assert_eq!(rates.div_in_chaos, 20.0 / 2.5); // 8 chaos per div
+    }
+
+    #[test]
+    fn derive_rates_mixed_anchor_units_errors() {
+        // Exalt quoted in exalt but Chaos quoted in chaos → ratio would mix units → reject.
+        let items = vec![
+            exalt_anchor("Exalted Orb", 1.0),
+            make_anchor("Chaos Orb", Some(1.0)), // chaos-quoted
+            exalt_anchor("Divine Orb", 20.0),
+        ];
+        let err = derive_rates(&items).unwrap_err();
+        assert!(
+            matches!(err, PriceRateError::MixedAnchorUnits),
+            "expected MixedAnchorUnits, got {err:?}"
+        );
     }
 
     // ── normalize_to_chaos preference order ─────────────────────────────────

@@ -1,36 +1,35 @@
 ---
 gsd_state_version: 1.0
 milestone: v0.1
-milestone_name: initial-release
-status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-05-25T07:57:53.630Z"
-last_activity: 2026-05-25 -- Phase 04 execution started
+milestone_name: Initial Release
+status: completed
+last_updated: "2026-05-28T00:00:00.000Z"
+last_activity: 2026-05-28 -- v0.1 milestone shipped
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
-  completed_plans: 10
-  percent: 71
+  completed_plans: 14
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-05-23)
+See: .planning/PROJECT.md (updated 2026-05-28)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 04 — sync
+**Current focus:** v0.1 shipped — planning next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: 04 (sync) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 04
-Last activity: 2026-05-25 -- Phase 04 execution started
+Milestone: v0.1 (Initial Release) — ✅ SHIPPED 2026-05-28
+Phases: 4/4 complete (14/14 plans)
+Status: Milestone complete
+Last activity: 2026-05-28 -- v0.1 milestone shipped
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -92,18 +91,23 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 4 (Sync) is blocked until the poe.ninja PoE2 API spike confirms base URL, field names, and league-resolution endpoint. This is the only external dependency in the project.
+- None. (The poe.ninja PoE2 API spike — the project's only external unknown — was resolved in Phase 4.)
 
 ## Deferred Items
 
-| Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
-| *(none)* | | | |
+Items acknowledged and deferred at milestone close on 2026-05-28:
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Live softcore no-flag `sync` happy path | Blocked on PoE2 league cycle ("Fate of the Vaal" ended); tool fails safe. Live integration confirmed via `sync --standard` (318 items). Re-confirm when a new league launches. |
+| verification | Live network sign-off for `sync` | Signed off working 2026-05-28; full live re-check pending an active softcore league. |
+| sync | Lenient-parse guard for Standard unique endpoints (`UniqueSanctumRelics` missing `core`) | Non-blocking; wrote 0 uniques on Standard. |
+| sync | Optional no-flag `sync` → `--standard` fallback/hint when no challenge league active | Enhancement idea. |
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 4 context gathered
-Resume file: --resume-file
+Last session: 2026-05-28T02:10:50.969Z
+Stopped at: context exhaustion at 98% (2026-05-28)
+Resume file: None
 
 **Planned Phase:** 4 () — 0 plans — 2026-05-25T07:41:13.473Z

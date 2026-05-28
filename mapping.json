@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "overviewTypes": [
+    {
+      "type": "Currency",
+      "category": "Currency",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Breach",
+      "category": "Breach",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Delirium",
+      "category": "Delirium",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Essences",
+      "category": "Essences",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Expedition",
+      "category": "Expedition",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Runes",
+      "category": "Runes",
+      "class": "Augment",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Ritual",
+      "category": "Omens",
+      "class": "Omen",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "SoulCores",
+      "category": "Soul Cores",
+      "class": "Augment",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Abyss",
+      "category": "Abyssal Eyes",
+      "class": "Augment",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Fragments",
+      "category": "Map Fragments & Pinnacle Keys",
+      "class": "Map Fragments",
+      "baseTypeIsName": true
+    },
+    {
+      "type": "Idols",
+      "category": "Idols",
+      "class": "Augment",
+      "baseTypeIsName": true
+    }
+  ],
+  "itemTypes": [
+    { "type": "UniqueWeapons", "category": "Uniques" },
+    { "type": "UniqueArmours", "category": "Uniques" },
+    { "type": "UniqueAccessories", "category": "Uniques" },
+    { "type": "UniqueFlasks", "category": "Uniques" },
+    { "type": "UniqueCharms", "category": "Uniques" },
+    { "type": "UniqueJewels", "category": "Uniques" },
+    { "type": "UniqueMaps", "category": "Uniques" },
+    { "type": "UniqueSanctumRelics", "category": "Uniques" }
+  ],
+  "gemFilter": {
+    "type": "UncutGems",
+    "category": "Uncut Gems",
+    "class": "Stackable Currency",
+    "minLevel": 18
+  }
+}

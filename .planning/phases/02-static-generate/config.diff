@@ -1,0 +1,13 @@
+diff --git a/config.json b/config.json
+index 6dcac39..d5d7ece 100644
+--- a/config.json
++++ b/config.json
+@@ -5,7 +5,7 @@
+     "S":         { "text": [255,121,198], "border": [255,121,198], "background": [40,42,54], "font": 37,   "minimap": { "size": 1, "color": "Pink",   "shape": "Circle" }, "beam": { "color": "Pink",   "temp": false }, "sound": { "custom": "uwu.mp3", "vol": 300 }, "action": "Show", "disableDropSound": false },
+     "A":         { "text": [189,147,249], "border": [189,147,249], "background": [40,42,54], "font": 37,   "minimap": { "size": 1, "color": "Purple", "shape": "Circle" }, "beam": { "color": "Purple", "temp": false }, "sound": { "custom": "uwu.mp3", "vol": 300 }, "action": "Show", "disableDropSound": false },
+     "B":         { "text": [255,85,85],   "border": [255,85,85],   "background": [40,42,54], "font": 37,   "minimap": { "size": 2, "color": "Red",    "shape": "Circle" }, "beam": { "color": "Red",    "temp": false }, "sound": { "id": 2, "vol": 200 },          "action": "Show", "disableDropSound": false },
+-    "C":         { "text": [241,250,140], "border": [241,250,140], "background": [40,42,54], "font": null, "minimap": { "size": 2, "color": "Yellow", "shape": "Circle" }, "beam": null,                                  "sound": { "id": 2, "vol": 200 },          "action": "Show", "disableDropSound": false },
++    "C":         { "text": [241,250,140], "border": [241,250,140], "background": [40,42,54], "font": null, "minimap": { "size": 2, "color": "Yellow", "shape": "Circle" }, "beam": { "color": "Yellow", "temp": false }, "sound": { "id": 2, "vol": 200 },          "action": "Show", "disableDropSound": false },
+     "D":         { "text": [139,233,253], "border": [139,233,253], "background": [40,42,54], "font": null, "minimap": { "size": 2, "color": "White",  "shape": "Circle" }, "beam": { "color": "White",  "temp": false }, "sound": null,                             "action": "Show", "disableDropSound": false },
+     "E":         { "text": [248,248,242], "border": [248,248,242], "background": [40,42,54], "font": 29,   "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false },
+     "F":         { "text": [248,248,242], "border": [248,248,242], "background": [40,42,54], "font": 25,   "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false },

@@ -1,0 +1,87 @@
+{
+  "core": {
+    "items": [
+      {
+        "id": "exalted",
+        "name": "Exalted Orb",
+        "image": "https://web.poecdn.com/gen/image/exalted.png",
+        "category": "Currency",
+        "detailsId": "exalted-orb"
+      },
+      {
+        "id": "chaos",
+        "name": "Chaos Orb",
+        "image": "https://web.poecdn.com/gen/image/chaos.png",
+        "category": "Currency",
+        "detailsId": "chaos-orb"
+      },
+      {
+        "id": "divine",
+        "name": "Divine Orb",
+        "image": "https://web.poecdn.com/gen/image/divine.png",
+        "category": "Currency",
+        "detailsId": "divine-orb"
+      },
+      {
+        "id": "mirror",
+        "name": "Mirror of Kalandra",
+        "image": "https://web.poecdn.com/gen/image/mirror.png",
+        "category": "Currency",
+        "detailsId": "mirror-of-kalandra"
+      },
+      {
+        "id": "blessed",
+        "name": "Blessed Orb",
+        "image": "https://web.poecdn.com/gen/image/blessed.png",
+        "category": "Currency",
+        "detailsId": "blessed-orb"
+      },
+      {
+        "id": "orb-of-alteration",
+        "name": "Orb of Alteration",
+        "image": "https://web.poecdn.com/gen/image/alteration.png",
+        "category": "Currency",
+        "detailsId": "orb-of-alteration"
+      }
+    ],
+    "rates": {
+      "chaos": 220.0,
+      "exalted": 48.89
+    },
+    "primary": "divine",
+    "secondary": "exalted"
+  },
+  "lines": [
+    {
+      "id": "exalted",
+      "primaryValue": 0.02045,
+      "volumePrimaryValue": 100.0
+    },
+    {
+      "id": "chaos",
+      "primaryValue": 0.004545,
+      "volumePrimaryValue": 500.0
+    },
+    {
+      "id": "divine",
+      "primaryValue": 1.0,
+      "volumePrimaryValue": 1320.0
+    },
+    {
+      "id": "mirror",
+      "primaryValue": 1380.0,
+      "volumePrimaryValue": 5.0
+    },
+    {
+      "id": "blessed",
+      "primaryValue": 0.009,
+      "volumePrimaryValue": 50.0
+    },
+    {
+      "id": "orb-of-alteration",
+      "primaryValue": 0.0045,
+      "volumePrimaryValue": 200.0
+    }
+  ],
+  "items": []
+}

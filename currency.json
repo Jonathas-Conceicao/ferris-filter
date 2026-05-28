@@ -1,0 +1,151 @@
+{
+  "categories": [
+    {
+      "name": "Currency",
+      "entries": [
+        { "tier": "S", "class": "Stackable Currency", "bases": ["Perfect Chaos Orb", "Mirror of Kalandra", "Hinekora's Lock", "Perfect Exalted Orb", "Divine Orb", "Fracturing Orb", "Albino Rhoa Feather", "Vaal Cultivation Orb"] },
+        { "tier": "A", "class": "Stackable Currency", "bases": ["Perfect Jeweller's Orb", "Core Destabiliser", "Vaal Infuser", "Architect's Orb", "Ancient Infuser", "Crystallised Corruption"] },
+        { "tier": "B", "class": "Stackable Currency", "bases": ["Greater Chaos Orb", "Perfect Regal Orb", "Orb of Annulment", "Orb of Extraction"] },
+        { "tier": "C", "class": "Stackable Currency", "bases": ["Chaos Orb", "Orb of Chance", "Exalted Orb", "Greater Exalted Orb", "Perfect Orb of Augmentation"] },
+        { "tier": "D", "class": "Stackable Currency", "bases": ["Arcanist's Etcher", "Armourer's Scrap", "Orb of Alchemy", "Perfect Orb of Transmutation", "Greater Regal Orb", "Glassblower's Bauble", "Gemcutter's Prism", "Chance Shard", "Vaal Orb"] },
+        { "tier": "E", "class": "Stackable Currency", "bases": ["Blacksmith's Whetstone", "Lesser Jeweller's Orb", "Greater Jeweller's Orb", "Artificer's Orb"] },
+        { "tier": "F", "class": "Stackable Currency", "bases": ["Scroll of Wisdom", "Orb of Transmutation", "Greater Orb of Transmutation", "Regal Orb", "Orb of Augmentation", "Greater Orb of Augmentation", "Transmutation Shard", "Regal Shard", "Artificer's Shard"] }
+      ]
+    },
+    {
+      "name": "Abyssal Eyes",
+      "entries": [
+        { "tier": "S", "class": "Augment", "bases": ["Amanamu's Gaze", "Tecrod's Gaze"] },
+        { "tier": "A", "class": "Augment", "bases": ["Kurgal's Gaze"] },
+        { "tier": "C", "class": "Augment", "bases": ["Ulaman's Gaze"] }
+      ]
+    },
+    {
+      "name": "Ancient Bones",
+      "entries": [
+        { "tier": "S", "class": "Stackable Currency", "bases": ["Ancient Jawbone", "Ancient Rib", "Ancient Collarbone"] },
+        { "tier": "B", "class": "Stackable Currency", "bases": ["Preserved Collarbone", "Preserved Cranium"] },
+        { "tier": "C", "class": "Stackable Currency", "bases": ["Gnawed Jawbone", "Preserved Rib"] },
+        { "tier": "D", "class": "Stackable Currency", "bases": ["Preserved Jawbone", "Gnawed Collarbone"] },
+        { "tier": "E", "class": "Stackable Currency", "bases": ["Gnawed Rib"] }
+      ]
+    },
+    {
+      "name": "Breach",
+      "entries": [
+        { "tier": "B", "class": "Stackable Currency", "bases": ["Esh's Catalyst", "Reaver Catalyst"] },
+        { "tier": "C", "class": "Stackable Currency", "bases": ["Neural Catalyst", "Carapace Catalyst", "Xoph's Catalyst", "Tul's Catalyst", "Sibilant Catalyst", "Skittering Catalyst"] },
+        { "tier": "D", "class": "Stackable Currency", "bases": ["Flesh Catalyst", "Uul-Netol's Catalyst", "Chayula's Catalyst", "Adaptive Catalyst", "Breach Splinter"] }
+      ]
+    },
+    {
+      "name": "Delirium",
+      "entries": [
+        { "tier": "S", "class": "Stackable Currency", "bases": ["Concentrated Liquid Isolation"] },
+        { "tier": "A", "class": "Stackable Currency", "bases": ["Concentrated Liquid Suffering"] },
+        { "tier": "B", "class": "Stackable Currency", "bases": ["Liquid Despair", "Concentrated Liquid Fear"] },
+        { "tier": "C", "class": "Stackable Currency", "bases": ["Liquid Disgust", "Simulacrum Splinter"] },
+        { "tier": "D", "class": "Stackable Currency", "bases": ["Liquid Envy"] },
+        { "tier": "E", "class": "Stackable Currency", "bases": ["Liquid Paranoia"] },
+        { "tier": "F", "class": "Stackable Currency", "bases": ["Diluted Liquid Ire", "Diluted Liquid Guilt", "Diluted Liquid Greed"] }
+      ]
+    },
+    {
+      "name": "Essences",
+      "entries": [
+        { "tier": "S", "class": "Stackable Currency", "bases": ["Essence of Hysteria"] },
+        { "tier": "A", "class": "Stackable Currency", "bases": ["Perfect Essence of Battle", "Perfect Essence of Haste", "Essence of Horror", "Greater Essence of Opulence"] },
+        { "tier": "B", "class": "Stackable Currency", "bases": ["Essence of Abrasion", "Perfect Essence of Sorcery", "Essence of Delirium", "Essence of Opulence"] },
+        { "tier": "C", "class": "Stackable Currency", "bases": ["Essence of the Body", "Essence of Enhancement", "Essence of Ruin", "Essence of Sorcery", "Essence of Haste", "Greater Essence of Ruin", "Perfect Essence of the Mind", "Perfect Essence of Enhancement", "Perfect Essence of Abrasion", "Perfect Essence of Ice", "Perfect Essence of Electricity", "Essence of Seeking", "Greater Essence of Seeking", "Essence of Insanity", "Essence of the Abyss", "Essence of Insulation", "Greater Essence of Insulation", "Perfect Essence of Insulation", "Essence of Thawing", "Greater Essence of Thawing", "Essence of Grounding", "Greater Essence of Grounding", "Essence of Alacrity", "Perfect Essence of Alacrity", "Essence of Command"] },
+        { "tier": "D", "class": "Stackable Currency", "bases": ["Lesser Essence of the Body", "Lesser Essence of the Mind", "Lesser Essence of Enhancement", "Lesser Essence of Abrasion", "Lesser Essence of Flames", "Lesser Essence of Ice", "Lesser Essence of Electricity", "Lesser Essence of Ruin", "Lesser Essence of Battle", "Lesser Essence of Sorcery", "Lesser Essence of Haste", "Lesser Essence of the Infinite", "Essence of the Mind", "Essence of Flames", "Essence of Ice", "Essence of Electricity", "Essence of Battle", "Essence of the Infinite", "Greater Essence of Enhancement", "Greater Essence of Abrasion", "Greater Essence of Sorcery", "Greater Essence of Haste", "Perfect Essence of the Body", "Perfect Essence of Flames", "Perfect Essence of Ruin", "Perfect Essence of the Infinite", "Lesser Essence of Seeking", "Perfect Essence of Seeking", "Lesser Essence of Insulation", "Lesser Essence of Thawing", "Perfect Essence of Thawing", "Lesser Essence of Grounding", "Perfect Essence of Grounding", "Lesser Essence of Alacrity", "Greater Essence of Alacrity", "Lesser Essence of Opulence", "Perfect Essence of Opulence", "Lesser Essence of Command", "Greater Essence of Command", "Perfect Essence of Command"] },
+        { "tier": "E", "class": "Stackable Currency", "bases": ["Greater Essence of the Body", "Greater Essence of the Mind", "Greater Essence of Flames", "Greater Essence of Ice", "Greater Essence of Electricity", "Greater Essence of Battle", "Greater Essence of the Infinite"] }
+      ]
+    },
+    {
+      "name": "Expedition",
+      "entries": [
+        { "tier": "B", "class": "Expedition Logbooks", "bases": ["Expedition Logbook"] },
+        { "tier": "C", "class": "Stackable Currency", "bases": ["Runic Splinter"] },
+        { "tier": "D", "class": "Stackable Currency", "bases": ["Exotic Coinage"] },
+        { "tier": "E", "class": "Stackable Currency", "bases": ["Broken Circle Artifact", "Black Scythe Artifact", "Order Artifact", "Sun Artifact"] }
+      ]
+    },
+    {
+      "name": "Idols",
+      "entries": [
+        { "tier": "S", "class": "Augment", "bases": ["Idol of Sirrius"] },
+        { "tier": "A", "class": "Augment", "bases": ["Idol of Eeshta", "Rabbit Idol"] },
+        { "tier": "B", "class": "Augment", "bases": ["Idol of Ralakesh", "Fox Idol"] },
+        { "tier": "C", "class": "Augment", "bases": ["Idol of Thruldana", "Idol of Egrin", "Idol of Maxarius", "Primate Idol", "Wolf Idol", "Ox Idol"] },
+        { "tier": "D", "class": "Augment", "bases": ["Idol of Grold", "Snake Idol", "Owl Idol", "Cat Idol", "Stag Idol", "Boar Idol", "Bear Idol"] }
+      ]
+    },
+    {
+      "name": "Incubators",
+      "entries": [
+        { "tier": "D", "class": "Incubators", "bases": ["Vaal Siphoner"] }
+      ]
+    },
+    {
+      "name": "Map Fragments & Pinnacle Keys",
+      "entries": [
+        { "tier": "S", "class": "Pinnacle Keys", "bases": ["Ancient Crisis Fragment", "Primary Calamity Fragment"] },
+        { "tier": "A", "class": "Map Fragments", "bases": ["Cowardly Fate", "Deadly Fate", "Victorious Fate"] },
+        { "tier": "A", "class": "Pinnacle Keys", "bases": ["Faded Crisis Fragment", "Weathered Crisis Fragment", "Secondary Calamity Fragment", "Tertiary Calamity Fragment"] },
+        { "tier": "C", "class": "Map Fragments", "bases": ["Kulemak's Invitation"] },
+        { "tier": "E", "class": "Trial Coins", "bases": ["Djinn Barya"] },
+        { "tier": "E", "class": "Inscribed Ultimatum", "bases": ["Inscribed Ultimatum"] }
+      ]
+    },
+    {
+      "name": "Omens",
+      "entries": [
+        { "tier": "S", "class": "Omen", "bases": ["Omen of Whittling", "Omen of Sinistral Erasure", "Omen of Dextral Erasure", "Omen of Sinistral Annulment", "Omen of Dextral Annulment", "Omen of Chance", "Omen of Sanctification", "Omen of Light"] },
+        { "tier": "A", "class": "Omen", "bases": ["Omen of Recombination", "Omen of Dextral Crystallisation", "Omen of Sinistral Crystallisation", "Omen of Abyssal Echoes"] },
+        { "tier": "B", "class": "Omen", "bases": ["Omen of Amelioration", "Omen of Corruption", "Omen of the Hunt", "Omen of Reinforcements", "Omen of the Blessed", "Omen of Chaotic Rarity", "Omen of the Ancients", "Omen of Catalysing Exaltation"] },
+        { "tier": "C", "class": "Omen", "bases": ["Omen of Resurgence", "Omen of Greater Exaltation", "Omen of Sinistral Exaltation", "Omen of Dextral Exaltation", "Omen of Answered Prayers", "Omen of Secret Compartments", "Omen of Bartering", "Omen of Chaotic Quantity", "Omen of Chaotic Monsters", "Omen of Putrefaction", "Omen of Sinistral Necromancy"] },
+        { "tier": "D", "class": "Omen", "bases": ["Omen of the Sovereign", "Omen of the Blackblooded", "Omen of Dextral Necromancy"] },
+        { "tier": "E", "class": "Omen", "bases": ["Omen of Gambling"] },
+        { "tier": "E", "class": "Stackable Currency", "bases": ["Petition Splinter"] },
+        { "tier": "F", "class": "Omen", "bases": ["Omen of Refreshment", "Omen of the Liege"] }
+      ]
+    },
+    {
+      "name": "Runes",
+      "entries": [
+        { "tier": "S", "class": "Augment", "bases": ["Hedgewitch Assandra's Rune of Wisdom", "Countess Seske's Rune of Archery"] },
+        { "tier": "A", "class": "Augment", "bases": ["Saqawal's Rune of the Sky", "Farrul's Rune of the Chase", "Courtesan Mannan's Rune of Cruelty"] },
+        { "tier": "B", "class": "Augment", "bases": ["Iron Rune", "Adept Rune", "Greater Rune of Tithing", "Greater Rune of Alacrity", "Saqawal's Rune of Memory"] },
+        { "tier": "C", "class": "Augment", "bases": ["Glacial Rune", "Storm Rune", "Body Rune", "Rebirth Rune", "Vision Rune", "Lesser Desert Rune", "Lesser Storm Rune", "Lesser Iron Rune", "Lesser Inspiration Rune", "Robust Rune", "Lesser Adept Rune", "Lesser Resolve Rune", "Resolve Rune", "Greater Rune of Leadership", "Fenumus' Rune of Agony", "Craiceann's Rune of Warding", "Farrul's Rune of the Hunt", "Thane Grannell's Rune of Mastery", "Fenumus' Rune of Spinning", "Thane Girt's Rune of Wildness", "Thane Leld's Rune of Spring", "The Greatwolf's Rune of Claws", "The Greatwolf's Rune of Willpower"] },
+        { "tier": "D", "class": "Augment", "bases": ["Desert Rune", "Mind Rune", "Inspiration Rune", "Stone Rune", "Lesser Glacial Rune", "Lesser Body Rune", "Lesser Rebirth Rune", "Lesser Vision Rune", "Greater Iron Rune", "Greater Body Rune", "Lesser Robust Rune", "Greater Adept Rune", "Greater Rune of Nobility", "Farrul's Rune of Grace", "Saqawal's Rune of Erosion", "Craiceann's Rune of Recovery", "Fenumus' Rune of Draining", "Thane Myrk's Rune of Summer", "Lady Hestra's Rune of Winter"] },
+        { "tier": "E", "class": "Augment", "bases": ["Lesser Mind Rune", "Lesser Stone Rune", "Greater Desert Rune", "Greater Glacial Rune", "Greater Storm Rune", "Greater Mind Rune", "Greater Rebirth Rune", "Greater Inspiration Rune", "Greater Vision Rune", "Greater Robust Rune", "Greater Resolve Rune"] },
+        { "tier": "F", "class": "Augment", "bases": ["Greater Stone Rune"] }
+      ]
+    },
+    {
+      "name": "Soul Cores",
+      "entries": [
+        { "tier": "S", "class": "Augment", "bases": ["Quipolatl's Thesis", "Jiquani's Thesis", "Guatelitzi's Thesis", "Citaqualotl's Thesis"] },
+        { "tier": "A", "class": "Augment", "bases": ["Tzamoto's Soul Core of Ferocity", "Soul Core of Tacati", "Soul Core of Jiquani", "Soul Core of Quipolatl"] },
+        { "tier": "B", "class": "Augment", "bases": ["Atmohua's Soul Core of Retreat", "Quipolatl's Soul Core of Flow", "Opiloti's Soul Core of Assault", "Xopec's Soul Core of Power", "Estazunti's Soul Core of Convalescence", "Soul Core of Zalatl", "Soul Core of Citaqualotl", "Soul Core of Azcapa", "Soul Core of Zantipi"] },
+        { "tier": "C", "class": "Augment", "bases": ["Hayoxi's Soul Core of Heatproofing", "Zalatl's Soul Core of Insulation", "Topotante's Soul Core of Dampening", "Uromoti's Soul Core of Attenuation", "Guatelitzi's Soul Core of Endurance", "Tacati's Soul Core of Affliction", "Citaqualotl's Soul Core of Foulness", "Xipocado's Soul Core of Dominion", "Soul Core of Opiloti", "Soul Core of Puhuarte", "Soul Core of Tzamoto", "Soul Core of Xopec", "Soul Core of Topotante", "Soul Core of Ticaba", "Soul Core of Atmohua", "Soul Core of Cholotl"] },
+        { "tier": "D", "class": "Augment", "bases": ["Cholotl's Soul Core of War"] }
+      ]
+    },
+    {
+      "name": "Tablets",
+      "entries": [
+        { "tier": "B", "class": "Tablet", "bases": ["Ritual Precursor Tablet", "Abyss Precursor Tablet"] },
+        { "tier": "C", "class": "Tablet", "bases": ["Breach Precursor Tablet", "Expedition Precursor Tablet", "Delirium Precursor Tablet", "Precursor Tablet", "Overseer Precursor Tablet"] }
+      ]
+    },
+    {
+      "name": "Vault Keys",
+      "entries": [
+        { "tier": "S", "class": "Vault Keys", "bases": ["Xesht's Reliquary Key", "The Trialmaster's Reliquary Key", "Tangmazu's Reliquary Key", "Olroth's Reliquary Key", "The Arbiter's Reliquary Key", "Zarokh's Reliquary Key: Against the Darkness", "Zarokh's Reliquary Key: Sandstorm Visage", "Zarokh's Reliquary Key: Blessed Bonds", "Zarokh's Reliquary Key: Sekhema's Resolve", "Zarokh's Reliquary Key: Temporalis", "Azmeri Reliquary Key"] },
+        { "tier": "A", "class": "Vault Keys", "bases": ["Ritualistic Reliquary Key"] },
+        { "tier": "C", "class": "Vault Keys", "bases": ["Twilight Reliquary Key"] }
+      ]
+    }
+  ]
+}

@@ -1,17 +1,35 @@
-# CLAUDE.md — PoE2 Loot Filter Repository
+# CLAUDE.md — FerrisFilter
 
-This repo stores **Path of Exile 2 loot filters** (not application code). The goal is to
-author, version, and iterate on `.filter` files.
+This repo is **FerrisFilter**: a Rust CLI that compiles a human-editable config into a
+Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja (`sync`).
+
+- **Project plan & workflow:** managed with GSD in `.planning/` — see `.planning/PROJECT.md`
+  (context), `.planning/ROADMAP.md` (4 phases), `.planning/REQUIREMENTS.md`, and
+  `.planning/STATE.md`. Git uses a **milestone branching** workflow (see PROJECT.md → Git Workflow).
+- **Changelog:** `CHANGELOG.md` (repo root) tracks notable changes. Keep `[Unreleased]` current
+  as work lands, and **always update `CHANGELOG.md` when a milestone is completed** (e.g. via
+  `/gsd-complete-milestone`): move the `[Unreleased]` entries into a new dated version section
+  with a one-line milestone summary.
+- **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
+  philosophy. `config.json` is the executable spec the `generate` command compiles. The
+  **byte-for-byte acceptance baseline** is now the committed fixture
+  `tests/fixtures/seed-universal.filter` (generated from `config.json` + the seed
+  `tests/fixtures/seed-prices.json`); the `artifact_guard` test enforces it. The repo-root
+  `universal.filter` / `prices.json` are **generated, git-ignored, and not committed**.
+  Everything from "Repository layout" down is that reference — keep it accurate.
 
 ## Repository layout
 
 | Path | Purpose |
 |------|---------|
 | `filter-model.json` | **Source of truth.** Compact policy model the filter is generated from: `styles` (the Dracula tier palette + `unchanged`/`hidden`), `build` (weapon/armour classes + defence-type taper), `areaLevelBands` (per-level show logic), and `alwaysShow` (currency, recycle). Edit this, then regenerate. |
-| `universal.filter` | **Generated** from `filter-model.json` — do not hand-edit; change the model and regenerate. Each block is tagged with its model path (e.g. `[areaLevelBands "6-25".weapons -> styles.unchanged]`). Currency base lists are curated data carried in the filter (intentionally not stored in the model). |
+| `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each block is tagged with its model path (e.g. `[areaLevelBands "6-25".weapons -> styles.unchanged]`). |
+| `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. |
+| `tests/fixtures/seed-prices.json`, `tests/fixtures/seed-universal.filter` | **Committed test fixtures** — the frozen seed prices + its generated filter. These are the test oracle (`include_str!` unit tests + `generate_snapshot`/`artifact_guard`). Regenerate the `.filter` fixture only after a deliberate generator change. |
+| `prices-fallback.json` + `tiers-fallback.json` (repo root) | **Committed early-league fallback pair**, always used *together* (their values are calibrated to each other). `generate` loads them instead of `prices.json`/`tiers.json` when `prices.json` is absent/empty (with a warning) or when `--early-game` is passed. Tier membership comes from a poe2filter.com export; cutoffs are **exalt-denominated** (`unit: "exalt"`) so Divine isn't pinned to the A floor. Every base — orbs included — is priced in **exalt at its tier floor** (Divine 20→S, Chaos 2.5→A, Exalt 1→B). No stored rates: `pricer::derive_rates` reads the three anchor orbs (items[0..2]) and expresses them relative to the Chaos Orb (`exalt_in_chaos = value(Exalt)/value(Chaos)` etc.), so quoting the orbs in exalt is enough. The same code on live chaos-quoted data (Chaos = 1c) reproduces the old numbers. The three anchors must share one unit. |
 | other `*.filter` (repo root) | Active, version-controlled filters we author/maintain. |
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
-| `install.bat` | Copies `universal.filter` into the in-game config folder. |
+| `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |
 | `CLAUDE.md` | This file — the filter-syntax reference so we rarely need to re-fetch the docs. |
 
 > **Design philosophy (current):** Hide what we don't want, style the few highlights, and let
@@ -170,9 +188,16 @@ green `80 250 123` · orange `255 184 108` · pink `255 121 198` · purple `189 
 red `255 85 85` · yellow `241 250 140`. (Source: dracula/dracula-theme.)
 
 **Rules:**
-- **Uniques are untouched** — always shown, native game style. A unique only gets a tier
-  style if its *specific base* is curated into a tier list (a high-value drop). Never apply a
-  blanket restyle to `Rarity == Unique`.
+- **Uniques are highlighted by price tier, never blanket-restyled.** `sync` fetches per-unique
+  prices from poe.ninja's `stash/current/item/overview` endpoint and records each with its
+  filter **base type** (e.g. `Voidforge → Infernal Sword`). `generate` groups those bases into
+  `Show # Unique <tier>` blocks (`Rarity == Unique` + `BaseType ==`, deduped per base to the
+  highest tier). Price-tiered unique blocks get the tier's text/border/beam **plus a distinct
+  bronze background `SetBackgroundColor 175 96 37 240`** so they read as "valuable unique"
+  regardless of tier color. Uniques whose base is *not* priced get no rule — they fall through
+  to native game style. There is still **no blanket restyle of all `Rarity == Unique`**; only
+  curated/priced bases are touched. (Caveat: a `BaseType` match highlights every unique on that
+  base, since PoE2 filters cannot target a unique by name.)
 - **Unwanted items are hidden, not deleted.** They drop to **tier F**, which uses `Hide` —
   off the screen by default but **revealable by holding Alt** in-game. The `Hide` blocks keep
   their style actions (native rarity color, small font 21, `DisableDropSound`) so an Alt-reveal

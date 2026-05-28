@@ -1,0 +1,1923 @@
+{
+  "league": "Fallback",
+  "fetchedAt": "fallback",
+  "items": [
+    {
+      "name": "Exalted Orb",
+      "baseType": "Exalted Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 1.0,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Chaos Orb",
+      "baseType": "Chaos Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Divine Orb",
+      "baseType": "Divine Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Mirror of Kalandra",
+      "baseType": "Mirror of Kalandra",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Hinekora's Lock",
+      "baseType": "Hinekora's Lock",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Fracturing Orb",
+      "baseType": "Fracturing Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Albino Rhoa Feather",
+      "baseType": "Albino Rhoa Feather",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Crystallised Corruption",
+      "baseType": "Crystallised Corruption",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Vaal Cultivation Orb",
+      "baseType": "Vaal Cultivation Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ancient Infuser",
+      "baseType": "Ancient Infuser",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Perfect Chaos Orb",
+      "baseType": "Perfect Chaos Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Orb of Extraction",
+      "baseType": "Orb of Extraction",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Perfect Exalted Orb",
+      "baseType": "Perfect Exalted Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Architect's Orb",
+      "baseType": "Architect's Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Vaal Infuser",
+      "baseType": "Vaal Infuser",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Perfect Jeweller's Orb",
+      "baseType": "Perfect Jeweller's Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Greater Jeweller's Orb",
+      "baseType": "Greater Jeweller's Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Perfect Regal Orb",
+      "baseType": "Perfect Regal Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Core Destabiliser",
+      "baseType": "Core Destabiliser",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Orb of Annulment",
+      "baseType": "Orb of Annulment",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Tecrod's Gaze",
+      "baseType": "Tecrod's Gaze",
+      "class": "Augment",
+      "category": "Abyssal Eyes",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Kurgal's Gaze",
+      "baseType": "Kurgal's Gaze",
+      "class": "Augment",
+      "category": "Abyssal Eyes",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ulaman's Gaze",
+      "baseType": "Ulaman's Gaze",
+      "class": "Augment",
+      "category": "Abyssal Eyes",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Amanamu's Gaze",
+      "baseType": "Amanamu's Gaze",
+      "class": "Augment",
+      "category": "Abyssal Eyes",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ancient Jawbone",
+      "baseType": "Ancient Jawbone",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ancient Collarbone",
+      "baseType": "Ancient Collarbone",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ancient Rib",
+      "baseType": "Ancient Rib",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Gnawed Collarbone",
+      "baseType": "Gnawed Collarbone",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Preserved Cranium",
+      "baseType": "Preserved Cranium",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Reaver Catalyst",
+      "baseType": "Reaver Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Sibilant Catalyst",
+      "baseType": "Sibilant Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Neural Catalyst",
+      "baseType": "Neural Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Esh's Catalyst",
+      "baseType": "Esh's Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Tul's Catalyst",
+      "baseType": "Tul's Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Chayula's Catalyst",
+      "baseType": "Chayula's Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Concentrated Liquid Isolation",
+      "baseType": "Concentrated Liquid Isolation",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Concentrated Liquid Suffering",
+      "baseType": "Concentrated Liquid Suffering",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Concentrated Liquid Fear",
+      "baseType": "Concentrated Liquid Fear",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Liquid Despair",
+      "baseType": "Liquid Despair",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Liquid Disgust",
+      "baseType": "Liquid Disgust",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Expedition Logbook",
+      "baseType": "Expedition Logbook",
+      "class": "Expedition Logbooks",
+      "category": "Expedition",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Runic Splinter",
+      "baseType": "Runic Splinter",
+      "class": "Stackable Currency",
+      "category": "Expedition",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Fox Idol",
+      "baseType": "Fox Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Eeshta",
+      "baseType": "Idol of Eeshta",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Grold",
+      "baseType": "Idol of Grold",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Thruldana",
+      "baseType": "Idol of Thruldana",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Maxarius",
+      "baseType": "Idol of Maxarius",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Rabbit Idol",
+      "baseType": "Rabbit Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Ralakesh",
+      "baseType": "Idol of Ralakesh",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Sirrius",
+      "baseType": "Idol of Sirrius",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Primate Idol",
+      "baseType": "Primate Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Idol of Egrin",
+      "baseType": "Idol of Egrin",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Wolf Idol",
+      "baseType": "Wolf Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Boar Idol",
+      "baseType": "Boar Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Bear Idol",
+      "baseType": "Bear Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Snake Idol",
+      "baseType": "Snake Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Stag Idol",
+      "baseType": "Stag Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Cat Idol",
+      "baseType": "Cat Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Tertiary Calamity Fragment",
+      "baseType": "Tertiary Calamity Fragment",
+      "class": "Pinnacle Keys",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Deadly Fate",
+      "baseType": "Deadly Fate",
+      "class": "Map Fragments",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Victorious Fate",
+      "baseType": "Victorious Fate",
+      "class": "Map Fragments",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Cowardly Fate",
+      "baseType": "Cowardly Fate",
+      "class": "Map Fragments",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Secondary Calamity Fragment",
+      "baseType": "Secondary Calamity Fragment",
+      "class": "Pinnacle Keys",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Primary Calamity Fragment",
+      "baseType": "Primary Calamity Fragment",
+      "class": "Pinnacle Keys",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ancient Crisis Fragment",
+      "baseType": "Ancient Crisis Fragment",
+      "class": "Pinnacle Keys",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Weathered Crisis Fragment",
+      "baseType": "Weathered Crisis Fragment",
+      "class": "Pinnacle Keys",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Faded Crisis Fragment",
+      "baseType": "Faded Crisis Fragment",
+      "class": "Pinnacle Keys",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Kulemak's Invitation",
+      "baseType": "Kulemak's Invitation",
+      "class": "Map Fragments",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Dextral Annulment",
+      "baseType": "Omen of Dextral Annulment",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Sinistral Erasure",
+      "baseType": "Omen of Sinistral Erasure",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Dextral Erasure",
+      "baseType": "Omen of Dextral Erasure",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Sinistral Annulment",
+      "baseType": "Omen of Sinistral Annulment",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Whittling",
+      "baseType": "Omen of Whittling",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Light",
+      "baseType": "Omen of Light",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Chance",
+      "baseType": "Omen of Chance",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Sanctification",
+      "baseType": "Omen of Sanctification",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of the Blessed",
+      "baseType": "Omen of the Blessed",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Corruption",
+      "baseType": "Omen of Corruption",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Abyssal Echoes",
+      "baseType": "Omen of Abyssal Echoes",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Dextral Crystallisation",
+      "baseType": "Omen of Dextral Crystallisation",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of the Sovereign",
+      "baseType": "Omen of the Sovereign",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Answered Prayers",
+      "baseType": "Omen of Answered Prayers",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Reinforcements",
+      "baseType": "Omen of Reinforcements",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Sinistral Crystallisation",
+      "baseType": "Omen of Sinistral Crystallisation",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Bartering",
+      "baseType": "Omen of Bartering",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Recombination",
+      "baseType": "Omen of Recombination",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of the Hunt",
+      "baseType": "Omen of the Hunt",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Catalysing Exaltation",
+      "baseType": "Omen of Catalysing Exaltation",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Putrefaction",
+      "baseType": "Omen of Putrefaction",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Dextral Exaltation",
+      "baseType": "Omen of Dextral Exaltation",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Sinistral Exaltation",
+      "baseType": "Omen of Sinistral Exaltation",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Dextral Necromancy",
+      "baseType": "Omen of Dextral Necromancy",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of the Ancients",
+      "baseType": "Omen of the Ancients",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Chaotic Monsters",
+      "baseType": "Omen of Chaotic Monsters",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Guatelitzi's Thesis",
+      "baseType": "Guatelitzi's Thesis",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Quipolatl's Thesis",
+      "baseType": "Quipolatl's Thesis",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Jiquani's Thesis",
+      "baseType": "Jiquani's Thesis",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Xopec's Soul Core of Power",
+      "baseType": "Xopec's Soul Core of Power",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Quipolatl",
+      "baseType": "Soul Core of Quipolatl",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Opiloti's Soul Core of Assault",
+      "baseType": "Opiloti's Soul Core of Assault",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Citaqualotl's Thesis",
+      "baseType": "Citaqualotl's Thesis",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Guatelitzi's Soul Core of Endurance",
+      "baseType": "Guatelitzi's Soul Core of Endurance",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Jiquani",
+      "baseType": "Soul Core of Jiquani",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Azcapa",
+      "baseType": "Soul Core of Azcapa",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Zalatl",
+      "baseType": "Soul Core of Zalatl",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Estazunti's Soul Core of Convalescence",
+      "baseType": "Estazunti's Soul Core of Convalescence",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Quipolatl's Soul Core of Flow",
+      "baseType": "Quipolatl's Soul Core of Flow",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Hayoxi's Soul Core of Heatproofing",
+      "baseType": "Hayoxi's Soul Core of Heatproofing",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Cholotl",
+      "baseType": "Soul Core of Cholotl",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Atmohua's Soul Core of Retreat",
+      "baseType": "Atmohua's Soul Core of Retreat",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Tacati's Soul Core of Affliction",
+      "baseType": "Tacati's Soul Core of Affliction",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Atmohua",
+      "baseType": "Soul Core of Atmohua",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Tzamoto's Soul Core of Ferocity",
+      "baseType": "Tzamoto's Soul Core of Ferocity",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Zalatl's Soul Core of Insulation",
+      "baseType": "Zalatl's Soul Core of Insulation",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Cholotl's Soul Core of War",
+      "baseType": "Cholotl's Soul Core of War",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Citaqualotl",
+      "baseType": "Soul Core of Citaqualotl",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Topotante's Soul Core of Dampening",
+      "baseType": "Topotante's Soul Core of Dampening",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Xipocado's Soul Core of Dominion",
+      "baseType": "Xipocado's Soul Core of Dominion",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Puhuarte",
+      "baseType": "Soul Core of Puhuarte",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Tacati",
+      "baseType": "Soul Core of Tacati",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Citaqualotl's Soul Core of Foulness",
+      "baseType": "Citaqualotl's Soul Core of Foulness",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Ticaba",
+      "baseType": "Soul Core of Ticaba",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Zantipi",
+      "baseType": "Soul Core of Zantipi",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Xopec",
+      "baseType": "Soul Core of Xopec",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ritual Precursor Tablet",
+      "baseType": "Ritual Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Azmeri Reliquary Key",
+      "baseType": "Azmeri Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "The Trialmaster's Reliquary Key",
+      "baseType": "The Trialmaster's Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Zarokh's Reliquary Key: Against the Darkness",
+      "baseType": "Zarokh's Reliquary Key: Against the Darkness",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Zarokh's Reliquary Key: Temporalis",
+      "baseType": "Zarokh's Reliquary Key: Temporalis",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Tangmazu's Reliquary Key",
+      "baseType": "Tangmazu's Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Olroth's Reliquary Key",
+      "baseType": "Olroth's Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "The Arbiter's Reliquary Key",
+      "baseType": "The Arbiter's Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Xesht's Reliquary Key",
+      "baseType": "Xesht's Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ritualistic Reliquary Key",
+      "baseType": "Ritualistic Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Zarokh's Reliquary Key: Sandstorm Visage",
+      "baseType": "Zarokh's Reliquary Key: Sandstorm Visage",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Zarokh's Reliquary Key: Blessed Bonds",
+      "baseType": "Zarokh's Reliquary Key: Blessed Bonds",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Zarokh's Reliquary Key: Sekhema's Resolve",
+      "baseType": "Zarokh's Reliquary Key: Sekhema's Resolve",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 20,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Orb of Chance",
+      "baseType": "Orb of Chance",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Greater Chaos Orb",
+      "baseType": "Greater Chaos Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Gemcutter's Prism",
+      "baseType": "Gemcutter's Prism",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Perfect Orb of Augmentation",
+      "baseType": "Perfect Orb of Augmentation",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Glassblower's Bauble",
+      "baseType": "Glassblower's Bauble",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Greater Regal Orb",
+      "baseType": "Greater Regal Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Artificer's Orb",
+      "baseType": "Artificer's Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Arcanist's Etcher",
+      "baseType": "Arcanist's Etcher",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Perfect Orb of Transmutation",
+      "baseType": "Perfect Orb of Transmutation",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Greater Exalted Orb",
+      "baseType": "Greater Exalted Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Blacksmith's Whetstone",
+      "baseType": "Blacksmith's Whetstone",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Preserved Jawbone",
+      "baseType": "Preserved Jawbone",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Preserved Rib",
+      "baseType": "Preserved Rib",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Preserved Collarbone",
+      "baseType": "Preserved Collarbone",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Gnawed Rib",
+      "baseType": "Gnawed Rib",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Xoph's Catalyst",
+      "baseType": "Xoph's Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Skittering Catalyst",
+      "baseType": "Skittering Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Adaptive Catalyst",
+      "baseType": "Adaptive Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Breach Splinter",
+      "baseType": "Breach Splinter",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Carapace Catalyst",
+      "baseType": "Carapace Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Uul-Netol's Catalyst",
+      "baseType": "Uul-Netol's Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Flesh Catalyst",
+      "baseType": "Flesh Catalyst",
+      "class": "Stackable Currency",
+      "category": "Breach",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Diluted Liquid Greed",
+      "baseType": "Diluted Liquid Greed",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Liquid Envy",
+      "baseType": "Liquid Envy",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Diluted Liquid Guilt",
+      "baseType": "Diluted Liquid Guilt",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Liquid Paranoia",
+      "baseType": "Liquid Paranoia",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Simulacrum Splinter",
+      "baseType": "Simulacrum Splinter",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Ox Idol",
+      "baseType": "Ox Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Owl Idol",
+      "baseType": "Owl Idol",
+      "class": "Augment",
+      "category": "Idols",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Vaal Siphoner",
+      "baseType": "Vaal Siphoner",
+      "class": "Incubators",
+      "category": "Incubators",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Chaotic Quantity",
+      "baseType": "Omen of Chaotic Quantity",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Secret Compartments",
+      "baseType": "Omen of Secret Compartments",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Sinistral Necromancy",
+      "baseType": "Omen of Sinistral Necromancy",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Chaotic Rarity",
+      "baseType": "Omen of Chaotic Rarity",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Greater Exaltation",
+      "baseType": "Omen of Greater Exaltation",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Amelioration",
+      "baseType": "Omen of Amelioration",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Refreshment",
+      "baseType": "Omen of Refreshment",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of the Blackblooded",
+      "baseType": "Omen of the Blackblooded",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Resurgence",
+      "baseType": "Omen of Resurgence",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Uromoti's Soul Core of Attenuation",
+      "baseType": "Uromoti's Soul Core of Attenuation",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Tzamoto",
+      "baseType": "Soul Core of Tzamoto",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Topotante",
+      "baseType": "Soul Core of Topotante",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Soul Core of Opiloti",
+      "baseType": "Soul Core of Opiloti",
+      "class": "Augment",
+      "category": "Soul Cores",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Abyss Precursor Tablet",
+      "baseType": "Abyss Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Breach Precursor Tablet",
+      "baseType": "Breach Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Expedition Precursor Tablet",
+      "baseType": "Expedition Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Delirium Precursor Tablet",
+      "baseType": "Delirium Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Twilight Reliquary Key",
+      "baseType": "Twilight Reliquary Key",
+      "class": "Vault Keys",
+      "category": "Vault Keys",
+      "exalt": 2.5,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Chance Shard",
+      "baseType": "Chance Shard",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Armourer's Scrap",
+      "baseType": "Armourer's Scrap",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Vaal Orb",
+      "baseType": "Vaal Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Orb of Alchemy",
+      "baseType": "Orb of Alchemy",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Gnawed Jawbone",
+      "baseType": "Gnawed Jawbone",
+      "class": "Stackable Currency",
+      "category": "Ancient Bones",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Diluted Liquid Ire",
+      "baseType": "Diluted Liquid Ire",
+      "class": "Stackable Currency",
+      "category": "Delirium",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Exotic Coinage",
+      "baseType": "Exotic Coinage",
+      "class": "Stackable Currency",
+      "category": "Expedition",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Petition Splinter",
+      "baseType": "Petition Splinter",
+      "class": "Stackable Currency",
+      "category": "Omens",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Precursor Tablet",
+      "baseType": "Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Overseer Precursor Tablet",
+      "baseType": "Overseer Precursor Tablet",
+      "class": "Tablet",
+      "category": "Tablets",
+      "exalt": 1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Lesser Jeweller's Orb",
+      "baseType": "Lesser Jeweller's Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Black Scythe Artifact",
+      "baseType": "Black Scythe Artifact",
+      "class": "Stackable Currency",
+      "category": "Expedition",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Broken Circle Artifact",
+      "baseType": "Broken Circle Artifact",
+      "class": "Stackable Currency",
+      "category": "Expedition",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Sun Artifact",
+      "baseType": "Sun Artifact",
+      "class": "Stackable Currency",
+      "category": "Expedition",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Djinn Barya",
+      "baseType": "Djinn Barya",
+      "class": "Trial Coins",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Inscribed Ultimatum",
+      "baseType": "Inscribed Ultimatum",
+      "class": "Inscribed Ultimatum",
+      "category": "Map Fragments & Pinnacle Keys",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of the Liege",
+      "baseType": "Omen of the Liege",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 0.2,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Artificer's Shard",
+      "baseType": "Artificer's Shard",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.1,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Regal Orb",
+      "baseType": "Regal Orb",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Orb of Augmentation",
+      "baseType": "Orb of Augmentation",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Orb of Transmutation",
+      "baseType": "Orb of Transmutation",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Greater Orb of Transmutation",
+      "baseType": "Greater Orb of Transmutation",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Greater Orb of Augmentation",
+      "baseType": "Greater Orb of Augmentation",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Regal Shard",
+      "baseType": "Regal Shard",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Order Artifact",
+      "baseType": "Order Artifact",
+      "class": "Stackable Currency",
+      "category": "Expedition",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Omen of Gambling",
+      "baseType": "Omen of Gambling",
+      "class": "Omen",
+      "category": "Omens",
+      "exalt": 0.05,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Transmutation Shard",
+      "baseType": "Transmutation Shard",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.001,
+      "chaos": null,
+      "div": null
+    },
+    {
+      "name": "Scroll of Wisdom",
+      "baseType": "Scroll of Wisdom",
+      "class": "Stackable Currency",
+      "category": "Currency",
+      "exalt": 0.001,
+      "chaos": null,
+      "div": null
+    }
+  ]
+}

@@ -1,5 +1,9 @@
 # Roadmap: FerrisFilter
 
+## Milestone v0.1: Initial Release
+
+The first shippable FerrisFilter — `generate` + `sync` delivered across four phases.
+
 ## Overview
 
 FerrisFilter goes from zero to a working Rust CLI in four phases. Phase 1 lays the Cargo

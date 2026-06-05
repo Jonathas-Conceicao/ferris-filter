@@ -20,17 +20,24 @@ sync extensions are deferred.
 ### Rule Engine (RULE)
 
 - [ ] **RULE-01**: Author can define filter policy as an ordered list of rules in `config.json`; the generator emits one `Show`/`Hide` block per rule, in list order, preserving first-match-wins semantics.
-- [ ] **RULE-02**: Each rule selects its visuals and action by referencing a named style tier (`S`–`F`, `unchanged`, `hidden`, `Recycle`); whether the block is `Show` or `Hide` follows the referenced style's action.
+- [x] **RULE-02
+**: Each rule selects its visuals and action by referencing a named style tier (`S`–`F`, `unchanged`, `hidden`, `Recycle`); whether the block is `Show` or `Hide` follows the referenced style's action.
 - [ ] **RULE-03**: The hardcoded gear/armour/otherGear/flask special-casing is removed from the emitter; all gear, flask, charm, recycle, jewellery, and unidentified policy is produced from the rule list (no class-specific code paths remain in emission).
 
 ### Rule Conditions (COND)
 
-- [ ] **COND-01**: A rule can match on a list of item classes (any-of).
-- [ ] **COND-02**: A rule can constrain rarity with a comparator (`==` / `>=` / `<=` over Normal/Magic/Rare/Unique).
-- [ ] **COND-03**: A rule can constrain area level with a minimum and/or maximum bound (either side optional, i.e. open-ended ranges allowed).
-- [ ] **COND-04**: A rule can constrain numeric item attributes — base-defence (`BaseArmour` / `BaseEvasion` / `BaseEnergyShield`), `Quality`, and `Sockets` — each emitted as the corresponding filter condition.
-- [ ] **COND-05**: A rule can match against a `BaseType` list.
-- [ ] **COND-06**: A rule can constrain `UnidentifiedItemTier` with a threshold.
+- [x] **COND-01
+**: A rule can match on a list of item classes (any-of).
+- [x] **COND-02
+**: A rule can constrain rarity with a comparator (`==` / `>=` / `<=` over Normal/Magic/Rare/Unique).
+- [x] **COND-03
+**: A rule can constrain area level with a minimum and/or maximum bound (either side optional, i.e. open-ended ranges allowed).
+- [x] **COND-04
+**: A rule can constrain numeric item attributes — base-defence (`BaseArmour` / `BaseEvasion` / `BaseEnergyShield`), `Quality`, and `Sockets` — each emitted as the corresponding filter condition.
+- [x] **COND-05
+**: A rule can match against a `BaseType` list.
+- [x] **COND-06
+**: A rule can constrain `UnidentifiedItemTier` with a threshold.
 
 ### New Capabilities — the in-game edits, now config (CAP)
 

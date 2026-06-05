@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
-status: ready
-last_updated: "2026-06-05T00:00:00.000Z"
-last_activity: 2026-06-05 -- v0.2 roadmap created (Phases 5-7)
+status: executing
+stopped_at: "Completed 05-01-PLAN.md: rule-schema types"
+last_updated: "2026-06-05T09:18:52.448Z"
+last_activity: 2026-06-05
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 50
 ---
 
 # Project State
@@ -20,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-05)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.2 Declarative Rule Model — Phase 5: Rule Schema
+**Current focus:** Phase 5 — Rule Schema
 
 ## Current Position
 
-Phase: 5 — Rule Schema
-Plan: —
-Status: Not started
-Last activity: 2026-06-05 — Roadmap created; Phase 5 ready to plan
+Phase: 5 (Rule Schema) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-06-05
 
-Progress: [          ] 0%  (0/3 phases, 0/0 plans)
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -60,6 +61,7 @@ Progress: [          ] 0%  (0/3 phases, 0/0 plans)
 | Phase 03-pricing-layer P02 | 155 | 2 tasks | 2 files |
 | Phase 03-pricing-layer P03 | 326 | 2 tasks | 3 files |
 | Phase 03 P04 | 30 | 2 tasks | 4 files |
+| Phase 05-rule-schema P01 | 6 | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -89,6 +91,8 @@ Recent decisions affecting current work:
 - emitter::generate now takes &PricedData instead of &CurrencyData
 - load_prices_optional: Path::exists() check first; absent=Ok(None), malformed=Err
 - currency.json removed from generate path; src/models/currency.rs kept for tests
+- RarityComparator uses custom Deserialize for compact string format (>=Magic, <=Rare, bare==Eq) per 05-CONTEXT spec
+- New rule-schema types (Rule/When/RarityComparator/NumericCondition/AreaLevelRange/UnidentifiedTier) are additive; Config top-level struct unchanged until Plan 02
 
 ### Pending Todos
 
@@ -111,8 +115,10 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-06-05
-Stopped at: roadmap created
+Last session: 2026-06-05T09:18:52.438Z
+Stopped at: Completed 05-01-PLAN.md: rule-schema types
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 5`
+
+**Planned Phase:** 5 (Rule Schema) — 2 plans — 2026-06-05T09:10:34.951Z

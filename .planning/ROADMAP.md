@@ -36,7 +36,9 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
   2. A rule referencing a named style tier (S–F, unchanged, hidden, Recycle) deserializes correctly; an unknown tier name is rejected with an actionable error
   3. Every condition field (class list, rarity comparator, area-level min/max, base-defence attributes, quality, sockets, UnidentifiedItemTier, BaseType list) deserializes from its JSON representation
   4. A round-trip serialize/deserialize of a rule list produces identical values (no data loss)
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 05-01-PLAN.md - Add rule-schema types (Rule, When, RarityComparator, numeric/area-level/unidentified conditions) + tests
+- [ ] 05-02-PLAN.md - Wire rules + classGroups into Config, drop dead areaLevelBands types, round-trip/parity tests
 
 ### Phase 6: Emitter Rewrite + Migration Parity
 **Goal**: The hardcoded `emit_gear_bands` / `emit_flask_charm_bands` special-casing is gone; `generate` compiles the rule list in order; `config.json` is migrated to the new schema and produces a filter semantically equivalent to the currently installed in-game filter; the artifact-guard fixture is re-baselined

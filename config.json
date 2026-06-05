@@ -75,11 +75,12 @@
       }
     },
     {
-      "name": "bands 26+: build weapons Rare only",
+      "name": "bands 26+: build weapons Magic+Rare (capped)",
       "style": "unchanged",
       "when": {
         "class": ["Staves", "Wands", "Foci"],
-        "rarity": "Rare"
+        "areaLevel": { "max": 75 },
+        "rarity": ">=Magic"
       }
     },
     {
@@ -107,12 +108,32 @@
       "name": "bands 46+: build armour (pure ES)",
       "style": "unchanged",
       "when": {
-        "areaLevel": { "min": 46 },
+        "areaLevel": { "min": 46, "max": 75 },
         "class": ["Body Armours", "Helmets", "Gloves", "Boots"],
         "baseEnergyShield": { "min": 1 },
         "baseArmour": { "eq": 0 },
         "baseEvasion": { "eq": 0 },
         "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "unidentified high-tier: weapons + armour",
+      "style": "unidentified",
+      "when": {
+        "class": [
+          "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Sceptres",
+          "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+          "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+        ],
+        "unidentifiedTier": { "min": 4 }
+      }
+    },
+    {
+      "name": "unidentified high-tier: jewellery",
+      "style": "unidentified",
+      "when": {
+        "class": ["Rings", "Amulets", "Belts"],
+        "unidentifiedTier": { "min": 4 }
       }
     },
     {
@@ -141,6 +162,14 @@
       }
     },
     {
+      "name": "jewellery fallback: hide low-rarity Rings/Amulets/Belts",
+      "style": "hidden",
+      "when": {
+        "class": ["Rings", "Amulets", "Belts"],
+        "rarity": "<=Rare"
+      }
+    },
+    {
       "name": "flasks/charms: quality always",
       "style": "unchanged",
       "when": {
@@ -162,14 +191,24 @@
       "when": {
         "areaLevel": { "max": 65 },
         "class": ["Life Flasks", "Mana Flasks", "Charms"],
-        "rarity": "Magic"
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "bands 78+: normal charms",
+      "style": "unchanged",
+      "when": {
+        "class": ["Charms"],
+        "areaLevel": { "min": 78 },
+        "rarity": "==Normal"
       }
     },
     {
       "name": "flasks/charms fallback",
       "style": "hidden",
       "when": {
-        "class": ["Life Flasks", "Mana Flasks", "Charms"]
+        "class": ["Life Flasks", "Mana Flasks", "Charms"],
+        "rarity": "<=Magic"
       }
     }
   ],

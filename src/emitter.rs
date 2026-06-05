@@ -571,8 +571,8 @@ mod tests {
         let output = generate(&config, &priced).expect("generate failed");
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
-        assert_eq!(show_count, 83, "expected 83 Show blocks, got {}", show_count);
-        assert_eq!(hide_count, 2, "expected 2 Hide blocks, got {}", hide_count);
+        assert_eq!(show_count, 86, "expected 86 Show blocks, got {}", show_count);
+        assert_eq!(hide_count, 3, "expected 3 Hide blocks, got {}", hide_count);
     }
 
     #[test]

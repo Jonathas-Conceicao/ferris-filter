@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
-status: executing
+status: ready_to_plan
 stopped_at: "Completed 06-01-PLAN.md: Emitter rewrite + config migration"
 last_updated: "2026-06-05T10:40:39.898Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
   completed_plans: 3
-  percent: 75
+  percent: 67
 ---
 
 # Project State
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-06-05)
 
 ## Current Position
 
-Phase: 6 (Emitter Rewrite + Migration Parity) — EXECUTING
-Plan: 2 of 2
-Status: Ready to execute
+Phase: 7
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-05
 
 Progress: [████████░░] 75%
@@ -36,7 +36,7 @@ Progress: [████████░░] 75%
 
 **Velocity:**
 
-- Total plans completed: 12
+- Total plans completed: 14
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -48,6 +48,7 @@ Progress: [████████░░] 75%
 | 02 | 3 | - | - |
 | 03 | 4 | - | - |
 | 5 | 2 | - | - |
+| 6 | 2 | - | - |
 
 **Recent Trend:**
 

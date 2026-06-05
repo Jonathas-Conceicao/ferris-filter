@@ -102,6 +102,8 @@ Show # Human description (optional-slug)
 - `StackSize` — for stackable currency.
 - `WaystoneTier` — PoE2 map (Waystone) tier.
 - `BaseArmour` / `BaseEvasion` / `BaseEnergyShield` — base defence values.
+- `UnidentifiedItemTier` — confirmed PoE2 (author-tested, v0.2): highlights high-tier
+  unidentified items (e.g. `UnidentifiedItemTier >= 4`). Used by the unidentified rules.
 - `GemLevel`, `MapTier` (PoE1), `MemoryStrands`, etc. — exist in the grammar but verify
   PoE2 applicability before relying on them.
 
@@ -243,9 +245,9 @@ Build **weapons** (Staves, Wands, Foci) follow their own ladder: **all rarities 
 (Sceptres, Talismans) are shown Magic + Rare at all levels. All native rarity color, surfaced
 via font size (Rare font 32, Magic/mixed font 30).
 
-> Open verification items (test in-game, tune freely): whether PoE2 honors
-> `BaseEnergyShield`/`BaseArmour`/`BaseEvasion` as base-defence filters, and whether the
-> recycle `Sockets>=1 & Quality>=1` threshold is too broad.
+> Confirmed working in-game (author-tested, v0.2): PoE2 honors
+> `BaseArmour`/`BaseEvasion`/`BaseEnergyShield` as base-defence filters. (The recycle
+> `Sockets>=1 & Quality>=1` threshold remains a tuning knob, not a correctness question.)
 
 ## Authoring conventions for this repo
 - New filters derive from the curated item lists in `reference-old-filters/end_endgame.filter`

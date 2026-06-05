@@ -8,6 +8,19 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
+## Current Milestone: v0.2 Declarative Rule Model
+
+**Goal:** Replace the generator's hardcoded gear/flask band logic with a general, declarative rule schema in `config.json`, so any class + level-range + rarity (+ defence/quality/sockets/unidentified-tier/base-type) policy is expressible in config — making the fully-functional in-game filter reproducible from config alone.
+
+**Target features:**
+- **General rule engine** — config expresses an ordered list of show/hide rules (conditions → style/action); the emitter compiles them in order (first-match-wins preserved), deleting the weapons/armour/otherGear/flask special-casing.
+- **Condition vocabulary** — a rule can combine class list, rarity comparator, area-level min/max, base-defence (Armour/Evasion/ES), Quality, Sockets, UnidentifiedItemTier, and BaseType list.
+- **The 7 in-game edits expressible as config** — weapons Magic+Rare ≤75, armour upper cap, flask Magic+Rare + rarity-capped flask Hide, Charms surfaced independently (Normal ≥78), jewellery hide, unidentified-tier highlight.
+- **Migration + parity** — `config.json` ported to the new schema, reproducing the current fully-functional in-game filter (output **semantically equivalent**, reordering allowed); fixture/snapshot re-baselined deliberately. Price-driven currency/category + unique sections stay untouched.
+- **Spec docs realigned** — CLAUDE.md updated to the rule model; UnidentifiedItemTier + base-defence filters marked confirmed.
+
+**Acceptance bar:** Running `generate` on the migrated config produces a filter semantically equivalent to the filter currently installed in the game folder (block reordering is acceptable; any other behavioral change is surfaced for author review).
+
 ## Requirements
 
 ### Validated
@@ -23,16 +36,23 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 ### Active
 
-<!-- Candidates for the next milestone — refine via /gsd-new-milestone. -->
+<!-- v0.2 Declarative Rule Model — scoped in REQUIREMENTS.md (RULE / CAP / MIG IDs). -->
 
-- [ ] Generate QoL (v2): `--dry-run`, `--diff`, `-v/--verbose` rule logging, stale-`prices.json` warning (GENX-01..04)
-- [ ] Sync extensions (v2): multiple build profiles (`--config builds/<name>.json`); alternate price source fallback, e.g. poe2scout (SYNX-01..02)
+- [ ] Declarative rule engine — ordered show/hide rules compiled by the emitter (RULE-*)
+- [ ] Condition vocabulary — class/rarity/area-level/defence/quality/sockets/unID-tier/base-type (RULE-*)
+- [ ] The 7 in-game edits expressible as config (CAP-*)
+- [ ] Config migration + semantic parity with the in-game filter; baseline re-locked; price sections untouched (MIG-*)
+
+### Deferred (post-v0.2 candidates)
+
+- [ ] Generate QoL: `--dry-run`, `--diff`, `-v/--verbose` rule logging, stale-`prices.json` warning (GENX-01..04)
+- [ ] Sync extensions: multiple build profiles (`--config builds/<name>.json`); alternate price source fallback, e.g. poe2scout (SYNX-01..02)
 - [ ] Lenient-parse guard for Standard-league unique endpoints (different/empty shape); optional no-flag `sync` → `--standard` hint when no challenge league is active
 
 ### Out of Scope
 
 - Hand-maintaining currency/tier base-lists — replaced by `sync` + price-driven tiering
-- Filter rules for gems, jewels, jewellery, quest items, waystones, trials, unidentified items — these fall through to game default (established design philosophy)
+- Filter rules for gems, jewels, quest items, waystones, trials — these fall through to game default (established design philosophy). *(Jewellery hide and unidentified-tier highlight move IN-scope for v0.2 — the in-game filter already curates them.)*
 - Blanket unique styling — only price-tracked uniques get rules; the rest fall through
 - GUI / web interface — CLI only for now
 - ~~Auto-installing into the game folder~~ — **shipped in v0.1** as the `install` subcommand (copy-only; `install.bat` removed)
@@ -98,4 +118,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-28 after v0.1 (Initial Release) milestone*
+*Last updated: 2026-06-05 — started v0.2 (Declarative Rule Model) milestone*

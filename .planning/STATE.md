@@ -1,35 +1,35 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.1
-milestone_name: Initial Release
-status: completed
-last_updated: "2026-05-28T00:00:00.000Z"
-last_activity: 2026-05-28 -- v0.1 milestone shipped
+milestone: v0.2
+milestone_name: Declarative Rule Model
+status: defining-requirements
+last_updated: "2026-06-05T00:00:00.000Z"
+last_activity: 2026-06-05 -- v0.2 milestone started
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-05-28)
+See: .planning/PROJECT.md (updated 2026-06-05)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.1 shipped — planning next milestone (`/gsd-new-milestone`)
+**Current focus:** v0.2 Declarative Rule Model — defining requirements (`/gsd-new-milestone`)
 
 ## Current Position
 
-Milestone: v0.1 (Initial Release) — ✅ SHIPPED 2026-05-28
-Phases: 4/4 complete (14/14 plans)
-Status: Milestone complete
-Last activity: 2026-05-28 -- v0.1 milestone shipped
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-05 — Milestone v0.2 (Declarative Rule Model) started
 
-Progress: [██████████] 100%
+Progress: [          ] 0%
 
 ## Performance Metrics
 
@@ -68,6 +68,10 @@ Progress: [██████████] 100%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- v0.2 finding: the emitter is FULLY HARDCODED — `emit_gear_bands`/`emit_flask_charm_bands` write all band ranges + rarities as literal strings; `config.area_level_bands` and the `RarityRule` enum are parsed but NEVER read (zero consumers outside config.rs). v0.2 deletes this special-casing in favor of a general declarative rule model.
+- v0.2 acceptance bar: `generate` on the migrated config must be SEMANTICALLY EQUIVALENT to the filter currently installed in the game folder (block reordering OK; other behavioral changes surfaced for author review). The in-game `universal.filter` (game folder, fully functional) is the parity oracle and should be captured into the repo as a fixture.
+- v0.2 confirmed (author tested live, in-game filter fully functional): `UnidentifiedItemTier` and base-defence filters (`BaseArmour`/`BaseEvasion`/`BaseEnergyShield`) work in PoE2 — update CLAUDE.md's "unverified" caveats.
+- v0.2 scope: config-flexibility only. CLI surface (`generate`/`sync`/`install`) unchanged; price-driven currency/category + unique sections untouched. Generate QoL + sync extensions deferred.
 - Planning: poe.ninja PoE2 API surface is UNRESOLVED — spike is the first task of Phase 4 (sync), not a separate phase (granularity = coarse).
 - Planning: insta snapshot of generated universal.filter is the Phase 2 acceptance criterion; byte-identical reproduction is non-negotiable.
 - D-11: Styles named-fields struct replaces HashMap<String, Style> for deterministic tier access

@@ -765,6 +765,91 @@ mod tests {
     // Rule + When tests (v0.2 rule schema — RULE-02 / COND-01..06)
     // -----------------------------------------------------------------------
 
+    /// A representative rules+classGroups JSON fragment (not a full Config).
+    /// Used by round-trip and order-preservation tests — exercises every condition type:
+    /// class list, rarity comparator (>=), areaLevel min+max, baseArmour eq, baseEvasion eq,
+    /// baseEnergyShield min, quality min, sockets min, baseType list, unidentifiedTier, classGroups.
+    const REPRESENTATIVE_RULES_JSON: &str = r#"[
+    { "style": "F" },
+    { "style": "S", "name": "Top tier" },
+    { "style": "unchanged", "when": {
+        "class": ["Body Armours", "Helmets"],
+        "rarity": ">=Magic",
+        "areaLevel": { "min": 6, "max": 25 },
+        "baseArmour": { "eq": 0 },
+        "baseEvasion": { "eq": 0 },
+        "baseEnergyShield": { "min": 1 },
+        "quality": { "min": 1 },
+        "sockets": { "min": 1 },
+        "baseType": ["Titanium Kite Shield", "Astral Plate"],
+        "unidentifiedTier": { "min": 2 }
+    }}
+]"#;
+
+    #[test]
+    fn rules_preserve_authored_order() {
+        // Authored order is F, S, unchanged — must NOT be sorted.
+        let rules: Vec<Rule> = serde_json::from_str(REPRESENTATIVE_RULES_JSON).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].style, "F", "first rule should be style F");
+        assert_eq!(rules[1].style, "S", "second rule should be style S");
+        assert_eq!(rules[2].style, "unchanged", "third rule should be style unchanged");
+    }
+
+    #[test]
+    fn config_with_rules_round_trips() {
+        // Build a Config JSON with a representative rules array and classGroups, then
+        // serialize and re-deserialize — the two values must be equal (lossless round-trip).
+        let with_rules = CONFIG_JSON.replacen(
+            r#""fallthrough":"#,
+            &format!(
+                r#""rules": {},
+  "classGroups": {{
+    "buildWeapons": ["Staves", "Wands", "Foci"],
+    "buildArmour": ["Body Armours", "Helmets", "Gloves", "Boots"]
+  }},
+  "fallthrough":"#,
+                REPRESENTATIVE_RULES_JSON
+            ),
+            1,
+        );
+        let first: Config = serde_json::from_str(&with_rules)
+            .expect("config with representative rules should parse");
+        let serialized = serde_json::to_string(&first).expect("serialize should succeed");
+        let second: Config = serde_json::from_str(&serialized)
+            .expect("re-deserialize after round-trip should succeed");
+        assert_eq!(first, second, "config with rules did not round-trip losslessly");
+
+        // Spot-check: authored rule order is preserved in the round-tripped value
+        let rules = first.rules.as_ref().unwrap();
+        assert_eq!(rules[0].style, "F");
+        assert_eq!(rules[1].style, "S");
+        assert_eq!(rules[2].style, "unchanged");
+
+        // classGroups round-tripped
+        let groups = first.class_groups.as_ref().unwrap();
+        assert!(groups.contains_key("buildWeapons"));
+        assert!(groups.contains_key("buildArmour"));
+    }
+
+    #[test]
+    fn bad_rarity_in_rule_reports_error() {
+        // A rule with when.rarity: "Legendary" (invalid) must produce an Err.
+        // At runtime, src/loader.rs supplies serde_path_to_error for field-path context.
+        // Here we verify the plain serde_json error (the underlying rejection is the same).
+        let json = r#"{
+            "style": "E",
+            "when": { "rarity": "Legendary" }
+        }"#;
+        let result: Result<Rule, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "a rule with an invalid rarity in when should produce an Err (got Ok)"
+        );
+        // loader.rs applies serde_path_to_error at runtime, which will include "rarity"
+        // in the field path. This is the same rejection surfaced with full context there.
+    }
+
     #[test]
     fn rule_style_only() {
         // A rule with just "style" (no when, no name) deserializes — matches-everything fallback.

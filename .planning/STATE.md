@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
-status: ready_to_plan
+status: executing
 stopped_at: "Completed 06-01-PLAN.md: Emitter rewrite + config migration"
-last_updated: "2026-06-05T10:40:39.898Z"
-last_activity: 2026-06-05
+last_updated: "2026-06-05T11:47:27.666Z"
+last_activity: 2026-06-05 -- Phase 7 execution started
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 3
-  percent: 67
+  total_plans: 7
+  completed_plans: 4
+  percent: 57
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-05)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 6 — Emitter Rewrite + Migration Parity
+**Current focus:** Phase 7 — New Capabilities + Docs
 
 ## Current Position
 
-Phase: 7
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-05
+Phase: 7 (New Capabilities + Docs) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 7
+Last activity: 2026-06-05 -- Phase 7 execution started
 
 Progress: [████████░░] 75%
 
@@ -129,4 +129,4 @@ Resume file: None
 
 **Next step:** `/gsd-plan-phase 5`
 
-**Planned Phase:** 6 (Emitter Rewrite + Migration Parity) — 2 plans — 2026-06-05T10:29:38.623Z
+**Planned Phase:** 7 (New Capabilities + Docs) — 3 plans — 2026-06-05T11:47:27.370Z

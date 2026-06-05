@@ -66,7 +66,8 @@ sync extensions are deferred.
 
 ### Docs (DOC)
 
-- [ ] **DOC-01**: `CLAUDE.md` is realigned to the rule model (filter-grammar reference retained), and the "unverified" caveats for `UnidentifiedItemTier` + base-defence filters are updated to confirmed.
+- [x] **DOC-01
+**: `CLAUDE.md` is realigned to the rule model (filter-grammar reference retained), and the "unverified" caveats for `UnidentifiedItemTier` + base-defence filters are updated to confirmed.
 
 ---
 

@@ -43,12 +43,18 @@ sync extensions are deferred.
 
 ### New Capabilities — the in-game edits, now config (CAP)
 
-- [ ] **CAP-01**: Build weapons (Staves/Wands/Foci) can be shown Magic+Rare up to a configurable area level, then fall through. *(edit #1)*
-- [ ] **CAP-02**: Build-armour bands honor a configurable upper area-level cap. *(edit #2)*
-- [ ] **CAP-03**: Flask/charm mid-band can show Magic+Rare, and the flask/charm `Hide` fallback can be bounded by rarity. *(edits #5, #7)*
-- [ ] **CAP-04**: Charms can be targeted independently of flasks (e.g. show Normal charms at area level ≥ 78). *(edit #6)*
-- [ ] **CAP-05**: Low-rarity jewellery (Rings/Amulets/Belts, ≤ Rare) can be hidden via config. *(edit #4)*
-- [ ] **CAP-06**: High-tier unidentified items (`UnidentifiedItemTier >= N`) can be highlighted, for configurable class groups. *(edit #3)*
+- [x] **CAP-01
+**: Build weapons (Staves/Wands/Foci) can be shown Magic+Rare up to a configurable area level, then fall through. *(edit #1)*
+- [x] **CAP-02
+**: Build-armour bands honor a configurable upper area-level cap. *(edit #2)*
+- [x] **CAP-03
+**: Flask/charm mid-band can show Magic+Rare, and the flask/charm `Hide` fallback can be bounded by rarity. *(edits #5, #7)*
+- [x] **CAP-04
+**: Charms can be targeted independently of flasks (e.g. show Normal charms at area level ≥ 78). *(edit #6)*
+- [x] **CAP-05
+**: Low-rarity jewellery (Rings/Amulets/Belts, ≤ Rare) can be hidden via config. *(edit #4)*
+- [x] **CAP-06
+**: High-tier unidentified items (`UnidentifiedItemTier >= N`) can be highlighted, for configurable class groups. *(edit #3)*
 
 ### Migration & Parity (MIG)
 

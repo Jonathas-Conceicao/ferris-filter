@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
 status: executing
-stopped_at: "Completed 06-01-PLAN.md: Emitter rewrite + config migration"
-last_updated: "2026-06-05T11:47:27.666Z"
-last_activity: 2026-06-05 -- Phase 7 execution started
+stopped_at: "Completed 07-01-PLAN.md: CAP rules + unidentified style"
+last_updated: "2026-06-05T11:52:16.975Z"
+last_activity: 2026-06-05
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 5
+  percent: 71
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-05)
 ## Current Position
 
 Phase: 7 (New Capabilities + Docs) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 7
-Last activity: 2026-06-05 -- Phase 7 execution started
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-06-05
 
-Progress: [████████░░] 75%
+Progress: [███████░░░] 71%
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [████████░░] 75%
 | Phase 05-rule-schema P01 | 6 | 3 tasks | 1 files |
 | Phase 05 P02 | 12 | 3 tasks | 2 files |
 | Phase 06-emitter-rewrite-migration-parity P01 | 516 | 3 tasks | 4 files |
+| Phase 07-new-capabilities-docs P01 | 4 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,9 @@ Recent decisions affecting current work:
 - Dead areaLevelBands scaffolding (RarityRule/AreaLevelBand/BandShow/ArmourShow + Config field + config.json block) removed; emitter confirmed non-consumer (comment strings only); Phase 6 emitter rewrite starts clean
 - classGroups approach (a): inline full class lists in each rule when.class; classGroups is documentation/Phase-7 aliases only, not consumed by emit_rules
 - base-defence min:1 renders as '>0' (not '>=1') in emit_numeric to match oracle filter syntax
+- CAP-06 weapon+armour class list omits Quarterstaves (matches foo.filter oracle exactly — author's in-game list)
+- unidentified style uses no text/border/background/font to preserve native rarity color
+- generate_block_counts test updated to 86 Show / 3 Hide after adding 3 CAP Show blocks + 1 Hide block
 
 ### Pending Todos
 
@@ -123,8 +127,8 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-06-05T10:40:39.885Z
-Stopped at: Completed 06-01-PLAN.md: Emitter rewrite + config migration
+Last session: 2026-06-05T11:52:16.968Z
+Stopped at: Completed 07-01-PLAN.md: CAP rules + unidentified style
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 5`

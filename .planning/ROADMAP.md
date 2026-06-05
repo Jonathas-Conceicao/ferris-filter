@@ -62,7 +62,10 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
   2. Changing a cap value in a rule (e.g. weapon Magic+Rare max area level) produces a different filter block with the new bound — confirming the rule, not hardcoded logic, drives output
   3. `CLAUDE.md` no longer contains "unverified" or "verify before use" caveats for `UnidentifiedItemTier` or base-defence filters; the rule model schema is documented as the authoritative generator input
   4. `cargo test` passes with the full suite after the capability rules and doc changes are applied
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 07-01-PLAN.md — Encode the 7 CAP edits as config.json rules + add the unidentified style
+- [ ] 07-02-PLAN.md — Phase 7 parity gate vs the in-game filter + rule-driven test + re-baseline
+- [ ] 07-03-PLAN.md — DOC-01: realign CLAUDE.md to the rule model; clear unverified caveats
 
 ## Progress
 
@@ -74,7 +77,7 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
 | 4. Sync | v0.1 | 4/4 | Complete | 2026-05-28 |
 | 5. Rule Schema | v0.2 | 2/2 | Complete    | 2026-06-05 |
 | 6. Emitter Rewrite + Migration Parity | v0.2 | 2/2 | Complete    | 2026-06-05 |
-| 7. New Capabilities + Docs | v0.2 | 0/? | Not started | - |
+| 7. New Capabilities + Docs | v0.2 | 0/3 | Planned | - |
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 roadmap created 2026-06-05.*

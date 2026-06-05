@@ -28,9 +28,10 @@ Show # band 6-25: build weapons any rarity
   AreaLevel <= 25
   Class "Staves" "Wands" "Foci"
 
-Show # bands 26+: build weapons Rare only
+Show # bands 26+: build weapons Magic+Rare (capped)
+  AreaLevel <= 75
   Class "Staves" "Wands" "Foci"
-  Rarity == Rare
+  Rarity >= Magic
 
 Show # band 6-25: build armour (non-evasion)
   AreaLevel <= 25
@@ -48,11 +49,26 @@ Show # band 26-45: build armour (ES / hybrid)
 
 Show # bands 46+: build armour (pure ES)
   AreaLevel >= 46
+  AreaLevel <= 75
   Class "Body Armours" "Helmets" "Gloves" "Boots"
   BaseArmour 0
   BaseEvasion 0
   BaseEnergyShield > 0
   Rarity >= Magic
+
+Show # unidentified high-tier: weapons + armour
+  Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+  UnidentifiedItemTier >= 4
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
+
+Show # unidentified high-tier: jewellery
+  Class "Rings" "Amulets" "Belts"
+  UnidentifiedItemTier >= 4
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
 
 Show # bands <=45: any other Rare gear
   AreaLevel <= 45
@@ -61,6 +77,12 @@ Show # bands <=45: any other Rare gear
 
 Hide # gear fallback: hide unmatched equipment
   Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+  Rarity <= Rare
+  SetFontSize 21
+  DisableDropSound
+
+Hide # jewellery fallback: hide low-rarity Rings/Amulets/Belts
+  Class "Rings" "Amulets" "Belts"
   Rarity <= Rare
   SetFontSize 21
   DisableDropSound
@@ -76,10 +98,16 @@ Show # bands <=25: all flasks/charms
 Show # bands 26-65: magic flasks/charms
   AreaLevel <= 65
   Class "Life Flasks" "Mana Flasks" "Charms"
-  Rarity == Magic
+  Rarity >= Magic
+
+Show # bands 78+: normal charms
+  AreaLevel >= 78
+  Class "Charms"
+  Rarity == Normal
 
 Hide # flasks/charms fallback
   Class "Life Flasks" "Mana Flasks" "Charms"
+  Rarity <= Magic
   SetFontSize 21
   DisableDropSound
 

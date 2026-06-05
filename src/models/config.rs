@@ -119,6 +119,7 @@ pub struct Styles {
     #[serde(rename = "Recycle")] pub recycle: Style,
     pub unchanged: Style,
     pub hidden: Style,
+    pub unidentified: Style,
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +513,8 @@ mod tests {
                 "F":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false}
+                "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
+                "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
             },
             "build": {"weapons":[],"armour":[],"armourTypes":{}},
             "weaponClasses": [],

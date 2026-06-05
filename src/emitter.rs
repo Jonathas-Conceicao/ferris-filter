@@ -20,7 +20,7 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden")]
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
         rule_index: usize,
@@ -73,6 +73,7 @@ fn resolve_style<'a>(
         "Recycle" => &styles.recycle,
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
+        "unidentified" => &styles.unidentified,
         other => {
             return Err(GenerateError::UnknownStyle {
                 rule_index: idx,

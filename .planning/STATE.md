@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
-status: ready_to_plan
-stopped_at: "Completed 05-02-PLAN.md: Config rules field + cleanup"
-last_updated: "2026-06-05T09:26:08.133Z"
+status: executing
+stopped_at: "Completed 06-01-PLAN.md: Emitter rewrite + config migration"
+last_updated: "2026-06-05T10:40:39.898Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 3
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
-  percent: 67
+  completed_phases: 1
+  total_plans: 4
+  completed_plans: 3
+  percent: 75
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-05)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 5 — Rule Schema
+**Current focus:** Phase 6 — Emitter Rewrite + Migration Parity
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to plan
+Phase: 6 (Emitter Rewrite + Migration Parity) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-06-05
 
-Progress: [██████████] 100%
+Progress: [████████░░] 75%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [██████████] 100%
 | Phase 03 P04 | 30 | 2 tasks | 4 files |
 | Phase 05-rule-schema P01 | 6 | 3 tasks | 1 files |
 | Phase 05 P02 | 12 | 3 tasks | 2 files |
+| Phase 06-emitter-rewrite-migration-parity P01 | 516 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -97,6 +98,8 @@ Recent decisions affecting current work:
 - New rule-schema types (Rule/When/RarityComparator/NumericCondition/AreaLevelRange/UnidentifiedTier) are additive; Config top-level struct unchanged until Plan 02
 - Config.rules (Option<Vec<Rule>>) and class_groups (Option<HashMap<String,Vec<String>>>) are additive optional fields with serde(default); existing config.json parses with both as None until Phase 6 populates them
 - Dead areaLevelBands scaffolding (RarityRule/AreaLevelBand/BandShow/ArmourShow + Config field + config.json block) removed; emitter confirmed non-consumer (comment strings only); Phase 6 emitter rewrite starts clean
+- classGroups approach (a): inline full class lists in each rule when.class; classGroups is documentation/Phase-7 aliases only, not consumed by emit_rules
+- base-defence min:1 renders as '>0' (not '>=1') in emit_numeric to match oracle filter syntax
 
 ### Pending Todos
 
@@ -119,10 +122,10 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-06-05T09:26:08.123Z
-Stopped at: Completed 05-02-PLAN.md: Config rules field + cleanup
+Last session: 2026-06-05T10:40:39.885Z
+Stopped at: Completed 06-01-PLAN.md: Emitter rewrite + config migration
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 5`
 
-**Planned Phase:** 5 (Rule Schema) — 2 plans — 2026-06-05T09:10:34.951Z
+**Planned Phase:** 6 (Emitter Rewrite + Migration Parity) — 2 plans — 2026-06-05T10:29:38.623Z

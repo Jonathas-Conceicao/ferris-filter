@@ -23,7 +23,8 @@ sync extensions are deferred.
 **: Author can define filter policy as an ordered list of rules in `config.json`; the generator emits one `Show`/`Hide` block per rule, in list order, preserving first-match-wins semantics.
 - [x] **RULE-02
 **: Each rule selects its visuals and action by referencing a named style tier (`S`–`F`, `unchanged`, `hidden`, `Recycle`); whether the block is `Show` or `Hide` follows the referenced style's action.
-- [ ] **RULE-03**: The hardcoded gear/armour/otherGear/flask special-casing is removed from the emitter; all gear, flask, charm, recycle, jewellery, and unidentified policy is produced from the rule list (no class-specific code paths remain in emission).
+- [x] **RULE-03
+**: The hardcoded gear/armour/otherGear/flask special-casing is removed from the emitter; all gear, flask, charm, recycle, jewellery, and unidentified policy is produced from the rule list (no class-specific code paths remain in emission).
 
 ### Rule Conditions (COND)
 

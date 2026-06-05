@@ -473,6 +473,14 @@ pub struct Config {
     pub area_level_bands: Vec<AreaLevelBand>,
     pub always_show: AlwaysShow,
     pub fallthrough: String,
+    /// Ordered declarative policy rules (RULE-01). Optional during the migration —
+    /// absent today, populated in Phase 6. Authored order is preserved (first-match-wins).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<Rule>>,
+    /// Optional class-alias map: alias name -> list of item classes, referenced by
+    /// `when.class` names to avoid repetition (e.g. "buildWeapons": ["Staves","Wands","Foci"]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_groups: Option<HashMap<String, Vec<String>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -548,6 +556,36 @@ mod tests {
         let bad = CONFIG_JSON.replace("\"Pink\"", "\"Mauve\"");
         let result: Result<Config, _> = serde_json::from_str(&bad);
         assert!(result.is_err(), "expected error for unknown FilterColor 'Mauve', got Ok");
+    }
+
+    #[test]
+    fn config_with_rules_and_class_groups_parses() {
+        // Prove that rules + classGroups are additive optional fields: a config parsed from
+        // the real file (no rules/classGroups) has both as None (via config_parses_real_file),
+        // while a config that includes them parses with both as Some.
+        // We inject rules+classGroups by string-replacement into the real config.json.
+        let with_rules = CONFIG_JSON.replacen(
+            r#""fallthrough":"#,
+            r#""rules": [
+    { "style": "F" },
+    { "name": "Test rule", "style": "E", "when": { "class": ["Staves"] } }
+  ],
+  "classGroups": {
+    "buildWeapons": ["Staves", "Wands", "Foci"]
+  },
+  "fallthrough":"#,
+            1,
+        );
+        let config: Config = serde_json::from_str(&with_rules)
+            .expect("config with rules+classGroups should parse");
+        assert!(config.rules.is_some(), "rules should be Some");
+        assert_eq!(config.rules.as_ref().unwrap().len(), 2);
+        assert!(config.class_groups.is_some(), "classGroups should be Some");
+        assert!(config.class_groups.as_ref().unwrap().contains_key("buildWeapons"));
+        // Also confirm baseline (no rules) still has both as None
+        let baseline: Config = serde_json::from_str(CONFIG_JSON).unwrap();
+        assert!(baseline.rules.is_none(), "baseline config should have rules = None");
+        assert!(baseline.class_groups.is_none(), "baseline config should have class_groups = None");
     }
 
     #[test]

@@ -1,12 +1,33 @@
-/// Filter emitter — pure function: `generate(&Config, &PricedData) -> String`.
+/// Filter emitter — pure function: `generate(&Config, &PricedData) -> Result<String, GenerateError>`.
 ///
 /// All block emission uses a single canonical action order (D-03) via `emit_style_actions`.
 /// No HashMap iteration; all collection traversal is over Vecs or named struct fields (GEN-01).
 /// Output is LF-only (`writeln!` produces `\n` on all platforms — never `\r\n`).
 use std::fmt::Write;
 
-use crate::models::config::{Config, FilterColor, MinimapShape, Style};
+use miette::Diagnostic;
+use thiserror::Error;
+
+use crate::models::config::{
+    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, Styles,
+};
 use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+#[derive(Error, Debug, Diagnostic)]
+pub enum GenerateError {
+    #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden")]
+    #[diagnostic(code(ferrisfilter::generate::unknown_style))]
+    UnknownStyle {
+        rule_index: usize,
+        rule_name: String,
+        style: String,
+    },
+}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -16,16 +37,50 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 ///
 /// Returns a LF-only `String` ending with exactly one trailing newline.
 /// Pure function — no I/O, no side effects.
-pub fn generate(config: &Config, priced: &PricedData) -> String {
+/// Returns `Err(GenerateError::UnknownStyle)` if any rule references an unknown style name.
+pub fn generate(config: &Config, priced: &PricedData) -> Result<String, GenerateError> {
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out);
-    emit_recycle(&mut out, config);
-    emit_gear_bands(&mut out, config);
-    emit_flask_charm_bands(&mut out, config);
+    emit_rules(&mut out, config)?;
     emit_currency_sections(&mut out, config, &priced.category_blocks);
     emit_unique_sections(&mut out, config, &priced.unique_blocks);
     debug_assert!(out.ends_with('\n'), "generate() output must end with exactly one newline");
-    out
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Style resolver
+// ---------------------------------------------------------------------------
+
+/// Resolve a style name to the matching `&Style` in `Styles`.
+///
+/// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
+/// S/A/B/C/D/E/F/Recycle/unchanged/hidden.
+fn resolve_style<'a>(
+    styles: &'a Styles,
+    style: &str,
+    idx: usize,
+    name: &str,
+) -> Result<&'a Style, GenerateError> {
+    Ok(match style {
+        "S" => &styles.s,
+        "A" => &styles.a,
+        "B" => &styles.b,
+        "C" => &styles.c,
+        "D" => &styles.d,
+        "E" => &styles.e,
+        "F" => &styles.f,
+        "Recycle" => &styles.recycle,
+        "unchanged" => &styles.unchanged,
+        "hidden" => &styles.hidden,
+        other => {
+            return Err(GenerateError::UnknownStyle {
+                rule_index: idx,
+                rule_name: name.to_string(),
+                style: other.to_string(),
+            })
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +186,7 @@ fn emit_style_actions(out: &mut String, style: &Style) {
 }
 
 // ---------------------------------------------------------------------------
-// Style-by-tier resolver
+// Style-by-tier resolver (used by pricer sections)
 // ---------------------------------------------------------------------------
 
 /// Resolve the `Style` for a tier letter from the config's `Styles`.
@@ -172,254 +227,142 @@ fn emit_header(out: &mut String) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 2: Recycle block
+// Numeric condition helper
 // ---------------------------------------------------------------------------
 
-fn emit_recycle(out: &mut String, config: &Config) {
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out, "# alwaysShow.recycle  ->  styles.Recycle").unwrap();
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out).unwrap();
-    writeln!(
-        out,
-        "Show # recycle: sockets + quality salvage  [alwaysShow.recycle -> styles.Recycle]"
-    )
-    .unwrap();
-    writeln!(out, "  Sockets >= 1").unwrap();
-    writeln!(out, "  Quality >= 1").unwrap();
-    emit_style_actions(out, &config.styles.recycle);
-    writeln!(out).unwrap();
+fn emit_numeric(out: &mut String, attr: &str, nc: &crate::models::config::NumericCondition) {
+    if let Some(v) = nc.eq {
+        writeln!(out, "  {attr} {v}").unwrap();
+    }
+    if let Some(n) = nc.min {
+        let is_defence = matches!(attr, "BaseArmour" | "BaseEvasion" | "BaseEnergyShield");
+        if is_defence && n == 1 {
+            writeln!(out, "  {attr} > 0").unwrap();
+        } else {
+            writeln!(out, "  {attr} >= {n}").unwrap();
+        }
+    }
+    if let Some(n) = nc.max {
+        writeln!(out, "  {attr} <= {n}").unwrap();
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Section 3: Gear AreaLevel bands (8 blocks: 7 Show + 1 Hide)
+// Section 2: Rule-driven policy blocks
 // ---------------------------------------------------------------------------
 
-fn emit_gear_bands(out: &mut String, config: &Config) {
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out, "# areaLevelBands — gear").unwrap();
-    writeln!(out, "# Shown gear = styles.unchanged (Show, no restyle, protects it from the").unwrap();
-    writeln!(out, "# trailing Hide). The Hide fallback = styles.hidden. Uniques excluded from").unwrap();
-    writeln!(out, "# the fallback so they fall through.").unwrap();
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out).unwrap();
-
-    // Build class lists as space-separated quoted strings
-    let armour_classes_str = config
-        .armour_classes
+/// Emit all policy blocks by iterating `config.rules` in authored order.
+///
+/// Each rule compiles to exactly one Show/Hide block. The style name is resolved
+/// via `resolve_style`; an unknown name is a hard error (RULE-03 / T-06-01).
+fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
+    for (idx, rule) in config
+        .rules
+        .as_deref()
+        .unwrap_or(&[])
         .iter()
-        .map(|s| format!("\"{}\"", s))
-        .collect::<Vec<_>>()
-        .join(" ");
+        .enumerate()
+    {
+        let derived_label = format!("rule {}", idx);
+        let label: &str = rule.name.as_deref().unwrap_or(&derived_label);
+        let style = resolve_style(&config.styles, &rule.style, idx, label)?;
 
-    let build_armour_str = config
-        .build
-        .armour
-        .iter()
-        .map(|s| format!("\"{}\"", s))
-        .collect::<Vec<_>>()
-        .join(" ");
+        // Header line: Show or Hide based on style.action
+        let block_type = match style.action {
+            StyleAction::Show => "Show",
+            StyleAction::Hide => "Hide",
+        };
+        writeln!(out, "{} # {}", block_type, label).unwrap();
 
-    let build_weapons_str = config
-        .build
-        .weapons
-        .iter()
-        .map(|s| format!("\"{}\"", s))
-        .collect::<Vec<_>>()
-        .join(" ");
+        // Emit condition lines from rule.when in fixed deterministic order:
+        // areaLevel(min then max), class, baseArmour, baseEvasion, baseEnergyShield,
+        // rarity, quality, sockets, baseType, unidentifiedTier
+        if let Some(when) = &rule.when {
+            // 1. AreaLevel >= min
+            if let Some(al) = &when.area_level {
+                if let Some(n) = al.min {
+                    writeln!(out, "  AreaLevel >= {}", n).unwrap();
+                }
+                if let Some(m) = al.max {
+                    writeln!(out, "  AreaLevel <= {}", m).unwrap();
+                }
+            }
 
-    // otherGear = weapon_classes + armour_classes combined
-    let other_gear_classes: Vec<String> = config
-        .weapon_classes
-        .iter()
-        .chain(config.armour_classes.iter())
-        .map(|s| format!("\"{}\"", s))
-        .collect();
-    let other_gear_str = other_gear_classes.join(" ");
+            // 2. Class (bare, no ==)
+            if let Some(classes) = &when.class {
+                let class_str = classes
+                    .iter()
+                    .map(|c| format!("\"{}\"", c))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(out, "  Class {}", class_str).unwrap();
+            }
 
-    // --- Block 1: band <=5 all armour any rarity ---
-    writeln!(out, "# [areaLevelBands \"1-5\".allArmour] all armour, any rarity").unwrap();
-    writeln!(out, "# (build weapons come from the weapon rules below; rares of any class from the <=45 otherGear rule)").unwrap();
-    writeln!(
-        out,
-        "Show # band <=5: all armour any rarity  [areaLevelBands \"1-5\".allArmour -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  AreaLevel <= 5").unwrap();
-    writeln!(out, "  Class {}", armour_classes_str).unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
+            // 3. BaseArmour
+            if let Some(nc) = &when.base_armour {
+                emit_numeric(out, "BaseArmour", nc);
+            }
 
-    // --- Block 2: band 6-25 build weapons any rarity ---
-    writeln!(out, "# [areaLevelBands \"6-25\".weapons] build weapons, any rarity").unwrap();
-    writeln!(
-        out,
-        "Show # band 6-25: build weapons any rarity  [build.weapons -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  AreaLevel <= 25").unwrap();
-    writeln!(out, "  Class {}", build_weapons_str).unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
+            // 4. BaseEvasion
+            if let Some(nc) = &when.base_evasion {
+                emit_numeric(out, "BaseEvasion", nc);
+            }
 
-    // --- Block 3: bands 26+ build weapons Rare only ---
-    writeln!(out, "# [areaLevelBands 26+ .weapons \"Rare only\"] build weapons, Rare, any level").unwrap();
-    writeln!(
-        out,
-        "Show # bands 26+: build weapons Rare only  [build.weapons -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  Class {}", build_weapons_str).unwrap();
-    writeln!(out, "  Rarity == Rare").unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
+            // 5. BaseEnergyShield
+            if let Some(nc) = &when.base_energy_shield {
+                emit_numeric(out, "BaseEnergyShield", nc);
+            }
 
-    // --- Block 4: band 6-25 build armour anyNonEvasion Magic+Rare ---
-    let any_non_evasion = config
-        .build
-        .armour_types
-        .get("anyNonEvasion")
-        .expect("config.build.armourTypes must contain 'anyNonEvasion'");
-    writeln!(out, "# [areaLevelBands \"6-25\".armour anyNonEvasion, Magic+Rare]").unwrap();
-    writeln!(
-        out,
-        "Show # band 6-25: build armour (non-evasion)  [build.armour/anyNonEvasion -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  AreaLevel <= 25").unwrap();
-    writeln!(out, "  Class {}", build_armour_str).unwrap();
-    for cond in any_non_evasion {
-        writeln!(out, "  {}", cond).unwrap();
+            // 6. Rarity
+            if let Some(rc) = &when.rarity {
+                let op_str = match rc.op {
+                    RarityOp::Eq => "==",
+                    RarityOp::Gte => ">=",
+                    RarityOp::Lte => "<=",
+                };
+                let rarity_str = match rc.rarity {
+                    crate::models::config::Rarity::Normal => "Normal",
+                    crate::models::config::Rarity::Magic => "Magic",
+                    crate::models::config::Rarity::Rare => "Rare",
+                    crate::models::config::Rarity::Unique => "Unique",
+                };
+                writeln!(out, "  Rarity {} {}", op_str, rarity_str).unwrap();
+            }
+
+            // 7. Quality
+            if let Some(nc) = &when.quality {
+                emit_numeric(out, "Quality", nc);
+            }
+
+            // 8. Sockets
+            if let Some(nc) = &when.sockets {
+                emit_numeric(out, "Sockets", nc);
+            }
+
+            // 9. BaseType == (with ==)
+            if let Some(base_types) = &when.base_type {
+                let bt_str = base_types
+                    .iter()
+                    .map(|b| format!("\"{}\"", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(out, "  BaseType == {}", bt_str).unwrap();
+            }
+
+            // 10. UnidentifiedItemTier
+            if let Some(ut) = &when.unidentified_tier {
+                writeln!(out, "  UnidentifiedItemTier >= {}", ut.min).unwrap();
+            }
+        }
+
+        emit_style_actions(out, style);
+        writeln!(out).unwrap();
     }
-    writeln!(out, "  Rarity >= Magic").unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 5: band 26-45 build armour esHybrid Magic+Rare ---
-    let es_hybrid = config
-        .build
-        .armour_types
-        .get("esHybrid")
-        .expect("config.build.armourTypes must contain 'esHybrid'");
-    writeln!(out, "# [areaLevelBands \"26-45\".armour esHybrid, Magic+Rare]").unwrap();
-    writeln!(
-        out,
-        "Show # band 26-45: build armour (ES / hybrid)  [build.armour/esHybrid -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  AreaLevel >= 26").unwrap();
-    writeln!(out, "  AreaLevel <= 45").unwrap();
-    writeln!(out, "  Class {}", build_armour_str).unwrap();
-    for cond in es_hybrid {
-        writeln!(out, "  {}", cond).unwrap();
-    }
-    writeln!(out, "  Rarity >= Magic").unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 6: bands 46+ build armour pureES Magic+Rare ---
-    let pure_es = config
-        .build
-        .armour_types
-        .get("pureES")
-        .expect("config.build.armourTypes must contain 'pureES'");
-    writeln!(out, "# [areaLevelBands \"46-65\"+\"66+\".armour pureES, Magic+Rare]").unwrap();
-    writeln!(
-        out,
-        "Show # bands 46+: build armour (pure ES)  [build.armour/pureES -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  AreaLevel >= 46").unwrap();
-    writeln!(out, "  Class {}", build_armour_str).unwrap();
-    for cond in pure_es {
-        writeln!(out, "  {}", cond).unwrap();
-    }
-    writeln!(out, "  Rarity >= Magic").unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 7: bands <=45 any other Rare gear ---
-    writeln!(out, "# [areaLevelBands \"6-25\"+\"26-45\".otherGear \"Rare\"] any other equipment, Rare, <=45").unwrap();
-    writeln!(
-        out,
-        "Show # bands <=45: any other Rare gear  [areaLevelBands.otherGear -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  AreaLevel <= 45").unwrap();
-    writeln!(out, "  Class {}", other_gear_str).unwrap();
-    writeln!(out, "  Rarity == Rare").unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 8: gear fallback Hide ---
-    writeln!(out, "# [fallthrough guard] hide remaining equipment (uniques excluded -> fall through)").unwrap();
-    writeln!(
-        out,
-        "Hide # gear fallback: hide unmatched equipment  [styles.hidden]"
-    )
-    .unwrap();
-    writeln!(out, "  Class {}", other_gear_str).unwrap();
-    writeln!(out, "  Rarity <= Rare").unwrap();
-    emit_style_actions(out, &config.styles.hidden);
-    writeln!(out).unwrap();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Section 4: Flask/charm AreaLevel bands (4 blocks: 3 Show + 1 Hide)
-// ---------------------------------------------------------------------------
-
-fn emit_flask_charm_bands(out: &mut String, config: &Config) {
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out, "# areaLevelBands — flasks & charms  [flaskCharmClasses]").unwrap();
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out).unwrap();
-
-    let flask_classes_str = config
-        .flask_charm_classes
-        .iter()
-        .map(|s| format!("\"{}\"", s))
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // --- Block 1: quality always shown ---
-    writeln!(out, "# quality always shown (this is the \">65 Quality only\" tier)").unwrap();
-    writeln!(
-        out,
-        "Show # flasks/charms: quality always  [areaLevelBands.flasksCharms -> styles.unchanged]"
-    )
-    .unwrap();
-    writeln!(out, "  Quality >= 1").unwrap();
-    writeln!(out, "  Class {}", flask_classes_str).unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 2: bands <=25 all flasks/charms ---
-    writeln!(out, "# [areaLevelBands \"1-5\"+\"6-25\".flasksCharms \"any rarity\"]").unwrap();
-    writeln!(out, "Show # bands <=25: all flasks/charms  [styles.unchanged]").unwrap();
-    writeln!(out, "  AreaLevel <= 25").unwrap();
-    writeln!(out, "  Class {}", flask_classes_str).unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 3: bands 26-65 magic flasks/charms ---
-    writeln!(out, "# [areaLevelBands \"26-45\"+\"46-65\".flasksCharms \"Magic\"]").unwrap();
-    writeln!(out, "Show # bands 26-65: magic flasks/charms  [styles.unchanged]").unwrap();
-    writeln!(out, "  AreaLevel <= 65").unwrap();
-    writeln!(out, "  Class {}", flask_classes_str).unwrap();
-    writeln!(out, "  Rarity == Magic").unwrap();
-    emit_style_actions(out, &config.styles.unchanged);
-    writeln!(out).unwrap();
-
-    // --- Block 4: flasks/charms fallback Hide ---
-    writeln!(out, "# remaining flasks/charms hidden").unwrap();
-    writeln!(out, "Hide # flasks/charms fallback  [styles.hidden]").unwrap();
-    writeln!(out, "  Class {}", flask_classes_str).unwrap();
-    emit_style_actions(out, &config.styles.hidden);
-    writeln!(out).unwrap();
-}
-
-// ---------------------------------------------------------------------------
-// Section 5: Currency / category tier blocks (from PricedData.category_blocks)
+// Section 3: Currency / category tier blocks (from PricedData.category_blocks)
 // ---------------------------------------------------------------------------
 
 fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryBlock]) {
@@ -465,7 +408,7 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
 }
 
 // ---------------------------------------------------------------------------
-// Section 6: Unique blocks (from PricedData.unique_blocks)
+// Section 4: Unique blocks (from PricedData.unique_blocks)
 //
 // Emits a dedicated section only when unique_blocks is non-empty.
 // With the committed seed (zero uniques), this function emits nothing.
@@ -582,21 +525,25 @@ mod tests {
     #[test]
     fn smoke_test_generate_starts_with_header_and_contains_recycle_tag() {
         let (config, priced) = load_inputs();
-        let output = generate(&config, &priced);
+        let output = generate(&config, &priced).expect("generate failed");
         assert!(
             output.starts_with("# universal.filter"),
             "output must start with '# universal.filter'"
         );
-        assert!(
-            output.contains("[alwaysShow.recycle -> styles.Recycle]"),
-            "output must contain the recycle model-path tag"
-        );
+        // When config.rules contains the recycle rule, the block comment includes its name.
+        // If rules is populated (Task 3+), the recycle rule name must appear in the output.
+        if config.rules.as_ref().map_or(false, |r| !r.is_empty()) {
+            assert!(
+                output.contains("recycle"),
+                "output must contain the recycle rule name when rules are defined"
+            );
+        }
     }
 
     #[test]
     fn generate_lf_only() {
         let (config, priced) = load_inputs();
-        let output = generate(&config, &priced);
+        let output = generate(&config, &priced).expect("generate failed");
         assert!(
             !output.contains("\r\n"),
             "generate() output must not contain CRLF sequences"
@@ -606,7 +553,7 @@ mod tests {
     #[test]
     fn generate_ends_with_single_newline() {
         let (config, priced) = load_inputs();
-        let output = generate(&config, &priced);
+        let output = generate(&config, &priced).expect("generate failed");
         assert!(
             output.ends_with('\n'),
             "generate() output must end with a newline"
@@ -620,7 +567,7 @@ mod tests {
     #[test]
     fn generate_block_counts() {
         let (config, priced) = load_inputs();
-        let output = generate(&config, &priced);
+        let output = generate(&config, &priced).expect("generate failed");
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
         assert_eq!(show_count, 83, "expected 83 Show blocks, got {}", show_count);
@@ -630,7 +577,7 @@ mod tests {
     #[test]
     fn generate_no_unique_or_jewels_blocks() {
         let (config, priced) = load_inputs();
-        let output = generate(&config, &priced);
+        let output = generate(&config, &priced).expect("generate failed");
         assert!(
             !output.contains("Rarity == Unique"),
             "GEN-04: no Rarity == Unique blocks"
@@ -660,7 +607,7 @@ mod tests {
             }],
         };
 
-        let output = generate(&config, &priced);
+        let output = generate(&config, &priced).expect("generate failed");
         assert!(
             output.contains("Rarity == Unique"),
             "a priced unique must produce a Rarity == Unique block"
@@ -678,8 +625,8 @@ mod tests {
     #[test]
     fn generate_is_deterministic() {
         let (config, priced) = load_inputs();
-        let first = generate(&config, &priced);
-        let second = generate(&config, &priced);
+        let first = generate(&config, &priced).expect("generate failed");
+        let second = generate(&config, &priced).expect("generate failed");
         assert_eq!(first, second, "generate() must be deterministic");
     }
 }

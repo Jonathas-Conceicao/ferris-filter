@@ -72,7 +72,8 @@ fn cmd_generate(output: &str, early_game: bool) -> miette::Result<()> {
     };
 
     // Generate the filter text (pure function — no I/O inside).
-    let generated = emitter::generate(&config, &priced);
+    let generated = emitter::generate(&config, &priced)
+        .map_err(miette::Error::from)?;
 
     // Write LF-only content to the output path.
     // T-02-03: write exactly the user-supplied --output path (no traversal, no shell);

@@ -21,7 +21,7 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
 
 ### v0.2 Declarative Rule Model
 
-- [x] **Phase 5: Rule Schema** — Define the declarative rule model in serde; every condition type is representable in config.json (completed 2026-06-05)
+- [x] **Phase 5: Rule Schema** — Define the declarative rule model in serde; every condition type is representable in config.json (completed 2026-06-05)
 - [ ] **Phase 6: Emitter Rewrite + Migration Parity** — Replace hardcoded emitter with the rule compiler; migrate config.json; re-baseline fixture
 - [ ] **Phase 7: New Capabilities + Docs** — Express the 7 in-game edits as config rules; realign CLAUDE.md to the new model
 
@@ -49,7 +49,9 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
   2. The captured in-game filter (`tests/fixtures/parity-ingame.filter`) exists in the repo as the semantic oracle; a diff tool confirms the migrated generator output matches it block-for-block (reordering permitted, no behavioral differences)
   3. `cargo test` passes with the full suite; `generate_snapshot` and `artifact_guard` pass against the re-baselined `tests/fixtures/seed-universal.filter`
   4. `generate` with `--early-game` and with a live `prices.json` produces correct currency/unique sections unchanged from v0.1 behavior
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 06-01-PLAN.md — Rewrite emitter as a generic rule compiler (emit_rules + When→filter-line mapping + unknown-style hard error); migrate config.json to the rules schema (RULE-03)
+- [ ] 06-02-PLAN.md — Semantic parity test vs the frozen --early-game oracle; re-baseline seed-universal.filter; confirm pricer sections unchanged (MIG-02/03/04)
 
 ### Phase 7: New Capabilities + Docs
 **Goal**: All 6 capability requirements (the 7 in-game edits) are expressible and exercised in `config.json`; CLAUDE.md is realigned to the declarative model with confirmed-status filters
@@ -71,7 +73,7 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
 | 3. Pricing Layer | v0.1 | 4/4 | Complete | 2026-05-25 |
 | 4. Sync | v0.1 | 4/4 | Complete | 2026-05-28 |
 | 5. Rule Schema | v0.2 | 2/2 | Complete    | 2026-06-05 |
-| 6. Emitter Rewrite + Migration Parity | v0.2 | 0/? | Not started | - |
+| 6. Emitter Rewrite + Migration Parity | v0.2 | 0/2 | Planned | - |
 | 7. New Capabilities + Docs | v0.2 | 0/? | Not started | - |
 
 ---

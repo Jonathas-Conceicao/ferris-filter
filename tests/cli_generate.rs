@@ -371,20 +371,28 @@ fn currency_retiering_present() {
     );
 }
 
-/// Semantic parity test — the `--early-game` policy blocks must be semantically equivalent
-/// (order- and comment-insensitive) to the frozen oracle `parity-baseline-earlygame.filter`.
+// NOTE (Phase 7 / Plan 07-02): The `parity_policy_blocks_match_oracle` test that compared
+// `--early-game` output to `tests/fixtures/parity-baseline-earlygame.filter` (the Phase 6
+// pre-edit baseline) has been removed. The 7 CAP edits (Plan 07-01) deliberately changed the
+// policy output, making it permanently mismatched against that old oracle. The pre-edit
+// baseline fixture is kept as a historical artifact only. The Phase 7 parity gate is now
+// `parity_ingame` below, which compares against the updated in-game oracle.
+
+/// Phase 7 parity gate — `generate --early-game` POLICY blocks must be semantically equivalent
+/// (order- and comment-insensitive) to the frozen in-game oracle `parity-ingame.filter`.
 ///
 /// Only the policy section (before `# --- Currency ---`) is compared. The pricer-driven
-/// currency/unique sections are excluded from this test (they are data-driven, not policy).
+/// currency/unique sections are excluded — pricer differences (Vaal Infuser, Tablets absent
+/// in `foo.filter`) are DATA drift from the new game version, not policy edits.
 ///
-/// Satisfies MIG-02 (T-06-04: generator drift guard, T-06-05: re-baseline repudiation guard).
+/// Satisfies CAP-01..06 parity gate (MIG-02 / T-07-04).
 #[test]
-fn parity_policy_blocks_match_oracle() {
+fn parity_ingame() {
     let generated = generate_early_game();
     let oracle = normalize(
         &fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity-baseline-earlygame.filter"
+            "/tests/fixtures/parity-ingame.filter"
         ))
         .unwrap(),
     );
@@ -399,6 +407,59 @@ fn parity_policy_blocks_match_oracle() {
         "policy-block parity mismatch.\n  Only in oracle: {:#?}\n  Only in generated: {:#?}",
         only_in_oracle,
         only_in_generated
+    );
+}
+
+/// Rule-driven cap test — proves that changing a CAP rule value in config.json changes
+/// the emitted filter output, i.e. the generator is declarative, not hardcoded.
+///
+/// Mutates CAP-01/CAP-02's `areaLevel.max` from 75 to 60 (sentinel) in config.json,
+/// regenerates with `--early-game`, and asserts:
+///   - `AreaLevel <= 60` is present (the sentinel value made it through)
+///   - `AreaLevel <= 75` is absent (the original value is gone)
+///
+/// Satisfies CAP-01 rule-driven requirement.
+#[test]
+fn cap_is_rule_driven() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_cap_test_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp cap test dir");
+
+    // Read config.json and mutate the areaLevel.max=75 sentinel to 60.
+    // CAP-01 (build weapons) and CAP-02 (build armour) both use max:75; replacing all is fine.
+    let config_text = std::fs::read_to_string(manifest.join("config.json"))
+        .expect("read config.json");
+    let mutated_config = config_text.replace("\"max\": 75", "\"max\": 60");
+
+    // Write the mutated config + other required fallback files into the temp dir.
+    std::fs::write(dir.join("config.json"), mutated_config).expect("write mutated config.json");
+    for f in ["currency.json", "prices-fallback.json", "tiers-fallback.json"] {
+        std::fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let output = normalize(&std::fs::read_to_string(&out_path).expect("read cap test output"));
+
+    assert!(
+        output.contains("AreaLevel <= 60"),
+        "cap_is_rule_driven: expected 'AreaLevel <= 60' in output (sentinel value), but not found"
+    );
+    assert!(
+        !output.contains("AreaLevel <= 75"),
+        "cap_is_rule_driven: expected 'AreaLevel <= 75' to be absent after mutation, but it is still present"
     );
 }
 

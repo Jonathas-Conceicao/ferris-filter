@@ -187,7 +187,11 @@ impl<'de> Deserialize<'de> for RarityComparator {
         let s = String::deserialize(deserializer)?;
         let s = s.trim();
 
-        // Check for a 2-char operator prefix first.
+        // Strip a leading comparison operator if present; a bare word means `==`.
+        // Any malformed operator (e.g. ">", "><") leaves a non-rarity remainder that
+        // the rarity match below rejects with a clear, case-listing error — so no
+        // fragile byte-slice prefix heuristic is needed (avoids panics on multi-byte
+        // UTF-8 input, and gives lowercase words like "rare" a useful error).
         let (op, rarity_str) = if let Some(rest) = s.strip_prefix(">=") {
             (RarityOp::Gte, rest.trim())
         } else if let Some(rest) = s.strip_prefix("<=") {
@@ -195,17 +199,6 @@ impl<'de> Deserialize<'de> for RarityComparator {
         } else if let Some(rest) = s.strip_prefix("==") {
             (RarityOp::Eq, rest.trim())
         } else {
-            // Detect any other 2-char operator that is not a valid rarity start to give a clear error.
-            // Valid bare rarity words start with 'N', 'M', 'R', 'U' (Normal/Magic/Rare/Unique).
-            if s.len() >= 2 {
-                let prefix = &s[..2];
-                if !matches!(prefix, "No" | "Ma" | "Ra" | "Un") {
-                    return Err(de::Error::custom(format!(
-                        "unknown rarity operator prefix {:?} in {:?}; expected ==, >=, <= or a bare rarity word",
-                        prefix, s
-                    )));
-                }
-            }
             (RarityOp::Eq, s)
         };
 
@@ -215,7 +208,8 @@ impl<'de> Deserialize<'de> for RarityComparator {
             "Rare"   => Rarity::Rare,
             "Unique" => Rarity::Unique,
             other => return Err(de::Error::custom(format!(
-                "unknown rarity {:?}; expected Normal, Magic, Rare, or Unique",
+                "unknown rarity {:?} in rarity comparator; expected Normal, Magic, Rare, or Unique \
+                 (optionally prefixed with ==, >=, or <=)",
                 other
             ))),
         };
@@ -577,6 +571,14 @@ mod tests {
     fn rarity_comparator_rejects_bad_op() {
         let result: Result<RarityComparator, _> = serde_json::from_str(r#""><Rare""#);
         assert!(result.is_err(), "expected error for unknown op '><' in '><Rare', got Ok");
+    }
+
+    #[test]
+    fn rarity_comparator_rejects_multibyte_without_panic() {
+        // Regression: a multi-byte UTF-8 input must produce a clean Err, never a
+        // byte-slice boundary panic (the old `&s[..2]` heuristic panicked here).
+        let result: Result<RarityComparator, _> = serde_json::from_str(r#""日本語""#);
+        assert!(result.is_err(), "expected error for multi-byte input, got Ok");
     }
 
     #[test]

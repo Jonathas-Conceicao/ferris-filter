@@ -488,32 +488,42 @@ mod tests {
 
     #[test]
     fn config_with_rules_and_class_groups_parses() {
-        // Prove that rules + classGroups are additive optional fields: a config parsed from
-        // the real file (no rules/classGroups) has both as None (via config_parses_real_file),
-        // while a config that includes them parses with both as Some.
-        // We inject rules+classGroups by string-replacement into the real config.json.
-        let with_rules = CONFIG_JSON.replacen(
-            r#""fallthrough":"#,
-            r#""rules": [
-    { "style": "F" },
-    { "name": "Test rule", "style": "E", "when": { "class": ["Staves"] } }
-  ],
-  "classGroups": {
-    "buildWeapons": ["Staves", "Wands", "Foci"]
-  },
-  "fallthrough":"#,
-            1,
-        );
-        let config: Config = serde_json::from_str(&with_rules)
+        // Prove that rules + classGroups parse correctly from the real config.json.
+        // Phase 6 migrated config.json to include a rules array and classGroups map.
+        let config: Config = serde_json::from_str(CONFIG_JSON)
             .expect("config with rules+classGroups should parse");
-        assert!(config.rules.is_some(), "rules should be Some");
-        assert_eq!(config.rules.as_ref().unwrap().len(), 2);
-        assert!(config.class_groups.is_some(), "classGroups should be Some");
+        assert!(config.rules.is_some(), "config.json rules should be Some after Phase 6 migration");
+        assert!(
+            config.rules.as_ref().unwrap().len() >= 13,
+            "config.json should have at least 13 rules (the 13 policy blocks)"
+        );
+        assert!(config.class_groups.is_some(), "classGroups should be Some after Phase 6 migration");
         assert!(config.class_groups.as_ref().unwrap().contains_key("buildWeapons"));
-        // Also confirm baseline (no rules) still has both as None
-        let baseline: Config = serde_json::from_str(CONFIG_JSON).unwrap();
-        assert!(baseline.rules.is_none(), "baseline config should have rules = None");
-        assert!(baseline.class_groups.is_none(), "baseline config should have class_groups = None");
+        // Also confirm a minimal config (no rules/classGroups) parses with both as None.
+        let minimal = r#"{
+            "meta": {"name":"x","palette":"x","background":[0,0,0]},
+            "styles": {
+                "S":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "A":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "B":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "C":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "D":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "E":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "F":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false}
+            },
+            "build": {"weapons":[],"armour":[],"armourTypes":{}},
+            "weaponClasses": [],
+            "armourClasses": [],
+            "flaskCharmClasses": [],
+            "alwaysShow": {"currency":{"style":"x"},"recycle":{"match":"x","style":"Recycle"}},
+            "fallthrough": "x"
+        }"#;
+        let baseline: Config = serde_json::from_str(minimal).unwrap();
+        assert!(baseline.rules.is_none(), "minimal config should have rules = None");
+        assert!(baseline.class_groups.is_none(), "minimal config should have class_groups = None");
     }
 
     #[test]
@@ -689,33 +699,21 @@ mod tests {
 
     #[test]
     fn config_with_rules_round_trips() {
-        // Build a Config JSON with a representative rules array and classGroups, then
-        // serialize and re-deserialize — the two values must be equal (lossless round-trip).
-        let with_rules = CONFIG_JSON.replacen(
-            r#""fallthrough":"#,
-            &format!(
-                r#""rules": {},
-  "classGroups": {{
-    "buildWeapons": ["Staves", "Wands", "Foci"],
-    "buildArmour": ["Body Armours", "Helmets", "Gloves", "Boots"]
-  }},
-  "fallthrough":"#,
-                REPRESENTATIVE_RULES_JSON
-            ),
-            1,
-        );
-        let first: Config = serde_json::from_str(&with_rules)
-            .expect("config with representative rules should parse");
+        // Verify that config.json (which now includes rules + classGroups) round-trips
+        // losslessly: deserialize → serialize → re-deserialize produces equal values.
+        // Phase 6 migrated config.json to include the full 13-rule policy array.
+        let first: Config = serde_json::from_str(CONFIG_JSON)
+            .expect("config with rules should parse");
         let serialized = serde_json::to_string(&first).expect("serialize should succeed");
         let second: Config = serde_json::from_str(&serialized)
             .expect("re-deserialize after round-trip should succeed");
         assert_eq!(first, second, "config with rules did not round-trip losslessly");
 
-        // Spot-check: authored rule order is preserved in the round-tripped value
+        // Spot-check: rules and classGroups are present
         let rules = first.rules.as_ref().unwrap();
-        assert_eq!(rules[0].style, "F");
-        assert_eq!(rules[1].style, "S");
-        assert_eq!(rules[2].style, "unchanged");
+        assert!(rules.len() >= 13, "should have at least 13 policy rules");
+        // First rule should be the recycle rule
+        assert_eq!(rules[0].style, "Recycle", "first rule should be Recycle style");
 
         // classGroups round-tripped
         let groups = first.class_groups.as_ref().unwrap();

@@ -575,6 +575,29 @@ mod tests {
     }
 
     #[test]
+    fn generate_rejects_unknown_style_name() {
+        // RULE-03 / Phase-5 deferral: a rule referencing a style name outside the
+        // closed Styles set must fail generate-time with GenerateError::UnknownStyle
+        // naming the offending style.
+        let (mut config, priced) = load_inputs();
+        config
+            .rules
+            .get_or_insert_with(Vec::new)
+            .push(crate::models::config::Rule {
+                name: Some("bad rule".to_string()),
+                style: "NotATier".to_string(),
+                when: None,
+            });
+        match generate(&config, &priced) {
+            Err(GenerateError::UnknownStyle { style, .. }) => {
+                assert_eq!(style, "NotATier", "error must name the offending style");
+            }
+            Err(other) => panic!("expected UnknownStyle, got {:?}", other),
+            Ok(_) => panic!("expected generate to reject the unknown style 'NotATier'"),
+        }
+    }
+
+    #[test]
     fn generate_no_unique_or_jewels_blocks() {
         let (config, priced) = load_inputs();
         let output = generate(&config, &priced).expect("generate failed");

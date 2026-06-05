@@ -19,7 +19,8 @@ sync extensions are deferred.
 
 ### Rule Engine (RULE)
 
-- [ ] **RULE-01**: Author can define filter policy as an ordered list of rules in `config.json`; the generator emits one `Show`/`Hide` block per rule, in list order, preserving first-match-wins semantics.
+- [x] **RULE-01
+**: Author can define filter policy as an ordered list of rules in `config.json`; the generator emits one `Show`/`Hide` block per rule, in list order, preserving first-match-wins semantics.
 - [x] **RULE-02
 **: Each rule selects its visuals and action by referencing a named style tier (`S`–`F`, `unchanged`, `hidden`, `Recycle`); whether the block is `Show` or `Hide` follows the referenced style's action.
 - [ ] **RULE-03**: The hardcoded gear/armour/otherGear/flask special-casing is removed from the emitter; all gear, flask, charm, recycle, jewellery, and unidentified policy is produced from the rule list (no class-specific code paths remain in emission).
@@ -50,7 +51,8 @@ sync extensions are deferred.
 
 ### Migration & Parity (MIG)
 
-- [ ] **MIG-01**: `config.json` is migrated to the new rule schema; serde models validate it with field-path + expected-type errors, consistent with v0.1 input modeling.
+- [x] **MIG-01
+**: `config.json` is migrated to the new rule schema; serde models validate it with field-path + expected-type errors, consistent with v0.1 input modeling.
 - [ ] **MIG-02**: `generate` on the migrated config produces a filter semantically equivalent to the current in-game filter (game folder) — block reordering allowed; any difference beyond ordering is surfaced for author review.
 - [ ] **MIG-03**: The current in-game filter is captured into the repo as the parity oracle, and the artifact-guard/snapshot fixture (`tests/fixtures/seed-universal.filter`) is re-baselined deliberately to the new generator output with the full test suite passing.
 - [ ] **MIG-04**: Price-driven currency/category and unique sections continue to be emitted from sync data, unchanged by the redesign (including the `--early-game` fallback path).

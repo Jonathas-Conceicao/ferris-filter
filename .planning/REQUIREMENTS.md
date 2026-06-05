@@ -71,8 +71,25 @@ sync extensions are deferred.
 
 ## Traceability
 
-*(Filled by the roadmap — maps each REQ-ID to the phase that delivers it.)*
-
 | REQ-ID | Phase |
 |--------|-------|
-| _pending roadmap_ | — |
+| RULE-01 | Phase 5 |
+| RULE-02 | Phase 5 |
+| RULE-03 | Phase 6 |
+| COND-01 | Phase 5 |
+| COND-02 | Phase 5 |
+| COND-03 | Phase 5 |
+| COND-04 | Phase 5 |
+| COND-05 | Phase 5 |
+| COND-06 | Phase 5 |
+| CAP-01 | Phase 7 |
+| CAP-02 | Phase 7 |
+| CAP-03 | Phase 7 |
+| CAP-04 | Phase 7 |
+| CAP-05 | Phase 7 |
+| CAP-06 | Phase 7 |
+| MIG-01 | Phase 5 |
+| MIG-02 | Phase 6 |
+| MIG-03 | Phase 6 |
+| MIG-04 | Phase 6 |
+| DOC-01 | Phase 7 |

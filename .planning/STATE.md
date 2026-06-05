@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
-status: defining-requirements
+status: ready
 last_updated: "2026-06-05T00:00:00.000Z"
-last_activity: 2026-06-05 -- v0.2 milestone started
+last_activity: 2026-06-05 -- v0.2 roadmap created (Phases 5-7)
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-05)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.2 Declarative Rule Model — defining requirements (`/gsd-new-milestone`)
+**Current focus:** v0.2 Declarative Rule Model — Phase 5: Rule Schema
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 5 — Rule Schema
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-05 — Milestone v0.2 (Declarative Rule Model) started
+Status: Not started
+Last activity: 2026-06-05 — Roadmap created; Phase 5 ready to plan
 
-Progress: [          ] 0%
+Progress: [          ] 0%  (0/3 phases, 0/0 plans)
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Recent decisions affecting current work:
 - v0.2 acceptance bar: `generate` on the migrated config must be SEMANTICALLY EQUIVALENT to the filter currently installed in the game folder (block reordering OK; other behavioral changes surfaced for author review). The in-game `universal.filter` (game folder, fully functional) is the parity oracle and should be captured into the repo as a fixture.
 - v0.2 confirmed (author tested live, in-game filter fully functional): `UnidentifiedItemTier` and base-defence filters (`BaseArmour`/`BaseEvasion`/`BaseEnergyShield`) work in PoE2 — update CLAUDE.md's "unverified" caveats.
 - v0.2 scope: config-flexibility only. CLI surface (`generate`/`sync`/`install`) unchanged; price-driven currency/category + unique sections untouched. Generate QoL + sync extensions deferred.
+- v0.2 build order: (1) schema/rule-model design (Phase 5), (2) emitter rewrite + migrate config.json + re-baseline fixture (Phase 6), (3) new capabilities + docs (Phase 7). The schema is the linchpin.
 - Planning: poe.ninja PoE2 API surface is UNRESOLVED — spike is the first task of Phase 4 (sync), not a separate phase (granularity = coarse).
 - Planning: insta snapshot of generated universal.filter is the Phase 2 acceptance criterion; byte-identical reproduction is non-negotiable.
 - D-11: Styles named-fields struct replaces HashMap<String, Style> for deterministic tier access
@@ -91,11 +92,11 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- Phase 5 first: capture the current in-game `universal.filter` from `C:\Users\jonat\OneDrive\Documentos\My Games\Path of Exile 2` into `tests/fixtures/parity-ingame.filter` as the parity oracle (MIG-03 prerequisite).
 
 ### Blockers/Concerns
 
-- None. (The poe.ninja PoE2 API spike — the project's only external unknown — was resolved in Phase 4.)
+- None. (The poe.ninja PoE2 API spike — the project's only external unknown — was resolved in Phase 4. UnidentifiedItemTier + base-defence filters confirmed working in-game.)
 
 ## Deferred Items
 
@@ -110,8 +111,8 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-05-28T02:10:50.969Z
-Stopped at: context exhaustion at 98% (2026-05-28)
+Last session: 2026-06-05
+Stopped at: roadmap created
 Resume file: None
 
-**Planned Phase:** 4 () — 0 plans — 2026-05-25T07:41:13.473Z
+**Next step:** `/gsd-plan-phase 5`

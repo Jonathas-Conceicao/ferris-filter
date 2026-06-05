@@ -21,7 +21,7 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
 
 ### v0.2 Declarative Rule Model
 
-- [ ] **Phase 5: Rule Schema** — Define the declarative rule model in serde; every condition type is representable in config.json
+- [x] **Phase 5: Rule Schema** — Define the declarative rule model in serde; every condition type is representable in config.json (completed 2026-06-05)
 - [ ] **Phase 6: Emitter Rewrite + Migration Parity** — Replace hardcoded emitter with the rule compiler; migrate config.json; re-baseline fixture
 - [ ] **Phase 7: New Capabilities + Docs** — Express the 7 in-game edits as config rules; realign CLAUDE.md to the new model
 
@@ -37,8 +37,8 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
   3. Every condition field (class list, rarity comparator, area-level min/max, base-defence attributes, quality, sockets, UnidentifiedItemTier, BaseType list) deserializes from its JSON representation
   4. A round-trip serialize/deserialize of a rule list produces identical values (no data loss)
 **Plans**: 2 plans
-- [ ] 05-01-PLAN.md - Add rule-schema types (Rule, When, RarityComparator, numeric/area-level/unidentified conditions) + tests
-- [ ] 05-02-PLAN.md - Wire rules + classGroups into Config, drop dead areaLevelBands types, round-trip/parity tests
+- [x] 05-01-PLAN.md - Add rule-schema types (Rule, When, RarityComparator, numeric/area-level/unidentified conditions) + tests
+- [x] 05-02-PLAN.md - Wire rules + classGroups into Config, drop dead areaLevelBands types, round-trip/parity tests
 
 ### Phase 6: Emitter Rewrite + Migration Parity
 **Goal**: The hardcoded `emit_gear_bands` / `emit_flask_charm_bands` special-casing is gone; `generate` compiles the rule list in order; `config.json` is migrated to the new schema and produces a filter semantically equivalent to the currently installed in-game filter; the artifact-guard fixture is re-baselined
@@ -70,7 +70,7 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
 | 2. Static Generate | v0.1 | 3/3 | Complete | 2026-05-24 |
 | 3. Pricing Layer | v0.1 | 4/4 | Complete | 2026-05-25 |
 | 4. Sync | v0.1 | 4/4 | Complete | 2026-05-28 |
-| 5. Rule Schema | v0.2 | 0/? | Not started | - |
+| 5. Rule Schema | v0.2 | 2/2 | Complete    | 2026-06-05 |
 | 6. Emitter Rewrite + Migration Parity | v0.2 | 0/? | Not started | - |
 | 7. New Capabilities + Docs | v0.2 | 0/? | Not started | - |
 

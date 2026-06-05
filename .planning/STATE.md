@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.2
 milestone_name: Declarative Rule Model
-status: verifying
+status: ready_to_plan
 stopped_at: "Completed 05-02-PLAN.md: Config rules field + cleanup"
 last_updated: "2026-06-05T09:26:08.133Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 2
   completed_plans: 2
-  percent: 100
+  percent: 67
 ---
 
 # Project State
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-06-05)
 
 ## Current Position
 
-Phase: 5 (Rule Schema) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
+Phase: 6
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-05
 
 Progress: [██████████] 100%
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 10
+- Total plans completed: 12
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -47,6 +47,7 @@ Progress: [██████████] 100%
 | 01 | 3 | - | - |
 | 02 | 3 | - | - |
 | 03 | 4 | - | - |
+| 5 | 2 | - | - |
 
 **Recent Trend:**
 

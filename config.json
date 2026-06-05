@@ -31,14 +31,6 @@
   "armourClasses": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
   "flaskCharmClasses": ["Life Flasks", "Mana Flasks", "Charms"],
 
-  "areaLevelBands": [
-    { "range": "1-5",   "show": { "weapons": "any rarity", "allArmour": "any rarity" } },
-    { "range": "6-25",  "show": { "weapons": "any rarity", "armour": { "type": "anyNonEvasion", "rarity": "Magic + Rare" }, "otherGear": "Rare", "flasksCharms": "any rarity" } },
-    { "range": "26-45", "show": { "weapons": "Rare only",  "armour": { "type": "esHybrid",      "rarity": "Magic + Rare" }, "otherGear": "Rare", "flasksCharms": "Magic" } },
-    { "range": "46-65", "show": { "weapons": "Rare only",  "armour": { "type": "pureES",        "rarity": "Magic + Rare" }, "flasksCharms": "Magic" } },
-    { "range": "66+",   "show": { "weapons": "Rare only",  "armour": { "type": "pureES",        "rarity": "Magic + Rare" }, "flasksCharms": "Quality only" } }
-  ],
-
   "alwaysShow": {
     "currency": { "style": "tiered S-F (base lists are curated data, kept outside this model)" },
     "recycle":  { "match": "Sockets >= 1 AND Quality >= 1", "style": "Recycle" }

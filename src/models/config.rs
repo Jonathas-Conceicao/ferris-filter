@@ -137,33 +137,6 @@ pub struct Build {
 }
 
 // ---------------------------------------------------------------------------
-// RarityRule enum (D-10)
-// Replaces freeform Option<String> rarity fields in BandShow and ArmourShow.
-// config.json string values stay unchanged; serde renames + alias handle the mapping.
-// ---------------------------------------------------------------------------
-
-/// Closed enum for the rarity rules used in areaLevelBands.
-///
-/// NOTE: config.json uses TWO strings that mean "show Rare":
-///   - `"Rare only"` (used in weapons, bands 26+)
-///   - `"Rare"` (used in otherGear, bands 6-25 and 26-45)
-/// Both emit the identical `Rarity == Rare` condition (verified against universal.filter).
-/// They collapse to ONE variant via a serde alias. Serializing always yields `"Rare only"`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub enum RarityRule {
-    #[serde(rename = "any rarity")]
-    Any,
-    #[serde(rename = "Rare only", alias = "Rare")]
-    RareOnly,
-    #[serde(rename = "Magic + Rare")]
-    MagicPlusRare,
-    #[serde(rename = "Magic")]
-    Magic,
-    #[serde(rename = "Quality only")]
-    QualityOnly,
-}
-
-// ---------------------------------------------------------------------------
 // Rule schema types (v0.2 Declarative Rule Model)
 // ---------------------------------------------------------------------------
 
@@ -378,43 +351,6 @@ pub struct Rule {
 }
 
 // ---------------------------------------------------------------------------
-// AreaLevelBands section
-// ---------------------------------------------------------------------------
-
-/// Armour-show entry used inside a band's `show.armour` field.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ArmourShow {
-    #[serde(rename = "type")]
-    pub armour_type: String,
-    pub rarity: RarityRule,
-}
-
-/// The `show` object inside one area-level band.
-/// All keys are optional; which keys appear determines which rules apply (Phase 2 interprets).
-/// Rarity values are typed as `RarityRule` — the closed enum (D-10).
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct BandShow {
-    pub weapons: Option<RarityRule>,
-    /// Only present in band 1-5 (all armour shown)
-    pub all_armour: Option<RarityRule>,
-    /// Present in bands 6+ (typed armour progression)
-    pub armour: Option<ArmourShow>,
-    /// Other gear (non-build classes), present in some bands
-    pub other_gear: Option<RarityRule>,
-    pub flasks_charms: Option<RarityRule>,
-}
-
-/// One entry in `areaLevelBands`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct AreaLevelBand {
-    pub range: String,
-    pub show: BandShow,
-}
-
-// ---------------------------------------------------------------------------
 // AlwaysShow section
 // ---------------------------------------------------------------------------
 
@@ -470,7 +406,6 @@ pub struct Config {
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
     pub flask_charm_classes: Vec<String>,
-    pub area_level_bands: Vec<AreaLevelBand>,
     pub always_show: AlwaysShow,
     pub fallthrough: String,
     /// Ordered declarative policy rules (RULE-01). Optional during the migration —
@@ -541,7 +476,6 @@ mod tests {
             "weaponClasses": [],
             "armourClasses": [],
             "flaskCharmClasses": [],
-            "areaLevelBands": [],
             "alwaysShow": {"currency":{"style":"x"},"recycle":{"match":"x","style":"Recycle"}},
             "fallthrough": "x",
             "minimip": "typo key"
@@ -603,51 +537,6 @@ mod tests {
         let hide: StyleAction = serde_json::from_str(r#""Hide""#).unwrap();
         assert_eq!(show, StyleAction::Show);
         assert_eq!(hide, StyleAction::Hide);
-    }
-
-    // -----------------------------------------------------------------------
-    // RarityRule tests (D-10)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn rarity_rule_variants_roundtrip() {
-        // "Magic + Rare" deserializes to MagicPlusRare and round-trips back
-        let r: RarityRule = serde_json::from_str(r#""Magic + Rare""#).unwrap();
-        assert_eq!(r, RarityRule::MagicPlusRare);
-        let back = serde_json::to_string(&r).unwrap();
-        assert_eq!(back, r#""Magic + Rare""#);
-    }
-
-    #[test]
-    fn rare_alias_maps_to_rare_only() {
-        // otherGear uses bare "Rare" — must map to RarityRule::RareOnly via the serde alias
-        let r: RarityRule = serde_json::from_str(r#""Rare""#).unwrap();
-        assert_eq!(r, RarityRule::RareOnly);
-    }
-
-    #[test]
-    fn rarity_rule_rejects_unknown() {
-        let result: Result<RarityRule, _> = serde_json::from_str(r#""Legendary""#);
-        assert!(result.is_err(), "expected error for unknown rarity rule 'Legendary', got Ok");
-    }
-
-    #[test]
-    fn rarity_rule_all_variants_parse() {
-        // Verify all five rarity-rule strings from config.json deserialize correctly
-        let any: RarityRule = serde_json::from_str(r#""any rarity""#).unwrap();
-        assert_eq!(any, RarityRule::Any);
-
-        let rare_only: RarityRule = serde_json::from_str(r#""Rare only""#).unwrap();
-        assert_eq!(rare_only, RarityRule::RareOnly);
-
-        let magic_rare: RarityRule = serde_json::from_str(r#""Magic + Rare""#).unwrap();
-        assert_eq!(magic_rare, RarityRule::MagicPlusRare);
-
-        let magic: RarityRule = serde_json::from_str(r#""Magic""#).unwrap();
-        assert_eq!(magic, RarityRule::Magic);
-
-        let quality: RarityRule = serde_json::from_str(r#""Quality only""#).unwrap();
-        assert_eq!(quality, RarityRule::QualityOnly);
     }
 
     // -----------------------------------------------------------------------

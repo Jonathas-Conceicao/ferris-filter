@@ -46,7 +46,7 @@ Full detail: [milestones/v0.1-ROADMAP.md](milestones/v0.1-ROADMAP.md)
 **Requirements**: RULE-03, MIG-02, MIG-03, MIG-04
 **Success Criteria** (what must be TRUE):
   1. `src/emitter.rs` contains no class-specific code paths for gear, flasks, charms, recycle, or jewellery — all policy blocks are produced by iterating the rule list
-  2. The captured in-game filter (`tests/fixtures/parity-ingame.filter`) exists in the repo as the semantic oracle; a diff tool confirms the migrated generator output matches it block-for-block (reordering permitted, no behavioral differences)
+  2. The frozen pre-edit oracle (`tests/fixtures/parity-baseline-earlygame.filter`) exists in the repo; a semantic comparison confirms the migrated generator's `--early-game` policy output matches it block-for-block (reordering permitted, no behavioral differences). [The full in-game filter incl. the 7 edits — `foo.filter` — is the Phase 7 oracle.]
   3. `cargo test` passes with the full suite; `generate_snapshot` and `artifact_guard` pass against the re-baselined `tests/fixtures/seed-universal.filter`
   4. `generate` with `--early-game` and with a live `prices.json` produces correct currency/unique sections unchanged from v0.1 behavior
 **Plans**: 2 plans

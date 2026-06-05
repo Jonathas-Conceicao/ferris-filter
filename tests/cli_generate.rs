@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::str::contains;
+use std::collections::BTreeSet;
 use std::fs;
 
 /// Normalize CRLF line endings to LF.
@@ -47,6 +48,119 @@ fn generate_on_seed() -> String {
         .success();
 
     normalize(&fs::read_to_string(&out_path).expect("read generated filter"))
+}
+
+/// Run `generate --early-game` hermetically against the committed fallback fixtures.
+///
+/// Copies `config.json`, `currency.json`, `prices-fallback.json`, `tiers-fallback.json`
+/// from the manifest dir into a fresh temp dir and runs `generate --early-game --output <out>`.
+/// Returns CRLF-normalized output. Mirrors `generate_on_seed` for the early-game input set.
+fn generate_early_game() -> String {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_gen_eg_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp early-game gen dir");
+    for f in ["config.json", "currency.json", "prices-fallback.json", "tiers-fallback.json"] {
+        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+
+    normalize(&fs::read_to_string(&out_path).expect("read early-game generated filter"))
+}
+
+/// Split filter text into blocks.
+///
+/// A block starts at a line beginning with `Show` or `Hide` and runs until the next blank line.
+/// Returns each block as `Vec<String>` containing ONLY meaningful lines:
+/// - The header keyword ("Show" or "Hide") as the first element
+/// - Indented condition/action lines (trimmed), excluding pure-comment lines and blank lines
+///
+/// The `# ...` comment text on the header line is dropped — only "Show" or "Hide" is kept.
+fn split_blocks(filter: &str) -> Vec<Vec<String>> {
+    let mut blocks: Vec<Vec<String>> = Vec::new();
+    let mut current: Option<Vec<String>> = None;
+
+    for line in filter.lines() {
+        if line.starts_with("Show") || line.starts_with("Hide") {
+            // Save any in-progress block
+            if let Some(blk) = current.take() {
+                if !blk.is_empty() {
+                    blocks.push(blk);
+                }
+            }
+            // Start new block with just the keyword
+            let keyword = if line.starts_with("Show") { "Show" } else { "Hide" };
+            current = Some(vec![keyword.to_string()]);
+        } else if let Some(ref mut blk) = current {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                // Blank line ends current block
+                blocks.push(current.take().unwrap());
+            } else if !trimmed.starts_with('#') {
+                // Non-comment, non-blank line: collect it trimmed
+                blk.push(trimmed.to_string());
+            }
+            // Pure-comment lines (# ...) are dropped
+        }
+        // Lines before first Show/Hide (header comments) are ignored
+    }
+    // Flush any trailing block (no trailing blank line after last block)
+    if let Some(blk) = current {
+        if !blk.is_empty() {
+            blocks.push(blk);
+        }
+    }
+
+    blocks
+}
+
+/// Normalize a block for order-insensitive comparison.
+///
+/// Returns the block with the Show/Hide keyword first (unchanged) and all subsequent
+/// condition/action lines sorted alphabetically. Two blocks with the same disposition
+/// and same SET of condition/action lines will normalize to equal.
+fn normalize_block(block: &[String]) -> Vec<String> {
+    if block.is_empty() {
+        return Vec::new();
+    }
+    let keyword = block[0].clone();
+    let mut rest: Vec<String> = block[1..].to_vec();
+    rest.sort();
+    let mut result = vec![keyword];
+    result.extend(rest);
+    result
+}
+
+/// Extract policy blocks (before the pricer section) as a normalized set.
+///
+/// Truncates the filter at the first `# --- Currency ---` marker (everything from
+/// that line onward is pricer-driven and excluded). Then splits into blocks,
+/// normalizes each, and returns as a `BTreeSet` (order-insensitive across blocks).
+fn policy_blocks(filter: &str) -> BTreeSet<Vec<String>> {
+    // Find the pricer section cut marker
+    let cut_marker = "# --- Currency ---";
+    let policy_text = if let Some(pos) = filter.find(cut_marker) {
+        &filter[..pos]
+    } else {
+        filter
+    };
+
+    split_blocks(policy_text)
+        .into_iter()
+        .map(|blk| normalize_block(&blk))
+        .collect()
 }
 
 /// `ferrisfilter --help` lists both subcommands.
@@ -254,5 +368,91 @@ fn currency_retiering_present() {
     assert!(
         !c_line.contains("\"Exalted Orb\""),
         "Currency C BaseType should NOT contain \"Exalted Orb\" (re-tiered to D); got: {c_line}"
+    );
+}
+
+/// Semantic parity test — the `--early-game` policy blocks must be semantically equivalent
+/// (order- and comment-insensitive) to the frozen oracle `parity-baseline-earlygame.filter`.
+///
+/// Only the policy section (before `# --- Currency ---`) is compared. The pricer-driven
+/// currency/unique sections are excluded from this test (they are data-driven, not policy).
+///
+/// Satisfies MIG-02 (T-06-04: generator drift guard, T-06-05: re-baseline repudiation guard).
+#[test]
+fn parity_policy_blocks_match_oracle() {
+    let generated = generate_early_game();
+    let oracle = normalize(
+        &fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/parity-baseline-earlygame.filter"
+        ))
+        .unwrap(),
+    );
+    let gen_set = policy_blocks(&generated);
+    let oracle_set = policy_blocks(&oracle);
+
+    // Surface differences explicitly for author review (anything beyond pure reordering).
+    let only_in_oracle: Vec<_> = oracle_set.difference(&gen_set).collect();
+    let only_in_generated: Vec<_> = gen_set.difference(&oracle_set).collect();
+    assert!(
+        only_in_oracle.is_empty() && only_in_generated.is_empty(),
+        "policy-block parity mismatch.\n  Only in oracle: {:#?}\n  Only in generated: {:#?}",
+        only_in_oracle,
+        only_in_generated
+    );
+}
+
+/// Confirms the pricer-driven section is present and uses the correct format.
+///
+/// Asserts that the seed output contains the `# --- Currency ---` marker and the
+/// Currency tier blocks, and that pricer blocks use `Class == "Stackable Currency"`
+/// (with `==`) distinct from policy blocks' bare `Class`. This guards that the rewrite
+/// did not accidentally route currency through `emit_rules`.
+///
+/// Satisfies MIG-04.
+#[test]
+fn pricer_section_present_and_unchanged() {
+    let output = generate_on_seed();
+
+    // The currency section marker must be present
+    assert!(
+        output.contains("# --- Currency ---"),
+        "pricer section marker '# --- Currency ---' not found in output"
+    );
+
+    // Currency tier blocks S through F must exist
+    for tier in &["Currency S", "Currency A", "Currency B", "Currency C", "Currency D", "Currency E", "Currency F"] {
+        assert!(
+            output.contains(&format!("Show # {}", tier)),
+            "Currency tier block '{}' not found in output",
+            tier
+        );
+    }
+
+    // Pricer blocks use Class == "Stackable Currency" (with ==), not bare Class
+    assert!(
+        output.contains("Class == \"Stackable Currency\""),
+        "pricer currency blocks must use 'Class == \"Stackable Currency\"' (with ==); not found"
+    );
+
+    // Pricer blocks use BaseType == (with ==)
+    assert!(
+        output.contains("BaseType =="),
+        "pricer currency blocks must use 'BaseType ==' (with ==); not found"
+    );
+
+    // Policy blocks must NOT use Class == for gear/flask blocks (bare Class, no ==)
+    // Verify the recycle block uses bare Class (no ==) — confirming emit_rules is used for policy
+    let policy_section = {
+        let cut = "# --- Currency ---";
+        if let Some(pos) = output.find(cut) {
+            &output[..pos]
+        } else {
+            &output[..]
+        }
+    };
+    assert!(
+        !policy_section.contains("Class == "),
+        "policy section must not contain 'Class == ' (bare Class is correct for policy blocks)"
     );
 }

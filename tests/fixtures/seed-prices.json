@@ -111,15 +111,6 @@
       "div": null
     },
     {
-      "name": "Vaal Infuser",
-      "baseType": "Vaal Infuser",
-      "class": "Stackable Currency",
-      "category": "Currency",
-      "exalt": null,
-      "chaos": 220.0,
-      "div": null
-    },
-    {
       "name": "Architect's Orb",
       "baseType": "Architect's Orb",
       "class": "Stackable Currency",
@@ -3042,69 +3033,6 @@
       "category": "Soul Cores",
       "exalt": null,
       "chaos": 2.0,
-      "div": null
-    },
-    {
-      "name": "Ritual Precursor Tablet",
-      "baseType": "Ritual Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 30.0,
-      "div": null
-    },
-    {
-      "name": "Abyss Precursor Tablet",
-      "baseType": "Abyss Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 30.0,
-      "div": null
-    },
-    {
-      "name": "Breach Precursor Tablet",
-      "baseType": "Breach Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 10.0,
-      "div": null
-    },
-    {
-      "name": "Expedition Precursor Tablet",
-      "baseType": "Expedition Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 10.0,
-      "div": null
-    },
-    {
-      "name": "Delirium Precursor Tablet",
-      "baseType": "Delirium Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 10.0,
-      "div": null
-    },
-    {
-      "name": "Precursor Tablet",
-      "baseType": "Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 10.0,
-      "div": null
-    },
-    {
-      "name": "Overseer Precursor Tablet",
-      "baseType": "Overseer Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": null,
-      "chaos": 10.0,
       "div": null
     },
     {

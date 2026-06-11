@@ -136,7 +136,7 @@ Show # Currency S
 
 Show # Currency A
   Class == "Stackable Currency"
-  BaseType == "Divine Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Vaal Infuser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
+  BaseType == "Divine Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
   PlayEffect Purple
   MinimapIcon 1 Purple Circle
   SetTextColor 189 147 249 255
@@ -795,28 +795,6 @@ Show # Soul Cores D
   SetTextColor 139 233 253 255
   SetBackgroundColor 40 42 54 255
   SetBorderColor 139 233 253 255
-
-# --- Tablets ---
-Show # Tablet B
-  Class == "Tablet"
-  BaseType == "Ritual Precursor Tablet" "Abyss Precursor Tablet"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
-
-Show # Tablet C
-  Class == "Tablet"
-  BaseType == "Breach Precursor Tablet" "Expedition Precursor Tablet" "Delirium Precursor Tablet" "Precursor Tablet" "Overseer Precursor Tablet"
-  PlayEffect Yellow
-  MinimapIcon 2 Yellow Circle
-  SetTextColor 241 250 140 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 241 250 140 255
-  PlayAlertSound 2 200
 
 # --- Vault Keys ---
 Show # Vault Keys S

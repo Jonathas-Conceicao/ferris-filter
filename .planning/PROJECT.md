@@ -8,18 +8,14 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Current Milestone: v0.2 Declarative Rule Model
+## Current State
 
-**Goal:** Replace the generator's hardcoded gear/flask band logic with a general, declarative rule schema in `config.json`, so any class + level-range + rarity (+ defence/quality/sockets/unidentified-tier/base-type) policy is expressible in config — making the fully-functional in-game filter reproducible from config alone.
+**Shipped:** v0.2 Declarative Rule Model (2026-06-12) — the generator's hardcoded gear/flask band
+logic is replaced by a general, declarative `rules` schema in `config.json`; the full in-game
+filter is now reproducible from config. `generate` + `sync` + `install` all live. ~154 tests green.
 
-**Target features:**
-- **General rule engine** — config expresses an ordered list of show/hide rules (conditions → style/action); the emitter compiles them in order (first-match-wins preserved), deleting the weapons/armour/otherGear/flask special-casing.
-- **Condition vocabulary** — a rule can combine class list, rarity comparator, area-level min/max, base-defence (Armour/Evasion/ES), Quality, Sockets, UnidentifiedItemTier, and BaseType list.
-- **The 7 in-game edits expressible as config** — weapons Magic+Rare ≤75, armour upper cap, flask Magic+Rare + rarity-capped flask Hide, Charms surfaced independently (Normal ≥78), jewellery hide, unidentified-tier highlight.
-- **Migration + parity** — `config.json` ported to the new schema, reproducing the current fully-functional in-game filter (output **semantically equivalent**, reordering allowed); fixture/snapshot re-baselined deliberately. Price-driven currency/category + unique sections stay untouched.
-- **Spec docs realigned** — CLAUDE.md updated to the rule model; UnidentifiedItemTier + base-defence filters marked confirmed.
-
-**Acceptance bar:** Running `generate` on the migrated config produces a filter semantically equivalent to the filter currently installed in the game folder (block reordering is acceptable; any other behavioral change is surfaced for author review).
+**Next milestone:** not yet started — run `/gsd-new-milestone`. Leading candidates (see Deferred):
+the BaseType-matched economy-tiered Tablets category, and Generate QoL (`--dry-run`/`--diff`/verbose).
 
 ## Requirements
 
@@ -33,17 +29,18 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 - [x] **Live price sync** — `ferrisfilter sync` fetches PoE2 economy data from poe.ninja (currency, uniques, tracked drops; uncut gems ≥ 18), resolves the league per `--standard`/`--hc` (none = softcore trade), records league + timestamp, and writes `prices.json` atomically (failure-safe; never corrupts an existing file). *(Validated in Phase 4: Sync — v0.1)*
 - [x] **Install** — `ferrisfilter install` copies a generated filter into the game config folder (`--dest`/`--input` overrides), replacing the old `install.bat`. *(Shipped in v0.1)*
 - [x] **Early-league fallback** — committed `prices-fallback.json` + `tiers-fallback.json` (exalt-denominated) drive `generate` when `prices.json` is absent/empty (with a warning) or `--early-game` is passed; cross-rates are derived from the anchor orbs. *(Shipped in v0.1)*
+- [x] **Declarative rule engine** — `config.json` `rules` array (ordered, first-match-wins) compiled by `emit_rules`; the hardcoded gear/armour/otherGear/flask special-casing is gone. *(Validated in Phase 6 — v0.2)*
+- [x] **Condition vocabulary** — rules combine class list, compact rarity comparator, areaLevel min/max, base-defence/Quality/Sockets, BaseType list, and UnidentifiedItemTier; serde-validated with field-path errors. *(Validated in Phase 5 — v0.2)*
+- [x] **The 7 in-game edits expressible as config** — weapon/armour caps, flask/charm Magic+Rare + rarity-bounded Hide, Normal charms ≥78, jewellery hide, unidentified-tier highlight (new `unidentified` style). *(Validated in Phase 7 — v0.2)*
+- [x] **Config migration + semantic parity** — `config.json` migrated to rules; `generate --early-game` reproduces the in-game filter with zero non-reorder policy differences; `seed-universal.filter` re-baselined; price-driven sections untouched. *(Validated in Phase 6/7 — v0.2)*
 
 ### Active
 
-<!-- v0.2 Declarative Rule Model — scoped in REQUIREMENTS.md (RULE / CAP / MIG IDs). -->
+<!-- No active milestone — run /gsd-new-milestone to scope the next one (candidates below). -->
 
-- [ ] Declarative rule engine — ordered show/hide rules compiled by the emitter (RULE-*)
-- [ ] Condition vocabulary — class/rarity/area-level/defence/quality/sockets/unID-tier/base-type (RULE-*)
-- [ ] The 7 in-game edits expressible as config (CAP-*)
-- [ ] Config migration + semantic parity with the in-game filter; baseline re-locked; price sections untouched (MIG-*)
+_None — v0.2 shipped. Next milestone not yet scoped._
 
-### Deferred (post-v0.2 candidates)
+### Deferred (next-milestone candidates)
 
 - [ ] **BaseType-matched, economy-tiered priced category** (e.g. Tablets): support a priced category that emits `BaseType ==` with **no `Class` line** (tablets have no usable PoE2 filter class). Needs a `Tablets` type in `mapping.json` (spike: confirm poe.ninja serves tablet prices), pricer/emitter support for class-less category blocks, and corrected base names (`Ritual Tablet`/`Abyss Tablet`/…, no "Precursor"). Tablets currently fall through to game default after the v0.2 removal of the invalid `Class "Tablet"` rows.
 - [ ] Generate QoL: `--dry-run`, `--diff`, `-v/--verbose` rule logging, stale-`prices.json` warning (GENX-01..04)
@@ -88,6 +85,11 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 | Price-tier valuable uniques; untracked uniques fall through | Only relevant-value uniques deserve rules | ✓ Good (v0.1) |
 | Both `generate` and `sync` in v1 | Author wants the full loop usable from the start | ✓ Good (v0.1) |
 | Milestone git workflow (branch per milestone) | Clean, reviewable history per milestone | ✓ Good (v0.1) |
+| Declarative `rules` array replaces hardcoded emitter bands | One general model; any class/level/rarity/condition policy expressible in config | ✓ Good (v0.2) |
+| Compact rarity string (`">=Magic"`) over an object | Author preference; terser config authoring | ✓ Good (v0.2) |
+| Semantic (order/comment-insensitive) parity, not byte-for-byte | Block reordering is irrelevant in PoE2; lets the rule model reshape output freely | ✓ Good (v0.2) |
+| Price-driven currency/unique sections stay pricer-driven (not rules) | Keep the v0.1 economy pipeline untouched; rules cover policy only | ✓ Good (v0.2) |
+| Tablets have no usable filter `Class` → removed broken rows | `Class "Tablet"` failed to load in-game; BaseType-only category deferred | ⚠️ Revisit (v0.2 — deferred re-add) |
 
 ## Git Workflow
 
@@ -119,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-05 — started v0.2 (Declarative Rule Model) milestone*
+*Last updated: 2026-06-12 — after v0.2 (Declarative Rule Model) milestone shipped*

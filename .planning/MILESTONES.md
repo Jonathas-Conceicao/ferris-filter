@@ -1,5 +1,37 @@
 # Milestones
 
+## v0.2 — Declarative Rule Model
+
+**Shipped:** 2026-06-12
+**Phases:** 5-7 (3) · **Plans:** 7 · **Commits:** ~38 · **Tests:** 154 green
+**Timeline:** 2026-06-05 → 2026-06-12
+
+**Delivered:** Replaced the generator's hardcoded gear/flask band logic with a general,
+declarative rule schema in `config.json`, making the fully-functional in-game filter
+reproducible from config alone.
+
+**Key accomplishments:**
+
+1. **Rule schema** — an ordered `rules` array (first-match-wins) with a full `when` condition
+   vocabulary (class, compact rarity comparator, areaLevel min/max, base-defence/quality/sockets,
+   BaseType, UnidentifiedItemTier) + `classGroups` aliases; serde-validated, unknown-style hard error.
+2. **Emitter rewrite** — generic `emit_rules` compiler replaces the hardcoded
+   `emit_gear_bands`/`emit_flask_charm_bands`/`emit_recycle`; `config.json` migrated to rules;
+   the dead `areaLevelBands` model removed.
+3. **Migration parity** — `generate --early-game` reproduces the pre-edit baseline and (with the
+   capability rules) the author's in-game filter with zero non-reorder policy differences;
+   `seed-universal.filter` re-baselined; pricer currency/unique sections untouched.
+4. **New capabilities as config** — the 7 in-game edits (weapon/armour caps, flask/charm
+   Magic+Rare + rarity-bounded Hide, Normal charms ≥78, jewellery hide, unidentified-tier
+   highlight via a new `unidentified` style).
+5. **Docs + fix** — CLAUDE.md realigned to the rule model (UnidentifiedItemTier + base-defence
+   confirmed); dropped the invalid `Class "Tablet"` rows that failed to load in-game.
+
+**Known deferred items at close:** BaseType-matched, economy-tiered Tablets category (needs
+pricer/emitter support for class-less category blocks). Generate QoL + sync extensions deferred.
+
+**Archives:** [v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md) · [v0.2-REQUIREMENTS.md](milestones/v0.2-REQUIREMENTS.md) · [v0.2-MILESTONE-AUDIT.md](milestones/v0.2-MILESTONE-AUDIT.md)
+
 ## v0.1 — Initial Release
 
 **Shipped:** 2026-05-28

@@ -186,6 +186,48 @@ fn generate_help_shows_output_flag() {
         .stdout(contains("--output"));
 }
 
+/// `generate --config <path>` reads the config from a non-default filename.
+///
+/// Copies the committed inputs into a temp dir but names the config `custom-config.json`
+/// (the default `config.json` is intentionally absent), then runs
+/// `generate --config custom-config.json`. Success proves the flag is honored — without it
+/// the loader would look for `config.json` and fail.
+#[test]
+fn generate_config_flag_reads_alternate_path() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_cfg_flag_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp cfg-flag dir");
+    // config.json copied under a non-default name; default name deliberately absent.
+    fs::copy(manifest.join("config.json"), dir.join("custom-config.json"))
+        .expect("copy config.json as custom-config.json");
+    for f in ["currency.json", "prices-fallback.json", "tiers-fallback.json"] {
+        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--config",
+            "custom-config.json",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(out_path.exists(), "generate --config did not produce output");
+}
+
 /// Regression: `--standard`/`--hc` are reachable from the bare `sync` command, so
 /// `ferrisfilter sync --standard` parses. They previously lived on the `prices` subcommand,
 /// which made `sync --standard` fail with "unexpected argument '--standard'".

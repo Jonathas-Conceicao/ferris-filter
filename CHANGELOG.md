@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`generate --config <path>`** — point the `generate` subcommand at a config file other than
+  the default `config.json`. Defaults to `config.json`, so existing invocations are unchanged.
 
 ## [0.2.0] - 2026-06-12
 

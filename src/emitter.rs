@@ -20,7 +20,8 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified")]
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified, craftable \
+             (craftable must be defined in the config's styles object)")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
         rule_index: usize,
@@ -55,7 +56,12 @@ pub fn generate(config: &Config, priced: &PricedData) -> Result<String, Generate
 /// Resolve a style name to the matching `&Style` in `Styles`.
 ///
 /// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
-/// S/A/B/C/D/E/F/Recycle/unchanged/hidden.
+/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/unidentified/craftable.
+///
+/// FUTURE (style flexibility): this match hardcodes the style vocabulary, so adding a style
+/// means editing this arm and the `Styles` struct. To let any config define and use new
+/// styles, back `Styles` with a name→`Style` map and resolve by lookup here instead of a
+/// match. See the matching FUTURE note on `models::config::Styles`.
 fn resolve_style<'a>(
     styles: &'a Styles,
     style: &str,
@@ -74,6 +80,9 @@ fn resolve_style<'a>(
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
         "unidentified" => &styles.unidentified,
+        // Optional style — present only when the config defines it. A rule referencing
+        // "craftable" against a config that omits it is treated as an unknown style.
+        "craftable" if styles.craftable.is_some() => styles.craftable.as_ref().unwrap(),
         other => {
             return Err(GenerateError::UnknownStyle {
                 rule_index: idx,

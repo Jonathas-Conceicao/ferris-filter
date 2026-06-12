@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`generate --config <path>`** — point the `generate` subcommand at a config file other than
   the default `config.json`. Defaults to `config.json`, so existing invocations are unchanged.
+- **Optional `craftable` style** — the `styles` object accepts an additional `craftable` style
+  (green text/border on a light background, etc.) that rules can reference. It is optional and
+  absent from the default `config.json`, so the committed filter and fixtures are unchanged. The
+  style vocabulary is still hardcoded in the model — making styles fully config-driven is tracked
+  as backlog Phase 999.1.
 
 ## [0.2.0] - 2026-06-12
 

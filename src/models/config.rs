@@ -106,6 +106,14 @@ pub struct Style {
 /// All style tiers as named fields — deterministic access, no HashMap lookup.
 /// The JSON object keys are the original uppercase tier names; serde renames handle the mapping.
 /// `deny_unknown_fields` ensures an unknown tier key (e.g. a typo "SS") fails deserialization.
+///
+/// FUTURE (style flexibility): the set of style names is hardcoded here and in
+/// `emitter::resolve_style`. A config cannot define an arbitrary new style without a code
+/// change (`craftable` was added this way). To make styles fully config-driven, replace these
+/// named fields with a `HashMap<String, Style>` (or keep S–F/unchanged/hidden as the known
+/// palette and add an open `extra: HashMap<String, Style>`), have `resolve_style` look up by
+/// name in that map, and validate at load-time that every `rule.style` resolves. See the
+/// matching FUTURE note in `emitter::resolve_style`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Styles {
@@ -120,6 +128,11 @@ pub struct Styles {
     pub unchanged: Style,
     pub hidden: Style,
     pub unidentified: Style,
+    /// Optional extra style for craftable-base highlighting (used by custom configs such as
+    /// `ssf_icewolf_config.json`). Absent in the default `config.json`, so it stays `None`
+    /// there — additive, no impact on the committed filter or fixtures.
+    #[serde(default)]
+    pub craftable: Option<Style>,
 }
 
 // ---------------------------------------------------------------------------

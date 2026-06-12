@@ -11,103 +11,103 @@
 # items, waystones, trials, unidentified — no rules touch them).
 # Currency base lists are curated data kept outside the model (carried over here).
 
-#============================================================
-# alwaysShow.recycle  ->  styles.Recycle
-#============================================================
-
-Show # recycle: sockets + quality salvage  [alwaysShow.recycle -> styles.Recycle]
-  Sockets >= 1
+Show # recycle: sockets + quality salvage
   Quality >= 1
+  Sockets >= 1
   PlayEffect Green
   MinimapIcon 2 Green Cross
   SetTextColor 80 250 123 255
   SetBackgroundColor 40 42 54 255
   SetBorderColor 80 250 123 255
 
-#============================================================
-# areaLevelBands — gear
-# Shown gear = styles.unchanged (Show, no restyle, protects it from the
-# trailing Hide). The Hide fallback = styles.hidden. Uniques excluded from
-# the fallback so they fall through.
-#============================================================
-
-# [areaLevelBands "1-5".allArmour] all armour, any rarity
-# (build weapons come from the weapon rules below; rares of any class from the <=45 otherGear rule)
-Show # band <=5: all armour any rarity  [areaLevelBands "1-5".allArmour -> styles.unchanged]
+Show # band <=5: all armour any rarity
   AreaLevel <= 5
   Class "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
 
-# [areaLevelBands "6-25".weapons] build weapons, any rarity
-Show # band 6-25: build weapons any rarity  [build.weapons -> styles.unchanged]
+Show # band 6-25: build weapons any rarity
   AreaLevel <= 25
   Class "Staves" "Wands" "Foci"
 
-# [areaLevelBands 26+ .weapons "Rare only"] build weapons, Rare, any level
-Show # bands 26+: build weapons Rare only  [build.weapons -> styles.unchanged]
+Show # bands 26+: build weapons Magic+Rare (capped)
+  AreaLevel <= 75
   Class "Staves" "Wands" "Foci"
-  Rarity == Rare
+  Rarity >= Magic
 
-# [areaLevelBands "6-25".armour anyNonEvasion, Magic+Rare]
-Show # band 6-25: build armour (non-evasion)  [build.armour/anyNonEvasion -> styles.unchanged]
+Show # band 6-25: build armour (non-evasion)
   AreaLevel <= 25
   Class "Body Armours" "Helmets" "Gloves" "Boots"
   BaseEvasion 0
   Rarity >= Magic
 
-# [areaLevelBands "26-45".armour esHybrid, Magic+Rare]
-Show # band 26-45: build armour (ES / hybrid)  [build.armour/esHybrid -> styles.unchanged]
+Show # band 26-45: build armour (ES / hybrid)
   AreaLevel >= 26
   AreaLevel <= 45
   Class "Body Armours" "Helmets" "Gloves" "Boots"
-  BaseEnergyShield > 0
   BaseEvasion 0
+  BaseEnergyShield > 0
   Rarity >= Magic
 
-# [areaLevelBands "46-65"+"66+".armour pureES, Magic+Rare]
-Show # bands 46+: build armour (pure ES)  [build.armour/pureES -> styles.unchanged]
+Show # bands 46+: build armour (pure ES)
   AreaLevel >= 46
+  AreaLevel <= 75
   Class "Body Armours" "Helmets" "Gloves" "Boots"
-  BaseEnergyShield > 0
   BaseArmour 0
   BaseEvasion 0
+  BaseEnergyShield > 0
   Rarity >= Magic
 
-# [areaLevelBands "6-25"+"26-45".otherGear "Rare"] any other equipment, Rare, <=45
-Show # bands <=45: any other Rare gear  [areaLevelBands.otherGear -> styles.unchanged]
+Show # unidentified high-tier: weapons + armour
+  Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+  UnidentifiedItemTier >= 4
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
+
+Show # unidentified high-tier: jewellery
+  Class "Rings" "Amulets" "Belts"
+  UnidentifiedItemTier >= 4
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
+
+Show # bands <=45: any other Rare gear
   AreaLevel <= 45
   Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
   Rarity == Rare
 
-# [fallthrough guard] hide remaining equipment (uniques excluded -> fall through)
-Hide # gear fallback: hide unmatched equipment  [styles.hidden]
+Hide # gear fallback: hide unmatched equipment
   Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
   Rarity <= Rare
   SetFontSize 21
   DisableDropSound
 
-#============================================================
-# areaLevelBands — flasks & charms  [flaskCharmClasses]
-#============================================================
+Hide # jewellery fallback: hide low-rarity Rings/Amulets/Belts
+  Class "Rings" "Amulets" "Belts"
+  Rarity <= Rare
+  SetFontSize 21
+  DisableDropSound
 
-# quality always shown (this is the ">65 Quality only" tier)
-Show # flasks/charms: quality always  [areaLevelBands.flasksCharms -> styles.unchanged]
-  Quality >= 1
+Show # flasks/charms: quality always
   Class "Life Flasks" "Mana Flasks" "Charms"
+  Quality >= 1
 
-# [areaLevelBands "1-5"+"6-25".flasksCharms "any rarity"]
-Show # bands <=25: all flasks/charms  [styles.unchanged]
+Show # bands <=25: all flasks/charms
   AreaLevel <= 25
   Class "Life Flasks" "Mana Flasks" "Charms"
 
-# [areaLevelBands "26-45"+"46-65".flasksCharms "Magic"]
-Show # bands 26-65: magic flasks/charms  [styles.unchanged]
+Show # bands 26-65: magic flasks/charms
   AreaLevel <= 65
   Class "Life Flasks" "Mana Flasks" "Charms"
-  Rarity == Magic
+  Rarity >= Magic
 
-# remaining flasks/charms hidden
-Hide # flasks/charms fallback  [styles.hidden]
+Show # bands 78+: normal charms
+  AreaLevel >= 78
+  Class "Charms"
+  Rarity == Normal
+
+Hide # flasks/charms fallback
   Class "Life Flasks" "Mana Flasks" "Charms"
+  Rarity <= Magic
   SetFontSize 21
   DisableDropSound
 
@@ -132,7 +132,7 @@ Show # Currency S
 
 Show # Currency A
   Class == "Stackable Currency"
-  BaseType == "Divine Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Vaal Infuser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
+  BaseType == "Divine Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
   PlayEffect Purple
   MinimapIcon 1 Purple Circle
   SetTextColor 189 147 249 255
@@ -791,28 +791,6 @@ Show # Soul Cores D
   SetTextColor 139 233 253 255
   SetBackgroundColor 40 42 54 255
   SetBorderColor 139 233 253 255
-
-# --- Tablets ---
-Show # Tablet B
-  Class == "Tablet"
-  BaseType == "Ritual Precursor Tablet" "Abyss Precursor Tablet"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
-
-Show # Tablet C
-  Class == "Tablet"
-  BaseType == "Breach Precursor Tablet" "Expedition Precursor Tablet" "Delirium Precursor Tablet" "Precursor Tablet" "Overseer Precursor Tablet"
-  PlayEffect Yellow
-  MinimapIcon 2 Yellow Circle
-  SetTextColor 241 250 140 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 241 250 140 255
-  PlayAlertSound 2 200
 
 # --- Vault Keys ---
 Show # Vault Keys S

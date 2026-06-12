@@ -1,0 +1,549 @@
+# universal.filter
+# GENERATED FROM config.json — edit the model, not this file (then regenerate).
+#
+# Block tags link each rule back to the model:
+#   [alwaysShow.K]          -> a level-independent highlight
+#   [areaLevelBands "R".K]  -> band R, show-key K
+#   [styles.X]              -> the style entry applied
+#
+# Philosophy: HIDE what we don't want, STYLE the few highlights, let everything
+# else fall through to the game default (uniques, jewels, gems, jewellery, quest
+# items, waystones, trials, unidentified — no rules touch them).
+# Currency base lists are curated data kept outside the model (carried over here).
+
+#============================================================
+# alwaysShow.recycle  ->  styles.Recycle
+#============================================================
+
+Show # recycle: sockets + quality salvage  [alwaysShow.recycle -> styles.Recycle]
+  Sockets >= 1
+  Quality >= 1
+  PlayEffect Green
+  MinimapIcon 2 Green Cross
+  SetTextColor 80 250 123 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 80 250 123 255
+
+#============================================================
+# areaLevelBands — gear
+# Shown gear = styles.unchanged (Show, no restyle, protects it from the
+# trailing Hide). The Hide fallback = styles.hidden. Uniques excluded from
+# the fallback so they fall through.
+#============================================================
+
+# [areaLevelBands "1-5".allArmour] all armour, any rarity
+# (build weapons come from the weapon rules below; rares of any class from the <=45 otherGear rule)
+Show # band <=5: all armour any rarity  [areaLevelBands "1-5".allArmour -> styles.unchanged]
+  AreaLevel <= 5
+  Class "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+
+# [areaLevelBands "6-25".weapons] build weapons, any rarity
+Show # band 6-25: build weapons any rarity  [build.weapons -> styles.unchanged]
+  AreaLevel <= 25
+  Class "Staves" "Wands" "Foci"
+
+# [areaLevelBands 26+ .weapons "Rare only"] build weapons, Rare, any level
+Show # bands 26+: build weapons Rare only  [build.weapons -> styles.unchanged]
+  Class "Staves" "Wands" "Foci"
+  AreaLevel <= 75
+  Rarity >= Magic
+
+# [areaLevelBands "6-25".armour anyNonEvasion, Magic+Rare]
+Show # band 6-25: build armour (non-evasion)  [build.armour/anyNonEvasion -> styles.unchanged]
+  AreaLevel <= 25
+  Class "Body Armours" "Helmets" "Gloves" "Boots"
+  BaseEvasion 0
+  Rarity >= Magic
+
+# [areaLevelBands "26-45".armour esHybrid, Magic+Rare]
+Show # band 26-45: build armour (ES / hybrid)  [build.armour/esHybrid -> styles.unchanged]
+  AreaLevel >= 26
+  AreaLevel <= 45
+  Class "Body Armours" "Helmets" "Gloves" "Boots"
+  BaseEnergyShield > 0
+  BaseEvasion 0
+  Rarity >= Magic
+
+# [areaLevelBands "46-65"+"66+".armour pureES, Magic+Rare]
+Show # bands 46+: build armour (pure ES)  [build.armour/pureES -> styles.unchanged]
+  AreaLevel >= 46
+  AreaLevel <= 75
+  Class "Body Armours" "Helmets" "Gloves" "Boots"
+  BaseEnergyShield > 0
+  BaseArmour 0
+  BaseEvasion 0
+  Rarity >= Magic
+
+Show
+  UnidentifiedItemTier >= 4
+  Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
+
+Show
+  UnidentifiedItemTier >= 4
+  Class "Rings" "Amulets" "Belts"
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
+
+
+# [areaLevelBands "6-25"+"26-45".otherGear "Rare"] any other equipment, Rare, <=45
+Show # bands <=45: any other Rare gear  [areaLevelBands.otherGear -> styles.unchanged]
+  AreaLevel <= 45
+  Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+  Rarity == Rare
+
+# [fallthrough guard] hide remaining equipment (uniques excluded -> fall through)
+Hide # gear fallback: hide unmatched equipment  [styles.hidden]
+  Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+  Rarity <= Rare
+  SetFontSize 21
+  DisableDropSound
+
+Hide
+  Class "Rings" "Amulets" "Belts"
+  Rarity <= Rare
+  SetFontSize 21
+  DisableDropSound
+
+#============================================================
+# areaLevelBands — flasks & charms  [flaskCharmClasses]
+#============================================================
+
+# quality always shown (this is the ">65 Quality only" tier)
+Show # flasks/charms: quality always  [areaLevelBands.flasksCharms -> styles.unchanged]
+  Quality >= 1
+  Class "Life Flasks" "Mana Flasks" "Charms"
+
+# [areaLevelBands "1-5"+"6-25".flasksCharms "any rarity"]
+Show # bands <=25: all flasks/charms  [styles.unchanged]
+  AreaLevel <= 25
+  Class "Life Flasks" "Mana Flasks" "Charms"
+
+# [areaLevelBands "26-45"+"46-65".flasksCharms "Magic"]
+Show # bands 26-65: magic flasks/charms  [styles.unchanged]
+  AreaLevel <= 65
+  Class "Life Flasks" "Mana Flasks" "Charms"
+  Rarity >= Magic
+
+# [areaLevelBands "26-45"+"46-65".flasksCharms "Magic"]
+Show # bands 26-65: magic flasks/charms  [styles.unchanged]
+  AreaLevel >= 78
+  Class "Charms"
+  Rarity == Normal
+
+# remaining flasks/charms hidden
+Hide # flasks/charms fallback  [styles.hidden]
+  Class "Life Flasks" "Mana Flasks" "Charms"
+  SetFontSize 21
+  DisableDropSound
+  Rarity <= Magic
+
+#============================================================
+# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]
+# Each block's tier letter = the styles.<tier> applied. Base lists are
+# curated data carried over from the prior filter (not stored in the model).
+# Gems are intentionally omitted (fall through to game default).
+#============================================================
+
+# --- Currency ---
+Show # Currency S
+  Class == "Stackable Currency"
+  BaseType == "Divine Orb" "Mirror of Kalandra" "Hinekora's Lock" "Fracturing Orb" "Albino Rhoa Feather" "Crystallised Corruption" "Vaal Cultivation Orb" "Ancient Infuser" "Perfect Chaos Orb" "Orb of Extraction" "Perfect Exalted Orb" "Architect's Orb" "Perfect Jeweller's Orb" "Greater Jeweller's Orb" "Perfect Regal Orb" "Core Destabiliser" "Orb of Annulment"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Currency A
+  Class == "Stackable Currency"
+  BaseType == "Chaos Orb" "Orb of Chance" "Greater Chaos Orb" "Gemcutter's Prism" "Perfect Orb of Augmentation" "Glassblower's Bauble" "Greater Regal Orb" "Artificer's Orb" "Arcanist's Etcher" "Perfect Orb of Transmutation" "Greater Exalted Orb" "Blacksmith's Whetstone"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Currency B
+  Class == "Stackable Currency"
+  BaseType == "Exalted Orb" "Chance Shard" "Armourer's Scrap" "Vaal Orb" "Orb of Alchemy"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Currency C
+  Class == "Stackable Currency"
+  BaseType == "Lesser Jeweller's Orb"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Currency D
+  Class == "Stackable Currency"
+  BaseType == "Artificer's Shard"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Currency E
+  Class == "Stackable Currency"
+  BaseType == "Regal Orb" "Orb of Augmentation" "Orb of Transmutation" "Greater Orb of Transmutation" "Greater Orb of Augmentation" "Regal Shard"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Currency F
+  Class == "Stackable Currency"
+  BaseType == "Transmutation Shard" "Scroll of Wisdom"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Abyssal Eyes ---
+Show # Abyssal Eyes S
+  Class == "Augment"
+  BaseType == "Tecrod's Gaze" "Kurgal's Gaze" "Ulaman's Gaze" "Amanamu's Gaze"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+# --- Ancient Bones ---
+Show # Ancient Bones S
+  Class == "Stackable Currency"
+  BaseType == "Ancient Jawbone" "Ancient Collarbone" "Ancient Rib" "Gnawed Collarbone" "Preserved Cranium"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Ancient Bones A
+  Class == "Stackable Currency"
+  BaseType == "Preserved Jawbone" "Preserved Rib" "Preserved Collarbone" "Gnawed Rib"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Ancient Bones B
+  Class == "Stackable Currency"
+  BaseType == "Gnawed Jawbone"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+# --- Breach ---
+Show # Breach S
+  Class == "Stackable Currency"
+  BaseType == "Reaver Catalyst" "Sibilant Catalyst" "Neural Catalyst" "Esh's Catalyst" "Tul's Catalyst" "Chayula's Catalyst"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Breach A
+  Class == "Stackable Currency"
+  BaseType == "Xoph's Catalyst" "Skittering Catalyst" "Adaptive Catalyst" "Breach Splinter" "Carapace Catalyst" "Uul-Netol's Catalyst" "Flesh Catalyst"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+# --- Delirium ---
+Show # Delirium S
+  Class == "Stackable Currency"
+  BaseType == "Concentrated Liquid Isolation" "Concentrated Liquid Suffering" "Concentrated Liquid Fear" "Liquid Despair" "Liquid Disgust"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Delirium A
+  Class == "Stackable Currency"
+  BaseType == "Diluted Liquid Greed" "Liquid Envy" "Diluted Liquid Guilt" "Liquid Paranoia" "Simulacrum Splinter"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Delirium B
+  Class == "Stackable Currency"
+  BaseType == "Diluted Liquid Ire"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+# --- Expedition ---
+Show # Expedition S
+  Class == "Expedition Logbooks"
+  BaseType == "Expedition Logbook"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Expedition S
+  Class == "Stackable Currency"
+  BaseType == "Runic Splinter"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Expedition B
+  Class == "Stackable Currency"
+  BaseType == "Exotic Coinage"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Expedition C
+  Class == "Stackable Currency"
+  BaseType == "Black Scythe Artifact" "Broken Circle Artifact" "Sun Artifact"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Expedition E
+  Class == "Stackable Currency"
+  BaseType == "Order Artifact"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+# --- Idols ---
+Show # Idols S
+  Class == "Augment"
+  BaseType == "Fox Idol" "Idol of Eeshta" "Idol of Grold" "Idol of Thruldana" "Idol of Maxarius" "Rabbit Idol" "Idol of Ralakesh" "Idol of Sirrius" "Primate Idol" "Idol of Egrin" "Wolf Idol" "Boar Idol" "Bear Idol" "Snake Idol" "Stag Idol" "Cat Idol"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Idols A
+  Class == "Augment"
+  BaseType == "Ox Idol" "Owl Idol"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+# --- Map Fragments & Pinnacle Keys ---
+Show # Pinnacle Keys S
+  Class == "Pinnacle Keys"
+  BaseType == "Tertiary Calamity Fragment" "Secondary Calamity Fragment" "Primary Calamity Fragment" "Ancient Crisis Fragment" "Weathered Crisis Fragment" "Faded Crisis Fragment"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Map Fragments S
+  Class == "Map Fragments"
+  BaseType == "Deadly Fate" "Victorious Fate" "Cowardly Fate" "Kulemak's Invitation"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Trial Coins C
+  Class == "Trial Coins"
+  BaseType == "Djinn Barya"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Inscribed Ultimatum C
+  Class == "Inscribed Ultimatum"
+  BaseType == "Inscribed Ultimatum"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+# --- Omens ---
+Show # Omen S
+  Class == "Omen"
+  BaseType == "Omen of Dextral Annulment" "Omen of Sinistral Erasure" "Omen of Dextral Erasure" "Omen of Sinistral Annulment" "Omen of Whittling" "Omen of Light" "Omen of Chance" "Omen of Sanctification" "Omen of the Blessed" "Omen of Corruption" "Omen of Abyssal Echoes" "Omen of Dextral Crystallisation" "Omen of the Sovereign" "Omen of Answered Prayers" "Omen of Reinforcements" "Omen of Sinistral Crystallisation" "Omen of Bartering" "Omen of Recombination" "Omen of the Hunt" "Omen of Catalysing Exaltation" "Omen of Putrefaction" "Omen of Dextral Exaltation" "Omen of Sinistral Exaltation" "Omen of Dextral Necromancy" "Omen of the Ancients" "Omen of Chaotic Monsters"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Omen A
+  Class == "Omen"
+  BaseType == "Omen of Chaotic Quantity" "Omen of Secret Compartments" "Omen of Sinistral Necromancy" "Omen of Chaotic Rarity" "Omen of Greater Exaltation" "Omen of Amelioration" "Omen of Refreshment" "Omen of the Blackblooded" "Omen of Resurgence"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Omens B
+  Class == "Stackable Currency"
+  BaseType == "Petition Splinter"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Omen C
+  Class == "Omen"
+  BaseType == "Omen of the Liege"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Omen E
+  Class == "Omen"
+  BaseType == "Omen of Gambling"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+# --- Soul Cores ---
+Show # Soul Cores S
+  Class == "Augment"
+  BaseType == "Guatelitzi's Thesis" "Quipolatl's Thesis" "Jiquani's Thesis" "Xopec's Soul Core of Power" "Soul Core of Quipolatl" "Opiloti's Soul Core of Assault" "Citaqualotl's Thesis" "Guatelitzi's Soul Core of Endurance" "Soul Core of Jiquani" "Soul Core of Azcapa" "Soul Core of Zalatl" "Estazunti's Soul Core of Convalescence" "Quipolatl's Soul Core of Flow" "Hayoxi's Soul Core of Heatproofing" "Soul Core of Cholotl" "Atmohua's Soul Core of Retreat" "Tacati's Soul Core of Affliction" "Soul Core of Atmohua" "Tzamoto's Soul Core of Ferocity" "Zalatl's Soul Core of Insulation" "Cholotl's Soul Core of War" "Soul Core of Citaqualotl" "Topotante's Soul Core of Dampening" "Xipocado's Soul Core of Dominion" "Soul Core of Puhuarte" "Soul Core of Tacati" "Citaqualotl's Soul Core of Foulness" "Soul Core of Ticaba" "Soul Core of Zantipi" "Soul Core of Xopec"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Soul Cores A
+  Class == "Augment"
+  BaseType == "Uromoti's Soul Core of Attenuation" "Soul Core of Tzamoto" "Soul Core of Topotante" "Soul Core of Opiloti"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+# --- Vault Keys ---
+Show # Vault Keys S
+  Class == "Vault Keys"
+  BaseType == "Azmeri Reliquary Key" "The Trialmaster's Reliquary Key" "Zarokh's Reliquary Key: Against the Darkness" "Zarokh's Reliquary Key: Temporalis" "Tangmazu's Reliquary Key" "Olroth's Reliquary Key" "The Arbiter's Reliquary Key" "Xesht's Reliquary Key" "Ritualistic Reliquary Key" "Zarokh's Reliquary Key: Sandstorm Visage" "Zarokh's Reliquary Key: Blessed Bonds" "Zarokh's Reliquary Key: Sekhema's Resolve"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Vault Keys A
+  Class == "Vault Keys"
+  BaseType == "Twilight Reliquary Key"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+# --- Incubators ---
+Show # Incubators A
+  Class == "Incubators"
+  BaseType == "Vaal Siphoner"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300

@@ -129,15 +129,6 @@
       "div": null
     },
     {
-      "name": "Vaal Infuser",
-      "baseType": "Vaal Infuser",
-      "class": "Stackable Currency",
-      "category": "Currency",
-      "exalt": 20,
-      "chaos": null,
-      "div": null
-    },
-    {
       "name": "Perfect Jeweller's Orb",
       "baseType": "Perfect Jeweller's Orb",
       "class": "Stackable Currency",
@@ -1119,15 +1110,6 @@
       "div": null
     },
     {
-      "name": "Ritual Precursor Tablet",
-      "baseType": "Ritual Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": 20,
-      "chaos": null,
-      "div": null
-    },
-    {
       "name": "Azmeri Reliquary Key",
       "baseType": "Azmeri Reliquary Key",
       "class": "Vault Keys",
@@ -1623,42 +1605,6 @@
       "div": null
     },
     {
-      "name": "Abyss Precursor Tablet",
-      "baseType": "Abyss Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": 2.5,
-      "chaos": null,
-      "div": null
-    },
-    {
-      "name": "Breach Precursor Tablet",
-      "baseType": "Breach Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": 2.5,
-      "chaos": null,
-      "div": null
-    },
-    {
-      "name": "Expedition Precursor Tablet",
-      "baseType": "Expedition Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": 2.5,
-      "chaos": null,
-      "div": null
-    },
-    {
-      "name": "Delirium Precursor Tablet",
-      "baseType": "Delirium Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": 2.5,
-      "chaos": null,
-      "div": null
-    },
-    {
       "name": "Twilight Reliquary Key",
       "baseType": "Twilight Reliquary Key",
       "class": "Vault Keys",
@@ -1735,24 +1681,6 @@
       "baseType": "Petition Splinter",
       "class": "Stackable Currency",
       "category": "Omens",
-      "exalt": 1,
-      "chaos": null,
-      "div": null
-    },
-    {
-      "name": "Precursor Tablet",
-      "baseType": "Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
-      "exalt": 1,
-      "chaos": null,
-      "div": null
-    },
-    {
-      "name": "Overseer Precursor Tablet",
-      "baseType": "Overseer Precursor Tablet",
-      "class": "Tablet",
-      "category": "Tablets",
       "exalt": 1,
       "chaos": null,
       "div": null

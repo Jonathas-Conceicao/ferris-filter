@@ -22,8 +22,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 
 | Path | Purpose |
 |------|---------|
-| `filter-model.json` | **Source of truth.** Compact policy model the filter is generated from: `styles` (the Dracula tier palette + `unchanged`/`hidden`), `build` (weapon/armour classes + defence-type taper), `areaLevelBands` (per-level show logic), and `alwaysShow` (currency, recycle). Edit this, then regenerate. |
-| `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each block is tagged with its model path (e.g. `[areaLevelBands "6-25".weapons -> styles.unchanged]`). |
+| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `styles` (the Dracula tier palette + `unchanged`/`hidden`/`unidentified`), `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` and `styles`, then regenerate. |
+| `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each policy block is headed `Show # <rule name>` (from the `name` field in `config.json`). |
 | `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. |
 | `tests/fixtures/seed-prices.json`, `tests/fixtures/seed-universal.filter` | **Committed test fixtures** — the frozen seed prices + its generated filter. These are the test oracle (`include_str!` unit tests + `generate_snapshot`/`artifact_guard`). Regenerate the `.filter` fixture only after a deliberate generator change. |
 | `prices-fallback.json` + `tiers-fallback.json` (repo root) | **Committed early-league fallback pair**, always used *together* (their values are calibrated to each other). `generate` loads them instead of `prices.json`/`tiers.json` when `prices.json` is absent/empty (with a warning) or when `--early-game` is passed. Tier membership comes from a poe2filter.com export; cutoffs are **exalt-denominated** (`unit: "exalt"`) so Divine isn't pinned to the A floor. Every base — orbs included — is priced in **exalt at its tier floor** (Divine 20→S, Chaos 2.5→A, Exalt 1→B). No stored rates: `pricer::derive_rates` reads the three anchor orbs (items[0..2]) and expresses them relative to the Chaos Orb (`exalt_in_chaos = value(Exalt)/value(Chaos)` etc.), so quoting the orbs in exalt is enough. The same code on live chaos-quoted data (Chaos = 1c) reproduces the old numbers. The three anchors must share one unit. |
@@ -33,10 +33,11 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | `CLAUDE.md` | This file — the filter-syntax reference so we rarely need to re-fetch the docs. |
 
 > **Design philosophy (current):** Hide what we don't want, style the few highlights, and let
-> everything else fall through to the game default. Uniques, jewels, gems, jewellery, quest
-> items, waystones, trials, and unidentified items have **no rules** — they show natively.
-> The detailed tier/progression prose further down predates `filter-model.json`; when it
-> conflicts with the model, **the model wins** (that section needs reconciling).
+> everything else fall through to the game default. Uniques, jewels, gems, quest items,
+> waystones, and trials have **no rules** — they show natively. Jewellery, unidentified
+> high-tier items, and equipment are covered by explicit rules in the `config.json` `rules`
+> array. `config.json` is the authoritative model — the reconciliation of the old
+> hardcoded-band description with the actual code is complete as of v0.2.
 
 Source folder for filters in-game (where they must be copied to be usable):
 `C:\Users\jonat\OneDrive\Documentos\My Games\Path of Exile 2`
@@ -102,6 +103,8 @@ Show # Human description (optional-slug)
 - `StackSize` — for stackable currency.
 - `WaystoneTier` — PoE2 map (Waystone) tier.
 - `BaseArmour` / `BaseEvasion` / `BaseEnergyShield` — base defence values.
+- `UnidentifiedItemTier` — confirmed PoE2 (author-tested, v0.2): highlights high-tier
+  unidentified items (e.g. `UnidentifiedItemTier >= 4`). Used by the unidentified rules.
 - `GemLevel`, `MapTier` (PoE1), `MemoryStrands`, etc. — exist in the grammar but verify
   PoE2 applicability before relying on them.
 
@@ -198,54 +201,97 @@ red `255 85 85` · yellow `241 250 140`. (Source: dracula/dracula-theme.)
   to native game style. There is still **no blanket restyle of all `Rarity == Unique`**; only
   curated/priced bases are touched. (Caveat: a `BaseType` match highlights every unique on that
   base, since PoE2 filters cannot target a unique by name.)
-- **Unwanted items are hidden, not deleted.** They drop to **tier F**, which uses `Hide` —
-  off the screen by default but **revealable by holding Alt** in-game. The `Hide` blocks keep
-  their style actions (native rarity color, small font 21, `DisableDropSound`) so an Alt-reveal
-  renders them in the de-emphasized look, not the game default. No color repaint, no black bg.
-  Tier-F `Hide` currently applies to **equipment** (`gear-hide-remaining`) and the
-  **flask/charm progression catch-all** (`flasks-charms-hide-remaining`). Jewellery
-  (rings/amulets/belts) is kept `Show` (de-emphasized) so it stays visible — its
-  `*-hidden-*` slugs are legacy names, not the current behavior.
+- **Unwanted items are hidden, not deleted.** The `hidden` style uses `Hide` — off the screen
+  by default but **revealable by holding Alt** in-game. Hidden blocks keep no color overrides
+  (native rarity color), font 21, and `DisableDropSound`, so an Alt-reveal renders them
+  de-emphasized, not in the game default. The `hidden` style currently applies to equipment
+  (gear fallback rule), jewellery (rings/amulets/belts fallback rule), and the flask/charm
+  fallback rule.
 
-**Flasks & charms** share one matched `AreaLevel` ladder (native rarity color throughout):
-`≤25` show all rarities · `26–65` show **Magic** only · `>65` show **Quality ≥ 1** only.
-Quality flasks/charms always show (they cover the >65 tier); everything else falls to the
-`flasks-charms-hide-remaining` `Hide`. The curated `charms-high-ilevel` crafting bases are an
-exception shown above the ladder.
+**Flasks & charms** have three show rules (native rarity color throughout): quality `≥1` always
+show (highest priority); `AreaLevel ≤25` show all rarities; `AreaLevel ≤65` show `Magic` or
+better (`>=Magic`). Deep endgame (AreaLevel ≥78) surfaces Normal-rarity charms. Everything else
+falls to the `hidden` flask/charm fallback rule.
 
 **Jewels** (`Class "Jewels"`) are always shown — every rarity, every level — at native rarity
 color, font 32, with a cyan diamond minimap icon (`jewels-all`).
 - **Recycle** = items with **both `Sockets >= 1` and `Quality >= 1`**. Shown green regardless
-  of zone level, placed before the F catch-all so it wins.
+  of zone level; the Recycle rule is first in the rules array so it wins before any hide rule.
 
-## Single-filter AreaLevel progression
+## Declarative rule model
 
-`universal.filter` works at every level via an `AreaLevel` ladder (no separate leveling/endgame
-files). Blocks ordered above the F catch-all:
+`universal.filter` is generated by compiling the `rules` array in `config.json`. This is the
+authoritative description of how the filter is produced (v0.2+). There is no separate
+leveling/endgame file — a single generated `universal.filter` handles all area levels because
+the rules themselves carry `areaLevel` conditions.
 
-All shown gear keeps its **native rarity color**; the column below is what gets *surfaced*
-(larger font), not a recolor.
+### Rules array
 
-| AreaLevel | Shown (larger font, native color) | Falls to F (hidden, Alt-viewable) |
+`rules` is an **ordered array** of rule objects; the first matching rule wins
+(first-match-wins, identical to how the filter engine evaluates blocks). Each rule compiles to
+exactly one `Show` or `Hide` block — the disposition is determined by the `action` field of the
+referenced style. A rule with no `when` is a catch-all that matches everything.
+
+```json
+{ "name": "band <=5: all armour any rarity", "style": "unchanged",
+  "when": { "areaLevel": { "max": 5 }, "class": ["Body Armours", "Helmets", ...] } }
+```
+
+### `when` condition vocabulary
+
+All fields are optional. All present conditions must match (AND semantics within a rule).
+
+| Field | JSON type | Emitted filter condition |
 |---|---|---|
-| **≤ 5** | All equipment, any rarity | — |
-| **6–20** | My-type Magic + all Rares | off-type Normal/Magic |
-| **20–45** | Build gear (my type) + all Rares | off-type Normal/Magic |
-| **45+** | Build gear only | off-type Rares too (demoted to F-hidden) |
+| `class` | `["ClassName", ...]` | `Class "ClassName" "ClassName" ...` (bare, match-any) |
+| `rarity` | compact string | `Rarity == Rare` / `Rarity >= Magic` / `Rarity <= Rare` (bare value = `==`) |
+| `areaLevel` | `{ "min": N, "max": N }` | `AreaLevel >= N` and/or `AreaLevel <= N` |
+| `baseArmour` | `{ "eq": N }` / `{ "min": N }` | `BaseArmour N` / `BaseArmour >= N` |
+| `baseEvasion` | `{ "eq": N }` / `{ "min": N }` | `BaseEvasion N` / `BaseEvasion >= N` |
+| `baseEnergyShield` | `{ "eq": N }` / `{ "min": N }` | `BaseEnergyShield N` / `BaseEnergyShield >= N` |
+| `quality` | `{ "min": N }` | `Quality >= N` |
+| `sockets` | `{ "min": N }` | `Sockets >= N` |
+| `baseType` | `["Base Name", ...]` | `BaseType == "Base Name" "Base Name" ...` |
+| `unidentifiedTier` | `{ "min": N }` | `UnidentifiedItemTier >= N` |
 
-**"My armour type" tapers with level** (detected via base-defence conditions):
-- `≤25`: ES **+** Armour **+** ES/Armour hybrid → `BaseEvasion 0`
-- `26–45`: ES **+** ES/Armour hybrid → `BaseEnergyShield > 0` and `BaseEvasion 0`
-- `45+`: full ES only → `BaseEnergyShield > 0`, `BaseArmour 0`, `BaseEvasion 0`
+Note: `min: 1` on a defence attribute emits `> 0` (e.g. `BaseEnergyShield > 0`), matching the
+oracle filter syntax. The `max` field on `NumericCondition` emits `<= max` (available for
+future use).
 
-Build **weapons** (Staves, Wands, Foci) follow their own ladder: **all rarities ≤25**, then
-**Rare only** above 25 (Magic/Normal fall to the gear F-hide). Other caster off-hands
-(Sceptres, Talismans) are shown Magic + Rare at all levels. All native rarity color, surfaced
-via font size (Rare font 32, Magic/mixed font 30).
+> Confirmed working in-game (author-tested, v0.2): PoE2 honors
+> `BaseArmour`/`BaseEvasion`/`BaseEnergyShield` as base-defence filters and
+> `UnidentifiedItemTier` as a threshold condition. (The recycle `Sockets>=1 & Quality>=1`
+> threshold remains a tuning knob, not a correctness question.)
 
-> Open verification items (test in-game, tune freely): whether PoE2 honors
-> `BaseEnergyShield`/`BaseArmour`/`BaseEvasion` as base-defence filters, and whether the
-> recycle `Sockets>=1 & Quality>=1` threshold is too broad.
+### Named styles
+
+The `styles` object defines all named styles. An unknown style name in a rule is a hard error
+at generate-time. Current styles:
+
+| Name | Action | What it does |
+|---|---|---|
+| `S` | Show | Pink text/border, Dracula bg, font 37, Pink beam, Pink circle minimap, custom sound uwu.mp3 |
+| `A` | Show | Purple text/border, Dracula bg, font 37, Purple beam, Purple circle minimap, custom sound uwu.mp3 |
+| `B` | Show | Red text/border, Dracula bg, font 37, Red beam, Red circle minimap, alert sound |
+| `C` | Show | Yellow text/border, Dracula bg, no font override, Yellow beam, Yellow circle minimap, alert sound |
+| `D` | Show | Cyan text/border, Dracula bg, no font override, White beam, White circle minimap |
+| `E` | Show | White text/border, Dracula bg, font 29 |
+| `F` | Show | White text/border, Dracula bg, font 25 (de-emphasized; used as fallback before a `hidden` rule) |
+| `Recycle` | Show | Green text/border, Dracula bg, Green beam, Green cross minimap |
+| `unchanged` | Show | No color/font/minimap/beam overrides — native rarity color and game defaults |
+| `hidden` | Hide | No color overrides, font 21, DisableDropSound — Alt-reveals as de-emphasized |
+| `unidentified` | Show | No color overrides (native rarity), Orange beam, Orange Kite minimap, alert sound |
+
+### `classGroups`
+
+`classGroups` is a documentation-only alias map (e.g. `"buildWeapons": ["Staves","Wands","Foci"]`).
+It is **not consumed by the compiler** — rules inline their full class lists in `when.class`.
+Use `classGroups` as a reference when authoring new rules to keep class lists consistent.
+
+### Fallthrough
+
+Any item not matched by a rule is left to the game default (uniques, jewels, gems, quest
+items, waystones, trials, etc.). See the `"fallthrough"` field in `config.json` for the note.
 
 ## Authoring conventions for this repo
 - New filters derive from the curated item lists in `reference-old-filters/end_endgame.filter`

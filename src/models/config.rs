@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de;
 
 // ---------------------------------------------------------------------------
 // Closed-vocabulary enums (D-07)
@@ -118,6 +119,7 @@ pub struct Styles {
     #[serde(rename = "Recycle")] pub recycle: Style,
     pub unchanged: Style,
     pub hidden: Style,
+    pub unidentified: Style,
 }
 
 // ---------------------------------------------------------------------------
@@ -136,67 +138,211 @@ pub struct Build {
 }
 
 // ---------------------------------------------------------------------------
-// RarityRule enum (D-10)
-// Replaces freeform Option<String> rarity fields in BandShow and ArmourShow.
-// config.json string values stay unchanged; serde renames + alias handle the mapping.
+// Rule schema types (v0.2 Declarative Rule Model)
 // ---------------------------------------------------------------------------
 
-/// Closed enum for the rarity rules used in areaLevelBands.
+/// The PoE2 item rarity tiers in ordinal order (Normal < Magic < Rare < Unique).
 ///
-/// NOTE: config.json uses TWO strings that mean "show Rare":
-///   - `"Rare only"` (used in weapons, bands 26+)
-///   - `"Rare"` (used in otherGear, bands 6-25 and 26-45)
-/// Both emit the identical `Rarity == Rare` condition (verified against universal.filter).
-/// They collapse to ONE variant via a serde alias. Serializing always yields `"Rare only"`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub enum RarityRule {
-    #[serde(rename = "any rarity")]
-    Any,
-    #[serde(rename = "Rare only", alias = "Rare")]
-    RareOnly,
-    #[serde(rename = "Magic + Rare")]
-    MagicPlusRare,
-    #[serde(rename = "Magic")]
+/// JSON values are PascalCase matching the variant names (e.g. `"Rare"`).
+/// `PartialOrd`/`Ord` allow comparisons such as `rarity >= Magic` in Phase 6 emit logic.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Rarity {
+    Normal,
     Magic,
-    #[serde(rename = "Quality only")]
-    QualityOnly,
+    Rare,
+    Unique,
 }
 
-// ---------------------------------------------------------------------------
-// AreaLevelBands section
-// ---------------------------------------------------------------------------
+/// Comparison operator for a rarity condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RarityOp {
+    /// `==` (or bare value — see `RarityComparator`)
+    Eq,
+    /// `>=`
+    Gte,
+    /// `<=`
+    Lte,
+}
 
-/// Armour-show entry used inside a band's `show.armour` field.
+/// A rarity condition expressed as a **compact string** in JSON.
+///
+/// Format: `[op]<Rarity>` where `op` is `==`, `>=`, or `<=`.
+/// A bare value with no operator prefix means `==` (e.g. `"Rare"` → `Rarity == Rare`).
+///
+/// Examples:
+/// - `"Rare"`    → `{ op: Eq,  rarity: Rare   }` (bare == Eq)
+/// - `"==Rare"`  → `{ op: Eq,  rarity: Rare   }`
+/// - `">=Magic"` → `{ op: Gte, rarity: Magic  }`
+/// - `"<=Rare"`  → `{ op: Lte, rarity: Rare   }`
+///
+/// **Round-trip note:** Serialization emits the bare form for `Eq` (no `==` prefix),
+/// so `"==Rare"` round-trips to `"Rare"` — both deserialize to the same value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RarityComparator {
+    pub op: RarityOp,
+    pub rarity: Rarity,
+}
+
+impl<'de> Deserialize<'de> for RarityComparator {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let s = s.trim();
+
+        // Strip a leading comparison operator if present; a bare word means `==`.
+        // Any malformed operator (e.g. ">", "><") leaves a non-rarity remainder that
+        // the rarity match below rejects with a clear, case-listing error — so no
+        // fragile byte-slice prefix heuristic is needed (avoids panics on multi-byte
+        // UTF-8 input, and gives lowercase words like "rare" a useful error).
+        let (op, rarity_str) = if let Some(rest) = s.strip_prefix(">=") {
+            (RarityOp::Gte, rest.trim())
+        } else if let Some(rest) = s.strip_prefix("<=") {
+            (RarityOp::Lte, rest.trim())
+        } else if let Some(rest) = s.strip_prefix("==") {
+            (RarityOp::Eq, rest.trim())
+        } else {
+            (RarityOp::Eq, s)
+        };
+
+        let rarity = match rarity_str {
+            "Normal" => Rarity::Normal,
+            "Magic"  => Rarity::Magic,
+            "Rare"   => Rarity::Rare,
+            "Unique" => Rarity::Unique,
+            other => return Err(de::Error::custom(format!(
+                "unknown rarity {:?} in rarity comparator; expected Normal, Magic, Rare, or Unique \
+                 (optionally prefixed with ==, >=, or <=)",
+                other
+            ))),
+        };
+
+        Ok(RarityComparator { op, rarity })
+    }
+}
+
+impl Serialize for RarityComparator {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Eq serializes as a bare rarity word (no == prefix) — round-trip produces "Rare" not "==Rare".
+        let rarity_str = match self.rarity {
+            Rarity::Normal => "Normal",
+            Rarity::Magic  => "Magic",
+            Rarity::Rare   => "Rare",
+            Rarity::Unique => "Unique",
+        };
+        let s = match self.op {
+            RarityOp::Eq  => rarity_str.to_string(),
+            RarityOp::Gte => format!(">={}", rarity_str),
+            RarityOp::Lte => format!("<={}", rarity_str),
+        };
+        serializer.serialize_str(&s)
+    }
+}
+
+/// Numeric operator condition for base-defence attributes, quality, and sockets.
+///
+/// Field mapping to emitted filter conditions:
+/// - `eq`  → `<Attr> <value>`   (exact match; e.g. `BaseEvasion 0`, `BaseArmour 0`)
+/// - `min` → `<Attr> >= <min>`  (at-least; e.g. `Quality >= 1`, `Sockets >= 1`,
+///                                or `BaseEnergyShield > 0` authored as `min: 1`)
+/// - `max` → `<Attr> <= <max>`  (at-most; included for symmetry and future use)
+///
+/// Note: `> 0` (strictly positive) is expressed as `min: 1` for integer attributes.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ArmourShow {
-    #[serde(rename = "type")]
-    pub armour_type: String,
-    pub rarity: RarityRule,
+pub struct NumericCondition {
+    pub eq: Option<i64>,
+    /// Emits `>= min` (e.g. `min: 1` covers both `Quality >= 1` and `BaseEnergyShield > 0`)
+    pub min: Option<i64>,
+    /// Emits `<= max` (included for symmetry; for future use)
+    pub max: Option<i64>,
 }
 
-/// The `show` object inside one area-level band.
-/// All keys are optional; which keys appear determines which rules apply (Phase 2 interprets).
-/// Rarity values are typed as `RarityRule` — the closed enum (D-10).
+/// Area-level range condition — both bounds are optional (open-ended ranges allowed).
+///
+/// - `min` → emits `AreaLevel >= min`
+/// - `max` → emits `AreaLevel <= max`
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct BandShow {
-    pub weapons: Option<RarityRule>,
-    /// Only present in band 1-5 (all armour shown)
-    pub all_armour: Option<RarityRule>,
-    /// Present in bands 6+ (typed armour progression)
-    pub armour: Option<ArmourShow>,
-    /// Other gear (non-build classes), present in some bands
-    pub other_gear: Option<RarityRule>,
-    pub flasks_charms: Option<RarityRule>,
+pub struct AreaLevelRange {
+    /// Emits `AreaLevel >= min`
+    pub min: Option<u32>,
+    /// Emits `AreaLevel <= max`
+    pub max: Option<u32>,
 }
 
-/// One entry in `areaLevelBands`.
+/// UnidentifiedItemTier threshold condition.
+///
+/// Emits `UnidentifiedItemTier >= min`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct AreaLevelBand {
-    pub range: String,
-    pub show: BandShow,
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UnidentifiedTier {
+    /// Emits `UnidentifiedItemTier >= min`
+    pub min: u32,
+}
+
+/// The match conditions for a declarative rule.
+///
+/// All fields are optional. An absent/empty `When` matches everything (catch-all semantics).
+/// Unknown fields are rejected (`deny_unknown_fields`) to catch typos at load time.
+///
+/// JSON field names are camelCase (e.g. `areaLevel`, `baseArmour`, `baseEnergyShield`,
+/// `baseType`, `unidentifiedTier`) mapped to snake_case Rust fields by `rename_all`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct When {
+    /// `Class == "..."` (exact full-name match)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class: Option<Vec<String>>,
+    /// Compact rarity comparator (e.g. `">=Magic"`, `"Rare"`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rarity: Option<RarityComparator>,
+    /// `AreaLevel >= min` and/or `AreaLevel <= max`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area_level: Option<AreaLevelRange>,
+    /// `BaseArmour` numeric condition
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_armour: Option<NumericCondition>,
+    /// `BaseEvasion` numeric condition
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_evasion: Option<NumericCondition>,
+    /// `BaseEnergyShield` numeric condition
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_energy_shield: Option<NumericCondition>,
+    /// `Quality` numeric condition
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<NumericCondition>,
+    /// `Sockets` numeric condition
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sockets: Option<NumericCondition>,
+    /// `BaseType == "..."` (exact full-name match)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_type: Option<Vec<String>>,
+    /// `UnidentifiedItemTier >= min`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unidentified_tier: Option<UnidentifiedTier>,
+}
+
+/// A declarative filter rule: a named, optionally-conditional style assignment.
+///
+/// Rules are evaluated in order; the first matching rule wins (first-match-wins semantics).
+/// A rule with no `when` matches everything and acts as a catch-all/fallback.
+///
+/// The `style` field is a plain `String` resolved against the `Styles` struct keys at
+/// generate-time. Valid values: `"S"`, `"A"`, `"B"`, `"C"`, `"D"`, `"E"`, `"F"`,
+/// `"unchanged"`, `"hidden"`, `"Recycle"`. An unknown style name is a **hard error**
+/// at generate-time (Phase 6 validation — not enforced by serde here).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Rule {
+    /// Optional label emitted as the block comment header (`Show # <name>`).
+    /// When absent the emitter derives a label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Style tier name — must match a `Styles` key (S/A/B/C/D/E/F/unchanged/hidden/Recycle).
+    /// Validation (unknown-style hard error) is deferred to generate-time (Phase 6).
+    pub style: String,
+    /// Optional match conditions. Absent/empty `when` matches everything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
 }
 
 // ---------------------------------------------------------------------------
@@ -255,9 +401,16 @@ pub struct Config {
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
     pub flask_charm_classes: Vec<String>,
-    pub area_level_bands: Vec<AreaLevelBand>,
     pub always_show: AlwaysShow,
     pub fallthrough: String,
+    /// Ordered declarative policy rules (RULE-01). Optional during the migration —
+    /// absent today, populated in Phase 6. Authored order is preserved (first-match-wins).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<Rule>>,
+    /// Optional class-alias map: alias name -> list of item classes, referenced by
+    /// `when.class` names to avoid repetition (e.g. "buildWeapons": ["Staves","Wands","Foci"]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_groups: Option<HashMap<String, Vec<String>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +471,6 @@ mod tests {
             "weaponClasses": [],
             "armourClasses": [],
             "flaskCharmClasses": [],
-            "areaLevelBands": [],
             "alwaysShow": {"currency":{"style":"x"},"recycle":{"match":"x","style":"Recycle"}},
             "fallthrough": "x",
             "minimip": "typo key"
@@ -333,6 +485,47 @@ mod tests {
         let bad = CONFIG_JSON.replace("\"Pink\"", "\"Mauve\"");
         let result: Result<Config, _> = serde_json::from_str(&bad);
         assert!(result.is_err(), "expected error for unknown FilterColor 'Mauve', got Ok");
+    }
+
+    #[test]
+    fn config_with_rules_and_class_groups_parses() {
+        // Prove that rules + classGroups parse correctly from the real config.json.
+        // Phase 6 migrated config.json to include a rules array and classGroups map.
+        let config: Config = serde_json::from_str(CONFIG_JSON)
+            .expect("config with rules+classGroups should parse");
+        assert!(config.rules.is_some(), "config.json rules should be Some after Phase 6 migration");
+        assert!(
+            config.rules.as_ref().unwrap().len() >= 13,
+            "config.json should have at least 13 rules (the 13 policy blocks)"
+        );
+        assert!(config.class_groups.is_some(), "classGroups should be Some after Phase 6 migration");
+        assert!(config.class_groups.as_ref().unwrap().contains_key("buildWeapons"));
+        // Also confirm a minimal config (no rules/classGroups) parses with both as None.
+        let minimal = r#"{
+            "meta": {"name":"x","palette":"x","background":[0,0,0]},
+            "styles": {
+                "S":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "A":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "B":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "C":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "D":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "E":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "F":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
+                "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
+            },
+            "build": {"weapons":[],"armour":[],"armourTypes":{}},
+            "weaponClasses": [],
+            "armourClasses": [],
+            "flaskCharmClasses": [],
+            "alwaysShow": {"currency":{"style":"x"},"recycle":{"match":"x","style":"Recycle"}},
+            "fallthrough": "x"
+        }"#;
+        let baseline: Config = serde_json::from_str(minimal).unwrap();
+        assert!(baseline.rules.is_none(), "minimal config should have rules = None");
+        assert!(baseline.class_groups.is_none(), "minimal config should have class_groups = None");
     }
 
     #[test]
@@ -353,47 +546,285 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // RarityRule tests (D-10)
+    // RarityComparator tests (v0.2 rule schema — COND-02)
     // -----------------------------------------------------------------------
 
     #[test]
-    fn rarity_rule_variants_roundtrip() {
-        // "Magic + Rare" deserializes to MagicPlusRare and round-trips back
-        let r: RarityRule = serde_json::from_str(r#""Magic + Rare""#).unwrap();
-        assert_eq!(r, RarityRule::MagicPlusRare);
-        let back = serde_json::to_string(&r).unwrap();
-        assert_eq!(back, r#""Magic + Rare""#);
+    fn rarity_comparator_bare_is_eq() {
+        let r: RarityComparator = serde_json::from_str(r#""Rare""#).unwrap();
+        assert_eq!(r, RarityComparator { op: RarityOp::Eq, rarity: Rarity::Rare });
     }
 
     #[test]
-    fn rare_alias_maps_to_rare_only() {
-        // otherGear uses bare "Rare" — must map to RarityRule::RareOnly via the serde alias
-        let r: RarityRule = serde_json::from_str(r#""Rare""#).unwrap();
-        assert_eq!(r, RarityRule::RareOnly);
+    fn rarity_comparator_gte_magic() {
+        let r: RarityComparator = serde_json::from_str(r#"">=Magic""#).unwrap();
+        assert_eq!(r, RarityComparator { op: RarityOp::Gte, rarity: Rarity::Magic });
     }
 
     #[test]
-    fn rarity_rule_rejects_unknown() {
-        let result: Result<RarityRule, _> = serde_json::from_str(r#""Legendary""#);
-        assert!(result.is_err(), "expected error for unknown rarity rule 'Legendary', got Ok");
+    fn rarity_comparator_lte_rare() {
+        let r: RarityComparator = serde_json::from_str(r#""<=Rare""#).unwrap();
+        assert_eq!(r, RarityComparator { op: RarityOp::Lte, rarity: Rarity::Rare });
     }
 
     #[test]
-    fn rarity_rule_all_variants_parse() {
-        // Verify all five rarity-rule strings from config.json deserialize correctly
-        let any: RarityRule = serde_json::from_str(r#""any rarity""#).unwrap();
-        assert_eq!(any, RarityRule::Any);
+    fn rarity_comparator_eq_prefix_unique() {
+        let r: RarityComparator = serde_json::from_str(r#""==Unique""#).unwrap();
+        assert_eq!(r, RarityComparator { op: RarityOp::Eq, rarity: Rarity::Unique });
+    }
 
-        let rare_only: RarityRule = serde_json::from_str(r#""Rare only""#).unwrap();
-        assert_eq!(rare_only, RarityRule::RareOnly);
+    #[test]
+    fn rarity_comparator_rejects_unknown_rarity() {
+        let result: Result<RarityComparator, _> = serde_json::from_str(r#""Legendary""#);
+        assert!(result.is_err(), "expected error for unknown rarity 'Legendary', got Ok");
+    }
 
-        let magic_rare: RarityRule = serde_json::from_str(r#""Magic + Rare""#).unwrap();
-        assert_eq!(magic_rare, RarityRule::MagicPlusRare);
+    #[test]
+    fn rarity_comparator_rejects_bad_op() {
+        let result: Result<RarityComparator, _> = serde_json::from_str(r#""><Rare""#);
+        assert!(result.is_err(), "expected error for unknown op '><' in '><Rare', got Ok");
+    }
 
-        let magic: RarityRule = serde_json::from_str(r#""Magic""#).unwrap();
-        assert_eq!(magic, RarityRule::Magic);
+    #[test]
+    fn rarity_comparator_rejects_multibyte_without_panic() {
+        // Regression: a multi-byte UTF-8 input must produce a clean Err, never a
+        // byte-slice boundary panic (the old `&s[..2]` heuristic panicked here).
+        let result: Result<RarityComparator, _> = serde_json::from_str(r#""日本語""#);
+        assert!(result.is_err(), "expected error for multi-byte input, got Ok");
+    }
 
-        let quality: RarityRule = serde_json::from_str(r#""Quality only""#).unwrap();
-        assert_eq!(quality, RarityRule::QualityOnly);
+    #[test]
+    fn rarity_comparator_round_trip() {
+        // ">=Magic" deserializes, serializes to ">=Magic", re-deserializes to same value.
+        let original: RarityComparator = serde_json::from_str(r#"">=Magic""#).unwrap();
+        let serialized = serde_json::to_string(&original).unwrap();
+        let restored: RarityComparator = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn rarity_comparator_eq_serializes_bare() {
+        // Eq serializes without == prefix — "==Rare" round-trips to "Rare"
+        let r = RarityComparator { op: RarityOp::Eq, rarity: Rarity::Rare };
+        let s = serde_json::to_string(&r).unwrap();
+        assert_eq!(s, r#""Rare""#);
+    }
+
+    // -----------------------------------------------------------------------
+    // NumericCondition tests (v0.2 rule schema — COND-04)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn numeric_condition_eq_zero() {
+        let nc: NumericCondition = serde_json::from_str(r#"{"eq": 0}"#).unwrap();
+        assert_eq!(nc, NumericCondition { eq: Some(0), min: None, max: None });
+    }
+
+    #[test]
+    fn numeric_condition_min_one() {
+        let nc: NumericCondition = serde_json::from_str(r#"{"min": 1}"#).unwrap();
+        assert_eq!(nc, NumericCondition { eq: None, min: Some(1), max: None });
+    }
+
+    #[test]
+    fn numeric_condition_rejects_unknown_key() {
+        let result: Result<NumericCondition, _> = serde_json::from_str(r#"{"lt": 3}"#);
+        assert!(result.is_err(), "expected error for unknown key 'lt', got Ok");
+    }
+
+    // -----------------------------------------------------------------------
+    // AreaLevelRange tests (v0.2 rule schema — COND-03)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn area_level_range_both_bounds() {
+        let r: AreaLevelRange = serde_json::from_str(r#"{"min": 5, "max": 10}"#).unwrap();
+        assert_eq!(r, AreaLevelRange { min: Some(5), max: Some(10) });
+    }
+
+    #[test]
+    fn area_level_range_min_only() {
+        let r: AreaLevelRange = serde_json::from_str(r#"{"min": 5}"#).unwrap();
+        assert_eq!(r, AreaLevelRange { min: Some(5), max: None });
+    }
+
+    #[test]
+    fn area_level_range_max_only() {
+        let r: AreaLevelRange = serde_json::from_str(r#"{"max": 10}"#).unwrap();
+        assert_eq!(r, AreaLevelRange { min: None, max: Some(10) });
+    }
+
+    // -----------------------------------------------------------------------
+    // UnidentifiedTier tests (v0.2 rule schema — COND-06)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unidentified_tier_min() {
+        let t: UnidentifiedTier = serde_json::from_str(r#"{"min": 2}"#).unwrap();
+        assert_eq!(t, UnidentifiedTier { min: 2 });
+    }
+
+    // -----------------------------------------------------------------------
+    // Rule + When tests (v0.2 rule schema — RULE-02 / COND-01..06)
+    // -----------------------------------------------------------------------
+
+    /// A representative rules+classGroups JSON fragment (not a full Config).
+    /// Used by round-trip and order-preservation tests — exercises every condition type:
+    /// class list, rarity comparator (>=), areaLevel min+max, baseArmour eq, baseEvasion eq,
+    /// baseEnergyShield min, quality min, sockets min, baseType list, unidentifiedTier, classGroups.
+    const REPRESENTATIVE_RULES_JSON: &str = r#"[
+    { "style": "F" },
+    { "style": "S", "name": "Top tier" },
+    { "style": "unchanged", "when": {
+        "class": ["Body Armours", "Helmets"],
+        "rarity": ">=Magic",
+        "areaLevel": { "min": 6, "max": 25 },
+        "baseArmour": { "eq": 0 },
+        "baseEvasion": { "eq": 0 },
+        "baseEnergyShield": { "min": 1 },
+        "quality": { "min": 1 },
+        "sockets": { "min": 1 },
+        "baseType": ["Titanium Kite Shield", "Astral Plate"],
+        "unidentifiedTier": { "min": 2 }
+    }}
+]"#;
+
+    #[test]
+    fn rules_preserve_authored_order() {
+        // Authored order is F, S, unchanged — must NOT be sorted.
+        let rules: Vec<Rule> = serde_json::from_str(REPRESENTATIVE_RULES_JSON).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].style, "F", "first rule should be style F");
+        assert_eq!(rules[1].style, "S", "second rule should be style S");
+        assert_eq!(rules[2].style, "unchanged", "third rule should be style unchanged");
+    }
+
+    #[test]
+    fn config_with_rules_round_trips() {
+        // Verify that config.json (which now includes rules + classGroups) round-trips
+        // losslessly: deserialize → serialize → re-deserialize produces equal values.
+        // Phase 6 migrated config.json to include the full 13-rule policy array.
+        let first: Config = serde_json::from_str(CONFIG_JSON)
+            .expect("config with rules should parse");
+        let serialized = serde_json::to_string(&first).expect("serialize should succeed");
+        let second: Config = serde_json::from_str(&serialized)
+            .expect("re-deserialize after round-trip should succeed");
+        assert_eq!(first, second, "config with rules did not round-trip losslessly");
+
+        // Spot-check: rules and classGroups are present
+        let rules = first.rules.as_ref().unwrap();
+        assert!(rules.len() >= 13, "should have at least 13 policy rules");
+        // First rule should be the recycle rule
+        assert_eq!(rules[0].style, "Recycle", "first rule should be Recycle style");
+
+        // classGroups round-tripped
+        let groups = first.class_groups.as_ref().unwrap();
+        assert!(groups.contains_key("buildWeapons"));
+        assert!(groups.contains_key("buildArmour"));
+    }
+
+    #[test]
+    fn bad_rarity_in_rule_reports_error() {
+        // A rule with when.rarity: "Legendary" (invalid) must produce an Err.
+        // At runtime, src/loader.rs supplies serde_path_to_error for field-path context.
+        // Here we verify the plain serde_json error (the underlying rejection is the same).
+        let json = r#"{
+            "style": "E",
+            "when": { "rarity": "Legendary" }
+        }"#;
+        let result: Result<Rule, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "a rule with an invalid rarity in when should produce an Err (got Ok)"
+        );
+        // loader.rs applies serde_path_to_error at runtime, which will include "rarity"
+        // in the field path. This is the same rejection surfaced with full context there.
+    }
+
+    #[test]
+    fn rule_style_only() {
+        // A rule with just "style" (no when, no name) deserializes — matches-everything fallback.
+        let r: Rule = serde_json::from_str(r#"{"style": "F"}"#).unwrap();
+        assert_eq!(r.style, "F");
+        assert!(r.name.is_none());
+        assert!(r.when.is_none());
+    }
+
+    #[test]
+    fn rule_full_round_trip() {
+        let json = r#"{
+            "name": "Energy-shield gear",
+            "style": "E",
+            "when": {
+                "class": ["Body Armours", "Helmets"],
+                "rarity": ">=Magic",
+                "areaLevel": {"min": 26},
+                "baseEvasion": {"eq": 0},
+                "baseType": ["Titan Plate"],
+                "unidentifiedTier": {"min": 3}
+            }
+        }"#;
+        let rule: Rule = serde_json::from_str(json).unwrap();
+        let when = rule.when.as_ref().unwrap();
+        assert_eq!(rule.name.as_deref(), Some("Energy-shield gear"));
+        assert_eq!(rule.style, "E");
+        assert_eq!(when.class.as_ref().unwrap(), &["Body Armours", "Helmets"]);
+        assert_eq!(when.rarity.unwrap().op, RarityOp::Gte);
+        assert_eq!(when.rarity.unwrap().rarity, Rarity::Magic);
+        assert_eq!(when.area_level.as_ref().unwrap().min, Some(26));
+        assert_eq!(when.base_evasion.as_ref().unwrap().eq, Some(0));
+        assert_eq!(when.base_type.as_ref().unwrap(), &["Titan Plate"]);
+        assert_eq!(when.unidentified_tier.as_ref().unwrap().min, 3);
+
+        // Round-trip: serialize then re-deserialize, must be equal
+        let serialized = serde_json::to_string(&rule).unwrap();
+        let restored: Rule = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(rule, restored);
+    }
+
+    #[test]
+    fn rule_rejects_unknown_field() {
+        let json = r#"{"style": "E", "unknown_key": true}"#;
+        let result: Result<Rule, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "expected error for unknown field 'unknown_key' on Rule");
+    }
+
+    #[test]
+    fn when_rejects_unknown_field() {
+        let json = r#"{"style": "E", "when": {"notAField": 1}}"#;
+        let result: Result<Rule, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "expected error for unknown field 'notAField' on When");
+    }
+
+    #[test]
+    fn when_all_condition_fields_populate() {
+        // Full when object with all condition types present
+        let json = r#"{
+            "style": "C",
+            "when": {
+                "class": ["Staves"],
+                "rarity": ">=Magic",
+                "areaLevel": {"min": 1, "max": 25},
+                "baseArmour": {"eq": 0},
+                "baseEvasion": {"eq": 0},
+                "baseEnergyShield": {"min": 1},
+                "quality": {"min": 1},
+                "sockets": {"min": 1},
+                "baseType": ["Short Staff"],
+                "unidentifiedTier": {"min": 2}
+            }
+        }"#;
+        let rule: Rule = serde_json::from_str(json).unwrap();
+        let when = rule.when.as_ref().unwrap();
+        assert!(when.class.is_some());
+        assert!(when.rarity.is_some());
+        assert!(when.area_level.is_some());
+        assert!(when.base_armour.is_some());
+        assert!(when.base_evasion.is_some());
+        assert!(when.base_energy_shield.is_some());
+        assert!(when.quality.is_some());
+        assert!(when.sockets.is_some());
+        assert!(when.base_type.is_some());
+        assert!(when.unidentified_tier.is_some());
     }
 }

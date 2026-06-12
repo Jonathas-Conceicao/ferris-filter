@@ -11,7 +11,8 @@
     "F":         { "text": [248,248,242], "border": [248,248,242], "background": [40,42,54], "font": 25,   "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false },
     "Recycle":   { "text": [80,250,123],  "border": [80,250,123],  "background": [40,42,54], "font": null, "minimap": { "size": 2, "color": "Green", "shape": "Cross" }, "beam": { "color": "Green", "temp": false }, "sound": null, "action": "Show", "disableDropSound": false },
     "unchanged": { "text": null, "border": null, "background": null, "font": null, "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false },
-    "hidden":    { "text": null, "border": null, "background": null, "font": 21,   "minimap": null, "beam": null, "sound": null, "action": "Hide", "disableDropSound": true }
+    "hidden":    { "text": null, "border": null, "background": null, "font": 21,   "minimap": null, "beam": null, "sound": null, "action": "Hide", "disableDropSound": true },
+    "unidentified": { "text": null, "border": null, "background": null, "font": null, "minimap": { "size": 2, "color": "Orange", "shape": "Kite" }, "beam": { "color": "Orange", "temp": false }, "sound": { "id": 2, "vol": 200 }, "action": "Show", "disableDropSound": false }
   },
 
   "build": {
@@ -31,18 +32,186 @@
   "armourClasses": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
   "flaskCharmClasses": ["Life Flasks", "Mana Flasks", "Charms"],
 
-  "areaLevelBands": [
-    { "range": "1-5",   "show": { "weapons": "any rarity", "allArmour": "any rarity" } },
-    { "range": "6-25",  "show": { "weapons": "any rarity", "armour": { "type": "anyNonEvasion", "rarity": "Magic + Rare" }, "otherGear": "Rare", "flasksCharms": "any rarity" } },
-    { "range": "26-45", "show": { "weapons": "Rare only",  "armour": { "type": "esHybrid",      "rarity": "Magic + Rare" }, "otherGear": "Rare", "flasksCharms": "Magic" } },
-    { "range": "46-65", "show": { "weapons": "Rare only",  "armour": { "type": "pureES",        "rarity": "Magic + Rare" }, "flasksCharms": "Magic" } },
-    { "range": "66+",   "show": { "weapons": "Rare only",  "armour": { "type": "pureES",        "rarity": "Magic + Rare" }, "flasksCharms": "Quality only" } }
-  ],
-
   "alwaysShow": {
     "currency": { "style": "tiered S-F (base lists are curated data, kept outside this model)" },
     "recycle":  { "match": "Sockets >= 1 AND Quality >= 1", "style": "Recycle" }
   },
+
+  "classGroups": {
+    "buildWeapons": ["Staves", "Wands", "Foci"],
+    "buildArmour":  ["Body Armours", "Helmets", "Gloves", "Boots"],
+    "allArmour":    ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
+    "allGear": [
+      "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Quarterstaves",
+      "Sceptres", "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+      "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+    ],
+    "flaskCharm": ["Life Flasks", "Mana Flasks", "Charms"]
+  },
+
+  "rules": [
+    {
+      "name": "recycle: sockets + quality salvage",
+      "style": "Recycle",
+      "when": {
+        "sockets": { "min": 1 },
+        "quality": { "min": 1 }
+      }
+    },
+    {
+      "name": "band <=5: all armour any rarity",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "max": 5 },
+        "class": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"]
+      }
+    },
+    {
+      "name": "band 6-25: build weapons any rarity",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "max": 25 },
+        "class": ["Staves", "Wands", "Foci"]
+      }
+    },
+    {
+      "name": "bands 26+: build weapons Magic+Rare (capped)",
+      "style": "unchanged",
+      "when": {
+        "class": ["Staves", "Wands", "Foci"],
+        "areaLevel": { "max": 75 },
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "band 6-25: build armour (non-evasion)",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "max": 25 },
+        "class": ["Body Armours", "Helmets", "Gloves", "Boots"],
+        "baseEvasion": { "eq": 0 },
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "band 26-45: build armour (ES / hybrid)",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "min": 26, "max": 45 },
+        "class": ["Body Armours", "Helmets", "Gloves", "Boots"],
+        "baseEnergyShield": { "min": 1 },
+        "baseEvasion": { "eq": 0 },
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "bands 46+: build armour (pure ES)",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "min": 46, "max": 75 },
+        "class": ["Body Armours", "Helmets", "Gloves", "Boots"],
+        "baseEnergyShield": { "min": 1 },
+        "baseArmour": { "eq": 0 },
+        "baseEvasion": { "eq": 0 },
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "unidentified high-tier: weapons + armour",
+      "style": "unidentified",
+      "when": {
+        "class": [
+          "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Sceptres",
+          "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+          "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+        ],
+        "unidentifiedTier": { "min": 4 }
+      }
+    },
+    {
+      "name": "unidentified high-tier: jewellery",
+      "style": "unidentified",
+      "when": {
+        "class": ["Rings", "Amulets", "Belts"],
+        "unidentifiedTier": { "min": 4 }
+      }
+    },
+    {
+      "name": "bands <=45: any other Rare gear",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "max": 45 },
+        "class": [
+          "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Quarterstaves",
+          "Sceptres", "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+          "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+        ],
+        "rarity": "Rare"
+      }
+    },
+    {
+      "name": "gear fallback: hide unmatched equipment",
+      "style": "hidden",
+      "when": {
+        "class": [
+          "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Quarterstaves",
+          "Sceptres", "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+          "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+        ],
+        "rarity": "<=Rare"
+      }
+    },
+    {
+      "name": "jewellery fallback: hide low-rarity Rings/Amulets/Belts",
+      "style": "hidden",
+      "when": {
+        "class": ["Rings", "Amulets", "Belts"],
+        "rarity": "<=Rare"
+      }
+    },
+    {
+      "name": "flasks/charms: quality always",
+      "style": "unchanged",
+      "when": {
+        "quality": { "min": 1 },
+        "class": ["Life Flasks", "Mana Flasks", "Charms"]
+      }
+    },
+    {
+      "name": "bands <=25: all flasks/charms",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "max": 25 },
+        "class": ["Life Flasks", "Mana Flasks", "Charms"]
+      }
+    },
+    {
+      "name": "bands 26-65: magic flasks/charms",
+      "style": "unchanged",
+      "when": {
+        "areaLevel": { "max": 65 },
+        "class": ["Life Flasks", "Mana Flasks", "Charms"],
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "name": "bands 78+: normal charms",
+      "style": "unchanged",
+      "when": {
+        "class": ["Charms"],
+        "areaLevel": { "min": 78 },
+        "rarity": "==Normal"
+      }
+    },
+    {
+      "name": "flasks/charms fallback",
+      "style": "hidden",
+      "when": {
+        "class": ["Life Flasks", "Mana Flasks", "Charms"],
+        "rarity": "<=Magic"
+      }
+    }
+  ],
 
   "fallthrough": "Anything not matched by a Hide or a styled Show is left to the game default (uniques, jewels, gems, jewellery, quest items, waystones, trials, unidentified, etc.)."
 }

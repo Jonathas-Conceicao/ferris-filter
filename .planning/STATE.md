@@ -1,15 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.1
-milestone_name: Initial Release
-status: completed
-last_updated: "2026-05-28T00:00:00.000Z"
-last_activity: 2026-05-28 -- v0.1 milestone shipped
+milestone: v0.2
+milestone_name: Declarative Rule Model
+status: milestone_complete
+stopped_at: "Completed 07-03-PLAN.md: CLAUDE.md declarative rule model realignment (DOC-01)"
+last_updated: "2026-06-05T11:56:50.222Z"
+last_activity: 2026-06-05
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 6
   percent: 100
 ---
 
@@ -17,25 +18,25 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-05-28)
+See: .planning/PROJECT.md (updated 2026-06-05)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.1 shipped — planning next milestone (`/gsd-new-milestone`)
+**Current focus:** Phase 7 — New Capabilities + Docs
 
 ## Current Position
 
-Milestone: v0.1 (Initial Release) — ✅ SHIPPED 2026-05-28
-Phases: 4/4 complete (14/14 plans)
+Phase: 7
+Plan: Not started
 Status: Milestone complete
-Last activity: 2026-05-28 -- v0.1 milestone shipped
+Last activity: 2026-06-12
 
-Progress: [██████████] 100%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 10
+- Total plans completed: 17
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -46,6 +47,9 @@ Progress: [██████████] 100%
 | 01 | 3 | - | - |
 | 02 | 3 | - | - |
 | 03 | 4 | - | - |
+| 5 | 2 | - | - |
+| 6 | 2 | - | - |
+| 7 | 3 | - | - |
 
 **Recent Trend:**
 
@@ -60,6 +64,11 @@ Progress: [██████████] 100%
 | Phase 03-pricing-layer P02 | 155 | 2 tasks | 2 files |
 | Phase 03-pricing-layer P03 | 326 | 2 tasks | 3 files |
 | Phase 03 P04 | 30 | 2 tasks | 4 files |
+| Phase 05-rule-schema P01 | 6 | 3 tasks | 1 files |
+| Phase 05 P02 | 12 | 3 tasks | 2 files |
+| Phase 06-emitter-rewrite-migration-parity P01 | 516 | 3 tasks | 4 files |
+| Phase 07-new-capabilities-docs P01 | 4 | 2 tasks | 3 files |
+| Phase 07-new-capabilities-docs P03 | 3 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -68,6 +77,11 @@ Progress: [██████████] 100%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- v0.2 finding: the emitter is FULLY HARDCODED — `emit_gear_bands`/`emit_flask_charm_bands` write all band ranges + rarities as literal strings; `config.area_level_bands` and the `RarityRule` enum are parsed but NEVER read (zero consumers outside config.rs). v0.2 deletes this special-casing in favor of a general declarative rule model.
+- v0.2 acceptance bar: `generate` on the migrated config must be SEMANTICALLY EQUIVALENT to the filter currently installed in the game folder (block reordering OK; other behavioral changes surfaced for author review). The in-game `universal.filter` (game folder, fully functional) is the parity oracle and should be captured into the repo as a fixture.
+- v0.2 confirmed (author tested live, in-game filter fully functional): `UnidentifiedItemTier` and base-defence filters (`BaseArmour`/`BaseEvasion`/`BaseEnergyShield`) work in PoE2 — update CLAUDE.md's "unverified" caveats.
+- v0.2 scope: config-flexibility only. CLI surface (`generate`/`sync`/`install`) unchanged; price-driven currency/category + unique sections untouched. Generate QoL + sync extensions deferred.
+- v0.2 build order: (1) schema/rule-model design (Phase 5), (2) emitter rewrite + migrate config.json + re-baseline fixture (Phase 6), (3) new capabilities + docs (Phase 7). The schema is the linchpin.
 - Planning: poe.ninja PoE2 API surface is UNRESOLVED — spike is the first task of Phase 4 (sync), not a separate phase (granularity = coarse).
 - Planning: insta snapshot of generated universal.filter is the Phase 2 acceptance criterion; byte-identical reproduction is non-negotiable.
 - D-11: Styles named-fields struct replaces HashMap<String, Style> for deterministic tier access
@@ -84,14 +98,24 @@ Recent decisions affecting current work:
 - emitter::generate now takes &PricedData instead of &CurrencyData
 - load_prices_optional: Path::exists() check first; absent=Ok(None), malformed=Err
 - currency.json removed from generate path; src/models/currency.rs kept for tests
+- RarityComparator uses custom Deserialize for compact string format (>=Magic, <=Rare, bare==Eq) per 05-CONTEXT spec
+- New rule-schema types (Rule/When/RarityComparator/NumericCondition/AreaLevelRange/UnidentifiedTier) are additive; Config top-level struct unchanged until Plan 02
+- Config.rules (Option<Vec<Rule>>) and class_groups (Option<HashMap<String,Vec<String>>>) are additive optional fields with serde(default); existing config.json parses with both as None until Phase 6 populates them
+- Dead areaLevelBands scaffolding (RarityRule/AreaLevelBand/BandShow/ArmourShow + Config field + config.json block) removed; emitter confirmed non-consumer (comment strings only); Phase 6 emitter rewrite starts clean
+- classGroups approach (a): inline full class lists in each rule when.class; classGroups is documentation/Phase-7 aliases only, not consumed by emit_rules
+- base-defence min:1 renders as '>0' (not '>=1') in emit_numeric to match oracle filter syntax
+- CAP-06 weapon+armour class list omits Quarterstaves (matches foo.filter oracle exactly — author's in-game list)
+- unidentified style uses no text/border/background/font to preserve native rarity color
+- generate_block_counts test updated to 86 Show / 3 Hide after adding 3 CAP Show blocks + 1 Hide block
+- DOC-01: CLAUDE.md realigned to v0.2 declarative rule model; config.json named source of truth; UnidentifiedItemTier + base-defence filters confirmed working in-game
 
 ### Pending Todos
 
-None yet.
+- Phase 5 first: capture the current in-game `universal.filter` from `C:\Users\jonat\OneDrive\Documentos\My Games\Path of Exile 2` into `tests/fixtures/parity-ingame.filter` as the parity oracle (MIG-03 prerequisite).
 
 ### Blockers/Concerns
 
-- None. (The poe.ninja PoE2 API spike — the project's only external unknown — was resolved in Phase 4.)
+- None. (The poe.ninja PoE2 API spike — the project's only external unknown — was resolved in Phase 4. UnidentifiedItemTier + base-defence filters confirmed working in-game.)
 
 ## Deferred Items
 
@@ -106,8 +130,10 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-05-28T02:10:50.969Z
-Stopped at: context exhaustion at 98% (2026-05-28)
+Last session: 2026-06-05T11:56:50.216Z
+Stopped at: Completed 07-03-PLAN.md: CLAUDE.md declarative rule model realignment (DOC-01)
 Resume file: None
 
-**Planned Phase:** 4 () — 0 plans — 2026-05-25T07:41:13.473Z
+**Next step:** `/gsd-plan-phase 5`
+
+**Planned Phase:** 7 (New Capabilities + Docs) — 3 plans — 2026-06-05T11:47:27.370Z

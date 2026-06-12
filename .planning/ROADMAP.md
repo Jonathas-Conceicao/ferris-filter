@@ -44,3 +44,20 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. Start the next milestone with `/gsd-new-milestone`.*
+
+## Backlog
+
+### Phase 999.1: Config-driven styles (no hardcoded vocabulary) (BACKLOG)
+
+**Goal:** Any config should be able to define and use new named styles without a code change.
+Today the style vocabulary is hardcoded in the `Styles` struct (`src/models/config.rs`) and
+`emitter::resolve_style` (`src/emitter.rs`) — adding `craftable` (for `ssf_icewolf_config.json`)
+required editing both. Replace the named-field `Styles` struct with a name→`Style` map (or keep
+S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` map), resolve styles
+by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
+`FUTURE` comments already mark both code locations.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)

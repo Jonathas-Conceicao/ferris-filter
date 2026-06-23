@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.2
-milestone_name: Declarative Rule Model
-status: milestone_complete
-stopped_at: "Completed 07-03-PLAN.md: CLAUDE.md declarative rule model realignment (DOC-01)"
-last_updated: "2026-06-05T11:56:50.222Z"
-last_activity: 2026-06-05
+milestone: v0.3
+milestone_name: Economy Items & Exceptional Gear
+status: defining_requirements
+stopped_at: "Milestone v0.3 started — defining requirements"
+last_updated: "2026-06-23"
+last_activity: 2026-06-23
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 7
-  completed_plans: 6
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-05)
+See: .planning/PROJECT.md (updated 2026-06-23)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 7 — New Capabilities + Docs
+**Current focus:** v0.3 Economy Items & Exceptional Gear — defining requirements
 
 ## Current Position
 
-Phase: 7
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-12
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-23 — Milestone v0.3 started
 
-Progress: [█████████░] 86%
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 

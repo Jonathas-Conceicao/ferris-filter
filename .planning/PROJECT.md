@@ -8,14 +8,27 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
+## Current Milestone: v0.3 Economy Items & Exceptional Gear
+
+**Goal:** Track three new/broken economy categories with correct styling, and highlight "exceptional" gear.
+
+**Target features:**
+- **Verisium** — new synced category (poe.ninja exchange `type=Verisium`), emitted with the regular tiered currency style.
+- **Uncut Gems fix** — emitted `BaseType` includes the level (`Uncut Skill Gem (Level N)`) so the rule actually matches; drop the `minLevel: 18` floor; price-tiered with a fixed background `80 70 55`.
+- **Lineage Support Gems** — new synced category (`type=LineageSupportGems`), price-tiered with a fixed background `10 150 150`.
+- **Exceptional gear highlight** — gear with extra sockets OR extra quality and NOT corrupted (filter mechanism unknown → resolved by research).
+
+**Key context:** League is now "Runes of Aldur" (Fate of the Vaal ended). Gem styling = tier color (border+text, by value) + a per-category background override — the same mechanism as priced uniques' bronze background, **not** a new named style (so the config-driven-styles backlog item is not pulled in). Tablets remain in the backlog (out of scope this milestone).
+
 ## Current State
 
 **Shipped:** v0.2 Declarative Rule Model (2026-06-12) — the generator's hardcoded gear/flask band
 logic is replaced by a general, declarative `rules` schema in `config.json`; the full in-game
 filter is now reproducible from config. `generate` + `sync` + `install` all live. ~154 tests green.
 
-**Next milestone:** not yet started — run `/gsd-new-milestone`. Leading candidates (see Deferred):
-the BaseType-matched economy-tiered Tablets category, and Generate QoL (`--dry-run`/`--diff`/verbose).
+**Next milestone:** v0.3 Economy Items & Exceptional Gear — started 2026-06-23 (defining requirements).
+Adds Verisium + Lineage Support Gems sync, fixes Uncut Gems base-type matching, and highlights
+exceptional (extra-socket/quality, uncorrupted) gear.
 
 ## Requirements
 
@@ -36,9 +49,13 @@ the BaseType-matched economy-tiered Tablets category, and Generate QoL (`--dry-r
 
 ### Active
 
-<!-- No active milestone — run /gsd-new-milestone to scope the next one (candidates below). -->
+<!-- v0.3 Economy Items & Exceptional Gear — REQ-IDs assigned in REQUIREMENTS.md. -->
 
-_None — v0.2 shipped. Next milestone not yet scoped._
+- [ ] **Verisium sync + tiering** — `sync` fetches Verisium from poe.ninja and `generate` tiers it as regular stackable currency.
+- [ ] **Uncut Gems base-type fix** — emitted base type carries the level (`Uncut Skill Gem (Level N)`); `minLevel` floor removed.
+- [ ] **Lineage Support Gems sync + tiering** — new synced category, price-tiered.
+- [ ] **Gem per-category background styling** — uncut/lineage gems show tier color (border+text) over a fixed per-category background.
+- [ ] **Exceptional gear highlight** — rules surface uncorrupted gear with extra sockets or extra quality (mechanism pending research).
 
 ### Deferred (next-milestone candidates)
 
@@ -121,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-12 — after v0.2 (Declarative Rule Model) milestone shipped*
+*Last updated: 2026-06-23 — v0.3 (Economy Items & Exceptional Gear) milestone started*

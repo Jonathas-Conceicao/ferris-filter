@@ -1,523 +1,274 @@
-# Architecture Research
+# Architecture Research — FerrisFilter v0.3 Integration
 
-**Domain:** Rust CLI — config-to-PoE2-filter compiler with poe.ninja price sync
-**Researched:** 2026-05-23
-**Confidence:** HIGH (derived directly from the existing filter-model.json and universal.filter, which are the executable spec)
-
----
-
-## System Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CLI Entry Point (main.rs)                 │
-│              clap: `generate` subcommand | `sync` subcommand     │
-└────────────────────┬──────────────────────────┬─────────────────┘
-                     │                          │
-         ┌───────────▼──────────┐   ┌───────────▼───────────┐
-         │   generate pipeline  │   │   sync pipeline        │
-         │  (pure, no network)  │   │  (all network I/O)     │
-         └───────────┬──────────┘   └───────────┬───────────┘
-                     │                          │
-    ┌────────────────┼──────────┐               │
-    │                │          │               │
-┌───▼────┐  ┌────────▼──┐  ┌───▼────┐    ┌─────▼──────┐
-│ config │  │   tiers   │  │ prices │    │  poe_ninja  │
-│ (serde)│  │  (serde)  │  │ (serde)│    │  (HTTP)     │
-└───┬────┘  └────────┬──┘  └───┬────┘    └─────┬──────┘
-    │                │          │               │
-    └────────────────▼──────────┘               │
-              ┌─────────────┐                   │
-              │  pricing    │                   │
-              │ (cross-rate │                   │
-              │  + tiering) │                   │
-              └─────┬───────┘                   │
-                    │                           │
-              ┌─────▼───────┐             ┌─────▼──────┐
-              │    emit     │             │ prices.json │
-              │ (block      │             │  (written)  │
-              │  renderer)  │             └────────────┘
-              └─────┬───────┘
-                    │
-              ┌─────▼──────────┐
-              │ universal.filter│
-              │   (written)     │
-              └────────────────┘
-```
+**Domain:** CLI filter compiler + economy sync (Path of Exile 2)
+**Researched:** 2026-06-23
+**Confidence:** HIGH — all findings are from direct code trace of the committed source
 
 ---
 
-## Module / Crate Layout
+## 1. Bronze-Background Code Path (Priced Uniques)
 
-Single binary crate. All logic in `src/`. No workspace needed at this scale.
+### Exact trace
+
+`emit_unique_sections` in `src/emitter.rs` (lines 427–466):
 
 ```
-src/
-├── main.rs              # CLI entry: clap App, routes to generate::run or sync::run
-├── cli.rs               # clap Arg definitions, LeagueFlags struct
-│
-├── config/
-│   └── mod.rs           # FilterConfig, Build, ArmourTypes, AreaLevelBand,
-│                        #   AlwaysShow, Style, Minimap, Beam, Sound — serde models
-│                        #   for config.json (renamed filter-model.json)
-│
-├── tiers/
-│   └── mod.rs           # TierCutoffs struct: per-tier chaos thresholds (F/E/D/C/B/A/S),
-│                        #   serde model for tiers.json; assign_tier(chaos_value, &cutoffs)
-│
-├── prices/
-│   ├── mod.rs           # PriceList, ItemPrice { exalt, chaos, div } — serde model
-│   │                    #   for prices.json; first 3 entries = Exalt/Chaos/Divine
-│   └── poe_ninja.rs     # HTTP client: fetch_prices(league: &LeagueFlags) -> PriceList
-│                        #   Hits poe.ninja PoE2 endpoints, normalizes response into PriceList
-│
-├── pricing/
-│   └── mod.rs           # CrossRates derived from PriceList[0..3]:
-│                        #   chaos_per_exalt, chaos_per_div
-│                        # to_chaos(item: &ItemPrice, rates: &CrossRates) -> Option<f64>
-│                        # assign_tier(value_chaos: f64, cutoffs: &TierCutoffs) -> Tier
-│
-├── emit/
-│   ├── mod.rs           # emit_filter(plan: &FilterPlan, config: &FilterConfig) -> String
-│   │                    #   Assembles ordered Vec<Block> and renders to filter text
-│   ├── block.rs         # Block { action, comment, conditions, actions } and
-│   │                    #   render_block(&Block) -> String
-│   ├── style.rs         # style_to_actions(style: &Style) -> Vec<FilterAction>
-│   │                    #   Handles null fields (omit), unchanged (no color actions),
-│   │                    #   hidden (SetFontSize 21 + DisableDropSound only)
-│   └── sections.rs      # One fn per logical section group (see emit order below):
-│                        #   emit_recycle, emit_gear_bands, emit_gear_fallthrough,
-│                        #   emit_flask_charm_bands, emit_currency_category,
-│                        #   emit_price_tiered_items
-│
-├── generate.rs          # Orchestrates the pure pipeline:
-│                        #   1. load config + tiers + prices
-│                        #   2. derive CrossRates
-│                        #   3. build PriceTieredItems (uniques + other price-tracked drops)
-│                        #   4. call emit::emit_filter(plan, config)
-│                        #   5. write universal.filter
-│
-└── sync.rs              # Orchestrates the network pipeline:
-│                        #   1. parse LeagueFlags
-│                        #   2. call prices::poe_ninja::fetch_prices
-│                        #   3. write prices.json
+emit_unique_sections(out, config, &priced.unique_blocks)
+  for block in blocks:
+    let style = style_for_tier(&config.styles, &block.tier)   // gets S/A/B/C/D/E/F Style
+    let mut unique_style = style.clone()
+    unique_style.background = None                             // suppress Dracula bg
+    emit_style_actions(out, &unique_style)                     // beam, minimap, text, border, font, sound
+    writeln!(out, "  SetBackgroundColor 175 96 37 240")        // bronze injected AFTER style actions
 ```
+
+Key observations:
+- The bronze background is NOT stored in any `Style` struct. It is **hardcoded in `emit_unique_sections`** as a literal `writeln!` after `emit_style_actions`.
+- The mechanism is: clone the tier's `Style`, null out its `background` field, emit actions, then append the override color manually.
+- `emit_style_actions` emits background at position 4 in a fixed canonical order (beam, minimap, text, bg, border, font, sound, disablesound). By nulling `background` on the clone and then writing `SetBackgroundColor` after the call, the output puts the background AFTER border and font — a minor deviation from canonical order that is tested and committed in the fixture.
+
+### Cleanest replication for gems
+
+Two valid approaches, ordered by preference:
+
+**Option A (recommended): emitter-level per-category override (mirrors the unique pattern exactly)**
+
+Add an `Option<[u8; 3]>` background field to `CategoryBlock` (in `src/pricer.rs`). `emit_currency_sections` checks it and, when present, clones the style, nulls its background, calls `emit_style_actions`, then writes `SetBackgroundColor R G B 255`. This is exactly what `emit_unique_sections` does — zero new mechanism, no new style names.
+
+Change surface:
+- `src/pricer.rs`: add `background_override: Option<[u8; 3]>` to `CategoryBlock`
+- `src/pricer.rs` (`price_tiers`): populate it from category name (`"Uncut Gems"` → `[80, 70, 55]`, `"Lineage Support Gems"` → `[10, 150, 150]`, others → `None`)
+- `src/emitter.rs` (`emit_currency_sections`): replicate the clone-null-override pattern when `category.background_override.is_some()`
+
+**Option B: mapping.json `backgroundOverride` field**
+
+Add `background_override: Option<[u8; 3]>` to `GemFilter` (and future gem-like `OverviewType` entries). The sync layer populates `CategoryBlock.background_override` from the mapping entry rather than from a category-name lookup. Slightly more flexible, requires touching `src/sync/mapping.rs` (model) and `src/sync/prices.rs` (propagation) in addition to the pricer/emitter.
+
+Option A is preferred for v0.3 because the background values are fixed per-category and do not need to be in the mapping file. Option B is the right choice if gem category backgrounds are expected to change between leagues.
 
 ---
 
-## Core Data Types
+## 2. Uncut Gem Level Embedding
 
-### config.rs (mirrors filter-model.json exactly)
+### Current behavior (v0.2 / committed)
 
+In `src/sync/prices.rs`, `build_prices` processes the `UncutGems` poe.ninja type:
+
+1. `parse_gem_level(&name)` extracts N from `"Uncut Skill Gem (Level N)"`.
+2. `if level < mapping.gem_filter.min_level { continue; }` — drops level < 18.
+3. `strip_gem_level(&name)` returns `"Uncut Skill Gem"` (no suffix).
+4. The resulting `PriceItem` has `name = base_type = "Uncut Skill Gem"` — the level is gone.
+5. The emitter emits `BaseType == "Uncut Skill Gem"` — a level-agnostic rule.
+
+### What v0.3 requires
+
+The in-game filter must use `BaseType == "Uncut Skill Gem (Level N)"` because PoE2 distinguishes gem levels for matching purposes. Currently the emitter strips the level and loses the per-level discrimination.
+
+### Where the change goes
+
+The stripping happens at line 204 of `src/sync/prices.rs`:
 ```rust
-pub struct FilterConfig {
-    pub meta: Meta,
-    pub styles: IndexMap<String, Style>,   // ordered: S, A, B, C, D, E, F, Recycle, unchanged, hidden
-    pub build: Build,
-    pub weapon_classes: Vec<String>,
-    pub armour_classes: Vec<String>,
-    pub flask_charm_classes: Vec<String>,
-    pub area_level_bands: Vec<AreaLevelBand>,
-    pub always_show: AlwaysShow,
-}
-
-pub struct Style {
-    pub text: Option<[u8; 3]>,
-    pub border: Option<[u8; 3]>,
-    pub background: Option<[u8; 3]>,
-    pub font: Option<u8>,
-    pub minimap: Option<Minimap>,
-    pub beam: Option<Beam>,
-    pub sound: Option<Sound>,
-    pub action: BlockAction,           // Show | Hide
-    pub disable_drop_sound: bool,
-}
-
-pub enum BlockAction { Show, Hide }
+let base = strip_gem_level(&name);
 ```
 
-`IndexMap` (from the `indexmap` crate) preserves insertion order for styles — important because `S` before `A` before `B` etc. mirrors the model file and makes the rendered output deterministic.
+For v0.3, **do not strip**. Keep `name` as the base_type (i.e., `"Uncut Skill Gem (Level 20)"`). Each level becomes a separate `PriceItem` and a separate tier group, emitting its own `BaseType == "Uncut Skill Gem (Level 20)"` block. The dedup-by-highest-value logic (`gem_best` HashMap) must also be removed, because levels are now distinct products, not duplicates.
 
-### prices.rs
+Change surface:
+- `src/sync/prices.rs` (`build_prices`, gem branch): remove `strip_gem_level` call; keep `name` as both `name` and `base_type`; remove the `gem_best` HashMap dedup; each level is a distinct entry.
+- `src/sync/prices.rs`: drop the `min_level` check (set `min_level: 0` in `mapping.json` or skip the guard entirely).
+- `mapping.json`: set `"minLevel": 0` (or remove the field if we make it optional).
+- `src/sync/mapping.rs` (`GemFilter`): make `min_level` optional (`Option<u32>`) or leave at 0.
+- `src/emitter.rs`: no change needed — `emit_currency_sections` already emits whatever is in `base_type`.
+- `tests/fixtures/seed-prices.json` and `seed-universal.filter`: must be re-baselined after the change.
 
+### Ripple: min_level removal
+
+`gem_filter.min_level` is currently checked in one place: the `if level < mapping.gem_filter.min_level` guard in `build_prices`. Removing or zeroing it is a one-line change. The `parse_gem_level` and `strip_gem_level` helpers remain in place (they are tested independently) but stop being called in the main path.
+
+---
+
+## 3. New Categories: Verisium and LineageSupportGems
+
+### Verisium
+
+Verisium is a regular stackable currency item on the poe.ninja exchange endpoint. It requires:
+
+1. **`mapping.json`**: add one new entry to `overviewTypes`:
+   ```json
+   { "type": "Verisium", "category": "Verisium", "class": "Stackable Currency", "baseTypeIsName": true }
+   ```
+2. **`src/sync/prices.rs`**: no code change. `run_sync_prices` iterates `mapping.overview_types` generically; the new entry is fetched automatically.
+3. **`src/pricer.rs` / `src/emitter.rs`**: no code change. `price_tiers` groups items by `category`; `emit_currency_sections` emits a `# --- Verisium ---` section automatically.
+
+No new struct, no new code path. Pure data change. Confirm poe.ninja serves `type=Verisium` on the exchange endpoint before committing.
+
+### LineageSupportGems
+
+LineageSupportGems are a gem-category item (level-bearing, per-level pricing) with a fixed background. The key question is whether they use the same exchange endpoint as UncutGems or a separate one.
+
+**If poe.ninja serves LineageSupportGems on the exchange endpoint (same as UncutGems):**
+
+Option A: add a second `GemFilter`-like entry. The current `Mapping` struct has a single `gem_filter: GemFilter` field. To support a second gem category, either:
+- Promote `gem_filter` to `gem_filters: Vec<GemFilter>` (generalized, handles any number of level-bearing categories)
+- Add a separate `lineage_gem_filter: Option<GemFilter>` field (minimal change)
+
+The `Vec<GemFilter>` approach is cleaner for the long term. `build_prices` already dispatches on `type_value == &mapping.gem_filter.r#type`; generalize to `mapping.gem_filters.iter().any(|g| g.r#type == type_value)`.
+
+**If poe.ninja serves LineageSupportGems on the item overview endpoint (like uniques):**
+
+They would enter via `build_unique_items` with `name != base_type` behavior — which is wrong for gems (we want currency-style category blocks, not `Rarity == Unique` blocks). This would require a new dispatch path.
+
+**Resolution required**: spike poe.ninja to confirm which endpoint and response shape LineageSupportGems use before implementing. The architecture recommendation below assumes the exchange endpoint (same as UncutGems).
+
+Change surface (exchange endpoint assumption):
+- `mapping.json`: replace `"gemFilter": {...}` with `"gemFilters": [{ ...uncutGems... }, { ...lineageSupportGems... }]`
+- `src/sync/mapping.rs`: rename `gem_filter: GemFilter` to `gem_filters: Vec<GemFilter>`; update `load_mapping`, `Mapping::lookup` if applicable
+- `src/sync/prices.rs` (`build_prices`): replace single `gem_filter` dispatch with iteration over `gem_filters`; each gem filter has its own `gem_best` accumulator
+- `src/pricer.rs`: add `background_override: Option<[u8; 3]>` to `CategoryBlock` (see section 1); populate from the `GemFilter` entry's category
+- `src/emitter.rs`: use the override when emitting
+
+---
+
+## 4. Exceptional Gear via Rules
+
+### What `when` currently supports (from `src/models/config.rs`, `When` struct)
+
+| Field | Emitted condition | Status |
+|-------|-------------------|--------|
+| `class` | `Class "..."` | Present |
+| `rarity` | `Rarity == / >= / <=` | Present |
+| `areaLevel` | `AreaLevel >= / <=` | Present |
+| `baseArmour` | `BaseArmour >= N` | Present |
+| `baseEvasion` | `BaseEvasion >= N` | Present |
+| `baseEnergyShield` | `BaseEnergyShield >= N` | Present |
+| `quality` | `Quality >= N` | Present |
+| `sockets` | `Sockets >= N` | Present |
+| `baseType` | `BaseType == "..."` | Present |
+| `unidentifiedTier` | `UnidentifiedItemTier >= N` | Present |
+| `corrupted` | `Corrupted True/False` | **ABSENT** |
+
+### OR-of-conditions
+
+PoE2 filter blocks have AND semantics within a block. There is no OR operator. To express `(Sockets >= 2 OR Quality >= 10) AND NOT Corrupted` you need two separate rules:
+
+```json
+{ "name": "exceptional gear: extra sockets", "style": "C",
+  "when": { "sockets": {"min": 2}, "corrupted": false, "class": [...gear classes...] } },
+{ "name": "exceptional gear: extra quality", "style": "C",
+  "when": { "quality": {"min": 10}, "corrupted": false, "class": [...gear classes...] } }
+```
+
+Both rules must appear in `config.json` before the gear hide rules.
+
+### Adding `corrupted` to `When`
+
+The `Corrupted` filter condition takes a boolean (`True` or `False`). The schema addition:
+
+In `src/models/config.rs`, `When` struct:
 ```rust
-pub struct ItemPrice {
-    pub exalt: Option<f64>,
-    pub chaos: Option<f64>,
-    pub div: Option<f64>,
-}
-
-// prices.json = Vec<(String, ItemPrice)> — ordered list
-// prices[0] = ("Exalted Orb", ...), prices[1] = ("Chaos Orb", ...), prices[2] = ("Divine Orb", ...)
-pub type PriceList = Vec<(String, ItemPrice)>;
+#[serde(skip_serializing_if = "Option::is_none")]
+pub corrupted: Option<bool>,
 ```
 
-The first-three-entries contract for cross-rate derivation is enforced in `pricing::CrossRates::from_price_list`, which panics (or returns `Err`) if the list has fewer than 3 entries or if `Chaos Orb` is missing a `chaos` value of `1.0`.
-
-### pricing.rs
-
+In `src/emitter.rs`, `emit_rules`, in the `when` condition emission block (after the `unidentifiedTier` arm, step 11):
 ```rust
-pub struct CrossRates {
-    pub chaos_per_exalt: f64,
-    pub chaos_per_div: f64,
-}
-
-impl CrossRates {
-    pub fn from_price_list(list: &PriceList) -> Result<Self, PricingError> {
-        // list[0] = Exalt, list[1] = Chaos (reference = 1.0c), list[2] = Divine
-    }
-    pub fn to_chaos(&self, price: &ItemPrice) -> Option<f64> {
-        // Try chaos directly, else exalt * chaos_per_exalt, else div * chaos_per_div
-        // Returns None if all fields are None
-    }
-}
-
-pub fn assign_tier(value_chaos: f64, cutoffs: &TierCutoffs) -> Tier {
-    // Iterates S down to F, returns first tier where value >= threshold
+// 11. Corrupted
+if let Some(c) = when.corrupted {
+    writeln!(out, "  Corrupted {}", if c { "True" } else { "False" }).unwrap();
 }
 ```
 
-### emit/block.rs
+That is the complete change. The `When` struct uses `deny_unknown_fields`, so the new field must also be added; serde's `#[serde(default)]` (or `Option<bool>` with `skip_serializing_if`) handles backward compatibility — existing rules without `"corrupted"` parse as `None` and emit nothing.
 
-```rust
-pub struct Block {
-    pub action: BlockAction,
-    pub comment: String,            // "Currency S", "band <=5: all armour any rarity", etc.
-    pub tag: String,                // "[alwaysShow.recycle -> styles.Recycle]"
-    pub conditions: Vec<Condition>, // ordered
-    pub filter_actions: Vec<FilterAction>, // ordered
-}
+### Defining "exceptional gear" targets
 
-pub enum Condition {
-    AreaLevel(RangeOp, u16),
-    Class(ExactMatch, Vec<String>),
-    BaseType(ExactMatch, Vec<String>),
-    Rarity(Op, Rarity),
-    Quality(Op, u8),
-    Sockets(Op, u8),
-    BaseEvasion(Op, u32),
-    BaseArmour(Op, u32),
-    BaseEnergyShield(Op, u32),
-}
+The `class` field lists which gear slots to watch. For extra-sockets, equippable gear that can have sockets includes weapons and armour. For extra-quality, all equippable gear.
 
-pub enum FilterAction {
-    SetTextColor([u8; 4]),
-    SetBorderColor([u8; 4]),
-    SetBackgroundColor([u8; 4]),
-    SetFontSize(u8),
-    PlayAlertSound(u8, u16),
-    CustomAlertSound(String, u16),
-    PlayEffect(String, bool),      // color, temp
-    MinimapIcon(u8, String, String), // size, color, shape
-    DisableDropSound,
-}
-```
+The exact `sockets` and `quality` thresholds are policy decisions (author-editable in `config.json`), not architecture decisions. A reasonable default for extra sockets is `{"min": 2}` (PoE2 base max is 1 socket for most items; 2+ means the item rolled an extra socket mod). For extra quality, `{"min": 15}` or `{"min": 20}` depending on league.
 
-`render_block` serializes to filter text. The ordering of filter_actions within a block follows the exact sequence in `universal.filter`: `PlayEffect`, `MinimapIcon`, `SetTextColor`, `SetBackgroundColor`, `SetBorderColor`, `SetFontSize`, `CustomAlertSound`/`PlayAlertSound`, `DisableDropSound`. Encoding this order in `style_to_actions` makes output byte-for-byte stable.
+### Full schema additions required
+
+- `src/models/config.rs` `When`: add `pub corrupted: Option<bool>`
+- `src/emitter.rs` `emit_rules`: add arm 11 emitting `Corrupted True/False`
+- `config.json` `rules`: insert two new rules (sockets-exceptional and quality-exceptional) before the gear hide fallback rules, each with `"corrupted": false`
+- No changes to `src/pricer.rs`, `src/sync/`, or `mapping.json`
 
 ---
 
-## Emit Order (the canonical block sequence)
+## 5. Component Map: New vs Modified
 
-`emit_filter` builds a `Vec<Block>` in this exact order, then renders linearly. This is the rule that makes first-match-wins work correctly:
+### Files modified
 
-```
-Section 1: Recycle guard
-  alwaysShow.recycle → styles.Recycle
-  Show, Sockets >= 1, Quality >= 1
+| File | Change type | What changes |
+|------|-------------|--------------|
+| `mapping.json` | Data | Add Verisium to `overviewTypes`; replace `gemFilter` with `gemFilters` array including LineageSupportGems |
+| `src/sync/mapping.rs` | Minor modification | `gem_filter: GemFilter` → `gem_filters: Vec<GemFilter>`; add `background_override: Option<[u8;3]>` to `GemFilter` |
+| `src/sync/prices.rs` | Moderate modification | Generalize gem dispatch to iterate `gem_filters`; remove `strip_gem_level`/`gem_best` dedup; remove `min_level` guard |
+| `src/pricer.rs` | Minor modification | Add `background_override: Option<[u8;3]>` to `CategoryBlock`; populate it in `price_tiers` from gem category |
+| `src/emitter.rs` | Minor modification | In `emit_currency_sections`: clone-null-emit-override pattern when `background_override.is_some()`; add `Corrupted` arm in `emit_rules` |
+| `src/models/config.rs` | Minor modification | Add `corrupted: Option<bool>` to `When` |
+| `config.json` | Data | Add two exceptional-gear rules; optionally add `"corrupted"` to existing rules that need it |
+| `tests/fixtures/seed-prices.json` | Re-baseline | Add per-level uncut gem entries; add Verisium if present in seed |
+| `tests/fixtures/seed-universal.filter` | Re-baseline | New blocks for per-level gems, background overrides, exceptional-gear rules |
 
-Section 2: Gear areaLevelBands (styles.unchanged = Show, no color actions)
-  2a. band <=5: all armour any rarity        (armourClasses, AreaLevel <= 5)
-  2b. band <=25: build weapons any rarity    (build.weapons, AreaLevel <= 25)
-  2c. band 26+: build weapons Rare only      (build.weapons, Rarity == Rare)
-  2d. band <=25: build armour anyNonEvasion  (build.armour, AreaLevel <= 25, BaseEvasion 0, Rarity >= Magic)
-  2e. band 26-45: build armour esHybrid      (build.armour, AreaLevel 26-45, BaseEnergyShield > 0, BaseEvasion 0, Rarity >= Magic)
-  2f. band 46+: build armour pureES          (build.armour, AreaLevel >= 46, BaseEnergyShield > 0, BaseArmour 0, BaseEvasion 0, Rarity >= Magic)
-  2g. bands <=45: any other Rare gear        (all weaponClasses + armourClasses, AreaLevel <= 45, Rarity == Rare)
+### Files not modified
 
-Section 3: Gear fallthrough (styles.hidden = Hide)
-  Hide, all weaponClasses + armourClasses, Rarity <= Rare
-  SetFontSize 21, DisableDropSound
-
-Section 4: Flask/charm areaLevelBands (styles.unchanged)
-  4a. quality always shown   (flaskCharmClasses, Quality >= 1)
-  4b. bands <=25: all        (flaskCharmClasses, AreaLevel <= 25)
-  4c. bands 26-65: magic     (flaskCharmClasses, AreaLevel <= 65, Rarity == Magic)
-
-Section 5: Flask/charm fallthrough (styles.hidden)
-  Hide, flaskCharmClasses, SetFontSize 21, DisableDropSound
-
-Section 6: Currency / curated always-show blocks
-  For each named category group (Currency, Abyssal Eyes, Ancient Bones, Breach,
-  Delirium, Essences, Expedition, Idols, Incubators, Map Fragments/Pinnacle Keys,
-  Omens, Runes, Soul Cores, Tablets, Vault Keys, ...):
-    For each tier present in that category (S through F, descending):
-      Show, Class == "<class>", BaseType == "<b1>" "<b2>" ..., <style actions>
-
-Section 7: Price-tiered items (future — uniques + other poe.ninja drops)
-  Emitted after curated currency, before any final fallthrough.
-  For each tier S through F (descending):
-    For each item in that tier:
-      Show, BaseType == "<name>", Rarity == Unique (for uniques), <style actions>
-  Items with no price or price below F threshold: no block → falls through to game default.
-```
-
-Sections 1–6 are fully deterministic from `config.json` + the curated `CurrencyData` struct embedded in `emit/sections.rs`. Section 7 is deterministic given a fixed `prices.json` + `tiers.json`.
+- `src/models/prices.rs` — `PriceItem` needs no new fields; category and class already carry all needed info
+- `src/sync/league.rs`, `src/sync/client.rs`, `src/sync/models.rs` — no change
+- `src/models/tiers.rs` — no change
+- `tiers.json`, `tiers-fallback.json` — no change
 
 ---
 
-## How Styles Map to Block Actions
+## 6. Recommended Build Order
 
-`emit/style.rs::style_to_actions(style: &Style) -> Vec<FilterAction>`:
+Dependencies drive this order: each step's output is consumed by the next.
 
-| Style field | When `null` | When present |
-|---|---|---|
-| `text` / `border` / `background` | Omit the action entirely | Emit `SetTextColor` / `SetBorderColor` / `SetBackgroundColor` with alpha 255 (text/border) or 255 (bg) |
-| `font` | Omit `SetFontSize` | Emit `SetFontSize N` |
-| `minimap` | Omit | Emit `MinimapIcon size color shape` |
-| `beam` | Omit | Emit `PlayEffect color [Temp]` |
-| `sound.custom` | Check `sound.id` | Emit `CustomAlertSound "file.mp3" vol` |
-| `sound.id` | Omit sound | Emit `PlayAlertSound id vol` |
-| `disable_drop_sound: true` | N/A | Emit `DisableDropSound` |
+**Step 1: mapping.json + sync/mapping.rs (data foundation)**
+- Add Verisium to `overviewTypes`
+- Replace `gem_filter` with `gem_filters: Vec<GemFilter>`; each entry gets `background_override: Option<[u8;3]>`
+- Update `load_mapping`, fix all callsites
+- Tests: mapping parse tests update; existing tests for gem_filter become gem_filters[0]
 
-The `unchanged` style has all nullable fields set to `null` → emits a `Show` block with zero styling actions. The `hidden` style has `action: Hide`, `font: 21`, `disable_drop_sound: true`, all colors null → emits a `Hide` with `SetFontSize 21` + `DisableDropSound`.
+**Step 2: sync/prices.rs (sync pipeline)**
+- Generalize gem dispatch to iterate `gem_filters`
+- Remove `strip_gem_level` call, remove `gem_best` dedup, remove `min_level` guard
+- Each gem level (e.g., `"Uncut Skill Gem (Level 20)"`) is now a distinct `PriceItem`
+- Tests: update `gem_level_filter_keeps_only_min_level_and_above` → replace with level-preservation tests; re-baseline `seed-prices.json`
 
----
+**Step 3: pricer.rs (background_override propagation)**
+- Add `background_override: Option<[u8;3]>` to `CategoryBlock`
+- In `price_tiers`, match category name to background: `"Uncut Gems"` → `[80, 70, 55]`, `"Lineage Support Gems"` → `[10, 150, 150]`
+- Tests: unit test that `CategoryBlock` for gem categories carries the correct background
 
-## Curated Currency Data
+**Step 4: emitter.rs (output)**
+- In `emit_currency_sections`: when `category.background_override.is_some()`, clone style, null its background, call `emit_style_actions`, then write `SetBackgroundColor`
+- Re-baseline `seed-universal.filter`
+- Tests: update `generate_block_counts`; add snapshot test for gem block with background
 
-Currency category lists (the `BaseType ==` lists in Section 6) are **curated data, not derived from the model or prices**. They belong to a `CurrencyData` struct embedded directly in `emit/sections.rs`. This matches the design decision in `filter-model.json`: `"alwaysShow": { "currency": { "style": "tiered S-F (base lists are curated data, kept outside this model)" } }`.
+**Step 5: models/config.rs + emitter.rs (corrupted condition)**
+- Add `corrupted: Option<bool>` to `When`
+- Add arm 11 in `emit_rules`
+- Tests: unit tests for `Corrupted True` and `Corrupted False` emission; `deny_unknown_fields` ensures no silent breakage
 
-Structure:
-
-```rust
-// emit/sections.rs
-pub struct CurrencyCategory {
-    pub name: &'static str,     // "Currency", "Abyssal Eyes", etc.
-    pub class: &'static str,    // "Stackable Currency", "Augment", etc.
-    pub tiers: &'static [(Tier, &'static [&'static str])], // tier -> base names
-}
-
-// Populated from the exact base lists in universal.filter.
-// When sync + price-tiering lands, these lists transition to being
-// generated from prices.json rather than being static — but the
-// emit interface (CurrencyCategory) stays identical.
-static CURRENCY_DATA: &[CurrencyCategory] = &[ ... ];
-```
-
-Once `sync` + price-tiering is in place, `CURRENCY_DATA` either becomes the fallback for items poe.ninja doesn't price, or is replaced by the output of `pricing::assign_tier` applied to all `Stackable Currency`-class items.
+**Step 6: config.json (policy authoring)**
+- Add two exceptional-gear rules using `"corrupted": false` and either `"sockets"` or `"quality"`
+- Re-baseline `seed-universal.filter` if rules affect its block count
+- Tests: `generate_block_counts` assertion will need updating (currently asserts 84 Show / 3 Hide)
 
 ---
 
-## The Unique-by-Base Matching Problem
+## 7. Open Architecture Questions
 
-**Where it lives:** `generate.rs` + `pricing/mod.rs`, not in `emit/`.
+1. **LineageSupportGems endpoint**: Confirm whether poe.ninja serves this on the exchange endpoint or the item overview endpoint. If it is the item overview endpoint, the dispatch logic in `run_sync_prices` needs a third fetch path distinct from both `overviews` (exchange) and `item_overviews` (uniques). Check poe.ninja API before implementing Step 1.
 
-**The problem:** poe.ninja tracks unique items by their display name (e.g., `"Shavronne's Wrappings"`). The PoE2 filter matches by `BaseType ==` (the base item name, e.g. `"Occultist's Vestment"`) or by the unique's display name — PoE2 filter grammar supports matching `BaseType == "Shavronne's Wrappings"` directly (uniques have their own name as base type in filter context). This means for price-tiered uniques:
+2. **Exceptional gear thresholds**: The specific `sockets` min and `quality` min values are policy (author decision), not architecture. Research what PoE2 base item socket caps are to pick a meaningful `sockets.min` value.
 
-- The block is: `Show`, `BaseType == "<unique display name>"`, `Rarity == Unique`, `<style actions>`
-- **No ambiguity when matching by display name.** PoE2 filter `BaseType ==` matches the unique's actual name, not the base.
+3. **`mapping.json` version bump**: If the schema changes from `gemFilter` (singular) to `gemFilters` (plural), the committed `mapping.json` `"version": 1` should increment to 2 to make the breaking schema change detectable.
 
-**Architectural implication:** `generate.rs` builds a `Vec<TieredItem>` where each entry is `(display_name: String, class: Option<String>, rarity_filter: Option<Rarity>, tier: Tier)`. For uniques, `rarity_filter = Some(Rarity::Unique)`. For currency items (once price-driven), `rarity_filter = None` (class match is sufficient). The emitter receives this flattened list; it does not need to resolve base types.
-
-**Where the lookup is performed:** `generate.rs` calls `pricing::assign_tier` for every entry in `prices.json`, groups results by tier, and passes the grouped `Vec<TieredItem>` to `emit::emit_price_tiered_items`. All logic is in `generate.rs`; `emit/` is a pure renderer.
+4. **Fixture re-baseline scope**: Steps 2, 4, and 6 each independently invalidate `seed-universal.filter`. Consider doing a single re-baseline pass at the end rather than three incremental ones, unless intermediate snapshot tests are needed during development.
 
 ---
 
-## Data Flow: `generate` Command
-
-```
-CLI args
-    ↓
-generate::run()
-    ├── config::load("config.json")         → FilterConfig
-    ├── tiers::load("tiers.json")           → TierCutoffs
-    ├── prices::load("prices.json")         → PriceList
-    │
-    ├── pricing::CrossRates::from_price_list(&prices)  → CrossRates
-    │
-    ├── for each item in prices[3..]:
-    │     to_chaos(item, &rates) → Option<f64>
-    │     assign_tier(value, &cutoffs) → Tier
-    │     → PriceTieredItems: BTreeMap<Tier, Vec<TieredItem>>
-    │         (BTreeMap ensures deterministic S→F ordering)
-    │
-    └── emit::emit_filter(&config, &price_tiered_items)
-            ├── emit_recycle(&config)
-            ├── emit_gear_bands(&config)
-            ├── emit_gear_fallthrough(&config)
-            ├── emit_flask_charm_bands(&config)
-            ├── emit_flask_charm_fallthrough(&config)
-            ├── emit_currency_categories()        ← static CURRENCY_DATA
-            └── emit_price_tiered_items(&price_tiered_items)
-            → Vec<Block>
-            → render_all_blocks(blocks) → String
-            → write "universal.filter"
-```
-
-Everything from `CrossRates::from_price_list` onward is pure computation. No `mut` global state, no I/O after the initial reads.
-
----
-
-## Data Flow: `sync` Command
-
-```
-CLI args (--hc, --standard flags)
-    ↓
-sync::run()
-    ├── cli::parse_league_flags(&matches) → LeagueFlags
-    └── prices::poe_ninja::fetch_prices(&league)
-            ├── reqwest::Client::new()
-            ├── GET poe.ninja/api/data/itemoverview?league=...&type=Currency
-            ├── GET poe.ninja/api/data/itemoverview?league=...&type=UniqueWeapon
-            ├── GET poe.ninja/api/data/itemoverview?league=...&type=UniqueArmour
-            ├── ... (other categories)
-            ├── normalize: build Vec<(name, ItemPrice)>
-            │     prepend [("Exalted Orb", ...), ("Chaos Orb", 1.0c), ("Divine Orb", ...)]
-            │     then all other items
-            └── serialize to prices.json
-```
-
-`sync` is the **only** module that does network I/O. `generate` never touches the network. This isolation means `generate` is easily testable with fixture `prices.json` files and always produces deterministic output given the same inputs.
-
----
-
-## Module Dependency Graph (Build Order)
-
-Dependencies flow strictly downward. Build phases should follow this order:
-
-```
-Level 0 (no deps):
-  config/     — serde models only
-  tiers/      — serde models + assign_tier()
-  prices/     — serde model (PriceList)
-
-Level 1 (depends on Level 0):
-  pricing/    — depends on prices, tiers
-
-Level 2 (depends on Level 0–1):
-  emit/       — depends on config (Style, FilterConfig)
-               — depends on pricing (Tier enum, TieredItem)
-
-Level 3 (depends on Level 0–2):
-  generate    — depends on config, tiers, prices, pricing, emit
-  sync        — depends on prices (only the model + poe_ninja client)
-
-Level 4:
-  main / cli  — depends on generate + sync
-```
-
-Recommended build phase structure:
-
-1. **Phase 1 — emit foundation:** `config` models + `emit/block.rs` + `emit/style.rs`. Can render hardcoded blocks. Validates the filter grammar.
-2. **Phase 2 — static generate:** `emit/sections.rs` with hardcoded `CURRENCY_DATA` and all gear/flask sections. `generate.rs` wired to read `config.json` and emit a deterministic `universal.filter` that matches the existing hand-built file. No prices yet.
-3. **Phase 3 — tiers + pricing:** `tiers` + `pricing` modules. `generate.rs` extended to load `prices.json`, derive cross-rates, assign tiers, and emit `Section 7` blocks.
-4. **Phase 4 — sync:** `prices/poe_ninja.rs` + `sync.rs`. End-to-end: `sync` → `prices.json` → `generate` → `universal.filter`.
-
----
-
-## Architectural Patterns
-
-### Pattern 1: Pure Generate, Impure Sync
-
-**What:** `generate` reads files and writes one file. No network. No randomness. All intermediate values (CrossRates, PriceTieredItems) are plain data structs derived deterministically from inputs.
-
-**When to use:** Always for the generate path. This is the core invariant.
-
-**Trade-offs:** Requires the two-step workflow (`sync` first, then `generate`), but makes `generate` trivially testable and diff-friendly (same config + prices = same filter output).
-
-### Pattern 2: Block List as Intermediate Representation
-
-**What:** `emit::emit_filter` builds a `Vec<Block>` before rendering to text. The Block IR separates "what blocks exist and in what order" from "how to serialize a block to filter syntax."
-
-**When to use:** Preferred. Makes section ordering explicit and testable. `emit_recycle` returns `Vec<Block>`, not a `String` — composable.
-
-**Trade-offs:** Slight extra allocation, but filter output is small (< 5000 lines), so this is irrelevant.
-
-### Pattern 3: Static Curated Data as Rust Literals
-
-**What:** `CURRENCY_DATA` in `emit/sections.rs` is `&'static [CurrencyCategory]` — Rust `&'static str` arrays compiled into the binary. No runtime loading, no external file dependency.
-
-**When to use:** For data that is hand-curated and changes only with league transitions (i.e., when the developer decides to update and recompile). When price-tiering replaces curation, this transitions to a computed structure — but the rest of `emit/` does not change.
-
-**Trade-offs:** Requires recompile to update lists. Acceptable: the filter regeneration workflow already requires running the CLI.
-
----
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Mixing Network I/O into `generate`
-
-**What people do:** Call poe.ninja inside `generate` when `prices.json` is missing.
-
-**Why it's wrong:** Breaks determinism, makes testing require mocks, makes `generate` fail on network issues even when cached prices are valid.
-
-**Do this instead:** `generate` errors with a clear message if `prices.json` is absent. User runs `sync` first. The separation is intentional.
-
-### Anti-Pattern 2: Building the Filter as String Concatenation
-
-**What people do:** Each section function returns a `String` and the emitter `+`-concatenates them.
-
-**Why it's wrong:** No ability to reorder blocks, inspect the output, or test individual blocks without parsing text.
-
-**Do this instead:** Return `Vec<Block>` from each section function. Convert to string once at the end in `render_all_blocks`.
-
-### Anti-Pattern 3: Blanket Unique Styling
-
-**What people do:** Add a catch-all `Rarity == Unique` block to style all uniques with a tier color.
-
-**Why it's wrong:** Violates the established design philosophy (CLAUDE.md: "Never apply a blanket restyle to `Rarity == Unique`"). Untracked uniques must fall through to the game default.
-
-**Do this instead:** Only emit `BaseType == "<name>" Rarity == Unique` blocks for specific uniques present in `prices.json`. All other uniques fall through.
-
-### Anti-Pattern 4: Sorting prices.json by Name
-
-**What people do:** Sort the PriceList alphabetically or by value when writing `prices.json`.
-
-**Why it's wrong:** The first three entries encode the cross-rate reference currencies. Sorting would destroy that contract.
-
-**Do this instead:** `sync` always writes Exalt, Chaos, Divine as entries 0/1/2, then the rest in any consistent order (e.g., by descending chaos value for human readability).
-
----
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---|---|---|
-| poe.ninja PoE2 API | `reqwest` HTTP GET in `prices::poe_ninja` | Rate limits unknown; research needed. Returns JSON arrays of `{name, chaosValue, divineValue, ...}`. Separate endpoints per item category. |
-
-### Internal Boundaries
-
-| Boundary | Communication | Notes |
-|---|---|---|
-| `generate` → `emit` | Passes `&FilterConfig` + `&BTreeMap<Tier, Vec<TieredItem>>` | emit never reads files directly |
-| `generate` → `pricing` | Passes `&PriceList` + `&TierCutoffs`, receives `CrossRates` + tier assignments | Pure functions only |
-| `sync` → `prices::poe_ninja` | Calls `fetch_prices(league)`, receives `PriceList` | All network in this fn |
-| `config` / `tiers` / `prices` | Loaded by `generate` and `sync` respectively via `serde_json::from_reader` | Each is a standalone load function |
-
----
-
-## Scaling Considerations
-
-This is a single-user local CLI tool. Scaling is not relevant. The only performance concern worth noting:
-
-| Concern | Approach |
-|---|---|
-| poe.ninja rate limits | Cache `prices.json` locally; only `sync` hits the API. Don't call `sync` in a loop. |
-| Filter output size | The current hand-built filter is ~850 lines. Even with price-tiered uniques, output will be well under 10,000 lines. String allocation is trivially fast. |
-| Determinism regression | The only risk is non-deterministic ordering in `BTreeMap` or `HashMap`. Use `BTreeMap<Tier, Vec<TieredItem>>` (ordered by Tier enum discriminant) and `IndexMap` for styles. Sort `Vec<TieredItem>` by name before emitting. |
-
----
-
-## Sources
-
-- `filter-model.json` — source of truth for all model types (HIGH confidence)
-- `universal.filter` — executable spec for block emission order and rendering (HIGH confidence)
-- `CLAUDE.md` — filter grammar, style rules, design philosophy (HIGH confidence)
-- `.planning/PROJECT.md` — requirements and key decisions (HIGH confidence)
-
----
-*Architecture research for: FerrisFilter (Rust CLI, config-to-PoE2-filter compiler)*
-*Researched: 2026-05-23*
+*Architecture research for: FerrisFilter v0.3 Economy Items & Exceptional Gear*
+*Researched: 2026-06-23*

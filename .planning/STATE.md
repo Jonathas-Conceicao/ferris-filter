@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Economy Items & Exceptional Gear
-status: defining_requirements
-stopped_at: "Milestone v0.3 started — defining requirements"
+status: planned
+stopped_at: "Roadmap defined — Phase 8 planned, ready for /gsd-plan-phase 8"
 last_updated: "2026-06-23"
 last_activity: 2026-06-23
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.3 Economy Items & Exceptional Gear — defining requirements
+**Current focus:** v0.3 Economy Items & Exceptional Gear — Phase 8: Sync Pipeline
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 8 (Sync Pipeline) — Not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-23 — Milestone v0.3 started
+Status: Roadmap defined; ready to plan Phase 8
+Last activity: 2026-06-23 — v0.3 roadmap created (Phases 8-10)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -88,7 +88,7 @@ Recent decisions affecting current work:
 - D-10: RarityRule closed enum replaces freeform rarity strings; serde alias covers otherGear bare 'Rare' value
 - D-03 canonical action order: PlayEffect→MinimapIcon→SetTextColor→SetBackgroundColor→SetBorderColor→SetFontSize→Sound→DisableDropSound — applied to all 85 blocks via single emit_style_actions function
 - Re-baseline D-01 complete: universal.filter regenerated as golden master; only header source-indicator + recycle action reorder changed (D-02 behavioral equivalence confirmed)
-- CRLF normalization: s.replace(\"\r\n\", \"\n\") on both sides of every string comparison in tests — working-tree *.filter is CRLF on Windows, generator emits LF-only
+- CRLF normalization: s.replace("\r\n", "\n") on both sides of every string comparison in tests — working-tree *.filter is CRLF on Windows, generator emits LF-only
 - Approach A for snapshot tests: drive binary via assert_cmd --output to temp path; consistent with existing test conventions
 - D-03 extended: PriceItem has required class+category+baseType (String, not Option)
 - D-09 seed: non-reference bases at tier lower-bound; Chaos=1c, Exalt=4.5c, Divine=220c committed in prices.json
@@ -108,14 +108,20 @@ Recent decisions affecting current work:
 - unidentified style uses no text/border/background/font to preserve native rarity color
 - generate_block_counts test updated to 86 Show / 3 Hide after adding 3 CAP Show blocks + 1 Hide block
 - DOC-01: CLAUDE.md realigned to v0.2 declarative rule model; config.json named source of truth; UnidentifiedItemTier + base-defence filters confirmed working in-game
+- v0.3 AUTHORITATIVE: uncut gem each level is a distinct PoE2 base type; `strip_gem_level`+`gem_best` dedup is the bug; emit `Uncut Skill Gem (Level N)` with per-subtype plural Class
+- v0.3 poe.ninja spellings live-verified 2026-06-23: `type=UncutGems`, `type=LineageSupportGems`, `type=Verisium`
+- v0.3 background-override pattern: mirror emit_unique_sections — clone tier Style, null its background, call emit_style_actions, then writeln! the override SetBackgroundColor
+- v0.3 Lineage gem Class is a blocking spike (poe2db says "Support Gems"; NeverSink dual-class — confirm before committing mapping.json)
+- v0.3 fixture re-baseline: do ONE consolidated pass at Phase 10 (last phase that changes emitter output)
 
 ### Pending Todos
 
-- Phase 5 first: capture the current in-game `universal.filter` from `C:\Users\jonat\OneDrive\Documentos\My Games\Path of Exile 2` into `tests/fixtures/parity-ingame.filter` as the parity oracle (MIG-03 prerequisite).
+- Phase 8 first task (BLOCKING SPIKE): confirm LineageSupportGems filter Class via poe2db lookup.
+- Phase 5 todo carried forward: capture current in-game `universal.filter` from game folder into `tests/fixtures/parity-ingame.filter` as parity oracle (MIG-03 prerequisite — may be moot after v0.2 re-baseline, but worth confirming).
 
 ### Blockers/Concerns
 
-- None. (The poe.ninja PoE2 API spike — the project's only external unknown — was resolved in Phase 4. UnidentifiedItemTier + base-defence filters confirmed working in-game.)
+- LineageSupportGems filter Class is MEDIUM confidence (poe2db "Support Gems" vs NeverSink dual-class). Must be resolved as first task of Phase 8 before `mapping.json` is committed.
 
 ## Deferred Items
 
@@ -130,10 +136,10 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-06-05T11:56:50.216Z
-Stopped at: Completed 07-03-PLAN.md: CLAUDE.md declarative rule model realignment (DOC-01)
+Last session: 2026-06-23
+Stopped at: v0.3 roadmap defined (Phases 8-10); REQUIREMENTS.md traceability filled
 Resume file: None
 
-**Next step:** `/gsd-plan-phase 5`
+**Next step:** `/gsd-plan-phase 8`
 
-**Planned Phase:** 7 (New Capabilities + Docs) — 3 plans — 2026-06-05T11:47:27.370Z
+**Planned Phase:** 8 (Sync Pipeline) — requirements: ECON-01, ECON-02, ECON-03

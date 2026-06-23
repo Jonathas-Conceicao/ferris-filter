@@ -57,25 +57,23 @@ Explicitly excluded for v0.3. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ECON-01 | TBD | Pending |
-| ECON-02 | TBD | Pending |
-| ECON-03 | TBD | Pending |
-| STYLE-01 | TBD | Pending |
-| STYLE-02 | TBD | Pending |
-| EXC-01 | TBD | Pending |
-| EXC-02 | TBD | Pending |
-| EXC-03 | TBD | Pending |
-| EXC-04 | TBD | Pending |
+| ECON-01 | Phase 8 | Pending |
+| ECON-02 | Phase 8 | Pending |
+| ECON-03 | Phase 8 | Pending |
+| STYLE-01 | Phase 9 | Pending |
+| STYLE-02 | Phase 9 | Pending |
+| EXC-01 | Phase 10 | Pending |
+| EXC-02 | Phase 10 | Pending |
+| EXC-03 | Phase 10 | Pending |
+| EXC-04 | Phase 10 | Pending |
 
 **Coverage:**
 - v0.3 requirements: 9 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 9 ⚠️ (filled by roadmapper)
+- Mapped to phases: 9 (100%) ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-23*
-*Last updated: 2026-06-23 after initial v0.3 definition*
+*Last updated: 2026-06-23 — traceability filled during roadmap creation*

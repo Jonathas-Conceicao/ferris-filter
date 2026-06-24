@@ -657,10 +657,10 @@ Show # Uncut Gems S
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
-  SetBackgroundColor 40 42 54 255
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 80 70 55 255
 
 Show # Uncut Gems A
   Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
@@ -668,10 +668,10 @@ Show # Uncut Gems A
   PlayEffect Purple
   MinimapIcon 1 Purple Circle
   SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
   SetBorderColor 189 147 249 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 80 70 55 255
 
 Show # Uncut Gems C
   Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
@@ -679,9 +679,9 @@ Show # Uncut Gems C
   PlayEffect Yellow
   MinimapIcon 2 Yellow Circle
   SetTextColor 241 250 140 255
-  SetBackgroundColor 40 42 54 255
   SetBorderColor 241 250 140 255
   PlayAlertSound 2 200
+  SetBackgroundColor 80 70 55 255
 
 Show # Uncut Gems D
   Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
@@ -689,8 +689,8 @@ Show # Uncut Gems D
   PlayEffect White
   MinimapIcon 2 White Circle
   SetTextColor 139 233 253 255
-  SetBackgroundColor 40 42 54 255
   SetBorderColor 139 233 253 255
+  SetBackgroundColor 80 70 55 255
 
 # --- Lineage Support Gems ---
 Show # Lineage Support Gems B
@@ -699,10 +699,10 @@ Show # Lineage Support Gems B
   PlayEffect Red
   MinimapIcon 2 Red Circle
   SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
   SetBorderColor 255 85 85 255
   SetFontSize 37
   PlayAlertSound 2 200
+  SetBackgroundColor 10 150 150 255
 
 Show # Lineage Support Gems D
   Class == "Support Gems"
@@ -710,5 +710,5 @@ Show # Lineage Support Gems D
   PlayEffect White
   MinimapIcon 2 White Circle
   SetTextColor 139 233 253 255
-  SetBackgroundColor 40 42 54 255
   SetBorderColor 139 233 253 255
+  SetBackgroundColor 10 150 150 255

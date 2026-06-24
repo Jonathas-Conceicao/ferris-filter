@@ -45,6 +45,12 @@ pub struct FakeClient {
 impl FakeClient {
     /// Build a FakeClient that serves the happy-path fixtures:
     /// index-state, currency, UniqueWeapon, UncutGem.
+    ///
+    /// Reserved for future integration tests of `run_sync_prices` end-to-end.
+    /// The current happy-path tests drive `build_prices` directly (faster, no I/O).
+    /// When a `run_sync_prices` integration test is added, activate this factory
+    /// and update type keys to match `mapping.json` itemTypes (plural spellings).
+    #[allow(dead_code)]
     fn happy_path() -> Self {
         Self {
             responses: vec![
@@ -81,6 +87,7 @@ impl FakeClient {
     }
 
     /// Build a FakeClient where every overview type returns empty (off-season / Err).
+    #[allow(dead_code)]
     fn all_empty() -> Self {
         Self {
             responses: vec![
@@ -91,6 +98,7 @@ impl FakeClient {
     }
 
     /// Build a FakeClient that returns Err for any overview URL (simulates network failure).
+    #[allow(dead_code)]
     fn network_error_for_overview() -> Self {
         Self {
             responses: vec![

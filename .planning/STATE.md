@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.3
 milestone_name: Economy Items & Exceptional Gear
 status: planning
-stopped_at: Completed 09-gem-background-styling-01-PLAN.md
-last_updated: "2026-06-24T03:14:46.970Z"
+stopped_at: Completed 10-corrupted-condition-exceptional-gear-01-PLAN.md
+last_updated: "2026-06-24T03:20:53.852Z"
 last_activity: 2026-06-24
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -30,7 +30,7 @@ Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-24
 
-Progress: [██████████] 100%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -74,6 +74,7 @@ Progress: [██████████] 100%
 | Phase 08-sync-pipeline P01 | 5 | 3 tasks | 4 files |
 | Phase 08-sync-pipeline P02 | 12 | 3 tasks | 8 files |
 | Phase 09-gem-background-styling P01 | 15 | 2 tasks | 3 files |
+| Phase 10-corrupted-condition-exceptional-gear P01 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -124,6 +125,8 @@ Recent decisions affecting current work:
 - 08-02: pre-quoted multi-class string UNCUT_GEM_MULTICLASS merged at pricer boundary (not emitter)
 - 08-02: category_background() derives background_override from category name for Phase 9 carry
 - background_override branch is data-driven (Some([r,g,b]) vs None) in emitter — no category-name string checks; Phase 9 clone-null-append pattern mirrors emit_unique_sections
+- EXC-01: corrupted uses serde(default) + skip_serializing_if for zero-cost backward compat; emits bare boolean Corrupted True/False with NO == operator
+- EXC-04: exceptional is a required field on Styles (modeled on unidentified); style def added to config.json in Plan 01; rules deferred to Plan 02
 
 ### Pending Todos
 
@@ -148,8 +151,8 @@ Items acknowledged and deferred at milestone close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-06-24T02:50:11.819Z
-Stopped at: Completed 09-gem-background-styling-01-PLAN.md
+Last session: 2026-06-24T03:20:53.833Z
+Stopped at: Completed 10-corrupted-condition-exceptional-gear-01-PLAN.md
 Resume file: None
 
 **Next step:** Execute Phase 08 Plan 02 (08-02-PLAN.md — prices.rs gem dispatch rewrite)

@@ -34,7 +34,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 ### v0.3 Economy Items & Exceptional Gear
 
 - [x] **Phase 8: Sync Pipeline** — New economy categories + corrected Uncut Gem dispatch (completed 2026-06-24)
-- [ ] **Phase 9: Gem Background Styling** — Per-category background override on priced gem blocks
+- [x] **Phase 9: Gem Background Styling** — Per-category background override on priced gem blocks (completed 2026-06-24)
 - [ ] **Phase 10: Corrupted Condition + Exceptional Gear** — New `corrupted` when-field, exceptional-gear rules, new `exceptional` style, consolidated fixture re-baseline
 
 ## Phase Details
@@ -63,7 +63,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   3. Verisium blocks and all non-gem currency blocks contain no `SetBackgroundColor` override (Dracula bg from the tier style is their sole background).
   4. A guard test asserts no gem block in the generated filter has duplicate `SetBackgroundColor` lines.
 **Plans**: 1 plan
-  - [ ] 09-01-PLAN.md — emit per-category gem background override in emit_currency_sections (clone-null-append, mirroring emit_unique_sections) + no-duplicate-background guard test; re-baseline seed-universal.filter + insta snapshot
+  - [x] 09-01-PLAN.md — emit per-category gem background override in emit_currency_sections (clone-null-append, mirroring emit_unique_sections) + no-duplicate-background guard test; re-baseline seed-universal.filter + insta snapshot
 **UI hint**: no
 
 ### Phase 10: Corrupted Condition + Exceptional Gear
@@ -91,7 +91,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 | 6. Emitter Rewrite + Migration Parity | v0.2 | 2/2 | Complete | 2026-06-05 |
 | 7. New Capabilities + Docs | v0.2 | 3/3 | Complete | 2026-06-12 |
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete    | 2026-06-24 |
-| 9. Gem Background Styling | v0.3 | 0/1 | Planned | - |
+| 9. Gem Background Styling | v0.3 | 1/1 | Complete    | 2026-06-24 |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/? | Not started | - |
 
 ---
@@ -109,7 +109,7 @@ S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` ma
 by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
 `FUTURE` comments already mark both code locations.
 **Requirements:** TBD
-**Plans:** 2/2 plans complete
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] TBD (promote with /gsd-review-backlog when ready)

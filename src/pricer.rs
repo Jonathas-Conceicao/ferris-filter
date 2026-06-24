@@ -28,7 +28,16 @@ pub struct TieredItem {
 #[derive(Debug, Clone)]
 pub struct TierGroup {
     pub tier: String,
+    /// The `Class ==` value for this block.
+    ///
+    /// For single-class blocks this is a bare class name (e.g. `"Stackable Currency"`).
+    /// When `is_multi_class` is true, this is the pre-quoted multi-class string
+    /// `UNCUT_GEM_MULTICLASS` — emitted verbatim by the emitter.
     pub class: String,
+    /// True when `class` holds a pre-formatted multi-class string (e.g. the Uncut Gems
+    /// merge block). The emitter uses this typed signal instead of the fragile
+    /// `contains('"')` heuristic to decide whether to wrap the value in quotes.
+    pub is_multi_class: bool,
     pub items: Vec<TieredItem>,
 }
 
@@ -49,18 +58,26 @@ pub struct CategoryBlock {
 /// Phase 9 will consume this; Phase 8 only carries it.
 fn category_background(name: &str) -> Option<[u8; 3]> {
     match name {
-        "Uncut Gems" => Some([80, 70, 55]),
+        UNCUT_GEMS_CATEGORY => Some([80, 70, 55]),
         "Lineage Support Gems" => Some([10, 150, 150]),
         _ => None,
     }
 }
+
+/// Category sentinel for the Uncut Gems merge case.
+///
+/// This string originates from `GemFilter.category` in `mapping.json`
+/// (`"category": "Uncut Gems"`). Using a named const avoids brittle string literals
+/// scattered across the pricer and `category_background` — if the category value
+/// is ever renamed in `mapping.json`, only this const needs updating.
+const UNCUT_GEMS_CATEGORY: &str = "Uncut Gems";
 
 /// Canonical multi-class Class value for the Uncut Gems category.
 ///
 /// The three uncut gem subtype classes are merged into a single `Class ==` line
 /// by the emitter. The ordering (Skill, Spirit, Support) is fixed and deterministic.
 /// Phase 8 builds this string at the pricer boundary; the emitter emits it verbatim
-/// (using the `contains('"')` multi-class check).
+/// when `TierGroup.is_multi_class` is true (set by the pricer for this group).
 const UNCUT_GEM_MULTICLASS: &str =
     r#""Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems""#;
 
@@ -340,7 +357,7 @@ pub fn price_tiers(
     // check. Items from all three subtypes are unioned into that single group.
     let mut category_blocks: Vec<CategoryBlock> = Vec::new();
     for cat in &category_order {
-        let is_uncut_gems = cat == "Uncut Gems";
+        let is_uncut_gems = cat == UNCUT_GEMS_CATEGORY;
         let mut tier_groups: Vec<TierGroup> = Vec::new();
 
         for &tier in TIER_ORDER {
@@ -360,8 +377,10 @@ pub fn price_tiers(
                 if !all_items.is_empty() {
                     tier_groups.push(TierGroup {
                         tier: tier.to_string(),
-                        // Pre-quoted multi-class value emitted verbatim by the emitter.
+                        // Pre-quoted multi-class value — emitter uses is_multi_class to
+                        // emit this verbatim rather than wrapping it in extra quotes.
                         class: UNCUT_GEM_MULTICLASS.to_string(),
+                        is_multi_class: true,
                         items: all_items,
                     });
                 }
@@ -378,6 +397,7 @@ pub fn price_tiers(
                             tier_groups.push(TierGroup {
                                 tier: tier.to_string(),
                                 class: cls.clone(),
+                                is_multi_class: false,
                                 items: items.clone(),
                             });
                         }

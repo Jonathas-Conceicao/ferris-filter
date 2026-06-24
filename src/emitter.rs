@@ -400,10 +400,10 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
                 .join(" ");
 
             writeln!(out, "Show # {}", label).unwrap();
-            // Multi-class support: if the class string already contains interior quotes
-            // (pre-formatted multi-class value from the pricer), emit it verbatim.
-            // Single-class values are wrapped in quotes normally.
-            if tier_group.class.contains('"') {
+            // Multi-class support: use the typed `is_multi_class` signal from the pricer
+            // (set for the Uncut Gems merge group) to emit the pre-formatted multi-class
+            // string verbatim. Single-class values are wrapped in quotes normally.
+            if tier_group.is_multi_class {
                 writeln!(out, "  Class == {}", tier_group.class).unwrap();
             } else {
                 writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();

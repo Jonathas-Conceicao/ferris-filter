@@ -133,7 +133,7 @@ impl HttpClient for FakeClient {
 
 fn minimal_mapping_str() -> &'static str {
     r#"{
-        "version": 1,
+        "version": 2,
         "overviewTypes": [
             {
                 "type": "Currency",
@@ -148,12 +148,13 @@ fn minimal_mapping_str() -> &'static str {
                 "baseTypeIsName": false
             }
         ],
-        "gemFilter": {
-            "type": "UncutGem",
-            "category": "Uncut Gems",
-            "class": "Stackable Currency",
-            "minLevel": 18
-        }
+        "gemFilters": [
+            {
+                "type": "UncutGems",
+                "category": "Uncut Gems",
+                "classes": ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
+            }
+        ]
     }"#
 }
 
@@ -188,7 +189,8 @@ fn happy_path_anchors_first_and_correct_values() {
     let overviews = vec![
         ("Currency".to_string(), currency_overview),
         ("UniqueWeapon".to_string(), uniques_overview),
-        ("UncutGem".to_string(), gem_overview),
+        // Use "UncutGems" to match the gemFilters array type in minimal_mapping_str().
+        ("UncutGems".to_string(), gem_overview),
     ];
 
     let items = build_prices(&overviews, &mapping)
@@ -249,19 +251,37 @@ fn happy_path_anchors_first_and_correct_values() {
         "Voidforge must have category 'Uniques'"
     );
 
-    // Uncut gems collapse to their level-less base type; level 16 is excluded and the
-    // highest-valued surviving variant (level 20, div 5.0) is kept.
-    let gem = items.iter().find(|i| i.base_type == "Uncut Spirit Gem");
-    assert!(gem.is_some(), "uncut gem base type must be present in output");
-    assert!(
-        !items.iter().any(|i| i.name.contains("(Level")),
-        "no (Level N) suffix should remain in gem names"
-    );
+    // Uncut gems: all three levels survive as distinct PriceItems with (Level N) in base_type.
+    // No minLevel floor; no dedup. Class is derived from the "Uncut Spirit Gem" prefix.
+    let gems: Vec<_> = items.iter().filter(|i| i.category == "Uncut Gems").collect();
     assert_eq!(
-        gem.unwrap().div,
-        Some(5.0),
-        "kept gem must be the highest-valued variant (level 20)"
+        gems.len(),
+        3,
+        "all three uncut gem levels must produce distinct PriceItems; got {} items: {:?}",
+        gems.len(),
+        gems.iter().map(|i| &i.base_type).collect::<Vec<_>>()
     );
+    // Each level's (Level N) suffix is kept in the base_type.
+    assert!(
+        gems.iter().any(|i| i.base_type == "Uncut Spirit Gem (Level 16)"),
+        "level 16 must survive (no minLevel floor)"
+    );
+    assert!(
+        gems.iter().any(|i| i.base_type == "Uncut Spirit Gem (Level 18)"),
+        "level 18 must be present"
+    );
+    assert!(
+        gems.iter().any(|i| i.base_type == "Uncut Spirit Gem (Level 20)"),
+        "level 20 must be present"
+    );
+    // Class derived from prefix: "Uncut Spirit Gems"
+    for gem in &gems {
+        assert_eq!(
+            gem.class, "Uncut Spirit Gems",
+            "gem class must be prefix-derived for item '{}'",
+            gem.base_type
+        );
+    }
 }
 
 /// Write the happy-path output to a temp prices.json, then load it via the
@@ -281,7 +301,8 @@ fn happy_path_writes_schema_correct_prices_json() {
     let overviews = vec![
         ("Currency".to_string(), currency_overview),
         ("UniqueWeapon".to_string(), uniques_overview),
-        ("UncutGem".to_string(), gem_overview),
+        // Use "UncutGems" to match the gemFilters array type in minimal_mapping_str().
+        ("UncutGems".to_string(), gem_overview),
     ];
 
     let items = build_prices(&overviews, &mapping)
@@ -382,49 +403,71 @@ fn league_name_recorded_in_prices_output() {
 // Task 2: Gem ≥18 test (SYNC-03/D-09)
 // ---------------------------------------------------------------------------
 
-/// Build over overview-uncutgem.json (levels 16/18/20); assert only {18,20} survive.
+/// Build over overview-uncutgem.json (levels 16/18/20); assert all three levels survive
+/// as distinct PriceItems with the level kept in base_type (new per-level behavior).
 #[test]
-fn gem_filter_excludes_level_16() {
+fn gem_all_levels_survive_with_level_in_base_type() {
     let gem_overview: ferrisfilter::sync::models::ExchangeOverview =
         serde_json::from_str(FIXTURE_UNCUTGEM).expect("parse uncutgem fixture");
 
-    // Use a mapping with only the gem filter (no other types)
+    // Use a mapping with only the UncutGems gem filter (gemFilters array shape).
     let mapping_src = r#"{
-        "version": 1,
+        "version": 2,
         "overviewTypes": [],
-        "gemFilter": {
-            "type": "UncutGem",
-            "category": "Uncut Gems",
-            "class": "Stackable Currency",
-            "minLevel": 18
-        }
+        "gemFilters": [
+            {
+                "type": "UncutGems",
+                "category": "Uncut Gems",
+                "classes": ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
+            }
+        ]
     }"#;
     let mapping: ferrisfilter::sync::mapping::Mapping =
         serde_json::from_str(mapping_src).expect("parse gem-only mapping");
 
     let items = build_prices(
-        &[("UncutGem".to_string(), gem_overview)],
+        &[("UncutGems".to_string(), gem_overview)],
         &mapping,
     )
     .expect("build_prices with gem filter should succeed");
 
-    // Level 16 excluded; levels 18 and 20 collapse to a single base-type entry, keeping
-    // the highest-valued variant (level 20, div 5.0). The "(Level N)" suffix is stripped.
+    // All three levels survive (no minLevel floor); each is a distinct PriceItem.
     assert_eq!(
         items.len(),
-        1,
-        "expected exactly 1 collapsed gem base type; got {} items: {:?}",
+        3,
+        "expected 3 per-level PriceItems (no collapse/dedup); got {} items: {:?}",
         items.len(),
-        items.iter().map(|i| &i.name).collect::<Vec<_>>()
+        items.iter().map(|i| &i.base_type).collect::<Vec<_>>()
     );
-    let gem = &items[0];
-    assert_eq!(gem.base_type, "Uncut Spirit Gem");
+
+    // The "(Level N)" suffix is KEPT in each base_type (not stripped).
+    let base_types: Vec<&str> = items.iter().map(|i| i.base_type.as_str()).collect();
+    assert!(base_types.contains(&"Uncut Spirit Gem (Level 16)"), "level 16 must survive");
+    assert!(base_types.contains(&"Uncut Spirit Gem (Level 18)"), "level 18 must be present");
+    assert!(base_types.contains(&"Uncut Spirit Gem (Level 20)"), "level 20 must be present");
+
+    // Each item's class is derived from the prefix: "Uncut Spirit Gems".
+    for item in &items {
+        assert_eq!(
+            item.class, "Uncut Spirit Gems",
+            "class must be prefix-derived for item '{}'",
+            item.base_type
+        );
+    }
+
+    // Individual prices kept per level (no highest-value collapse).
+    let l16 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 16)").unwrap();
+    let l20 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 20)").unwrap();
     assert!(
-        !gem.name.contains("(Level"),
-        "level suffix must be stripped from gem name: {}",
-        gem.name
+        (l16.div.unwrap_or(0.0) - 0.05).abs() < 0.001,
+        "level 16 keeps its own div price (0.05); got {:?}",
+        l16.div
     );
-    assert_eq!(gem.div, Some(5.0), "kept variant must be level 20 (highest value)");
+    assert!(
+        (l20.div.unwrap_or(0.0) - 5.0).abs() < 0.001,
+        "level 20 keeps its own div price (5.0); got {:?}",
+        l20.div
+    );
 }
 
 // ---------------------------------------------------------------------------

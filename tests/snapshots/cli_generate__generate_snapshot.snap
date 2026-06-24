@@ -125,7 +125,7 @@ Hide # flasks/charms fallback
 # --- Currency ---
 Show # Currency S
   Class == "Stackable Currency"
-  BaseType == "Perfect Chaos Orb" "Mirror of Kalandra" "Hinekora's Lock" "Perfect Exalted Orb" "Fracturing Orb" "Albino Rhoa Feather" "Vaal Cultivation Orb"
+  BaseType == "Divine Orb" "Perfect Chaos Orb" "Mirror of Kalandra" "Hinekora's Lock" "Perfect Exalted Orb" "Fracturing Orb" "Albino Rhoa Feather" "Vaal Cultivation Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption" "Greater Chaos Orb" "Perfect Regal Orb" "Orb of Annulment" "Orb of Extraction"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -133,28 +133,6 @@ Show # Currency S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Currency A
-  Class == "Stackable Currency"
-  BaseType == "Divine Orb" "Perfect Jeweller's Orb" "Core Destabiliser" "Architect's Orb" "Ancient Infuser" "Crystallised Corruption"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Currency B
-  Class == "Stackable Currency"
-  BaseType == "Greater Chaos Orb" "Perfect Regal Orb" "Orb of Annulment" "Orb of Extraction"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Currency C
   Class == "Stackable Currency"
@@ -194,23 +172,12 @@ Show # Currency F
 # --- Abyssal Eyes ---
 Show # Abyssal Eyes S
   Class == "Augment"
-  BaseType == "Amanamu's Gaze" "Tecrod's Gaze"
+  BaseType == "Amanamu's Gaze" "Tecrod's Gaze" "Kurgal's Gaze"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
   SetBackgroundColor 40 42 54 255
   SetBorderColor 255 121 198 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Abyssal Eyes A
-  Class == "Augment"
-  BaseType == "Kurgal's Gaze"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
 
@@ -227,7 +194,7 @@ Show # Abyssal Eyes C
 # --- Ancient Bones ---
 Show # Ancient Bones S
   Class == "Stackable Currency"
-  BaseType == "Ancient Jawbone" "Ancient Rib" "Ancient Collarbone"
+  BaseType == "Ancient Jawbone" "Ancient Rib" "Ancient Collarbone" "Preserved Collarbone" "Preserved Cranium"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -235,17 +202,6 @@ Show # Ancient Bones S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Ancient Bones B
-  Class == "Stackable Currency"
-  BaseType == "Preserved Collarbone" "Preserved Cranium"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Ancient Bones C
   Class == "Stackable Currency"
@@ -275,16 +231,16 @@ Show # Ancient Bones E
   SetFontSize 29
 
 # --- Breach ---
-Show # Breach B
+Show # Breach S
   Class == "Stackable Currency"
   BaseType == "Esh's Catalyst" "Reaver Catalyst"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
   SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
+  SetBorderColor 255 121 198 255
   SetFontSize 37
-  PlayAlertSound 2 200
+  CustomAlertSound "uwu.mp3" 300
 
 Show # Breach C
   Class == "Stackable Currency"
@@ -308,7 +264,7 @@ Show # Breach D
 # --- Delirium ---
 Show # Delirium S
   Class == "Stackable Currency"
-  BaseType == "Concentrated Liquid Isolation"
+  BaseType == "Concentrated Liquid Isolation" "Concentrated Liquid Suffering" "Liquid Despair" "Concentrated Liquid Fear"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -316,28 +272,6 @@ Show # Delirium S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Delirium A
-  Class == "Stackable Currency"
-  BaseType == "Concentrated Liquid Suffering"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Delirium B
-  Class == "Stackable Currency"
-  BaseType == "Liquid Despair" "Concentrated Liquid Fear"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Delirium C
   Class == "Stackable Currency"
@@ -377,7 +311,7 @@ Show # Delirium F
 # --- Essences ---
 Show # Essences S
   Class == "Stackable Currency"
-  BaseType == "Essence of Hysteria"
+  BaseType == "Essence of Hysteria" "Perfect Essence of Battle" "Perfect Essence of Haste" "Essence of Horror" "Greater Essence of Opulence" "Essence of Abrasion" "Perfect Essence of Sorcery" "Essence of Delirium" "Essence of Opulence"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -385,28 +319,6 @@ Show # Essences S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Essences A
-  Class == "Stackable Currency"
-  BaseType == "Perfect Essence of Battle" "Perfect Essence of Haste" "Essence of Horror" "Greater Essence of Opulence"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Essences B
-  Class == "Stackable Currency"
-  BaseType == "Essence of Abrasion" "Perfect Essence of Sorcery" "Essence of Delirium" "Essence of Opulence"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Essences C
   Class == "Stackable Currency"
@@ -436,16 +348,16 @@ Show # Essences E
   SetFontSize 29
 
 # --- Expedition ---
-Show # Expedition Logbooks B
+Show # Expedition S
   Class == "Expedition Logbooks"
   BaseType == "Expedition Logbook"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
   SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
+  SetBorderColor 255 121 198 255
   SetFontSize 37
-  PlayAlertSound 2 200
+  CustomAlertSound "uwu.mp3" 300
 
 Show # Expedition C
   Class == "Stackable Currency"
@@ -477,7 +389,7 @@ Show # Expedition E
 # --- Idols ---
 Show # Idols S
   Class == "Augment"
-  BaseType == "Idol of Sirrius"
+  BaseType == "Idol of Sirrius" "Idol of Eeshta" "Rabbit Idol" "Idol of Ralakesh" "Fox Idol"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -485,28 +397,6 @@ Show # Idols S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Idols A
-  Class == "Augment"
-  BaseType == "Idol of Eeshta" "Rabbit Idol"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Idols B
-  Class == "Augment"
-  BaseType == "Idol of Ralakesh" "Fox Idol"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Idols C
   Class == "Augment"
@@ -540,7 +430,7 @@ Show # Incubators D
 # --- Map Fragments & Pinnacle Keys ---
 Show # Pinnacle Keys S
   Class == "Pinnacle Keys"
-  BaseType == "Ancient Crisis Fragment" "Primary Calamity Fragment"
+  BaseType == "Ancient Crisis Fragment" "Primary Calamity Fragment" "Faded Crisis Fragment" "Weathered Crisis Fragment" "Secondary Calamity Fragment" "Tertiary Calamity Fragment"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -549,25 +439,14 @@ Show # Pinnacle Keys S
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
 
-Show # Map Fragments A
+Show # Map Fragments S
   Class == "Map Fragments"
   BaseType == "Cowardly Fate" "Deadly Fate" "Victorious Fate"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
   SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Pinnacle Keys A
-  Class == "Pinnacle Keys"
-  BaseType == "Faded Crisis Fragment" "Weathered Crisis Fragment" "Secondary Calamity Fragment" "Tertiary Calamity Fragment"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
+  SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
 
@@ -600,7 +479,7 @@ Show # Inscribed Ultimatum E
 # --- Omens ---
 Show # Omen S
   Class == "Omen"
-  BaseType == "Omen of Whittling" "Omen of Sinistral Erasure" "Omen of Dextral Erasure" "Omen of Sinistral Annulment" "Omen of Dextral Annulment" "Omen of Chance" "Omen of Sanctification" "Omen of Light"
+  BaseType == "Omen of Whittling" "Omen of Sinistral Erasure" "Omen of Dextral Erasure" "Omen of Sinistral Annulment" "Omen of Dextral Annulment" "Omen of Chance" "Omen of Sanctification" "Omen of Light" "Omen of Recombination" "Omen of Dextral Crystallisation" "Omen of Sinistral Crystallisation" "Omen of Abyssal Echoes" "Omen of Amelioration" "Omen of Corruption" "Omen of the Hunt" "Omen of Reinforcements" "Omen of the Blessed" "Omen of Chaotic Rarity" "Omen of the Ancients" "Omen of Catalysing Exaltation"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -608,28 +487,6 @@ Show # Omen S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Omen A
-  Class == "Omen"
-  BaseType == "Omen of Recombination" "Omen of Dextral Crystallisation" "Omen of Sinistral Crystallisation" "Omen of Abyssal Echoes"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Omen B
-  Class == "Omen"
-  BaseType == "Omen of Amelioration" "Omen of Corruption" "Omen of the Hunt" "Omen of Reinforcements" "Omen of the Blessed" "Omen of Chaotic Rarity" "Omen of the Ancients" "Omen of Catalysing Exaltation"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Omen C
   Class == "Omen"
@@ -677,7 +534,7 @@ Show # Omen F
 # --- Runes ---
 Show # Runes S
   Class == "Augment"
-  BaseType == "Hedgewitch Assandra's Rune of Wisdom" "Countess Seske's Rune of Archery"
+  BaseType == "Hedgewitch Assandra's Rune of Wisdom" "Countess Seske's Rune of Archery" "Saqawal's Rune of the Sky" "Farrul's Rune of the Chase" "Courtesan Mannan's Rune of Cruelty" "Iron Rune" "Adept Rune" "Greater Rune of Tithing" "Greater Rune of Alacrity" "Saqawal's Rune of Memory"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -685,28 +542,6 @@ Show # Runes S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Runes A
-  Class == "Augment"
-  BaseType == "Saqawal's Rune of the Sky" "Farrul's Rune of the Chase" "Courtesan Mannan's Rune of Cruelty"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Runes B
-  Class == "Augment"
-  BaseType == "Iron Rune" "Adept Rune" "Greater Rune of Tithing" "Greater Rune of Alacrity" "Saqawal's Rune of Memory"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Runes C
   Class == "Augment"
@@ -746,7 +581,7 @@ Show # Runes F
 # --- Soul Cores ---
 Show # Soul Cores S
   Class == "Augment"
-  BaseType == "Quipolatl's Thesis" "Jiquani's Thesis" "Guatelitzi's Thesis" "Citaqualotl's Thesis"
+  BaseType == "Quipolatl's Thesis" "Jiquani's Thesis" "Guatelitzi's Thesis" "Citaqualotl's Thesis" "Tzamoto's Soul Core of Ferocity" "Soul Core of Tacati" "Soul Core of Jiquani" "Soul Core of Quipolatl" "Atmohua's Soul Core of Retreat" "Quipolatl's Soul Core of Flow" "Opiloti's Soul Core of Assault" "Xopec's Soul Core of Power" "Estazunti's Soul Core of Convalescence" "Soul Core of Zalatl" "Soul Core of Citaqualotl" "Soul Core of Azcapa" "Soul Core of Zantipi"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
@@ -754,28 +589,6 @@ Show # Soul Cores S
   SetBorderColor 255 121 198 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
-
-Show # Soul Cores A
-  Class == "Augment"
-  BaseType == "Tzamoto's Soul Core of Ferocity" "Soul Core of Tacati" "Soul Core of Jiquani" "Soul Core of Quipolatl"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Soul Cores B
-  Class == "Augment"
-  BaseType == "Atmohua's Soul Core of Retreat" "Quipolatl's Soul Core of Flow" "Opiloti's Soul Core of Assault" "Xopec's Soul Core of Power" "Estazunti's Soul Core of Convalescence" "Soul Core of Zalatl" "Soul Core of Citaqualotl" "Soul Core of Azcapa" "Soul Core of Zantipi"
-  PlayEffect Red
-  MinimapIcon 2 Red Circle
-  SetTextColor 255 85 85 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 255 85 85 255
-  SetFontSize 37
-  PlayAlertSound 2 200
 
 Show # Soul Cores C
   Class == "Augment"
@@ -799,23 +612,12 @@ Show # Soul Cores D
 # --- Vault Keys ---
 Show # Vault Keys S
   Class == "Vault Keys"
-  BaseType == "Xesht's Reliquary Key" "The Trialmaster's Reliquary Key" "Tangmazu's Reliquary Key" "Olroth's Reliquary Key" "The Arbiter's Reliquary Key" "Zarokh's Reliquary Key: Against the Darkness" "Zarokh's Reliquary Key: Sandstorm Visage" "Zarokh's Reliquary Key: Blessed Bonds" "Zarokh's Reliquary Key: Sekhema's Resolve" "Zarokh's Reliquary Key: Temporalis" "Azmeri Reliquary Key"
+  BaseType == "Xesht's Reliquary Key" "The Trialmaster's Reliquary Key" "Tangmazu's Reliquary Key" "Olroth's Reliquary Key" "The Arbiter's Reliquary Key" "Zarokh's Reliquary Key: Against the Darkness" "Zarokh's Reliquary Key: Sandstorm Visage" "Zarokh's Reliquary Key: Blessed Bonds" "Zarokh's Reliquary Key: Sekhema's Resolve" "Zarokh's Reliquary Key: Temporalis" "Azmeri Reliquary Key" "Ritualistic Reliquary Key"
   PlayEffect Pink
   MinimapIcon 1 Pink Circle
   SetTextColor 255 121 198 255
   SetBackgroundColor 40 42 54 255
   SetBorderColor 255 121 198 255
-  SetFontSize 37
-  CustomAlertSound "uwu.mp3" 300
-
-Show # Vault Keys A
-  Class == "Vault Keys"
-  BaseType == "Ritualistic Reliquary Key"
-  PlayEffect Purple
-  MinimapIcon 1 Purple Circle
-  SetTextColor 189 147 249 255
-  SetBackgroundColor 40 42 54 255
-  SetBorderColor 189 147 249 255
   SetFontSize 37
   CustomAlertSound "uwu.mp3" 300
 
@@ -828,3 +630,89 @@ Show # Vault Keys C
   SetBackgroundColor 40 42 54 255
   SetBorderColor 241 250 140 255
   PlayAlertSound 2 200
+
+# --- Verisium ---
+Show # Verisium S
+  Class == "Stackable Currency"
+  BaseType == "Exceptional Verisium"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Verisium A
+  Class == "Stackable Currency"
+  BaseType == "Verisium"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+# --- Uncut Gems ---
+Show # Uncut Gems S
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Spirit Gem (Level 20)"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Uncut Gems A
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 20)"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Uncut Gems C
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 19)"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Uncut Gems D
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 18)"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+# --- Lineage Support Gems ---
+Show # Lineage Support Gems B
+  Class == "Support Gems"
+  BaseType == "Lifeforce Support"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Lineage Support Gems D
+  Class == "Support Gems"
+  BaseType == "Endurance Support"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255

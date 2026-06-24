@@ -680,18 +680,21 @@ mod tests {
     #[test]
     fn assign_tier_anchor_rertiering() {
         let (_, cutoffs) = seeded_cutoffs();
-        // Divine: 220c >= 220c (A floor) -> A
-        assert_eq!(assign_tier(220.0, &cutoffs).as_deref(), Some("A"));
-        // Chaos: 1c >= 0.5c (E floor) -> E
+        // With tiers.json: S=30c, A=20c, B=12c, C=8c, D=2c, E=0.5c, F=0.1c.
+        // Divine (220c): 220 >= 30 → S
+        assert_eq!(assign_tier(220.0, &cutoffs).as_deref(), Some("S"));
+        // Chaos (1c): 1 >= 0.5 (E floor) → E
         assert_eq!(assign_tier(1.0, &cutoffs).as_deref(), Some("E"));
-        // Exalt: 4.5c >= 2c (D floor) -> D (4.5 < 10 = C floor)
+        // Exalt (4.5c): 4.5 >= 2 (D floor) → D (4.5 < 8 = C floor)
         assert_eq!(assign_tier(4.5, &cutoffs).as_deref(), Some("D"));
     }
 
     #[test]
-    fn assign_tier_s_at_exactly_1100c() {
+    fn assign_tier_s_at_exactly_30c() {
         let (_, cutoffs) = seeded_cutoffs();
-        // S floor = 5 div * 220 = 1100c — exactly at boundary -> S
+        // S floor = 30c (tiers.json) — exactly at boundary -> S
+        assert_eq!(assign_tier(30.0, &cutoffs).as_deref(), Some("S"));
+        // Also test well above: 1100c is solidly in S
         assert_eq!(assign_tier(1100.0, &cutoffs).as_deref(), Some("S"));
     }
 
@@ -721,9 +724,10 @@ mod tests {
 
     #[test]
     fn unique_base_collision_uses_highest_tier() {
-        // Inline fixture: two uniques sharing "Heavy Belt", one B-tier, one D-tier.
-        // Headhunter: 50c >= 30c = tier B; Darkness Enthroned: 5c >= 2c = tier D.
-        // Collision on "Heavy Belt": highest = B wins.
+        // Inline fixture: two uniques sharing "Heavy Belt", one high-tier, one D-tier.
+        // With tiers.json: S=30c, A=20c, B=12c, C=8c, D=2c.
+        // Headhunter: 50c >= 30c = tier S; Darkness Enthroned: 5c >= 2c = tier D.
+        // Collision on "Heavy Belt": highest (S) wins over D.
         let prices_json = r#"{
             "league": "Standard",
             "fetchedAt": "2026-01-01T00:00:00Z",
@@ -740,9 +744,9 @@ mod tests {
         let rates = derive_rates(&prices.items).unwrap();
         let priced = price_tiers(&prices, &tiers, &rates).unwrap();
 
-        // Exactly one unique block at tier B with BaseType == "Heavy Belt"
+        // Exactly one unique block at tier S (Headhunter wins collision) with BaseType == "Heavy Belt"
         assert_eq!(priced.unique_blocks.len(), 1);
-        assert_eq!(priced.unique_blocks[0].tier, "B");
+        assert_eq!(priced.unique_blocks[0].tier, "S", "Headhunter (50c) must land S (>= 30c floor)");
         assert_eq!(
             priced.unique_blocks[0].base_types,
             vec!["Heavy Belt".to_string()]
@@ -792,27 +796,30 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let a_items = items_in_tier("A");
+        // With tiers.json: S=30c, A=20c, B=12c, C=8c, D=2c, E=0.5c, F=0.1c.
+        // seed-prices.json anchors: Exalt=4.5c, Chaos=1.0c, Divine=220c.
+        // Divine (220c): >= 30c → S.  Chaos (1c): >= 0.5c → E.  Exalt (4.5c): >= 2c → D.
+        let s_items = items_in_tier("S");
         let e_items = items_in_tier("E");
         let d_items = items_in_tier("D");
 
         assert!(
-            a_items.contains(&"Divine Orb".to_string()),
-            "Divine Orb should be in A tier, got A items: {a_items:?}"
+            s_items.contains(&"Divine Orb".to_string()),
+            "Divine Orb should be in S tier (220c >= 30c floor), got S items: {s_items:?}"
         );
         assert!(
             e_items.contains(&"Chaos Orb".to_string()),
-            "Chaos Orb should be in E tier, got E items: {e_items:?}"
+            "Chaos Orb should be in E tier (1c >= 0.5c floor), got E items: {e_items:?}"
         );
         assert!(
             d_items.contains(&"Exalted Orb".to_string()),
-            "Exalted Orb should be in D tier, got D items: {d_items:?}"
+            "Exalted Orb should be in D tier (4.5c >= 2c floor), got D items: {d_items:?}"
         );
 
         // Verify they are NOT in their old positions
         assert!(
-            !items_in_tier("S").contains(&"Divine Orb".to_string()),
-            "Divine Orb must NOT be in S tier"
+            !items_in_tier("A").contains(&"Divine Orb".to_string()),
+            "Divine Orb must NOT be in A tier (moved to S with new cutoffs)"
         );
         assert!(
             !items_in_tier("C").contains(&"Chaos Orb".to_string()),

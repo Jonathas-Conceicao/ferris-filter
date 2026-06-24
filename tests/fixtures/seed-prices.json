@@ -3151,6 +3151,78 @@
       "exalt": null,
       "chaos": 10.0,
       "div": null
+    },
+    {
+      "name": "Verisium",
+      "baseType": "Verisium",
+      "class": "Stackable Currency",
+      "category": "Verisium",
+      "exalt": null,
+      "chaos": 25.0,
+      "div": null
+    },
+    {
+      "name": "Exceptional Verisium",
+      "baseType": "Exceptional Verisium",
+      "class": "Stackable Currency",
+      "category": "Verisium",
+      "exalt": null,
+      "chaos": 500.0,
+      "div": null
+    },
+    {
+      "name": "Uncut Skill Gem (Level 20)",
+      "baseType": "Uncut Skill Gem (Level 20)",
+      "class": "Uncut Skill Gems",
+      "category": "Uncut Gems",
+      "exalt": null,
+      "chaos": 25.0,
+      "div": null
+    },
+    {
+      "name": "Uncut Skill Gem (Level 19)",
+      "baseType": "Uncut Skill Gem (Level 19)",
+      "class": "Uncut Skill Gems",
+      "category": "Uncut Gems",
+      "exalt": null,
+      "chaos": 8.0,
+      "div": null
+    },
+    {
+      "name": "Uncut Skill Gem (Level 18)",
+      "baseType": "Uncut Skill Gem (Level 18)",
+      "class": "Uncut Skill Gems",
+      "category": "Uncut Gems",
+      "exalt": null,
+      "chaos": 2.0,
+      "div": null
+    },
+    {
+      "name": "Uncut Spirit Gem (Level 20)",
+      "baseType": "Uncut Spirit Gem (Level 20)",
+      "class": "Uncut Spirit Gems",
+      "category": "Uncut Gems",
+      "exalt": null,
+      "chaos": 30.0,
+      "div": null
+    },
+    {
+      "name": "Lifeforce Support",
+      "baseType": "Lifeforce Support",
+      "class": "Support Gems",
+      "category": "Lineage Support Gems",
+      "exalt": null,
+      "chaos": 15.0,
+      "div": null
+    },
+    {
+      "name": "Endurance Support",
+      "baseType": "Endurance Support",
+      "class": "Support Gems",
+      "category": "Lineage Support Gems",
+      "exalt": null,
+      "chaos": 3.0,
+      "div": null
     }
   ]
 }

@@ -587,9 +587,10 @@ mod tests {
         let output = generate(&config, &priced).expect("generate failed");
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
-        // TODO(Task 3): update show_count after seed-prices.json re-baseline adds
-        // Uncut Gems / Lineage Support Gems / Verisium blocks. Counts will increase.
-        assert_eq!(show_count, 84, "expected 84 Show blocks, got {}", show_count);
+        // Count updated in 08-02 Task 3: seed-prices.json re-baseline added Verisium (2),
+        // Uncut Gems (4), and Lineage Support Gems (2) blocks (+8 total); tiers.json
+        // cutoff changes removed some mid-range tiers (net: 84 - 18 + 8 = 74).
+        assert_eq!(show_count, 74, "expected 74 Show blocks, got {}", show_count);
         assert_eq!(hide_count, 3, "expected 3 Hide blocks, got {}", hide_count);
     }
 

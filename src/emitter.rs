@@ -604,11 +604,103 @@ mod tests {
         let output = generate(&config, &priced).expect("generate failed");
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
-        // Count updated in 08-02 Task 3: seed-prices.json re-baseline added Verisium (2),
-        // Uncut Gems (4), and Lineage Support Gems (2) blocks (+8 total); tiers.json
-        // cutoff changes removed some mid-range tiers (net: 84 - 18 + 8 = 74).
-        assert_eq!(show_count, 74, "expected 74 Show blocks, got {}", show_count);
+        // Count updated in 10-02 Task 2: Phase 10 added 3 exceptional Show blocks (74 + 3 = 77).
+        // Prior baseline: 08-02 added Verisium (2), Uncut Gems (4), Lineage Support Gems (2)
+        // blocks (+8 total); tiers.json cutoff changes removed some mid-range tiers (net: 74).
+        assert_eq!(show_count, 77, "expected 77 Show blocks, got {}", show_count);
         assert_eq!(hide_count, 3, "expected 3 Hide blocks, got {}", hide_count);
+    }
+
+    /// Guard test (EXC-02/03/04, T-10-04): asserts all three exceptional blocks are present,
+    /// carry the correct conditions and pink style, and appear BEFORE the recycle block.
+    #[test]
+    fn exceptional_blocks_present_and_precede_recycle() {
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced).expect("generate failed");
+
+        // All three exceptional block headers must be present
+        assert!(
+            output.contains("Show # exceptional sockets 2h/body"),
+            "missing 'Show # exceptional sockets 2h/body' block"
+        );
+        assert!(
+            output.contains("Show # exceptional sockets 1h"),
+            "missing 'Show # exceptional sockets 1h' block"
+        );
+        assert!(
+            output.contains("Show # exceptional quality"),
+            "missing 'Show # exceptional quality' block"
+        );
+
+        // Each block must carry Corrupted False
+        // Extract each block's text by locating the header and scanning until the next blank line.
+        let extract_block = |header: &str| -> String {
+            let start = output.find(header).expect(&format!("block not found: {header}"));
+            let slice = &output[start..];
+            let end = slice.find("\n\n").unwrap_or(slice.len());
+            slice[..end].to_string()
+        };
+
+        let block_2h = extract_block("Show # exceptional sockets 2h/body");
+        let block_1h = extract_block("Show # exceptional sockets 1h");
+        let block_quality = extract_block("Show # exceptional quality");
+
+        // Sockets thresholds
+        assert!(block_2h.contains("Sockets >= 3"), "2h/body block must have Sockets >= 3");
+        assert!(block_1h.contains("Sockets >= 2"), "1h block must have Sockets >= 2");
+        assert!(block_quality.contains("Quality >= 24"), "quality block must have Quality >= 24");
+
+        // Corrupted False on all three
+        assert!(block_2h.contains("Corrupted False"), "2h/body block must have Corrupted False");
+        assert!(block_1h.contains("Corrupted False"), "1h block must have Corrupted False");
+        assert!(block_quality.contains("Corrupted False"), "quality block must have Corrupted False");
+
+        // Pink exceptional style on all three
+        for (label, block) in [
+            ("2h/body", &block_2h),
+            ("1h", &block_1h),
+            ("quality", &block_quality),
+        ] {
+            assert!(
+                block.contains("SetTextColor 255 121 198 255"),
+                "exceptional {label} block must have pink SetTextColor"
+            );
+            assert!(
+                block.contains("SetBorderColor 255 121 198 255"),
+                "exceptional {label} block must have pink SetBorderColor"
+            );
+            assert!(
+                block.contains("SetBackgroundColor 40 42 54 255"),
+                "exceptional {label} block must have Dracula background"
+            );
+            assert!(
+                block.contains("PlayEffect Pink"),
+                "exceptional {label} block must have PlayEffect Pink"
+            );
+            assert!(
+                block.contains("MinimapIcon 2 Pink Cross"),
+                "exceptional {label} block must have MinimapIcon 2 Pink Cross"
+            );
+        }
+
+        // Ordering: all exceptional blocks appear BEFORE the recycle block (T-10-04)
+        let recycle_pos = output.find("Show # recycle").expect("recycle block not found");
+        let exc_2h_pos = output.find("Show # exceptional sockets 2h/body").unwrap();
+        let exc_1h_pos = output.find("Show # exceptional sockets 1h").unwrap();
+        let exc_quality_pos = output.find("Show # exceptional quality").unwrap();
+
+        assert!(
+            exc_2h_pos < recycle_pos,
+            "exceptional sockets 2h/body block must precede the recycle block"
+        );
+        assert!(
+            exc_1h_pos < recycle_pos,
+            "exceptional sockets 1h block must precede the recycle block"
+        );
+        assert!(
+            exc_quality_pos < recycle_pos,
+            "exceptional quality block must precede the recycle block"
+        );
     }
 
     #[test]

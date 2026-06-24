@@ -735,8 +735,8 @@ mod tests {
         // Spot-check: rules and classGroups are present
         let rules = first.rules.as_ref().unwrap();
         assert!(rules.len() >= 13, "should have at least 13 policy rules");
-        // First rule should be the recycle rule
-        assert_eq!(rules[0].style, "Recycle", "first rule should be Recycle style");
+        // First rule should be the first exceptional rule (recycle is now rules[3])
+        assert_eq!(rules[0].style, "exceptional", "first rule should be exceptional style (Phase 10 placed 3 exceptional rules before recycle)");
 
         // classGroups round-tripped
         let groups = first.class_groups.as_ref().unwrap();

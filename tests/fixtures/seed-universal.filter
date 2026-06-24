@@ -11,6 +11,36 @@
 # items, waystones, trials, unidentified — no rules touch them).
 # Currency base lists are curated data kept outside the model (carried over here).
 
+Show # exceptional sockets 2h/body
+  Class "Body Armours" "Two Hand Maces" "Bows" "Crossbows" "Quarterstaves" "Staves"
+  Sockets >= 3
+  Corrupted False
+  PlayEffect Pink
+  MinimapIcon 2 Pink Cross
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+
+Show # exceptional sockets 1h
+  Class "Helmets" "Gloves" "Boots" "Shields" "Bucklers" "Foci" "One Hand Maces" "Sceptres" "Wands" "Spears"
+  Sockets >= 2
+  Corrupted False
+  PlayEffect Pink
+  MinimapIcon 2 Pink Cross
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+
+Show # exceptional quality
+  Class "Body Armours" "Two Hand Maces" "Bows" "Crossbows" "Quarterstaves" "Staves" "Helmets" "Gloves" "Boots" "Shields" "Bucklers" "Foci" "One Hand Maces" "Sceptres" "Wands" "Spears"
+  Quality >= 24
+  Corrupted False
+  PlayEffect Pink
+  MinimapIcon 2 Pink Cross
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+
 Show # recycle: sockets + quality salvage
   Quality >= 1
   Sockets >= 1

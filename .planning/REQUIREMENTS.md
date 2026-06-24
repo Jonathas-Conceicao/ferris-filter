@@ -27,8 +27,10 @@ Requirements for the v0.3 milestone. Each maps to a roadmap phase.
 
 - [x] **EXC-01
 **: The rule `when` vocabulary supports a `corrupted` boolean condition, emitting `Corrupted True` / `Corrupted False`.
-- [ ] **EXC-02**: `generate` highlights uncorrupted gear with extra sockets — `Sockets >= 3` for two-hand/body classes, `Sockets >= 2` for one-hand/smaller classes (separate rules; filter blocks are AND-only).
-- [ ] **EXC-03**: `generate` highlights uncorrupted gear with `Quality >= 24`.
+- [x] **EXC-02
+**: `generate` highlights uncorrupted gear with extra sockets — `Sockets >= 3` for two-hand/body classes, `Sockets >= 2` for one-hand/smaller classes (separate rules; filter blocks are AND-only).
+- [x] **EXC-03
+**: `generate` highlights uncorrupted gear with `Quality >= 24`.
 - [x] **EXC-04
 **: Exceptional gear (EXC-02/03) uses a new dedicated `exceptional` named style, modeled on `Recycle` (tier-style text + border, Dracula background, colored beam, colored cross minimap icon), colored pink `255 121 198` for now. It is a *separate* style from S (same pink today) so the color can be retuned independently later.
 

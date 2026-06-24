@@ -185,6 +185,18 @@ pub fn build_prices(
                 let item_class = match derive_uncut_class(&name) {
                     Some(cls) => cls,
                     None => {
+                        // For UncutGems types, derive_uncut_class returning None means the
+                        // base-type prefix is unrecognized (e.g. a new "Uncut Aura Gem" subtype).
+                        // Warn so that derive_uncut_class can be updated before the item
+                        // silently lands in the fallback class, which would mislabel it.
+                        if gf.r#type == "UncutGems" {
+                            eprintln!(
+                                "Warning: unrecognized uncut gem prefix in '{}'; \
+                                 update derive_uncut_class — using fallback class '{}'",
+                                name,
+                                gf.classes.first().map(|s| s.as_str()).unwrap_or("(none)")
+                            );
+                        }
                         // Not an uncut gem prefix — use the first class from the filter config.
                         // This handles LineageSupportGems and any future gem categories.
                         match gf.classes.first() {

@@ -49,7 +49,9 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   3. `prices.json` contains Lineage Support Gem entries with the filter `Class` confirmed by the poe2db spike (blocking: resolve `"Support Gems"` vs `"Skill Gems" "Support Gems"` before committing).
   4. `generate` emits a `Show # Verisium <tier>` block with `Class "Stackable Currency"` and `BaseType ==` containing Verisium base types.
   5. The `overview_types_use_correct_plural_spellings` guard test is extended to assert `Verisium` and `LineageSupportGems` are present and correctly spelled.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 08-01-PLAN.md — mapping.json v2: gemFilters array (UncutGems + LineageSupportGems) + Verisium overviewType; reshape GemFilter struct (drop minLevel, add background); extend plural-spelling guard
+  - [ ] 08-02-PLAN.md — rewrite gem dispatch (per-level BaseType, prefix-derived plural Class, no strip/dedup/minLevel); multi-class emitter + pricer background carry; re-baseline seed fixtures + snapshot (suite green)
 
 ### Phase 9: Gem Background Styling
 **Goal**: Priced gem blocks in the generated filter carry a per-category fixed background color while preserving the value tier's text and border color — identical in mechanism to the priced-unique bronze background.

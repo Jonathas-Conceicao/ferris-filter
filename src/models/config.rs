@@ -130,8 +130,11 @@ pub struct Styles {
     pub unidentified: Style,
     /// Exceptional-gear highlight (EXC-04): pink text+border 255 121 198, Dracula bg,
     /// Pink beam, Pink Cross minimap, no sound, no font. Modeled on Recycle but pink.
-    /// A SEPARATE style from S so its color can be retuned independently. Required in config.json.
-    pub exceptional: Style,
+    /// A SEPARATE style from S so its color can be retuned independently.
+    /// Optional (like `craftable`) so older custom configs that omit it still parse;
+    /// a rule referencing `"exceptional"` against a config that omits it is an UnknownStyle error.
+    #[serde(default)]
+    pub exceptional: Option<Style>,
     /// Optional extra style for craftable-base highlighting (used by custom configs such as
     /// `ssf_icewolf_config.json`). Absent in the default `config.json`, so it stays `None`
     /// there — additive, no impact on the committed filter or fixtures.
@@ -348,8 +351,9 @@ pub struct When {
 ///
 /// The `style` field is a plain `String` resolved against the `Styles` struct keys at
 /// generate-time. Valid values: `"S"`, `"A"`, `"B"`, `"C"`, `"D"`, `"E"`, `"F"`,
-/// `"unchanged"`, `"hidden"`, `"Recycle"`. An unknown style name is a **hard error**
-/// at generate-time (Phase 6 validation — not enforced by serde here).
+/// `"unchanged"`, `"hidden"`, `"Recycle"`, `"unidentified"`, `"exceptional"`,
+/// `"craftable"` (requires the optional `styles.craftable` field to be defined).
+/// An unknown style name is a **hard error** at generate-time (Phase 6 validation — not enforced by serde here).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Rule {
@@ -357,7 +361,8 @@ pub struct Rule {
     /// When absent the emitter derives a label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Style tier name — must match a `Styles` key (S/A/B/C/D/E/F/unchanged/hidden/Recycle).
+    /// Style tier name — must match a `Styles` key
+    /// (S/A/B/C/D/E/F/unchanged/hidden/Recycle/unidentified/exceptional/craftable).
     /// Validation (unknown-style hard error) is deferred to generate-time (Phase 6).
     pub style: String,
     /// Optional match conditions. Absent/empty `when` matches everything.
@@ -857,29 +862,61 @@ mod tests {
     fn config_has_exceptional_style() {
         let config: Config = serde_json::from_str(CONFIG_JSON)
             .expect("config.json should parse with exceptional style defined");
+        let exceptional = config.styles.exceptional.as_ref()
+            .expect("config.json must define the exceptional style");
         assert_eq!(
-            config.styles.exceptional.action,
+            exceptional.action,
             StyleAction::Show,
             "exceptional style must be Show"
         );
         // Verify the pink color (255 121 198)
         assert_eq!(
-            config.styles.exceptional.text,
+            exceptional.text,
             Some([255, 121, 198]),
             "exceptional text color must be pink [255, 121, 198]"
         );
         assert_eq!(
-            config.styles.exceptional.border,
+            exceptional.border,
             Some([255, 121, 198]),
             "exceptional border color must be pink [255, 121, 198]"
         );
         // No sound, no font
-        assert!(config.styles.exceptional.sound.is_none(), "exceptional must have no sound");
-        assert!(config.styles.exceptional.font.is_none(), "exceptional must have no font");
+        assert!(exceptional.sound.is_none(), "exceptional must have no sound");
+        assert!(exceptional.font.is_none(), "exceptional must have no font");
         // Pink Cross minimap
-        let mm = config.styles.exceptional.minimap.as_ref().expect("exceptional must have minimap");
+        let mm = exceptional.minimap.as_ref().expect("exceptional must have minimap");
         assert_eq!(mm.color, FilterColor::Pink, "exceptional minimap color must be Pink");
         assert_eq!(mm.shape, MinimapShape::Cross, "exceptional minimap shape must be Cross");
+    }
+
+    /// Verify that a `Styles` object that omits `"exceptional"` still parses (WR-01 fix).
+    /// This models SSF custom configs like `ssf_icewolf_config.json` which predate Phase 10.
+    #[test]
+    fn styles_without_exceptional_parses_as_none() {
+        // A minimal styles JSON with all required fields but no "exceptional" key.
+        let styles_json = r#"{
+            "S":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "A":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "B":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "C":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "D":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "E":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "F":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+            "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
+            "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
+        }"#;
+        let styles: Result<Styles, _> = serde_json::from_str(styles_json);
+        assert!(
+            styles.is_ok(),
+            "Styles without 'exceptional' must parse successfully (WR-01 regression check): {:?}",
+            styles.err()
+        );
+        assert!(
+            styles.unwrap().exceptional.is_none(),
+            "exceptional must be None when absent from config"
+        );
     }
 
     // -----------------------------------------------------------------------

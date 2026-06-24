@@ -56,7 +56,7 @@ pub fn generate(config: &Config, priced: &PricedData) -> Result<String, Generate
 /// Resolve a style name to the matching `&Style` in `Styles`.
 ///
 /// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
-/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/unidentified/craftable.
+/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/unidentified/exceptional/craftable.
 ///
 /// FUTURE (style flexibility): this match hardcodes the style vocabulary, so adding a style
 /// means editing this arm and the `Styles` struct. To let any config define and use new
@@ -80,7 +80,9 @@ fn resolve_style<'a>(
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
         "unidentified" => &styles.unidentified,
-        "exceptional" => &styles.exceptional,
+        // Optional style — present only when the config defines it. A rule referencing
+        // "exceptional" against a config that omits it is treated as an unknown style.
+        "exceptional" if styles.exceptional.is_some() => styles.exceptional.as_ref().unwrap(),
         // Optional style — present only when the config defines it. A rule referencing
         // "craftable" against a config that omits it is treated as an unknown style.
         "craftable" if styles.craftable.is_some() => styles.craftable.as_ref().unwrap(),

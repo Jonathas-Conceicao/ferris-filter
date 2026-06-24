@@ -215,9 +215,11 @@ mod tests {
     fn mapping_contains_all_unique_item_types() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         // Uniques are fetched from the stash/item endpoint with PLURAL type values.
+        // NOTE: "UniqueMaps" is intentionally absent — it is a PoE1-only concept (PoE2 uses
+        // Waystones, not maps) and the poe.ninja PoE2 endpoint returns HTTP 404 for it.
         let unique_types = [
             "UniqueWeapons", "UniqueArmours", "UniqueAccessories", "UniqueFlasks",
-            "UniqueCharms", "UniqueJewels", "UniqueMaps", "UniqueSanctumRelics",
+            "UniqueCharms", "UniqueJewels", "UniqueSanctumRelics",
         ];
         for t in unique_types {
             assert!(
@@ -229,7 +231,11 @@ mod tests {
                 "{t} must map to category 'Uniques'"
             );
         }
-        assert_eq!(m.item_types.len(), 8, "expected exactly 8 unique item types");
+        assert_eq!(m.item_types.len(), 7, "expected exactly 7 unique item types");
+        assert!(
+            !m.item_types.iter().any(|it| it.r#type == "UniqueMaps"),
+            "UniqueMaps is PoE1-only (PoE2 has no unique maps) — must not be queried"
+        );
     }
 
     #[test]

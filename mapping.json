@@ -81,7 +81,6 @@
     { "type": "UniqueFlasks", "category": "Uniques" },
     { "type": "UniqueCharms", "category": "Uniques" },
     { "type": "UniqueJewels", "category": "Uniques" },
-    { "type": "UniqueMaps", "category": "Uniques" },
     { "type": "UniqueSanctumRelics", "category": "Uniques" }
   ],
   "gemFilters": [

@@ -9,9 +9,12 @@ Requirements for the v0.3 milestone. Each maps to a roadmap phase.
 
 ### Economy Categories (ECON)
 
-- [ ] **ECON-01**: `sync` fetches Verisium (poe.ninja `type=Verisium`) and `generate` tiers it as regular stackable currency (`Class "Stackable Currency"`, `BaseType ==`), with no special background.
-- [ ] **ECON-02**: `sync` fetches Lineage Support Gems (poe.ninja `type=LineageSupportGems`) — each gem's name as `BaseType` — and `generate` emits them with the correct filter `Class` (resolved by the blocking spike: `"Support Gems"` vs `"Skill Gems" "Support Gems"`).
-- [ ] **ECON-03**: `generate` emits Uncut Gems that actually match in-game — the level is kept in the `BaseType` (`Uncut Skill/Spirit/Support Gem (Level N)`, one priced entry per level) and the `Class` is the per-subtype plural (`Uncut Skill Gems` / `Uncut Spirit Gems` / `Uncut Support Gems`). The `minLevel` floor is removed.
+- [x] **ECON-01
+**: `sync` fetches Verisium (poe.ninja `type=Verisium`) and `generate` tiers it as regular stackable currency (`Class "Stackable Currency"`, `BaseType ==`), with no special background.
+- [x] **ECON-02
+**: `sync` fetches Lineage Support Gems (poe.ninja `type=LineageSupportGems`) — each gem's name as `BaseType` — and `generate` emits them with the correct filter `Class` (resolved by the blocking spike: `"Support Gems"` vs `"Skill Gems" "Support Gems"`).
+- [x] **ECON-03
+**: `generate` emits Uncut Gems that actually match in-game — the level is kept in the `BaseType` (`Uncut Skill/Spirit/Support Gem (Level N)`, one priced entry per level) and the `Class` is the per-subtype plural (`Uncut Skill Gems` / `Uncut Spirit Gems` / `Uncut Support Gems`). The `minLevel` floor is removed.
 
 ### Gem Styling (STYLE)
 

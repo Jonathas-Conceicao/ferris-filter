@@ -253,13 +253,29 @@ mod tests {
         // regressing to the singular spellings that silently fetch nothing.
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         let types: Vec<&str> = m.overview_types.iter().map(|t| t.r#type.as_str()).collect();
-        for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols"] {
+        for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols", "Verisium"] {
             assert!(types.contains(&t), "overviewTypes must use plural type '{t}'");
         }
         for bad in ["Essence", "Rune", "SoulCore", "Fragment"] {
             assert!(
                 !types.contains(&bad),
                 "'{bad}' is the wrong singular spelling (returns empty) — use the plural form"
+            );
+        }
+        // Guard: gemFilters must contain both gem categories with correct plural spellings.
+        // Silent-empty-fetch pitfall: wrong type= value returns empty from poe.ninja (D-CTX-5).
+        assert!(
+            m.gem_filters.iter().any(|g| g.r#type == "LineageSupportGems"),
+            "gemFilters must contain LineageSupportGems (silent-empty-fetch guard)"
+        );
+        assert!(
+            m.gem_filters.iter().any(|g| g.r#type == "UncutGems"),
+            "gemFilters must contain UncutGems"
+        );
+        for bad in ["LineageSupportGem"] {
+            assert!(
+                !m.gem_filters.iter().any(|g| g.r#type == bad),
+                "'{bad}' is the wrong singular spelling for the Lineage gem type"
             );
         }
     }

@@ -55,7 +55,7 @@ exceptional (extra-socket/quality, uncorrupted) gear.
 - [x] **Uncut Gems base-type fix** — emitted base type carries the level (`Uncut Skill Gem (Level N)`), per-subtype plural Class; `minLevel` floor removed. *(Validated in Phase 8 — ECON-03)*
 - [x] **Lineage Support Gems sync + tiering** — new synced category (`Class "Support Gems"`), price-tiered. *(Validated in Phase 8 — ECON-02)*
 - [x] **Gem per-category background styling** — uncut/lineage gems show tier color (border+text) over a fixed per-category background. *(Validated in Phase 9 — STYLE-01/02)*
-- [ ] **Exceptional gear highlight** — rules surface uncorrupted gear with extra sockets or extra quality, dedicated `exceptional` style. *(Phase 10)*
+- [x] **Exceptional gear highlight** — rules surface uncorrupted gear with extra sockets or extra quality, dedicated pink `exceptional` style. *(Validated in Phase 10 — EXC-01/02/03/04)*
 
 ### Deferred (next-milestone candidates)
 
@@ -138,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-24 — Phase 9 (Gem Background Styling) complete: uncut/lineage gems now show per-category backgrounds with tiered text/border (STYLE-01/02 validated)*
+*Last updated: 2026-06-24 — Phase 10 (Corrupted Condition + Exceptional Gear) complete: `corrupted` when-condition + pink `exceptional` style + 3 exceptional-gear rules (EXC-01/02/03/04 validated). All v0.3 phases (8–10) done.*

@@ -286,7 +286,7 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
 
         // Emit condition lines from rule.when in fixed deterministic order:
         // areaLevel(min then max), class, baseArmour, baseEvasion, baseEnergyShield,
-        // rarity, quality, sockets, baseType, unidentifiedTier
+        // rarity, quality, sockets, corrupted, baseType, unidentifiedTier
         if let Some(when) = &rule.when {
             // 1. AreaLevel >= min
             if let Some(al) = &when.area_level {
@@ -347,6 +347,11 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
             // 8. Sockets
             if let Some(nc) = &when.sockets {
                 emit_numeric(out, "Sockets", nc);
+            }
+
+            // 8b. Corrupted (boolean — no operator)
+            if let Some(c) = when.corrupted {
+                writeln!(out, "  Corrupted {}", if c { "True" } else { "False" }).unwrap();
             }
 
             // 9. BaseType == (with ==)
@@ -682,6 +687,81 @@ mod tests {
         let first = generate(&config, &priced).expect("generate failed");
         let second = generate(&config, &priced).expect("generate failed");
         assert_eq!(first, second, "generate() must be deterministic");
+    }
+
+    // -----------------------------------------------------------------------
+    // Corrupted condition emit tests (EXC-01)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emit_rules_emits_corrupted_false() {
+        use crate::models::config::{Rule, When};
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(Rule {
+            name: Some("test-corrupted-false".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                corrupted: Some(false),
+                ..Default::default()
+            }),
+        });
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(
+            output.contains("  Corrupted False"),
+            "expected '  Corrupted False' in output, got:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("Corrupted =="),
+            "Corrupted must NOT use == operator, got:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn emit_rules_emits_corrupted_true() {
+        use crate::models::config::{Rule, When};
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(Rule {
+            name: Some("test-corrupted-true".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                corrupted: Some(true),
+                ..Default::default()
+            }),
+        });
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(
+            output.contains("  Corrupted True"),
+            "expected '  Corrupted True' in output, got:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn emit_rules_omits_corrupted_when_none() {
+        use crate::models::config::{Rule, When, NumericCondition};
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(Rule {
+            name: Some("test-no-corrupted".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                sockets: Some(NumericCondition { eq: None, min: Some(1), max: None }),
+                corrupted: None,
+                ..Default::default()
+            }),
+        });
+        let output = generate(&config, &priced).expect("generate failed");
+        // Find the block for our test rule
+        let block = output
+            .split("\n\n")
+            .find(|b| b.contains("test-no-corrupted"))
+            .expect("block for test-no-corrupted not found");
+        assert!(
+            !block.contains("Corrupted"),
+            "no Corrupted line should be emitted when corrupted is None:\n{}",
+            block
+        );
     }
 
     #[test]

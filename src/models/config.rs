@@ -326,6 +326,9 @@ pub struct When {
     /// `Sockets` numeric condition
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sockets: Option<NumericCondition>,
+    /// `Corrupted True` / `Corrupted False` (boolean — NO operator). None emits nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrupted: Option<bool>,
     /// `BaseType == "..."` (exact full-name match)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_type: Option<Vec<String>>,
@@ -839,5 +842,44 @@ mod tests {
         assert!(when.sockets.is_some());
         assert!(when.base_type.is_some());
         assert!(when.unidentified_tier.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Corrupted condition tests (EXC-01)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn when_corrupted_false_parses() {
+        let rule: Rule = serde_json::from_str(r#"{"style":"E","when":{"corrupted":false}}"#).unwrap();
+        assert_eq!(rule.when.as_ref().unwrap().corrupted, Some(false));
+    }
+
+    #[test]
+    fn when_corrupted_true_parses() {
+        let rule: Rule = serde_json::from_str(r#"{"style":"E","when":{"corrupted":true}}"#).unwrap();
+        assert_eq!(rule.when.as_ref().unwrap().corrupted, Some(true));
+    }
+
+    #[test]
+    fn when_corrupted_absent_is_none() {
+        let rule: Rule = serde_json::from_str(r#"{"style":"E","when":{"sockets":{"min":1}}}"#).unwrap();
+        assert!(rule.when.as_ref().unwrap().corrupted.is_none());
+    }
+
+    #[test]
+    fn when_corrupted_round_trips() {
+        let rule = Rule {
+            name: Some("test-corrupted".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                corrupted: Some(false),
+                ..Default::default()
+            }),
+        };
+        let serialized = serde_json::to_string(&rule).unwrap();
+        let restored: Rule = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(rule, restored);
+        // None-valued fields must not appear in the serialized form
+        assert!(serialized.contains("\"corrupted\":false"));
     }
 }

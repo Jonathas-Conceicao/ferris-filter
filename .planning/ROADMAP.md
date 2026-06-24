@@ -77,7 +77,9 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   4. The generated filter contains a `Show # exceptional-quality` block with `Quality >= 24` (author-decided threshold) and `Corrupted False` covering gear classes.
   5. The `exceptional` style produces pink text `255 121 198`, pink border, Dracula background, a pink beam, and a pink cross minimap icon — verifiable in the emitted filter blocks.
   6. `seed-universal.filter` and `generate_block_counts` are re-baselined; `artifact_guard` + `generate_snapshot` pass green.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 10-01-PLAN.md — code half: add `corrupted: Option<bool>` to `When` + emit arm (EXC-01); add required `exceptional` named style to `Styles` + `resolve_style` + config.json style def (EXC-04); unit tests; seed oracle unchanged
+  - [ ] 10-02-PLAN.md — policy half: author the 3 exceptional rules at the top of config.json rules (before recycle, EXC-02/03/04); consolidated re-baseline of seed-universal.filter + insta snapshot + `generate_block_counts` (+3 Show → 77); ordering guard test; suite green
 
 ## Progress
 
@@ -92,7 +94,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 | 7. New Capabilities + Docs | v0.2 | 3/3 | Complete | 2026-06-12 |
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete    | 2026-06-24 |
 | 9. Gem Background Styling | v0.3 | 1/1 | Complete    | 2026-06-24 |
-| 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/? | Not started | - |
+| 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/2 | Planned | - |
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 roadmap defined 2026-06-23.*

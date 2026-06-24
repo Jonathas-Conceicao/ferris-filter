@@ -73,10 +73,10 @@ Explicitly excluded for v0.3. Documented to prevent scope creep.
 | ECON-03 | Phase 8 | Complete |
 | STYLE-01 | Phase 9 | Complete |
 | STYLE-02 | Phase 9 | Complete |
-| EXC-01 | Phase 10 | Pending |
-| EXC-02 | Phase 10 | Pending |
-| EXC-03 | Phase 10 | Pending |
-| EXC-04 | Phase 10 | Pending |
+| EXC-01 | Phase 10 | Complete |
+| EXC-02 | Phase 10 | Complete |
+| EXC-03 | Phase 10 | Complete |
+| EXC-04 | Phase 10 | Complete |
 
 **Coverage:**
 - v0.3 requirements: 9 total

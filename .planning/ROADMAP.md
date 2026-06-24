@@ -35,7 +35,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 
 - [x] **Phase 8: Sync Pipeline** — New economy categories + corrected Uncut Gem dispatch (completed 2026-06-24)
 - [x] **Phase 9: Gem Background Styling** — Per-category background override on priced gem blocks (completed 2026-06-24)
-- [ ] **Phase 10: Corrupted Condition + Exceptional Gear** — New `corrupted` when-field, exceptional-gear rules, new `exceptional` style, consolidated fixture re-baseline
+- [x] **Phase 10: Corrupted Condition + Exceptional Gear** — New `corrupted` when-field, exceptional-gear rules, new `exceptional` style, consolidated fixture re-baseline (completed 2026-06-24)
 
 ## Phase Details
 
@@ -78,8 +78,8 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   5. The `exceptional` style produces pink text `255 121 198`, pink border, Dracula background, a pink beam, and a pink cross minimap icon — verifiable in the emitted filter blocks.
   6. `seed-universal.filter` and `generate_block_counts` are re-baselined; `artifact_guard` + `generate_snapshot` pass green.
 **Plans**: 2 plans
-  - [ ] 10-01-PLAN.md — code half: add `corrupted: Option<bool>` to `When` + emit arm (EXC-01); add required `exceptional` named style to `Styles` + `resolve_style` + config.json style def (EXC-04); unit tests; seed oracle unchanged
-  - [ ] 10-02-PLAN.md — policy half: author the 3 exceptional rules at the top of config.json rules (before recycle, EXC-02/03/04); consolidated re-baseline of seed-universal.filter + insta snapshot + `generate_block_counts` (+3 Show → 77); ordering guard test; suite green
+  - [x] 10-01-PLAN.md — code half: add `corrupted: Option<bool>` to `When` + emit arm (EXC-01); add required `exceptional` named style to `Styles` + `resolve_style` + config.json style def (EXC-04); unit tests; seed oracle unchanged
+  - [x] 10-02-PLAN.md — policy half: author the 3 exceptional rules at the top of config.json rules (before recycle, EXC-02/03/04); consolidated re-baseline of seed-universal.filter + insta snapshot + `generate_block_counts` (+3 Show → 77); ordering guard test; suite green
 
 ## Progress
 
@@ -94,7 +94,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 | 7. New Capabilities + Docs | v0.2 | 3/3 | Complete | 2026-06-12 |
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete    | 2026-06-24 |
 | 9. Gem Background Styling | v0.3 | 1/1 | Complete    | 2026-06-24 |
-| 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/2 | Planned | - |
+| 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete    | 2026-06-24 |
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 roadmap defined 2026-06-23.*
@@ -111,7 +111,7 @@ S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` ma
 by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
 `FUTURE` comments already mark both code locations.
 **Requirements:** TBD
-**Plans:** 1/1 plans complete
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] TBD (promote with /gsd-review-backlog when ready)

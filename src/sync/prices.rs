@@ -115,14 +115,16 @@ pub fn build_prices(
         std::collections::HashMap::new();
 
     for (type_value, overview) in overviews {
-        // Determine if this is the gemFilter type or a regular overviewType
-        let is_gem_type = type_value == &mapping.gem_filter.r#type;
+        // Determine if this is a gemFilters type (Plan 02 rewrites this branch fully).
+        let first_gem = mapping.gem_filters.first();
+        let is_gem_type = first_gem.map_or(false, |g| type_value == &g.r#type);
 
         // Determine category/class from mapping
         let (category, class, base_type_is_name) = if is_gem_type {
+            let g = first_gem.unwrap();
             (
-                mapping.gem_filter.category.clone(),
-                mapping.gem_filter.class.clone(),
+                g.category.clone(),
+                g.classes.first().cloned().unwrap_or_default(),
                 true, // gems: baseType = name
             )
         } else {
@@ -198,7 +200,8 @@ pub fn build_prices(
                 let level = parse_gem_level(&name)
                     .or_else(|| parse_gem_level(&line.id))
                     .unwrap_or(0);
-                if level < mapping.gem_filter.min_level {
+                // TODO(Plan 02): min_level removed from schema; this branch is rewritten.
+                if level < 18 {
                     continue;
                 }
                 let base = strip_gem_level(&name);
@@ -427,9 +430,17 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         }
     }
 
-    // gemFilter type
+    // gem_filters fetches (Plan 02 rewrites this to loop all entries).
+    // For now, fetch only the first gem_filter entry for backward compatibility.
     {
-        let gem_type = &mapping.gem_filter.r#type;
+        let gem_type = match mapping.gem_filters.first() {
+            Some(g) => g.r#type.clone(),
+            None => {
+                eprintln!("Warning: gem_filters is empty, skipping gem fetch");
+                String::new()
+            }
+        };
+        let gem_type = &gem_type;
         let query = [
             ("league", league_name.as_str()),
             ("type", gem_type.as_str()),

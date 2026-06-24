@@ -103,7 +103,7 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
         version: committed.version,
         overview_types: committed.overview_types,
         item_types: committed.item_types,
-        gem_filter: committed.gem_filter,
+        gem_filters: committed.gem_filters,
     };
 
     // 4. Validate before persist: refuse to write if overviewTypes is empty.

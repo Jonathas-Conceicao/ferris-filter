@@ -50,7 +50,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   4. `generate` emits a `Show # Verisium <tier>` block with `Class "Stackable Currency"` and `BaseType ==` containing Verisium base types.
   5. The `overview_types_use_correct_plural_spellings` guard test is extended to assert `Verisium` and `LineageSupportGems` are present and correctly spelled.
 **Plans**: 2 plans
-  - [ ] 08-01-PLAN.md — mapping.json v2: gemFilters array (UncutGems + LineageSupportGems) + Verisium overviewType; reshape GemFilter struct (drop minLevel, add background); extend plural-spelling guard
+  - [x] 08-01-PLAN.md — mapping.json v2: gemFilters array (UncutGems + LineageSupportGems) + Verisium overviewType; reshape GemFilter struct (drop minLevel, add background); extend plural-spelling guard
   - [ ] 08-02-PLAN.md — rewrite gem dispatch (per-level BaseType, prefix-derived plural Class, no strip/dedup/minLevel); multi-class emitter + pricer background carry; re-baseline seed fixtures + snapshot (suite green)
 
 ### Phase 9: Gem Background Styling
@@ -89,7 +89,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 | 5. Rule Schema | v0.2 | 2/2 | Complete | 2026-06-05 |
 | 6. Emitter Rewrite + Migration Parity | v0.2 | 2/2 | Complete | 2026-06-05 |
 | 7. New Capabilities + Docs | v0.2 | 3/3 | Complete | 2026-06-12 |
-| 8. Sync Pipeline | v0.3 | 0/? | Not started | - |
+| 8. Sync Pipeline | v0.3 | 1/2 | Executing | - |
 | 9. Gem Background Styling | v0.3 | 0/? | Not started | - |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/? | Not started | - |
 

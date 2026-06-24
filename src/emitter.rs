@@ -409,7 +409,18 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
                 writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();
             }
             writeln!(out, "  BaseType == {}", base_type_str).unwrap();
-            emit_style_actions(out, style);
+            // Per-category background override (Phase 9): mirror the priced-unique bronze
+            // pattern — clone the tier style, null its background so emit_style_actions
+            // skips the Dracula SetBackgroundColor line, then append the single override.
+            match category.background_override {
+                Some([r, g, b]) => {
+                    let mut bg_style = style.clone();
+                    bg_style.background = None;
+                    emit_style_actions(out, &bg_style);
+                    writeln!(out, "  SetBackgroundColor {} {} {} 255", r, g, b).unwrap();
+                }
+                None => emit_style_actions(out, style),
+            }
             writeln!(out).unwrap();
         }
     }
@@ -671,5 +682,31 @@ mod tests {
         let first = generate(&config, &priced).expect("generate failed");
         let second = generate(&config, &priced).expect("generate failed");
         assert_eq!(first, second, "generate() must be deterministic");
+    }
+
+    #[test]
+    fn gem_blocks_have_single_per_category_background() {
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced).expect("generate failed");
+        // Walk blocks: a block starts at a "Show"/"Hide" line and ends at a blank line.
+        for block in output.split("\n\n") {
+            let header = block.lines().next().unwrap_or("");
+            let bg_count = block.lines().filter(|l| l.trim_start().starts_with("SetBackgroundColor")).count();
+            if header.contains("# Uncut Gems") {
+                assert!(block.contains("SetBackgroundColor 80 70 55 255"), "uncut gem block must carry 80 70 55 bg:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 40 42 54 255"), "uncut gem block must not keep the Dracula bg:\n{block}");
+                assert_eq!(bg_count, 1, "uncut gem block must have exactly one SetBackgroundColor:\n{block}");
+            }
+            if header.contains("# Lineage Support Gems") {
+                assert!(block.contains("SetBackgroundColor 10 150 150 255"), "lineage gem block must carry 10 150 150 bg:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 40 42 54 255"), "lineage gem block must not keep the Dracula bg:\n{block}");
+                assert_eq!(bg_count, 1, "lineage gem block must have exactly one SetBackgroundColor:\n{block}");
+            }
+            if header.contains("# Verisium") {
+                assert!(block.contains("SetBackgroundColor 40 42 54 255"), "Verisium must keep the Dracula bg:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 80 70 55"), "Verisium must not get the uncut override:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 10 150 150"), "Verisium must not get the lineage override:\n{block}");
+            }
+        }
     }
 }

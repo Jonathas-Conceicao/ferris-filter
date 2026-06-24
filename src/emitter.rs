@@ -400,7 +400,14 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
                 .join(" ");
 
             writeln!(out, "Show # {}", label).unwrap();
-            writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();
+            // Multi-class support: if the class string already contains interior quotes
+            // (pre-formatted multi-class value from the pricer), emit it verbatim.
+            // Single-class values are wrapped in quotes normally.
+            if tier_group.class.contains('"') {
+                writeln!(out, "  Class == {}", tier_group.class).unwrap();
+            } else {
+                writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();
+            }
             writeln!(out, "  BaseType == {}", base_type_str).unwrap();
             emit_style_actions(out, style);
             writeln!(out).unwrap();
@@ -580,6 +587,8 @@ mod tests {
         let output = generate(&config, &priced).expect("generate failed");
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
+        // TODO(Task 3): update show_count after seed-prices.json re-baseline adds
+        // Uncut Gems / Lineage Support Gems / Verisium blocks. Counts will increase.
         assert_eq!(show_count, 84, "expected 84 Show blocks, got {}", show_count);
         assert_eq!(hide_count, 3, "expected 3 Hide blocks, got {}", hide_count);
     }

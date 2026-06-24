@@ -603,7 +603,6 @@ fn is_leap_year(year: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::prices::PriceItem;
     use crate::sync::mapping::Mapping;
     use crate::sync::models::{ExchangeCore, ExchangeItem, ExchangeLine, ExchangeOverview};
     use std::collections::HashMap;

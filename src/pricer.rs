@@ -37,7 +37,32 @@ pub struct TierGroup {
 pub struct CategoryBlock {
     pub name: String,
     pub tiers: Vec<TierGroup>,
+    /// Per-category fixed background `[R, G, B]` carried from mapping.json for Phase 9.
+    /// Phase 8 does NOT emit this — the emitter leaves it unread this phase.
+    /// None = no background override (Currency, Verisium, etc.).
+    pub background_override: Option<[u8; 3]>,
 }
+
+/// Derive the per-category background override from the category name.
+///
+/// These values mirror the `backgroundOverride` fields in mapping.json gemFilters.
+/// Phase 9 will consume this; Phase 8 only carries it.
+fn category_background(name: &str) -> Option<[u8; 3]> {
+    match name {
+        "Uncut Gems" => Some([80, 70, 55]),
+        "Lineage Support Gems" => Some([10, 150, 150]),
+        _ => None,
+    }
+}
+
+/// Canonical multi-class Class value for the Uncut Gems category.
+///
+/// The three uncut gem subtype classes are merged into a single `Class ==` line
+/// by the emitter. The ordering (Skill, Spirit, Support) is fixed and deterministic.
+/// Phase 8 builds this string at the pricer boundary; the emitter emits it verbatim
+/// (using the `contains('"')` multi-class check).
+const UNCUT_GEM_MULTICLASS: &str =
+    r#""Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems""#;
 
 /// A price-tiered unique block (one or more base types at the same tier).
 #[derive(Debug, Clone)]
@@ -306,33 +331,66 @@ pub fn price_tiers(
     }
 
     // ── Build Vec<CategoryBlock> using deterministic iteration ─────────────
-    // Iterate category_order (first-appearance) × TIER_ORDER (fixed S→F) × class_order
+    // Iterate category_order (first-appearance) × TIER_ORDER (fixed S→F) × class_order.
+    //
+    // Special case — "Uncut Gems": the three subtype classes ("Uncut Skill Gems",
+    // "Uncut Spirit Gems", "Uncut Support Gems") are merged into ONE TierGroup per
+    // tier. The `class` field on that group is the pre-quoted multi-class string
+    // (UNCUT_GEM_MULTICLASS) which the emitter emits verbatim via its `contains('"')`
+    // check. Items from all three subtypes are unioned into that single group.
     let mut category_blocks: Vec<CategoryBlock> = Vec::new();
     for cat in &category_order {
+        let is_uncut_gems = cat == "Uncut Gems";
         let mut tier_groups: Vec<TierGroup> = Vec::new();
+
         for &tier in TIER_ORDER {
-            // Get class order for this (category, tier)
-            let classes = class_order
-                .get(&(cat.clone(), tier.to_string()))
-                .cloned()
-                .unwrap_or_default();
-            for cls in &classes {
-                let key = (cat.clone(), tier.to_string(), cls.clone());
-                if let Some(items) = category_tier_class_items.get(&key) {
-                    if !items.is_empty() {
-                        tier_groups.push(TierGroup {
-                            tier: tier.to_string(),
-                            class: cls.clone(),
-                            items: items.clone(),
-                        });
+            if is_uncut_gems {
+                // Collect all items in this tier across all three subtype classes.
+                let all_items: Vec<TieredItem> = ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
+                    .iter()
+                    .flat_map(|cls| {
+                        let key = (cat.clone(), tier.to_string(), cls.to_string());
+                        category_tier_class_items
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .collect();
+
+                if !all_items.is_empty() {
+                    tier_groups.push(TierGroup {
+                        tier: tier.to_string(),
+                        // Pre-quoted multi-class value emitted verbatim by the emitter.
+                        class: UNCUT_GEM_MULTICLASS.to_string(),
+                        items: all_items,
+                    });
+                }
+            } else {
+                // Regular categories: one TierGroup per (category, tier, class).
+                let classes = class_order
+                    .get(&(cat.clone(), tier.to_string()))
+                    .cloned()
+                    .unwrap_or_default();
+                for cls in &classes {
+                    let key = (cat.clone(), tier.to_string(), cls.clone());
+                    if let Some(items) = category_tier_class_items.get(&key) {
+                        if !items.is_empty() {
+                            tier_groups.push(TierGroup {
+                                tier: tier.to_string(),
+                                class: cls.clone(),
+                                items: items.clone(),
+                            });
+                        }
                     }
                 }
             }
         }
+
         if !tier_groups.is_empty() {
             category_blocks.push(CategoryBlock {
                 name: cat.clone(),
                 tiers: tier_groups,
+                background_override: category_background(cat),
             });
         }
     }

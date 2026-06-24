@@ -54,7 +54,7 @@ exceptional (extra-socket/quality, uncorrupted) gear.
 - [x] **Verisium sync + tiering** — `sync` fetches Verisium from poe.ninja and `generate` tiers it as regular stackable currency. *(Validated in Phase 8: Sync Pipeline — ECON-01)*
 - [x] **Uncut Gems base-type fix** — emitted base type carries the level (`Uncut Skill Gem (Level N)`), per-subtype plural Class; `minLevel` floor removed. *(Validated in Phase 8 — ECON-03)*
 - [x] **Lineage Support Gems sync + tiering** — new synced category (`Class "Support Gems"`), price-tiered. *(Validated in Phase 8 — ECON-02)*
-- [ ] **Gem per-category background styling** — uncut/lineage gems show tier color (border+text) over a fixed per-category background. *(Phase 9)*
+- [x] **Gem per-category background styling** — uncut/lineage gems show tier color (border+text) over a fixed per-category background. *(Validated in Phase 9 — STYLE-01/02)*
 - [ ] **Exceptional gear highlight** — rules surface uncorrupted gear with extra sockets or extra quality, dedicated `exceptional` style. *(Phase 10)*
 
 ### Deferred (next-milestone candidates)
@@ -138,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-24 — Phase 8 (Sync Pipeline) complete: Verisium + Lineage Support Gems synced, Uncut Gems base-type fix landed (ECON-01/02/03 validated)*
+*Last updated: 2026-06-24 — Phase 9 (Gem Background Styling) complete: uncut/lineage gems now show per-category backgrounds with tiered text/border (STYLE-01/02 validated)*

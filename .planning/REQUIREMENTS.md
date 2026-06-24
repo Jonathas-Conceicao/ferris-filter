@@ -62,9 +62,9 @@ Explicitly excluded for v0.3. Documented to prevent scope creep.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ECON-01 | Phase 8 | Pending |
-| ECON-02 | Phase 8 | Pending |
-| ECON-03 | Phase 8 | Pending |
+| ECON-01 | Phase 8 | Complete |
+| ECON-02 | Phase 8 | Complete |
+| ECON-03 | Phase 8 | Complete |
 | STYLE-01 | Phase 9 | Pending |
 | STYLE-02 | Phase 9 | Pending |
 | EXC-01 | Phase 10 | Pending |

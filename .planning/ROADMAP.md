@@ -33,7 +33,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 
 ### v0.3 Economy Items & Exceptional Gear
 
-- [ ] **Phase 8: Sync Pipeline** — New economy categories + corrected Uncut Gem dispatch
+- [x] **Phase 8: Sync Pipeline** — New economy categories + corrected Uncut Gem dispatch (completed 2026-06-24)
 - [ ] **Phase 9: Gem Background Styling** — Per-category background override on priced gem blocks
 - [ ] **Phase 10: Corrupted Condition + Exceptional Gear** — New `corrupted` when-field, exceptional-gear rules, new `exceptional` style, consolidated fixture re-baseline
 
@@ -51,7 +51,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   5. The `overview_types_use_correct_plural_spellings` guard test is extended to assert `Verisium` and `LineageSupportGems` are present and correctly spelled.
 **Plans**: 2 plans
   - [x] 08-01-PLAN.md — mapping.json v2: gemFilters array (UncutGems + LineageSupportGems) + Verisium overviewType; reshape GemFilter struct (drop minLevel, add background); extend plural-spelling guard
-  - [ ] 08-02-PLAN.md — rewrite gem dispatch (per-level BaseType, prefix-derived plural Class, no strip/dedup/minLevel); multi-class emitter + pricer background carry; re-baseline seed fixtures + snapshot (suite green)
+  - [x] 08-02-PLAN.md — rewrite gem dispatch (per-level BaseType, prefix-derived plural Class, no strip/dedup/minLevel); multi-class emitter + pricer background carry; re-baseline seed fixtures + snapshot (suite green)
 
 ### Phase 9: Gem Background Styling
 **Goal**: Priced gem blocks in the generated filter carry a per-category fixed background color while preserving the value tier's text and border color — identical in mechanism to the priced-unique bronze background.
@@ -89,7 +89,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 | 5. Rule Schema | v0.2 | 2/2 | Complete | 2026-06-05 |
 | 6. Emitter Rewrite + Migration Parity | v0.2 | 2/2 | Complete | 2026-06-05 |
 | 7. New Capabilities + Docs | v0.2 | 3/3 | Complete | 2026-06-12 |
-| 8. Sync Pipeline | v0.3 | 1/2 | Executing | - |
+| 8. Sync Pipeline | v0.3 | 2/2 | Complete    | 2026-06-24 |
 | 9. Gem Background Styling | v0.3 | 0/? | Not started | - |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/? | Not started | - |
 
@@ -108,7 +108,7 @@ S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` ma
 by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
 `FUTURE` comments already mark both code locations.
 **Requirements:** TBD
-**Plans:** 0 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] TBD (promote with /gsd-review-backlog when ready)

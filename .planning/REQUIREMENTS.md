@@ -18,8 +18,10 @@ Requirements for the v0.3 milestone. Each maps to a roadmap phase.
 
 ### Gem Styling (STYLE)
 
-- [ ] **STYLE-01**: Priced gem categories carry a fixed per-category background override that replaces the Dracula background while preserving the value tier's text + border color (same mechanism as priced uniques' bronze background — not a new named style).
-- [ ] **STYLE-02**: Uncut gems render with background `80 70 55`; Lineage Support Gems render with background `10 150 150`.
+- [x] **STYLE-01
+**: Priced gem categories carry a fixed per-category background override that replaces the Dracula background while preserving the value tier's text + border color (same mechanism as priced uniques' bronze background — not a new named style).
+- [x] **STYLE-02
+**: Uncut gems render with background `80 70 55`; Lineage Support Gems render with background `10 150 150`.
 
 ### Exceptional Gear (EXC)
 

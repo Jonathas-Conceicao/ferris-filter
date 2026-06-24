@@ -20,7 +20,7 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified, craftable \
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified, exceptional, craftable \
              (craftable must be defined in the config's styles object)")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
@@ -80,6 +80,7 @@ fn resolve_style<'a>(
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
         "unidentified" => &styles.unidentified,
+        "exceptional" => &styles.exceptional,
         // Optional style — present only when the config defines it. A rule referencing
         // "craftable" against a config that omits it is treated as an unknown style.
         "craftable" if styles.craftable.is_some() => styles.craftable.as_ref().unwrap(),

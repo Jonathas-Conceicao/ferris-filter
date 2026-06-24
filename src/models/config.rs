@@ -128,6 +128,10 @@ pub struct Styles {
     pub unchanged: Style,
     pub hidden: Style,
     pub unidentified: Style,
+    /// Exceptional-gear highlight (EXC-04): pink text+border 255 121 198, Dracula bg,
+    /// Pink beam, Pink Cross minimap, no sound, no font. Modeled on Recycle but pink.
+    /// A SEPARATE style from S so its color can be retuned independently. Required in config.json.
+    pub exceptional: Style,
     /// Optional extra style for craftable-base highlighting (used by custom configs such as
     /// `ssf_icewolf_config.json`). Absent in the default `config.json`, so it stays `None`
     /// there — additive, no impact on the committed filter or fixtures.
@@ -530,7 +534,8 @@ mod tests {
                 "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
-                "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
+                "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "exceptional":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
             },
             "build": {"weapons":[],"armour":[],"armourTypes":{}},
             "weaponClasses": [],
@@ -842,6 +847,39 @@ mod tests {
         assert!(when.sockets.is_some());
         assert!(when.base_type.is_some());
         assert!(when.unidentified_tier.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Exceptional style tests (EXC-04)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn config_has_exceptional_style() {
+        let config: Config = serde_json::from_str(CONFIG_JSON)
+            .expect("config.json should parse with exceptional style defined");
+        assert_eq!(
+            config.styles.exceptional.action,
+            StyleAction::Show,
+            "exceptional style must be Show"
+        );
+        // Verify the pink color (255 121 198)
+        assert_eq!(
+            config.styles.exceptional.text,
+            Some([255, 121, 198]),
+            "exceptional text color must be pink [255, 121, 198]"
+        );
+        assert_eq!(
+            config.styles.exceptional.border,
+            Some([255, 121, 198]),
+            "exceptional border color must be pink [255, 121, 198]"
+        );
+        // No sound, no font
+        assert!(config.styles.exceptional.sound.is_none(), "exceptional must have no sound");
+        assert!(config.styles.exceptional.font.is_none(), "exceptional must have no font");
+        // Pink Cross minimap
+        let mm = config.styles.exceptional.minimap.as_ref().expect("exceptional must have minimap");
+        assert_eq!(mm.color, FilterColor::Pink, "exceptional minimap color must be Pink");
+        assert_eq!(mm.shape, MinimapShape::Cross, "exceptional minimap shape must be Cross");
     }
 
     // -----------------------------------------------------------------------

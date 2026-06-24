@@ -62,7 +62,8 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
   2. A generated Lineage Support Gem block (any tier) contains exactly one `SetBackgroundColor 10 150 150 255` line and no second `SetBackgroundColor` from the tier style.
   3. Verisium blocks and all non-gem currency blocks contain no `SetBackgroundColor` override (Dracula bg from the tier style is their sole background).
   4. A guard test asserts no gem block in the generated filter has duplicate `SetBackgroundColor` lines.
-**Plans**: TBD
+**Plans**: 1 plan
+  - [ ] 09-01-PLAN.md — emit per-category gem background override in emit_currency_sections (clone-null-append, mirroring emit_unique_sections) + no-duplicate-background guard test; re-baseline seed-universal.filter + insta snapshot
 **UI hint**: no
 
 ### Phase 10: Corrupted Condition + Exceptional Gear
@@ -90,7 +91,7 @@ Full detail: [milestones/v0.2-ROADMAP.md](milestones/v0.2-ROADMAP.md)
 | 6. Emitter Rewrite + Migration Parity | v0.2 | 2/2 | Complete | 2026-06-05 |
 | 7. New Capabilities + Docs | v0.2 | 3/3 | Complete | 2026-06-12 |
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete    | 2026-06-24 |
-| 9. Gem Background Styling | v0.3 | 0/? | Not started | - |
+| 9. Gem Background Styling | v0.3 | 0/1 | Planned | - |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 0/? | Not started | - |
 
 ---

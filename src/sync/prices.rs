@@ -71,6 +71,31 @@ pub(crate) fn derive_uncut_class(base_type: &str) -> Option<String> {
     }
 }
 
+/// The poe.ninja `category` (and mapping category) for the Expedition exchange feed.
+pub(crate) const EXPEDITION_CATEGORY: &str = "Expedition";
+
+/// Derive the correct in-game filter `Class` for an item in the poe.ninja `type=Expedition`
+/// feed, which mixes THREE distinct item classes under one response:
+/// - the **Expedition Logbook** → `Expedition Logbooks`
+/// - the leader **Sagas** (e.g. "Aldur's Saga", "Medved's Saga") → `Omen`
+/// - the **artifacts / Flux** (e.g. "Thaumaturgic Flux", "Exotic Coinage") → the mapping's
+///   default class (`Stackable Currency`)
+///
+/// Returns `Some(class)` for the logbook/saga special cases, or `None` to fall back to the
+/// mapping default. Without this, the single mapping class (`Stackable Currency`) is applied
+/// to every expedition item, so the logbook and Saga blocks never match in-game (class
+/// mismatch). Confirmed against poe2db (Aldur's/Medved's Saga = `Omen`) and the author's
+/// reference filters (Expedition Logbook = `Expedition Logbooks`).
+pub(crate) fn derive_expedition_class(base_type: &str) -> Option<&'static str> {
+    if base_type == "Expedition Logbook" {
+        Some("Expedition Logbooks")
+    } else if base_type.ends_with(" Saga") {
+        Some("Omen")
+    } else {
+        None
+    }
+}
+
 /// Join `core.items` + `lines` on `id`, convert `primaryValue` to chaos/div/exalt
 /// via `core.rates`, filter uncut gems to level ≥ minLevel, and promote
 /// Exalted/Chaos/Divine Orbs to positions [0], [1], [2].
@@ -236,13 +261,23 @@ pub fn build_prices(
             let _ = base_type_is_name;
             let base_type = name.clone();
 
+            // The Expedition feed mixes item classes (logbook / Saga / artifacts) under one
+            // type; derive the correct per-base class instead of the single mapping default.
+            let item_class = if category == EXPEDITION_CATEGORY {
+                derive_expedition_class(&base_type)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| class.clone())
+            } else {
+                class.clone()
+            };
+
             let (chaos, div, exalt) =
                 convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
 
             let item = PriceItem {
                 name: name.clone(),
                 base_type,
-                class: class.clone(),
+                class: item_class,
                 category: category.clone(),
                 exalt,
                 chaos,
@@ -961,6 +996,97 @@ mod tests {
             super::derive_uncut_class("Divine Orb"),
             None,
             "currency names must return None"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: derive_expedition_class helper — the poe.ninja Expedition feed mixes
+    // three item classes (logbook / Saga / artifacts).
+    // -----------------------------------------------------------------------
+    #[test]
+    fn derive_expedition_class_splits_logbook_saga_and_artifacts() {
+        assert_eq!(
+            super::derive_expedition_class("Expedition Logbook"),
+            Some("Expedition Logbooks"),
+            "logbook → Expedition Logbooks class"
+        );
+        assert_eq!(
+            super::derive_expedition_class("Aldur's Saga"),
+            Some("Omen"),
+            "leader Sagas are the Omen class"
+        );
+        assert_eq!(super::derive_expedition_class("Vorana's Saga"), Some("Omen"));
+        assert_eq!(
+            super::derive_expedition_class("Thaumaturgic Flux (Level 20)"),
+            None,
+            "Flux falls through to the mapping default (Stackable Currency)"
+        );
+        assert_eq!(
+            super::derive_expedition_class("Exotic Coinage"),
+            None,
+            "artifacts fall through to the mapping default"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: build_prices assigns the correct per-item class across the mixed
+    // Expedition feed — logbook → Expedition Logbooks, Saga → Omen,
+    // Flux/artifact → Stackable Currency (the mapping default).
+    // -----------------------------------------------------------------------
+    #[test]
+    fn build_prices_splits_expedition_classes() {
+        let expedition_mapping: Mapping = serde_json::from_str(
+            r#"{
+                "version": 2,
+                "overviewTypes": [
+                    { "type": "Expedition", "category": "Expedition", "class": "Stackable Currency", "baseTypeIsName": true }
+                ],
+                "gemFilters": []
+            }"#,
+        )
+        .expect("expedition mapping should parse");
+
+        let overview = make_overview(
+            "divine",
+            &[("chaos", 100.0), ("exalted", 20.0)],
+            &[
+                ("expedition-logbook", "Expedition Logbook"),
+                ("aldurs-saga", "Aldur's Saga"),
+                ("thaumaturgic-flux-l20", "Thaumaturgic Flux (Level 20)"),
+            ],
+            &[
+                ("expedition-logbook", 0.3),
+                ("aldurs-saga", 0.5),
+                ("thaumaturgic-flux-l20", 0.05),
+            ],
+        );
+
+        let items =
+            super::build_prices(&[("Expedition".to_string(), overview)], &expedition_mapping)
+                .expect("build_prices should succeed");
+
+        let logbook = items
+            .iter()
+            .find(|i| i.base_type == "Expedition Logbook")
+            .expect("logbook present");
+        assert_eq!(
+            logbook.class, "Expedition Logbooks",
+            "logbook must be the Expedition Logbooks class, not Stackable Currency"
+        );
+
+        let saga = items
+            .iter()
+            .find(|i| i.base_type == "Aldur's Saga")
+            .expect("saga present");
+        assert_eq!(saga.class, "Omen", "Saga must be the Omen class");
+
+        let flux = items
+            .iter()
+            .find(|i| i.base_type == "Thaumaturgic Flux (Level 20)")
+            .expect("flux present");
+        assert_eq!(
+            flux.class, "Stackable Currency",
+            "Flux must use the mapping default class"
         );
     }
 

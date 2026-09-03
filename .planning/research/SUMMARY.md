@@ -48,8 +48,9 @@ Nothing is removed. `notify` is explicitly *not* needed — there is nothing to 
   extraction is wrong — do not re-baseline it.
 - **Regenerate fixtures hermetically** (temp dir + absolute binary path). Running `cargo run` from
   the repo root picks up a live `prices.json`; this cost time twice during v0.3.
-- **`dynamic.filter` probably needs the economy sections too**, or selecting it in-game silently
-  loses all currency/gem/unique highlighting. Decide deliberately.
+- **`dynamic.filter` carries the economy sections** (decided): rules from `dynamic.json`, economy
+  from `prices.json` via the pricer. Pinned, not editable in the overlay, but present — otherwise
+  selecting it in-game loses all currency/gem/unique highlighting.
 - **Ordinal identity breaks under reorder** — re-resolve any "currently editing" selection when a
   rule moves.
 - **Never hardcode class names.** `config.json` already enumerates them; a hand-typed list caused a
@@ -57,13 +58,11 @@ Nothing is removed. `notify` is explicitly *not* needed — there is nothing to 
 - **GUI has no test story** in a repo built on asserting emitted text. Keep every mutation,
   validation and compile step in the library behind unit-testable functions; let egui be a dumb view.
 
-## ToS position
+## ToS position — closed
 
-No GGG-approved third-party tools exist. The community standard that keeps Awakened PoE Trade and
-Exiled Exchange 2 viable is: one action per keypress, no memory access, no injection, no
-automation. This tool clears that bar by a wide margin — it never reads game memory or the
-clipboard, never sends input, and performs no server actions; it writes a text file the game reads
-when the player asks it to. Worth stating plainly in the README, without claiming approval.
+Not a concern and **not a deliverable** (author decision). Filter generation tools are universal
+in this community; v0.4 changes when the filter is written, not what the tool touches. No memory
+access, no injection, no input, no server actions. No disclaimers in the product.
 
 ## Suggested build order
 

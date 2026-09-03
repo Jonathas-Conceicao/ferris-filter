@@ -25,16 +25,14 @@ overlays: an exclusive-fullscreen DirectX swapchain will not let another top-lev
 above it. **Exclusive fullscreen breaks any overlay, ours included.** This must be documented for
 the user and ideally detected, not silently failed.
 
-### 3. GGG's stance is conditional, not an approval
+### 3. Terms of service — a non-issue here (author decision, 2026-09-03)
 
-There are no GGG-approved third-party tools. The community line — and the reason Awakened PoE
-Trade and Exiled Exchange 2 are used at scale without bans — is compliance: one action per
-keypress, no memory reads or writes, no injection into the game process, no automation.
+Filter *generation* tools are universal in this community (FilterBlade, poe2filter.com, and this
+repo's own CLI). v0.4 changes when the filter is written, not what the tool touches: no memory
+access, no injection, no input sent to the game, no server actions — it writes a text file.
 
-**We are comfortably inside that line, and further inside it than the price checkers:** this tool
-never reads game memory, never reads the clipboard, never sends input to the game, and makes no
-server actions at all. It writes a text file. Worth stating explicitly in the README so users can
-assess it themselves — but do not claim it is "approved" or "ban-safe", because no one can.
+**Author decision: no ToS notes or disclaimers in the product.** Recorded here only so the
+question is not re-opened during planning.
 
 ## egui / eframe defects to avoid
 
@@ -74,11 +72,12 @@ of the seed fixture. Regenerate hermetically: temp dir + the binary by absolute 
 `generate_on_seed()`. This bit the project in both Phase 9 and Phase 10 — it will bite again the
 moment `dynamic.filter` needs a fixture.
 
-### 6. `dynamic.filter` without economy sections is a trap
+### 6. `dynamic.filter` must carry the economy sections (decided)
 
-If Apply writes only the `rules` half, the player selects `dynamic.filter` in-game and silently
-loses every currency, gem and unique highlight. Decide this deliberately (see ARCHITECTURE) rather
-than discovering it in-game.
+If Apply wrote only the `rules` half, the player would select `dynamic.filter` in-game and
+silently lose every currency, gem and unique highlight. **Author decision 2026-09-03:**
+`dynamic.filter` includes the economy sections, sourced from `prices.json` via the pricer just as
+`universal.filter` does — they are pinned and not editable in the overlay, but they are present.
 
 ### 7. Half-written filter files
 

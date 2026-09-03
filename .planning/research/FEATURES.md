@@ -76,9 +76,8 @@ differentiator, and it only works because filters are a plain text file the game
 
 ## Anti-features
 
-- **Anything resembling automation.** No input sent to the game, no memory reads. This is what
-  keeps the tool on the right side of the ToS line, and it costs us nothing because the feature
-  does not need it.
+- **Anything resembling automation.** No input sent to the game, no memory reads. The feature does
+  not need either, so there is nothing to weigh.
 - **Implying live reload.** Any UI that suggests changes take effect instantly will be read as
   broken. Be explicit that the player must hit Refresh.
 - **A second source of truth for `universal.filter`.** `config.json` stays the CLI's input, with

@@ -83,16 +83,16 @@ dynamic editor never sets `area_level`.
 ### Compile path
 
 `dynamic.json → emit_rules → dynamic.filter`. This is the *same* `emit_rules` the CLI uses, so
-dynamic output is grammatically identical to `universal.filter` blocks by construction. Two open
-design points for the phase that builds it:
+dynamic output is grammatically identical to `universal.filter` blocks by construction.
 
-1. **Does `dynamic.filter` include the economy sections?** The pinned currency/gem/unique blocks
-   come from `prices.json` via the pricer. If `dynamic.filter` is meant to be the filter you
-   actually play with, it needs them — otherwise selecting it in-game loses all currency
-   highlighting. Recommendation: yes, emit economy sections from the same pricer, with only the
-   `rules` half coming from `dynamic.json`.
-2. **Atomic write.** Reuse the existing `tempfile` write-then-rename discipline from `sync`, so a
-   half-written `dynamic.filter` can never be left in the game folder.
+**Economy sections are included — decided by the author 2026-09-03.** `dynamic.filter` is a
+complete, playable filter: the `rules` half comes from `dynamic.json`, and the currency / gem /
+unique sections come from `prices.json` through the existing pricer, exactly as they do for
+`universal.filter`. They are simply **not editable in the overlay** this milestone. Anything less
+would mean selecting `dynamic.filter` in-game silently loses every economy highlight.
+
+**Atomic write:** reuse the existing `tempfile` write-then-rename discipline from `sync`, so a
+half-written `dynamic.filter` can never be left in the game folder.
 
 ### Overlay window
 

@@ -74,9 +74,6 @@ work (carried forward past the v0.3 close):
 
 ### Pending Todos
 
-- **`parity_ingame` test is failing** — pre-existing, predates Phase 10. Its oracle
-  `tests/fixtures/parity-ingame.filter` was never refreshed after the v0.2 re-baseline. Decide
-  refresh-or-retire in v0.4.
 - **Amend `10-01-SUMMARY.md` prose** — it says `exceptional` is a required `Styles` field; it
   landed as `Option<Style>`. Code is correct and tested; only the prose is stale.
 - **Test-only compiler warnings** (pre-existing): unreachable match arm in the emitter
@@ -99,7 +96,6 @@ clear — these are scope/debt carries, not open GSD artifacts):
 
 | Category | Item | Status |
 |----------|------|--------|
-| test | `parity_ingame` failing; oracle stale since the v0.2 re-baseline | Pre-existing; refresh or retire in v0.4 |
 | docs | `10-01-SUMMARY.md` prose vs `Option<Style>` reality | Cosmetic; code self-consistent and tested |
 | scope | ECONX-01 Tablets as a class-less priced `BaseType ==` category | Deferred; needs pricer/emitter support + a poe.ninja spike |
 | scope | Config-driven style vocabulary | Backlog Phase 999.1 |

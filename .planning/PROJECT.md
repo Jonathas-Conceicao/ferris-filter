@@ -46,8 +46,8 @@ band logic with a declarative `rules` schema, making the full in-game filter rep
 items below: Tablets as a class-less priced category (ECONX-01), generate QoL (`--dry-run`,
 `--diff`, verbose rule logging), and the config-driven style vocabulary (backlog Phase 999.1).
 
-**Open at close:** the `parity_ingame` test is failing (pre-existing, predates Phase 10) and wants
-either a refreshed `tests/fixtures/parity-ingame.filter` oracle or retirement.
+**Open at close:** nothing blocking. Full suite green on `main` at tag `v0.3` (166 tests, 0
+failures).
 
 ## Requirements
 
@@ -102,7 +102,6 @@ None — awaiting the v0.4 scope.
 - **poe.ninja** is the price source; its PoE2 API surface was resolved via the Phase 4 spike (exchange + stash/item overview endpoints, plural `type` values, league index-state resolution) and is now consumed by `sync`.
 - **Shipped state (v0.1, 2026-05-28):** ~4,970 LOC Rust across 4 phases / 14 plans / 127 commits. `generate` + `sync` + `install` all live; full test suite green (~113 tests). Live softcore no-flag `sync` happy path awaits a new active league (fails safe meanwhile).
 - **Shipped state (v0.3, 2026-06-27):** ~7,534 LOC Rust; 133 lib tests plus the CLI/sync integration suites green. `mapping.json` is at schema v2 (`gemFilters` array with per-category `backgroundOverride`, `Verisium` overview type). The generated filter is 77 `Show` / 3 `Hide` blocks. Live league is "Runes of Aldur"; post-close `sync` fixes landed for the Expedition logbook/Sagas mixed-class feed and PoE1-only `UniqueMaps`.
-- **Known-failing test:** `parity_ingame` — pre-existing, predates Phase 10. Its oracle (`tests/fixtures/parity-ingame.filter`) was never refreshed after the v0.2 re-baseline; decide between refresh and retirement in v0.4.
 
 ## Constraints
 
@@ -168,4 +167,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-27 after the v0.3 milestone — full evolution review: v0.3 requirements moved to Validated, Active cleared for v0.4, v0.3 decisions logged, Context refreshed with shipped state and the known-failing `parity_ingame` test.*
+*Last updated: 2026-06-27 after the v0.3 milestone — full evolution review: v0.3 requirements moved to Validated, Active cleared for v0.4, v0.3 decisions logged, Context refreshed with shipped state; full suite verified green at tag v0.3.*

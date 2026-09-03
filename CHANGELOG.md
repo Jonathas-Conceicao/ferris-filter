@@ -65,10 +65,11 @@ with correct in-game matching and per-category gem styling, and the rule vocabul
   `tests/fixtures/seed-universal.filter` and the insta snapshot were re-baselined in one
   consolidated pass.
 
-### Known Issues
+### Verification
 
-- The `parity_ingame` test is failing. This is **pre-existing** (it predates this milestone): its
-  oracle `tests/fixtures/parity-ingame.filter` was never refreshed after the v0.2 re-baseline.
+- Full suite green on `main` at tag `v0.3`: 136 lib tests plus the CLI, install and sync
+  integration suites (166 total, 0 failures) — `artifact_guard`, `generate_snapshot` and
+  `parity_ingame` included.
 
 ## [0.2.0] - 2026-06-12
 

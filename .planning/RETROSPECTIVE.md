@@ -114,8 +114,10 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
 - Reconcile SUMMARY prose when a code-review fix changes a shape the summary described; the
   audit's tech-debt list is the last line of defence, not the first.
 - Clear carried todos as part of the plan that satisfies them, not at milestone close.
-- A pre-existing red test (`parity_ingame`) is cheap to carry and expensive to explain. Decide
-  refresh-or-retire when it first goes red, not two milestones later.
+- **Verify a "known failing test" against `main` before recording it as debt.** `parity_ingame`
+  was written up as failing in the Phase 10 SUMMARY and carried into the milestone audit's
+  tech-debt list, but it passes on `main` — its oracle was refreshed during this milestone and
+  nobody re-checked. A stale red-test note costs the next milestone real triage time.
 
 ### Cost Observations
 

@@ -37,10 +37,14 @@ exceptional-gear highlighting for uncorrupted extra-socket / high-quality drops.
 
 **Audit:** `passed` — requirements 9/9, phases 3/3, integration 8/8, E2E flows 5/5.
 
-**Known deferred items at close:** 0 open GSD artifacts (audit clear). Carried tech debt:
-`parity_ingame` test failing (pre-existing, predates Phase 10); two test-only compiler warnings
-(pre-existing); `10-01-SUMMARY.md` prose stale on `exceptional` being a required vs optional
-`Styles` field. Backlog Phase 999.1 (config-driven style vocabulary) deliberately not pulled in.
+**Verification at close:** full suite green on `main` at tag `v0.3` — 136 lib tests plus the CLI,
+install and sync integration suites (166 total, 0 failures), `parity_ingame` included.
+
+**Known deferred items at close:** 0 open GSD artifacts (audit clear). Carried tech debt: two
+test-only compiler warnings (pre-existing — unreachable match arm in the emitter unknown-style
+test, unused `FakeClient::ok` in `sync/metadata.rs`); `10-01-SUMMARY.md` prose stale on
+`exceptional` being a required vs optional `Styles` field. Backlog Phase 999.1 (config-driven
+style vocabulary) deliberately not pulled in.
 
 **Archives:** [v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md) · [v0.3-REQUIREMENTS.md](milestones/v0.3-REQUIREMENTS.md) · [v0.3-MILESTONE-AUDIT.md](milestones/v0.3-MILESTONE-AUDIT.md)
 

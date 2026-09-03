@@ -5,7 +5,7 @@
 - ✅ **v0.1 Initial Release** — Phases 1-4 (shipped 2026-05-28) — [archive](milestones/v0.1-ROADMAP.md)
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
-- 📋 **v0.4** — not yet defined (`/gsd-new-milestone`)
+- 🔄 **v0.4 Overlay Filter Editor Rework** — Phases 11-14 (started 2026-09-03)
 
 ## Phases
 
@@ -43,13 +43,72 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 
 </details>
 
-### 📋 v0.4 — Not Yet Defined
+### v0.4 Overlay Filter Editor Rework
 
-No phases planned. Run `/gsd-new-milestone` to scope the next milestone.
+- [ ] **Phase 11: Core Library Extraction** — split the compiler into a library so the overlay and the CLI are two front ends over one core
+- [ ] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless
+- [ ] **Phase 13: Overlay Shell** — an always-on-top window over PoE2 with a global toggle hotkey
+- [ ] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store
 
-Candidate inputs: the Future Requirements carried in
-[milestones/v0.3-REQUIREMENTS.md](milestones/v0.3-REQUIREMENTS.md) (ECONX-01 Tablets,
-GENX-01..04 generate QoL, SYNX-01..02 sync extensions) and the Backlog below.
+## Phase Details
+
+### Phase 11: Core Library Extraction
+**Goal**: The models, pricer and emitter live behind a library target that any binary can depend on, and the CLI becomes a thin shell over it — with `generate`, `sync` and `install` behaving exactly as they do today.
+**Depends on**: Nothing (first phase of v0.4)
+**Requirements**: CORE-01, CORE-02, CORE-03
+**Success Criteria** (what must be TRUE):
+  1. A second binary in this workspace can call the rule compiler and produce filter text without duplicating any model, pricer or emitter code.
+  2. `artifact_guard` and `generate_snapshot` pass with **zero** changes to `tests/fixtures/seed-universal.filter` or the insta snapshot — the extraction is provably behavior-preserving.
+  3. `generate`, `generate --early-game`, `generate --config`, `sync` and `install` produce the same output and exit codes as before the split.
+  4. The CLI binary contains no tiering, policy or emit logic — only argument parsing, IO wiring and error reporting.
+  5. `seed_prices` imports the real currency types instead of its local duplicates, and the duplicate definitions are gone.
+**Plans**: 1-2 plans
+**UI hint**: no
+
+### Phase 12: Dynamic Rule Store
+**Goal**: A persisted `dynamic.json` rule set compiles to a complete, playable `dynamic.filter` — policy blocks from the dynamic rules, economy sections from `prices.json` — entirely without a GUI, so the feature is verifiable on the project's existing testing terms.
+**Depends on**: Phase 11
+**Requirements**: DYN-01, DYN-02, DYN-03, DYN-04, DYN-05, DYN-06, DYN-07, DYN-08
+**Success Criteria** (what must be TRUE):
+  1. A `dynamic.json` containing an ordered rule array parses, round-trips, and reports a malformed field with its path — reusing the existing `Rule`/`When` types rather than new ones.
+  2. Compiling a dynamic rule that sets only `sockets` emits a block containing `Sockets >= N` and **no** `Class`, `Rarity`, `BaseArmour`, `Quality` or `Corrupted` lines.
+  3. Reordering two rules in `dynamic.json` reorders their blocks in `dynamic.filter`, confirming ordinal position drives precedence.
+  4. A generated `dynamic.filter` contains the currency, gem and unique economy sections, matching what `universal.filter` emits from the same `prices.json`.
+  5. No dynamic rule emits an `AreaLevel` line, while `config.json`'s area-level rules still do.
+  6. Interrupting the write leaves the previous `dynamic.filter` intact — no truncated file is ever observable in the game folder.
+  7. Edits written to `dynamic.json` are present after the process exits and restarts.
+  8. `artifact_guard` and `generate_snapshot` still pass with no fixture changes.
+**Plans**: 2 plans
+**UI hint**: no
+
+### Phase 13: Overlay Shell
+**Goal**: A window renders above a running Path of Exile 2 and can be summoned and dismissed by a global hotkey without alt-tabbing — the delivery surface, with no editing in it yet.
+**Depends on**: Phase 11
+**Requirements**: SHELL-01, SHELL-02, SHELL-03
+**Success Criteria** (what must be TRUE):
+  1. With PoE2 running in windowed-fullscreen and focused, the window is visible on top of the game.
+  2. A global hotkey shows and hides the window while the game holds focus.
+  3. The window is opaque, does not pass mouse input through, and is smaller than the full screen — the configuration that avoids the documented egui/eframe Windows overlay defects.
+  4. Closing the overlay leaves the game unaffected, and the overlay makes no attempt to read game memory or send input to it.
+  5. The overlay binary is not named `overlay` (egui #5512 gives a package with that name a black background).
+**Plans**: 1-2 plans
+**UI hint**: yes
+
+### Phase 14: Rule Editor + Apply
+**Goal**: Every dynamic rule is editable from the overlay — style, classes, rarity, defences, sockets, quality, corrupted, each condition independently togglable — and Apply writes `dynamic.filter` and tells the player to reload it in-game.
+**Depends on**: Phase 12, Phase 13
+**Requirements**: EDIT-01, EDIT-02, EDIT-03, EDIT-04, EDIT-05, EDIT-06, EDIT-07, EDIT-08, EDIT-09
+**Success Criteria** (what must be TRUE):
+  1. A rule can be added, deleted and moved in the list, and moving it changes which of two overlapping rules wins in the emitted filter.
+  2. Disabling a single rule covering the flask and charm classes removes flask drops from the generated filter — the milestone's motivating example, done in one click.
+  3. The style dropdown offers exactly the styles defined in `config.json`, and picking one changes the emitted block's styling actions.
+  4. The class picker's options come from `config.json`'s class lists — adding a class there makes it selectable without a code change.
+  5. Ticking armour and energy shield while leaving evasion unticked emits `BaseArmour > 0`, `BaseEnergyShield > 0` and `BaseEvasion 0`; all seven PoE2 armour types are reachable this way, and disabling the defence group emits no defence lines at all.
+  6. Turning any individual condition off removes exactly its line from the emitted block and leaves the others untouched.
+  7. Apply writes `dynamic.filter` to the game folder and the UI states that the filter must be reloaded via Options → Game → Item Filter → Refresh.
+  8. Rule mutation, validation and compilation are library functions covered by unit tests; the egui layer holds no logic that can only be exercised by clicking.
+**Plans**: 2-3 plans
+**UI hint**: yes
 
 ## Progress
 
@@ -65,9 +124,13 @@ GENX-01..04 generate QoL, SYNX-01..02 sync extensions) and the Backlog below.
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete | 2026-06-24 |
 | 9. Gem Background Styling | v0.3 | 1/1 | Complete | 2026-06-24 |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete | 2026-06-24 |
+| 11. Core Library Extraction | v0.4 | 0/? | Not started | - |
+| 12. Dynamic Rule Store | v0.4 | 0/? | Not started | - |
+| 13. Overlay Shell | v0.4 | 0/? | Not started | - |
+| 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |
 
 ---
-*v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 shipped 2026-06-27.*
+*v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 shipped 2026-06-27. v0.4 roadmap defined 2026-09-03.*
 
 ## Backlog
 

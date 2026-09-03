@@ -45,7 +45,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 
 ### v0.4 Overlay Filter Editor Rework
 
-- [ ] **Phase 11: Callable Compile API** — make the generate pipeline callable as a library API so the overlay can drive it without duplicating orchestration
+- [x] **Phase 11: Callable Compile API** — make the generate pipeline callable as a library API so the overlay can drive it without duplicating orchestration (completed 2026-09-03)
 - [ ] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless
 - [ ] **Phase 13: Overlay Shell** — an always-on-top window over PoE2 with a global toggle hotkey
 - [ ] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store
@@ -66,7 +66,9 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   6. `artifact_guard` and `generate_snapshot` pass with **zero** changes to `tests/fixtures/seed-universal.filter` or the insta snapshot, and the full suite passes — the refactor is provably behavior-preserving.
   7. `generate`, `generate --early-game`, `generate --config`, `sync` and `install` produce the same output, stderr and exit codes as before.
   8. `seed_prices` imports the real types from the library, its five duplicate structs are gone, and its comment claiming the crate has no `[lib]` target is removed.
-**Plans**: 1-2 plans
+**Plans**: 2 plans
+  - [x] 11-01-PLAN.md — typed loader errors; new src/compile.rs two-stage API (InputPaths, PriceSourcePolicy, PriceSource, CompileError, load_inputs, compile); CLI rewired and proven byte-identical across 6 cases
+  - [x] 11-02-PLAN.md — seed_prices imports the library models; five mirror structs and the stale "no [lib] target" comment removed; output byte-identical
 **UI hint**: no
 
 ### Phase 12: Dynamic Rule Store
@@ -128,7 +130,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete | 2026-06-24 |
 | 9. Gem Background Styling | v0.3 | 1/1 | Complete | 2026-06-24 |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete | 2026-06-24 |
-| 11. Callable Compile API | v0.4 | 0/? | Not started | - |
+| 11. Callable Compile API | v0.4 | 2/2 | Complete | 2026-09-03 |
 | 12. Dynamic Rule Store | v0.4 | 0/? | Not started | - |
 | 13. Overlay Shell | v0.4 | 0/? | Not started | - |
 | 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |

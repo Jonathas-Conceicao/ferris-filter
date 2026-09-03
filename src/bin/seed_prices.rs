@@ -4,62 +4,14 @@
 //! resulting `prices.json` is committed as the seeded value source for Phase 3.
 //! After this run, `currency.json` is reference-only — not consumed by `generate`.
 //!
-//! ## Design choice (architecture note)
-//! This binary duplicates the minimal `CurrencyData` structs locally rather than
-//! importing them from the crate. Reason: the crate has no `[lib]` target
-//! (only `[[bin]]` targets), so `use ferrisfilter::...` is not available to
-//! other binaries. Duplicating the three small structs avoids restructuring the
-//! crate just for this one-time tool. The canonical currency model lives in
-//! `src/models/currency.rs` and is unchanged.
+//! ## Models
+//! The currency and prices models are imported from the library
+//! (`ferrisfilter::models::currency` / `::prices`) — this binary defines none of its own.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-// ---------------------------------------------------------------------------
-// Minimal local mirror of src/models/currency.rs (reference only)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct CurrencyEntry {
-    tier: String,
-    class: String,
-    bases: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CurrencyCategory {
-    name: String,
-    entries: Vec<CurrencyEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CurrencyData {
-    categories: Vec<CurrencyCategory>,
-}
-
-// ---------------------------------------------------------------------------
-// Minimal local mirror of src/models/prices.rs (output target)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PricesFile {
-    league: String,
-    fetched_at: String,
-    items: Vec<PriceItem>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PriceItem {
-    name: String,
-    base_type: String,
-    class: String,
-    category: String,
-    exalt: Option<f64>,
-    chaos: Option<f64>,
-    div: Option<f64>,
-}
+use ferrisfilter::models::currency::CurrencyData;
+use ferrisfilter::models::prices::{PriceItem, PricesFile};
 
 // ---------------------------------------------------------------------------
 // Seed logic

@@ -14,13 +14,25 @@ whole milestone. The dynamic path is additive.
 
 ### Core Library (CORE)
 
-- [ ] **CORE-01**: The crate exposes a library target that other binaries can depend on, covering
-  the models, pricer and emitter; `generate`, `sync` and `install` keep their current behavior and
-  the full existing test suite passes unchanged.
-- [ ] **CORE-02**: The CLI binary is a thin shell over the library — no policy, tiering or emit
-  logic lives in the binary.
+> **Re-aimed 2026-09-03** during `/gsd-discuss-phase 11`. CORE-01 and CORE-02 as originally
+> written were already satisfied: the crate has had a `[lib]` target for some time, and both
+> binaries are already ~6-line shims over `ferrisfilter::run()`. The original wording came from a
+> stale v0.1 STATE.md note. The underlying intent — a second front end can drive the pipeline —
+> is genuinely unmet, so the requirements are restated to target the actual blocker rather than
+> deleted. See `.planning/phases/11-core-library-extraction/11-CONTEXT.md`.
+
+- [ ] **CORE-01**: The generate pipeline is callable through public library functions — loading
+  inputs and producing filter text — so a front end other than the CLI can drive it without
+  reimplementing the price-source fallback, rate derivation or tier pricing. `generate`, `sync`
+  and `install` keep their current behavior and the full existing suite passes unchanged.
+- [ ] **CORE-02**: Library code takes every input path from its caller and reads no hardcoded
+  working-directory-relative path, so a front end with an arbitrary working directory can use it.
 - [ ] **CORE-03**: The `seed_prices` duplicated-currency-struct workaround (added in v0.1 because
   the crate had no library target) is removed in favor of importing the real types.
+- [ ] **CORE-04**: Expected failure paths are returned as distinct variants of one typed error
+  type that a caller can match on, and the price source actually used (live / committed fallback
+  pair / none) is returned as a value rather than printed — so a GUI can present both as it sees
+  fit while the CLI keeps its existing stderr output and miette diagnostics byte-for-byte.
 
 ### Dynamic Rule Store (DYN)
 
@@ -121,6 +133,7 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | CORE-01 | Phase 11 | Pending |
 | CORE-02 | Phase 11 | Pending |
 | CORE-03 | Phase 11 | Pending |
+| CORE-04 | Phase 11 | Pending |
 | DYN-01 | Phase 12 | Pending |
 | DYN-02 | Phase 12 | Pending |
 | DYN-03 | Phase 12 | Pending |
@@ -143,8 +156,8 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | EDIT-09 | Phase 14 | Pending |
 
 **Coverage:**
-- v0.4 requirements: 23 total
-- Mapped to phases: 23 (100%) ✓
+- v0.4 requirements: 24 total (CORE-04 added 2026-09-03 during phase 11 discussion)
+- Mapped to phases: 24 (100%) ✓
 - Unmapped: 0 ✓
 
 ---

@@ -45,23 +45,27 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 
 ### v0.4 Overlay Filter Editor Rework
 
-- [ ] **Phase 11: Core Library Extraction** — split the compiler into a library so the overlay and the CLI are two front ends over one core
+- [ ] **Phase 11: Callable Compile API** — make the generate pipeline callable as a library API so the overlay can drive it without duplicating orchestration
 - [ ] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless
 - [ ] **Phase 13: Overlay Shell** — an always-on-top window over PoE2 with a global toggle hotkey
 - [ ] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store
 
 ## Phase Details
 
-### Phase 11: Core Library Extraction
-**Goal**: The models, pricer and emitter live behind a library target that any binary can depend on, and the CLI becomes a thin shell over it — with `generate`, `sync` and `install` behaving exactly as they do today.
+### Phase 11: Callable Compile API
+**Goal**: The generate pipeline is callable as a library API — caller-supplied paths, a typed error enum, and the price-source decision returned as a value rather than printed — so the Phase 13/14 overlay can drive it without duplicating orchestration, depending on the working directory, or needing stdout.
 **Depends on**: Nothing (first phase of v0.4)
-**Requirements**: CORE-01, CORE-02, CORE-03
+**Requirements**: CORE-01, CORE-02, CORE-03, CORE-04
+**Note**: Scope corrected during `/gsd-discuss-phase 11` (2026-09-03). The roadmap was written believing the crate had no library target; it has had one for some time — `[lib]` is declared, `src/lib.rs` exports every module, and both binaries are already ~6-line shims over `ferrisfilter::run()`. The stale claim came from a v0.1 STATE.md note and `seed_prices.rs`'s header comment. The real blocker is that `run::cmd_generate` is private, hardcodes CWD-relative paths, writes its own output and prints warnings — so no second front end can reuse it. See `11-CONTEXT.md`.
 **Success Criteria** (what must be TRUE):
-  1. A second binary in this workspace can call the rule compiler and produce filter text without duplicating any model, pricer or emitter code.
-  2. `artifact_guard` and `generate_snapshot` pass with **zero** changes to `tests/fixtures/seed-universal.filter` or the insta snapshot — the extraction is provably behavior-preserving.
-  3. `generate`, `generate --early-game`, `generate --config`, `sync` and `install` produce the same output and exit codes as before the split.
-  4. The CLI binary contains no tiering, policy or emit logic — only argument parsing, IO wiring and error reporting.
-  5. `seed_prices` imports the real currency types instead of its local duplicates, and the duplicate definitions are gone.
+  1. A caller outside the CLI can load inputs and produce filter text through public library functions, passing its own paths, without reimplementing the price-source fallback, rate derivation or tier pricing.
+  2. No library code reads a hardcoded working-directory-relative input path; every input path originates from the caller.
+  3. Expected failure paths — unreadable/malformed config, malformed prices, unreadable/malformed/invalid tiers, reference-rate failure, unknown style — are represented as distinct, matchable variants of one error type returned by the library.
+  4. `tests/cli_errors.rs` passes **unmodified**: the rendered stderr still contains `Cannot read`, `config.json`, `styles.S.font`, `expected u8`, `missing required tier` and `not strictly ascending`, with miette source spans intact.
+  5. Which price source was used (live / committed fallback pair / none) is available to the caller as a value; the CLI derives its existing warning text from it and its stderr output is unchanged.
+  6. `artifact_guard` and `generate_snapshot` pass with **zero** changes to `tests/fixtures/seed-universal.filter` or the insta snapshot, and the full suite passes — the refactor is provably behavior-preserving.
+  7. `generate`, `generate --early-game`, `generate --config`, `sync` and `install` produce the same output, stderr and exit codes as before.
+  8. `seed_prices` imports the real types from the library, its five duplicate structs are gone, and its comment claiming the crate has no `[lib]` target is removed.
 **Plans**: 1-2 plans
 **UI hint**: no
 
@@ -124,7 +128,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 | 8. Sync Pipeline | v0.3 | 2/2 | Complete | 2026-06-24 |
 | 9. Gem Background Styling | v0.3 | 1/1 | Complete | 2026-06-24 |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete | 2026-06-24 |
-| 11. Core Library Extraction | v0.4 | 0/? | Not started | - |
+| 11. Callable Compile API | v0.4 | 0/? | Not started | - |
 | 12. Dynamic Rule Store | v0.4 | 0/? | Not started | - |
 | 13. Overlay Shell | v0.4 | 0/? | Not started | - |
 | 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |

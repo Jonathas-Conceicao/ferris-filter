@@ -8,6 +8,7 @@
 // re-uses these modules via `use ferrisfilter::...`.
 
 pub mod cli;
+pub mod compile;
 pub mod emitter;
 pub mod error;
 pub mod install;

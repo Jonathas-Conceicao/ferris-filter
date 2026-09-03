@@ -59,9 +59,20 @@ pub struct InputPaths {
 }
 
 impl InputPaths {
+    /// The conventional file names as bare relative paths, resolved by the caller's process
+    /// against its own working directory.
+    ///
+    /// This is what the CLI uses: it yields `config.json`, `prices.json`, … with no directory
+    /// prefix, exactly the strings `cmd_generate` passed before v0.4. Note this is deliberately
+    /// **not** `relative_to(".")`, which would produce `./config.json` (`.\config.json` on
+    /// Windows) and change every rendered error message.
+    pub fn conventional() -> Self {
+        Self::relative_to("")
+    }
+
     /// The conventional file names, resolved against `root`.
     ///
-    /// `InputPaths::relative_to(".")` yields exactly the paths the CLI used before v0.4.
+    /// An empty `root` yields bare relative names — see [`InputPaths::conventional`].
     pub fn relative_to(root: impl AsRef<Path>) -> Self {
         let root = root.as_ref();
         InputPaths {
@@ -146,8 +157,11 @@ pub enum CompileError {
     Generate(#[from] GenerateError),
 
     /// [`PriceSourcePolicy::ForceFallback`] was requested but the fallback prices are missing.
+    ///
+    /// Deliberately carries **no** `#[diagnostic(code(...))]`: the CLI previously raised this
+    /// with the bare `miette::miette!` macro, which renders no code line. Adding one changes the
+    /// rendered stderr, which the byte-identical-CLI bar forbids.
     #[error("--early-game requires {path}, which is missing")]
-    #[diagnostic(code(ferrisfilter::compile::forced_fallback_missing))]
     ForcedFallbackMissing { path: String },
 }
 
@@ -273,6 +287,19 @@ mod tests {
             p.tiers_fallback,
             Path::new("/tmp/root").join("tiers-fallback.json")
         );
+    }
+
+    /// The CLI's paths must render with no directory prefix, or every error message that names
+    /// a file changes (`./config.json` vs `config.json`). Guards the byte-identical-CLI bar.
+    #[test]
+    fn conventional_yields_bare_relative_names() {
+        let p = InputPaths::conventional();
+        assert_eq!(p.config, Path::new("config.json"));
+        assert_eq!(p.prices, Path::new("prices.json"));
+        assert_eq!(p.tiers, Path::new("tiers.json"));
+        assert_eq!(p.prices_fallback, Path::new("prices-fallback.json"));
+        assert_eq!(p.tiers_fallback, Path::new("tiers-fallback.json"));
+        assert_eq!(p.prices_fallback.to_string_lossy(), "prices-fallback.json");
     }
 
     #[test]

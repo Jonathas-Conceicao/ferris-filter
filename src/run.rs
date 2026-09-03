@@ -4,12 +4,17 @@
 //! (`src/main.rs` and `src/bin/ff.rs`) each have their own source file. Previously both
 //! `[[bin]]` targets pointed at `src/main.rs`, which made Cargo warn that one file was
 //! present in multiple build targets.
+//!
+//! This module owns *presentation* only. The compile pipeline itself lives in
+//! [`crate::compile`], which does no printing and takes all its paths from the caller — so the
+//! overlay front end can drive the same pipeline without inheriting the CLI's stdout or its
+//! working-directory assumptions.
 
 use clap::Parser;
 
 use crate::cli::{Cli, Commands};
-use crate::models::config::Config;
-use crate::{emitter, install, loader, pricer, sync};
+use crate::compile::{self, FallbackReason, InputPaths, PriceSource, PriceSourcePolicy};
+use crate::{install, sync};
 
 /// Parse CLI args and dispatch to the matching subcommand.
 pub fn run() -> miette::Result<()> {
@@ -23,57 +28,50 @@ pub fn run() -> miette::Result<()> {
 }
 
 fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Result<()> {
-    // Load and validate the config into the typed Config model.
-    // serde_path_to_error + miette surface the dotted field path and expected type
-    // for any malformed field.
-    let config: Config = loader::load_json(config_path).map_err(miette::Error::from)?;
+    // Bare relative names, resolved against the process working directory — exactly the paths
+    // this function passed before the compile API existed. `conventional()` rather than
+    // `relative_to(".")` because the latter would render as `./config.json` and change every
+    // error message that names a file.
+    let paths = InputPaths::conventional().with_config(config_path);
 
-    // Pick the (prices, tiers) source pair. The early-league fallback always pairs
-    // prices-fallback.json with tiers-fallback.json — their values are calibrated to each
-    // other (exalt-denominated cutoffs), so they must travel together.
-    let (prices_opt, tiers) = if early_game {
+    let policy = if early_game {
+        // Emitted BEFORE loading, gated on the flag rather than derived from the returned
+        // PriceSource — because this note must still appear when prices-fallback.json turns out
+        // to be missing and the load fails. Deriving it after the fact would silently drop it on
+        // that path.
         eprintln!("note: --early-game — using prices-fallback.json + tiers-fallback.json");
-        let prices = loader::load_prices_optional("prices-fallback.json").map_err(miette::Error::from)?
-            .ok_or_else(|| miette::miette!("--early-game requires prices-fallback.json, which is missing"))?;
-        (Some(prices), loader::load_tiers("tiers-fallback.json").map_err(miette::Error::from)?)
+        PriceSourcePolicy::ForceFallback
     } else {
-        match loader::load_prices_optional("prices.json").map_err(miette::Error::from)? {
-            // Live prices present and non-empty → normal path.
-            Some(prices) if !prices.items.is_empty() => {
-                (Some(prices), loader::load_tiers("tiers.json").map_err(miette::Error::from)?)
-            }
-            // Absent or empty → fall back to the committed early-league pair (with a warning).
-            _ => {
-                eprintln!(
-                    "warning: prices.json absent or empty — falling back to \
-                     prices-fallback.json + tiers-fallback.json"
-                );
-                match loader::load_prices_optional("prices-fallback.json").map_err(miette::Error::from)? {
-                    Some(prices) => (Some(prices), loader::load_tiers("tiers-fallback.json").map_err(miette::Error::from)?),
-                    None => {
-                        eprintln!(
-                            "warning: prices-fallback.json not found — \
-                             currency/category blocks will be omitted"
-                        );
-                        (None, loader::load_tiers("tiers.json").map_err(miette::Error::from)?)
-                    }
-                }
-            }
-        }
+        PriceSourcePolicy::Auto
     };
 
-    let priced = match prices_opt {
-        None => pricer::PricedData::empty(),
-        Some(prices) => {
-            // TIER-04: abort on bad reference rates (names the offending currency).
-            let rates = pricer::derive_rates(&prices.items)?;
-            pricer::price_tiers(&prices, &tiers, &rates)?
-        }
-    };
+    let inputs = compile::load_inputs(&paths, policy).map_err(miette::Error::from)?;
 
-    // Generate the filter text (pure function — no I/O inside).
-    let generated = emitter::generate(&config, &priced)
-        .map_err(miette::Error::from)?;
+    // Render the price-source decision the loader reported. The library returns this as a value
+    // so a GUI can present it its own way; here it becomes the warnings this CLI has always
+    // printed.
+    match inputs.price_source {
+        PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty) => {
+            eprintln!(
+                "warning: prices.json absent or empty — falling back to \
+                 prices-fallback.json + tiers-fallback.json"
+            );
+        }
+        PriceSource::Absent => {
+            eprintln!(
+                "warning: prices.json absent or empty — falling back to \
+                 prices-fallback.json + tiers-fallback.json"
+            );
+            eprintln!(
+                "warning: prices-fallback.json not found — \
+                 currency/category blocks will be omitted"
+            );
+        }
+        // Live prices, or a fallback the caller explicitly asked for — both already reported.
+        PriceSource::Live | PriceSource::Fallback(FallbackReason::Forced) => {}
+    }
+
+    let generated = compile::compile(&inputs).map_err(miette::Error::from)?;
 
     // Write LF-only content to the output path.
     // T-02-03: write exactly the user-supplied --output path (no traversal, no shell);

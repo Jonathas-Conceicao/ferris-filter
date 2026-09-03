@@ -2,11 +2,12 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: planning
-last_updated: "2026-09-03T17:08:31.710Z"
-last_activity: 2026-09-03
+status: Defining requirements
+stopped_at: Phase 11 context gathered
+last_updated: "2026-09-03T18:59:39.685Z"
+last_activity: 2026-09-03 — Milestone v0.4 started
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -117,8 +118,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-06-27 — v0.3 milestone closed and archived.
-Stopped at: Milestone complete.
-Resume file: None
+Last session: 2026-09-03T18:59:39.679Z
+Stopped at: Phase 11 context gathered
+Resume file: .planning/phases/11-core-library-extraction/11-CONTEXT.md
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

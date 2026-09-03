@@ -16,7 +16,8 @@ pub struct Mapping {
     /// backward compatibility with older mapping.json files.
     #[serde(default)]
     pub item_types: Vec<ItemType>,
-    pub gem_filter: GemFilter,
+    /// Gem fetch/emit configurations. Replaces the singular `gemFilter` (schema v2).
+    pub gem_filters: Vec<GemFilter>,
 }
 
 /// One poe.ninja stash-item overview type (uniques) → filter category.
@@ -49,18 +50,23 @@ pub struct OverviewType {
     pub base_type_is_name: bool,
 }
 
-/// Special gem filter configuration.
+/// Per-category gem fetch/emit configuration (schema v2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GemFilter {
-    /// poe.ninja type parameter for gems.
+    /// poe.ninja `type=` value (e.g. "UncutGems", "LineageSupportGems").
     pub r#type: String,
-    /// PriceItem.category value.
+    /// PriceItem.category value (e.g. "Uncut Gems", "Lineage Support Gems").
     pub category: String,
-    /// Filter Class== value.
-    pub class: String,
-    /// Minimum gem level to include (items below this level are excluded).
-    pub min_level: u32,
+    /// Filter `Class ==` value(s). One entry for LineageSupportGems ("Support Gems");
+    /// for UncutGems, all three subtype plural classes (Uncut Skill Gems, Uncut Spirit
+    /// Gems, Uncut Support Gems) so the emitted block matches the multi-class line.
+    /// The per-subtype Class is derived from each base-type prefix at build time (Plan 02).
+    pub classes: Vec<String>,
+    /// Per-category fixed background `[R, G, B]`. STORED for Phase 9 — Phase 8 does NOT
+    /// emit it. `None` means no background override.
+    #[serde(default)]
+    pub background_override: Option<[u8; 3]>,
 }
 
 impl Mapping {
@@ -193,7 +199,7 @@ mod tests {
         let m: Mapping = serde_json::from_str(MAPPING_JSON)
             .expect("mapping.json should parse into Mapping struct");
         assert!(!m.overview_types.is_empty(), "overviewTypes must be non-empty");
-        assert_eq!(m.version, 1);
+        assert_eq!(m.version, 2);
     }
 
     #[test]
@@ -209,9 +215,11 @@ mod tests {
     fn mapping_contains_all_unique_item_types() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         // Uniques are fetched from the stash/item endpoint with PLURAL type values.
+        // NOTE: "UniqueMaps" is intentionally absent — it is a PoE1-only concept (PoE2 uses
+        // Waystones, not maps) and the poe.ninja PoE2 endpoint returns HTTP 404 for it.
         let unique_types = [
             "UniqueWeapons", "UniqueArmours", "UniqueAccessories", "UniqueFlasks",
-            "UniqueCharms", "UniqueJewels", "UniqueMaps", "UniqueSanctumRelics",
+            "UniqueCharms", "UniqueJewels", "UniqueSanctumRelics",
         ];
         for t in unique_types {
             assert!(
@@ -223,7 +231,11 @@ mod tests {
                 "{t} must map to category 'Uniques'"
             );
         }
-        assert_eq!(m.item_types.len(), 8, "expected exactly 8 unique item types");
+        assert_eq!(m.item_types.len(), 7, "expected exactly 7 unique item types");
+        assert!(
+            !m.item_types.iter().any(|it| it.r#type == "UniqueMaps"),
+            "UniqueMaps is PoE1-only (PoE2 has no unique maps) — must not be queried"
+        );
     }
 
     #[test]
@@ -247,7 +259,7 @@ mod tests {
         // regressing to the singular spellings that silently fetch nothing.
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         let types: Vec<&str> = m.overview_types.iter().map(|t| t.r#type.as_str()).collect();
-        for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols"] {
+        for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols", "Verisium"] {
             assert!(types.contains(&t), "overviewTypes must use plural type '{t}'");
         }
         for bad in ["Essence", "Rune", "SoulCore", "Fragment"] {
@@ -256,12 +268,31 @@ mod tests {
                 "'{bad}' is the wrong singular spelling (returns empty) — use the plural form"
             );
         }
+        // Guard: gemFilters must contain both gem categories with correct plural spellings.
+        // Silent-empty-fetch pitfall: wrong type= value returns empty from poe.ninja (D-CTX-5).
+        assert!(
+            m.gem_filters.iter().any(|g| g.r#type == "LineageSupportGems"),
+            "gemFilters must contain LineageSupportGems (silent-empty-fetch guard)"
+        );
+        assert!(
+            m.gem_filters.iter().any(|g| g.r#type == "UncutGems"),
+            "gemFilters must contain UncutGems"
+        );
+        for bad in ["LineageSupportGem"] {
+            assert!(
+                !m.gem_filters.iter().any(|g| g.r#type == bad),
+                "'{bad}' is the wrong singular spelling for the Lineage gem type"
+            );
+        }
     }
 
     #[test]
     fn mapping_contains_uncut_gem() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
-        assert_eq!(m.gem_filter.r#type, "UncutGems");
+        assert!(
+            m.gem_filters.iter().any(|g| g.r#type == "UncutGems"),
+            "gemFilters must contain an UncutGems entry"
+        );
     }
 
     #[test]

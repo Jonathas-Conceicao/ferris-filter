@@ -1,5 +1,49 @@
 # Milestones
 
+## v0.3 — Economy Items & Exceptional Gear
+
+**Shipped:** 2026-06-27
+**Phases:** 8-10 (3) · **Plans:** 5 · **Tasks:** 13 · **Commits:** 54 · **Tests:** 133 lib + integration green
+**Timeline:** 2026-06-12 → 2026-06-27 · **Code:** ~7,534 lines Rust (+1,453/-726 in src/tests)
+
+**Delivered:** Tracked three new/broken poe.ninja economy categories with correct in-game
+matching and per-category gem styling, and added a `corrupted` rule condition plus
+exceptional-gear highlighting for uncorrupted extra-socket / high-quality drops.
+
+**Key accomplishments:**
+
+1. **`mapping.json` schema v2** — a `gemFilters` array (UncutGems + LineageSupportGems, each
+   with `backgroundOverride`) plus the `Verisium` overview type; `Mapping`/`GemFilter` Rust
+   structs reshaped to match, `minLevel` dropped.
+2. **Uncut Gems actually match in-game** — the `build_prices` gem branch was rewritten to emit
+   one `PriceItem` per gem level (`Uncut Skill Gem (Level N)`) with a prefix-derived plural
+   class; subtypes merge in the pricer into one multi-class `TierGroup`, and the emitter gained
+   multi-class emit support. The old `strip_gem_level` + `gem_best` dedup — the root bug — is gone.
+3. **Per-category gem backgrounds** — `emit_currency_sections` carries
+   `CategoryBlock.background_override` through the priced-unique clone-null-append pattern:
+   Uncut Gem blocks emit `SetBackgroundColor 80 70 55 255`, Lineage Support Gems
+   `10 150 150 255`, with no category-name string checks in the emitter and a guard test
+   against duplicate background lines.
+4. **`corrupted` when-condition** — `When.corrupted: Option<bool>` emitting the bare boolean
+   `Corrupted True` / `Corrupted False` (no `==`), slotted between `sockets` and `baseType` in
+   the deterministic emit order, `serde(default)` for backward compatibility.
+5. **Exceptional-gear highlighting** — three rules at the top of `config.json` `rules` (ahead of
+   recycle): sockets >= 3 for 2h/body, sockets >= 2 for 1h/smaller, quality >= 24 — all
+   `corrupted: false`, all using the new pink `exceptional` style (Pink Cross minimap, no sound),
+   with a guard test asserting both the styling and the ordering vs recycle.
+6. **One consolidated fixture re-baseline** — deferred to Phase 10 (the last emitter-output
+   phase): `seed-universal.filter` + the insta snapshot re-baselined, `generate_block_counts`
+   bumped 74 → 77 Show / 3 Hide.
+
+**Audit:** `passed` — requirements 9/9, phases 3/3, integration 8/8, E2E flows 5/5.
+
+**Known deferred items at close:** 0 open GSD artifacts (audit clear). Carried tech debt:
+`parity_ingame` test failing (pre-existing, predates Phase 10); two test-only compiler warnings
+(pre-existing); `10-01-SUMMARY.md` prose stale on `exceptional` being a required vs optional
+`Styles` field. Backlog Phase 999.1 (config-driven style vocabulary) deliberately not pulled in.
+
+**Archives:** [v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md) · [v0.3-REQUIREMENTS.md](milestones/v0.3-REQUIREMENTS.md) · [v0.3-MILESTONE-AUDIT.md](milestones/v0.3-MILESTONE-AUDIT.md)
+
 ## v0.2 — Declarative Rule Model
 
 **Shipped:** 2026-06-12

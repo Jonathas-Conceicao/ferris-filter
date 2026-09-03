@@ -12,6 +12,9 @@ pub enum Commands {
     /// Compile config.json (+ tiers.json + prices.json) into a .filter file
     #[command(alias = "gen")]
     Generate {
+        /// Config file to compile [default: config.json]
+        #[arg(long, default_value = "config.json")]
+        config: String,
         /// Output file path [default: universal.filter]
         #[arg(long, default_value = "universal.filter")]
         output: String,

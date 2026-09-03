@@ -20,7 +20,8 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified")]
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified, exceptional, craftable \
+             (craftable must be defined in the config's styles object)")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
         rule_index: usize,
@@ -55,7 +56,12 @@ pub fn generate(config: &Config, priced: &PricedData) -> Result<String, Generate
 /// Resolve a style name to the matching `&Style` in `Styles`.
 ///
 /// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
-/// S/A/B/C/D/E/F/Recycle/unchanged/hidden.
+/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/unidentified/exceptional/craftable.
+///
+/// FUTURE (style flexibility): this match hardcodes the style vocabulary, so adding a style
+/// means editing this arm and the `Styles` struct. To let any config define and use new
+/// styles, back `Styles` with a name→`Style` map and resolve by lookup here instead of a
+/// match. See the matching FUTURE note on `models::config::Styles`.
 fn resolve_style<'a>(
     styles: &'a Styles,
     style: &str,
@@ -74,6 +80,12 @@ fn resolve_style<'a>(
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
         "unidentified" => &styles.unidentified,
+        // Optional style — present only when the config defines it. A rule referencing
+        // "exceptional" against a config that omits it is treated as an unknown style.
+        "exceptional" if styles.exceptional.is_some() => styles.exceptional.as_ref().unwrap(),
+        // Optional style — present only when the config defines it. A rule referencing
+        // "craftable" against a config that omits it is treated as an unknown style.
+        "craftable" if styles.craftable.is_some() => styles.craftable.as_ref().unwrap(),
         other => {
             return Err(GenerateError::UnknownStyle {
                 rule_index: idx,
@@ -277,7 +289,7 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
 
         // Emit condition lines from rule.when in fixed deterministic order:
         // areaLevel(min then max), class, baseArmour, baseEvasion, baseEnergyShield,
-        // rarity, quality, sockets, baseType, unidentifiedTier
+        // rarity, quality, sockets, corrupted, baseType, unidentifiedTier
         if let Some(when) = &rule.when {
             // 1. AreaLevel >= min
             if let Some(al) = &when.area_level {
@@ -340,6 +352,11 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
                 emit_numeric(out, "Sockets", nc);
             }
 
+            // 8b. Corrupted (boolean — no operator)
+            if let Some(c) = when.corrupted {
+                writeln!(out, "  Corrupted {}", if c { "True" } else { "False" }).unwrap();
+            }
+
             // 9. BaseType == (with ==)
             if let Some(base_types) = &when.base_type {
                 let bt_str = base_types
@@ -391,9 +408,27 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
                 .join(" ");
 
             writeln!(out, "Show # {}", label).unwrap();
-            writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();
+            // Multi-class support: use the typed `is_multi_class` signal from the pricer
+            // (set for the Uncut Gems merge group) to emit the pre-formatted multi-class
+            // string verbatim. Single-class values are wrapped in quotes normally.
+            if tier_group.is_multi_class {
+                writeln!(out, "  Class == {}", tier_group.class).unwrap();
+            } else {
+                writeln!(out, "  Class == \"{}\"", tier_group.class).unwrap();
+            }
             writeln!(out, "  BaseType == {}", base_type_str).unwrap();
-            emit_style_actions(out, style);
+            // Per-category background override (Phase 9): mirror the priced-unique bronze
+            // pattern — clone the tier style, null its background so emit_style_actions
+            // skips the Dracula SetBackgroundColor line, then append the single override.
+            match category.background_override {
+                Some([r, g, b]) => {
+                    let mut bg_style = style.clone();
+                    bg_style.background = None;
+                    emit_style_actions(out, &bg_style);
+                    writeln!(out, "  SetBackgroundColor {} {} {} 255", r, g, b).unwrap();
+                }
+                None => emit_style_actions(out, style),
+            }
             writeln!(out).unwrap();
         }
     }
@@ -571,8 +606,103 @@ mod tests {
         let output = generate(&config, &priced).expect("generate failed");
         let show_count = output.lines().filter(|l| l.starts_with("Show")).count();
         let hide_count = output.lines().filter(|l| l.starts_with("Hide")).count();
-        assert_eq!(show_count, 84, "expected 84 Show blocks, got {}", show_count);
+        // Count updated in 10-02 Task 2: Phase 10 added 3 exceptional Show blocks (74 + 3 = 77).
+        // Prior baseline: 08-02 added Verisium (2), Uncut Gems (4), Lineage Support Gems (2)
+        // blocks (+8 total); tiers.json cutoff changes removed some mid-range tiers (net: 74).
+        assert_eq!(show_count, 77, "expected 77 Show blocks, got {}", show_count);
         assert_eq!(hide_count, 3, "expected 3 Hide blocks, got {}", hide_count);
+    }
+
+    /// Guard test (EXC-02/03/04, T-10-04): asserts all three exceptional blocks are present,
+    /// carry the correct conditions and pink style, and appear BEFORE the recycle block.
+    #[test]
+    fn exceptional_blocks_present_and_precede_recycle() {
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced).expect("generate failed");
+
+        // All three exceptional block headers must be present
+        assert!(
+            output.contains("Show # exceptional sockets 2h/body"),
+            "missing 'Show # exceptional sockets 2h/body' block"
+        );
+        assert!(
+            output.contains("Show # exceptional sockets 1h"),
+            "missing 'Show # exceptional sockets 1h' block"
+        );
+        assert!(
+            output.contains("Show # exceptional quality"),
+            "missing 'Show # exceptional quality' block"
+        );
+
+        // Each block must carry Corrupted False
+        // Extract each block's text by locating the header and scanning until the next blank line.
+        let extract_block = |header: &str| -> String {
+            let start = output.find(header).expect(&format!("block not found: {header}"));
+            let slice = &output[start..];
+            let end = slice.find("\n\n").unwrap_or(slice.len());
+            slice[..end].to_string()
+        };
+
+        let block_2h = extract_block("Show # exceptional sockets 2h/body");
+        let block_1h = extract_block("Show # exceptional sockets 1h");
+        let block_quality = extract_block("Show # exceptional quality");
+
+        // Sockets thresholds
+        assert!(block_2h.contains("Sockets >= 3"), "2h/body block must have Sockets >= 3");
+        assert!(block_1h.contains("Sockets >= 2"), "1h block must have Sockets >= 2");
+        assert!(block_quality.contains("Quality >= 24"), "quality block must have Quality >= 24");
+
+        // Corrupted False on all three
+        assert!(block_2h.contains("Corrupted False"), "2h/body block must have Corrupted False");
+        assert!(block_1h.contains("Corrupted False"), "1h block must have Corrupted False");
+        assert!(block_quality.contains("Corrupted False"), "quality block must have Corrupted False");
+
+        // Pink exceptional style on all three
+        for (label, block) in [
+            ("2h/body", &block_2h),
+            ("1h", &block_1h),
+            ("quality", &block_quality),
+        ] {
+            assert!(
+                block.contains("SetTextColor 255 121 198 255"),
+                "exceptional {label} block must have pink SetTextColor"
+            );
+            assert!(
+                block.contains("SetBorderColor 255 121 198 255"),
+                "exceptional {label} block must have pink SetBorderColor"
+            );
+            assert!(
+                block.contains("SetBackgroundColor 40 42 54 255"),
+                "exceptional {label} block must have Dracula background"
+            );
+            assert!(
+                block.contains("PlayEffect Pink"),
+                "exceptional {label} block must have PlayEffect Pink"
+            );
+            assert!(
+                block.contains("MinimapIcon 2 Pink Cross"),
+                "exceptional {label} block must have MinimapIcon 2 Pink Cross"
+            );
+        }
+
+        // Ordering: all exceptional blocks appear BEFORE the recycle block (T-10-04)
+        let recycle_pos = output.find("Show # recycle").expect("recycle block not found");
+        let exc_2h_pos = output.find("Show # exceptional sockets 2h/body").unwrap();
+        let exc_1h_pos = output.find("Show # exceptional sockets 1h").unwrap();
+        let exc_quality_pos = output.find("Show # exceptional quality").unwrap();
+
+        assert!(
+            exc_2h_pos < recycle_pos,
+            "exceptional sockets 2h/body block must precede the recycle block"
+        );
+        assert!(
+            exc_1h_pos < recycle_pos,
+            "exceptional sockets 1h block must precede the recycle block"
+        );
+        assert!(
+            exc_quality_pos < recycle_pos,
+            "exceptional quality block must precede the recycle block"
+        );
     }
 
     #[test]
@@ -652,5 +782,106 @@ mod tests {
         let first = generate(&config, &priced).expect("generate failed");
         let second = generate(&config, &priced).expect("generate failed");
         assert_eq!(first, second, "generate() must be deterministic");
+    }
+
+    // -----------------------------------------------------------------------
+    // Corrupted condition emit tests (EXC-01)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emit_rules_emits_corrupted_false() {
+        use crate::models::config::{Rule, When};
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(Rule {
+            name: Some("test-corrupted-false".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                corrupted: Some(false),
+                ..Default::default()
+            }),
+        });
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(
+            output.contains("  Corrupted False"),
+            "expected '  Corrupted False' in output, got:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("Corrupted =="),
+            "Corrupted must NOT use == operator, got:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn emit_rules_emits_corrupted_true() {
+        use crate::models::config::{Rule, When};
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(Rule {
+            name: Some("test-corrupted-true".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                corrupted: Some(true),
+                ..Default::default()
+            }),
+        });
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(
+            output.contains("  Corrupted True"),
+            "expected '  Corrupted True' in output, got:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn emit_rules_omits_corrupted_when_none() {
+        use crate::models::config::{Rule, When, NumericCondition};
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(Rule {
+            name: Some("test-no-corrupted".to_string()),
+            style: "E".to_string(),
+            when: Some(When {
+                sockets: Some(NumericCondition { eq: None, min: Some(1), max: None }),
+                corrupted: None,
+                ..Default::default()
+            }),
+        });
+        let output = generate(&config, &priced).expect("generate failed");
+        // Find the block for our test rule
+        let block = output
+            .split("\n\n")
+            .find(|b| b.contains("test-no-corrupted"))
+            .expect("block for test-no-corrupted not found");
+        assert!(
+            !block.contains("Corrupted"),
+            "no Corrupted line should be emitted when corrupted is None:\n{}",
+            block
+        );
+    }
+
+    #[test]
+    fn gem_blocks_have_single_per_category_background() {
+        let (config, priced) = load_inputs();
+        let output = generate(&config, &priced).expect("generate failed");
+        // Walk blocks: a block starts at a "Show"/"Hide" line and ends at a blank line.
+        for block in output.split("\n\n") {
+            let header = block.lines().next().unwrap_or("");
+            let bg_count = block.lines().filter(|l| l.trim_start().starts_with("SetBackgroundColor")).count();
+            if header.contains("# Uncut Gems") {
+                assert!(block.contains("SetBackgroundColor 80 70 55 255"), "uncut gem block must carry 80 70 55 bg:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 40 42 54 255"), "uncut gem block must not keep the Dracula bg:\n{block}");
+                assert_eq!(bg_count, 1, "uncut gem block must have exactly one SetBackgroundColor:\n{block}");
+            }
+            if header.contains("# Lineage Support Gems") {
+                assert!(block.contains("SetBackgroundColor 10 150 150 255"), "lineage gem block must carry 10 150 150 bg:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 40 42 54 255"), "lineage gem block must not keep the Dracula bg:\n{block}");
+                assert_eq!(bg_count, 1, "lineage gem block must have exactly one SetBackgroundColor:\n{block}");
+            }
+            if header.contains("# Verisium") {
+                assert!(block.contains("SetBackgroundColor 40 42 54 255"), "Verisium must keep the Dracula bg:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 80 70 55"), "Verisium must not get the uncut override:\n{block}");
+                assert!(!block.contains("SetBackgroundColor 10 150 150"), "Verisium must not get the lineage override:\n{block}");
+            }
+        }
     }
 }

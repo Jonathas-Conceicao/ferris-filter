@@ -49,42 +49,50 @@ fn convert_primary(
     }
 }
 
-/// Parse the gem level from an item name or id slug.
+/// Derive the per-subtype plural Class from an uncut gem base_type.
 ///
-/// Handles two known formats:
-/// - Parenthetical: "Uncut Spirit Gem (Level 18)" → Some(18)
-/// - Slug suffix:   "uncut-spirit-gem-l18"        → Some(18)
+/// "Uncut Skill Gem (Level 20)"   → Some("Uncut Skill Gems")
+/// "Uncut Spirit Gem (Level 18)"  → Some("Uncut Spirit Gems")
+/// "Uncut Support Gem (Level 16)" → Some("Uncut Support Gems")
 ///
-/// Returns None for strings that don't contain a recognizable level pattern.
-pub(crate) fn parse_gem_level(s: &str) -> Option<u32> {
-    // Pattern 1: "(Level N)" in the display name
-    if let Some(start) = s.find("(Level ") {
-        let rest = &s[start + 7..];
-        if let Some(end) = rest.find(')') {
-            return rest[..end].trim().parse().ok();
-        }
+/// Returns None for base types that don't match the known uncut gem prefixes.
+pub(crate) fn derive_uncut_class(base_type: &str) -> Option<String> {
+    // Strip the " (Level N)" suffix to get the stem, then match.
+    let stem = base_type
+        .split(" (Level ")
+        .next()
+        .unwrap_or(base_type)
+        .trim();
+    match stem {
+        "Uncut Skill Gem" => Some("Uncut Skill Gems".to_string()),
+        "Uncut Spirit Gem" => Some("Uncut Spirit Gems".to_string()),
+        "Uncut Support Gem" => Some("Uncut Support Gems".to_string()),
+        _ => None,
     }
-
-    // Pattern 2: "-lN" suffix in an id slug (e.g. "uncut-spirit-gem-l18")
-    if let Some(pos) = s.rfind("-l") {
-        let level_str = &s[pos + 2..];
-        // Consume digits only
-        let digits: String = level_str.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            return digits.parse().ok();
-        }
-    }
-
-    None
 }
 
-/// Strip a trailing " (Level N)" suffix from an uncut-gem name to get its filter base type.
-/// "Uncut Spirit Gem (Level 18)" -> "Uncut Spirit Gem". The level is a property of the drop,
-/// not part of the `BaseType`, so all levels of a gem share one base type.
-fn strip_gem_level(name: &str) -> String {
-    match name.find(" (Level ") {
-        Some(idx) => name[..idx].trim_end().to_string(),
-        None => name.to_string(),
+/// The poe.ninja `category` (and mapping category) for the Expedition exchange feed.
+pub(crate) const EXPEDITION_CATEGORY: &str = "Expedition";
+
+/// Derive the correct in-game filter `Class` for an item in the poe.ninja `type=Expedition`
+/// feed, which mixes THREE distinct item classes under one response:
+/// - the **Expedition Logbook** → `Expedition Logbooks`
+/// - the leader **Sagas** (e.g. "Aldur's Saga", "Medved's Saga") → `Omen`
+/// - the **artifacts / Flux** (e.g. "Thaumaturgic Flux", "Exotic Coinage") → the mapping's
+///   default class (`Stackable Currency`)
+///
+/// Returns `Some(class)` for the logbook/saga special cases, or `None` to fall back to the
+/// mapping default. Without this, the single mapping class (`Stackable Currency`) is applied
+/// to every expedition item, so the logbook and Saga blocks never match in-game (class
+/// mismatch). Confirmed against poe2db (Aldur's/Medved's Saga = `Omen`) and the author's
+/// reference filters (Expedition Logbook = `Expedition Logbooks`).
+pub(crate) fn derive_expedition_class(base_type: &str) -> Option<&'static str> {
+    if base_type == "Expedition Logbook" {
+        Some("Expedition Logbooks")
+    } else if base_type.ends_with(" Saga") {
+        Some("Omen")
+    } else {
+        None
     }
 }
 
@@ -109,21 +117,21 @@ pub fn build_prices(
     let mut anchors: std::collections::HashMap<String, PriceItem> =
         std::collections::HashMap::new();
 
-    // Uncut gems collapse across levels to one base type (e.g. "Uncut Spirit Gem"); keep the
-    // highest-valued variant per base so the emitted block lists each base exactly once.
-    let mut gem_best: std::collections::HashMap<String, PriceItem> =
-        std::collections::HashMap::new();
-
     for (type_value, overview) in overviews {
-        // Determine if this is the gemFilter type or a regular overviewType
-        let is_gem_type = type_value == &mapping.gem_filter.r#type;
+        // Determine if this is a gemFilters type by looking up in gem_filters Vec.
+        let gem_filter = mapping.gem_filters.iter().find(|g| &g.r#type == type_value);
+        let is_gem_type = gem_filter.is_some();
 
-        // Determine category/class from mapping
+        // Determine category/class from mapping.
+        // For gem types, category comes from the matched gem_filter; per-item class is
+        // derived at the item level (derive_uncut_class or gem_filter.classes[0]).
+        // For currency types, class comes from the overview type mapping.
         let (category, class, base_type_is_name) = if is_gem_type {
+            let g = gem_filter.unwrap();
             (
-                mapping.gem_filter.category.clone(),
-                mapping.gem_filter.class.clone(),
-                true, // gems: baseType = name
+                g.category.clone(),
+                String::new(), // placeholder; real class derived per-item in the gem branch
+                true,          // gems: baseType = name
             )
         } else {
             match mapping.lookup(type_value) {
@@ -191,41 +199,60 @@ pub fn build_prices(
                 }
             };
 
-            // Uncut gems: filter by level, then collapse to the level-less base type and
-            // keep the highest-valued variant. The "(Level N)" suffix is a drop property,
-            // not part of the filter BaseType, and all levels share one base type.
+            // Gem branch: emit one PriceItem per level with the level KEPT in base_type.
+            // No minLevel floor; no dedup — every level is a distinct PoE2 base type.
             if is_gem_type {
-                let level = parse_gem_level(&name)
-                    .or_else(|| parse_gem_level(&line.id))
-                    .unwrap_or(0);
-                if level < mapping.gem_filter.min_level {
-                    continue;
-                }
-                let base = strip_gem_level(&name);
+                let gf = gem_filter.unwrap();
+                // Derive the per-item class from the base-type prefix.
+                // UncutGems: prefix "Uncut Skill/Spirit/Support Gem" → plural class.
+                // LineageSupportGems: derive_uncut_class returns None → fall back to
+                // gem_filter.classes[0] (i.e. "Support Gems").
+                let item_class = match derive_uncut_class(&name) {
+                    Some(cls) => cls,
+                    None => {
+                        // For UncutGems types, derive_uncut_class returning None means the
+                        // base-type prefix is unrecognized (e.g. a new "Uncut Aura Gem" subtype).
+                        // Warn so that derive_uncut_class can be updated before the item
+                        // silently lands in the fallback class, which would mislabel it.
+                        if gf.r#type == "UncutGems" {
+                            eprintln!(
+                                "Warning: unrecognized uncut gem prefix in '{}'; \
+                                 update derive_uncut_class — using fallback class '{}'",
+                                name,
+                                gf.classes.first().map(|s| s.as_str()).unwrap_or("(none)")
+                            );
+                        }
+                        // Not an uncut gem prefix — use the first class from the filter config.
+                        // This handles LineageSupportGems and any future gem categories.
+                        match gf.classes.first() {
+                            Some(cls) => cls.clone(),
+                            None => {
+                                eprintln!(
+                                    "Warning: gem_filter '{}' has no classes configured; \
+                                     skipping item '{}'",
+                                    gf.r#type, name
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                };
+
                 let (chaos, div, exalt) = convert_primary(
                     &overview.core.primary,
                     line.primary_value,
                     &overview.core.rates,
                 );
-                let new_div = div.unwrap_or(0.0);
-                let keep = match gem_best.get(&base) {
-                    Some(existing) => new_div > existing.div.unwrap_or(0.0),
-                    None => true,
-                };
-                if keep {
-                    gem_best.insert(
-                        base.clone(),
-                        PriceItem {
-                            name: base.clone(),
-                            base_type: base,
-                            class: class.clone(),
-                            category: category.clone(),
-                            exalt,
-                            chaos,
-                            div,
-                        },
-                    );
-                }
+
+                body.push(PriceItem {
+                    name: name.clone(),
+                    base_type: name, // keep the full "(Level N)" name as the base type
+                    class: item_class,
+                    category: category.clone(),
+                    exalt,
+                    chaos,
+                    div,
+                });
                 continue;
             }
 
@@ -234,13 +261,23 @@ pub fn build_prices(
             let _ = base_type_is_name;
             let base_type = name.clone();
 
+            // The Expedition feed mixes item classes (logbook / Saga / artifacts) under one
+            // type; derive the correct per-base class instead of the single mapping default.
+            let item_class = if category == EXPEDITION_CATEGORY {
+                derive_expedition_class(&base_type)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| class.clone())
+            } else {
+                class.clone()
+            };
+
             let (chaos, div, exalt) =
                 convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
 
             let item = PriceItem {
                 name: name.clone(),
                 base_type,
-                class: class.clone(),
+                class: item_class,
                 category: category.clone(),
                 exalt,
                 chaos,
@@ -255,11 +292,6 @@ pub fn build_prices(
             }
         }
     }
-
-    // Add the deduped uncut gems (sorted by base type for deterministic output).
-    let mut gems: Vec<PriceItem> = gem_best.into_values().collect();
-    gems.sort_by(|a, b| a.base_type.cmp(&b.base_type));
-    body.extend(gems);
 
     // Apply explicit overrides to the three reference orbs (by definition):
     // Exalted Orb: exalt = 1.0
@@ -427,24 +459,33 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         }
     }
 
-    // gemFilter type
-    {
-        let gem_type = &mapping.gem_filter.r#type;
+    // Fetch each gem_filters entry (UncutGems, LineageSupportGems, etc.).
+    // Each entry uses the same exchange overview endpoint as regular overviewTypes.
+    if mapping.gem_filters.is_empty() {
+        eprintln!("Warning: gem_filters is empty, skipping gem fetch");
+    }
+    for gf in &mapping.gem_filters {
         let query = [
             ("league", league_name.as_str()),
-            ("type", gem_type.as_str()),
+            ("type", gf.r#type.as_str()),
         ];
         match client.get_json(OVERVIEW_URL, &query).await {
             Ok(body) => match serde_json::from_str::<ExchangeOverview>(&body) {
                 Ok(ov) => {
-                    overviews.push((gem_type.clone(), ov));
+                    overviews.push((gf.r#type.clone(), ov));
                 }
                 Err(e) => {
-                    eprintln!("Warning: failed to parse UncutGem overview: {e}");
+                    eprintln!(
+                        "Warning: failed to parse overview for gem type '{}': {e}",
+                        gf.r#type
+                    );
                 }
             },
             Err(e) => {
-                eprintln!("Warning: failed to fetch UncutGem overview: {e}");
+                eprintln!(
+                    "Warning: failed to fetch overview for gem type '{}': {e}",
+                    gf.r#type
+                );
             }
         }
     }
@@ -609,7 +650,6 @@ fn is_leap_year(year: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::prices::PriceItem;
     use crate::sync::mapping::Mapping;
     use crate::sync::models::{ExchangeCore, ExchangeItem, ExchangeLine, ExchangeOverview};
     use std::collections::HashMap;
@@ -656,7 +696,7 @@ mod tests {
 
     fn minimal_mapping() -> Mapping {
         let src = r#"{
-            "version": 1,
+            "version": 2,
             "overviewTypes": [
                 {
                     "type": "Currency",
@@ -665,26 +705,28 @@ mod tests {
                     "baseTypeIsName": true
                 }
             ],
-            "gemFilter": {
-                "type": "UncutGem",
-                "category": "Uncut Gems",
-                "class": "Stackable Currency",
-                "minLevel": 18
-            }
+            "gemFilters": [
+                {
+                    "type": "UncutGems",
+                    "category": "Uncut Gems",
+                    "classes": ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
+                }
+            ]
         }"#;
         serde_json::from_str(src).expect("minimal mapping should parse")
     }
 
     fn gem_mapping() -> Mapping {
         let src = r#"{
-            "version": 1,
+            "version": 2,
             "overviewTypes": [],
-            "gemFilter": {
-                "type": "UncutGems",
-                "category": "Uncut Gems",
-                "class": "Stackable Currency",
-                "minLevel": 18
-            }
+            "gemFilters": [
+                {
+                    "type": "UncutGems",
+                    "category": "Uncut Gems",
+                    "classes": ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
+                }
+            ]
         }"#;
         serde_json::from_str(src).expect("gem mapping should parse")
     }
@@ -845,10 +887,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: gem level filter — levels {16,18,20} → only {18,20} survive
+    // Test: gem per-level entries — all three levels survive, level kept in base_type,
+    // class derived from prefix (new behavior: no minLevel floor, no collapse/dedup)
     // -----------------------------------------------------------------------
     #[test]
-    fn gem_level_filter_keeps_only_min_level_and_above() {
+    fn gem_per_level_entries_keep_level_and_derive_class() {
         let gem_overview = make_overview(
             "divine",
             &[("chaos", 32.24), ("exalted", 149.0)],
@@ -870,62 +913,181 @@ mod tests {
         )
         .expect("build_prices with gem filter should succeed");
 
-        // Level 16 is excluded; levels 18 and 20 collapse to ONE base-type entry.
-        let gems: Vec<_> = items
-            .iter()
-            .filter(|i| i.base_type == "Uncut Spirit Gem")
-            .collect();
+        // All three levels survive — no minLevel floor.
         assert_eq!(
-            gems.len(),
-            1,
-            "uncut gem levels must collapse to a single base type"
+            items.len(),
+            3,
+            "all three gem levels must produce distinct PriceItems; got {} items: {:?}",
+            items.len(),
+            items.iter().map(|i| &i.base_type).collect::<Vec<_>>()
         );
-        let gem = gems[0];
-        // No "(Level N)" suffix leaks into the name or base type.
+
+        // Each level keeps its "(Level N)" suffix in both name and base_type.
+        let base_types: Vec<&str> = items.iter().map(|i| i.base_type.as_str()).collect();
         assert!(
-            !gem.name.contains("(Level"),
-            "level suffix must be stripped: {}",
-            gem.name
+            base_types.contains(&"Uncut Spirit Gem (Level 16)"),
+            "level 16 must survive: {:?}",
+            base_types
         );
-        assert_eq!(gem.name, "Uncut Spirit Gem");
-        assert_eq!(
-            gem.name, gem.base_type,
-            "gem must be a category item (name == base_type), not a unique"
+        assert!(
+            base_types.contains(&"Uncut Spirit Gem (Level 18)"),
+            "level 18 must survive: {:?}",
+            base_types
         );
-        // Highest-valued variant kept: level 20, primaryValue 5.0 (divine primary → div 5.0).
-        assert_eq!(gem.div, Some(5.0), "kept variant must be the highest-valued (level 20)");
+        assert!(
+            base_types.contains(&"Uncut Spirit Gem (Level 20)"),
+            "level 20 must survive: {:?}",
+            base_types
+        );
+
+        // All items derive class "Uncut Spirit Gems" from the prefix.
+        for item in &items {
+            assert_eq!(
+                item.class, "Uncut Spirit Gems",
+                "class must be derived from prefix for item '{}'",
+                item.base_type
+            );
+            // name == base_type (category item, not a unique)
+            assert_eq!(
+                item.name, item.base_type,
+                "gem name must equal base_type (not a unique): {:?}",
+                item
+            );
+        }
+
+        // No collapse: three distinct base_types.
+        let l16 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 16)").unwrap();
+        let l20 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 20)").unwrap();
+        assert!(
+            (l16.div.unwrap_or(0.0) - 0.1).abs() < 0.001,
+            "level 16 keeps its own price (div ~0.1); got {:?}",
+            l16.div
+        );
+        assert!(
+            (l20.div.unwrap_or(0.0) - 5.0).abs() < 0.001,
+            "level 20 keeps its own price (div 5.0); got {:?}",
+            l20.div
+        );
     }
 
     // -----------------------------------------------------------------------
-    // Test: parse_gem_level helper
+    // Test: derive_uncut_class helper
     // -----------------------------------------------------------------------
     #[test]
-    fn parse_gem_level_from_name_parenthetical() {
+    fn derive_uncut_class_from_base_type() {
         assert_eq!(
-            super::parse_gem_level("Uncut Spirit Gem (Level 18)"),
-            Some(18)
+            super::derive_uncut_class("Uncut Skill Gem (Level 20)"),
+            Some("Uncut Skill Gems".to_string())
         );
         assert_eq!(
-            super::parse_gem_level("Uncut Spirit Gem (Level 20)"),
-            Some(20)
+            super::derive_uncut_class("Uncut Spirit Gem (Level 18)"),
+            Some("Uncut Spirit Gems".to_string())
         );
         assert_eq!(
-            super::parse_gem_level("Uncut Spirit Gem (Level 16)"),
-            Some(16)
+            super::derive_uncut_class("Uncut Support Gem (Level 16)"),
+            Some("Uncut Support Gems".to_string())
+        );
+        assert_eq!(
+            super::derive_uncut_class("Lifeforce Support"),
+            None,
+            "non-uncut gem names must return None"
+        );
+        assert_eq!(
+            super::derive_uncut_class("Divine Orb"),
+            None,
+            "currency names must return None"
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Test: derive_expedition_class helper — the poe.ninja Expedition feed mixes
+    // three item classes (logbook / Saga / artifacts).
+    // -----------------------------------------------------------------------
     #[test]
-    fn parse_gem_level_from_id_slug() {
-        assert_eq!(super::parse_gem_level("uncut-spirit-gem-l18"), Some(18));
-        assert_eq!(super::parse_gem_level("uncut-spirit-gem-l20"), Some(20));
-        assert_eq!(super::parse_gem_level("uncut-spirit-gem-l16"), Some(16));
+    fn derive_expedition_class_splits_logbook_saga_and_artifacts() {
+        assert_eq!(
+            super::derive_expedition_class("Expedition Logbook"),
+            Some("Expedition Logbooks"),
+            "logbook → Expedition Logbooks class"
+        );
+        assert_eq!(
+            super::derive_expedition_class("Aldur's Saga"),
+            Some("Omen"),
+            "leader Sagas are the Omen class"
+        );
+        assert_eq!(super::derive_expedition_class("Vorana's Saga"), Some("Omen"));
+        assert_eq!(
+            super::derive_expedition_class("Thaumaturgic Flux (Level 20)"),
+            None,
+            "Flux falls through to the mapping default (Stackable Currency)"
+        );
+        assert_eq!(
+            super::derive_expedition_class("Exotic Coinage"),
+            None,
+            "artifacts fall through to the mapping default"
+        );
     }
 
+    // -----------------------------------------------------------------------
+    // Test: build_prices assigns the correct per-item class across the mixed
+    // Expedition feed — logbook → Expedition Logbooks, Saga → Omen,
+    // Flux/artifact → Stackable Currency (the mapping default).
+    // -----------------------------------------------------------------------
     #[test]
-    fn parse_gem_level_returns_none_for_non_gem() {
-        assert_eq!(super::parse_gem_level("Divine Orb"), None);
-        assert_eq!(super::parse_gem_level("chaos"), None);
+    fn build_prices_splits_expedition_classes() {
+        let expedition_mapping: Mapping = serde_json::from_str(
+            r#"{
+                "version": 2,
+                "overviewTypes": [
+                    { "type": "Expedition", "category": "Expedition", "class": "Stackable Currency", "baseTypeIsName": true }
+                ],
+                "gemFilters": []
+            }"#,
+        )
+        .expect("expedition mapping should parse");
+
+        let overview = make_overview(
+            "divine",
+            &[("chaos", 100.0), ("exalted", 20.0)],
+            &[
+                ("expedition-logbook", "Expedition Logbook"),
+                ("aldurs-saga", "Aldur's Saga"),
+                ("thaumaturgic-flux-l20", "Thaumaturgic Flux (Level 20)"),
+            ],
+            &[
+                ("expedition-logbook", 0.3),
+                ("aldurs-saga", 0.5),
+                ("thaumaturgic-flux-l20", 0.05),
+            ],
+        );
+
+        let items =
+            super::build_prices(&[("Expedition".to_string(), overview)], &expedition_mapping)
+                .expect("build_prices should succeed");
+
+        let logbook = items
+            .iter()
+            .find(|i| i.base_type == "Expedition Logbook")
+            .expect("logbook present");
+        assert_eq!(
+            logbook.class, "Expedition Logbooks",
+            "logbook must be the Expedition Logbooks class, not Stackable Currency"
+        );
+
+        let saga = items
+            .iter()
+            .find(|i| i.base_type == "Aldur's Saga")
+            .expect("saga present");
+        assert_eq!(saga.class, "Omen", "Saga must be the Omen class");
+
+        let flux = items
+            .iter()
+            .find(|i| i.base_type == "Thaumaturgic Flux (Level 20)")
+            .expect("flux present");
+        assert_eq!(
+            flux.class, "Stackable Currency",
+            "Flux must use the mapping default class"
+        );
     }
 
     // -----------------------------------------------------------------------

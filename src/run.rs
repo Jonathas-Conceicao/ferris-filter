@@ -15,18 +15,18 @@ use crate::{emitter, install, loader, pricer, sync};
 pub fn run() -> miette::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Generate { output, early_game } => cmd_generate(&output, early_game)?,
+        Commands::Generate { config, output, early_game } => cmd_generate(&config, &output, early_game)?,
         Commands::Sync { standard, hc, sub } => sync::cmd_sync(standard, hc, sub)?,
         Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
     }
     Ok(())
 }
 
-fn cmd_generate(output: &str, early_game: bool) -> miette::Result<()> {
-    // Load and validate config.json into the typed Config model.
+fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Result<()> {
+    // Load and validate the config into the typed Config model.
     // serde_path_to_error + miette surface the dotted field path and expected type
     // for any malformed field.
-    let config: Config = loader::load_json("config.json")?;
+    let config: Config = loader::load_json(config_path)?;
 
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
     // prices-fallback.json with tiers-fallback.json — their values are calibrated to each

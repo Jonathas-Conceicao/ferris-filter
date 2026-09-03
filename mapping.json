@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "overviewTypes": [
     {
       "type": "Currency",
@@ -66,6 +66,12 @@
       "category": "Idols",
       "class": "Augment",
       "baseTypeIsName": true
+    },
+    {
+      "type": "Verisium",
+      "category": "Verisium",
+      "class": "Stackable Currency",
+      "baseTypeIsName": true
     }
   ],
   "itemTypes": [
@@ -75,13 +81,20 @@
     { "type": "UniqueFlasks", "category": "Uniques" },
     { "type": "UniqueCharms", "category": "Uniques" },
     { "type": "UniqueJewels", "category": "Uniques" },
-    { "type": "UniqueMaps", "category": "Uniques" },
     { "type": "UniqueSanctumRelics", "category": "Uniques" }
   ],
-  "gemFilter": {
-    "type": "UncutGems",
-    "category": "Uncut Gems",
-    "class": "Stackable Currency",
-    "minLevel": 18
-  }
+  "gemFilters": [
+    {
+      "type": "UncutGems",
+      "category": "Uncut Gems",
+      "classes": ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"],
+      "backgroundOverride": [80, 70, 55]
+    },
+    {
+      "type": "LineageSupportGems",
+      "category": "Lineage Support Gems",
+      "classes": ["Support Gems"],
+      "backgroundOverride": [10, 150, 150]
+    }
+  ]
 }

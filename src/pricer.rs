@@ -28,7 +28,16 @@ pub struct TieredItem {
 #[derive(Debug, Clone)]
 pub struct TierGroup {
     pub tier: String,
+    /// The `Class ==` value for this block.
+    ///
+    /// For single-class blocks this is a bare class name (e.g. `"Stackable Currency"`).
+    /// When `is_multi_class` is true, this is the pre-quoted multi-class string
+    /// `UNCUT_GEM_MULTICLASS` — emitted verbatim by the emitter.
     pub class: String,
+    /// True when `class` holds a pre-formatted multi-class string (e.g. the Uncut Gems
+    /// merge block). The emitter uses this typed signal instead of the fragile
+    /// `contains('"')` heuristic to decide whether to wrap the value in quotes.
+    pub is_multi_class: bool,
     pub items: Vec<TieredItem>,
 }
 
@@ -37,7 +46,40 @@ pub struct TierGroup {
 pub struct CategoryBlock {
     pub name: String,
     pub tiers: Vec<TierGroup>,
+    /// Per-category fixed background `[R, G, B]` carried from mapping.json for Phase 9.
+    /// Phase 8 does NOT emit this — the emitter leaves it unread this phase.
+    /// None = no background override (Currency, Verisium, etc.).
+    pub background_override: Option<[u8; 3]>,
 }
+
+/// Derive the per-category background override from the category name.
+///
+/// These values mirror the `backgroundOverride` fields in mapping.json gemFilters.
+/// Phase 9 will consume this; Phase 8 only carries it.
+fn category_background(name: &str) -> Option<[u8; 3]> {
+    match name {
+        UNCUT_GEMS_CATEGORY => Some([80, 70, 55]),
+        "Lineage Support Gems" => Some([10, 150, 150]),
+        _ => None,
+    }
+}
+
+/// Category sentinel for the Uncut Gems merge case.
+///
+/// This string originates from `GemFilter.category` in `mapping.json`
+/// (`"category": "Uncut Gems"`). Using a named const avoids brittle string literals
+/// scattered across the pricer and `category_background` — if the category value
+/// is ever renamed in `mapping.json`, only this const needs updating.
+const UNCUT_GEMS_CATEGORY: &str = "Uncut Gems";
+
+/// Canonical multi-class Class value for the Uncut Gems category.
+///
+/// The three uncut gem subtype classes are merged into a single `Class ==` line
+/// by the emitter. The ordering (Skill, Spirit, Support) is fixed and deterministic.
+/// Phase 8 builds this string at the pricer boundary; the emitter emits it verbatim
+/// when `TierGroup.is_multi_class` is true (set by the pricer for this group).
+const UNCUT_GEM_MULTICLASS: &str =
+    r#""Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems""#;
 
 /// A price-tiered unique block (one or more base types at the same tier).
 #[derive(Debug, Clone)]
@@ -306,33 +348,69 @@ pub fn price_tiers(
     }
 
     // ── Build Vec<CategoryBlock> using deterministic iteration ─────────────
-    // Iterate category_order (first-appearance) × TIER_ORDER (fixed S→F) × class_order
+    // Iterate category_order (first-appearance) × TIER_ORDER (fixed S→F) × class_order.
+    //
+    // Special case — "Uncut Gems": the three subtype classes ("Uncut Skill Gems",
+    // "Uncut Spirit Gems", "Uncut Support Gems") are merged into ONE TierGroup per
+    // tier. The `class` field on that group is the pre-quoted multi-class string
+    // (UNCUT_GEM_MULTICLASS) which the emitter emits verbatim via its `contains('"')`
+    // check. Items from all three subtypes are unioned into that single group.
     let mut category_blocks: Vec<CategoryBlock> = Vec::new();
     for cat in &category_order {
+        let is_uncut_gems = cat == UNCUT_GEMS_CATEGORY;
         let mut tier_groups: Vec<TierGroup> = Vec::new();
+
         for &tier in TIER_ORDER {
-            // Get class order for this (category, tier)
-            let classes = class_order
-                .get(&(cat.clone(), tier.to_string()))
-                .cloned()
-                .unwrap_or_default();
-            for cls in &classes {
-                let key = (cat.clone(), tier.to_string(), cls.clone());
-                if let Some(items) = category_tier_class_items.get(&key) {
-                    if !items.is_empty() {
-                        tier_groups.push(TierGroup {
-                            tier: tier.to_string(),
-                            class: cls.clone(),
-                            items: items.clone(),
-                        });
+            if is_uncut_gems {
+                // Collect all items in this tier across all three subtype classes.
+                let all_items: Vec<TieredItem> = ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
+                    .iter()
+                    .flat_map(|cls| {
+                        let key = (cat.clone(), tier.to_string(), cls.to_string());
+                        category_tier_class_items
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .collect();
+
+                if !all_items.is_empty() {
+                    tier_groups.push(TierGroup {
+                        tier: tier.to_string(),
+                        // Pre-quoted multi-class value — emitter uses is_multi_class to
+                        // emit this verbatim rather than wrapping it in extra quotes.
+                        class: UNCUT_GEM_MULTICLASS.to_string(),
+                        is_multi_class: true,
+                        items: all_items,
+                    });
+                }
+            } else {
+                // Regular categories: one TierGroup per (category, tier, class).
+                let classes = class_order
+                    .get(&(cat.clone(), tier.to_string()))
+                    .cloned()
+                    .unwrap_or_default();
+                for cls in &classes {
+                    let key = (cat.clone(), tier.to_string(), cls.clone());
+                    if let Some(items) = category_tier_class_items.get(&key) {
+                        if !items.is_empty() {
+                            tier_groups.push(TierGroup {
+                                tier: tier.to_string(),
+                                class: cls.clone(),
+                                is_multi_class: false,
+                                items: items.clone(),
+                            });
+                        }
                     }
                 }
             }
         }
+
         if !tier_groups.is_empty() {
             category_blocks.push(CategoryBlock {
                 name: cat.clone(),
                 tiers: tier_groups,
+                background_override: category_background(cat),
             });
         }
     }
@@ -622,18 +700,21 @@ mod tests {
     #[test]
     fn assign_tier_anchor_rertiering() {
         let (_, cutoffs) = seeded_cutoffs();
-        // Divine: 220c >= 220c (A floor) -> A
-        assert_eq!(assign_tier(220.0, &cutoffs).as_deref(), Some("A"));
-        // Chaos: 1c >= 0.5c (E floor) -> E
+        // With tiers.json: S=30c, A=20c, B=12c, C=8c, D=2c, E=0.5c, F=0.1c.
+        // Divine (220c): 220 >= 30 → S
+        assert_eq!(assign_tier(220.0, &cutoffs).as_deref(), Some("S"));
+        // Chaos (1c): 1 >= 0.5 (E floor) → E
         assert_eq!(assign_tier(1.0, &cutoffs).as_deref(), Some("E"));
-        // Exalt: 4.5c >= 2c (D floor) -> D (4.5 < 10 = C floor)
+        // Exalt (4.5c): 4.5 >= 2 (D floor) → D (4.5 < 8 = C floor)
         assert_eq!(assign_tier(4.5, &cutoffs).as_deref(), Some("D"));
     }
 
     #[test]
-    fn assign_tier_s_at_exactly_1100c() {
+    fn assign_tier_s_at_exactly_30c() {
         let (_, cutoffs) = seeded_cutoffs();
-        // S floor = 5 div * 220 = 1100c — exactly at boundary -> S
+        // S floor = 30c (tiers.json) — exactly at boundary -> S
+        assert_eq!(assign_tier(30.0, &cutoffs).as_deref(), Some("S"));
+        // Also test well above: 1100c is solidly in S
         assert_eq!(assign_tier(1100.0, &cutoffs).as_deref(), Some("S"));
     }
 
@@ -663,9 +744,10 @@ mod tests {
 
     #[test]
     fn unique_base_collision_uses_highest_tier() {
-        // Inline fixture: two uniques sharing "Heavy Belt", one B-tier, one D-tier.
-        // Headhunter: 50c >= 30c = tier B; Darkness Enthroned: 5c >= 2c = tier D.
-        // Collision on "Heavy Belt": highest = B wins.
+        // Inline fixture: two uniques sharing "Heavy Belt", one high-tier, one D-tier.
+        // With tiers.json: S=30c, A=20c, B=12c, C=8c, D=2c.
+        // Headhunter: 50c >= 30c = tier S; Darkness Enthroned: 5c >= 2c = tier D.
+        // Collision on "Heavy Belt": highest (S) wins over D.
         let prices_json = r#"{
             "league": "Standard",
             "fetchedAt": "2026-01-01T00:00:00Z",
@@ -682,9 +764,9 @@ mod tests {
         let rates = derive_rates(&prices.items).unwrap();
         let priced = price_tiers(&prices, &tiers, &rates).unwrap();
 
-        // Exactly one unique block at tier B with BaseType == "Heavy Belt"
+        // Exactly one unique block at tier S (Headhunter wins collision) with BaseType == "Heavy Belt"
         assert_eq!(priced.unique_blocks.len(), 1);
-        assert_eq!(priced.unique_blocks[0].tier, "B");
+        assert_eq!(priced.unique_blocks[0].tier, "S", "Headhunter (50c) must land S (>= 30c floor)");
         assert_eq!(
             priced.unique_blocks[0].base_types,
             vec!["Heavy Belt".to_string()]
@@ -734,27 +816,30 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let a_items = items_in_tier("A");
+        // With tiers.json: S=30c, A=20c, B=12c, C=8c, D=2c, E=0.5c, F=0.1c.
+        // seed-prices.json anchors: Exalt=4.5c, Chaos=1.0c, Divine=220c.
+        // Divine (220c): >= 30c → S.  Chaos (1c): >= 0.5c → E.  Exalt (4.5c): >= 2c → D.
+        let s_items = items_in_tier("S");
         let e_items = items_in_tier("E");
         let d_items = items_in_tier("D");
 
         assert!(
-            a_items.contains(&"Divine Orb".to_string()),
-            "Divine Orb should be in A tier, got A items: {a_items:?}"
+            s_items.contains(&"Divine Orb".to_string()),
+            "Divine Orb should be in S tier (220c >= 30c floor), got S items: {s_items:?}"
         );
         assert!(
             e_items.contains(&"Chaos Orb".to_string()),
-            "Chaos Orb should be in E tier, got E items: {e_items:?}"
+            "Chaos Orb should be in E tier (1c >= 0.5c floor), got E items: {e_items:?}"
         );
         assert!(
             d_items.contains(&"Exalted Orb".to_string()),
-            "Exalted Orb should be in D tier, got D items: {d_items:?}"
+            "Exalted Orb should be in D tier (4.5c >= 2c floor), got D items: {d_items:?}"
         );
 
         // Verify they are NOT in their old positions
         assert!(
-            !items_in_tier("S").contains(&"Divine Orb".to_string()),
-            "Divine Orb must NOT be in S tier"
+            !items_in_tier("A").contains(&"Divine Orb".to_string()),
+            "Divine Orb must NOT be in A tier (moved to S with new cutoffs)"
         );
         assert!(
             !items_in_tier("C").contains(&"Chaos Orb".to_string()),

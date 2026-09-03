@@ -1,215 +1,338 @@
-# Feature Research
+# Feature Research — v0.3 Economy Items & Exceptional Gear
 
-**Domain:** CLI loot-filter compiler + price-sync tool for Path of Exile 2
-**Researched:** 2026-05-23
-**Confidence:** HIGH (core features), MEDIUM (poe.ninja API specifics — undocumented PoE2 endpoints)
-
----
-
-## Feature Landscape
-
-### Table Stakes (Users Expect These)
-
-Features any filter generator must have to feel complete. Missing one makes the tool
-feel unfinished or unusable.
-
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| `generate` emits a valid `.filter` file | Core value proposition — nothing else works without it | MEDIUM | Must match PoE2 grammar exactly; same grammar as PoE1 but different valid class/base-type names |
-| Deterministic output | Same inputs → identical output; required for version control diffs to be meaningful | LOW | Sort all collections before rendering; never use HashMap iteration order |
-| `--output <path>` flag on `generate` | Users need to redirect output or write to the game folder | LOW | Default to `universal.filter` in cwd; accept absolute or relative paths |
-| `--help` on every subcommand | Standard CLI contract; users expect it before reading docs | LOW | Clap's derive API provides this for free with good doc strings |
-| Actionable error messages | Config typos or bad values surface immediately with context | MEDIUM | Include field path + actual value + what was expected; use `thiserror` for domain errors, `anyhow` for app errors |
-| Config schema validation on `generate` | Catches malformed `config.json`/`tiers.json` before generating 400-line filter | MEDIUM | Validate required fields, enum values (style names, class names), numeric ranges at startup |
-| `sync` writes `prices.json` | The fetch half of the generate/sync loop | MEDIUM | File must be human-readable JSON; on failure leave prior file intact |
-| League selection flags (`--hc`, `--standard`) on `sync` | Users play different leagues; the tool must target the right economy data | LOW | Default (no flags) = current softcore trade league; `--standard` = Standard; `--hc` = current HC trade; `--standard --hc` = Standard HC |
-| Exalt/Chaos/Divine always first in `prices.json` | Required by `generate`'s cross-rate logic | LOW | Hardcode these three at indices 0-2 with explicit fetch; null-safe (untraded currency gets `null` chaos value) |
-| Null-safe price handling | Some items are untraded or newly introduced; the file must not crash `generate` | LOW | `{exalt: null, chaos: null, div: null}` is valid; `generate` treats null-priced items as tier F or omits them from rules |
-| Uncut gems only at level >= 18 | Project requirement; lower-level uncut gems are low-value and create rule noise | LOW | Filter gem rows in `sync` by level field before writing; levels 1-17 are dropped |
-| Exit codes | Scripts and CI need 0 = success, nonzero = failure | LOW | Standard: 0 success, 1 logic/config error, 2 network/IO error |
-
-### Differentiators (Competitive Advantage)
-
-Features that are not universal across comparable tools but add real value for this project.
-
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Dry-run / diff on `generate` | See exactly what will change before overwriting the filter; safe to iterate quickly | MEDIUM | `--dry-run` prints the filter to stdout; `--diff` diffs against the existing output file using a line-level diff (similar to `diff` output); no file is written in either mode |
-| Block-level source comments in output | Every block tagged with its model path (`[areaLevelBands "6-25".weapons -> styles.unchanged]`) | LOW | Already in the current hand-built filter; `generate` must reproduce this tagging; invaluable for debugging mismatches |
-| Tiering from `tiers.json` (configurable cutoffs) | User can recalibrate what counts as "A-tier" without touching code | LOW | Seven thresholds in chaos: F <0.1 · E 0.1–<0.5 · D 0.5–<2 · C 2–<5 · B 5c–<1div · A 1div–<5div · S ≥5div; `generate` reads this at compile time, not hardcoded |
-| Chaos cross-rate conversion at generate time | All three reference currencies (Exalt/Chaos/Divine) in `prices.json` let `generate` normalize any price to chaos for threshold comparisons | MEDIUM | Cross-rates derived from the first three `prices.json` entries; if Chaos entry has `chaos: 1.0` and Divine entry has `chaos: 250.0`, then a 300c item that poe.ninja reports at 1.2 div is treated as 300c |
-| Verbose mode (`-v` / `--verbose`) | Shows which rules were generated from which model keys; useful when debugging why an item isn't highlighted | LOW | Print to stderr; one level is sufficient for v1 |
-| Caching of `prices.json` with a staleness check | Avoid hammering poe.ninja on every `generate` run; warn if prices are older than N hours | LOW | Embed a `fetched_at` ISO-8601 timestamp in `prices.json`; `sync` always overwrites; `generate --warn-stale 24h` emits a warning but proceeds |
-| Price-tiered uniques (only tracked ones get rules) | Avoids bloating the filter with rules for low-value uniques; untracked fall through | MEDIUM | `generate` emits one `Show` block per unique in `prices.json` whose tier is >= configured minimum; untracked uniques use game default (CLAUDE.md design philosophy) |
-| Separation of human-edited config from machine-generated prices | `config.json` (human) + `tiers.json` (human) + `prices.json` (machine) keeps merge conflicts minimal | LOW | `prices.json` should be in `.gitignore` or at least documented as machine-generated; `config.json` and `tiers.json` are version-controlled |
-
-### Anti-Features (Commonly Requested, Often Problematic)
-
-Features to explicitly not build in v1 (and potentially ever).
-
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| GUI / web interface | Lowers barrier for non-technical users; FilterBlade shows demand | Enormous scope; defeats the "Rust CLI" design goal; any web layer adds deployment, auth, and maintenance | FilterBlade already exists for GUI workflows; FerrisFilter targets authors who want version-controlled, reproducible configs |
-| Auto-install into game folder | Convenience; avoids manual copy step | Couples the tool to a specific OS path; breaks on OneDrive/cloud sync variants; `install.bat` already covers it for this repo | Keep `install.bat`; document the output path; user copies when ready |
-| Rules for gems, jewels, jewellery, quest items, waystones, trials, unidentified items | Completeness instinct | These fall through to game default by design (CLAUDE.md philosophy); adding rules creates false confidence and bloat without value; no PoE2 mechanic requires filtering them | Document the fall-through explicitly in generated filter header comment (already done in `universal.filter`) |
-| Blanket unique styling | "Highlight all uniques" is common ask | Would repaint uniques the game already shows natively; hides the useful signal that a specific base is economically tiered; NeverSink notes the engine cannot distinguish between two uniques on the same base | Only price-tracked uniques with tier >= configured minimum get rules; the rest fall through |
-| Strictness levels (NeverSink-style 0–6) | Flexible aggression control is popular | Adds a hidden dimension to the config that interacts with every rule; hard to test; the area-level progression already handles "show more while leveling, show less in endgame" | The `areaLevelBands` model already encodes the equivalent of strictness progression without a separate dial |
-| Historical price trends / sparklines | "Is this item trending up?" | poe.ninja PoE2 API does not currently return sparkline/trend data (confirmed: undocumented endpoint, no historical data); adds complexity with no available data source | Track only current snapshot; user checks poe.ninja directly for trends |
-| Interactive / REPL mode | "Just run and ask me questions" | Complicates piping and automation; hard to test | `--help` + clear error messages with fix hints cover the same UX need |
-| Auto-update of `config.json` from new game patches | Sounds convenient | Config is author-intent; auto-mutation violates the principle that generate is deterministic from known inputs | Changelog docs + `sync` handles price updates; class/base-type changes require deliberate author edit |
+**Domain:** PoE2 loot filter — new league items + exceptional gear highlighting
+**Researched:** 2026-06-23
+**Confidence:** HIGH (primary sources: NeverSink PoE2 filter source code, reference-old-filters/ on disk, poe.ninja URLs, poe2db)
 
 ---
 
-## Feature Dependencies
+## 1. Exceptional Items (Highest Priority)
+
+### What "Exceptional" Means in PoE2
+
+In PoE2, "exceptional" gear refers to items that have been boosted above their base quality or socket cap via crafting or fortunate drops. Two sub-categories:
+
+- **Extra sockets** — a 2-handed/body item with 3 sockets, or a 1-handed/small piece with 2 sockets (PoE2 default caps are typically 1-2 sockets per slot).
+- **Extra quality** — an item with Quality >= 20+ (obtainable via Glassblower's Bauble chaining or Omen of Sanctification; normal crafted cap is 20 but exceptional pieces can reach 27-30+).
+
+These items are valuable as either crafting bases (for "chancing" into uniques) or direct quality improvement targets. The `Corrupted False` condition is mandatory because corrupted items cannot be further crafted.
+
+### There is NO Dedicated "Exceptional" Filter Keyword
+
+There is no `Exceptional` or `ExtraSocket` filter condition in PoE2. "Exceptional" is not a game tag or modifier — it is an informal community term. The filter mechanism uses standard conditions combined:
+
+| Goal | Filter Conditions Used |
+|------|------------------------|
+| Extra quality | `Quality >= N` + `Corrupted False` |
+| Extra sockets (2H/Body) | `Sockets >= 3` + `Corrupted False` + Class list |
+| Extra sockets (1H/Small) | `Sockets >= 2` + `Corrupted False` + Class list |
+| Restrict to specific bases | `BaseType == ...` (optional but recommended) |
+
+`Corrupted False` is the correct PoE2 filter syntax (boolean — no `==`). Confirmed by: NeverSink filter source (GitHub), reference-old-filters/end_endgame.filter on disk.
+
+### Exact Filter Syntax (Concrete Examples)
+
+From `reference-old-filters/end_endgame.filter` (on disk, author's prior filter):
 
 ```
-prices.json (written by sync)
-    └──required by──> generate: currency cross-rate conversion
-    └──required by──> generate: price-tiered unique rules
+# Extra quality — show quality-exceptional Normal items (excellent tier)
+Show # Excellent Exceptional Quality Weapons (gear-exceptional-excellent-quality)
+  Quality >= 28
+  Class == "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands"
+  BaseType == "Guardian Bow" "Gemini Bow" [...]
+  Rarity == Normal
 
-tiers.json (human-edited, thresholds in chaos)
-    └──required by──> generate: tier assignment for all priced items
+# Extra sockets (2-handed/Body — needs 3 for "exceptional")
+Show # Excellent Exceptional 2-Socketed Weapons (gear-exceptional-excellent-socketed-weapons)
+  Sockets >= 3
+  Class "Bows" "Crossbows" "Quarterstaves" "Talismans" "Staves" "Two Hand Maces"
+  BaseType == "Guardian Bow" [...]
+  Rarity == Normal
 
-config.json (human-edited, policy model)
-    └──required by──> generate: ALL rule generation
-
-generate (core compilation)
-    └──enables──> --dry-run (stdout instead of file write)
-    └──enables──> --diff (compare against existing output)
-    └──enables──> --warn-stale (check prices.json age before compiling)
-
-sync (price fetch)
-    └──enables──> prices.json freshness
-    └──depends on──> poe.ninja PoE2 API (external, undocumented, may change)
-
-block-level source comments
-    └──enhances──> generate output (readability, debugging)
-
-tiers.json configurable cutoffs
-    └──enhances──> generate: tiering logic (without it, cutoffs are hardcoded)
-
---verbose flag
-    └──enhances──> generate and sync (both benefit independently)
+# Extra sockets (1-handed/small — needs 2 for "exceptional")
+Show # Excellent Exceptional 1-Socketed Weapons (gear-exceptional-excellent-socketed-weapons)
+  Sockets >= 2
+  Class "Foci" "One Hand Maces" "Sceptres" "Spears" "Wands"
+  BaseType == [...]
+  Rarity == Normal
 ```
 
-### Dependency Notes
+From NeverSink PoE2 filter (GitHub), **current-generation** simplified blocks (less strict about specific BaseTypes):
 
-- **`generate` requires `prices.json`:** Currency cross-rates and unique tiering are computed at generate time from the prices file. If `prices.json` is absent, `generate` should warn and skip price-tiered rules (fall through to game default), not crash — makes first-run experience workable without running `sync` first.
-- **`generate` requires `tiers.json`:** Without thresholds, tier assignment has no reference points. This file should have a checked-in default so `generate` works out of the box.
-- **`--dry-run` and `--diff` enhance `generate`:** Both are output-mode flags that share the same compilation path; they just change where the result goes. Implement after core `generate` works.
-- **`sync` depends on undocumented poe.ninja PoE2 API:** The `/poe2/api/economy/currencyexchange/overview` endpoint was discovered via network interception; it is not officially documented and may change without notice. The `sync` implementation must handle HTTP errors gracefully and report the failure without corrupting the existing `prices.json`.
-- **Uncut gem level filter is a `sync`-side concern:** The `>= 18` threshold is applied when writing `prices.json`, not at generate time. This keeps generate's logic simple (it just reads the file as given).
+```
+# Extra quality — any base above Q27, not corrupted
+Show # exceptional overqual1q1
+  Corrupted False
+  Quality >= 27
+  Rarity Normal Magic Rare
+  BaseType == "Adherent Cuffs" "Akoyan Spear" [...top-tier endgame bases...]
+
+# Extra sockets (2H/Body), not corrupted
+Show # exceptional oversockt1s3
+  Corrupted False
+  Sockets >= 3
+  Rarity Normal Magic Rare
+  Class == "Body Armours" "Bows" "Crossbows" "Quarterstaves" "Staves" "Talismans" "Two Hand Maces"
+  BaseType == [endgame base list]
+
+# Extra sockets (1H/Small), not corrupted
+Show # exceptional oversockt1s2
+  Corrupted False
+  Sockets >= 2
+  Rarity Normal Magic Rare
+  Class == "Boots" "Bucklers" "Foci" "Gloves" "Helmets" "One Hand Maces" "Sceptres" "Shields" "Spears" "Wands"
+  BaseType == [endgame base list]
+```
+
+Source: `NeverSinkDev/NeverSink-Filter-for-PoE2` main branch, section `$type->exotic->exceptional`.
+
+Also from `reference-old-filters/#end_endgame.filter#` on disk (broader, no BaseType restriction):
+```
+Show # Exceptional 2-Socketed Uniques (uniques-exceptional)
+  Rarity == Unique
+  Sockets >= 3
+  Class == "Bows" "Crossbows" "Quarterstaves" "Talismans" "Staves" "Two Hand Maces" "Body Armours"
+
+Show # Exceptional 1-Socketed Uniques (uniques-exceptional)
+  Rarity == Unique
+  Sockets >= 2
+  Class == "Foci" "One Hand Maces" "Sceptres" "Spears" "Wands" "Helmets" "Gloves" "Boots" "Shields" "Bucklers"
+
+Show # Exceptional Quality Uniques (uniques-exceptional)
+  Rarity == Unique
+  Quality >= 24
+```
+
+### Design Recommendation for FerrisFilter v0.3
+
+Two approaches are viable:
+
+**Option A — Base-type-gated (highest signal, fewest false positives):** Only highlight exceptional items on known high-value bases. Requires maintaining a curated `BaseType ==` list. Best for end-endgame filter.
+
+**Option B — Class-only (broadest, simpler, no curation needed):** Use `Corrupted False` + `Quality >= N` or `Sockets >= N` + class list, no BaseType restriction. Produces more noise early league but never misses a base.
+
+Given the declarative `rules` model and the fact that this is a personal filter (not a public release), Option B is the correct v0.3 approach: add two rules before the `hidden` gear fallback:
+
+```json
+// In config.json rules array (before the gear-hide fallback):
+{ "name": "exceptional: extra-socketed 2H/Body", "style": "D",
+  "when": { "corrupted": false, "sockets": { "min": 3 },
+            "class": ["Body Armours","Bows","Crossbows","Quarterstaves","Staves","Talismans","Two Hand Maces"],
+            "rarity": "<=Rare" } },
+{ "name": "exceptional: extra-socketed 1H/small", "style": "D",
+  "when": { "corrupted": false, "sockets": { "min": 2 },
+            "class": ["Boots","Bucklers","Foci","Gloves","Helmets","One Hand Maces","Sceptres","Shields","Spears","Wands"],
+            "rarity": "<=Rare" } },
+{ "name": "exceptional: extra quality", "style": "D",
+  "when": { "corrupted": false, "quality": { "min": 20 },
+            "class": ["Body Armours","Boots","Bows","Bucklers","Crossbows","Foci","Gloves","Helmets",
+                      "One Hand Maces","Quarterstaves","Sceptres","Shields","Spears","Staves",
+                      "Talismans","Two Hand Maces","Wands"],
+            "rarity": "<=Rare" } }
+```
+
+**IMPORTANT implementation note:** The `when` vocabulary in config.json does NOT currently have a `corrupted` field. That condition must be added to the schema (new `NumericCondition` or a boolean field) and to `emit_rules`. This is a new condition to implement. Emits `Corrupted False` in the filter block.
+
+The quality threshold is tunable — `20` catches items that have hit quality cap by any means; `24+` restricts to items that went beyond normal crafted cap (rare/league-specific).
 
 ---
 
-## MVP Definition
+## 2. Uncut Gems
 
-### Launch With (v1)
+### Naming Convention — CRITICAL CORRECTION
 
-Minimum to make the tool usable end-to-end.
+**The correct filter syntax uses `GemLevel` condition, NOT `(Level N)` in the BaseType name.**
 
-- [ ] `generate` subcommand — reads `config.json` + `tiers.json` + `prices.json` and emits `universal.filter`; reproduces all current hand-built logic
-- [ ] `generate --output <path>` — redirect output file
-- [ ] Deterministic output — same inputs, same bytes out
-- [ ] Config validation at startup — actionable errors for bad `config.json` / `tiers.json`
-- [ ] Block-level source comments in generated filter — every block tagged with model path
-- [ ] `generate` graceful handling of absent `prices.json` — warn, skip price-tiered rules, proceed
-- [ ] `sync` subcommand — fetches poe.ninja PoE2 economy data, writes `prices.json`
-- [ ] `sync` league flags — `--hc`, `--standard`
-- [ ] `sync` Exalt/Chaos/Divine first in `prices.json`, null-safe for untraded items
-- [ ] `sync` uncut gem level filter — only gems >= level 18 written to `prices.json`
-- [ ] `--help` on all subcommands with useful descriptions
-- [ ] Exit codes: 0 success, nonzero failure
-- [ ] Actionable error messages (field path + actual + expected)
+Evidence from NeverSink PoE2 filter (main branch, June 2026):
 
-### Add After Validation (v1.x)
+```
+Show # uncut $tier->skill20
+  GemLevel >= 20
+  BaseType "Uncut Skill Gem"
 
-Add once the core generate/sync loop is proven correct.
+Show # uncut $tier->skill19
+  GemLevel 19
+  BaseType "Uncut Skill Gem"
 
-- [ ] `generate --dry-run` — when the output looks right and you want a safety net before overwriting
-- [ ] `generate --diff` — when you want to see exactly what changed after a sync
-- [ ] `generate --warn-stale <duration>` — once the habit of running sync periodically is established
-- [ ] `-v / --verbose` flag — when debugging why a specific item isn't highlighted
-- [ ] `prices.json` `fetched_at` timestamp — low effort, pairs with `--warn-stale`
+Show # uncut $tier->skillgemprogression18
+  GemLevel 18
+  BaseType "Uncut Skill Gem"
+  AreaLevel <= 79
+```
 
-### Future Consideration (v2+)
+The `BaseType` strings are exactly:
+- `"Uncut Skill Gem"` (no level suffix)
+- `"Uncut Spirit Gem"` (no level suffix)
+- `"Uncut Support Gem"` (no level suffix)
 
-Defer until the tool is in daily use and real friction surfaces.
+The poe.ninja URL that contains `?name=Uncut+Skill+Gem+%28Level+20%29` is a **query parameter for the web UI**, not the in-game BaseType name. The poe2db page confirms the base type is simply `"Uncut Skill Gem"`. Levels in the filter are expressed via the `GemLevel` condition.
 
-- [ ] Multiple build profiles (e.g., `--config builds/witch.json`) — when the single build assumption breaks
-- [ ] `generate --validate-only` without writing output — when CI integration is desired
-- [ ] Parallel category fetches in `sync` — when poe.ninja adds more PoE2 categories and serial fetch is noticeably slow
-- [ ] Support for poe2scout as an alternate price source — if poe.ninja PoE2 coverage proves insufficient for uniques
+Note: The `(Level N)` convention DOES exist for Thaumaturgic Flux expedition items (e.g., `"Thaumaturgic Flux (Level 20)"` is the actual BaseType). Uncut Gems do not follow this pattern.
 
----
+### Class for Uncut Gems
 
-## Feature Prioritization Matrix
+NeverSink filter uses **no `Class` line** for uncut gem blocks — the `BaseType "Uncut Skill Gem"` substring match works across the "Gems" class. poe2db metadata class for Uncut Skill Gem is `Metadata/Items/Gems/SkillGemUncut`. The filter class name is likely `"Gems"` but the bareword `BaseType` match without `Class` is simpler and confirmed working by NeverSink.
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| `generate` core compilation | HIGH | MEDIUM | P1 |
-| Deterministic output | HIGH | LOW | P1 |
-| Config validation + error messages | HIGH | MEDIUM | P1 |
-| Block-level source comments | HIGH | LOW | P1 |
-| `sync` core fetch + `prices.json` write | HIGH | MEDIUM | P1 |
-| `sync` league flags | HIGH | LOW | P1 |
-| Null-safe price handling + absent prices.json graceful | HIGH | LOW | P1 |
-| Exalt/Chaos/Divine first 3 entries | HIGH | LOW | P1 |
-| Uncut gem level >= 18 filter in sync | MEDIUM | LOW | P1 |
-| `--output` path control | MEDIUM | LOW | P1 |
-| `--help` everywhere | MEDIUM | LOW | P1 |
-| Exit codes | MEDIUM | LOW | P1 |
-| `generate --dry-run` | MEDIUM | LOW | P2 |
-| `generate --diff` | MEDIUM | LOW | P2 |
-| `--verbose` flag | MEDIUM | LOW | P2 |
-| `prices.json` staleness timestamp + `--warn-stale` | LOW | LOW | P2 |
-| Multiple build profiles | LOW | MEDIUM | P3 |
-| `generate --validate-only` | LOW | LOW | P3 |
+The existing FerrisFilter filter uses `Class == "Stackable Currency"` for uncut gems — this is WRONG and explains why the rule fails to match. The correct class is `"Gems"` (or no class line + BaseType substring match).
 
-**Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
-- P3: Nice to have, future consideration
+### Gem Types and Level Range
+
+| BaseType | Notes |
+|----------|-------|
+| `Uncut Skill Gem` | Creates an active skill gem at GemLevel N |
+| `Uncut Spirit Gem` | Creates a persistent buff skill gem at GemLevel N |
+| `Uncut Support Gem` | Creates a support gem at GemLevel N |
+
+GemLevel range: 1–20 (GemLevel 20 is the practical endgame ceiling; GemLevel >= 20 catches any hypothetical higher values). Level 1-13 are common campaign drops; 18-20 are the high-value tiers.
+
+### Fix Required in FerrisFilter
+
+The current `sync` code fetches uncut gems with `minLevel: 18` filtering and the `generate` code emits `BaseType == "Uncut Skill Gem" "Uncut Spirit Gem"` (wrong class). The v0.3 fix:
+1. Drop `minLevel` floor in `sync` (price-tier everything, let economy drive it).
+2. Change the emitted class from `Class == "Stackable Currency"` to no class line or `Class == "Gems"`.
+3. Use the `GemLevel` condition (requires adding `gemLevel` to the `when` vocabulary in config.json or handling uncut gems in the pricer path with GemLevel conditions directly in the emitter).
+4. The `BaseType` string stays as the bare name (no `(Level N)` suffix).
 
 ---
 
-## Competitor Feature Analysis
+## 3. Lineage Support Gems
 
-| Feature | FilterBlade (NeverSink, web) | poe-filter (flapanther33781, Python, unmaintained) | PoE Dynamic Loot Filter (Apollys, Python) | FerrisFilter (our approach) |
-|---------|------------------------------|---------------------------------------------------|-------------------------------------------|-----------------------------|
-| Price-driven tiering | Yes — poe.ninja EXCHANGE data, economy-only updates | Yes — poe.ninja fetch per run | No — manual tier assignment | Yes — `sync` + `generate`; chaos cross-rates |
-| Config format | Web UI + saved profile | Python config module + GUI sliders | Profile.changes text file | JSON (`config.json` + `tiers.json`) |
-| CLI / automation | No — web only; Patreon auto-updater service | No — GUI-driven | Yes — `python backend_cli.py <cmd> <params>` | Yes — native CLI, two subcommands |
-| Deterministic output | Unknown (web service) | Unknown | Not stated | Yes — explicit design goal |
-| Dry-run / diff | No | No | No | v1.x — `--dry-run` + `--diff` |
-| Source comments in output | No (machine output) | No | No | Yes — block-level model-path tags |
-| Unique handling | Tiered by base type; cannot distinguish variants on same base | Tier by value breakpoint | Manual | Price-tracked uniques only; untracked fall through |
-| Uncut gem level filter | Implicit (gem highlighting by level band) | Not documented | Not applicable | Explicit >= 18 threshold in `sync` |
-| Area-level progression | Yes — campaign vs endgame mode (area level 65 switch) | Strictness slider (not area-level aware) | Not applicable | Full band ladder (1-5/6-25/26-45/46-65/66+) |
-| Strictness levels | 7 levels (soft to uber-plus-strict) | 10-tier system | Per-item tier visibility | Not a concept — area-level bands encode it |
-| League selection | Web UI league picker | League type in config | Not applicable | `--standard`, `--hc` flags |
-| Version-controlled config | No (web account) | Partially (Python files) | Yes (Profile.changes) | Yes — `config.json` + `tiers.json` checked in; `prices.json` machine-generated |
+### What They Are
+
+Lineage Support Gems are unique-rarity support gems with powerful build-defining effects, introduced in PoE2 patch 0.3.0 and expanded in 0.5.0 (Runes of Aldur). They drop from specific endgame bosses. Unlike standard support gems (created from Uncut Support Gems), Lineage gems drop directly as named items. A character can only equip one copy of each Lineage gem at a time.
+
+As of June 2026 (Runes of Aldur), approximately 74 Lineage Support Gems exist.
+
+### Filter Class
+
+From NeverSink PoE2 filter (definitive source):
+
+```
+Show # $type->gems->lineage $tier->s
+  Class == "Skill Gems" "Support Gems"
+  BaseType == "Ailith's Chimes" "Arbiter's Ignition" [...]
+```
+
+**Class is `"Skill Gems" "Support Gems"`** — both classes are listed because some Lineage gems are skill gems, others are support gems. This is the correct filter syntax.
+
+### BaseType Names (Sample from NeverSink S-tier)
+
+```
+"Ailith's Chimes" "Arbiter's Ignition" "Atalui's Bloodletting" "Atziri's Impatience"
+"Breachlord's Amalgam" "Breachlord's Rift" "Brutus' Brain" "Catha's Brilliance"
+"Dialla's Desire" "Esh's Prowess" "Esh's Radiance" "Garukhan's Resolve"
+"Her Declaration" "Ixchel's Torment" "Khatal's Rejuvenation" "Mórrigan's Insight"
+"Olroth's Conviction" "Olroth's Hubris" "Rakiata's Flow" "Rigwald's Ferocity"
+"Seraph's Heart" "Sione's Temper" "Styrn's Ferocity" "Tangmazu's Thurible"
+"Tecrod's Revenge" "Trickster's Shard" "Tul's Stillness" "Uhtred's Augury"
+"Uhtred's Constellation" "Uhtred's Exodus" "Uhtred's Omen" "Uul-Netol's Embrace"
+"Vorana's Siege" "Xoph's Pyre" "Zarokh's Revolt" "Zerphi's Infamy"
+```
+
+These are individual unique-named gems, not items with a level suffix. The poe.ninja `type=LineageSupportGems` endpoint will return the gem names with prices; `generate` needs to emit each name as a `BaseType ==` value.
+
+### Styling
+
+Per PROJECT.md: price-tiered with a per-category background `10 150 150` (teal), tier color on border+text. Same mechanism as priced uniques' bronze background — not a new named style.
+
+---
+
+## 4. Verisium
+
+### What It Is
+
+Verisium is a new stackable resource introduced in Runes of Aldur (patch 0.5.0). It drops from Ezomyte Remnants in the league mechanic and is the fundamental currency of the Runeforging crafting system — used to add the Runic Ward defense stat to armor.
+
+It has a stack size of 1000 and behaves more like Gold (a resource that accumulates in large stacks) than a traditional orb.
+
+### Filter Syntax
+
+From NeverSink PoE2 filter (definitive source):
+
+```
+Show # verisium $tier->massive
+  StackSize >= 1000
+  BaseType == "Verisium"
+
+Show # verisium $tier->huge
+  StackSize >= 150
+  BaseType == "Verisium"
+
+Show # verisium $tier->large
+  StackSize >= 30
+  BaseType == "Verisium"
+
+Show # verisium $tier->any
+  BaseType == "Verisium"
+```
+
+**No `Class` line is present.** The NeverSink filter treats Verisium via stack-size tiers, not price tiers. However, poe.ninja serves Verisium prices via an economy endpoint (`/poe2/economy/runesofaldur/verisium`), suggesting FerrisFilter can sync and price-tier it.
+
+Also in the filter: `"Exceptional Verisium"` — this appears to be a distinct, rarer base type (appears in the "xenotiering" section with mid-tier emphasis). Whether poe.ninja reports both items is unknown; the sync code should be verified against the live API.
+
+**BaseType names:**
+- `"Verisium"` — the common stackable resource
+- `"Exceptional Verisium"` — appears in NeverSink as a distinct (rarer) variant
+
+**Filter Class:** Not specified in NeverSink blocks — `BaseType == "Verisium"` matches without a class condition. Based on the poe.ninja endpoint returning it under "verisium" category and NeverSink's "xenotiering" section (which groups league-specific Stackable Currency items), Verisium is most likely `Class == "Stackable Currency"`.
+
+---
+
+## Feature Summary Table
+
+| Feature | Filter Mechanism | Class | BaseType | New Condition Needed |
+|---------|-----------------|-------|----------|----------------------|
+| Exceptional extra sockets | `Sockets >= N` + `Corrupted False` | gear classes | optional list | `corrupted` condition in config schema |
+| Exceptional extra quality | `Quality >= N` + `Corrupted False` | gear classes | optional list | `corrupted` condition in config schema |
+| Uncut Gems by level | `GemLevel N` + `BaseType "Uncut Skill Gem"` | `"Gems"` (no class needed) | bare name, no level suffix | `gemLevel` condition in config or emitter handling |
+| Lineage Support Gems | `BaseType == "Name"` (price-tiered) | `"Skill Gems" "Support Gems"` | individual named gems | none (same mechanism as uniques) |
+| Verisium | `BaseType == "Verisium"` | likely `"Stackable Currency"` | `"Verisium"` / `"Exceptional Verisium"` | none (treat as currency tier) |
+
+---
+
+## Anti-Features
+
+| Anti-Feature | Why Avoid |
+|---|---|
+| `BaseType == "Uncut Skill Gem (Level 20)"` | WRONG — level is NOT in the BaseType name; use `GemLevel` condition instead |
+| `Class == "Stackable Currency"` for uncut gems | WRONG — uncut gems are class `"Gems"`, not Stackable Currency; current filter bug |
+| Using `HasImplicitMod` or `AnyEnchantment` for exceptional items | No such mechanic for "exceptional" in PoE2; use `Quality`/`Sockets` + `Corrupted False` |
+| `Corrupted == False` syntax | Wrong — the correct syntax is `Corrupted False` (boolean, no operator) |
+| Blanket `BaseType "Uncut"` substring match | Would catch "Uncut Skill Gem", "Uncut Spirit Gem", "Uncut Support Gem" all at once without level discrimination; acceptable as a fallthrough but not for tiering |
+| Tracking Verisium via price tier at item level | Verisium is a bulk resource; stack-size tiering (like Gold) makes more sense than price per item; FerrisFilter can use price-tier but should note the stack-size nature |
+
+---
+
+## Confidence Assessment
+
+| Finding | Confidence | Source |
+|---------|------------|--------|
+| `Corrupted False` syntax | HIGH | NeverSink filter source (active, June 2026) |
+| Exceptional = `Sockets >= N` + `Quality >= N` + `Corrupted False` | HIGH | NeverSink filter + reference-old-filters/ on disk |
+| Socket threshold split (3 for 2H/Body, 2 for 1H/small) | HIGH | end_endgame.filter + NeverSink filter |
+| `Uncut Skill Gem` has no level in BaseType name | HIGH | poe2db + NeverSink filter (uses `GemLevel` condition) |
+| `GemLevel` is a valid PoE2 filter condition | HIGH | NeverSink filter actively uses it |
+| Uncut gems class is `"Gems"` (not `"Stackable Currency"`) | HIGH | NeverSink filter (blocks have no Class line, but waypoint comment says `"Gems"`) |
+| Lineage gems class `"Skill Gems" "Support Gems"` | HIGH | NeverSink filter exact syntax |
+| Lineage gem names (individual BaseType per gem) | HIGH | NeverSink filter source |
+| `BaseType == "Verisium"` | HIGH | NeverSink filter exact blocks |
+| `"Exceptional Verisium"` as distinct BaseType | MEDIUM | NeverSink filter (present in tier lists; game source not directly verified) |
+| Verisium class is `"Stackable Currency"` | MEDIUM | Inferred from poe.ninja category + community reports; NeverSink blocks have no `Class` line |
 
 ---
 
 ## Sources
 
-- FilterBlade / NeverSink Filter for PoE2: https://github.com/NeverSinkDev/NeverSink-Filter-for-PoE2 — economy tiering, strictness system, unique handling
-- FilterBlade deepwiki (customization features): https://deepwiki.com/NeverSinkDev/NeverSink-Filter-for-PoE2/5.2-customization-with-filterblade
-- poe.ninja API (PoE1 documented): https://github.com/ayberkgezer/poe.ninja-API-Document
-- poe.ninja PoE2 API (undocumented, discovered via network interception): https://github.com/Davenads/poeninjaAPI-2025 — PoE2 endpoint `/poe2/api/economy/currencyexchange/overview`, league names (Rise of the Abyssal, Dawn of the Hunt, Standard)
-- poe.ninja PoE2 unique categories announcement: https://poe.ninja/posts/poe2-unique-items — 8 unique categories tracked
-- NinjaPricer PoE2 categories (15 currency, 7 unique poe2scout): https://github.com/POEFixer/NinjaPricer
-- xan_filter pricetool_ninja.py (PoE1 API type names): https://github.com/xanthics/xan_filter/blob/master/pricetool_ninja.py
-- poe-filter Python tool (price fetch pattern): https://github.com/flapanther33781/poe-filter
-- PoE Dynamic Loot Filter (CLI pattern + exit codes): https://github.com/Apollys/PoEDynamicLootFilter
-- CLI design best practices (2025-2026): https://www.caduh.com/blog/make-your-cli-a-joy-to-use
-- Rust/Clap CLI error handling guide (January 2026): https://oneuptime.com/blog/post/2026-01-07-rust-cli-clap-error-handling/view
-- Uncut gem level information (character level 78 for level 18 gems): https://mobalytics.gg/poe-2/guides/high-level-gems
-- poe2db.tw — authoritative PoE2 base type / class reference (per CLAUDE.md)
-- `universal.filter` and `filter-model.json` in this repo — executable spec for what `generate` must reproduce
+- `reference-old-filters/end_endgame.filter` — author's prior filter (on disk): exceptional items blocks (lines 107–215)
+- `reference-old-filters/#end_endgame.filter#` — older version (on disk): uniques-exceptional blocks (lines 36–54)
+- `NeverSinkDev/NeverSink-Filter-for-PoE2` main branch (June 2026): [https://github.com/NeverSinkDev/NeverSink-Filter-for-PoE2](https://github.com/NeverSinkDev/NeverSink-Filter-for-PoE2) — definitive live filter; exceptional items `$type->exotic->exceptional`, gems section `[[2200]]`, Verisium blocks `$type->verisium`
+- poe2db.tw: BaseType for Uncut Skill Gem is `"Uncut Skill Gem"` (no level in name), class `Metadata/Items/Gems/SkillGemUncut`
+- poe.ninja Runes of Aldur uncut-gems URL: `?name=Uncut+Skill+Gem+%28Level+20%29` — level is a web UI query param, not in-game BaseType
+- poe.ninja Verisium economy page: confirms `Verisium` as a distinct poe.ninja economy category
+- Game8.co: Lineage Support Gems overview — ~74 gems, drop from specific endgame bosses
+- ssf_icewolf.filter, ssf_mercenary.filter (repo root) — current generated filters, confirmed `Class == "Stackable Currency"` for uncut gems (the bug to fix)
 
 ---
 
-*Feature research for: FerrisFilter — Rust CLI loot-filter compiler + price-sync for PoE2*
-*Researched: 2026-05-23*
+*Feature research for: FerrisFilter v0.3 Economy Items & Exceptional Gear*
+*Researched: 2026-06-23*

@@ -8,14 +8,46 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
+## Current Milestone: none — v0.3 shipped, v0.4 not yet defined
+
+Run `/gsd-new-milestone` to scope the next milestone.
+
+<details>
+<summary>✅ v0.3 Economy Items & Exceptional Gear — SHIPPED 2026-06-27</summary>
+
+**Goal:** Track three new/broken economy categories with correct styling, and highlight "exceptional" gear.
+
+**Delivered features:**
+- **Verisium** — new synced category (poe.ninja exchange `type=Verisium`), emitted with the regular tiered currency style.
+- **Uncut Gems fix** — emitted `BaseType` includes the level (`Uncut Skill Gem (Level N)`) so the rule actually matches; drop the `minLevel: 18` floor; price-tiered with a fixed background `80 70 55`.
+- **Lineage Support Gems** — new synced category (`type=LineageSupportGems`), price-tiered with a fixed background `10 150 150`.
+- **Exceptional gear highlight** — gear with extra sockets OR extra quality and NOT corrupted (filter mechanism unknown → resolved by research).
+
+**Key context:** League is "Runes of Aldur" (Fate of the Vaal ended). Gem styling = tier color (border+text, by value) + a per-category background override — the same mechanism as priced uniques' bronze background, **not** a new named style (so the config-driven-styles backlog item was not pulled in). Tablets remain in the backlog (out of scope for v0.3).
+
+**Audit:** `passed` — 9/9 requirements, 3/3 phases, 8/8 integration, 5/5 E2E flows. Archives:
+[v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md) · [v0.3-REQUIREMENTS.md](milestones/v0.3-REQUIREMENTS.md) · [v0.3-MILESTONE-AUDIT.md](milestones/v0.3-MILESTONE-AUDIT.md)
+
+</details>
+
 ## Current State
 
-**Shipped:** v0.2 Declarative Rule Model (2026-06-12) — the generator's hardcoded gear/flask band
-logic is replaced by a general, declarative `rules` schema in `config.json`; the full in-game
-filter is now reproducible from config. `generate` + `sync` + `install` all live. ~154 tests green.
+**Shipped:** v0.3 Economy Items & Exceptional Gear (2026-06-27) — `sync` now tracks Verisium and
+Lineage Support Gems, Uncut Gems finally match in-game (level kept in `BaseType`, per-subtype plural
+`Class`, no `minLevel` floor), priced gem blocks carry a per-category background over the value-tier
+text/border, and the rule vocabulary gained `corrupted` — driving three exceptional-gear rules
+(sockets >= 3 / >= 2, quality >= 24, all uncorrupted) in the new pink `exceptional` style.
+`generate` + `sync` + `install` all live. ~7,534 LOC Rust; 133 lib tests + integration suite green.
 
-**Next milestone:** not yet started — run `/gsd-new-milestone`. Leading candidates (see Deferred):
-the BaseType-matched economy-tiered Tablets category, and Generate QoL (`--dry-run`/`--diff`/verbose).
+**Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
+band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
+
+**Next milestone:** not yet defined — run `/gsd-new-milestone`. Leading candidates are the deferred
+items below: Tablets as a class-less priced category (ECONX-01), generate QoL (`--dry-run`,
+`--diff`, verbose rule logging), and the config-driven style vocabulary (backlog Phase 999.1).
+
+**Open at close:** the `parity_ingame` test is failing (pre-existing, predates Phase 10) and wants
+either a refreshed `tests/fixtures/parity-ingame.filter` oracle or retirement.
 
 ## Requirements
 
@@ -33,12 +65,18 @@ the BaseType-matched economy-tiered Tablets category, and Generate QoL (`--dry-r
 - [x] **Condition vocabulary** — rules combine class list, compact rarity comparator, areaLevel min/max, base-defence/Quality/Sockets, BaseType list, and UnidentifiedItemTier; serde-validated with field-path errors. *(Validated in Phase 5 — v0.2)*
 - [x] **The 7 in-game edits expressible as config** — weapon/armour caps, flask/charm Magic+Rare + rarity-bounded Hide, Normal charms ≥78, jewellery hide, unidentified-tier highlight (new `unidentified` style). *(Validated in Phase 7 — v0.2)*
 - [x] **Config migration + semantic parity** — `config.json` migrated to rules; `generate --early-game` reproduces the in-game filter with zero non-reorder policy differences; `seed-universal.filter` re-baselined; price-driven sections untouched. *(Validated in Phase 6/7 — v0.2)*
+- [x] **Verisium sync + tiering** — `sync` fetches Verisium from poe.ninja and `generate` tiers it as regular stackable currency, no special background. *(Validated in Phase 8 — ECON-01, v0.3)*
+- [x] **Uncut Gems base-type fix** — emitted base type carries the level (`Uncut Skill Gem (Level N)`), per-subtype plural `Class`; `minLevel` floor removed; subtypes merge into one multi-class block. *(Validated in Phase 8 — ECON-03, v0.3)*
+- [x] **Lineage Support Gems sync + tiering** — new synced category (`Class "Support Gems"`, spike-confirmed), price-tiered. *(Validated in Phase 8 — ECON-02, v0.3)*
+- [x] **Gem per-category background styling** — uncut (`80 70 55`) / lineage (`10 150 150`) gems show value-tier text+border over a fixed per-category background, via the priced-unique clone-null-append pattern. *(Validated in Phase 9 — STYLE-01/02, v0.3)*
+- [x] **`corrupted` rule condition** — `when.corrupted` emits the bare boolean `Corrupted True`/`Corrupted False`, no operator. *(Validated in Phase 10 — EXC-01, v0.3)*
+- [x] **Exceptional gear highlight** — three rules ahead of recycle surface uncorrupted gear with extra sockets (>= 3 2h/body, >= 2 1h) or `Quality >= 24`, in the dedicated pink `exceptional` style. *(Validated in Phase 10 — EXC-02/03/04, v0.3)*
 
 ### Active
 
-<!-- No active milestone — run /gsd-new-milestone to scope the next one (candidates below). -->
+<!-- Empty: v0.3 shipped. New requirements land here via /gsd-new-milestone. -->
 
-_None — v0.2 shipped. Next milestone not yet scoped._
+None — awaiting the v0.4 scope.
 
 ### Deferred (next-milestone candidates)
 
@@ -50,7 +88,7 @@ _None — v0.2 shipped. Next milestone not yet scoped._
 ### Out of Scope
 
 - Hand-maintaining currency/tier base-lists — replaced by `sync` + price-driven tiering
-- Filter rules for gems, jewels, quest items, waystones, trials — these fall through to game default (established design philosophy). *(Jewellery hide and unidentified-tier highlight move IN-scope for v0.2 — the in-game filter already curates them.)*
+- Filter rules for jewels, quest items, waystones, trials — these fall through to game default (established design philosophy). *(Jewellery hide and unidentified-tier highlight moved IN-scope in v0.2 — the in-game filter already curates them. **Uncut and Lineage Support gems moved IN-scope in v0.3** as priced, economy-tiered categories; all other gems still fall through.)*
 - Blanket unique styling — only price-tracked uniques get rules; the rest fall through
 - GUI / web interface — CLI only for now
 - ~~Auto-installing into the game folder~~ — **shipped in v0.1** as the `install` subcommand (copy-only; `install.bat` removed)
@@ -63,6 +101,8 @@ _None — v0.2 shipped. Next milestone not yet scoped._
 - **Platform:** Windows 11, PowerShell primary shell. Author prefers Rust.
 - **poe.ninja** is the price source; its PoE2 API surface was resolved via the Phase 4 spike (exchange + stash/item overview endpoints, plural `type` values, league index-state resolution) and is now consumed by `sync`.
 - **Shipped state (v0.1, 2026-05-28):** ~4,970 LOC Rust across 4 phases / 14 plans / 127 commits. `generate` + `sync` + `install` all live; full test suite green (~113 tests). Live softcore no-flag `sync` happy path awaits a new active league (fails safe meanwhile).
+- **Shipped state (v0.3, 2026-06-27):** ~7,534 LOC Rust; 133 lib tests plus the CLI/sync integration suites green. `mapping.json` is at schema v2 (`gemFilters` array with per-category `backgroundOverride`, `Verisium` overview type). The generated filter is 77 `Show` / 3 `Hide` blocks. Live league is "Runes of Aldur"; post-close `sync` fixes landed for the Expedition logbook/Sagas mixed-class feed and PoE1-only `UniqueMaps`.
+- **Known-failing test:** `parity_ingame` — pre-existing, predates Phase 10. Its oracle (`tests/fixtures/parity-ingame.filter`) was never refreshed after the v0.2 re-baseline; decide between refresh and retirement in v0.4.
 
 ## Constraints
 
@@ -90,6 +130,13 @@ _None — v0.2 shipped. Next milestone not yet scoped._
 | Semantic (order/comment-insensitive) parity, not byte-for-byte | Block reordering is irrelevant in PoE2; lets the rule model reshape output freely | ✓ Good (v0.2) |
 | Price-driven currency/unique sections stay pricer-driven (not rules) | Keep the v0.1 economy pipeline untouched; rules cover policy only | ✓ Good (v0.2) |
 | Tablets have no usable filter `Class` → removed broken rows | `Class "Tablet"` failed to load in-game; BaseType-only category deferred | ⚠️ Revisit (v0.2 — deferred re-add) |
+| Each uncut gem *level* is a distinct base type; drop `strip_gem_level`/`gem_best` dedup | Level-stripped `BaseType` never matched in-game — that dedup was the bug | ✓ Good (v0.3) |
+| Gem backgrounds via a data-driven `background_override`, not a new named style | Reuses the priced-unique clone-null-append path; kept the 999.1 style refactor out of scope | ✓ Good (v0.3) |
+| `corrupted` emits a bare boolean (`Corrupted False`), no operator | PoE2 boolean conditions take no comparator | ✓ Good (v0.3) |
+| OR-semantics as separate rules (sockets vs quality) | Filter blocks are AND-only; one combined rule would demand *both* | ✓ Good (v0.3) |
+| `exceptional` kept as its own style, separate from `S` (same pink today) | Lets the exceptional-gear color be retuned independently later | ✓ Good (v0.3) |
+| `exceptional` landed as `Option<Style>` rather than a required `Styles` field | Matches the `craftable` pattern so `--config` files without it keep parsing | ✓ Good (v0.3 — adjusted in code review) |
+| One consolidated fixture re-baseline at the last emitter-output phase | Avoided re-baselining the oracle three times across Phases 8-10 | ✓ Good (v0.3) |
 
 ## Git Workflow
 
@@ -121,4 +168,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-12 — after v0.2 (Declarative Rule Model) milestone shipped*
+*Last updated: 2026-06-27 after the v0.3 milestone — full evolution review: v0.3 requirements moved to Validated, Active cleared for v0.4, v0.3 decisions logged, Context refreshed with shipped state and the known-failing `parity_ingame` test.*

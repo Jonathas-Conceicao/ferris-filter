@@ -1,221 +1,249 @@
 # Pitfalls Research
 
-**Domain:** Rust CLI — config-to-PoE2-filter compiler with poe.ninja price sync
-**Researched:** 2026-05-23
-**Confidence:** MEDIUM (poe.ninja PoE2 API is undocumented; behavior inferred from community reverse-engineering and wrapper libraries. Filter grammar confirmed via CLAUDE.md + NeverSink research. Unique-matching limitation confirmed by multiple independent sources.)
+**Domain:** FerrisFilter v0.3 — Economy Items & Exceptional Gear
+**Researched:** 2026-06-23
+**Confidence:** HIGH (all findings are grounded in the existing codebase, prior incidents, and PoE2 filter grammar documented in CLAUDE.md)
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: The Unique-by-Base Matching Problem (DESIGN RISK — flag prominently)
+### Pitfall 1: Uncut Gem BaseType Includes Level Suffix, Which the Filter Cannot Match
 
 **What goes wrong:**
-poe.ninja prices a unique item by **name** (e.g., "Temporalis", "Cloak of Flame"). The PoE2 filter system can only match a unique by **BaseType** (the shared base, e.g., "Silk Robe") plus `Rarity == Unique`. A cheap unique and an expensive unique that share the same base type **cannot be distinguished by any filter condition**. Emitting a highlight rule for the expensive one will equally highlight the cheap one — and hiding the cheap one will hide the expensive one too.
+The poe.ninja display name for an uncut gem entry is `"Uncut Skill Gem (Level 20)"`. The current `strip_gem_level` function in `src/sync/prices.rs` already removes this suffix before writing to `prices.json`, so the stored `base_type` is correctly `"Uncut Skill Gem"`. The bug is the inverse: if the level suffix is ever accidentally left in the emitted `BaseType ==` line (e.g. if `strip_gem_level` is bypassed, or if a new code path writes the raw poe.ninja name), the filter block will never match any item in-game — PoE2 base types never carry level suffixes.
 
-Concrete example: if "Temporalis" (S-tier) and "Cloak of Flame" (D-tier) both drop from a "Silk Robe" base, a block like:
-
-```
-Show # Unique S-tier: Temporalis
-  Rarity == Unique
-  BaseType == "Silk Robe"
-  PlayEffect Pink
-```
-
-...will play the pink beam for every unique Silk Robe regardless of which unique it is.
+The v0.3 Lineage Support Gem path is a second opportunity for this class of bug if it goes through a different code branch that does not call `strip_gem_level`. The same risk applies to Verisium if it carries any suffix in poe.ninja data.
 
 **Why it happens:**
-Developers copy the poe.ninja `name` field directly into a `BaseType ==` match without verifying that no other uniques share the base. The filter emitter has no awareness of the base-name-to-unique-name cardinality.
+The fix (stripping) exists on the sync side, but the emitter trusts whatever `base_type` is in `prices.json`. A new fetch path that writes raw names to `prices.json` silently breaks all matching without a compile error.
 
 **How to avoid:**
-1. During `sync`, for every unique returned by poe.ninja, look up its base type from the API response (`baseType` field in the itemoverview schema). Group by base type.
-2. When multiple uniques share a base type, apply the **highest tier** of any member of that group to the base. Document in a comment which names informed the tier.
-3. Consider emitting a comment in the generated filter like `# WARNING: shared base — also matches [other names]` for any block where ≥2 uniques share the base.
-4. Never emit a `Hide` rule for a base type that has any high-value unique sharing it.
-5. At the extreme, treat any base that has both a high-value and a low-value unique as "unknown" and default to Show with minimal styling (treat as tier E or D, no hide).
+- Add a unit test asserting `!base_type.contains("(Level")` on every item written to `prices.json` from the gem and lineage categories. This test should live in `src/sync/prices.rs` alongside the existing `gem_level_filter_keeps_only_min_level_and_above` test.
+- When adding the Lineage Support Gems path, reuse or extract `strip_gem_level` into a shared helper and call it in both branches — do not inline a new strip call, which risks diverging behavior.
+- The existing `parse_gem_level` + `strip_gem_level` pair handles `"(Level N)"` from the poe.ninja name; verify the Lineage Gem name format on poe.ninja is identical (if it uses a different suffix format, the function needs extension).
 
 **Warning signs:**
-- poe.ninja response for `UniqueWeapon`, `UniqueArmour`, `UniqueAccessory` contains items where `baseType` appears more than once across entries.
-- Unit tests that assert block count will pass even when base-type collisions exist — they won't catch the semantic error.
+- The emitted filter contains a `BaseType ==` line with `(Level` in the string — visually obvious on inspection of `universal.filter`.
+- In-game: the gem highlight rule exists in the filter but no items ever trigger it.
+- A unit test checking `!base_type.contains("(Level")` fails.
 
 **Phase to address:**
-Phase covering `sync` implementation and the `generate` unique-tiering logic. Must be addressed before any unique highlight blocks are emitted. This is the single most design-critical constraint.
+The sync phase (Phase 1) when adding Lineage Support Gems. Add the regression test before wiring up the new fetch branch.
 
 ---
 
-### Pitfall 2: poe.ninja League Name Is Not Discoverable from poe.ninja Itself
+### Pitfall 2: poe.ninja `type=` Spelling — Silent Empty Fetch, No Error
 
 **What goes wrong:**
-poe.ninja's PoE2 economy endpoints require an exact, case-sensitive `leagueName` parameter (e.g., `"Rise of the Abyssal"`, `"Dawn of the Hunt"`, `"Standard"`). poe.ninja provides no API endpoint to enumerate active leagues. The league name changes every 3–4 months at league launch and the exact display name cannot be guessed from the slug or a date.
+poe.ninja's exchange endpoint returns an empty `lines` array (not an HTTP error) when the `type=` query parameter is misspelled or is the wrong plurality. The existing guard `overview_types_use_correct_plural_spellings` in `src/sync/mapping.rs` already enforces correct spellings for the current set. If `Verisium` or `LineageSupportGems` are added with wrong spellings (e.g. `"Verisiums"`, `"LineageSupportGem"`, `"LineageGems"`), sync will silently fetch empty data and write a `prices.json` with no Verisium or lineage gem entries. `generate` will then emit no blocks for those categories. No error is raised.
 
-If FerrisFilter hardcodes the league name, it silently fetches stale or empty data after the next league launch without any error — poe.ninja may return an empty `lines` array for an expired league name rather than a 404.
+The prior documented instance of this was "Essence" vs "Essences" — the plural fetches data, the singular does not.
 
 **Why it happens:**
-Developers know the current league name when writing the code and hardcode it as a constant. The problem surfaces only at the next league transition, weeks or months later.
+The `build_prices` function has a documented guard for empty `lines` (it skips with a warning) but does not distinguish between "genuinely no data this league" and "misspelled type returns nothing". Misspellings are indistinguishable from off-season emptiness at the code level.
 
 **How to avoid:**
-1. Resolve the current challenge league name from the **GGG official API** before hitting poe.ninja. The endpoint `GET https://www.pathofexile.com/api/league?realm=poe2` (or the developer docs endpoint `GET /league` with `realm=poe2`) returns an array of active leagues. The first non-Standard, non-Hardcore result is the current challenge league. (MEDIUM confidence — verified from developer docs that `realm=poe2` is a valid parameter; exact response shape needs live verification.)
-2. Cache the resolved league name to disk alongside `prices.json` so re-runs within a league don't re-query GGG.
-3. If the GGG league endpoint returns 0 challenge leagues (rare, e.g., between leagues), fall back to `--league` CLI flag and emit a clear error.
-4. For Hardcore variants: the HC league name is typically `"Hardcore <ChallengeName>"` — test by appending "Hardcore " prefix and verifying the poe.ninja response is non-empty. Do not guess other formats.
+- Verify the exact spelling by curling the live poe.ninja endpoint before adding to `mapping.json`. The pattern for the current league (Runes of Aldur) is: `curl "https://poe.ninja/poe2/api/economy/exchange/current/overview?league=Runes%20of%20Aldur&type=Verisium"`.
+- Extend the `overview_types_use_correct_plural_spellings` test in `src/sync/mapping.rs` to enumerate every new type added:
+  ```rust
+  for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols", "Verisium", "LineageSupportGems"] {
+      assert!(types.contains(&t), "overviewTypes must use correct type '{t}'");
+  }
+  for bad in ["Essence", "Rune", "SoulCore", "Fragment", "Verisiums", "LineageSupportGem"] {
+      assert!(!types.contains(&bad), "'{bad}' is wrong — use the correct spelling");
+  }
+  ```
+- The pluralization pattern is inconsistent in poe.ninja: some types are plural (`Essences`, `Runes`, `SoulCores`), some are singular (`Verisium` if it is an uncountable noun). Do not assume plural; verify each one.
 
 **Warning signs:**
-- `lines` array is empty or shorter than expected on a poe.ninja response.
-- Prices fetched look identical to the previous league.
-- The `core.timestamp` in the poe.ninja response is weeks old.
+- `sync` prints `Warning: poe.ninja type 'X' returned empty lines, skipping` for the new category.
+- `generate` output has no section header for the category.
+- The live `prices.json` after sync has no items with `category: "Verisium"` or `category: "Lineage Support Gems"`.
 
 **Phase to address:**
-`sync` subcommand implementation phase. Add league resolution as the first step before any economy requests.
+Phase 1 (sync additions). Verify live before committing the `mapping.json` entry.
 
 ---
 
-### Pitfall 3: poe.ninja PoE2 API Is Undocumented and Subject to Silent Schema Drift
+### Pitfall 3: Gem Class Name — "Stackable Currency" May Be Wrong for Lineage Support Gems
 
 **What goes wrong:**
-The poe.ninja PoE2 economy API (`https://poe.ninja/poe2/api/economy/...`) is not officially documented. The schema used here was reverse-engineered from network traffic and community wrappers. Field names, the structure of the `lines` vs `items` split, and available `overviewName` values may change without notice. A schema change that removes or renames `primaryValue` (or introduces a new pricing field) will silently produce wrong price data — not a deserialization error, because serde's default behavior in Rust drops unknown fields.
+The current `GemFilter` in `mapping.json` sets `"class": "Stackable Currency"` for uncut gems and emits `Class == "Stackable Currency"` in the filter block. This was likely correct for Uncut Skill/Spirit/Charm Gems in prior leagues. Lineage Support Gems may belong to a different in-game class. If the emitted `Class ==` line uses "Stackable Currency" but Lineage Support Gems are classified differently in-game, the block silently matches nothing.
 
-Specific risks:
-- The `overviewName` / `type` parameter values for PoE2 categories (e.g., what string to pass for unique weapons vs. currency) are not authoritative — confirmed "Currency" and category names like "UniqueWeapon" inferred from PoE1 behavior.
-- The PoE2 currency endpoint uses `primaryValue`/`volumePrimaryValue` (not `chaosValue`/`divineValue` as in PoE1). If poe.ninja aligns PoE2 to the PoE1 schema in a future update, the mapping code breaks.
-- Rate limit is approximately 12 requests per 5 minutes based on community documentation (LOW confidence — not officially stated). There are no documented rate limit response headers from poe.ninja. Exceeding the limit likely produces a 429 or a Cloudflare block.
+This is the exact mechanism of the Tablets failure in v0.2: `Class "Tablet"` was emitted but failed to load in-game because no such class exists. That incident forced removing the tablet block entirely. For gems, the failure mode is subtler — the block loads but matches nothing (instead of failing to parse).
 
 **Why it happens:**
-Developers rely on examples in GitHub README files that document the PoE1 API and assume PoE2 is identical.
+The class name comes from `mapping.json` and is trusted by the emitter without in-game validation. poe.ninja's response does not reliably indicate the in-game `Class` value (its category field is its own taxonomy).
 
 **How to avoid:**
-1. Keep the poe.ninja response deserialization in a single, clearly-bounded module (`src/ninja/schema.rs`) with explicit version comments and a last-verified date.
-2. Use `#[serde(deny_unknown_fields)]` only on the inner price structs to catch schema additions early in tests. Keep the outer envelope permissive.
-3. Log the raw JSON body (at debug level) on any deserialization failure — never silently drop parse errors.
-4. Add a canary assertion: after deserializing, assert that the `lines` array is non-empty and that at least one of the three reference currencies (Chaos, Exalt, Divine) was found. Fail loudly if not.
-5. Set a meaningful `User-Agent` header. GGG's own API requires `"User-Agent: OAuth <app>/<version> (contact: <email>)"` format; apply the same courtesy to poe.ninja even though it is not required. Use `reqwest::ClientBuilder::user_agent("FerrisFilter/0.1 (contact: jonathasaoc@gmail.com)")`.
-6. Space requests with at least 5-second gaps. With ~10 categories to fetch (currency + 8 unique categories + gems), 10 requests at 5s gaps = 50 seconds per sync — acceptable for an infrequent CLI operation.
+- Verify the in-game class for Lineage Support Gems before writing the `mapping.json` entry. Use poe2db.tw or the in-game item tooltip. Check whether they are "Stackable Currency", "Gems", or something else.
+- If the class is unknown or unverifiable pre-launch, consider omitting the `Class` line and matching only on `BaseType ==` for the gem blocks — this is wider but correct, versus a narrow-but-broken class filter.
+- Add a test in `mapping.rs` that explicitly asserts the gem-related class values, naming the expected string. This fails loudly if someone changes it without updating the comment.
+- If the Lineage Support Gems require a different class, the `GemFilter` struct is insufficient to represent them — they need a separate `OverviewType` entry with their own `class` field.
 
 **Warning signs:**
-- Any field used in price calculations (`primaryValue`, `chaosValue`) deserialized as 0.0 or missing on items expected to have value.
-- `lines` array length drops suddenly from prior syncs.
-- HTTP 429 or 503 responses.
+- The filter block for Lineage Support Gems exists in `universal.filter` but no items highlight in-game.
+- Running `ferrisfilter generate` after sync produces a block with `Class == "Stackable Currency"` and `BaseType == "..."`, but those gems never trigger it.
 
 **Phase to address:**
-`sync` implementation phase. The schema module and canary assertions should be in the same phase as the first `sync` implementation, not deferred.
+Phase 1 (sync) — resolve the class before wiring up `mapping.json`.
 
 ---
 
-### Pitfall 4: Missing or Zero Reference Currency Breaks All Tiering Math
+### Pitfall 4: Exceptional Gear — OR Conditions Require Two Separate Filter Blocks
 
 **What goes wrong:**
-`generate` derives chaos cross-rates from the first three entries in `prices.json` (Exalt, Chaos, Divine per the project spec). If any of these is null, zero, or absent — which poe.ninja can return for items with low listing volume, especially early in a league — all tier threshold calculations either divide by zero, produce NaN/infinity, or silently apply nonsense values.
+The v0.3 requirement is to highlight uncorrupted gear that has extra sockets OR extra quality. The PoE2 filter grammar does not have OR logic within a block. All conditions in a block are AND. Trying to express `(Sockets >= 2 OR Quality >= 1) AND Corrupted False` in a single block is impossible — one block can only represent one conjunction.
 
-Cascading failure: a zero Exalt rate means every item priced in Exalts gets normalized to 0 chaos, landing in tier F and being hidden. No Rust panic, no error message — wrong output.
+If the implementation writes a single rule with both `Sockets >= 2` and `Quality >= 1`, that block highlights only items that have both, missing the "either" intent. This is a silent logic error: the block parses and matches but has different semantics than intended.
 
 **Why it happens:**
-Null handling is written for the common case (mid-league, all three reference currencies actively traded). Early-league or off-meta league states (SSF, Hardcore low-pop) have sparse data.
+The declarative rule model (one rule = one filter block = one conjunction) does not expose OR-within-block syntax, and there is no warning when a developer writes two conditions intending them as OR. The config is AND-only by design.
 
 **How to avoid:**
-1. In `prices.json`, store each of the three reference values as `Option<f64>` (or equivalent) — never coerce null to 0.0 during sync.
-2. In `generate`, at startup validate that all three reference cross-rates are present and > 0. If any is absent or ≤ 0:
-   - Emit a named error (`MissingReferenceRate { currency: "Exalt" }`) and abort with a clear message.
-   - Do not fall back silently to 1.0 or any other default. The user must decide how to handle it (re-sync, use `--league standard`, etc.).
-3. For non-reference items with null prices: assign tier E (show, no highlight) by convention — the item is known to exist but is unpriced. Never assign tier F (hide) based on a null price.
-4. Add a `--dry-run` flag to `generate` that prints the resolved cross-rates before emitting any filter blocks, so the user can spot wrong rates before overwriting their filter.
+- Use two separate rules in `config.json`, both before any hide rule:
+  ```json
+  { "name": "exceptional: sockets", "style": "C",
+    "when": { "class": [...gear classes...], "sockets": { "min": 2 }, "corrupted": false } },
+  { "name": "exceptional: quality", "style": "C",
+    "when": { "class": [...gear classes...], "quality": { "min": 1 }, "corrupted": false } }
+  ```
+  Because the engine is first-match-wins, either rule fires independently.
+- Note: `corrupted` is not currently in the `When` vocabulary (the `config.rs` `When` struct has no `corrupted` field). Verify whether `Corrupted False` is needed and if so, add the `corrupted: Option<bool>` field to `When` and the corresponding emitter branch before authoring the rules.
+- If `Corrupted False` cannot be expressed via the rule model, the alternative is to rely on drop mechanics (corrupted items come from specific sources) and accept the false positive. Document the tradeoff explicitly.
 
 **Warning signs:**
-- `prices.json` first three entries have `null` in `chaos`, `exalt`, or `div` fields.
-- All uniques land in tier F after `generate`.
-- Currency tier thresholds look implausible (e.g., 0.0 or 1e308).
+- Only items with both extra sockets AND extra quality are highlighted (AND instead of OR).
+- A single config rule has both `sockets` and `quality` conditions with the comment "either-or" — this is wrong.
 
 **Phase to address:**
-`generate` subcommand implementation, specifically the price-normalization and tier-assignment logic. Must be designed before writing tiering code, not retrofitted.
+Phase 2 (exceptional gear rule authoring). Establish the two-rule pattern in `config.json` and verify in-game before locking.
 
 ---
 
-### Pitfall 5: Non-Deterministic Output Breaks Diffs and Version Control
+### Pitfall 5: Corrupted Condition Not in the Rule Vocabulary
 
 **What goes wrong:**
-`generate` emits a different `universal.filter` on successive runs from identical inputs because:
-- Items are iterated over a `HashMap` whose iteration order is not guaranteed in Rust (and changes between runs in newer Rust versions / hash randomization).
-- Floating-point comparison of chaos values produces different sort orders for items that round to the same tier boundary (e.g., 4.9999... vs 5.0001... both normalize to tier C vs B, but boundary items may flip).
-- `prices.json` entries are written in HashMap iteration order by `sync`, so the "first three entries are Exalt/Chaos/Divine" invariant is not guaranteed unless explicitly sorted.
-
-The filter still works in-game, but `git diff` shows constant noise, and the author cannot tell whether a re-sync changed the filter meaningfully or not.
+The `When` struct in `src/models/config.rs` has no `corrupted` field. If the exceptional-gear rules must exclude corrupted items (to avoid wasting attention on items that cannot be crafted), there is currently no way to express `Corrupted False` in a declarative rule. The emitter will silently omit the condition, and the rule will fire on corrupted items too. This is a false-positive issue: corrupted gear with extra sockets gets highlighted as "exceptional" even though it cannot be improved.
 
 **Why it happens:**
-Developers use `HashMap` for O(1) lookup during tier assignment, then iterate it directly when emitting. Sorting is added as an afterthought only after the noise is noticed.
+The v0.2 rule vocabulary was built for the existing policy (area level, class, rarity, base defence, quality, sockets, base type, unidentified tier). Boolean filter conditions (Corrupted, Mirrored, Identified) were not needed by any prior rule and were never added.
 
 **How to avoid:**
-1. Define a canonical block-emission order in code (mirrors the order in `universal.filter`): recycle → gear bands → flask bands → currency (S→F each category alphabetically) → uniques (by tier desc, then base type name asc).
-2. Collect all items into a `BTreeMap` or sort into a `Vec` before emission. Use `BTreeMap` for the tier → items grouping.
-3. In `prices.json`, serialize as a JSON array (not object) with a guaranteed order: Exalt first, Chaos second, Divine third, then all other items sorted by name. Use `serde_json::to_string_pretty` with items collected into a `BTreeMap` or pre-sorted `Vec`.
-4. For floating-point tier boundaries, use integer chaos-value rounding (`.round() as u64`) before tier comparison to eliminate flip-flop at exact thresholds.
-5. Add a test: run `generate` twice from the same inputs, assert the outputs are byte-for-byte identical.
+- Decide first whether corrupted exclusion is required for the exceptional highlight. If yes, add `corrupted: Option<bool>` to `When` in `config.rs` and emit `Corrupted False` / `Corrupted True` in `emit_rules`. This is a small, low-risk addition.
+- If corrupted exclusion is deferred (accept false positives), document the design decision explicitly in the config comment for the exceptional-gear rule so a future reader does not add it as a silent omission.
+- Either way, add a unit test asserting the emitter does or does not emit `Corrupted` — to prevent regression in both directions.
 
 **Warning signs:**
-- `git diff universal.filter` after re-running `generate` with unchanged inputs shows block reordering.
-- The three reference currencies appear in different positions across `prices.json` syncs.
+- Attempting to add `"corrupted": false` to a rule's `when` object causes a `deny_unknown_fields` deserialization error at generate-time. This surfaces immediately but only if tested.
+- Corrupted gear with extra sockets appears highlighted in-game when only uncorrupted exceptional gear was intended.
 
 **Phase to address:**
-`generate` implementation. Establish determinism from the first working implementation — retrofitting it after block emission is wired is painful.
+Phase 2 (before authoring exceptional-gear rules). Add the field or document the omission.
 
 ---
 
-### Pitfall 6: First-Match-Wins Block Ordering — Unique Items Accidentally Hidden
+### Pitfall 6: Gem Per-Category Background Override Clashes With Emitter's Style-Based Pipeline
 
 **What goes wrong:**
-The gear fallback block:
-```
-Hide  # gear fallback
-  Class "Body Armours" "Helmets" ...
-  Rarity <= Rare
-```
-uses `Rarity <= Rare` which matches Normal, Magic, and Rare — but **not Unique** (Unique > Rare in PoE ordinal ordering). This is intentional and correct in `universal.filter`. However, when `generate` emits price-tiered unique highlight blocks, if those blocks are placed **after** any `Hide` block that inadvertently matches Unique (e.g., a block without a Rarity upper bound), those uniques will be hidden by the earlier block and the highlight will never fire.
+Gem blocks need a fixed per-category background (e.g. `80 70 55` for uncut gems, `10 150 150` for lineage gems) that overrides the tier style's Dracula background. The current `emit_currency_sections` function calls `emit_style_actions(style)` which emits whatever `background` is in the named style. For gems, the per-category background must replace the tier style's background — not be appended after it (the last `SetBackgroundColor` wins, but two conflicting lines is messy).
 
-Specific traps:
-- Any `Hide` block that omits a `Rarity` condition will match Uniques.
-- Any `Hide` block using `Rarity != Unique` as an exclusion works in PoE1 but behavior in PoE2 should be verified.
-- A unique-tier highlight block placed after the flask/charm fallback `Hide` but before the gear fallback `Hide` has no effect because the flask block doesn't match gear — but getting the order wrong during code generation is easy.
+The same mechanism was used successfully for priced uniques (bronze background `175 96 37 240`): `emit_unique_sections` clones the style, sets `background = None`, calls `emit_style_actions`, then appends `SetBackgroundColor 175 96 37 240` explicitly. Gems need the same pattern — but the currency pipeline in `emit_currency_sections` does not currently support a per-category background override.
 
 **Why it happens:**
-The emitter generates sections independently (currency section, unique section, gear band section) and concatenates them without verifying that a later `Hide` cannot shadow an earlier `Show`.
+The currency pipeline was designed for homogeneous categories where every tier block uses the tier's style verbatim. Per-category background overrides require category-level metadata that the pipeline does not carry.
 
 **How to avoid:**
-1. Codify the canonical section order in the emitter as a type-level guarantee (enum variants in emission order, not a loose string concatenation).
-2. Unique highlight blocks must always appear **before** any `Hide` that covers equipment classes and before any gear fallback blocks.
-3. Emit `Rarity <= Rare` (not `Rarity < Unique`, which is ambiguous) on every gear `Hide` block to explicitly exclude Uniques from hide rules.
-4. Write a post-generation validator that parses the emitted filter and checks: for each unique BaseType in a `Show` block, verify no preceding `Hide` block would match `Rarity == Unique` with that BaseType.
-5. Snapshot-test: the generated filter, when the entire `universal.filter` test case is used, must have all unique blocks appearing before the gear-hide block.
+- Model the override explicitly: add an `Option<[u8; 3]>` background override to `CategoryBlock` (in `pricer.rs`) and propagate it from wherever gems are classified (the sync/mapping layer).
+- In `emit_currency_sections`, after calling `emit_style_actions`, check if `category.background_override.is_some()` and emit the explicit `SetBackgroundColor` line (mirroring the unique section pattern).
+- Do not use two `SetBackgroundColor` lines in the same block — redundant lines are harmless (last wins) but confusing on inspection. Set `style.background = None` in the clone before calling `emit_style_actions`.
 
 **Warning signs:**
-- In-game: valuable items you know dropped are not visible, not even on Alt-reveal.
-- `generate` tests pass but in-game testing shows missing uniques.
-- A `Hide` block in the emitter output contains no `Rarity` condition.
+- Generated filter has two `SetBackgroundColor` lines in a gem block (the tier's Dracula bg plus the per-category override).
+- The per-category background is absent from gem blocks (background override was not wired up, only the tier background is used).
 
 **Phase to address:**
-`generate` block-ordering logic. Also apply the post-generation validator in the same phase.
+Phase 1 (gem styling, when adding Lineage Support Gems and fixing Uncut Gems). Wire this up before merging the category blocks into the emitter.
 
 ---
 
-### Pitfall 7: GemLevel Condition for Uncut Gems — Unverified in PoE2
+### Pitfall 7: Native-Rarity-Color Boundary Violated by Gem Background Override
 
 **What goes wrong:**
-The project spec requires `sync` to include uncut gems only at level ≥ 18. The filter must then emit a `GemLevel >= 18` (or equivalent) condition to match only high-level uncut gems. However, `GemLevel` as a filter condition is **not documented in the NeverSink PoE2 filter syntax reference** (confirmed via DeepWiki as of April 2025) and its behavior in PoE2 is unverified.
+CLAUDE.md mandates: "generic equipment/jewellery/flask/charm blocks that match by Class + Rarity alone must NOT repaint the item — omit SetTextColor/SetBorderColor/SetBackgroundColor so the game's native rarity color shows through." Gems, however, ARE explicitly curated and price-driven, so the Dracula text/border + per-category background override is correct for them. The risk is accidentally applying a background override to a rule that is NOT a curated gem/currency rule — particularly if a new developer sees the per-category override pattern and applies it to the `unchanged` or `hidden` style blocks.
 
-If `GemLevel` does not work in PoE2 (which is different from PoE1 in its gem system), the emitted block either matches all gems regardless of level (if the condition is silently ignored) or causes a filter parse error.
+The constraint is: background + text/border overrides are ONLY for curated/priced blocks (currency, gems, priced uniques). They must NOT appear on rules using the `unchanged` or `hidden` styles (which are for equipment policy blocks where native rarity color must be preserved).
 
 **Why it happens:**
-The condition exists in the PoE1 grammar documented at `pathofexile.com/item-filter/about`, and developers assume PoE2 supports the same conditions. CLAUDE.md explicitly notes that PoE2 uses the same grammar but different valid values.
+The native-rarity rule is enforced by convention (the `unchanged` and `hidden` styles have `text: None`, `border: None`, `background: None` in `config.json`), not by a type-system invariant. Adding a per-category background override in the emitter creates a new code path that, if misapplied to a policy block, silently violates the design principle.
 
 **How to avoid:**
-1. Before emitting any `GemLevel` condition, verify in-game that the condition parses and behaves correctly against an uncut gem at a known level. This is a one-time manual check.
-2. As a safe fallback until verified: use `BaseType == "Uncut Skill Gem" "Uncut Support Gem" "Uncut Spirit Gem"` without a GemLevel filter for the `generate` block, and add a `# TODO: verify GemLevel >= 18 works in PoE2 before adding level filter` comment. This is preferable to silently broken behavior.
-3. `sync` should still fetch only level ≥ 18 gems from poe.ninja (that filtering is on the data side, not the filter side). The filter block can then use `ItemLevel >= 70` as a rough proxy (level 18 uncut gems require area/item level ~70) while `GemLevel` is verified. Document this approximation.
-4. File the verification as a required in-game test case in the phase that implements gem highlighting.
+- Keep the per-category background override strictly in `emit_currency_sections` (the pricer-driven pipeline), not in `emit_rules` (the policy pipeline). Never add a `background_override` field to the `Rule` struct.
+- Add a test asserting that policy blocks (output of `emit_rules`) contain no `SetBackgroundColor` line for any rule using the `unchanged` or `hidden` style.
+- Document the boundary in the code: the comment in `emit_currency_sections` should state why per-category backgrounds are permitted there but forbidden in `emit_rules`.
 
 **Warning signs:**
-- The game client shows a filter error on load when `GemLevel` is present.
-- All uncut gems match the block regardless of their level.
-- No gems match the block at all.
+- A policy block in `universal.filter` (before the `# --- Currency ---` marker) contains a `SetBackgroundColor` line.
+- The existing `pricer_section_present_and_unchanged` test detects `Class == ` in the policy section — a similar test could check for `SetBackgroundColor` in the policy section.
 
 **Phase to address:**
-`generate` gem-highlight implementation. Must explicitly flag this as a requires-in-game-verification item before shipping.
+Phase 1 (gem styling). Add the guard test when wiring up the background override.
+
+---
+
+### Pitfall 8: Snapshot and Artifact Guard Tests Will Fail After Any Generator Change
+
+**What goes wrong:**
+Two tests lock the generated output to a committed baseline:
+1. `artifact_guard` in `tests/cli_generate.rs` — compares against `tests/fixtures/seed-universal.filter`.
+2. `generate_snapshot` in `tests/cli_generate.rs` — compares against an insta snapshot file in `tests/snapshots/`.
+
+Adding Verisium, Lineage Support Gems, or the gem background override to the generator will change `universal.filter`'s content whenever `prices.json` contains those categories. The seed fixture `tests/fixtures/seed-prices.json` does NOT contain Verisium or lineage gems yet, so the artifact guard will pass on the seed — BUT if the seed is updated to include them (which it should be, to give the new categories test coverage), the fixture re-baseline is mandatory. Forgetting to re-baseline produces a permanently failing CI.
+
+The `generate_block_counts` test in `src/emitter.rs` hardcodes `84 Show blocks` and `3 Hide blocks` — new categories or rules will change these counts.
+
+**Why it happens:**
+Snapshot tests are a deliberate trade-off: they catch accidental drift but require intentional re-baselining on every deliberate change. The danger is treating a passing artifact guard as "no re-baseline needed" — it only passes if the seed fixture does not exercise the new categories.
+
+**How to avoid:**
+- Decide explicitly before each code change: does this change affect the seed fixture's output? If yes, re-baseline first (or in the same commit as the change).
+- Update `tests/fixtures/seed-prices.json` to include representative entries for each new category (Verisium, lineage gems) as part of the gem/sync phases. This ensures the new code paths are exercised by the snapshot.
+- After re-baselining: `cp <generated output on seed inputs> tests/fixtures/seed-universal.filter`, then review the diff carefully.
+- Update the `generate_block_counts` assertion to the new counts after all categories are added.
+- Add an insta snapshot update step to the milestone completion checklist.
+
+**Warning signs:**
+- `artifact_guard` fails with "generator output does not match tests/fixtures/seed-universal.filter".
+- `generate_snapshot` fails (insta shows a diff).
+- `generate_block_counts` panics with "expected 84 Show blocks, got N".
+
+**Phase to address:**
+Every phase that changes generator output. Make re-baselining an explicit exit criterion for each phase's success checklist.
+
+---
+
+### Pitfall 9: League Name URL Encoding for Leagues With Spaces
+
+**What goes wrong:**
+The current league is "Runes of Aldur" — it contains spaces. The league name is passed as a `league=` query parameter to poe.ninja. The `reqwest` client encodes query parameters using `reqwest::RequestBuilder::query(&[("league", name)])`, which percent-encodes spaces as `%20`. poe.ninja accepts `%20`-encoded spaces. This is already working correctly (the v0.1 `sync` using `reqwest::query()` did not have an encoding bug).
+
+The risk is lower than it was for single-word leagues, but can emerge if: (a) someone switches to manual URL concatenation instead of `.query()`, or (b) a future league name contains characters reqwest does not encode the same way poe.ninja expects (e.g. accented characters, `&`, `#`).
+
+**Why it happens:**
+It is tempting to build URLs manually with `format!("{OVERVIEW_URL}?league={league}&type={type}")`, which does not encode spaces — producing a malformed URL that either errors or silently queries the wrong league.
+
+**How to avoid:**
+- Never manually concatenate query parameters. Always use `client.get_json(url, &[("league", name), ("type", type)])` which passes through `reqwest::RequestBuilder::query()`.
+- The existing `display_name_not_url_slug` test in `src/sync/league.rs` guards against passing the URL slug (`vaal`) instead of the display name (`Runes of Aldur`) — keep that test current when the league changes.
+- Add a test for `resolve_league` against a fixture that includes "Runes of Aldur" as the active league name, to confirm the current league is correctly resolved.
+
+**Warning signs:**
+- `sync` returns HTTP 400 or an empty/wrong response when the league has spaces.
+- The league name in `prices.json` is a slug (`runes-of-aldur`) instead of the display name (`Runes of Aldur`).
+
+**Phase to address:**
+No dedicated phase needed — the pattern is already correct. Add the Runes of Aldur fixture to the league tests as a regression guard.
 
 ---
 
@@ -223,12 +251,11 @@ The condition exists in the PoE1 grammar documented at `pathofexile.com/item-fil
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Hardcode current league name (e.g., `"Abyss"`) in `sync` | Saves league-resolution logic | Silent stale data next league; user has no indication sync failed | Never — always resolve from GGG `/league` endpoint |
-| Use `HashMap` iteration order for filter block emission | Simple code | Non-deterministic output, noisy git diffs | Never — use `BTreeMap` or explicit sort from day one |
-| Treat poe.ninja null price as 0.0 in tier math | Avoids `Option` unwrapping | All unpriced items silently land in tier F and get hidden | Never — propagate `None` and error loudly |
-| Skip post-generation filter validation | Faster to implement | Broken hide/show ordering ships without detection | Only acceptable in a throwaway prototype; never in a versioned release |
-| Emit `BaseType == <unique name>` instead of `BaseType == <base name>` | Seems more precise | Filter condition silently never matches (filter uses base type, not display name) | Never — PoE2 filters always use the base type name for BaseType matching |
-| One-shot `sync` that always hits poe.ninja fresh | Simplest code | Rate limit hits if called repeatedly (CI, debugging); unnecessary load on poe.ninja | Acceptable in MVP; add caching (write timestamp to `prices.json`) before any automated use |
+| Hardcode gem class as "Stackable Currency" without live verification | Faster implementation | Block silently matches nothing if class is wrong; impossible to detect without in-game testing | Never — always verify class against poe2db.tw first |
+| Single rule for exceptional (sockets AND quality) | Simpler config | Wrong semantics; misses items that only have one of the two | Never — OR logic always requires two rules |
+| Skip `corrupted` condition on exceptional rule | No code change needed | Highlights corrupted gear that cannot be crafted | Acceptable if design decision is documented |
+| Not updating seed-prices.json with new categories | No fixture churn during development | Artifact guard does not exercise new code paths; regression goes undetected | Acceptable during development only; must update before milestone completion |
+| Adding Lineage gems under a new `GemFilter2` field in mapping.json | Minimal mapping schema change | Two separate gem code paths diverge over time; `strip_gem_level` called inconsistently | Never — extract a shared gem spec type or make the mapping support multiple gems |
 
 ---
 
@@ -236,59 +263,27 @@ The condition exists in the PoE1 grammar documented at `pathofexile.com/item-fil
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| poe.ninja PoE2 economy API | Using PoE1 endpoint format (`/api/data/itemoverview?league=...&type=...`) | Use PoE2-specific base URL `https://poe.ninja/poe2/api/economy/`; the path structure differs from PoE1 |
-| poe.ninja currency endpoint | Using `chaosValue`/`divineValue` field names from PoE1 schema | PoE2 currency endpoint returns `primaryValue` / `volumePrimaryValue`; verify field mapping before use |
-| poe.ninja — Hardcore league | Sending `leagueName=Hardcore` | HC league for PoE2 is `"Hardcore <LeagueName>"` — resolve from GGG league list and filter for `category: {"id": "hardcore"}` |
-| GGG league endpoint | Calling `api.pathofexile.com/api/leagues` (PoE1 path) | Use `GET /league?realm=poe2` from the developer API; `realm=poe2` is an officially documented parameter |
-| poe.ninja — missing items | Assuming an item absent from the response is worthless | Items absent = no trade data; treat as `None` (untiered / show with no highlight), never as tier F |
-| PoE2 filter BaseType | Using the unique's display name (e.g., `"Temporalis"`) as the BaseType value | The `BaseType` condition matches the **base item name** (e.g., `"Silk Robe"`). The unique name is not a valid BaseType value. Always map via poe.ninja `baseType` field. |
-
----
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Fetching all poe.ninja categories sequentially with no delay | Hitting the ~12 req/5 min limit mid-sync | 5-second sleep between requests; stay well under rate limit | Approximately request 12+ in a 5-minute window |
-| Re-fetching poe.ninja on every `generate` run | Unnecessary network calls, slower generate | `generate` reads only from `prices.json` (never calls poe.ninja); sync is a separate explicit operation | Every run after the first if not separated |
-| Loading entire `universal.filter` into memory as a string for diffing | Fine for this use case | N/A — file is ~850 lines | Never an issue at this scale |
-| Parsing `prices.json` repeatedly per block in `generate` | Slow generation | Load and index once at startup into a `HashMap<String, PriceEntry>` | Never an issue for this scale (~hundreds of items) |
-
----
-
-## Security Mistakes
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Storing `POESESSID` or GGG OAuth token in `config.json` | Token leaked if config is committed to git | poe.ninja PoE2 API requires no auth token; do not accept or store one. GGG league endpoint is unauthenticated read-only. If auth is ever needed, use env var, never config file. |
-| Writing `install.bat` or `generate` output directly to the game folder without confirmation | Overwrites a working filter with a broken generated one | `generate` writes to repo root only; user manually copies (or runs `install.bat`). Never auto-install without explicit `--install` flag. |
-| Following an unvalidated URL from poe.ninja response (e.g., icon URLs) | SSRF if icon URLs are ever fetched | FerrisFilter never fetches icon URLs from poe.ninja responses. Only price fields are consumed. |
-
----
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Silent success when poe.ninja returns empty data | User runs `generate`, filter looks right, but all items are untiered because sync fetched nothing | Print item counts per category after sync: `"Fetched 342 currency, 89 unique items"`. Zero counts are an error. |
-| No indication which league was used for prices | User unsure if prices are current-league or stale | Write `"league": "Rise of the Abyssal", "synced_at": "<ISO timestamp>"` into `prices.json`; print these on every `generate` run. |
-| `generate` overwrites `universal.filter` with broken output due to a cross-rate error | Working filter destroyed | Write to a temp file first; only rename to `universal.filter` if post-generation validation passes. |
-| No `--dry-run` output | User can't preview what tier assignments look like before regenerating | Implement `generate --dry-run` that prints the tier → item mapping table without writing the filter file. |
+| poe.ninja exchange endpoint | Wrong `type=` spelling (singular/plural mismatch) returns empty `lines`, no error | Verify spelling live against current league before adding to `mapping.json`; guard with a plural-spelling test |
+| poe.ninja exchange endpoint | Using URL slug as `league=` parameter (`runes-of-aldur`) | Use the display name from `resolve_league` (`Runes of Aldur`); `.query()` handles encoding |
+| poe.ninja exchange endpoint | Adding a new gem category under `overviewTypes` instead of a gem-specific path | Gem categories need level-stripping logic; `overviewTypes` path does not call `strip_gem_level` |
+| PoE2 filter grammar | Writing `Corrupted False` without verifying it is a valid PoE2 condition | Verify via CLAUDE.md "Conditions (Boolean)" section; `Corrupted` is listed as a supported boolean |
+| PoE2 filter grammar | Expressing OR within a single block (`Sockets >= 2 OR Quality >= 1`) | Use two separate `Show` blocks; PoE2 filter AND-only within a block |
+| PoE2 filter grammar | Using `Class "Gems"` or `Class "Support Gems"` for uncut/lineage gems | Verify exact class name in-game; "Stackable Currency" was right for Uncut gems in prior leagues but may not hold for Lineage gems |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **sync league resolution:** Does the tool actually resolve the current challenge league from GGG, or is a league name hardcoded somewhere?
-- [ ] **null price propagation:** Are null poe.ninja prices stored as `null` in `prices.json` and handled as `None` in Rust, or silently coerced to `0.0`?
-- [ ] **unique base-type collision detection:** Does the emitter detect and handle base types shared by multiple uniques, or does it emit one block per unique name with that name misused as a BaseType?
-- [ ] **determinism test:** Does `generate` produce byte-for-byte identical output on two consecutive runs from the same inputs?
-- [ ] **GemLevel verification:** Has `GemLevel >= 18` been tested in-game in PoE2 before shipping the gem block?
-- [ ] **Rarity guard on Hide blocks:** Does every equipment `Hide` block have `Rarity <= Rare` to prevent it from swallowing uniques?
-- [ ] **cross-rate validation:** Does `generate` abort with a clear error (not produce wrong output) when any of the three reference rates is null or zero?
-- [ ] **poe.ninja rate limit headroom:** Are requests spaced to stay under the ~12/5min limit, with a 429 retry handler?
-- [ ] **schema canary:** Does `sync` assert that Chaos Orb / Exalted Orb / Divine Orb are all present in the currency response?
-- [ ] **User-Agent set:** Is a descriptive `User-Agent` header sent on all HTTP requests?
+- [ ] **Gem BaseType in filter:** Verify emitted `BaseType ==` lines contain no `(Level` suffix — inspect `universal.filter` after generate.
+- [ ] **Verisium/Lineage type spellings:** After adding to `mapping.json`, run `ferrisfilter sync` against the live league and confirm `prices.json` contains entries for both categories.
+- [ ] **Lineage gem class:** Confirmed against poe2db.tw or in-game tooltip — not assumed from prior gem categories.
+- [ ] **Exceptional gear OR logic:** Two separate rules exist in `config.json` for sockets and quality conditions — not one combined rule.
+- [ ] **Corrupted condition decision documented:** Either `corrupted: Option<bool>` is in `When` and tested, or a comment in `config.json` explains why it is omitted.
+- [ ] **Per-category gem background override:** Emitted `SetBackgroundColor` line in gem blocks uses the per-category color, not the tier's Dracula background.
+- [ ] **No duplicate `SetBackgroundColor` in gem blocks:** Each gem block has exactly one `SetBackgroundColor` line.
+- [ ] **Seed fixture re-baselined:** `tests/fixtures/seed-prices.json` includes new categories; `tests/fixtures/seed-universal.filter` and snapshot re-generated and reviewed.
+- [ ] **`generate_block_counts` updated:** The hardcoded Show/Hide count assertion matches the new total after all phases complete.
+- [ ] **Plural-spelling test extended:** `overview_types_use_correct_plural_spellings` in `mapping.rs` covers `Verisium` and `LineageSupportGems` (or whatever the verified spellings are).
 
 ---
 
@@ -296,13 +291,13 @@ The condition exists in the PoE1 grammar documented at `pathofexile.com/item-fil
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Unique base-type collision ships, wrong uniques highlighted | MEDIUM | Add collision detection to `generate`; re-sync + regenerate; no filter syntax change needed, just logic fix |
-| Wrong league name used; stale prices in filter | LOW | Re-run `sync --league <correct-name>`; regenerate |
-| poe.ninja schema drift breaks sync silently | MEDIUM | Update `src/ninja/schema.rs` to match new fields; re-sync; add regression test with a saved response snapshot |
-| Non-deterministic output discovered post-ship | LOW | Replace HashMap iteration with BTreeMap/sort; rerun generate; diffs clean up |
-| `GemLevel` condition not supported in PoE2 | LOW | Remove GemLevel condition; substitute ItemLevel proxy or omit gem-level filter entirely until GGG documents it |
-| Cross-rate divide-by-zero ships silently | HIGH | Requires logic audit of all tier assignments; regeneration of all prices; add the missing guard and retest |
-| Filter with missing `Rarity <= Rare` hides uniques | MEDIUM | Identify which Hide block is at fault from in-game symptom; fix guard in emitter template; regenerate |
+| Wrong gem BaseType (level suffix leaked) | LOW | Fix `strip_gem_level` call in the new code path, re-sync, re-generate, re-baseline fixture |
+| Wrong poe.ninja `type=` spelling | LOW | Update `mapping.json` with correct spelling, re-sync to get real data |
+| Wrong gem class (block never fires in-game) | LOW | Correct `class` in `mapping.json` or remove the `Class` line, re-generate |
+| Single rule for exceptional (AND instead of OR) | LOW | Split into two rules in `config.json`, re-generate |
+| Missing `corrupted` condition in `When` | MEDIUM | Add `corrupted: Option<bool>` to `When`, emit `Corrupted True/False` in `emit_rules`, add tests |
+| Artifact guard fails after generator change | LOW | Re-generate on seed inputs, copy output to fixture, review diff, commit |
+| Background override emitted on policy blocks | LOW | Move override out of `emit_rules`, restrict to `emit_currency_sections`, add guard test |
 
 ---
 
@@ -310,28 +305,29 @@ The condition exists in the PoE1 grammar documented at `pathofexile.com/item-fil
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Unique base-type collision | `generate` unique-tiering implementation | Unit test: given two uniques with same base in prices.json, assert only one block emitted at the higher tier |
-| League name not discoverable | `sync` implementation | Integration test: resolve league without hardcoded name; assert league name changes between test leagues |
-| poe.ninja schema drift | `sync` implementation (schema module) | Canary assertion test; snapshot test of saved API response |
-| Missing/zero reference rate | `generate` price-normalization | Unit test: prices.json with null Chaos rate → `generate` returns non-zero exit code with message |
-| Non-determinism | `generate` core emitter | Determinism test: two runs from same inputs produce identical bytes |
-| First-match-wins Hide swallowing Uniques | `generate` block-ordering logic | Post-generation validator test; snapshot test against universal.filter |
-| GemLevel unverified | `generate` gem-highlight | Manual in-game verification step documented as required acceptance criterion for the phase |
-| poe.ninja rate limit | `sync` HTTP client setup | Rate limit test: mock server that returns 429 on request 3+; verify backoff |
+| Gem BaseType level-suffix leak | Sync phase (Lineage gem addition) | Unit test: `!base_type.contains("(Level")` for all gem `prices.json` entries |
+| poe.ninja type spelling | Sync phase (before `mapping.json` commit) | Live curl; plural-spelling guard test extended |
+| Gem Class name for Lineage gems | Sync phase (before `mapping.json` commit) | poe2db.tw lookup; in-game verification |
+| OR logic needing two rules | Exceptional gear phase | Two rules visible in `config.json`; in-game items with only sockets OR only quality both highlight |
+| Corrupted condition missing from `When` | Exceptional gear phase | Decision documented; either field present in `When` and tested, or comment in config |
+| Background override double-emit | Gem styling phase | Assert one `SetBackgroundColor` per gem block |
+| Background override on policy blocks | Gem styling phase | Policy-section guard test: no `SetBackgroundColor` before `# --- Currency ---` |
+| Snapshot/fixture not re-baselined | End of every phase that changes emitter output | `artifact_guard` passes; snapshot reviewed and approved |
+| League name URL encoding | Sync phase (Runes of Aldur fixture) | League test fixture updated; `display_name_not_url_slug` test passes |
 
 ---
 
 ## Sources
 
-- poe.ninja PoE2 API schema and rate limit: community reverse-engineering via `github.com/Davenads/poeninjaAPI-2025` (MEDIUM confidence)
-- poe.ninja item schema (PoE1, largely applicable): `github.com/ayberkgezer/poe.ninja-API-Document` (HIGH confidence for field names; PoE2 schema diverges on currency pricing)
-- PoE2 unique base-type matching limitation: confirmed by NeverSink filter docs ("in POE(2) you can't distinguish a specific unique on the same base"), FilterBlade FAQ, and multiple community discussions (HIGH confidence)
-- GGG league endpoint with `realm=poe2`: confirmed via `pathofexile.com/developer/docs/reference` (HIGH confidence for parameter existence; live behavior needs verification)
-- PoE2 filter syntax valid conditions: NeverSink DeepWiki syntax reference, April 2025 (HIGH confidence for documented conditions; GemLevel not listed = MEDIUM confidence it may not work)
-- GGG User-Agent requirement: `pathofexile.com/developer/docs` (HIGH confidence for format; applies to GGG API; courtesy extension to poe.ninja is convention)
-- BaseType vs. unique name in PoE2 filters: confirmed via community forum thread `pathofexile.com/forum/view-thread/3592635` and NeverSink repo (HIGH confidence)
-- `universal.filter` (this repo): ground truth for correct block ordering, Rarity guard patterns, and section structure (HIGH confidence)
+- Codebase: `src/sync/prices.rs` (strip_gem_level, build_prices, gem_best dedup logic)
+- Codebase: `src/sync/mapping.rs` (overview_types_use_correct_plural_spellings test; prior Essences/plural-spelling incident documented in test comments)
+- Codebase: `src/emitter.rs` (emit_currency_sections, emit_unique_sections — unique bronze-bg override pattern)
+- Codebase: `src/models/config.rs` (When struct — Corrupted field absent)
+- Codebase: `tests/cli_generate.rs` (artifact_guard, generate_snapshot, generate_block_counts)
+- `.planning/MILESTONES.md` — v0.2 deferred Tablets due to `Class "Tablet"` in-game load failure
+- `.planning/PROJECT.md` — v0.3 target: Verisium, Lineage Support Gems, Uncut Gems fix, exceptional gear
+- `CLAUDE.md` — native-rarity-color design rule; filter grammar (OR-within-block impossible; Corrupted is a valid boolean condition; class list)
 
 ---
-*Pitfalls research for: FerrisFilter (Rust CLI — PoE2 filter compiler + poe.ninja price sync)*
-*Researched: 2026-05-23*
+*Pitfalls research for: FerrisFilter v0.3 — Economy Items & Exceptional Gear*
+*Researched: 2026-06-23*

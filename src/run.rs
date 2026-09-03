@@ -26,21 +26,21 @@ fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Re
     // Load and validate the config into the typed Config model.
     // serde_path_to_error + miette surface the dotted field path and expected type
     // for any malformed field.
-    let config: Config = loader::load_json(config_path)?;
+    let config: Config = loader::load_json(config_path).map_err(miette::Error::from)?;
 
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
     // prices-fallback.json with tiers-fallback.json — their values are calibrated to each
     // other (exalt-denominated cutoffs), so they must travel together.
     let (prices_opt, tiers) = if early_game {
         eprintln!("note: --early-game — using prices-fallback.json + tiers-fallback.json");
-        let prices = loader::load_prices_optional("prices-fallback.json")?
+        let prices = loader::load_prices_optional("prices-fallback.json").map_err(miette::Error::from)?
             .ok_or_else(|| miette::miette!("--early-game requires prices-fallback.json, which is missing"))?;
-        (Some(prices), loader::load_tiers("tiers-fallback.json")?)
+        (Some(prices), loader::load_tiers("tiers-fallback.json").map_err(miette::Error::from)?)
     } else {
-        match loader::load_prices_optional("prices.json")? {
+        match loader::load_prices_optional("prices.json").map_err(miette::Error::from)? {
             // Live prices present and non-empty → normal path.
             Some(prices) if !prices.items.is_empty() => {
-                (Some(prices), loader::load_tiers("tiers.json")?)
+                (Some(prices), loader::load_tiers("tiers.json").map_err(miette::Error::from)?)
             }
             // Absent or empty → fall back to the committed early-league pair (with a warning).
             _ => {
@@ -48,14 +48,14 @@ fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Re
                     "warning: prices.json absent or empty — falling back to \
                      prices-fallback.json + tiers-fallback.json"
                 );
-                match loader::load_prices_optional("prices-fallback.json")? {
-                    Some(prices) => (Some(prices), loader::load_tiers("tiers-fallback.json")?),
+                match loader::load_prices_optional("prices-fallback.json").map_err(miette::Error::from)? {
+                    Some(prices) => (Some(prices), loader::load_tiers("tiers-fallback.json").map_err(miette::Error::from)?),
                     None => {
                         eprintln!(
                             "warning: prices-fallback.json not found — \
                              currency/category blocks will be omitted"
                         );
-                        (None, loader::load_tiers("tiers.json")?)
+                        (None, loader::load_tiers("tiers.json").map_err(miette::Error::from)?)
                     }
                 }
             }

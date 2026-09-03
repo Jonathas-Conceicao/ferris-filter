@@ -8,9 +8,47 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Current Milestone: none — v0.3 shipped, v0.4 not yet defined
+## Current Milestone: v0.4 Overlay Filter Editor Rework
 
-Run `/gsd-new-milestone` to scope the next milestone.
+**Goal:** FerrisFilter gains an in-game overlay that edits filter rules directly and writes a
+`dynamic.filter` on demand, replacing pre-generated per-build presets.
+
+**Target features:**
+
+- **In-game overlay** — an always-on-top window over PoE2, becoming the primary way the tool is
+  used. Reference point: Exiled Exchange 2, the popular PoE2 price-check overlay.
+- **Persisted dynamic rule store** — `dynamic.json` in the repo directory, surviving restarts.
+- **Rule editor** — recreate any `rules` block from the overlay. Rules are ordinal-indexed (no
+  `name` field). Per rule: a style selector over the known styles (S–F, `Recycle`,
+  `exceptional`, `hidden`, `unchanged`, `unidentified`), a multi-select class picker, a rarity
+  selector, a three-checkbox defence picker covering all seven PoE2 armour types, and
+  sockets / quality / corrupted.
+- **Every condition independently togglable** — a disabled condition emits nothing into the
+  generated block. Maps directly onto `When`'s all-`Option` shape.
+- **Apply** — compiles `dynamic.json` into `dynamic.filter` in the game folder.
+- **Core as a library** — the rule compiler and pricer are extracted so the overlay and the CLI
+  are two front ends over one core; `generate` / `sync` / `install` survive unchanged.
+
+**Key context:**
+
+- **Economy tiering and the style palette are pinned** this milestone — not dynamically editable.
+  Only the `rules` array becomes dynamic.
+- **`areaLevel` leaves the dynamic vocabulary.** Live editing replaces level bands, so dynamic
+  rules carry no area-level conditions. `config.json` keeps the field, so `universal.filter`,
+  `seed-universal.filter` and `artifact_guard` are untouched.
+- **PoE2 does not hot-reload filters** (author-confirmed) and no external app can force it. Apply
+  writes the file; the player hits refresh in the in-game options menu. This is a known
+  constraint, not a defect to engineer around — so there is no filesystem-watching or
+  instant-write machinery, and the batch-edit-then-Apply model is the correct one.
+- **No named presets or profiles** — a single persisted live state. The four `ssf_*_config.json`
+  presets are retired by this milestone; per-build differences (weapon classes, defence type)
+  become ordinary rule edits.
+- **Defence semantics:** ticked = `> 0`, unticked = `0`. The three checkboxes yield exactly
+  2³−1 = 7 non-empty combinations, matching PoE2's seven armour types. The group disabled means
+  no defence conditions are emitted at all (for flasks, currency and other non-gear classes).
+- **The overlay is new ground.** Every prior milestone produced a headless, deterministic
+  compiler locked by a byte-for-byte oracle; a GUI has no equivalent test story, and windowing
+  over a fullscreen DirectX game is a discipline this repo has never touched.
 
 <details>
 <summary>✅ v0.3 Economy Items & Exceptional Gear — SHIPPED 2026-06-27</summary>
@@ -74,9 +112,17 @@ failures).
 
 ### Active
 
-<!-- Empty: v0.3 shipped. New requirements land here via /gsd-new-milestone. -->
+<!-- v0.4 Overlay Filter Editor Rework — REQ-IDs assigned in REQUIREMENTS.md. -->
 
-None — awaiting the v0.4 scope.
+- [ ] **Core extracted as a library** — rule compiler + pricer usable by both the CLI and the
+  overlay; `generate` / `sync` / `install` behavior and tests unchanged.
+- [ ] **Dynamic rule store** — `dynamic.json` modeled, persisted across restarts, round-tripped.
+- [ ] **Dynamic rule compilation** — `dynamic.json` compiles to `dynamic.filter`, with every
+  condition optional and disabled conditions emitting nothing.
+- [ ] **In-game overlay shell** — always-on-top window over PoE2 with a toggle hotkey.
+- [ ] **Rule editor UI** — ordinal rule list with add / delete / reorder, plus per-rule style,
+  class, rarity, defence, sockets, quality and corrupted controls.
+- [ ] **Apply** — writes `dynamic.filter` into the game folder on demand.
 
 ### Deferred (next-milestone candidates)
 
@@ -167,4 +213,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-27 after the v0.3 milestone — full evolution review: v0.3 requirements moved to Validated, Active cleared for v0.4, v0.3 decisions logged, Context refreshed with shipped state; full suite verified green at tag v0.3.*
+*Last updated: 2026-09-03 — v0.4 Overlay Filter Editor Rework scoped. Previously: 2026-06-27 after the v0.3 milestone — full evolution review: v0.3 requirements moved to Validated, Active cleared for v0.4, v0.3 decisions logged, Context refreshed with shipped state; full suite verified green at tag v0.3.*

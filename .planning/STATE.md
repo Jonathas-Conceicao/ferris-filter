@@ -1,11 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: none
-milestone_name: "v0.3 shipped — v0.4 not yet defined"
-status: milestone_complete
-stopped_at: "Completed v0.3 milestone (archived 2026-06-27)"
-last_updated: "2026-06-27T00:00:00.000Z"
-last_activity: 2026-06-27
+milestone: v0.4
+milestone_name: Overlay Filter Editor Rework
+status: planning
+last_updated: "2026-09-03T17:08:31.710Z"
+last_activity: 2026-09-03
 progress:
   total_phases: 0
   completed_phases: 0
@@ -18,19 +17,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-27)
+See: .planning/PROJECT.md (updated 2026-09-03)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Planning the next milestone — run `/gsd-new-milestone`.
+**Current focus:** v0.4 Overlay Filter Editor Rework — in-game overlay editing a persisted dynamic rule store that compiles to `dynamic.filter`.
 
 ## Current Position
 
-Milestone: none active (v0.3 shipped 2026-06-27)
-Phase: —
+Phase: Not started (defining requirements)
 Plan: —
-Status: Between milestones
-
-Shipped so far: v0.1 (2026-05-28) · v0.2 (2026-06-12) · v0.3 (2026-06-27)
+Status: Defining requirements
+Last activity: 2026-09-03 — Milestone v0.4 started
 
 ## Performance Metrics
 
@@ -61,14 +58,18 @@ work (carried forward past the v0.3 close):
 - **Per-category style overrides ride on the tier style** via clone-null-append (clone the tier
   `Style`, null the overridden attribute, `emit_style_actions`, then append the override line).
   Used by priced uniques (bronze bg) and priced gems (per-category bg).
+
 - **New named styles are added as `Option<Style>`** (like `craftable`, `exceptional`) so
   `--config` files predating the style keep parsing.
+
 - **New optional `when` fields use `serde(default)` + `skip_serializing_if`** for zero-cost
   backward compatibility and clean round-trips.
+
 - **Each uncut gem level is a distinct PoE2 base type** — never strip the level from `BaseType`.
 - **Fixtures are regenerated hermetically** (temp dir + binary by absolute path, mirroring
   `generate_on_seed()`); never `cargo run` from the repo root, which picks up a live
   `prices.json`.
+
 - **The style vocabulary is still hardcoded** in `Styles` + `emitter::resolve_style`; `FUTURE`
   comments mark both sites. Backlog Phase 999.1.
 
@@ -76,12 +77,15 @@ work (carried forward past the v0.3 close):
 
 - **Amend `10-01-SUMMARY.md` prose** — it says `exceptional` is a required `Styles` field; it
   landed as `Option<Style>`. Code is correct and tested; only the prose is stale.
+
 - **Test-only compiler warnings** (pre-existing): unreachable match arm in the emitter
   unknown-style test (`GenerateError` has a single variant); unused `FakeClient::ok` helper in
   `sync/metadata.rs`.
+
 - **Untracked working-tree files** — decide whether the `ssf_*_config.json` / `ssf_*.filter`
   per-build filters are tracked deliverables or `.gitignore` fodder, and drop the `scratch_*`,
   `foo.filter`, `temptest_gen.filter` scratch artifacts.
+
 - **`Cargo.toml` is still `version = "0.1.0"`** while tags read v0.1/v0.2/v0.3 — confirm whether
   the crate version is meant to track milestone tags.
 

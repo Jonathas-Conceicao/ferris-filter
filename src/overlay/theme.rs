@@ -55,9 +55,22 @@ pub const DISPLAY_FONT: &str = "cinzel";
 /// strokes so nothing renders in egui's default blue (RESEARCH § "Code Examples" — "Visuals
 /// mapping").
 pub fn poe2_visuals() -> egui::Visuals {
-    // RED stub (13-04 Task 2 TDD cycle): the unmodified default leaves every D-24 field at
-    // egui's own colors, so the behavior tests below fail before the palette is wired in.
-    egui::Visuals::default()
+    let mut v = egui::Visuals::dark();
+
+    v.panel_fill = PANEL_GROUND;
+    v.extreme_bg_color = INPUT_FILL;
+    v.window_fill = ROW_BASE;
+
+    v.widgets.noninteractive.bg_fill = ROW_BASE;
+    v.widgets.noninteractive.fg_stroke.color = LABEL_TAN;
+    v.widgets.inactive.bg_fill = ROW_BASE;
+    v.widgets.inactive.fg_stroke.color = LABEL_TAN;
+    v.widgets.hovered.fg_stroke.color = SECTION_CREAM;
+    v.widgets.active.fg_stroke.color = CONTROL_GLYPH;
+
+    v.hyperlink_color = WARM_ACCENT;
+
+    v
 }
 
 /// Registers the Cinzel display face (D-24's small-caps-adjacent serif) under

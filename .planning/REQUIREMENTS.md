@@ -69,7 +69,7 @@ whole milestone. The dynamic path is additive.
 - [x] **SHELL-01**: An always-on-top window renders above Path of Exile 2 while the game runs in
   windowed or windowed-fullscreen mode.
 
-- [ ] **SHELL-02**: A global hotkey toggles overlay visibility while the game holds focus, so it
+- [x] **SHELL-02**: A global hotkey toggles overlay visibility while the game holds focus, so it
   can be summoned without alt-tabbing.
 
 - [x] **SHELL-03**: The overlay window is opaque, non-passthrough, and never sized to the full
@@ -164,7 +164,7 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | DYN-07 | Phase 12 | Complete |
 | DYN-08 | Phase 12 | Complete |
 | SHELL-01 | Phase 13 | Complete |
-| SHELL-02 | Phase 13 | Pending |
+| SHELL-02 | Phase 13 | Complete |
 | SHELL-03 | Phase 13 | Complete |
 | EDIT-01 | Phase 14 | Pending |
 | EDIT-02 | Phase 14 | Pending |

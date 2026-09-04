@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-09-04T18:02:53.121Z"
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-09-04T18:46:11.884Z"
 last_activity: 2026-09-04
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 2
   total_plans: 9
-  completed_plans: 5
-  percent: 40
+  completed_plans: 6
+  percent: 33
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 13 (Overlay Shell) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-09-04
 
@@ -47,6 +47,7 @@ Last activity: 2026-09-04
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
 | Phase 13 P01 | 45min | 3 tasks | 8 files |
+| Phase 13 P02 | 10min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,8 @@ work (carried forward past the v0.3 close):
 - [Phase 13]: eframe 0.36.1's App trait uses fn ui(&mut self, ui, frame), not update(ctx, frame) as sketched in the plan — corrected against installed crate source
 - [Phase 13]: Overlay stripe docks right with EDGE_MARGIN=12.0px; dock_rect hard-clamps width/height strictly under the monitor size regardless of requested width or monitor size
 - [Phase 13]: Local nightly rustc toolchain updated (1.90 to 1.100) to meet eframe/egui 0.36.1's rustc 1.95 MSRV; no repo-level rust-toolchain.toml pin exists yet
+- [Phase 13]: Task 3's checkpoint cleared via live author verification on real hardware; all seven steps passed including the Shift+Z double-fire check
+- [Phase 13]: No single-instance guard exists or is planned for Phase 13 -- a second ff opens a second stripe window; deferred, out of scope for SHELL-02
 
 ### Pending Todos
 
@@ -123,8 +126,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-04T18:02:50.852Z
-Stopped at: Completed 13-01-PLAN.md
+Last session: 2026-09-04T18:46:11.865Z
+Stopped at: Completed 13-02-PLAN.md
 Resume file: None
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

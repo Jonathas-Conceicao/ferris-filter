@@ -99,7 +99,12 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   3. The window is opaque, does not pass mouse input through, and is smaller than the full screen — the configuration that avoids the documented egui/eframe Windows overlay defects.
   4. Closing the overlay leaves the game unaffected, and the overlay makes no attempt to read game memory or send input to it.
   5. The overlay binary is not named `overlay` (egui #5512 gives a package with that name a black background).
-**Plans**: 1-2 plans
+**Plans**: 5 plans
+  - [ ] 13-01-PLAN.md — Cargo/binary restructure (ff = GUI, ff-cli = console) + the always-on-top, opaque, sub-screen stripe window
+  - [ ] 13-02-PLAN.md — Ferris tray icon with Show/Quit menu + global Shift+Z registration, with registration failure surfaced in the tray
+  - [ ] 13-03-PLAN.md — Pure visibility state machine + raw-HWND SW_SHOWNOACTIVATE/SW_HIDE reveal and hide (summon never steals focus, click-away hides)
+  - [ ] 13-04-PLAN.md — Read-only dynamic.json rule list (pure, tested view-model) + PoE2 Options palette, Cinzel font and header plate
+  - [ ] 13-05-PLAN.md — In-game manual verification checklist for all five success criteria + windowed-mode documentation
 **UI hint**: yes
 
 ### Phase 14: Rule Editor + Apply

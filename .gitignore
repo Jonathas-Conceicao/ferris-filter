@@ -17,3 +17,10 @@ desktop.ini
 # used by tests lives in tests/fixtures/seed-prices.json / seed-universal.filter.
 /prices.json
 /universal.filter
+
+# Dynamic filter working state — `apply` seeds dynamic.json from the committed
+# dynamic_base.json template and writes dynamic.filter into the game folder.
+# dynamic_base.json IS committed (it is the template and the "reset to scratch"
+# source); these two are per-user state and are not.
+/dynamic.json
+/dynamic.filter

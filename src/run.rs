@@ -14,6 +14,8 @@ use clap::Parser;
 
 use crate::cli::{Cli, Commands};
 use crate::compile::{self, FallbackReason, InputPaths, PriceSource, PriceSourcePolicy};
+use crate::dynamic;
+use std::path::{Path, PathBuf};
 use crate::{install, sync};
 
 /// Parse CLI args and dispatch to the matching subcommand.
@@ -21,6 +23,7 @@ pub fn run() -> miette::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Generate { config, output, early_game } => cmd_generate(&config, &output, early_game)?,
+        Commands::Apply { store, base, dest, reset } => cmd_apply(&store, &base, dest, reset)?,
         Commands::Sync { standard, hc, sub } => sync::cmd_sync(standard, hc, sub)?,
         Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
     }
@@ -80,5 +83,71 @@ fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Re
         .map_err(|e| miette::miette!("Cannot write `{output}`: {e}"))?;
 
     println!("wrote {} bytes to {output}", generated.len());
+    Ok(())
+}
+
+/// `apply` — compile the dynamic store and write the result into the game folder.
+///
+/// The dynamic counterpart to `generate` + `install` in one step. All presentation lives here;
+/// `crate::dynamic` returns values and prints nothing.
+fn cmd_apply(store: &str, base: &str, dest: Option<String>, reset: bool) -> miette::Result<()> {
+    let store_path = Path::new(store);
+    let base_path = Path::new(base);
+
+    if reset {
+        dynamic::reset_store(base_path, store_path).map_err(miette::Error::from)?;
+        println!("reset {store} from {base}");
+    } else {
+        match dynamic::ensure_store(base_path, store_path).map_err(miette::Error::from)? {
+            dynamic::StoreState::Seeded => println!("created {store} from {base}"),
+            dynamic::StoreState::Existing => println!("using existing {store}"),
+        }
+    }
+
+    let compiled = dynamic::compile_store(&InputPaths::conventional(), store_path)
+        .map_err(miette::Error::from)?;
+
+    // Same wording cmd_generate uses for the same conditions — one message per situation, not two
+    // spellings of it.
+    match compiled.price_source {
+        PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty) => {
+            eprintln!(
+                "warning: prices.json absent or empty — falling back to \
+                 prices-fallback.json + tiers-fallback.json"
+            );
+        }
+        PriceSource::Absent => {
+            eprintln!(
+                "warning: prices.json absent or empty — falling back to \
+                 prices-fallback.json + tiers-fallback.json"
+            );
+            eprintln!(
+                "warning: prices-fallback.json not found — \
+                 currency/category blocks will be omitted"
+            );
+        }
+        PriceSource::Live | PriceSource::Fallback(FallbackReason::Forced) => {}
+    }
+
+    let dest_dir = match dest {
+        Some(d) => PathBuf::from(d),
+        None => dynamic::default_destination().ok_or_else(|| {
+            miette::miette!(
+                "Cannot resolve the default PoE2 config folder (USERPROFILE is not set). \
+                 Pass --dest <folder>."
+            )
+        })?,
+    };
+
+    let written = dynamic::write_filter(&dest_dir, &compiled.text).map_err(miette::Error::from)?;
+
+    println!(
+        "wrote {} bytes to {}",
+        compiled.text.len(),
+        written.display()
+    );
+    // PoE2 never re-reads a filter on its own, and no external process can make it. Saying so is
+    // not a nicety: a tool that writes silently reads as broken when drops do not change.
+    println!("Reload it in-game: Options → Game → Item Filter → Refresh");
     Ok(())
 }

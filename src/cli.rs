@@ -34,6 +34,26 @@ pub enum Commands {
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
     },
+    /// Compile dynamic.json into dynamic.filter and write it to the PoE2 config folder
+    ///
+    /// Seeds dynamic.json from dynamic_base.json on first run. Unlike `generate`, this both
+    /// compiles and installs — PoE2 still needs the filter reloaded in-game afterwards.
+    Apply {
+        /// Dynamic rule store to compile [default: dynamic.json]
+        #[arg(long, default_value = "dynamic.json")]
+        store: String,
+        /// Template used to seed the store, and to restore it with --reset
+        /// [default: dynamic_base.json]
+        #[arg(long, default_value = "dynamic_base.json")]
+        base: String,
+        /// Destination PoE2 config folder
+        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        #[arg(long)]
+        dest: Option<String>,
+        /// Discard the current store and restore it from the base before compiling
+        #[arg(long)]
+        reset: bool,
+    },
     /// Copy a generated .filter into the PoE2 config folder so it takes effect in-game
     Install {
         /// Filter file to install [default: universal.filter]

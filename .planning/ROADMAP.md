@@ -180,3 +180,20 @@ by lookup instead of a `match`, and validate at load-time that every `rule.style
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.2: Overlay single-instance guard (BACKLOG)
+
+**Goal:** Launching `ff` while it is already running should surface the existing stripe instead of
+opening a second one. Discovered by the author during Phase 13 wave-2 verification (2026-09-04):
+a second launch opens a second stripe window, and only the first instance owns the `Shift+Z`
+registration — the second correctly reports the conflict in its tray tooltip (D-10), so the
+failure is visible rather than silent, but two stripes and one working hotkey is not the intended
+shape for a tray app that gets double-clicked. Fix shape: acquire a named mutex at startup; if it
+is already held, signal the running instance to show itself and exit rather than creating a
+window. Small, self-contained, and touches only the overlay entry point.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

@@ -275,6 +275,14 @@ supersede that. Both are committed under `reference/` in this phase directory.
   boundary. This is Phase 14 (EDIT-01..09), and the read-only list is deliberately the shape it
   grows into.
 
+- **Single-instance guard** — discovered by the author during Phase 13 wave-2 verification
+  (2026-09-04): launching `ff` a second time opens a second stripe, and only the first instance
+  owns the `Shift+Z` registration (the second correctly reports the conflict in its tray tooltip,
+  per D-10). Benign when provoked deliberately, but for a tray app that gets double-clicked, the
+  accidental second launch is plausible. Fix shape: a named mutex at startup; if one is already
+  held, signal the running instance to show itself and exit rather than opening a second window.
+  Out of scope for Phase 13 — no requirement covers it.
+
 ### Carried from earlier phases (not this phase's work)
 - `Cargo.toml` still reads `version = "0.1.0"` while git tags read v0.3.
 - Untracked `ssf_*` presets and scratch files await a tracked-vs-ignored decision.

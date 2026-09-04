@@ -276,6 +276,20 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
         .iter()
         .enumerate()
     {
+        // A disabled rule emits nothing at all — no block, not even a commented one.
+        // `continue` here rather than filtering the iterator, deliberately: `enumerate()` must
+        // keep walking the whole array so labels stay tied to a rule's index in the source file.
+        // Filtering first would renumber every later rule, so disabling rule 2 would silently
+        // relabel rule 3's block as `rule 2` and break the trace from a filter block back to its
+        // position in the store.
+        //
+        // Skipping before `resolve_style` also means a disabled rule referencing an unknown style
+        // is inert rather than a hard error — a rule the author switched off should not be able to
+        // fail generation.
+        if rule.enabled == Some(false) {
+            continue;
+        }
+
         let derived_label = format!("rule {}", idx);
         let label: &str = rule.name.as_deref().unwrap_or(&derived_label);
         let style = resolve_style(&config.styles, &rule.style, idx, label)?;
@@ -715,6 +729,7 @@ mod tests {
             .rules
             .get_or_insert_with(Vec::new)
             .push(crate::models::config::Rule {
+                enabled: None,
                 name: Some("bad rule".to_string()),
                 style: "NotATier".to_string(),
                 when: None,
@@ -785,6 +800,86 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Disabled-rule suppression (DYN-01) — a rule stays in the store but emits nothing
+    // -----------------------------------------------------------------------
+
+    /// Push a rule onto the config and return the index it landed at.
+    fn push_rule(config: &mut Config, enabled: Option<bool>, style: &str) -> usize {
+        use crate::models::config::{Rule, When};
+        let rules = config.rules.get_or_insert_with(Vec::new);
+        rules.push(Rule {
+            enabled,
+            name: None,
+            style: style.to_string(),
+            when: Some(When {
+                sockets: Some(crate::models::config::NumericCondition { min: Some(3), max: None, eq: None }),
+                ..Default::default()
+            }),
+        });
+        rules.len() - 1
+    }
+
+    #[test]
+    fn disabled_rule_emits_no_block_at_all() {
+        let (mut config, priced) = load_inputs();
+        let idx = push_rule(&mut config, Some(false), "E");
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(
+            !output.contains(&format!("# rule {}", idx)),
+            "a disabled rule must emit no block, but `# rule {}` appeared:\n{}",
+            idx,
+            output
+        );
+    }
+
+    #[test]
+    fn enabled_true_and_absent_both_emit() {
+        for enabled in [Some(true), None] {
+            let (mut config, priced) = load_inputs();
+            let idx = push_rule(&mut config, enabled, "E");
+            let output = generate(&config, &priced).expect("generate failed");
+            assert!(
+                output.contains(&format!("# rule {}", idx)),
+                "enabled={:?} must emit a block, but `# rule {}` was absent",
+                enabled,
+                idx
+            );
+        }
+    }
+
+    /// The reason `emit_rules` uses `continue` inside the loop rather than filtering the
+    /// iterator: labels must stay tied to a rule's index in the source file, so disabling one
+    /// rule does not silently relabel the rules after it.
+    #[test]
+    fn disabling_a_rule_does_not_renumber_later_rules() {
+        let (mut config, priced) = load_inputs();
+        let first = push_rule(&mut config, None, "E");
+        let middle = push_rule(&mut config, Some(false), "E");
+        let last = push_rule(&mut config, None, "E");
+
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(output.contains(&format!("# rule {}", first)), "first rule missing");
+        assert!(
+            !output.contains(&format!("# rule {}", middle)),
+            "disabled middle rule must not emit"
+        );
+        assert!(
+            output.contains(&format!("# rule {}", last)),
+            "the rule after a disabled one must keep its own index ({}), not shift down",
+            last
+        );
+    }
+
+    /// A rule the author switched off must not be able to fail generation.
+    #[test]
+    fn disabled_rule_with_unknown_style_is_inert() {
+        let (mut config, priced) = load_inputs();
+        push_rule(&mut config, Some(false), "no-such-style");
+        generate(&config, &priced)
+            .expect("a disabled rule referencing an unknown style must not error");
+    }
+
+    // -----------------------------------------------------------------------
     // Corrupted condition emit tests (EXC-01)
     // -----------------------------------------------------------------------
 
@@ -793,6 +888,7 @@ mod tests {
         use crate::models::config::{Rule, When};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
+            enabled: None,
             name: Some("test-corrupted-false".to_string()),
             style: "E".to_string(),
             when: Some(When {
@@ -818,6 +914,7 @@ mod tests {
         use crate::models::config::{Rule, When};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
+            enabled: None,
             name: Some("test-corrupted-true".to_string()),
             style: "E".to_string(),
             when: Some(When {
@@ -838,6 +935,7 @@ mod tests {
         use crate::models::config::{Rule, When, NumericCondition};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
+            enabled: None,
             name: Some("test-no-corrupted".to_string()),
             style: "E".to_string(),
             when: Some(When {

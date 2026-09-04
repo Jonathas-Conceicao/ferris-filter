@@ -357,6 +357,16 @@ pub struct When {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Rule {
+    /// Whether this rule contributes a block to the generated filter.
+    ///
+    /// Absent (the default) or `Some(true)` → the rule is active and emits normally.
+    /// `Some(false)` → the rule stays in the file but emits **nothing at all** — not even a
+    /// commented-out block. This is how the overlay switches a rule off without losing its
+    /// configuration; deleting a rule is a separate operation (removal from the array).
+    ///
+    /// Absence is the default so every existing config parses and round-trips unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     /// Optional label emitted as the block comment header (`Show # <name>`).
     /// When absent the emitter derives a label.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -920,6 +930,66 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Rule.enabled round-trip (DYN-01)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rule_enabled_false_parses() {
+        let rule: Rule = serde_json::from_str(r#"{"enabled": false, "style": "E"}"#)
+            .expect("enabled:false must parse");
+        assert_eq!(rule.enabled, Some(false));
+    }
+
+    #[test]
+    fn rule_enabled_true_parses() {
+        let rule: Rule = serde_json::from_str(r#"{"enabled": true, "style": "E"}"#)
+            .expect("enabled:true must parse");
+        assert_eq!(rule.enabled, Some(true));
+    }
+
+    #[test]
+    fn rule_enabled_absent_is_none() {
+        let rule: Rule =
+            serde_json::from_str(r#"{"style": "E"}"#).expect("absent enabled must parse");
+        assert_eq!(
+            rule.enabled, None,
+            "absence must mean None (treated as enabled), so existing configs are unaffected"
+        );
+    }
+
+    /// The guarantee that keeps `config.json` and the committed fixtures byte-identical:
+    /// a rule that never set `enabled` must not grow the key on serialize.
+    #[test]
+    fn rule_without_enabled_serializes_without_the_key() {
+        let rule = Rule {
+            enabled: None,
+            name: None,
+            style: "E".to_string(),
+            when: None,
+        };
+        let json = serde_json::to_string(&rule).expect("serialize");
+        assert!(
+            !json.contains("enabled"),
+            "enabled:None must be skipped on serialize, got: {json}"
+        );
+    }
+
+    #[test]
+    fn rule_enabled_round_trips() {
+        for value in [Some(true), Some(false), None] {
+            let rule = Rule {
+                enabled: value,
+                name: None,
+                style: "E".to_string(),
+                when: None,
+            };
+            let json = serde_json::to_string(&rule).expect("serialize");
+            let back: Rule = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back.enabled, value, "round-trip failed for {value:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Corrupted condition tests (EXC-01)
     // -----------------------------------------------------------------------
 
@@ -944,6 +1014,7 @@ mod tests {
     #[test]
     fn when_corrupted_round_trips() {
         let rule = Rule {
+            enabled: None,
             name: Some("test-corrupted".to_string()),
             style: "E".to_string(),
             when: Some(When {

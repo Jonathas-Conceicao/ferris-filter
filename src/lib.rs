@@ -9,6 +9,7 @@
 
 pub mod cli;
 pub mod compile;
+pub mod dynamic;
 pub mod emitter;
 pub mod error;
 pub mod install;

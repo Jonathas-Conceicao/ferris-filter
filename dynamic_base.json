@@ -1,5 +1,5 @@
 {
-  "meta": { "name": "universal", "palette": "dracula", "background": [40, 42, 54] },
+  "meta": { "name": "dynamic", "palette": "dracula", "background": [40, 42, 54] },
 
   "styles": {
     "S":         { "text": [255,121,198], "border": [255,121,198], "background": [40,42,54], "font": 37,   "minimap": { "size": 1, "color": "Pink",   "shape": "Circle" }, "beam": { "color": "Pink",   "temp": false }, "sound": { "custom": "uwu.mp3", "vol": 300 }, "action": "Show", "disableDropSound": false },
@@ -52,7 +52,6 @@
 
   "rules": [
     {
-      "name": "exceptional sockets 2h/body",
       "style": "exceptional",
       "when": {
         "class": ["Body Armours", "Two Hand Maces", "Bows", "Crossbows", "Quarterstaves", "Staves"],
@@ -61,7 +60,6 @@
       }
     },
     {
-      "name": "exceptional sockets 1h",
       "style": "exceptional",
       "when": {
         "class": ["Helmets", "Gloves", "Boots", "Shields", "Bucklers", "Foci", "One Hand Maces", "Sceptres", "Wands", "Spears"],
@@ -70,7 +68,6 @@
       }
     },
     {
-      "name": "exceptional quality",
       "style": "exceptional",
       "when": {
         "class": ["Body Armours", "Two Hand Maces", "Bows", "Crossbows", "Quarterstaves", "Staves", "Helmets", "Gloves", "Boots", "Shields", "Bucklers", "Foci", "One Hand Maces", "Sceptres", "Wands", "Spears"],
@@ -79,7 +76,6 @@
       }
     },
     {
-      "name": "recycle: sockets + quality salvage",
       "style": "Recycle",
       "when": {
         "sockets": { "min": 1 },
@@ -87,21 +83,18 @@
       }
     },
     {
-      "name": "",
       "style": "unchanged",
       "when": {
         "class": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"]
       }
     },
     {
-      "name": "",
       "style": "unchanged",
       "when": {
         "class": ["Staves", "Wands", "Foci"]
       }
     },
     {
-      "name": "",
       "style": "unchanged",
       "when": {
         "class": ["Body Armours", "Helmets", "Gloves", "Boots"],
@@ -110,7 +103,6 @@
       }
     },
     {
-      "name": "",
       "style": "unidentified",
       "when": {
         "class": [
@@ -122,7 +114,6 @@
       }
     },
     {
-      "name": "unidentified high-tier: jewellery",
       "style": "unidentified",
       "when": {
         "class": ["Rings", "Amulets", "Belts"],
@@ -130,7 +121,6 @@
       }
     },
     {
-      "name": "",
       "style": "hidden",
       "when": {
         "class": [

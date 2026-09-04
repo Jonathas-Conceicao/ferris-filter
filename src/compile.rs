@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use miette::Diagnostic;
 use thiserror::Error;
 
-use crate::emitter::{self, GenerateError};
+use crate::emitter::{self, FilterIdentity, GenerateError};
 use crate::loader::{self, LoadError};
 use crate::models::config::Config;
 use crate::pricer::{self, PriceRateError, PricedData};
@@ -233,8 +233,21 @@ pub fn load_inputs(
 /// Stage two: turn loaded inputs into filter text. Pure — no I/O, no side effects.
 ///
 /// Returns LF-only text ending in exactly one newline. Writing it is the caller's job (D-05).
+///
+/// Uses the default [`FilterIdentity`] (`universal.filter` from `config.json`); use
+/// [`compile_as`] to name a different pair in the header.
 pub fn compile(inputs: &CompileInputs) -> Result<String, CompileError> {
-    Ok(emitter::generate(&inputs.config, &inputs.priced)?)
+    compile_as(inputs, &FilterIdentity::default())
+}
+
+/// Stage two, naming the filter and its source in the generated header.
+///
+/// The dynamic path passes `output_name: "dynamic.filter"`, `source_name: "dynamic.json"`.
+pub fn compile_as(
+    inputs: &CompileInputs,
+    identity: &FilterIdentity,
+) -> Result<String, CompileError> {
+    Ok(emitter::generate_as(&inputs.config, &inputs.priced, identity)?)
 }
 
 /// `Path` → `&str` for the loader's string-based API.

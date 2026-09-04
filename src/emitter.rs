@@ -34,14 +34,52 @@ pub enum GenerateError {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Generate the complete filter text from `config` and `priced`.
+/// Which filter is being produced, and from what — the two identifying lines of the header.
+///
+/// Exists so the dynamic path can say `# dynamic.filter` / `# GENERATED FROM dynamic.json`
+/// without changing a byte of the universal path's output. `Default` is exactly the pair the
+/// header hardcoded before v0.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilterIdentity<'a> {
+    /// Filename this filter is conventionally written as, named on the header's first line.
+    pub output_name: &'a str,
+    /// Source file it was compiled from, named on the header's second line.
+    pub source_name: &'a str,
+}
+
+impl Default for FilterIdentity<'_> {
+    fn default() -> Self {
+        FilterIdentity {
+            output_name: "universal.filter",
+            source_name: "config.json",
+        }
+    }
+}
+
+/// Generate the universal filter — `config.json` → `universal.filter`.
+///
+/// A thin delegation to [`generate_as`] with the default identity. Kept as its own function with
+/// an unchanged signature so the universal path is not merely *believed* unaffected by the
+/// identity parameter: it runs the same code it always did, and `generate_matches_generate_as_default`
+/// asserts the two agree.
+pub fn generate(config: &Config, priced: &PricedData) -> Result<String, GenerateError> {
+    generate_as(config, priced, &FilterIdentity::default())
+}
+
+/// Generate the complete filter text from `config` and `priced`, naming the filter and its
+/// source in the header.
 ///
 /// Returns a LF-only `String` ending with exactly one trailing newline.
 /// Pure function — no I/O, no side effects.
-/// Returns `Err(GenerateError::UnknownStyle)` if any rule references an unknown style name.
-pub fn generate(config: &Config, priced: &PricedData) -> Result<String, GenerateError> {
+/// Returns `Err(GenerateError::UnknownStyle)` if any *enabled* rule references an unknown style
+/// name; disabled rules are skipped before their style is resolved.
+pub fn generate_as(
+    config: &Config,
+    priced: &PricedData,
+    identity: &FilterIdentity,
+) -> Result<String, GenerateError> {
     let mut out = String::with_capacity(32_000);
-    emit_header(&mut out);
+    emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
     emit_currency_sections(&mut out, config, &priced.category_blocks);
     emit_unique_sections(&mut out, config, &priced.unique_blocks);
@@ -223,9 +261,14 @@ fn style_for_tier<'a>(styles: &'a crate::models::config::Styles, tier: &str) -> 
 // Section 1: File header comment
 // ---------------------------------------------------------------------------
 
-fn emit_header(out: &mut String) {
-    writeln!(out, "# universal.filter").unwrap();
-    writeln!(out, "# GENERATED FROM config.json — edit the model, not this file (then regenerate).").unwrap();
+fn emit_header(out: &mut String, identity: &FilterIdentity) {
+    writeln!(out, "# {}", identity.output_name).unwrap();
+    writeln!(
+        out,
+        "# GENERATED FROM {} — edit the model, not this file (then regenerate).",
+        identity.source_name
+    )
+    .unwrap();
     writeln!(out, "#").unwrap();
     writeln!(out, "# Block tags link each rule back to the model:").unwrap();
     writeln!(out, "#   [alwaysShow.K]          -> a level-independent highlight").unwrap();
@@ -797,6 +840,76 @@ mod tests {
         let first = generate(&config, &priced).expect("generate failed");
         let second = generate(&config, &priced).expect("generate failed");
         assert_eq!(first, second, "generate() must be deterministic");
+    }
+
+    // -----------------------------------------------------------------------
+    // FilterIdentity — the header's two identifying lines (12-CONTEXT D-10)
+    // -----------------------------------------------------------------------
+
+    /// The standing guard that parameterizing the header did not move the universal path.
+    /// `generate` delegates to `generate_as` with the default identity, so these must agree
+    /// byte-for-byte — if they ever diverge, `seed-universal.filter` is about to move.
+    #[test]
+    fn generate_matches_generate_as_default() {
+        let (config, priced) = load_inputs();
+        let via_generate = generate(&config, &priced).expect("generate failed");
+        let via_generate_as =
+            generate_as(&config, &priced, &FilterIdentity::default()).expect("generate_as failed");
+        assert_eq!(
+            via_generate, via_generate_as,
+            "generate() and generate_as(default) must produce identical output"
+        );
+    }
+
+    #[test]
+    fn default_identity_is_the_historical_pair() {
+        let d = FilterIdentity::default();
+        assert_eq!(d.output_name, "universal.filter");
+        assert_eq!(d.source_name, "config.json");
+    }
+
+    #[test]
+    fn generate_as_names_the_filter_and_its_source() {
+        let (config, priced) = load_inputs();
+        let output = generate_as(
+            &config,
+            &priced,
+            &FilterIdentity {
+                output_name: "dynamic.filter",
+                source_name: "dynamic.json",
+            },
+        )
+        .expect("generate_as failed");
+
+        let mut lines = output.lines();
+        assert_eq!(lines.next(), Some("# dynamic.filter"));
+        assert_eq!(
+            lines.next(),
+            Some("# GENERATED FROM dynamic.json — edit the model, not this file (then regenerate).")
+        );
+    }
+
+    /// Only the first two lines differ; the legend and philosophy note are untouched (D-11).
+    #[test]
+    fn custom_identity_changes_only_the_first_two_header_lines() {
+        let (config, priced) = load_inputs();
+        let default_out = generate(&config, &priced).expect("generate failed");
+        let custom_out = generate_as(
+            &config,
+            &priced,
+            &FilterIdentity {
+                output_name: "dynamic.filter",
+                source_name: "dynamic.json",
+            },
+        )
+        .expect("generate_as failed");
+
+        let default_rest: Vec<&str> = default_out.lines().skip(2).collect();
+        let custom_rest: Vec<&str> = custom_out.lines().skip(2).collect();
+        assert_eq!(
+            default_rest, custom_rest,
+            "everything after the first two header lines must be identical"
+        );
     }
 
     // -----------------------------------------------------------------------

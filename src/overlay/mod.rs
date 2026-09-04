@@ -7,18 +7,34 @@
 //! `dynamic.json` or the filter compiler.
 
 pub mod app;
+pub mod hotkey;
 pub mod layout;
 pub mod tray;
 
+use hotkey::HotkeyStatus;
+
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
-    // Thread affinity (RESEARCH Pattern 3, the one hard constraint): the tray
-    // must be built on the thread that runs the Win32 message loop. `launch()`
-    // runs on the main thread (called directly from `ff`'s `main`), and
-    // `eframe::run_native` below drives that same thread's message loop, so
-    // building here -- before the loop starts -- satisfies the constraint.
-    // Never build on a spawned thread.
-    let tray = tray::build("FerrisFilter — Shift+Z to toggle")
+    // Thread affinity (RESEARCH Pattern 3, the one hard constraint): both the
+    // hotkey manager and the tray must be built on the thread that runs the
+    // Win32 message loop. `launch()` runs on the main thread (called directly
+    // from `ff`'s `main`), and `eframe::run_native` below drives that same
+    // thread's message loop, so building here -- before the loop starts --
+    // satisfies the constraint. Never build either on a spawned thread.
+    let (hotkey_manager, hotkey_status) = hotkey::register_toggle();
+
+    // Surface a registration failure through the tray (D-10): both the
+    // tooltip and a disabled menu line name the combo and the reason, so the
+    // failure is visible with no console open.
+    let (tooltip, status_line) = match &hotkey_status {
+        HotkeyStatus::Registered { .. } => ("FerrisFilter — Shift+Z to toggle".to_string(), None),
+        HotkeyStatus::Failed(err) => {
+            let msg = format!("FerrisFilter — Shift+Z unavailable: {err}");
+            (msg.clone(), Some(msg))
+        }
+    };
+
+    let tray = tray::build(&tooltip, status_line.as_deref())
         .expect("failed to build the system tray icon");
     // The stripe: opaque, undecorated, always-on-top, never screen-sized.
     //
@@ -44,6 +60,12 @@ pub fn launch() -> eframe::Result<()> {
     eframe::run_native(
         "ferrisfilter",
         options,
-        Box::new(move |_cc| Ok(Box::new(app::OverlayApp::new(tray)))),
+        Box::new(move |_cc| {
+            Ok(Box::new(app::OverlayApp::new(
+                tray,
+                hotkey_manager,
+                hotkey_status,
+            )))
+        }),
     )
 }

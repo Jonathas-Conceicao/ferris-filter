@@ -3,12 +3,15 @@
 //! Content is deliberately a placeholder this plan; read-only rule-list content
 //! lands in a later plan (13-04). What this file owns: docking the stripe to the
 //! right screen edge on the first frame where a monitor size is known (D-12),
-//! and — this plan (13-02) — polling the tray and (Task 2) the global hotkey
-//! for their events, proving both reach `update()` before any show/hide
-//! mechanism exists (that is plan 13-03's subject).
+//! and — this plan (13-02) — polling the tray and the global hotkey for their
+//! events, proving both reach `update()` before any show/hide mechanism
+//! exists (that is plan 13-03's subject).
 
 use std::time::Duration;
 
+use global_hotkey::GlobalHotKeyManager;
+
+use super::hotkey::HotkeyStatus;
 use super::layout;
 use super::tray::{self, OverlayCommand, TrayHandles};
 
@@ -22,9 +25,19 @@ pub struct OverlayApp {
     /// process lifetime — dropping it would remove the icon from the tray.
     tray: TrayHandles,
 
-    /// Set by the tray's left click (and, from Task 2, the hotkey). Consumed
-    /// once per frame into `toggle_count`. The real show/hide mechanism is
-    /// plan 13-03; this plan proves delivery only.
+    /// The global hotkey manager. Never read after construction — held
+    /// purely so its `Drop` impl unregisters the hotkey when the app ends.
+    #[allow(dead_code)]
+    hotkey_manager: Option<GlobalHotKeyManager>,
+
+    /// Registration outcome for `Shift+Z` (D-09, D-10). Read every frame to
+    /// filter incoming `GlobalHotKeyEvent`s to the one combo this app
+    /// registered.
+    hotkey_status: HotkeyStatus,
+
+    /// Set by the tray's left click and by a `Shift+Z` press. Consumed once
+    /// per frame into `toggle_count`. The real show/hide mechanism is plan
+    /// 13-03; this plan proves delivery only.
     toggle_requested: bool,
 
     /// Set by the tray menu's "Show" item. Not yet consumed by anything —
@@ -40,12 +53,18 @@ pub struct OverlayApp {
 }
 
 impl OverlayApp {
-    /// Builds the app state around a tray already constructed on the main
-    /// thread (thread affinity — see `overlay::launch`).
-    pub fn new(tray: TrayHandles) -> Self {
+    /// Builds the app state around a tray and hotkey already constructed on
+    /// the main thread (thread affinity — see `overlay::launch`).
+    pub fn new(
+        tray: TrayHandles,
+        hotkey_manager: Option<GlobalHotKeyManager>,
+        hotkey_status: HotkeyStatus,
+    ) -> Self {
         Self {
             docked: false,
             tray,
+            hotkey_manager,
+            hotkey_status,
             toggle_requested: false,
             show_requested: false,
             toggle_count: 0,
@@ -67,6 +86,17 @@ impl eframe::App for OverlayApp {
             }
             // When monitor_size is None, leave the builder defaults in place —
             // never guess a monitor size. Retried on a later frame.
+        }
+
+        // Poll the global hotkey (D-09). Accept only our own registered id
+        // and only the Pressed state — without the state filter, a single
+        // keypress toggles twice (once on press, once on release).
+        if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
+            if let HotkeyStatus::Registered { id } = &self.hotkey_status {
+                if event.id == *id && event.state == global_hotkey::HotKeyState::Pressed {
+                    self.toggle_requested = true;
+                }
+            }
         }
 
         // Poll the tray's click events (D-17: left-click toggles, same as

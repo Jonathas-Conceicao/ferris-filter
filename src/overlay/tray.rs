@@ -60,9 +60,15 @@ fn load_icon() -> Icon {
 
 /// Builds the tray icon and its Show/Quit menu (D-17).
 ///
+/// `status_line`, when `Some`, is appended to the menu as a third, disabled
+/// item carrying the same text as a failed hotkey registration (D-10) — so
+/// the failure is visible from the tray alone, with no console. `tooltip`
+/// reflects the same state: the working combo on success, or the combo and
+/// the reason on failure.
+///
 /// Must be called on the thread that runs the Win32 message loop -- see the
 /// module docs.
-pub fn build(tooltip: &str) -> Result<TrayHandles, tray_icon::Error> {
+pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tray_icon::Error> {
     let menu = Menu::new();
     let show_item = MenuItem::new("Show", true, None);
     let quit_item = MenuItem::new("Quit", true, None);
@@ -72,6 +78,12 @@ pub fn build(tooltip: &str) -> Result<TrayHandles, tray_icon::Error> {
         .expect("appending a freshly-created MenuItem to a freshly-created Menu cannot fail");
     menu.append(&quit_item)
         .expect("appending a freshly-created MenuItem to a freshly-created Menu cannot fail");
+    if let Some(status_line) = status_line {
+        // `enabled: false` — informational only, not a clickable command.
+        let status_item = MenuItem::new(status_line, false, None);
+        menu.append(&status_item)
+            .expect("appending a freshly-created MenuItem to a freshly-created Menu cannot fail");
+    }
 
     let tray_icon = TrayIconBuilder::new()
         .with_icon(load_icon())

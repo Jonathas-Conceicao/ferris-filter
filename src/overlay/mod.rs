@@ -10,6 +10,7 @@ pub mod app;
 pub mod hotkey;
 pub mod layout;
 pub mod tray;
+pub mod visibility;
 
 use hotkey::HotkeyStatus;
 

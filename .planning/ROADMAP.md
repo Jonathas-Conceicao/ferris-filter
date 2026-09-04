@@ -53,11 +53,13 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 ## Phase Details
 
 ### Phase 11: Callable Compile API
+
 **Goal**: The generate pipeline is callable as a library API — caller-supplied paths, a typed error enum, and the price-source decision returned as a value rather than printed — so the Phase 13/14 overlay can drive it without duplicating orchestration, depending on the working directory, or needing stdout.
 **Depends on**: Nothing (first phase of v0.4)
 **Requirements**: CORE-01, CORE-02, CORE-03, CORE-04
 **Note**: Scope corrected during `/gsd-discuss-phase 11` (2026-09-03). The roadmap was written believing the crate had no library target; it has had one for some time — `[lib]` is declared, `src/lib.rs` exports every module, and both binaries are already ~6-line shims over `ferrisfilter::run()`. The stale claim came from a v0.1 STATE.md note and `seed_prices.rs`'s header comment. The real blocker is that `run::cmd_generate` is private, hardcodes CWD-relative paths, writes its own output and prints warnings — so no second front end can reuse it. See `11-CONTEXT.md`.
 **Success Criteria** (what must be TRUE):
+
   1. A caller outside the CLI can load inputs and produce filter text through public library functions, passing its own paths, without reimplementing the price-source fallback, rate derivation or tier pricing.
   2. No library code reads a hardcoded working-directory-relative input path; every input path originates from the caller.
   3. Expected failure paths — unreadable/malformed config, malformed prices, unreadable/malformed/invalid tiers, reference-rate failure, unknown style — are represented as distinct, matchable variants of one error type returned by the library.
@@ -66,16 +68,21 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   6. `artifact_guard` and `generate_snapshot` pass with **zero** changes to `tests/fixtures/seed-universal.filter` or the insta snapshot, and the full suite passes — the refactor is provably behavior-preserving.
   7. `generate`, `generate --early-game`, `generate --config`, `sync` and `install` produce the same output, stderr and exit codes as before.
   8. `seed_prices` imports the real types from the library, its five duplicate structs are gone, and its comment claiming the crate has no `[lib]` target is removed.
+
 **Plans**: 2 plans
+
   - [x] 11-01-PLAN.md — typed loader errors; new src/compile.rs two-stage API (InputPaths, PriceSourcePolicy, PriceSource, CompileError, load_inputs, compile); CLI rewired and proven byte-identical across 6 cases
   - [x] 11-02-PLAN.md — seed_prices imports the library models; five mirror structs and the stale "no [lib] target" comment removed; output byte-identical
+
 **UI hint**: no
 
 ### Phase 12: Dynamic Rule Store
+
 **Goal**: A persisted `dynamic.json` rule set compiles to a complete, playable `dynamic.filter` — policy blocks from the dynamic rules, economy sections from `prices.json` — entirely without a GUI, so the feature is verifiable on the project's existing testing terms.
 **Depends on**: Phase 11
 **Requirements**: DYN-01, DYN-02, DYN-03, DYN-04, DYN-05, DYN-06, DYN-07, DYN-08
 **Success Criteria** (what must be TRUE):
+
   1. A `dynamic.json` containing an ordered rule array parses, round-trips, and reports a malformed field with its path — reusing the existing `Rule`/`When` types rather than new ones.
   2. Compiling a dynamic rule that sets only `sockets` emits a block containing `Sockets >= N` and **no** `Class`, `Rarity`, `BaseArmour`, `Quality` or `Corrupted` lines.
   3. Reordering two rules in `dynamic.json` reorders their blocks in `dynamic.filter`, confirming ordinal position drives precedence.
@@ -84,34 +91,44 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   6. Interrupting the write leaves the previous `dynamic.filter` intact — no truncated file is ever observable in the game folder.
   7. Edits written to `dynamic.json` are present after the process exits and restarts.
   8. `artifact_guard` and `generate_snapshot` still pass with no fixture changes.
+
 **Plans**: 2 plans
+
   - [x] 12-01-PLAN.md — Rule.enabled + disabled-rule suppression preserving ordinal labels; FilterIdentity/generate_as/compile_as; dynamic_base.json cleaned for ordinal identity
   - [x] 12-02-PLAN.md — src/dynamic.rs lifecycle (seed/reset/compile/atomic write); `apply` subcommand; tests/dynamic_filter.rs
+
 **UI hint**: no
 
 ### Phase 13: Overlay Shell
+
 **Goal**: A window renders above a running Path of Exile 2 and can be summoned and dismissed by a global hotkey without alt-tabbing — the delivery surface, with no editing in it yet.
 **Depends on**: Phase 11
 **Requirements**: SHELL-01, SHELL-02, SHELL-03
 **Success Criteria** (what must be TRUE):
+
   1. With PoE2 running in windowed-fullscreen and focused, the window is visible on top of the game.
   2. A global hotkey shows and hides the window while the game holds focus.
   3. The window is opaque, does not pass mouse input through, and is smaller than the full screen — the configuration that avoids the documented egui/eframe Windows overlay defects.
   4. Closing the overlay leaves the game unaffected, and the overlay makes no attempt to read game memory or send input to it.
   5. The overlay binary is not named `overlay` (egui #5512 gives a package with that name a black background).
+
 **Plans**: 5 plans
+
   - [ ] 13-01-PLAN.md — Cargo/binary restructure (ff = GUI, ff-cli = console) + the always-on-top, opaque, sub-screen stripe window
   - [ ] 13-02-PLAN.md — Ferris tray icon with Show/Quit menu + global Shift+Z registration, with registration failure surfaced in the tray
   - [ ] 13-03-PLAN.md — Pure visibility state machine + raw-HWND SW_SHOWNOACTIVATE/SW_HIDE reveal and hide (summon never steals focus, click-away hides)
   - [ ] 13-04-PLAN.md — Read-only dynamic.json rule list (pure, tested view-model) + PoE2 Options palette, Cinzel font and header plate
   - [ ] 13-05-PLAN.md — In-game manual verification checklist for all five success criteria + windowed-mode documentation
+
 **UI hint**: yes
 
 ### Phase 14: Rule Editor + Apply
+
 **Goal**: Every dynamic rule is editable from the overlay — style, classes, rarity, defences, sockets, quality, corrupted, each condition independently togglable — and Apply writes `dynamic.filter` and tells the player to reload it in-game.
 **Depends on**: Phase 12, Phase 13
 **Requirements**: EDIT-01, EDIT-02, EDIT-03, EDIT-04, EDIT-05, EDIT-06, EDIT-07, EDIT-08, EDIT-09
 **Success Criteria** (what must be TRUE):
+
   1. A rule can be added, deleted and moved in the list, and moving it changes which of two overlapping rules wins in the emitted filter.
   2. Disabling a single rule covering the flask and charm classes removes flask drops from the generated filter — the milestone's motivating example, done in one click.
   3. The style dropdown offers exactly the styles defined in `config.json`, and picking one changes the emitted block's styling actions.
@@ -120,6 +137,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   6. Turning any individual condition off removes exactly its line from the emitted block and leaves the others untouched.
   7. Apply writes `dynamic.filter` to the game folder and the UI states that the filter must be reloaded via Options → Game → Item Filter → Refresh.
   8. Rule mutation, validation and compilation are library functions covered by unit tests; the egui layer holds no logic that can only be exercised by clicking.
+
 **Plans**: 2-3 plans
 **UI hint**: yes
 
@@ -139,7 +157,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete | 2026-06-24 |
 | 11. Callable Compile API | v0.4 | 2/2 | Complete | 2026-09-03 |
 | 12. Dynamic Rule Store | v0.4 | 2/2 | Complete | 2026-09-04 |
-| 13. Overlay Shell | v0.4 | 0/? | Not started | - |
+| 13. Overlay Shell | v0.4 | 0/5 | Planned    |  |
 | 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |
 
 ---
@@ -157,7 +175,8 @@ S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` ma
 by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
 `FUTURE` comments already mark both code locations.
 **Requirements:** TBD
-**Plans:** 0 planned (not yet scoped)
+**Plans:** 0/5 plans executed
 
 Plans:
+
 - [ ] TBD (promote with /gsd-review-backlog when ready)

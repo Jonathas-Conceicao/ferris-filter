@@ -36,7 +36,7 @@ a Phase 13 failure means *the stripe is broken*, not *the editor is broken*.
 - **D-02: `ff` becomes the GUI binary; the existing console CLI moves to `ff-cli`.** The
   long-name `ferrisfilter` binary stays a console CLI, unchanged. `default-run = "ff"` therefore
   needs no edit — it simply now resolves to the GUI.
-  - **Verified during discussion:** all 25 integration-test call sites use
+  - **Verified during discussion:** all 23 integration-test call sites use
     `Command::cargo_bin("ferrisfilter")`; **none** reference `ff`. The rename touches zero tests.
 - **D-03: The GUI binary declares the Windows GUI subsystem** so no console window flashes behind
   it. This is exactly why the CLI cannot be folded into the same binary — that subsystem has no

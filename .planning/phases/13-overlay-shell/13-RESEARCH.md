@@ -23,7 +23,7 @@ out individually.
 - **D-02: `ff` becomes the GUI binary; the existing console CLI moves to `ff-cli`.** The
   long-name `ferrisfilter` binary stays a console CLI, unchanged. `default-run = "ff"` therefore
   needs no edit — it simply now resolves to the GUI.
-  - **Verified during discussion:** all 25 integration-test call sites use
+  - **Verified during discussion:** all 23 integration-test call sites use
     `Command::cargo_bin("ferrisfilter")`; **none** reference `ff`. The rename touches zero tests.
 - **D-03: The GUI binary declares the Windows GUI subsystem** so no console window flashes behind
   it. This is exactly why the CLI cannot be folded into the same binary — that subsystem has no
@@ -224,7 +224,7 @@ logic belongs.
 |------------|-------------|----------------|-----------|
 | Window creation, always-on-top, decorations | Windowing shell (eframe/winit) | OS/Win32 | `ViewportBuilder` covers this natively; no raw calls needed |
 | Show-without-activate on repeat toggles | OS/Win32 (raw HWND) | Windowing shell | winit's own API only handles the first reveal (see Summary); every later reveal needs a direct `ShowWindow(SW_SHOWNOACTIVATE)` call |
-| Hide-on-focus-loss decision (the state machine) | Presentation (egui `update()` logic) | — | Reads `ViewportInfo::focused` each frame; pure state, belongs beside the UI code, not in the library |
+| Hide-on-focus-loss decision (the state machine) | Application/Library (`overlay::visibility`) | Presentation (egui `update()` feeds it the focus flag each frame) | **Corrected during plan verification.** This row originally said the state machine "belongs beside the UI code, not in the library", contradicting this document's own "Recommended Project Structure" and "Verification story" sections and `PITFALLS.md` §8. The transition function is pure — `fn advance(state, focused, toggle) -> state`, no egui types in its signature — so it lives in the library with `#[test]` coverage. Plan 13-03 follows the corrected placement. |
 | Global hotkey registration & polling | Windowing shell (main thread) | — | Must be created on the same thread as the winit event loop (Win32 message-loop affinity) |
 | Tray icon & menu | Windowing shell (main thread) | — | Same thread constraint as the hotkey manager |
 | Reading `dynamic.json` into a display list | Application/Library (`ferrisfilter` crate) | Presentation | The read-only view-model derivation is a pure function over `Config`/`Rule`; keep it in the library so it is unit-testable per `PITFALLS.md` §8 |
@@ -750,7 +750,14 @@ research, no breaking changes expected at a patch bump).
 | A3 | Cinzel's OFL 1.1 license is compatible with bundling the `.ttf` directly in `assets/` and shipping it in the compiled binary via `include_bytes!` | Font section | Low — OFL is specifically designed to permit bundling in software; this is the license's primary use case. Re-confirm the license file text before committing the font, as a final check, not because the license type is in doubt |
 | A4 | No `slopcheck` run against any of the six packages (tool unavailable in this environment) | Package Legitimacy Audit | Manual crates.io audit substituted; low risk given the extremely high download counts and matching official-org repos for every package, but the planner should still add a lightweight human-verify checkpoint per protocol |
 
-## Open Questions
+## Open Questions (RESOLVED — routed to manual verification during planning)
+
+> Both questions below are inherently answerable only by running the thing. Rather than leaving
+> them open, planning routed each to a named manual checkpoint:
+> **Q1** → Plan 13-05 Task 2, live-PoE2 checklist step 1 (`SW_SHOWNOACTIVATE` against PoE2's
+> windowed-fullscreen rendering). **Q2** → Plan 13-03 Task 3, which cites this question directly
+> and checks that the stripe still resizes and repaints correctly after several raw hide/reveal
+> cycles. Neither blocks implementation.
 
 1. **Does `SW_SHOWNOACTIVATE` behave identically when the target process (PoE2) is a DirectX
    fullscreen-borderless game vs. a plain windowed app?**

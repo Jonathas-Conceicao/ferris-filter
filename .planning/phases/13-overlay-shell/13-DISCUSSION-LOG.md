@@ -35,7 +35,7 @@ split buys much less, so the single crate with a third `[[bin]]` was kept.
 | `ff` becomes the GUI; CLI moves to `ff-cli` | The short name is the common usage | ✓ |
 
 **User's choice:** "Have the ff be the new GUI binary and ff-cli the old usage style"
-**Notes:** Verified during discussion that all 25 integration-test call sites use
+**Notes:** Verified during discussion that all 23 integration-test call sites use
 `cargo_bin("ferrisfilter")` and none reference `ff`, so the rename touches zero tests.
 `default-run = "ff"` already pointed at that name and needs no change.
 

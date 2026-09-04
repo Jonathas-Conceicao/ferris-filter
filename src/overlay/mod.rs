@@ -11,6 +11,7 @@ pub mod hotkey;
 pub mod layout;
 pub mod tray;
 pub mod visibility;
+pub mod win;
 
 use hotkey::HotkeyStatus;
 

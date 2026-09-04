@@ -9,8 +9,9 @@
 //!
 //! ## Why `ShownUnfocused` exists as a distinct state (Pitfall 2)
 //!
-//! RESEARCH found that a window revealed with `SW_SHOWNOACTIVATE` (the only way to satisfy
-//! D-05 across repeat summons — see `win.rs`) has **never been focused**. Its OS-reported
+//! RESEARCH found that a window revealed with the Win32 show-without-activating flag (the only
+//! way to satisfy D-05 across repeat summons — see `win.rs`) has **never been focused**. Its
+//! OS-reported
 //! `focused` flag reads `false` (or unset) from the instant it appears. A naive rule of
 //! "hide whenever `focused == false`" would therefore hide the stripe on the very first frame
 //! after every reveal — it would flash and vanish before the player could ever click into it.
@@ -125,9 +126,9 @@ mod tests {
 
     #[test]
     fn never_focused_guard_survives_many_consecutive_unfocused_frames() {
-        // The single most important test in this module (Pitfall 2): a window shown via
-        // SW_SHOWNOACTIVATE reads focused=false from the instant it appears, and must not hide
-        // itself before the user has ever had a chance to click into it.
+        // The single most important test in this module (Pitfall 2): a window shown without
+        // activation reads focused=false from the instant it appears, and must not hide itself
+        // before the user has ever had a chance to click into it.
         let mut state = ShownUnfocused;
         for _ in 0..20 {
             state = advance(state, false, false);

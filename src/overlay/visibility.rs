@@ -1,6 +1,6 @@
 //! The pure show/hide decision for the stripe (D-05, D-06, D-07).
 //!
-//! This module has **no** `egui`, `eframe`, `winit` or `windows_sys` type in any signature —
+//! This module has no dependency on any GUI or windowing crate in any signature —
 //! per `PITFALLS.md` §8 ("if a bug can only be found by clicking, it is in the wrong layer"),
 //! the decision of *whether* to show or hide is a value computed from two booleans, fully
 //! testable without a window. `app.rs` is the thin view: it reads the OS focus flag, calls
@@ -66,19 +66,51 @@ pub enum Effect {
 /// visible": `Hidden` → `ShownUnfocused`, and either shown state → `Hidden`. This makes the
 /// hotkey and tray behave identically whether the stripe is currently focused, unfocused, or
 /// hidden (D-09/D-17: one shared toggle behavior regardless of source).
-pub fn advance(state: Visibility, _focused_this_frame: bool, _toggle_requested: bool) -> Visibility {
-    // RED: intentionally wrong (identity) so every non-trivial test below fails first.
-    // Implemented properly in the immediately-following commit (TDD GREEN).
-    state
+pub fn advance(state: Visibility, focused_this_frame: bool, toggle_requested: bool) -> Visibility {
+    use Visibility::{Hidden, ShownFocused, ShownUnfocused};
+
+    if toggle_requested {
+        return match state {
+            Hidden => ShownUnfocused,
+            ShownUnfocused | ShownFocused => Hidden,
+        };
+    }
+
+    match state {
+        // Idle while hidden: never reveal from a stray focus reading. Only a toggle can do that.
+        Hidden => Hidden,
+        // The never-focused guard (Pitfall 2): stay here until a real focus gain is observed,
+        // no matter how many consecutive unfocused frames pass.
+        ShownUnfocused => {
+            if focused_this_frame {
+                ShownFocused
+            } else {
+                ShownUnfocused
+            }
+        }
+        // Now that a focus gain has been observed, a focus loss is a real "clicked away" (D-06).
+        ShownFocused => {
+            if focused_this_frame {
+                ShownFocused
+            } else {
+                Hidden
+            }
+        }
+    }
 }
 
 /// Maps a `(previous, next)` transition to the one OS-facing effect the caller must perform, or
 /// `None` if the transition needs no OS call. In particular, `ShownUnfocused -> ShownFocused` is
 /// `None`: the OS already activated the window on its own (that is what produced the focus
 /// event in the first place) — we are only *observing* that transition, not causing it.
-pub fn effect_for(_previous: Visibility, _next: Visibility) -> Option<Effect> {
-    // RED: intentionally wrong (always none) — implemented in the following GREEN commit.
-    None
+pub fn effect_for(previous: Visibility, next: Visibility) -> Option<Effect> {
+    use Visibility::{Hidden, ShownFocused, ShownUnfocused};
+
+    match (previous, next) {
+        (Hidden, ShownUnfocused) | (Hidden, ShownFocused) => Some(Effect::Reveal),
+        (ShownUnfocused, Hidden) | (ShownFocused, Hidden) => Some(Effect::Conceal),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

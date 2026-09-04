@@ -31,10 +31,19 @@ pub struct StoreView {
 /// Seeds the store from `base` if absent (never overwriting one that already exists), then loads
 /// and deserializes it. Returns the rendered error text on any failure — seeding failure, a
 /// missing/unreadable store, or a malformed store that fails JSON validation.
-pub fn load(_base: &Path, _store: &Path) -> Result<StoreView, String> {
-    // RED stub (13-04 Task 1 TDD cycle): never seeds, never reads — intentionally always
-    // errors so the behavior tests below fail before the real seed-then-load path lands.
-    Err("not yet implemented".to_string())
+pub fn load(base: &Path, store: &Path) -> Result<StoreView, String> {
+    let state = dynamic::ensure_store(base, store).map_err(|e| e.to_string())?;
+
+    let store_str = store
+        .to_str()
+        .ok_or_else(|| format!("store path `{}` is not valid UTF-8", store.display()))?;
+    let config: Config = loader::load_json(store_str).map_err(|e| e.to_string())?;
+
+    Ok(StoreView {
+        config,
+        seeded: state == StoreState::Seeded,
+        store_path: store.to_path_buf(),
+    })
 }
 
 /// Resolves the default base/store paths against the current working directory, mirroring the

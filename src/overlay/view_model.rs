@@ -41,10 +41,15 @@ pub struct RuleRow {
 /// Maps every rule in `config.rules` (in order) to a [`RuleRow`]. An absent `rules` array (a
 /// `Config` from before Phase 6, or a hand-stripped store) yields an empty vec, not an error —
 /// an empty read-only list is a valid, renderable state.
-pub fn rule_rows(_config: &Config) -> Vec<RuleRow> {
-    // RED stub (13-04 Task 1 TDD cycle): intentionally ignores its input so the behavior
-    // tests below fail before the real mapping is implemented.
-    Vec::new()
+pub fn rule_rows(config: &Config) -> Vec<RuleRow> {
+    config
+        .rules
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+        .map(|(ordinal, rule)| rule_row(ordinal, rule))
+        .collect()
 }
 
 fn rule_row(ordinal: usize, rule: &Rule) -> RuleRow {

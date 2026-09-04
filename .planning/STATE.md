@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: Defining requirements
+status: executing
 stopped_at: Phase 13 planned (5 plans, checker passed)
-last_updated: "2026-09-04T05:24:24.974Z"
-last_activity: 2026-09-03 — Milestone v0.4 started
+last_updated: "2026-09-04T17:15:47.274Z"
+last_activity: 2026-09-04 -- Phase 13 execution started
 progress:
   total_phases: 5
   completed_phases: 2
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-03)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.4 Overlay Filter Editor Rework — in-game overlay editing a persisted dynamic rule store that compiles to `dynamic.filter`.
+**Current focus:** Phase 13 — Overlay Shell
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-09-03 — Milestone v0.4 started
+Phase: 13 (Overlay Shell) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 13
+Last activity: 2026-09-04 -- Phase 13 execution started
 
 ## Performance Metrics
 

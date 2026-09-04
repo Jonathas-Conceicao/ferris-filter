@@ -1,16 +1,19 @@
 //! `OverlayApp` — the `eframe::App` implementation for the stripe window.
 //!
-//! Content is deliberately a placeholder this plan; read-only rule-list content
-//! lands in a later plan (13-04). What this file owns: docking the stripe to the
-//! right screen edge on the first frame where a monitor size is known (D-12);
-//! polling the tray and the global hotkey for their events (plan 13-02); and —
-//! this plan (13-03) — turning those events into an actual show/hide of the
-//! window that does not steal keyboard focus from the game, by delegating the
-//! decision to [`super::visibility`] and the OS call to [`super::win`]. This
-//! file itself contains no show/hide branching logic of its own — it advances
-//! the state machine, asks it for the effect, and performs that one effect.
-//! `PITFALLS.md` §8: if a bug can only be found by clicking, it belongs in one
-//! of those two modules, not here.
+//! What this file owns: docking the stripe to the right screen edge on the first
+//! frame where a monitor size is known (D-12); polling the tray and the global
+//! hotkey for their events (plan 13-02); turning those events into an actual
+//! show/hide of the window that does not steal keyboard focus from the game, by
+//! delegating the decision to [`super::visibility`] and the OS call to
+//! [`super::win`] (plan 13-03); and — this plan (13-04) — rendering the
+//! read-only rule list loaded once at startup via [`super::store`] and
+//! [`super::view_model`], in the PoE2-idiom chrome from [`super::theme`] and
+//! [`super::widgets`]. This file itself contains no show/hide branching logic,
+//! no rule-summarizing logic, and no palette values of its own — it advances
+//! the state machine, asks it for the effect, and performs that one effect; it
+//! holds the rows [`super::view_model::rule_rows`] already computed and paints
+//! them through [`super::widgets`]. `PITFALLS.md` §8: if a bug can only be
+//! found by clicking, it belongs in one of those library modules, not here.
 
 use std::time::Duration;
 
@@ -18,8 +21,12 @@ use global_hotkey::GlobalHotKeyManager;
 
 use super::hotkey::HotkeyStatus;
 use super::layout;
+use super::store;
+use super::theme;
 use super::tray::{self, OverlayCommand, TrayHandles};
+use super::view_model::{self, RuleRow};
 use super::visibility::{self, Visibility};
+use super::widgets;
 use super::win::{self, OverlayWindow};
 
 /// The eframe application state for the overlay stripe.
@@ -55,6 +62,14 @@ pub struct OverlayApp {
     /// on the first frame one is available. `None` on the very first few
     /// frames, and always `None` off Windows.
     window: Option<OverlayWindow>,
+
+    /// The read-only rule list (D-19), loaded once at startup via
+    /// [`store::load`] and mapped by [`view_model::rule_rows`]. `Err` holds
+    /// the rendered message a malformed or missing `dynamic.json` produced —
+    /// the stripe shows this text in place of the list rather than crashing
+    /// (T-13-13). Never reloaded during a session; nothing in this phase
+    /// mutates the store, so there is nothing to refresh from (D-20).
+    rows: Result<Vec<RuleRow>, String>,
 }
 
 impl OverlayApp {
@@ -65,6 +80,11 @@ impl OverlayApp {
         hotkey_manager: Option<GlobalHotKeyManager>,
         hotkey_status: HotkeyStatus,
     ) -> Self {
+        // D-19/D-20: read-only, one shot, at startup. Nothing here seeds a filter or writes
+        // anything beyond `store::load`'s own seed-if-absent (Phase 12's `ensure_store`).
+        let (base, store_path) = store::default_paths();
+        let rows = store::load(&base, &store_path).map(|view| view_model::rule_rows(&view.config));
+
         Self {
             docked: false,
             tray,
@@ -80,6 +100,7 @@ impl OverlayApp {
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
             window: None,
+            rows,
         }
     }
 }
@@ -179,26 +200,73 @@ impl eframe::App for OverlayApp {
         // explicit in our own code.
         ui.ctx().request_repaint_after(Duration::from_millis(50));
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("FerrisFilter");
-                // D-14: the header's close control hides the stripe; it is
-                // never the way the process exits (that is tray -> Quit
-                // alone).
-                if ui
-                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.button("\u{2715}")
-                    })
-                    .inner
-                    .clicked()
-                    && self.visibility != Visibility::Hidden
-                {
-                    if let Some(window) = &self.window {
-                        win::conceal(window);
-                    }
-                    self.visibility = Visibility::Hidden;
+        let panel_frame = egui::Frame::central_panel(&ui.style())
+            .fill(theme::PANEL_GROUND)
+            .inner_margin(egui::Margin::ZERO);
+
+        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| {
+            // D-14: the header's close control hides the stripe; it is never the way the
+            // process exits (that is tray -> Quit alone). widgets::header_plate does the
+            // painting; this file only decides what a click on it does.
+            let header = widgets::header_plate(ui, "FERRISFILTER");
+            if header.close_clicked && self.visibility != Visibility::Hidden {
+                if let Some(window) = &self.window {
+                    win::conceal(window);
                 }
+                self.visibility = Visibility::Hidden;
+            }
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.label(theme::section_header("RULES"));
             });
+            ui.add_space(6.0);
+
+            // D-19: read-only, in ordinal order, no status chrome (no store path, no price
+            // source, no destination folder). Content fills only the top of the stripe; the
+            // remainder stays empty panel ground rather than shrinking the window (D-23) --
+            // the ScrollArea below only grows as tall as its rows, it does not stretch to
+            // fill the CentralPanel.
+            match &self.rows {
+                Ok(rows) => {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for row in rows {
+                                widgets::zebra_row(ui, row.ordinal, |ui| {
+                                    render_rule_row(ui, row);
+                                });
+                            }
+                        });
+                }
+                Err(message) => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(10.0);
+                        ui.colored_label(theme::LABEL_TAN, message);
+                    });
+                }
+            }
         });
     }
+}
+
+/// Renders one rule row's ordinal, style, and condition summary. A disabled rule (D-19: still
+/// listed, never omitted — `PITFALLS.md` §9's ordinal-identity guard) renders in
+/// `theme::DISABLED_TEXT` with an explicit `DISABLED` marker rather than being skipped.
+fn render_rule_row(ui: &mut egui::Ui, row: &RuleRow) {
+    let text_color = if row.enabled {
+        theme::LABEL_TAN
+    } else {
+        theme::DISABLED_TEXT
+    };
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("{:02}", row.ordinal)).color(text_color).monospace());
+        ui.label(egui::RichText::new(&row.style).color(theme::VALUE_TEXT));
+        if !row.enabled {
+            ui.label(egui::RichText::new("DISABLED").color(theme::DISABLED_TEXT).small());
+        }
+    });
+    ui.label(egui::RichText::new(&row.summary).color(text_color).small());
 }

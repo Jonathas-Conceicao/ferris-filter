@@ -14,6 +14,7 @@ pub mod theme;
 pub mod tray;
 pub mod view_model;
 pub mod visibility;
+pub mod widgets;
 pub mod win;
 
 use hotkey::HotkeyStatus;
@@ -65,7 +66,13 @@ pub fn launch() -> eframe::Result<()> {
     eframe::run_native(
         "ferrisfilter",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            // D-24/D-25: register the Cinzel display face and switch to the PoE2-Options
+            // palette before the first frame paints, so nothing ever renders in egui's
+            // defaults even for one frame.
+            theme::install_fonts(&cc.egui_ctx);
+            cc.egui_ctx.set_visuals(theme::poe2_visuals());
+
             Ok(Box::new(app::OverlayApp::new(
                 tray,
                 hotkey_manager,

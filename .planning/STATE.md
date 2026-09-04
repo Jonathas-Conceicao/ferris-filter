@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Phase 13 planned (5 plans, checker passed)
-last_updated: "2026-09-04T17:15:47.274Z"
-last_activity: 2026-09-04 -- Phase 13 execution started
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-09-04T18:02:53.121Z"
+last_activity: 2026-09-04
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 9
-  completed_plans: 4
+  completed_plans: 5
   percent: 40
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 13 (Overlay Shell) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 13
-Last activity: 2026-09-04 -- Phase 13 execution started
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-09-04
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Last activity: 2026-09-04 -- Phase 13 execution started
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
+| Phase 13 P01 | 45min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,10 @@ work (carried forward past the v0.3 close):
 
 - **The style vocabulary is still hardcoded** in `Styles` + `emitter::resolve_style`; `FUTURE`
   comments mark both sites. Backlog Phase 999.1.
+
+- [Phase 13]: eframe 0.36.1's App trait uses fn ui(&mut self, ui, frame), not update(ctx, frame) as sketched in the plan — corrected against installed crate source
+- [Phase 13]: Overlay stripe docks right with EDGE_MARGIN=12.0px; dock_rect hard-clamps width/height strictly under the monitor size regardless of requested width or monitor size
+- [Phase 13]: Local nightly rustc toolchain updated (1.90 to 1.100) to meet eframe/egui 0.36.1's rustc 1.95 MSRV; no repo-level rust-toolchain.toml pin exists yet
 
 ### Pending Todos
 
@@ -118,8 +123,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-04T05:24:24.969Z
-Stopped at: Phase 13 planned (5 plans, checker passed)
-Resume file: .planning/phases/13-overlay-shell/13-01-PLAN.md
+Last session: 2026-09-04T18:02:50.852Z
+Stopped at: Completed 13-01-PLAN.md
+Resume file: None
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

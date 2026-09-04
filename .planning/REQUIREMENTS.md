@@ -25,10 +25,13 @@ whole milestone. The dynamic path is additive.
   inputs and producing filter text — so a front end other than the CLI can drive it without
   reimplementing the price-source fallback, rate derivation or tier pricing. `generate`, `sync`
   and `install` keep their current behavior and the full existing suite passes unchanged.
+
 - [x] **CORE-02**: Library code takes every input path from its caller and reads no hardcoded
   working-directory-relative path, so a front end with an arbitrary working directory can use it.
+
 - [x] **CORE-03**: The `seed_prices` duplicated-currency-struct workaround (added in v0.1 because
   the crate had no library target) is removed in favor of importing the real types.
+
 - [x] **CORE-04**: Expected failure paths are returned as distinct variants of one typed error
   type that a caller can match on, and the price source actually used (live / committed fallback
   pair / none) is returned as a value rather than printed — so a GUI can present both as it sees
@@ -38,50 +41,67 @@ whole milestone. The dynamic path is additive.
 
 - [x] **DYN-01**: `dynamic.json` is modeled in serde as an ordered array of rules reusing the
   existing `Rule` / `When` types, round-trips, and reports validation failures with field paths.
+
 - [x] **DYN-02**: Rules are identified by ordinal position; there is no `name` field, and array
   order defines first-match-wins precedence.
+
 - [x] **DYN-03**: The dynamic rule set persists to disk in the repository directory and is reloaded
   on the next run, so edits survive restarts.
+
 - [x] **DYN-04**: Every `when` condition is independently optional — a condition absent from a
   dynamic rule emits no corresponding line in the generated block.
+
 - [x] **DYN-05**: Dynamic rules carry no `areaLevel` condition; `config.json` retains the field for
   the CLI path.
+
 - [x] **DYN-06**: `dynamic.json` compiles to a complete, playable `dynamic.filter` — the policy
   blocks from `dynamic.json`, plus the economy sections (currency, gems, uniques) from
   `prices.json` through the existing pricer, matching how `universal.filter` emits them.
+
 - [x] **DYN-07**: `dynamic.filter` is written atomically into the game folder (write-then-rename),
   so a partially written filter is never visible to the game.
+
 - [x] **DYN-08**: The whole dynamic compile is reachable headlessly, without the overlay, so it is
   unit- and integration-testable on the project's existing terms.
 
 ### Overlay Shell (SHELL)
 
-- [ ] **SHELL-01**: An always-on-top window renders above Path of Exile 2 while the game runs in
+- [x] **SHELL-01**: An always-on-top window renders above Path of Exile 2 while the game runs in
   windowed or windowed-fullscreen mode.
+
 - [ ] **SHELL-02**: A global hotkey toggles overlay visibility while the game holds focus, so it
   can be summoned without alt-tabbing.
-- [ ] **SHELL-03**: The overlay window is opaque, non-passthrough, and never sized to the full
+
+- [x] **SHELL-03**: The overlay window is opaque, non-passthrough, and never sized to the full
   screen — the configuration that avoids the documented egui/eframe Windows overlay defects.
 
 ### Rule Editor (EDIT)
 
 - [ ] **EDIT-01**: The overlay lists the dynamic rules in ordinal order and supports adding,
   deleting and reordering them, with reordering changing match precedence.
+
 - [ ] **EDIT-02**: A rule can be enabled or disabled, so one toggle suppresses a whole category —
   the "hide all flask drops" case.
+
 - [ ] **EDIT-03**: Each rule has a style selector populated from the pinned `config.json` styles
   palette (S–F, `Recycle`, `exceptional`, `hidden`, `unchanged`, `unidentified`).
+
 - [ ] **EDIT-04**: Each rule has a multi-select class picker whose options come from the class
   lists already in `config.json`, not a hardcoded list.
+
 - [ ] **EDIT-05**: Each rule has a rarity selector emitting the existing compact comparator forms
   (`>=Magic`, `<=Rare`, `==Rare`, …).
+
 - [ ] **EDIT-06**: Each rule has a three-checkbox defence picker (armour / evasion / energy shield)
   where a ticked defence emits `> 0` and an unticked one emits `0`, making all seven PoE2 armour
   types selectable; with the group disabled, no defence condition is emitted at all.
+
 - [ ] **EDIT-07**: Each rule exposes sockets minimum, quality minimum, and a corrupted control
   whose unset state omits the condition entirely.
+
 - [ ] **EDIT-08**: Every condition control can be toggled off individually, and a disabled control
   contributes nothing to the emitted block (the UI expression of DYN-04).
+
 - [ ] **EDIT-09**: An Apply action writes `dynamic.filter` and tells the player to reload the
   filter in-game via Options → Game → Item Filter → Refresh.
 
@@ -103,6 +123,7 @@ Deferred — acknowledged, not in the v0.4 roadmap.
 
 - **ECONX-01**: BaseType-matched, economy-tiered Tablets category (class-less `BaseType ==`
   blocks; corrected base names). Needs pricer/emitter support for class-less category blocks.
+
 - **GENX-01..04**: `--dry-run`, `--diff`, `-v/--verbose` rule logging, stale-`prices.json` warning.
 - **SYNX-01..02**: Multiple build profiles; alternate price-source fallback.
 - **STYLEX-01**: Config-driven style vocabulary (backlog Phase 999.1) — define new named styles in
@@ -142,9 +163,9 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | DYN-06 | Phase 12 | Complete |
 | DYN-07 | Phase 12 | Complete |
 | DYN-08 | Phase 12 | Complete |
-| SHELL-01 | Phase 13 | Pending |
+| SHELL-01 | Phase 13 | Complete |
 | SHELL-02 | Phase 13 | Pending |
-| SHELL-03 | Phase 13 | Pending |
+| SHELL-03 | Phase 13 | Complete |
 | EDIT-01 | Phase 14 | Pending |
 | EDIT-02 | Phase 14 | Pending |
 | EDIT-03 | Phase 14 | Pending |
@@ -156,6 +177,7 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | EDIT-09 | Phase 14 | Pending |
 
 **Coverage:**
+
 - v0.4 requirements: 24 total (CORE-04 added 2026-09-03 during phase 11 discussion)
 - Mapped to phases: 24 (100%) ✓
 - Unmapped: 0 ✓

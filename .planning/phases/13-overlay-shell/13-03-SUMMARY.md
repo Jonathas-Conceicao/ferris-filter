@@ -140,3 +140,15 @@ None - no external service configuration required.
 ---
 *Phase: 13-overlay-shell*
 *Completed: 2026-09-04*
+
+## Self-Check: PASSED
+
+- FOUND: src/overlay/visibility.rs
+- FOUND: src/overlay/win.rs
+- FOUND: src/overlay/app.rs
+- FOUND: src/overlay/mod.rs
+- FOUND: .planning/phases/13-overlay-shell/13-03-SUMMARY.md
+- FOUND commit: 62efe25 (test(13-03))
+- FOUND commit: acd723b (feat(13-03))
+- FOUND commit: c6f9c03 (feat(13-02) — mislabeled, see Deviations)
+- FOUND commit: 38ff591 (docs(13-03): plan summary)

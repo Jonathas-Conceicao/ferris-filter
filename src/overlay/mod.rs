@@ -10,6 +10,7 @@ pub mod app;
 pub mod hotkey;
 pub mod layout;
 pub mod store;
+pub mod theme;
 pub mod tray;
 pub mod view_model;
 pub mod visibility;

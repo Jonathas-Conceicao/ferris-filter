@@ -140,12 +140,47 @@ The remaining argument — new surface area for a one-time failure — does.
 
 ---
 
+---
+
+## Visual design (added after the initial context was written)
+
+The author supplied two screenshots, superseding the discretionary style choice:
+
+**User's input:** "print001 shows exiled exchange UI for the price checking, I want the stripe to
+look something like that; and print 002 shows the game menu entry, I want the color palette and
+style to look similar to the game's own configuration menu, since I want the app to look somewhat
+like a game feature extension"
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Dracula palette from `CLAUDE.md` | GUI matches the colors the filter paints items with | superseded |
+| EE2 layout + EE2 palette | Copy the reference wholesale — cool Tailwind slate | |
+| EE2 layout + PoE2 Options palette | Structure from the overlay, colors from the game | ✓ |
+
+**Notes:** Both screenshots were copied into `reference/` in this phase directory so the refs do
+not rot in the Downloads folder. Rather than eyeballing the colors, both images were sampled
+pixel-wise: the EE2 panel measures **460 × 1080** (x 794→1254 — 24% of a 1920 screen, full height),
+and thirteen palette roles were read directly out of the Options menu (see D-24's table).
+
+The two palettes ended up with clean separate jobs — Dracula colors the items the filter paints in
+the game world, PoE-native colors the overlay chrome — recorded as D-25 so a later pass does not
+"harmonize" them.
+
+A side finding: print002 shows the exact screen the player must visit after Apply — Options → Game
+→ Guidance → Item Filter, a dropdown reading `universal`. Phase 14's post-Apply message can name
+that path precisely.
+
+This also revised D-14. Both references have a header bar, so "borderless, no title bar" became
+"no *OS* decorations, plus a custom-drawn PoE-style header plate" — which resolved the awkwardness
+of tray-Quit being the only exit: the plate's `✕` hides the stripe, tray Quit exits the process.
+
+---
+
 ## Claude's Discretion
 
-- Visual design of the stripe → the Dracula palette already specified in `CLAUDE.md`, so the GUI
-  and the filter it writes read as one tool.
-- Which screen edge the stripe docks to, and its width.
-- Layout of the read-only rule list.
+- Which screen edge the stripe docks to, and its exact width (24% is a reference, not a mandate).
+- Layout of the read-only rule list within the PoE2 idiom.
+- Whether to reproduce the header plate's gold filigree or just its flat bronze fill.
 - Mechanism for show-without-activate (native eframe/winit vs. raw `HWND`) — a research question.
 - Tray-icon crate selection.
 

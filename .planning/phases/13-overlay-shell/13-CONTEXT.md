@@ -73,8 +73,11 @@ a Phase 13 failure means *the stripe is broken*, not *the editor is broken*.
   window size equals screen size). Full-height-*ish*, deliberately under the screen height.
 - **D-13: Opaque, non-passthrough, always-on-top** — the configuration that dodges five of the six
   documented egui/eframe Windows overlay defects.
-- **D-14: Borderless, no title bar.** A title bar would consume the vertical space the stripe
-  exists to preserve. **Consequence: the tray menu is the only way to quit.**
+- **D-14: No OS decorations, but a custom-drawn header plate.** Revised after the author supplied
+  reference screenshots — both references have a header, so the window is borderless at the OS
+  level (all chrome is ours to style) with a PoE-style header plate drawn inside it: title on the
+  left, `✕` on the right. **The `✕` hides the stripe; tray → Quit exits the process.** Two
+  different actions, deliberately.
 - **D-15: Position and width are not persisted this phase.** The stripe opens the same way every
   launch. No settings file exists yet and this phase does not introduce one.
 
@@ -105,14 +108,60 @@ a Phase 13 failure means *the stripe is broken*, not *the editor is broken*.
   writes a text file and nothing else. Per `PITFALLS.md` §3 the author has already closed the ToS
   question: no disclaimers in the product.
 
+### Visual design (author-supplied references, 2026-09-04)
+
+The author initially left style to Claude's discretion, then supplied two screenshots that
+supersede that. Both are committed under `reference/` in this phase directory.
+
+- **D-23: Layout follows Exiled Exchange 2's price-check panel** —
+  `reference/ee2-panel-layout.png`. Measured from the screenshot: the panel occupies
+  **x 794→1254 on a 1920×1080 screen — 460 px wide (24% of width), full height**, docked as a
+  vertical column against the game. Content fills only the top portion; the rest of the stripe
+  stays empty background rather than the window shrinking to fit. Structure to copy: a slim header
+  bar with a centered title and a close control; content grouped into bordered boxes with slightly
+  contrasting fills; small-caps section labels; zebra-striped list rows.
+  **Take the structure, not the colors** — EE2's palette is a cool Tailwind slate (`#2D3748`
+  ground, `#1A202C` boxes, `#EDF2F7` text) and is explicitly not what we want.
+- **D-24: Palette and styling follow PoE2's own Options menu** —
+  `reference/poe2-options-palette.png`. The author's goal: *"I want the app to look somewhat like
+  a game feature extension."* Values sampled directly from that screenshot:
+
+  | Role | Hex | Where it was sampled |
+  |------|-----|----------------------|
+  | Row ground (base) | `#0D0D0D` | settings row background |
+  | Row ground (alternate) | `#121212` | adjacent zebra row |
+  | Panel ground | `#141414` | panel body between sections |
+  | Input / dropdown fill | `#090909` | Language dropdown — inputs recess *darker* than rows |
+  | Header plate | `#3B3326` | the ornate "Options" title plate |
+  | Label text (warm tan) | `#E3CD97` | "Language", "Auto-equip" row labels |
+  | Section header (cream) | `#F1E4C2` | "LANGUAGE", "GUIDANCE", "GENERAL" |
+  | Value text | `#FEFEFE` | dropdown values |
+  | Control glyph (check) | `#C4C4A8` | checked toggle |
+  | Button text | `#DEDEDE` | SAVE / DEFAULTS / CLOSE |
+  | Tab active | `#B3AF93` | "GAME" tab |
+  | Tab inactive / disabled | `#88856E` | "GRAPHICS", "UI" tabs |
+  | Warm accent / destructive | `#A36C3C` | the red-bronze "USE DEFAULT" button |
+
+  Typographic character: **small-caps serif throughout**, labels left / controls right, section
+  headers brighter and larger than row labels, near-black grounds with warm tan-to-cream text.
+  Toggles in PoE2 are **circular**, not square — worth matching, and it is what Phase 14's
+  per-condition enable checkboxes should look like.
+  `#A36C3C` is the accent to reserve for Phase 14's Reset, since the game uses it for the
+  equivalent "use default" action.
+
+- **D-25: The Dracula palette stays in the filter output, not in the GUI chrome.** This reverses
+  Claude's earlier discretionary choice. The two palettes now have clean, separate jobs: Dracula
+  colors the *items the filter paints in the game world* (pinned in `config.json` `styles`), while
+  the *overlay chrome* is PoE-native so the tool reads as part of the game. Do not "harmonize"
+  them — the split is intentional.
+
 ### Claude's Discretion
 
-The author said "no preference on style for now, go with what you think fits the design well":
-
-- **Visual design: use the Dracula palette already specified in `CLAUDE.md`** — the same colors the
-  generated filter paints items with. The GUI and its output should read as one tool.
-- Which screen edge the stripe docks to, and its width.
-- Layout of the read-only rule list.
+- Which screen edge the stripe docks to (EE2's reference sits left of the inventory panel).
+- Exact stripe width — D-23's 24% is the reference, not a mandate.
+- Layout of the read-only rule list within the PoE2 idiom.
+- Whether to reproduce the ornate gold filigree of the header plate or just its flat bronze fill —
+  a flat plate is expected to read closer to the game than a bad imitation of its artwork.
 - The mechanism for show-without-activate (native eframe/winit capability vs. dropping to the raw
   `HWND`) — a research question, not a design one.
 - Tray-icon crate selection.
@@ -147,8 +196,18 @@ The author said "no preference on style for now, go with what you think fits the
 - `src/dynamic.rs` — the store lifecycle the stripe reads from.
 - `src/compile.rs` — `load_inputs` / `compile_as`; the load path the read-only list needs.
 - `src/models/config.rs` — `Rule` / `When`; every condition field is already `Option<…>`.
-- `CLAUDE.md` § "Tier & color system (Dracula palette)" — the palette for the GUI, and the
-  game-folder path.
+- `CLAUDE.md` § "Tier & color system (Dracula palette)" — the palette the *filter output* uses
+  (**not** the GUI chrome — see D-25), and the game-folder path.
+
+### Visual references (author-supplied 2026-09-04, committed in this phase directory)
+- `.planning/phases/13-overlay-shell/reference/ee2-panel-layout.png` — Exiled Exchange 2's
+  price-check panel. **The layout reference:** stripe proportions, header bar, boxed sections,
+  zebra rows. Its colors are explicitly not adopted (D-23).
+- `.planning/phases/13-overlay-shell/reference/poe2-options-palette.png` — PoE2's own Options
+  menu. **The palette and styling reference** (D-24). Also shows the exact screen the player must
+  visit after Apply — Options → Game → Guidance → **Item Filter**, a dropdown currently reading
+  `universal`, with refresh and folder buttons beside it. Phase 14's post-Apply instruction can
+  name that path precisely, and the player will be switching that dropdown to `dynamic`.
 
 </canonical_refs>
 
@@ -192,9 +251,13 @@ The author said "no preference on style for now, go with what you think fits the
   only the horizontal space it requires, and any filter-configuration functionality gets built
   inside it. This is the single most shape-defining statement in the discussion.
 - **Exiled Exchange 2** was cited during milestone scoping as the reference overlay for how such a
-  tool should feel — while noting that its transparent click-through shape is *not* ours.
-- The stripe should feel like part of the same tool as the filter it writes, hence the Dracula
-  palette rather than default egui styling.
+  tool should feel — while noting that its transparent click-through shape is *not* ours. The
+  author later supplied a screenshot of it (D-23) to pin the layout concretely.
+- **"I want the app to look somewhat like a game feature extension"** — the sentence behind D-24.
+  The overlay should not look like a Rust developer tool that happens to sit over PoE2; it should
+  look like a screen the game shipped with. That is the bar for the visual work.
+- The player's post-Apply destination is visible in the reference screenshot: Options → Game →
+  Guidance → Item Filter, currently set to `universal`.
 
 </specifics>
 
@@ -234,6 +297,15 @@ Design is settled; these are mechanism questions the planner needs answered:
 5. **Windows GUI subsystem** — `#![windows_subsystem = "windows"]` on the binary, and whether it
    interacts with `cargo test` / `assert_cmd` for the other binaries.
 6. Confirm `eframe`/`egui`/`global-hotkey` versions are still current, and pin exact minors.
+7. **Font.** D-24 calls for small-caps serif. egui ships sans-serif defaults (Ubuntu/Hack), so this
+   needs a custom font registered via `egui::FontDefinitions` — find a freely-redistributable
+   serif close to PoE's (Fontin/Cinzel family shape) whose license permits bundling in
+   `assets/`, and confirm whether egui can synthesize small-caps or whether the glyphs must come
+   from the face itself. If no good option exists, an all-caps fallback at reduced letter-spacing
+   is acceptable and closer to the game than a default sans.
+8. **Theming reach.** How much of the PoE2 look is achievable through `egui::Style`/`Visuals`
+   alone (grounds, strokes, rounding, text colors) versus needing custom painting — particularly
+   the circular toggles and the header plate.
 
 </open_questions_for_research>
 

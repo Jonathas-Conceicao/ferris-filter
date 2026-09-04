@@ -7,10 +7,31 @@
 //! `dynamic.json` or the filter compiler.
 
 pub mod app;
+pub mod layout;
 
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
-    let options = eframe::NativeOptions::default();
+    // The stripe: opaque, undecorated, always-on-top, never screen-sized.
+    //
+    // Deliberately NOT configured (D-13, dodging documented egui/eframe Windows
+    // overlay defects by omission — see 13-RESEARCH.md "Anti-Patterns to Avoid"):
+    //   - transparency        — egui #4451 / #4446
+    //   - mouse click-through — egui #2537
+    //   - exclusive fullscreen — egui #4091
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("FerrisFilter")
+        .with_always_on_top()
+        .with_decorations(false)
+        .with_inner_size([layout::STRIPE_WIDTH, 1000.0])
+        .with_resizable(false)
+        .with_taskbar(false)
+        .with_active(false);
+
+    let options = eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    };
+
     eframe::run_native(
         "ferrisfilter",
         options,

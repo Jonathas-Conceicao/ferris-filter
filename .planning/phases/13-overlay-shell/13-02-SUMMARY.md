@@ -123,3 +123,14 @@ None — no external service configuration required.
 ---
 *Phase: 13-overlay-shell*
 *Completed: 2026-09-04*
+
+## Self-Check: PASSED
+
+- FOUND: `.planning/phases/13-overlay-shell/13-02-SUMMARY.md`
+- FOUND: `src/overlay/tray.rs`
+- FOUND: `src/overlay/hotkey.rs`
+- FOUND: `assets/ferris.png`
+- FOUND: `assets/ASSETS.md`
+- FOUND commit: `f9acd3f` (Task 1)
+- FOUND commit: `c3ca847` (Task 2)
+- FOUND commit: `62bc184` (this SUMMARY)

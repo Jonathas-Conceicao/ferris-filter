@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-09-04T19:11:04.942Z"
+stopped_at: Completed 13-04-PLAN.md
+last_updated: "2026-09-04T19:37:25.958Z"
 last_activity: 2026-09-04
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
   percent: 33
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 13 (Overlay Shell) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-09-04
 
@@ -49,6 +49,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 13 P01 | 45min | 3 tasks | 8 files |
 | Phase 13 P02 | 10min | 3 tasks | 6 files |
 | Phase 13 P03 | 15min | 3 tasks | 4 files |
+| Phase 13 P04 | 35min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,8 @@ work (carried forward past the v0.3 close):
 - [Phase 13]: No single-instance guard exists or is planned for Phase 13 -- a second ff opens a second stripe window; deferred, out of scope for SHELL-02
 - [Phase 13]: Task 3's checkpoint (13-03) cleared via live author verification on real hardware -- repeated Shift+Z summons never steal keyboard focus (closes RESEARCH Open Question 2 negatively)
 - [Phase 13]: Header close-control glyph (U+2715) renders as tofu box in egui's default font -- deferred to 13-04, which will paint two strokes with egui::Painter instead of substituting a Unicode glyph (the planned Cinzel face also lacks U+2715)
+- [Phase 13]: Cinzel Regular fetched from Google's CSS delivery API (legacy-browser User-Agent) rather than google/fonts' GitHub repo, which now only ships a variable font that ab_glyph cannot reliably instantiate to one weight
+- [Phase 13]: dynamic.json loads read-only exactly once at OverlayApp::new() startup -- no reload mechanism yet, since nothing in src/overlay/ can mutate the store this phase (D-20)
 
 ### Pending Todos
 
@@ -129,8 +132,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-04T19:11:04.935Z
-Stopped at: Completed 13-03-PLAN.md
+Last session: 2026-09-04T19:37:25.949Z
+Stopped at: Completed 13-04-PLAN.md
 Resume file: None
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

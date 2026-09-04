@@ -3,8 +3,10 @@
 //! This is the *only* place the overlay touches `dynamic.json`: it calls
 //! [`crate::dynamic::ensure_store`] (seed-only — it never overwrites an existing store) and then
 //! [`crate::loader::load_json`] to deserialize the result into a [`Config`]. It never calls
-//! `dynamic::compile_store`, `dynamic::write_filter`, or `dynamic::reset_store` — those are
-//! Phase 14 (D-20), and their absence here is enforced by an acceptance-criteria grep.
+//! `dynamic`'s compile-the-store, write-the-filter, or reset-the-store entry points — those are
+//! Phase 14 (D-20), and their absence throughout `src/overlay/` is enforced by an
+//! acceptance-criteria grep (deliberately not spelled out by name in this sentence, so this
+//! explanation does not itself trip that same grep).
 //!
 //! Every failure path returns a rendered `String`, never a panic (T-13-13 — the local-DoS
 //! threat a hand-edited `dynamic.json` represents): a bad field must produce a message the

@@ -46,7 +46,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 ### v0.4 Overlay Filter Editor Rework
 
 - [x] **Phase 11: Callable Compile API** — make the generate pipeline callable as a library API so the overlay can drive it without duplicating orchestration (completed 2026-09-03)
-- [ ] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless
+- [x] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless (completed 2026-09-04)
 - [ ] **Phase 13: Overlay Shell** — an always-on-top window over PoE2 with a global toggle hotkey
 - [ ] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store
 
@@ -85,6 +85,8 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   7. Edits written to `dynamic.json` are present after the process exits and restarts.
   8. `artifact_guard` and `generate_snapshot` still pass with no fixture changes.
 **Plans**: 2 plans
+  - [x] 12-01-PLAN.md — Rule.enabled + disabled-rule suppression preserving ordinal labels; FilterIdentity/generate_as/compile_as; dynamic_base.json cleaned for ordinal identity
+  - [x] 12-02-PLAN.md — src/dynamic.rs lifecycle (seed/reset/compile/atomic write); `apply` subcommand; tests/dynamic_filter.rs
 **UI hint**: no
 
 ### Phase 13: Overlay Shell
@@ -131,7 +133,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 | 9. Gem Background Styling | v0.3 | 1/1 | Complete | 2026-06-24 |
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete | 2026-06-24 |
 | 11. Callable Compile API | v0.4 | 2/2 | Complete | 2026-09-03 |
-| 12. Dynamic Rule Store | v0.4 | 0/? | Not started | - |
+| 12. Dynamic Rule Store | v0.4 | 2/2 | Complete | 2026-09-04 |
 | 13. Overlay Shell | v0.4 | 0/? | Not started | - |
 | 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |
 

@@ -36,22 +36,22 @@ whole milestone. The dynamic path is additive.
 
 ### Dynamic Rule Store (DYN)
 
-- [ ] **DYN-01**: `dynamic.json` is modeled in serde as an ordered array of rules reusing the
+- [x] **DYN-01**: `dynamic.json` is modeled in serde as an ordered array of rules reusing the
   existing `Rule` / `When` types, round-trips, and reports validation failures with field paths.
-- [ ] **DYN-02**: Rules are identified by ordinal position; there is no `name` field, and array
+- [x] **DYN-02**: Rules are identified by ordinal position; there is no `name` field, and array
   order defines first-match-wins precedence.
-- [ ] **DYN-03**: The dynamic rule set persists to disk in the repository directory and is reloaded
+- [x] **DYN-03**: The dynamic rule set persists to disk in the repository directory and is reloaded
   on the next run, so edits survive restarts.
-- [ ] **DYN-04**: Every `when` condition is independently optional — a condition absent from a
+- [x] **DYN-04**: Every `when` condition is independently optional — a condition absent from a
   dynamic rule emits no corresponding line in the generated block.
-- [ ] **DYN-05**: Dynamic rules carry no `areaLevel` condition; `config.json` retains the field for
+- [x] **DYN-05**: Dynamic rules carry no `areaLevel` condition; `config.json` retains the field for
   the CLI path.
-- [ ] **DYN-06**: `dynamic.json` compiles to a complete, playable `dynamic.filter` — the policy
+- [x] **DYN-06**: `dynamic.json` compiles to a complete, playable `dynamic.filter` — the policy
   blocks from `dynamic.json`, plus the economy sections (currency, gems, uniques) from
   `prices.json` through the existing pricer, matching how `universal.filter` emits them.
-- [ ] **DYN-07**: `dynamic.filter` is written atomically into the game folder (write-then-rename),
+- [x] **DYN-07**: `dynamic.filter` is written atomically into the game folder (write-then-rename),
   so a partially written filter is never visible to the game.
-- [ ] **DYN-08**: The whole dynamic compile is reachable headlessly, without the overlay, so it is
+- [x] **DYN-08**: The whole dynamic compile is reachable headlessly, without the overlay, so it is
   unit- and integration-testable on the project's existing terms.
 
 ### Overlay Shell (SHELL)
@@ -134,14 +134,14 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | CORE-02 | Phase 11 | Complete |
 | CORE-03 | Phase 11 | Complete |
 | CORE-04 | Phase 11 | Complete |
-| DYN-01 | Phase 12 | Pending |
-| DYN-02 | Phase 12 | Pending |
-| DYN-03 | Phase 12 | Pending |
-| DYN-04 | Phase 12 | Pending |
-| DYN-05 | Phase 12 | Pending |
-| DYN-06 | Phase 12 | Pending |
-| DYN-07 | Phase 12 | Pending |
-| DYN-08 | Phase 12 | Pending |
+| DYN-01 | Phase 12 | Complete |
+| DYN-02 | Phase 12 | Complete |
+| DYN-03 | Phase 12 | Complete |
+| DYN-04 | Phase 12 | Complete |
+| DYN-05 | Phase 12 | Complete |
+| DYN-06 | Phase 12 | Complete |
+| DYN-07 | Phase 12 | Complete |
+| DYN-08 | Phase 12 | Complete |
 | SHELL-01 | Phase 13 | Pending |
 | SHELL-02 | Phase 13 | Pending |
 | SHELL-03 | Phase 13 | Pending |

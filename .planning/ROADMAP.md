@@ -116,7 +116,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 
   - [x] 13-01-PLAN.md — Cargo/binary restructure (ff = GUI, ff-cli = console) + the always-on-top, opaque, sub-screen stripe window
   - [x] 13-02-PLAN.md — Ferris tray icon with Show/Quit menu + global Shift+Z registration, with registration failure surfaced in the tray
-  - [ ] 13-03-PLAN.md — Pure visibility state machine + raw-HWND SW_SHOWNOACTIVATE/SW_HIDE reveal and hide (summon never steals focus, click-away hides)
+  - [x] 13-03-PLAN.md — Pure visibility state machine + raw-HWND SW_SHOWNOACTIVATE/SW_HIDE reveal and hide (summon never steals focus, click-away hides)
   - [ ] 13-04-PLAN.md — Read-only dynamic.json rule list (pure, tested view-model) + PoE2 Options palette, Cinzel font and header plate
   - [ ] 13-05-PLAN.md — In-game manual verification checklist for all five success criteria + windowed-mode documentation
 
@@ -157,7 +157,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 | 10. Corrupted Condition + Exceptional Gear | v0.3 | 2/2 | Complete | 2026-06-24 |
 | 11. Callable Compile API | v0.4 | 2/2 | Complete | 2026-09-03 |
 | 12. Dynamic Rule Store | v0.4 | 2/2 | Complete | 2026-09-04 |
-| 13. Overlay Shell | v0.4 | 2/5 | In Progress|  |
+| 13. Overlay Shell | v0.4 | 3/5 | In Progress|  |
 | 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |
 
 ---
@@ -175,7 +175,7 @@ S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` ma
 by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
 `FUTURE` comments already mark both code locations.
 **Requirements:** TBD
-**Plans:** 2/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 

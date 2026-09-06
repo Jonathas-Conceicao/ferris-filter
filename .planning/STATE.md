@@ -89,7 +89,7 @@ work (carried forward past the v0.3 close):
 - [Phase 13]: Cinzel Regular fetched from Google's CSS delivery API (legacy-browser User-Agent) rather than google/fonts' GitHub repo, which now only ships a variable font that ab_glyph cannot reliably instantiate to one weight
 - [Phase 13]: dynamic.json loads read-only exactly once at OverlayApp::new() startup -- no reload mechanism yet, since nothing in src/overlay/ can mutate the store this phase (D-20)
 - [Phase 13]: Hotkey rebound from Shift+Z to Ctrl+Shift+Z at the author's request during live in-game verification, to keep Shift+Z free for other bindings (commit 15bff2f)
-- [Phase 13]: Game-dimming behind the overlay stripe is a recorded design request, not implemented -- it would require a second full-screen translucent window, conflicting with SHELL-03/D-12/D-13's opaque/non-passthrough/sub-screen constraints
+- [Phase 13]: Game-dimming behind the overlay stripe was requested during in-game verification and then DECLINED by the author (2026-09-06, “not really necessary”) -- closed, not deferred. It would have needed a second full-screen translucent window, conflicting with SHELL-03/D-12/D-13 opaque/non-passthrough/sub-screen constraints. The reasoning is retained only so a future request for the same thing starts from the constraint.
 
 ### Pending Todos
 

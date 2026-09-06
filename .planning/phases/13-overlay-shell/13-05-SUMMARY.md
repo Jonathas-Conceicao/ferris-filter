@@ -116,7 +116,7 @@ None - no external service configuration required.
 
 - SHELL-01, SHELL-02 and SHELL-03 are now verified against a real, running Path of Exile 2 session, not just against code review — Phase 13 is complete.
 - Phase 14 (Rule Editor + Apply) can build directly on the stripe, tray, hotkey and themed read-only list this phase shipped; `Ctrl+Shift+Z` is the binding it should assume and document going forward.
-- The game-dimming request is an open, recorded design question for whichever phase next touches the overlay's window configuration — it is not blocking Phase 14's editing-UI work, which does not need a second window.
+- The game-dimming request was **DECLINED by the author on 2026-09-06** — “We can drop the shadow for now, it is not really necessary.” It is closed, not deferred: do not carry it into a backlog or reopen it as pending work. The faint separation currently visible is egui default window shadow, left exactly as-is. Phase 14 needs no second window.
 - No other blockers.
 
 ---

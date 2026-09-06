@@ -122,3 +122,14 @@ None - no external service configuration required.
 ---
 *Phase: 13-overlay-shell*
 *Completed: 2026-09-06*
+
+## Self-Check: PASSED
+
+- FOUND: .planning/phases/13-overlay-shell/13-MANUAL-VERIFICATION.md
+- FOUND: .planning/phases/13-overlay-shell/13-05-SUMMARY.md
+- FOUND: CLAUDE.md
+- FOUND: CHANGELOG.md
+- FOUND: src/overlay/hotkey.rs
+- FOUND commit: c348c49 (docs(13-05): in-game verification checklist + windowed-mode docs)
+- FOUND commit: 15bff2f (feat(13-02): change the toggle hotkey to Ctrl+Shift+Z)
+- FOUND commit: 660b9e2 (docs(13-05): record author's in-game verification results)

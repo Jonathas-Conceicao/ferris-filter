@@ -34,7 +34,7 @@ running PoE2, opaque, with the game visible around it.
 (inventory, passive tree, map device) *inside* its own window. Not yet specifically tested: does
 the stripe stay above those, not just above the 3D game world?
 
-1. Summon the stripe (`Shift+Z`). Open the inventory (default bind `I`). **Expected:** the stripe
+1. Summon the stripe (`Ctrl+Shift+Z`). Open the inventory (default bind `I`). **Expected:** the stripe
    stays drawn on top of the inventory panel wherever they overlap.
 2. Close the inventory, open the **passive skill tree** — the strongest test, since it is
    typically the largest, most GPU-intensive in-game panel. **Expected:** the stripe stays on top
@@ -44,7 +44,8 @@ the stripe stay above those, not just above the 3D game world?
 **Failure would look like:** any in-game panel drawing over the stripe, or the stripe flickering
 behind and in front of a panel.
 
-**Residual Result:** _____ (PASS / FAIL + notes)
+**Residual Result:** PASS — author approved: the stripe stays drawn on top of PoE2's own in-game
+panels (inventory, passive tree, map device), not just the 3D game world.
 
 ---
 
@@ -52,7 +53,7 @@ behind and in front of a panel.
 
 Roadmap: "A global hotkey shows and hides the window while the game holds focus."
 
-**Already confirmed** (13-02 Task 3 and 13-03 Task 3 checkpoints, live hardware): `Shift+Z`
+**Already confirmed** (13-02 Task 3 and 13-03 Task 3 checkpoints, live hardware): `Ctrl+Shift+Z`
 summons and hides the stripe over a focused game; at least three repeated summons never steal
 keyboard focus or desync repaint (the winit `MARKER_ACTIVATE` defect, RESEARCH Pitfall 1); a
 movement key between summons still moves the character; clicking into the stripe activates it,
@@ -60,8 +61,8 @@ and clicking back onto the game hides it (D-05/D-06).
 **Result:** PASS (prior verification — see `.planning/phases/13-overlay-shell/13-02-SUMMARY.md`
 and `13-03-SUMMARY.md`)
 
-**Residual check — the `Shift+Z` trade in practice (D-09's accepted cost).** Because
-`global-hotkey` registers system-wide, `Shift+Z` fires in *every* application, including PoE2's
+**Residual check — the `Ctrl+Shift+Z` trade in practice (D-09's accepted cost).** Because
+`global-hotkey` registers system-wide, `Ctrl+Shift+Z` fires in *every* application, including PoE2's
 own chat box. This has not yet been judged in play.
 
 1. Open PoE2's chat box (default bind is usually `Enter`) and type a message containing a
@@ -69,10 +70,16 @@ own chat box. This has not yet been judged in play.
    cost, not a bug):** the stripe toggles and the keystroke is consumed by the hotkey instead of
    reaching the chat text field.
 2. Judge whether this is tolerable in normal play. If not, the remedy is a one-constant change
-   (e.g. `Ctrl+Shift+Z` or `Alt+Z`) in the hotkey registration — note that judgment here rather
-   than filing a new defect, since D-09 already anticipated this exact case.
+   in the hotkey registration — note that judgment here rather than filing a new defect, since
+   D-09 already anticipated this exact case. **Update:** the author requested the rebind during
+   this verification sitting (to keep `Shift+Z` free for other uses, not because it was
+   intolerable) and it has already shipped as `Ctrl+Shift+Z` (commit `15bff2f`); the steps above
+   and their expected observations were re-verified against the new binding.
 
-**Residual Result:** _____ (PASS / ANNOYING-BUT-ACCEPTABLE / NEEDS-REBIND + notes)
+**Residual Result:** NEEDS-REBIND (applied) — the hotkey works reliably in-game; the author asked
+to move it to `Ctrl+Shift+Z` to keep `Shift+Z` free for other bindings (not because the chat-box
+collision was intolerable). Rebind shipped in commit `15bff2f`; `cargo test` re-verified green
+(250/250) after the change.
 
 ---
 
@@ -99,7 +106,12 @@ the stripe. This is a fresh check.
    the game visible around it on at least three sides. **Failure would look like:** the stripe
    spanning the entire screen in either dimension.
 
-**Result:** _____ (PASS / FAIL + notes)
+**Result:** PASS — author: "the click focus is working, it captures input once clicked," and the
+click did not reach the game behind the stripe. Note: the stripe's own background reads as fully
+opaque with no scene bleed-through; separately the author observed only "a very mild shadow
+around the window" rather than a dimming of the game behind it — see "The one judgment no test can
+make" below for that observation, which is not a failure of this criterion (opacity of the
+stripe's own surface, not darkening of the game around it).
 
 ---
 
@@ -110,7 +122,7 @@ game memory or send input to it."
 
 No prior wave's checkpoint exercised a full session followed by Quit. This is a fresh check.
 
-1. With the stripe hidden (`Shift+Z` if currently showing) and PoE2 focused, play normally for
+1. With the stripe hidden (`Ctrl+Shift+Z` if currently showing) and PoE2 focused, play normally for
    about a minute — move, open an in-game panel, pick up an item. **Expected:** indistinguishable
    from playing without `ff` running at all.
 2. Right-click the tray icon and choose **Quit**. **Expected:** the `ff` process exits (tray icon
@@ -121,11 +133,12 @@ No prior wave's checkpoint exercised a full session followed by Quit. This is a 
    grep-based acceptance criteria in plans 13-02 and 13-03, not a new live check): the overlay
    reads no game process memory, injects no input into the game, and installs no global input
    hook. The only OS-level calls it makes that reach outside its own window are `ShowWindow` /
-   `SetWindowPos` on its own HWND and one `RegisterHotKey` for `Shift+Z`. Per `PITFALLS.md` §3 the
+   `SetWindowPos` on its own HWND and one `RegisterHotKey` for `Ctrl+Shift+Z`. Per `PITFALLS.md` §3 the
    author has already decided no disclaimer text belongs in the product — this line exists only in
    this verification record.
 
-**Result:** _____ (PASS / FAIL + notes)
+**Result:** PASS — author: "quitting works, doesn't bug the game or anything." The game continued
+unaffected through a normal play session and through tray Quit.
 
 ---
 
@@ -143,7 +156,8 @@ phase's closing record.
 2. Check `Cargo.toml`'s `[[bin]]` table: four entries (`ferrisfilter`, `ff`, `seed_prices`,
    `ff-cli`), none named `overlay`.
 
-**Result:** _____ (PASS / FAIL + notes)
+**Result:** PASS — the binary is `ff`; no binary named `overlay` exists in the build or the
+`Cargo.toml` `[[bin]]` table.
 
 ---
 
@@ -155,7 +169,15 @@ reads as part of the game or as a Rust developer tool sitting on top of it. Both
 "wrong" are useful answers — a restyle only touches plan 13-04's `theme.rs` / `widgets.rs`, nothing
 structural. This is a human judgment, not a test result.
 
-**Note:** _____
+**Note:** Author: "approved" for the panel-layering check above (criterion 1). On overall visual
+feel, the author separately observed that the stripe "doesn't darken the game screen, only a very
+mild shadow around the window right now," and said it *should* darken the game slightly ("just a
+little bit," never fully). This is a genuine, recorded design request, not implemented in this
+plan: dimming the game behind the stripe would require a second, full-screen translucent window,
+which directly conflicts with this phase's SHELL-03 / D-12 / D-13 constraints (opaque,
+non-passthrough, and never sized to the full screen — chosen specifically to avoid egui #4458 and
+#2537). Left for a later phase to resolve against that constraint; see the SUMMARY's
+issues/observations section.
 
 ---
 
@@ -166,7 +188,7 @@ Route a FAIL to the plan that owns the behavior — do not re-diagnose from scra
 | Symptom area | Owning plan | What it built |
 |---|---|---|
 | Window doesn't appear, wrong size/position, not opaque | 13-01 | Binary split, GUI dependencies, stripe viewport shape (`src/overlay/app.rs`, `layout.rs`) |
-| Tray icon/menu, hotkey doesn't register or doesn't fire | 13-02 | Ferris tray icon, Show/Quit menu, global `Shift+Z` registration and event delivery |
+| Tray icon/menu, hotkey doesn't register or doesn't fire | 13-02 | Ferris tray icon, Show/Quit menu, global `Ctrl+Shift+Z` registration and event delivery |
 | Hotkey steals focus, click-away doesn't hide, stale/blank repaints, always-on-top loses to in-game panels | 13-03 | The visibility state machine and raw-HWND `SW_SHOWNOACTIVATE`/`SW_HIDE` reveal/hide |
 | Wrong/missing rule content, wrong colors/fonts/header styling | 13-04 | The read-only `dynamic.json` view-model, PoE2 Options palette, Cinzel font, header plate |
 | Click passes through to the game, or the game reacts to overlay clicks | 13-01 (window config) or 13-03 (focus mechanism) | Opaque/non-passthrough window flags vs. the show-without-activate mechanism |

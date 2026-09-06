@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: executing
-stopped_at: Completed 13-04-PLAN.md
-last_updated: "2026-09-04T19:37:25.958Z"
-last_activity: 2026-09-04
+status: verifying
+stopped_at: Completed 13-05-PLAN.md -- Phase 13 Overlay Shell complete
+last_updated: "2026-09-06T17:43:46.543Z"
+last_activity: 2026-09-06
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
-  percent: 33
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 
 Phase: 13 (Overlay Shell) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
-Last activity: 2026-09-04
+Status: Phase complete — ready for verification
+Last activity: 2026-09-06
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 13 P02 | 10min | 3 tasks | 6 files |
 | Phase 13 P03 | 15min | 3 tasks | 4 files |
 | Phase 13 P04 | 35min | 3 tasks | 9 files |
+| Phase 13 P05 | ~16min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,8 @@ work (carried forward past the v0.3 close):
 - [Phase 13]: Header close-control glyph (U+2715) renders as tofu box in egui's default font -- deferred to 13-04, which will paint two strokes with egui::Painter instead of substituting a Unicode glyph (the planned Cinzel face also lacks U+2715)
 - [Phase 13]: Cinzel Regular fetched from Google's CSS delivery API (legacy-browser User-Agent) rather than google/fonts' GitHub repo, which now only ships a variable font that ab_glyph cannot reliably instantiate to one weight
 - [Phase 13]: dynamic.json loads read-only exactly once at OverlayApp::new() startup -- no reload mechanism yet, since nothing in src/overlay/ can mutate the store this phase (D-20)
+- [Phase 13]: Hotkey rebound from Shift+Z to Ctrl+Shift+Z at the author's request during live in-game verification, to keep Shift+Z free for other bindings (commit 15bff2f)
+- [Phase 13]: Game-dimming behind the overlay stripe is a recorded design request, not implemented -- it would require a second full-screen translucent window, conflicting with SHELL-03/D-12/D-13's opaque/non-passthrough/sub-screen constraints
 
 ### Pending Todos
 
@@ -132,8 +135,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-04T19:37:25.949Z
-Stopped at: Completed 13-04-PLAN.md
+Last session: 2026-09-06T17:43:46.535Z
+Stopped at: Completed 13-05-PLAN.md -- Phase 13 Overlay Shell complete
 Resume file: None
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

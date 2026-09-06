@@ -33,9 +33,9 @@ pub fn launch() -> eframe::Result<()> {
     // tooltip and a disabled menu line name the combo and the reason, so the
     // failure is visible with no console open.
     let (tooltip, status_line) = match &hotkey_status {
-        HotkeyStatus::Registered { .. } => ("FerrisFilter — Shift+Z to toggle".to_string(), None),
+        HotkeyStatus::Registered { .. } => ("FerrisFilter — Ctrl+Shift+Z to toggle".to_string(), None),
         HotkeyStatus::Failed(err) => {
-            let msg = format!("FerrisFilter — Shift+Z unavailable: {err}");
+            let msg = format!("FerrisFilter — Ctrl+Shift+Z unavailable: {err}");
             (msg.clone(), Some(msg))
         }
     };

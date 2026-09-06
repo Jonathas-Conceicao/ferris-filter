@@ -1,4 +1,4 @@
-//! Global `Shift+Z` toggle hotkey registration, and a status value a caller
+//! Global `Ctrl+Shift+Z` toggle hotkey registration, and a status value a caller
 //! can surface without a console (D-09, D-10).
 //!
 //! Thread affinity: `register_toggle()` must be called on the thread that
@@ -9,14 +9,19 @@
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::GlobalHotKeyManager;
 
-/// `Shift+Z`, hardcoded this phase (D-09).
+/// `Ctrl+Shift+Z`, hardcoded this phase (D-09).
 ///
-/// **Accepted trade:** `global-hotkey` registers system-wide, so this combo
-/// is captured in *every* application on the machine while the overlay is
-/// running — including PoE2's own chat box and any text field elsewhere on
-/// the machine. Changing it is a one-constant edit (e.g. `Ctrl+Shift+Z`,
-/// `Alt+Z`) if it proves annoying in play.
-pub const TOGGLE_MODIFIERS: Modifiers = Modifiers::SHIFT;
+/// Was plain `Shift+Z` through most of Phase 13. The author changed it after
+/// in-game verification (2026-09-06): `global-hotkey` registers system-wide,
+/// so `Shift+Z` was swallowed everywhere on the machine — including PoE2's
+/// own chat box — which cost a common typing combo for no benefit. Adding
+/// Control keeps the same mnemonic while leaving plain `Shift+Z` free.
+///
+/// The system-wide capture itself is inherent to a global hotkey, not a
+/// defect: `Ctrl+Shift+Z` is still owned by this process everywhere while the
+/// overlay runs (notably, it is redo in some editors). Changing it remains a
+/// one-constant edit.
+pub const TOGGLE_MODIFIERS: Modifiers = Modifiers::CONTROL.union(Modifiers::SHIFT);
 pub const TOGGLE_CODE: Code = Code::KeyZ;
 
 /// Outcome of attempting to register the toggle hotkey.
@@ -35,7 +40,7 @@ pub enum HotkeyStatus {
 
 /// Registers the toggle hotkey.
 ///
-/// Never panics: another application already owning `Shift+Z` is an
+/// Never panics: another application already owning `Ctrl+Shift+Z` is an
 /// expected outcome, not a crash (D-10).
 ///
 /// Returns the manager alongside the status because the manager must be kept
@@ -64,7 +69,7 @@ mod tests {
     #[test]
     fn toggle_combo_is_shift_z() {
         // D-09: stays a single-constant change if this ever needs to move.
-        assert_eq!(TOGGLE_MODIFIERS, Modifiers::SHIFT);
+        assert_eq!(TOGGLE_MODIFIERS, Modifiers::CONTROL.union(Modifiers::SHIFT));
         assert_eq!(TOGGLE_CODE, Code::KeyZ);
     }
 

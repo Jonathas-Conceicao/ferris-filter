@@ -44,12 +44,12 @@ pub struct OverlayApp {
     #[allow(dead_code)]
     hotkey_manager: Option<GlobalHotKeyManager>,
 
-    /// Registration outcome for `Shift+Z` (D-09, D-10). Read every frame to
+    /// Registration outcome for `Ctrl+Shift+Z` (D-09, D-10). Read every frame to
     /// filter incoming `GlobalHotKeyEvent`s to the one combo this app
     /// registered.
     hotkey_status: HotkeyStatus,
 
-    /// Set by the tray's left click, a `Shift+Z` press, or a tray "Show"
+    /// Set by the tray's left click, a `Ctrl+Shift+Z` press, or a tray "Show"
     /// while currently hidden. Consumed once per frame by
     /// [`visibility::advance`].
     toggle_requested: bool,
@@ -95,7 +95,7 @@ impl OverlayApp {
             // (`with_active(false)` only suppresses activation, not
             // visibility) and has never been focused — `ShownUnfocused` is
             // the state that matches that physical reality. Starting here
-            // (rather than `Hidden`) is what makes the very first `Shift+Z`
+            // (rather than `Hidden`) is what makes the very first `Ctrl+Shift+Z`
             // press after launch hide the stripe, matching the checkpoint
             // script's step 3.
             visibility: Visibility::ShownUnfocused,

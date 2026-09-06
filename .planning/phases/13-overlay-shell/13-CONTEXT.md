@@ -59,6 +59,11 @@ a Phase 13 failure means *the stripe is broken*, not *the editor is broken*.
   text. **This lifts a constraint on Phase 14:** typed numeric entry for sockets and quality is
   viable, so its controls need not be mouse-only.
 - **D-09: The toggle hotkey is `Shift+Z`, hardcoded this phase.**
+  > **SUPERSEDED 2026-09-06 → `Ctrl+Shift+Z`.** The trade recorded below turned out to be the
+  > wrong side of the bargain once tested in-game: plain `Shift+Z` is a combination you type by
+  > accident, so the system-wide registration cost a common keystroke everywhere on the machine
+  > for no gain. Adding Control keeps the mnemonic and frees `Shift+Z`. The system-wide capture
+  > itself is inherent to a global hotkey and remains accepted. Shipped in `src/overlay/hotkey.rs`.
   **Known trade, accepted by the author:** `global-hotkey` registers system-wide, so `Shift+Z` is
   captured in *every* application — including PoE2's chat box and any text field on the machine.
   It is a one-constant change (`Ctrl+Shift+Z`, `Alt+Z`) if it proves annoying in play.

@@ -90,6 +90,21 @@ impl InputPaths {
         self.config = path.into();
         self
     }
+
+    /// Override just the tier-cutoff path, leaving prices and everything else untouched.
+    ///
+    /// This exists to decouple *which prices* from *which cutoffs*. `--early-game` swaps both
+    /// together, which is right when there is no economy data at all. But early in a live league
+    /// there IS data, and it is the chaos-denominated cutoffs in `tiers.json` that misbehave:
+    /// chaos is expensive in a young economy, so measuring against it compresses the whole scale
+    /// downward (observed 2026-09-06 in Forbidden Rites — Divine landed in A and Exalted in F).
+    /// Pointing this at the exalt-denominated `tiers-fallback.json` while keeping live prices
+    /// restores sane placement without touching the committed `tiers.json` the test oracle
+    /// depends on.
+    pub fn with_tiers(mut self, path: impl Into<PathBuf>) -> Self {
+        self.tiers = path.into();
+        self
+    }
 }
 
 /// What the caller wants the loader to do about price sources.
@@ -313,6 +328,30 @@ mod tests {
         assert_eq!(p.prices_fallback, Path::new("prices-fallback.json"));
         assert_eq!(p.tiers_fallback, Path::new("tiers-fallback.json"));
         assert_eq!(p.prices_fallback.to_string_lossy(), "prices-fallback.json");
+    }
+
+    #[test]
+    fn with_tiers_overrides_only_the_tiers_path() {
+        let base = InputPaths::relative_to("/tmp/root");
+        let overridden = base.clone().with_tiers("tiers-fallback.json");
+        assert_eq!(overridden.tiers, Path::new("tiers-fallback.json"));
+        // Prices in particular must be untouched — the whole point of this override is to keep
+        // live prices while changing only the cutoffs. If it moved prices too it would be
+        // `--early-game` under a different name.
+        assert_eq!(overridden.prices, base.prices);
+        assert_eq!(overridden.config, base.config);
+        assert_eq!(overridden.prices_fallback, base.prices_fallback);
+        assert_eq!(overridden.tiers_fallback, base.tiers_fallback);
+    }
+
+    #[test]
+    fn with_config_and_with_tiers_compose() {
+        let paths = InputPaths::conventional()
+            .with_config("dynamic.json")
+            .with_tiers("tiers-fallback.json");
+        assert_eq!(paths.config, Path::new("dynamic.json"));
+        assert_eq!(paths.tiers, Path::new("tiers-fallback.json"));
+        assert_eq!(paths.prices, Path::new("prices.json"));
     }
 
     #[test]

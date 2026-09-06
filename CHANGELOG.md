@@ -11,7 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`ff` — the overlay GUI binary**, now `cargo build`'s default output (`default-run = "ff"`).
+  Opens an opaque, undecorated, always-on-top vertical stripe docked to the right screen edge
+  over a running Path of Exile 2, styled in PoE2's own Options-menu palette (Cinzel display font,
+  bronze header plate, zebra-striped rows). A Ferris tray icon with a Show/Quit menu keeps the
+  process reachable while the stripe is hidden; a system-wide `Shift+Z` hotkey summons and hides
+  it without alt-tabbing and without stealing keyboard focus from the game. The stripe currently
+  shows the rules in `dynamic.json` **read-only**, in ordinal order — editing lands in Phase 14.
+- **`ff-cli` — the short-name console CLI**, identical to `ferrisfilter`, just shorter to type.
+  Holds the console entry point `ff` used before it became the GUI binary. `ferrisfilter` itself
+  is unchanged.
 
 ## [0.3.0] - 2026-06-27
 

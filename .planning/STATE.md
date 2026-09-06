@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: verifying
-stopped_at: Completed 13-05-PLAN.md -- Phase 13 Overlay Shell complete
-last_updated: "2026-09-06T17:43:46.543Z"
+stopped_at: Phase 13 complete (verified 5/5)
+last_updated: "2026-09-06T17:50:48.840Z"
 last_activity: 2026-09-06
 progress:
   total_phases: 6
@@ -135,8 +135,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-06T17:43:46.535Z
-Stopped at: Completed 13-05-PLAN.md -- Phase 13 Overlay Shell complete
-Resume file: None
+Last session: 2026-09-06T17:50:48.835Z
+Stopped at: Phase 13 complete (verified 5/5)
+Resume file: .planning/phases/13-overlay-shell/13-VERIFICATION.md
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

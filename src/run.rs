@@ -22,20 +22,45 @@ use crate::{install, sync};
 pub fn run() -> miette::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Generate { config, output, early_game } => cmd_generate(&config, &output, early_game)?,
-        Commands::Apply { store, base, dest, reset } => cmd_apply(&store, &base, dest, reset)?,
-        Commands::Sync { standard, hc, sub } => sync::cmd_sync(standard, hc, sub)?,
+        Commands::Generate {
+            config,
+            output,
+            early_game,
+            tiers,
+        } => cmd_generate(&config, &output, early_game, tiers.as_deref())?,
+        Commands::Apply {
+            store,
+            base,
+            dest,
+            reset,
+            tiers,
+        } => cmd_apply(&store, &base, dest, reset, tiers.as_deref())?,
+        Commands::Sync {
+            standard,
+            hc,
+            league,
+            sub,
+        } => sync::cmd_sync(standard, hc, league, sub)?,
         Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
     }
     Ok(())
 }
 
-fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Result<()> {
+fn cmd_generate(
+    config_path: &str,
+    output: &str,
+    early_game: bool,
+    tiers: Option<&str>,
+) -> miette::Result<()> {
     // Bare relative names, resolved against the process working directory — exactly the paths
     // this function passed before the compile API existed. `conventional()` rather than
     // `relative_to(".")` because the latter would render as `./config.json` and change every
     // error message that names a file.
-    let paths = InputPaths::conventional().with_config(config_path);
+    let mut paths = InputPaths::conventional().with_config(config_path);
+    if let Some(t) = tiers {
+        eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
+        paths = paths.with_tiers(t);
+    }
 
     let policy = if early_game {
         // Emitted BEFORE loading, gated on the flag rather than derived from the returned
@@ -90,7 +115,13 @@ fn cmd_generate(config_path: &str, output: &str, early_game: bool) -> miette::Re
 ///
 /// The dynamic counterpart to `generate` + `install` in one step. All presentation lives here;
 /// `crate::dynamic` returns values and prints nothing.
-fn cmd_apply(store: &str, base: &str, dest: Option<String>, reset: bool) -> miette::Result<()> {
+fn cmd_apply(
+    store: &str,
+    base: &str,
+    dest: Option<String>,
+    reset: bool,
+    tiers: Option<&str>,
+) -> miette::Result<()> {
     let store_path = Path::new(store);
     let base_path = Path::new(base);
 
@@ -104,8 +135,12 @@ fn cmd_apply(store: &str, base: &str, dest: Option<String>, reset: bool) -> miet
         }
     }
 
-    let compiled = dynamic::compile_store(&InputPaths::conventional(), store_path)
-        .map_err(miette::Error::from)?;
+    let mut paths = InputPaths::conventional();
+    if let Some(t) = tiers {
+        eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
+        paths = paths.with_tiers(t);
+    }
+    let compiled = dynamic::compile_store(&paths, store_path).map_err(miette::Error::from)?;
 
     // Same wording cmd_generate uses for the same conditions — one message per situation, not two
     // spellings of it.

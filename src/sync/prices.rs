@@ -417,13 +417,14 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     client: &C,
     standard: bool,
     hc: bool,
+    league: Option<&str>,
 ) -> miette::Result<()> {
-    use crate::sync::league::{fetch_index_state, resolve_league};
+    use crate::sync::league::{fetch_index_state, resolve_league_with_override};
     use crate::sync::mapping::load_mapping;
 
     // Step 1: resolve league
     let state = fetch_index_state(client).await?;
-    let league_name = resolve_league(&state, standard, hc)?;
+    let league_name = resolve_league_with_override(&state, standard, hc, league)?;
     println!("Resolved league: {league_name}");
 
     // Step 2: load committed mapping

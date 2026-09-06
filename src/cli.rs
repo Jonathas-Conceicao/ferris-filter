@@ -22,6 +22,14 @@ pub enum Commands {
         /// even when a live prices.json exists
         #[arg(long)]
         early_game: bool,
+        /// Tier-cutoff file to use instead of tiers.json.
+        ///
+        /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
+        /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
+        /// Unlike --early-game this keeps your live prices.json.
+        #[arg(long)]
+        tiers: Option<String>,
+
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
     Sync {
@@ -31,6 +39,14 @@ pub enum Commands {
         /// Target the Hardcore variant (combine with --standard for permanent Hardcore)
         #[arg(long)]
         hc: bool,
+        /// Fetch a specific league by display name or url slug, e.g.
+        /// --league "Forbidden Rites" (or --league forbiddenrites).
+        ///
+        /// Overrides --standard/--hc. Needed during a league transition: poe.ninja lists the
+        /// new league before flagging it as indexed, so the automatic softcore pick still
+        /// resolves to the outgoing league even though the new one already has live data.
+        #[arg(long)]
+        league: Option<String>,
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
     },
@@ -53,6 +69,14 @@ pub enum Commands {
         /// Discard the current store and restore it from the base before compiling
         #[arg(long)]
         reset: bool,
+        /// Tier-cutoff file to use instead of tiers.json.
+        ///
+        /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
+        /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
+        /// Unlike --early-game this keeps your live prices.json.
+        #[arg(long)]
+        tiers: Option<String>,
+
     },
     /// Copy a generated .filter into the PoE2 config folder so it takes effect in-game
     Install {

@@ -1,5 +1,6 @@
 //! The expanded rule body — EDIT-03 through EDIT-08's editing vocabulary made visible: style,
-//! classes, rarity, defences, sockets, quality, corrupted. Every control here writes through
+//! classes, rarity, defences, sockets, quality, corrupted, unidentified tier. Every control
+//! here writes through
 //! [`super::edit`]'s pure mutation functions rather than assigning a `When` field inline (D-18,
 //! roadmap success criterion 8) — this file only decides *what to draw* and *which `edit::`
 //! function to call in response to a click*, never *what a `When` field's value should become*.
@@ -31,6 +32,12 @@
 //! - **corrupted** — one `circular_toggle` ([`render_corrupted`]), deliberately reusing the same
 //!   enable-toggle vocabulary as every other condition instead of a bespoke tri-state widget
 //!   (RESEARCH Pattern 2) — do not "improve" this into a three-way cycling control.
+//! - **unidentified tier** — one `circular_toggle` ([`render_unidentified_tier`]). Added
+//!   2026-09-07 after live use found the condition displayed in the row summary but uneditable;
+//!   EDIT-07 never named it, so the omission came from the requirement rather than execution.
+//!
+//! Not exposed here: `baseType` (no config list to source exact base names from, and no dynamic
+//! rule uses it) and `areaLevel` (deliberately outside the dynamic vocabulary, DYN-05).
 //!
 //! This inventory is auditable by reading this file, not by clicking through the accordion.
 
@@ -95,8 +102,9 @@ fn render_style(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId)
 }
 
 /// EDIT-04/D-10: a grouped, collapsible class picker sourced from the config's own class lists
-/// ([`edit::class_groups`]) — three `CollapsingHeader`s (WEAPONS/ARMOUR/FLASKS & CHARMS),
-/// collapsed by default so 21 checkboxes never swamp the stripe at once. The selected count is
+/// ([`edit::class_groups`]) — one `CollapsingHeader` per group (WEAPONS / ARMOUR / JEWELLERY /
+/// FLASKS & CHARMS), collapsed by default so two dozen checkboxes never swamp the stripe at once.
+/// Empty groups are omitted by `class_groups` rather than rendered as a bare header. The selected count is
 /// shown in each group's header text so a collapsed group still tells the player something.
 ///
 /// EDIT-08 for classes: there is no separate "classes off" toggle; deselecting the last class
@@ -326,8 +334,13 @@ fn render_quality(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
 /// and the collapsed summary showed it, but nothing could change it. EDIT-07 enumerated only
 /// sockets, quality and corrupted, so the gap came from the requirement, not from execution.
 ///
-/// The range stops at 10 because PoE2's unidentified tier indicator tops out well below that;
-/// the model's `min` is `u32`, so the widget is bounded at 0 rather than clamping a signed value.
+/// Uses a 1..=5 integer slider rather than the drag-value the other numeric conditions use:
+/// PoE2's unidentified tier is a small, fully-enumerable scale, so every valid position is
+/// visible at once and an out-of-range value cannot be typed or dragged in. Sockets and quality
+/// keep their drag-values because their ranges are wider and less evenly meaningful.
+///
+/// Author's request, 2026-09-07. The first cut shipped a 0..=10 drag-value, which allowed tiers
+/// the game does not have.
 fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
     ui.label(
@@ -343,30 +356,40 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
     ui.horizontal(|ui| {
         if widgets::circular_toggle(ui, &mut enabled).changed() {
             if enabled {
-                edit::set_unidentified_tier_min(edit::when_mut(rule), 4);
+                edit::set_unidentified_tier_min(edit::when_mut(rule), edit::UNIDENTIFIED_TIER_DEFAULT);
             } else if let Some(when) = rule.when.as_mut() {
                 edit::clear_unidentified_tier(when);
             }
             changed = true;
         }
         ui.label("min tier");
-
-        if enabled {
-            let mut min = rule
-                .when
-                .as_ref()
-                .and_then(|when| when.unidentified_tier.as_ref())
-                .map(|ut| ut.min)
-                .unwrap_or(4);
-            if ui
-                .add(egui::DragValue::new(&mut min).range(0..=10).speed(0.2))
-                .changed()
-            {
-                edit::set_unidentified_tier_min(edit::when_mut(rule), min);
-                changed = true;
-            }
-        }
     });
+
+    if enabled {
+        let mut min = rule
+            .when
+            .as_ref()
+            .and_then(|when| when.unidentified_tier.as_ref())
+            .map(|ut| ut.min)
+            .unwrap_or(edit::UNIDENTIFIED_TIER_DEFAULT)
+            .clamp(edit::UNIDENTIFIED_TIER_MIN, edit::UNIDENTIFIED_TIER_MAX);
+        // Full width on its own row: at 460px the slider needs the space to keep its five
+        // positions distinguishable, which is the whole reason it is a slider and not a
+        // drag-value.
+        if ui
+            .add(
+                egui::Slider::new(
+                    &mut min,
+                    edit::UNIDENTIFIED_TIER_MIN..=edit::UNIDENTIFIED_TIER_MAX,
+                )
+                .integer(),
+            )
+            .changed()
+        {
+            edit::set_unidentified_tier_min(edit::when_mut(rule), min);
+            changed = true;
+        }
+    }
 
     changed
 }

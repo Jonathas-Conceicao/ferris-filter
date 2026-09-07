@@ -356,6 +356,19 @@ pub fn clear_quality(when: &mut When) {
     when.quality = None;
 }
 
+/// The bounds of PoE2's unidentified-tier scale. It is a small enumerable range, not an
+/// open-ended count like sockets or quality, which is why the editor offers it as a five-position
+/// slider rather than a drag-value — every valid tier is visible at once and an out-of-range
+/// value cannot be entered.
+///
+/// Kept here rather than in the presentation layer so the bound is stated once, beside the
+/// setter it constrains (`PITFALLS.md` §10's principle applied to a numeric range).
+pub const UNIDENTIFIED_TIER_MIN: u32 = 1;
+pub const UNIDENTIFIED_TIER_MAX: u32 = 5;
+/// What enabling the condition starts at — the threshold `dynamic_base.json`'s rules 7 and 8
+/// already use.
+pub const UNIDENTIFIED_TIER_DEFAULT: u32 = 4;
+
 /// Sets the unidentified-item-tier minimum, emitting `UnidentifiedItemTier >= min`.
 ///
 /// Added 2026-09-07 after live use: `dynamic_base.json`'s rules 7 and 8 both carry this
@@ -805,6 +818,19 @@ mod tests {
     }
 
     // -- unidentified tier (gap found in live use 2026-09-07) ----------------------
+
+    #[test]
+    fn the_unidentified_tier_scale_matches_the_games_and_the_default_sits_inside_it() {
+        // PoE2's unidentified tier runs 1..=5. The editor offers a five-position slider, so a
+        // widened range here would silently let the player pick a tier the game never assigns —
+        // a rule that matches nothing, with no error to explain why.
+        assert_eq!(UNIDENTIFIED_TIER_MIN, 1);
+        assert_eq!(UNIDENTIFIED_TIER_MAX, 5);
+        assert!(
+            (UNIDENTIFIED_TIER_MIN..=UNIDENTIFIED_TIER_MAX).contains(&UNIDENTIFIED_TIER_DEFAULT),
+            "enabling the condition must start at a tier the slider can actually show"
+        );
+    }
 
     #[test]
     fn set_unidentified_tier_min_emits_the_threshold_line() {

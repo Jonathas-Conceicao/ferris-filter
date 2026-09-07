@@ -22,11 +22,12 @@ use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
 
-use crate::models::config::{Config, Rule};
+use crate::models::config::Config;
 
 use super::edit::{RuleId, WorkingRules};
 use super::hotkey::HotkeyStatus;
 use super::layout;
+use super::rule_editor;
 use super::store;
 use super::theme;
 use super::tray::{self, OverlayCommand, TrayHandles};
@@ -312,6 +313,11 @@ impl eframe::App for OverlayApp {
                         .as_ref()
                         .map(view_model::rule_rows)
                         .unwrap_or_default();
+                    // Held across the whole row loop so plan 14-03's condition editors can read
+                    // the style/class option lists (`edit::available_styles`/`class_groups`) --
+                    // a disjoint borrow of `self.config`, independent of `self.rules` (`working`,
+                    // below), exactly like `self.config.as_mut()` two lines above already is.
+                    let config_ref = self.config.as_ref();
 
                     // Snapshot this frame's starting expansion state once, so every row's
                     // `is_open` reflects the same moment regardless of what an earlier row in
@@ -320,21 +326,30 @@ impl eframe::App for OverlayApp {
                     let mut next_expanded = expanded_at_frame_start;
                     let confirm_delete = self.confirm_delete;
 
-                    // Every row control below only *records* what it was asked to do —
-                    // `working` is being walked immutably (`working.rows()`) for display at the
-                    // same time, so the actual `WorkingRules` mutation happens once, after the
-                    // loop ends, in the standard immediate-mode "collect intent, mutate after"
-                    // shape (mirrors `next_expanded` above, one level up).
+                    // Every row-structure control below (arrows/toggle/delete/add) only
+                    // *records* what it was asked to do -- `working`'s array itself must not be
+                    // mutated while `row_ids` (captured just below) is being walked, so those
+                    // mutations happen once, after the loop ends, in the standard immediate-mode
+                    // "collect intent, mutate after" shape (mirrors `next_expanded` above, one
+                    // level up). Condition edits inside a row's own body (plan 14-03) are
+                    // different: they mutate only that one rule's fields via `working.rule_mut`,
+                    // which never touches array structure/order, so those apply immediately
+                    // rather than through `RowAction`.
                     let mut pending_action: Option<RowAction> = None;
+                    let mut body_dirty = false;
+
+                    let row_ids: Vec<RuleId> = working.rows().iter().map(|(id, _)| *id).collect();
+                    let row_count = row_ids.len();
 
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
-                            let row_count = working.rows().len();
-                            for (ordinal, (id, rule)) in working.rows().iter().enumerate() {
-                                let id = *id;
+                            for (ordinal, id) in row_ids.iter().copied().enumerate() {
                                 let is_open = expanded_at_frame_start == Some(id);
                                 let is_confirming = confirm_delete == Some(id);
+                                let Some(rule) = working.rule_mut(id) else {
+                                    continue;
+                                };
                                 let enabled = rule.enabled != Some(false);
                                 let header_text = display_rows
                                     .get(ordinal)
@@ -395,7 +410,13 @@ impl eframe::App for OverlayApp {
                                         .id_salt(id)
                                         .open(Some(is_open))
                                         .show(ui, |ui| {
-                                            render_rule_body(ui, rule);
+                                            if let Some(config) = config_ref {
+                                                if rule_editor::render_rule_body(
+                                                    ui, rule, config, id,
+                                                ) {
+                                                    body_dirty = true;
+                                                }
+                                            }
                                         });
 
                                     if header.header_response.clicked() {
@@ -424,9 +445,13 @@ impl eframe::App for OverlayApp {
                     });
 
                     self.expanded = next_expanded;
+                    if body_dirty {
+                        self.dirty = true;
+                    }
 
-                    // The one place `working` is actually mutated this frame -- `working.rows()`
-                    // above is no longer borrowed once the closures that used it have returned.
+                    // The one place `working`'s array structure is actually mutated this frame --
+                    // `row_ids`/`working.rule_mut` above no longer borrow it once the closures
+                    // that used them have returned.
                     if let Some(action) = pending_action {
                         match action {
                             RowAction::MoveUp(id) => {
@@ -531,24 +556,4 @@ enum RowAction {
 fn row_header_text(row: &view_model::RuleRow) -> String {
     let marker = if row.enabled { "" } else { " [DISABLED]" };
     format!("{:02}  {}{}  —  {}", row.ordinal, row.style, marker, row.summary)
-}
-
-/// The expanded row's body.
-///
-/// Plan 14-02 (this file) renders only a placeholder naming the rule being edited — plan 14-03
-/// replaces this with the actual condition editors (style/class/rarity/defence/sockets/quality/
-/// corrupted). Kept as a single call site so the accordion, the `RuleId` identity handling, and
-/// the save path (Task 3) can be judged on their own, independent of the conditions UI. Returns
-/// whether anything changed, for the caller's dirty-tracking — always `false` here since nothing
-/// in this plan can yet mutate a rule from inside its own body.
-fn render_rule_body(ui: &mut egui::Ui, rule: &Rule) -> bool {
-    ui.label(
-        egui::RichText::new(format!(
-            "(\"{}\" rule — condition editors arrive in plan 14-03)",
-            rule.style
-        ))
-        .color(theme::DISABLED_TEXT)
-        .small(),
-    );
-    false
 }

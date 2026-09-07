@@ -951,7 +951,14 @@ and the same theme constants, none of which this research found any reason to re
 | A3 | egui's default fallback font (not just Cinzel) also lacks arrow glyphs (▲/▼), making the hand-painted-triangle fallback necessary rather than optional | Pitfall 4 | Low — even if the glyphs do render, the hand-painted approach is strictly safe as a first implementation given Phase 13's own precedent; this assumption only affects whether a simpler `ui.button("▲")` can be tried first before falling back |
 | A4 | No `slopcheck` verification ran against `egui_kittest` (tool unavailable in this environment, same as Phase 13) | Package Legitimacy Audit | Low — `egui_kittest` is optional this phase (not a required dependency), published by the same org/repo as the already-trusted `egui`/`eframe`, and gated behind a `checkpoint:human-verify` per protocol if the planner adopts it |
 
-## Open Questions
+## Open Questions (RESOLVED — both routed to manual verification during planning)
+
+> Neither is a correctness risk; both are look-at-it questions that only a running window can
+> settle, so planning routed each to a named checkpoint rather than leaving it open.
+> **Q1** (does externally-driven `.open()` fight egui internal collapse animation?) →
+> `14-MANUAL-VERIFICATION.md` item 1, the accordion-feel check.
+> **Q2** (does `scroll_to_me` bring an expanded body into view, not just its header?) →
+> `14-MANUAL-VERIFICATION.md` item 2, the scroll-into-view check.
 
 1. **Does the visual result of `.open(Some(bool))` driven every frame from `OverlayApp`'s own state
    ever visibly "fight" egui's internal collapse animation** (e.g. a one-frame flicker when the

@@ -141,6 +141,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 **Plans**: 4 plans
 
 Plans:
+
 - [ ] 14-01-PLAN.md — pure mutation layer (RuleId/WorkingRules + every condition set/clear), atomic store::save, and the flask/reorder end-to-end tests
 - [ ] 14-02-PLAN.md — the accordion, painted toggle/arrow controls, add/delete/reorder/enable, and the per-frame autosave
 - [ ] 14-03-PLAN.md — the condition editors: style, classes, rarity, defences, sockets, quality, corrupted
@@ -165,7 +166,7 @@ Plans:
 | 11. Callable Compile API | v0.4 | 2/2 | Complete | 2026-09-03 |
 | 12. Dynamic Rule Store | v0.4 | 2/2 | Complete | 2026-09-04 |
 | 13. Overlay Shell | v0.4 | 5/5 | Complete   | 2026-09-06 |
-| 14. Rule Editor + Apply | v0.4 | 0/? | Not started | - |
+| 14. Rule Editor + Apply | v0.4 | 0/4 | Planned    |  |
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 shipped 2026-06-27. v0.4 roadmap defined 2026-09-03.*
@@ -182,7 +183,7 @@ S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` ma
 by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
 `FUTURE` comments already mark both code locations.
 **Requirements:** TBD
-**Plans:** 5/5 plans complete
+**Plans:** 0/4 plans executed
 
 Plans:
 

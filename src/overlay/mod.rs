@@ -7,6 +7,7 @@
 //! `dynamic.json` or the filter compiler.
 
 pub mod app;
+pub mod edit;
 pub mod hotkey;
 pub mod layout;
 pub mod store;

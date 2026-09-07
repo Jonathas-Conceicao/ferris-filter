@@ -92,6 +92,24 @@ pub struct OverlayApp {
     /// `WorkingRules`' array positions but never invalidates a `RuleId`, so this field is never
     /// re-resolved after a move.
     expanded: Option<RuleId>,
+
+    /// The rule a delete click is asking to confirm (D-08): while `Some(id)`, that row's normal
+    /// controls (arrows/toggle/delete) are replaced with `Delete? [Yes] [Cancel]` instead of a
+    /// second window or modal. Opening a confirm on a different row silently replaces the
+    /// pending one — only one confirm can be live at a time, by construction (a single
+    /// `Option`, not a per-row bool).
+    confirm_delete: Option<RuleId>,
+
+    /// Set by any row control that mutates `rules` (move/toggle/delete/add) or, in plan 14-03,
+    /// an edited condition. Consumed exactly once per frame by the coalesced autosave (D-02,
+    /// RESEARCH Pattern 5) — never per keystroke, never on a timer.
+    dirty: bool,
+
+    /// The most recent autosave failure, if any, rendered in the stripe rather than printed
+    /// (T-14-01: a write failure must produce a message the player can see, not take the
+    /// process down or vanish into a console the GUI subsystem has none of). Plan 14-04 owns
+    /// the wider error/status surface this eventually joins.
+    last_save_error: Option<String>,
 }
 
 impl OverlayApp {
@@ -134,6 +152,9 @@ impl OverlayApp {
             config,
             store_path,
             expanded: None,
+            confirm_delete: None,
+            dirty: false,
+            last_save_error: None,
         }
     }
 }
@@ -188,7 +209,12 @@ impl eframe::App for OverlayApp {
             }
         }
 
-        // Poll the tray menu's Show/Quit events.
+        // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here — the
+        // actual close-the-viewport send is deferred to after the body renders and the autosave
+        // runs (RESEARCH Risk 4 / T-14-06): D-14 still makes Quit the only path that ends the
+        // process, but the *order* within this frame is what guarantees the last edit is not
+        // lost — see the comment at the deferred send site near the end of this function.
+        let mut quit_requested = false;
         if let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
             match tray::command_for_menu(&event.id, &self.tray) {
                 Some(OverlayCommand::Show) => {
@@ -202,8 +228,7 @@ impl eframe::App for OverlayApp {
                 }
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
                 Some(OverlayCommand::Quit) => {
-                    // D-14: Quit is the only path that ends the process.
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    quit_requested = true;
                 }
                 None => {}
             }
@@ -264,13 +289,21 @@ impl eframe::App for OverlayApp {
             // remainder stays empty panel ground rather than shrinking the window (D-23) -- the
             // ScrollArea below only grows as tall as its rows, it does not stretch to fill the
             // CentralPanel.
-            match &self.rules {
+            if let Some(message) = &self.last_save_error {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(10.0);
+                    ui.colored_label(theme::WARM_ACCENT, message);
+                });
+                ui.add_space(4.0);
+            }
+
+            match &mut self.rules {
                 Ok(working) => {
                     // Summaries are recomputed from the live working model every frame, reusing
                     // `view_model::rule_rows`'s existing summary derivation (the same one-line
                     // collapsed text 13-04 rendered) rather than duplicating that logic here.
                     // `config.rules` is kept in sync with `working` first so the two can never
-                    // drift, including once Task 3 adds mutation.
+                    // drift once a control below mutates it.
                     if let Some(config) = self.config.as_mut() {
                         config.rules = Some(working.to_rules());
                     }
@@ -285,19 +318,79 @@ impl eframe::App for OverlayApp {
                     // this same frame's loop does to `next_expanded`.
                     let expanded_at_frame_start = self.expanded;
                     let mut next_expanded = expanded_at_frame_start;
+                    let confirm_delete = self.confirm_delete;
+
+                    // Every row control below only *records* what it was asked to do —
+                    // `working` is being walked immutably (`working.rows()`) for display at the
+                    // same time, so the actual `WorkingRules` mutation happens once, after the
+                    // loop ends, in the standard immediate-mode "collect intent, mutate after"
+                    // shape (mirrors `next_expanded` above, one level up).
+                    let mut pending_action: Option<RowAction> = None;
 
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
+                            let row_count = working.rows().len();
                             for (ordinal, (id, rule)) in working.rows().iter().enumerate() {
                                 let id = *id;
                                 let is_open = expanded_at_frame_start == Some(id);
+                                let is_confirming = confirm_delete == Some(id);
+                                let enabled = rule.enabled != Some(false);
                                 let header_text = display_rows
                                     .get(ordinal)
                                     .map(row_header_text)
                                     .unwrap_or_else(|| rule.style.clone());
 
                                 widgets::zebra_row(ui, ordinal, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if is_confirming {
+                                            ui.colored_label(theme::WARM_ACCENT, "Delete?");
+                                            if ui
+                                                .button(
+                                                    egui::RichText::new("Yes")
+                                                        .color(theme::WARM_ACCENT),
+                                                )
+                                                .clicked()
+                                            {
+                                                pending_action =
+                                                    Some(RowAction::ConfirmDelete(id));
+                                            }
+                                            if ui.button("Cancel").clicked() {
+                                                pending_action = Some(RowAction::CancelDelete);
+                                            }
+                                        } else {
+                                            if widgets::arrow_button(
+                                                ui,
+                                                widgets::ArrowDirection::Up,
+                                                ordinal != 0,
+                                            )
+                                            .clicked()
+                                            {
+                                                pending_action = Some(RowAction::MoveUp(id));
+                                            }
+                                            if widgets::arrow_button(
+                                                ui,
+                                                widgets::ArrowDirection::Down,
+                                                ordinal + 1 != row_count,
+                                            )
+                                            .clicked()
+                                            {
+                                                pending_action = Some(RowAction::MoveDown(id));
+                                            }
+                                            let mut checked = enabled;
+                                            if widgets::circular_toggle(ui, &mut checked)
+                                                .changed()
+                                            {
+                                                pending_action =
+                                                    Some(RowAction::ToggleEnabled(id));
+                                            }
+                                            if ui.small_button("Delete").clicked() {
+                                                pending_action =
+                                                    Some(RowAction::RequestDelete(id));
+                                            }
+                                        }
+                                    });
+
                                     let header = egui::CollapsingHeader::new(header_text)
                                         .id_salt(id)
                                         .open(Some(is_open))
@@ -322,7 +415,62 @@ impl eframe::App for OverlayApp {
                             }
                         });
 
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        if ui.button("+ ADD RULE").clicked() {
+                            pending_action = Some(RowAction::Add);
+                        }
+                    });
+
                     self.expanded = next_expanded;
+
+                    // The one place `working` is actually mutated this frame -- `working.rows()`
+                    // above is no longer borrowed once the closures that used it have returned.
+                    if let Some(action) = pending_action {
+                        match action {
+                            RowAction::MoveUp(id) => {
+                                if working.move_up(id) {
+                                    self.dirty = true;
+                                }
+                            }
+                            RowAction::MoveDown(id) => {
+                                if working.move_down(id) {
+                                    self.dirty = true;
+                                }
+                            }
+                            RowAction::ToggleEnabled(id) => {
+                                working.toggle_enabled(id);
+                                self.dirty = true;
+                            }
+                            RowAction::RequestDelete(id) => {
+                                // D-08: opening a confirm on a different row silently replaces
+                                // whichever one was pending -- a single `Option`, not a per-row
+                                // bool, makes "only one confirm live at a time" true by
+                                // construction rather than something to enforce separately.
+                                self.confirm_delete = Some(id);
+                            }
+                            RowAction::ConfirmDelete(id) => {
+                                working.delete(id);
+                                self.confirm_delete = None;
+                                if self.expanded == Some(id) {
+                                    self.expanded = None;
+                                }
+                                self.dirty = true;
+                            }
+                            RowAction::CancelDelete => {
+                                self.confirm_delete = None;
+                            }
+                            RowAction::Add => {
+                                // D-06/D-07: appended at the end, enabled, `unchanged`/no-op --
+                                // safe the moment it lands because nothing an incomplete rule
+                                // does can reach the game until Apply *and* an in-game reload.
+                                let new_id = working.add();
+                                self.expanded = Some(new_id);
+                                self.dirty = true;
+                            }
+                        }
+                    }
                 }
                 Err(message) => {
                     ui.horizontal_wrapped(|ui| {
@@ -332,7 +480,48 @@ impl eframe::App for OverlayApp {
                 }
             }
         });
+
+        // Task 3 / D-02, D-04: exactly one coalesced, atomic write per frame -- never per
+        // keystroke, never on a timer/background thread. `self.dirty` is set by every row
+        // control above (and, in plan 14-03, every condition editor) via the deferred-action
+        // apply step; this is the single place that consumes it.
+        //
+        // RESEARCH Risk 4 / T-14-06: this call MUST precede the deferred viewport-close send
+        // below in *program order* within this same `ui()` call. eframe cannot begin tearing
+        // down the process until this function returns, so a save issued earlier in this same
+        // function body is guaranteed to run to completion before the close command is even
+        // dispatched. Reordering these two blocks (or moving the save back into the tray-poll
+        // branch above, ahead of the body) silently reintroduces "lose the last edit on Quit" --
+        // there is no automated test that would catch that regression, only this ordering itself.
+        if self.dirty {
+            if let Some(config) = &self.config {
+                if let Err(message) = store::save(config, &self.store_path) {
+                    self.last_save_error = Some(message);
+                }
+            }
+            self.dirty = false;
+        }
+
+        if quit_requested {
+            // D-14: Quit is the only path that ends the process -- deferred to here (see the
+            // comment above) so the autosave above always has a chance to run first.
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close); // the only Close send site
+        }
     }
+}
+
+/// What a row's controls requested this frame (D-05/D-06/D-08), applied once after the whole
+/// list has finished rendering -- see the "collect intent, mutate after" comment at the call
+/// site. Deliberately not `egui`-typed: this is the thin seam between the presentation loop and
+/// `super::edit`'s pure mutation functions, not a widget itself.
+enum RowAction {
+    MoveUp(RuleId),
+    MoveDown(RuleId),
+    ToggleEnabled(RuleId),
+    RequestDelete(RuleId),
+    ConfirmDelete(RuleId),
+    CancelDelete,
+    Add,
 }
 
 /// One collapsed-row header line: ordinal, style, an explicit `[DISABLED]` marker for a

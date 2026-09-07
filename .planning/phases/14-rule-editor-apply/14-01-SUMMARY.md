@@ -112,3 +112,9 @@ None — no external service configuration required.
 ---
 *Phase: 14-rule-editor-apply*
 *Completed: 2026-09-07*
+
+## Self-Check: PASSED
+
+All created/modified files (`src/overlay/edit.rs`, `src/overlay/store.rs`, `src/overlay/mod.rs`,
+`tests/rule_editor.rs`, this SUMMARY.md) confirmed present on disk. All four commit hashes
+(`bac13c3`, `5f42470`, `3f44241`, `2239471`) confirmed present in `git log`.

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: verifying
-stopped_at: Phase 14 planned (4 plans, checker passed)
-last_updated: "2026-09-07T04:46:48.460Z"
-last_activity: 2026-09-06
+status: executing
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-09-07T05:05:50.882Z"
+last_activity: 2026-09-07
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
   percent: 50
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-03)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 13 — Overlay Shell
+**Current focus:** Phase 14 — Rule Editor + Apply
 
 ## Current Position
 
-Phase: 13 (Overlay Shell) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-09-06
+Phase: 14 (Rule Editor + Apply) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-09-07
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 13 P03 | 15min | 3 tasks | 4 files |
 | Phase 13 P04 | 35min | 3 tasks | 9 files |
 | Phase 13 P05 | ~16min | 2 tasks | 7 files |
+| Phase 14 P01 | 55min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,10 @@ work (carried forward past the v0.3 close):
 - [Phase 13]: dynamic.json loads read-only exactly once at OverlayApp::new() startup -- no reload mechanism yet, since nothing in src/overlay/ can mutate the store this phase (D-20)
 - [Phase 13]: Hotkey rebound from Shift+Z to Ctrl+Shift+Z at the author's request during live in-game verification, to keep Shift+Z free for other bindings (commit 15bff2f)
 - [Phase 13]: Game-dimming behind the overlay stripe was requested during in-game verification and then DECLINED by the author (2026-09-06, “not really necessary”) -- closed, not deferred. It would have needed a second full-screen translucent window, conflicting with SHELL-03/D-12/D-13 opaque/non-passthrough/sub-screen constraints. The reasoning is retained only so a future request for the same thing starts from the constraint.
+- [Phase 14]: set_class collapses a fully-deselected class list to None (never Some(vec![])) to avoid a malformed bare Class line the emitter has no emptiness guard against
+- [Phase 14]: RuleId is a session-only, never-serialized identity layer over Vec<Rule> (overlay::edit::WorkingRules) -- the "currently expanded" rule state survives array reordering by construction, closing PITFALLS.md §9
+- [Phase 14]: toggle_enabled collapses both None and Some(true) to None on re-enable -- re-enabling a rule never writes a redundant "enabled": true key
+- [Phase 14]: overlay::store::save writes atomically via tempfile::NamedTempFile::new_in + persist (same discipline as dynamic::write_filter); store.rs's module header now documents the Phase 14 write boundary instead of Phase 13's now-stale "overlay never writes" claim
 
 ### Pending Todos
 
@@ -135,8 +140,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-07T04:46:48.453Z
-Stopped at: Phase 14 planned (4 plans, checker passed)
-Resume file: .planning/phases/14-rule-editor-apply/14-01-PLAN.md
+Last session: 2026-09-07T05:05:50.870Z
+Stopped at: Completed 14-01-PLAN.md
+Resume file: .planning/phases/14-rule-editor-apply/14-02-PLAN.md
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

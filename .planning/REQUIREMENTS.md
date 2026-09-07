@@ -77,29 +77,29 @@ whole milestone. The dynamic path is additive.
 
 ### Rule Editor (EDIT)
 
-- [ ] **EDIT-01**: The overlay lists the dynamic rules in ordinal order and supports adding,
+- [x] **EDIT-01**: The overlay lists the dynamic rules in ordinal order and supports adding,
   deleting and reordering them, with reordering changing match precedence.
 
-- [ ] **EDIT-02**: A rule can be enabled or disabled, so one toggle suppresses a whole category —
+- [x] **EDIT-02**: A rule can be enabled or disabled, so one toggle suppresses a whole category —
   the "hide all flask drops" case.
 
-- [ ] **EDIT-03**: Each rule has a style selector populated from the pinned `config.json` styles
+- [x] **EDIT-03**: Each rule has a style selector populated from the pinned `config.json` styles
   palette (S–F, `Recycle`, `exceptional`, `hidden`, `unchanged`, `unidentified`).
 
-- [ ] **EDIT-04**: Each rule has a multi-select class picker whose options come from the class
+- [x] **EDIT-04**: Each rule has a multi-select class picker whose options come from the class
   lists already in `config.json`, not a hardcoded list.
 
-- [ ] **EDIT-05**: Each rule has a rarity selector emitting the existing compact comparator forms
+- [x] **EDIT-05**: Each rule has a rarity selector emitting the existing compact comparator forms
   (`>=Magic`, `<=Rare`, `==Rare`, …).
 
-- [ ] **EDIT-06**: Each rule has a three-checkbox defence picker (armour / evasion / energy shield)
+- [x] **EDIT-06**: Each rule has a three-checkbox defence picker (armour / evasion / energy shield)
   where a ticked defence emits `> 0` and an unticked one emits `0`, making all seven PoE2 armour
   types selectable; with the group disabled, no defence condition is emitted at all.
 
-- [ ] **EDIT-07**: Each rule exposes sockets minimum, quality minimum, and a corrupted control
+- [x] **EDIT-07**: Each rule exposes sockets minimum, quality minimum, and a corrupted control
   whose unset state omits the condition entirely.
 
-- [ ] **EDIT-08**: Every condition control can be toggled off individually, and a disabled control
+- [x] **EDIT-08**: Every condition control can be toggled off individually, and a disabled control
   contributes nothing to the emitted block (the UI expression of DYN-04).
 
 - [ ] **EDIT-09**: An Apply action writes `dynamic.filter` and tells the player to reload the
@@ -166,14 +166,14 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | SHELL-01 | Phase 13 | Complete |
 | SHELL-02 | Phase 13 | Complete |
 | SHELL-03 | Phase 13 | Complete |
-| EDIT-01 | Phase 14 | Pending |
-| EDIT-02 | Phase 14 | Pending |
-| EDIT-03 | Phase 14 | Pending |
-| EDIT-04 | Phase 14 | Pending |
-| EDIT-05 | Phase 14 | Pending |
-| EDIT-06 | Phase 14 | Pending |
-| EDIT-07 | Phase 14 | Pending |
-| EDIT-08 | Phase 14 | Pending |
+| EDIT-01 | Phase 14 | Complete |
+| EDIT-02 | Phase 14 | Complete |
+| EDIT-03 | Phase 14 | Complete |
+| EDIT-04 | Phase 14 | Complete |
+| EDIT-05 | Phase 14 | Complete |
+| EDIT-06 | Phase 14 | Complete |
+| EDIT-07 | Phase 14 | Complete |
+| EDIT-08 | Phase 14 | Complete |
 | EDIT-09 | Phase 14 | Pending |
 
 **Coverage:**

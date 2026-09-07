@@ -365,6 +365,9 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
         ui.label("min tier");
     });
 
+    // Captured before the scope below, which narrows `available_width` as it lays out.
+    let ui_width = ui.available_width();
+
     if enabled {
         let mut min = rule
             .when
@@ -376,16 +379,51 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
         // Full width on its own row: at 460px the slider needs the space to keep its five
         // positions distinguishable, which is the whole reason it is a slider and not a
         // drag-value.
-        if ui
-            .add(
-                egui::Slider::new(
-                    &mut min,
-                    edit::UNIDENTIFIED_TIER_MIN..=edit::UNIDENTIFIED_TIER_MAX,
+        //
+        // The visuals below are overridden in a scope rather than globally. egui paints a
+        // slider's rail with `widgets.inactive.bg_fill`, which in this theme is the recessed
+        // input fill (#090909) sitting on a #0D0D0D row — invisible by construction, so the
+        // control read as a stray checkbox beside a number rather than a bar (reported from
+        // live use 2026-09-07, screenshot poe2_print003). Scoping keeps every other widget on
+        // the shared theme.
+        let slider_changed = ui
+            .scope(|ui| {
+                let spacing = ui.spacing_mut();
+                // Leave room for the value box the slider draws to its right.
+                spacing.slider_width = (ui_width - 72.0).max(120.0);
+                spacing.slider_rail_height = 6.0;
+
+                let visuals = ui.visuals_mut();
+                visuals.handle_shape = egui::style::HandleShape::Circle;
+                // The groove: warm and clearly lighter than the row behind it.
+                visuals.widgets.inactive.bg_fill = theme::HEADER_PLATE;
+                visuals.widgets.hovered.bg_fill = theme::HEADER_PLATE;
+                visuals.widgets.active.bg_fill = theme::HEADER_PLATE;
+                // The filled portion and the handle, in the same tone the checkmarks use so an
+                // active value reads consistently across controls. WARM_ACCENT is deliberately
+                // not used here — it is reserved for Reset (D-24).
+                visuals.selection.bg_fill = theme::CONTROL_GLYPH;
+                for state in [
+                    &mut visuals.widgets.inactive,
+                    &mut visuals.widgets.hovered,
+                    &mut visuals.widgets.active,
+                ] {
+                    state.fg_stroke = egui::Stroke::new(1.0, theme::SECTION_CREAM);
+                }
+
+                ui.add(
+                    egui::Slider::new(
+                        &mut min,
+                        edit::UNIDENTIFIED_TIER_MIN..=edit::UNIDENTIFIED_TIER_MAX,
+                    )
+                    .integer()
+                    .trailing_fill(true),
                 )
-                .integer(),
-            )
-            .changed()
-        {
+                .changed()
+            })
+            .inner;
+
+        if slider_changed {
             edit::set_unidentified_tier_min(edit::when_mut(rule), min);
             changed = true;
         }

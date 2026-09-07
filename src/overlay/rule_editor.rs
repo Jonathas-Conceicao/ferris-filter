@@ -16,10 +16,11 @@
 //! Plan 14-03 fills this file in across three tasks: style + classes (this commit), then rarity
 //! + the defence group, then sockets/quality/corrupted plus an EDIT-08 audit comment.
 
-use crate::models::config::{Config, Rule};
+use crate::models::config::{Config, Rarity, RarityOp, Rule};
 
 use super::edit::{self, RuleId};
 use super::theme;
+use super::widgets;
 
 /// Renders one expanded rule's condition editors. Returns `true` if any control changed the
 /// rule this frame, for the caller's autosave dirty-tracking (D-02).
@@ -35,6 +36,10 @@ pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id:
     changed |= render_style(ui, rule, config, id);
     ui.add_space(8.0);
     changed |= render_classes(ui, rule, config, id);
+    ui.add_space(8.0);
+    changed |= render_rarity(ui, rule, id);
+    ui.add_space(8.0);
+    changed |= render_defence(ui, rule, id);
 
     changed
 }
@@ -102,6 +107,111 @@ fn render_classes(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleI
                 }
             });
     }
+
+    changed
+}
+
+/// EDIT-05/D-11: rarity as a comparator plus a value, never typed free text. Assembling the
+/// compact comparator-plus-rarity string form is `RarityComparator`'s own `Serialize` impl's
+/// job — this function only ever passes a typed [`RarityOp`]/[`Rarity`] pair to
+/// [`edit::set_rarity`], never assembles a comparator string itself.
+fn render_rarity(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("RARITY").color(theme::LABEL_TAN).small());
+
+    let mut enabled = rule.when.as_ref().and_then(|when| when.rarity).is_some();
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            if enabled {
+                // Seeds a sensible default (>= Magic) through edit::set_rarity on enable.
+                edit::set_rarity(edit::when_mut(rule), RarityOp::Gte, Rarity::Magic);
+            } else if let Some(when) = rule.when.as_mut() {
+                edit::clear_rarity(when);
+            }
+            changed = true;
+        }
+        ui.label("has rarity");
+    });
+
+    if enabled {
+        if let Some(current) = rule.when.as_ref().and_then(|when| when.rarity) {
+            let mut op = current.op;
+            let mut value = current.rarity;
+            let mut value_changed = false;
+
+            ui.horizontal(|ui| {
+                value_changed |= ui.selectable_value(&mut op, RarityOp::Eq, "Exactly").changed();
+                value_changed |=
+                    ui.selectable_value(&mut op, RarityOp::Gte, "At Least").changed();
+                value_changed |= ui.selectable_value(&mut op, RarityOp::Lte, "At Most").changed();
+            });
+            ui.horizontal(|ui| {
+                value_changed |=
+                    ui.selectable_value(&mut value, Rarity::Normal, "Normal").changed();
+                value_changed |=
+                    ui.selectable_value(&mut value, Rarity::Magic, "Magic").changed();
+                value_changed |= ui.selectable_value(&mut value, Rarity::Rare, "Rare").changed();
+                value_changed |=
+                    ui.selectable_value(&mut value, Rarity::Unique, "Unique").changed();
+            });
+
+            if value_changed {
+                edit::set_rarity(edit::when_mut(rule), op, value);
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+/// EDIT-06/D-12: a group toggle plus three checkboxes reaches all seven PoE2 armour
+/// combinations (armour/evasion/energy shield, each present or absent) without asking the
+/// player to choose among seven named options. Ticked stores a strictly-positive minimum
+/// (emitting a "greater than zero" filter condition); unticked stores an explicit exact-zero
+/// condition — that asymmetry is the single least-guessable thing in this editor, so the row
+/// states it directly rather than leaving it to be inferred. The actual encoding is
+/// [`edit::set_defence`]'s job, not this file's.
+fn render_defence(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("DEFENCES").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("Ticked = has this defence. Unticked = has none of it.")
+            .color(theme::DISABLED_TEXT)
+            .small(),
+    );
+
+    let mut group_on = rule.when.as_ref().is_some_and(edit::defence_group_enabled);
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut group_on).changed() {
+            if group_on {
+                edit::enable_defence_group(edit::when_mut(rule));
+            } else if let Some(when) = rule.when.as_mut() {
+                edit::clear_defence_group(when);
+            }
+            changed = true;
+        }
+        ui.label("Enable defence conditions");
+    });
+
+    // The three checkboxes grey out (not disappear) with the group -- the player can still see
+    // the control exists even while it contributes nothing to the emitted block.
+    ui.add_enabled_ui(group_on, |ui| {
+        for (label, defence) in [
+            ("Armour", edit::Defence::Armour),
+            ("Evasion", edit::Defence::Evasion),
+            ("Energy Shield", edit::Defence::EnergyShield),
+        ] {
+            let mut ticked = rule
+                .when
+                .as_ref()
+                .is_some_and(|when| edit::defence_ticked(when, defence));
+            if ui.checkbox(&mut ticked, label).changed() {
+                edit::set_defence(edit::when_mut(rule), defence, ticked);
+                changed = true;
+            }
+        }
+    });
 
     changed
 }

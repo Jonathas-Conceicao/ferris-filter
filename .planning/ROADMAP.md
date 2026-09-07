@@ -138,7 +138,14 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
   7. Apply writes `dynamic.filter` to the game folder and the UI states that the filter must be reloaded via Options → Game → Item Filter → Refresh.
   8. Rule mutation, validation and compilation are library functions covered by unit tests; the egui layer holds no logic that can only be exercised by clicking.
 
-**Plans**: 2-3 plans
+**Plans**: 4 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — pure mutation layer (RuleId/WorkingRules + every condition set/clear), atomic store::save, and the flask/reorder end-to-end tests
+- [ ] 14-02-PLAN.md — the accordion, painted toggle/arrow controls, add/delete/reorder/enable, and the per-frame autosave
+- [ ] 14-03-PLAN.md — the condition editors: style, classes, rarity, defences, sockets, quality, corrupted
+- [ ] 14-04-PLAN.md — Apply + reload instruction + unapplied indicator, CLAUDE.md, and the manual in-game checklist
+
 **UI hint**: yes
 
 ## Progress

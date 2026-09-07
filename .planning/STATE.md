@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Completed 14-01-PLAN.md
-last_updated: "2026-09-07T05:05:50.882Z"
+stopped_at: Completed 14-02-PLAN.md
+last_updated: "2026-09-07T05:24:50.320Z"
 last_activity: 2026-09-07
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 10
+  completed_plans: 11
   percent: 50
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 14 (Rule Editor + Apply) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-09-07
 
@@ -52,6 +52,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 13 P04 | 35min | 3 tasks | 9 files |
 | Phase 13 P05 | ~16min | 2 tasks | 7 files |
 | Phase 14 P01 | 55min | 3 tasks | 4 files |
+| Phase 14 P02 | 70min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -95,6 +96,8 @@ work (carried forward past the v0.3 close):
 - [Phase 14]: RuleId is a session-only, never-serialized identity layer over Vec<Rule> (overlay::edit::WorkingRules) -- the "currently expanded" rule state survives array reordering by construction, closing PITFALLS.md §9
 - [Phase 14]: toggle_enabled collapses both None and Some(true) to None on re-enable -- re-enabling a rule never writes a redundant "enabled": true key
 - [Phase 14]: overlay::store::save writes atomically via tempfile::NamedTempFile::new_in + persist (same discipline as dynamic::write_filter); store.rs's module header now documents the Phase 14 write boundary instead of Phase 13's now-stale "overlay never writes" claim
+- [Phase ?]: 14-02: Deferred-action rendering -- row controls only record a RowAction during the render pass; the mutation happens once after the loop.
+- [Phase ?]: 14-02: Quit is only requested during tray-menu polling; ViewportCommand::Close is deferred until after the body renders and autosave runs, so the last edit is never lost on Quit (RESEARCH Risk 4).
 
 ### Pending Todos
 
@@ -140,8 +143,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-07T05:05:50.870Z
-Stopped at: Completed 14-01-PLAN.md
-Resume file: .planning/phases/14-rule-editor-apply/14-02-PLAN.md
+Last session: 2026-09-07T05:24:50.308Z
+Stopped at: Completed 14-02-PLAN.md
+Resume file: None
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

@@ -383,6 +383,11 @@ impl eframe::App for OverlayApp {
                                     .map(row_header_text)
                                     .unwrap_or_else(|| rule.style.clone());
 
+                                // Set by a click on the controls line's empty remainder; folded
+                                // into the same toggle the header click drives, so both lines
+                                // behave identically.
+                                let mut row_click = false;
+
                                 widgets::zebra_row(ui, ordinal, |ui| {
                                     ui.horizontal(|ui| {
                                         if is_confirming {
@@ -431,20 +436,60 @@ impl eframe::App for OverlayApp {
                                                     Some(RowAction::RequestDelete(id));
                                             }
                                         }
+
+                                        // The empty remainder of the controls line toggles the
+                                        // row too. Allocated AFTER the buttons, so it only ever
+                                        // covers space they did not claim — the arrows, the
+                                        // enable toggle and Delete keep their own hit areas
+                                        // rather than competing with a full-width overlay.
+                                        let rest = ui.available_size();
+                                        if rest.x > 0.0
+                                            && ui
+                                                .allocate_response(rest, egui::Sense::click())
+                                                .clicked()
+                                        {
+                                            row_click = true;
+                                        }
                                     });
 
-                                    let header = egui::CollapsingHeader::new(header_text)
-                                        .id_salt(id)
-                                        .open(Some(is_open))
-                                        .show(ui, |ui| {
-                                            if let Some(config) = config_ref {
-                                                if rule_editor::render_rule_body(
-                                                    ui, rule, config, id,
-                                                ) {
-                                                    body_dirty = true;
-                                                }
-                                            }
-                                        });
+                                    // `collapsing_header_frame` is what makes the header span the
+                                    // full row width; without it egui sizes the header to its
+                                    // text, so only the text itself was clickable and the empty
+                                    // space beside it did nothing (author, 2026-09-07).
+                                    //
+                                    // It also switches on the header's background painting, so
+                                    // the inactive fill is made transparent here — leaving a
+                                    // faint warm tint on hover, which is the affordance that
+                                    // tells you the whole line is clickable.
+                                    let header = ui
+                                        .scope(|ui| {
+                                            let visuals = ui.visuals_mut();
+                                            visuals.collapsing_header_frame = true;
+                                            visuals.widgets.inactive.weak_bg_fill =
+                                                egui::Color32::TRANSPARENT;
+                                            visuals.widgets.inactive.bg_stroke =
+                                                egui::Stroke::NONE;
+                                            visuals.widgets.hovered.weak_bg_fill =
+                                                theme::HEADER_PLATE;
+                                            visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                                            visuals.widgets.active.weak_bg_fill =
+                                                theme::HEADER_PLATE;
+                                            visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+
+                                            egui::CollapsingHeader::new(header_text)
+                                                .id_salt(id)
+                                                .open(Some(is_open))
+                                                .show(ui, |ui| {
+                                                    if let Some(config) = config_ref {
+                                                        if rule_editor::render_rule_body(
+                                                            ui, rule, config, id,
+                                                        ) {
+                                                            body_dirty = true;
+                                                        }
+                                                    }
+                                                })
+                                        })
+                                        .inner;
 
                                     // The wrapped summary sits under the header while the row is
                                     // collapsed. It cannot live in the header itself
@@ -457,7 +502,7 @@ impl eframe::App for OverlayApp {
                                         }
                                     }
 
-                                    if header.header_response.clicked() {
+                                    if header.header_response.clicked() || row_click {
                                         next_expanded = if is_open { None } else { Some(id) };
                                     }
 

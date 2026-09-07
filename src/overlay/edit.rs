@@ -12,7 +12,9 @@
 //! then clicks an up/down arrow must keep looking at the *same* rule afterward — an index-keyed
 //! "currently expanded" state would silently point at whatever rule now occupies that slot.
 
-use crate::models::config::{Rule, When};
+use crate::models::config::{
+    Config, NumericCondition, Rarity, RarityComparator, RarityOp, Rule, Styles, When,
+};
 
 // ---------------------------------------------------------------------------
 // The RuleId working model (Task 1)
@@ -159,6 +161,197 @@ impl WorkingRules {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-condition set/clear functions and config-sourced enumerations (Task 2)
+// ---------------------------------------------------------------------------
+
+/// Returns a mutable reference to `rule.when`, creating an empty (matches-everything) `When` if
+/// absent. Every condition setter below goes through this so a rule that starts with `when: None`
+/// (a catch-all) gains a `when` only when the player actually sets a condition on it.
+pub fn when_mut(rule: &mut Rule) -> &mut When {
+    rule.when.get_or_insert_with(When::default)
+}
+
+/// EDIT-03: sets the rule's style. The caller is expected to pick `style` from
+/// [`available_styles`] so an unresolvable name can never reach the store.
+pub fn set_style(rule: &mut Rule, style: &str) {
+    rule.style = style.to_string();
+}
+
+/// EDIT-03: the style names selectable from the picker, in the fixed display order the game's
+/// own tier system uses (S..F, then the named styles). Reads directly from the loaded `Styles`
+/// struct — `exceptional`/`craftable` only appear if the config actually defines them, so this
+/// can never offer a style name that would fail `emitter::resolve_style`'s generate-time check
+/// (T-14-03).
+pub fn available_styles(styles: &Styles) -> Vec<&'static str> {
+    let mut names = vec![
+        "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "unidentified",
+    ];
+    if styles.exceptional.is_some() {
+        names.push("exceptional");
+    }
+    if styles.craftable.is_some() {
+        names.push("craftable");
+    }
+    names
+}
+
+/// EDIT-04: the three class groups the picker offers (D-10), borrowed from the config —
+/// `PITFALLS.md` §10: class lists must never be hardcoded in the presentation layer.
+pub fn class_groups(config: &Config) -> Vec<(&'static str, &[String])> {
+    vec![
+        ("WEAPONS", config.weapon_classes.as_slice()),
+        ("ARMOUR", config.armour_classes.as_slice()),
+        ("FLASKS & CHARMS", config.flask_charm_classes.as_slice()),
+    ]
+}
+
+/// EDIT-04: `true` if `class` is currently selected on `when`.
+pub fn is_class_selected(when: &When, class: &str) -> bool {
+    when.class
+        .as_ref()
+        .is_some_and(|classes| classes.iter().any(|c| c == class))
+}
+
+/// EDIT-04/EDIT-08: selects or deselects `class` on `when`.
+///
+/// Selection order is the player's click order — `add` appends, `retain` on deselect — never
+/// sorted or re-derived from the config's own class order.
+///
+/// Deselecting the last remaining class collapses the field to `None` rather than `Some(vec![])`
+/// (roadmap acceptance criterion): `src/emitter.rs`'s class-line emission (`emit_rules`, ~line
+/// 362) writes a bare `Class "..." "..."` line straight from the vec with no emptiness guard, so
+/// an empty-but-present vec would emit a malformed, empty `Class` line that fails to load
+/// in-game — the exact defect class the invalid `Class "Tablet"` rows removed in v0.2 belonged
+/// to. `None` is the only representation of "no class condition" the emitter handles correctly.
+pub fn set_class(when: &mut When, class: &str, selected: bool) {
+    if selected {
+        let classes = when.class.get_or_insert_with(Vec::new);
+        if !classes.iter().any(|c| c == class) {
+            classes.push(class.to_string());
+        }
+    } else if let Some(classes) = when.class.as_mut() {
+        classes.retain(|c| c != class);
+        if classes.is_empty() {
+            when.class = None;
+        }
+    }
+}
+
+/// EDIT-05: sets the rarity comparator. `RarityComparator`'s own `Serialize` impl already emits
+/// the compact string form (`">=Magic"`, bare `"Rare"` for `Eq`) — this function only needs to
+/// set the typed value.
+pub fn set_rarity(when: &mut When, op: RarityOp, rarity: Rarity) {
+    when.rarity = Some(RarityComparator { op, rarity });
+}
+
+/// EDIT-05/EDIT-08: clears the rarity condition entirely.
+pub fn clear_rarity(when: &mut When) {
+    when.rarity = None;
+}
+
+/// EDIT-06: one of the three defence attributes a rule's `when` can condition on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Defence {
+    Armour,
+    Evasion,
+    EnergyShield,
+}
+
+/// EDIT-06: sets a single defence checkbox. `ticked` -> `min: Some(1)` (emits `> 0`); `!ticked`
+/// -> `eq: Some(0)` (emits the literal `0`). Mirrors `emitter::emit_numeric`'s own semantics
+/// exactly, so the picker cannot produce a combination the emitter interprets differently than
+/// the picker intended.
+///
+/// This writes only its own attribute — a rule that arrives partially specified from
+/// `dynamic_base.json` (e.g. rule 6's `baseEvasion: {"eq": 0}` alone) is never rewritten just by
+/// being displayed; only [`enable_defence_group`] writes all three explicitly.
+pub fn set_defence(when: &mut When, defence: Defence, ticked: bool) {
+    let nc = Some(if ticked {
+        NumericCondition { eq: None, min: Some(1), max: None }
+    } else {
+        NumericCondition { eq: Some(0), min: None, max: None }
+    });
+    match defence {
+        Defence::Armour => when.base_armour = nc,
+        Defence::Evasion => when.base_evasion = nc,
+        Defence::EnergyShield => when.base_energy_shield = nc,
+    }
+}
+
+/// EDIT-06: `true` only for `min == Some(1)` — i.e. the checkbox reads as ticked only for the
+/// "strictly positive" encoding, not for an `eq: Some(1)` a hand-edited file could contain.
+pub fn defence_ticked(when: &When, defence: Defence) -> bool {
+    let nc = match defence {
+        Defence::Armour => &when.base_armour,
+        Defence::Evasion => &when.base_evasion,
+        Defence::EnergyShield => &when.base_energy_shield,
+    };
+    nc.as_ref().is_some_and(|nc| nc.min == Some(1))
+}
+
+/// EDIT-06: `true` iff at least one of the three defence attributes is `Some` — so
+/// `dynamic_base.json`'s evasion-only rule (rule 6, `baseEvasion: {"eq": 0}` alone) reads as an
+/// enabled defence group without being rewritten on load.
+pub fn defence_group_enabled(when: &When) -> bool {
+    when.base_armour.is_some() || when.base_evasion.is_some() || when.base_energy_shield.is_some()
+}
+
+/// EDIT-06: turns the defence group on, writing all three attributes explicitly as
+/// `eq: Some(0)`. This is what makes roadmap criterion 5's `BaseEvasion 0` line appear for an
+/// attribute the player never ticked — ticking armour and energy shield and leaving evasion
+/// unticked, starting from a rule with no defence condition at all, must still emit
+/// `BaseEvasion 0` once the group itself is on.
+pub fn enable_defence_group(when: &mut When) {
+    let off = || Some(NumericCondition { eq: Some(0), min: None, max: None });
+    if when.base_armour.is_none() {
+        when.base_armour = off();
+    }
+    if when.base_evasion.is_none() {
+        when.base_evasion = off();
+    }
+    if when.base_energy_shield.is_none() {
+        when.base_energy_shield = off();
+    }
+}
+
+/// EDIT-06/EDIT-08: turns the defence group off — clears all three to `None`, so the compiled
+/// block contains no `BaseArmour`/`BaseEvasion`/`BaseEnergyShield` line at all.
+pub fn clear_defence_group(when: &mut When) {
+    when.base_armour = None;
+    when.base_evasion = None;
+    when.base_energy_shield = None;
+}
+
+/// EDIT-07: sets the sockets minimum.
+pub fn set_sockets_min(when: &mut When, min: i64) {
+    when.sockets = Some(NumericCondition { eq: None, min: Some(min), max: None });
+}
+
+/// EDIT-07/EDIT-08: clears the sockets condition entirely.
+pub fn clear_sockets(when: &mut When) {
+    when.sockets = None;
+}
+
+/// EDIT-07: sets the quality minimum.
+pub fn set_quality_min(when: &mut When, min: i64) {
+    when.quality = Some(NumericCondition { eq: None, min: Some(min), max: None });
+}
+
+/// EDIT-07/EDIT-08: clears the quality condition entirely.
+pub fn clear_quality(when: &mut When) {
+    when.quality = None;
+}
+
+/// EDIT-07/EDIT-08: sets (or, via `None`, clears) the corrupted condition. `Some(false)` emits
+/// `Corrupted False`; `Some(true)` emits `Corrupted True`; `None` omits the condition entirely.
+/// `corrupted` is not a bespoke tri-state widget — it uses the same enable-toggle + value
+/// architecture as every other condition (RESEARCH Pattern 2), so its "unset" state is exactly
+/// the same mechanism (`Option::None`) as every other condition's "off" state.
+pub fn set_corrupted(when: &mut When, value: Option<bool>) {
+    when.corrupted = value;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +368,12 @@ mod tests {
         let id = wr.add();
         wr.delete(id);
         id
+    }
+
+    fn base_config() -> Config {
+        let json =
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
+        serde_json::from_str(json).expect("dynamic_base.json must parse as a Config")
     }
 
     // -- WorkingRules: from_rules / to_rules --------------------------------
@@ -335,5 +534,329 @@ mod tests {
         let mut wr = WorkingRules::from_rules(vec![rule("A")]);
         let stray = unknown_id(&mut wr);
         assert!(!wr.is_enabled(stray));
+    }
+
+    // -- rule_mut composability ------------------------------------------------
+
+    #[test]
+    fn rule_mut_allows_composing_with_condition_setters() {
+        let mut wr = WorkingRules::from_rules(vec![rule("unchanged")]);
+        let id = wr.rows()[0].0;
+        let rule = wr.rule_mut(id).expect("rule must exist");
+        set_style(rule, "S");
+        assert_eq!(wr.rule(id).unwrap().style, "S");
+    }
+
+    // -- available_styles (EDIT-03) -------------------------------------------
+
+    #[test]
+    fn dynamic_base_json_offers_exactly_twelve_styles() {
+        let config = base_config();
+        let names = available_styles(&config.styles);
+        assert_eq!(names.len(), 12, "dynamic_base.json defines exceptional but not craftable");
+        assert!(names.contains(&"exceptional"));
+        assert!(!names.contains(&"craftable"));
+    }
+
+    #[test]
+    fn a_styles_struct_with_neither_optional_style_offers_eleven() {
+        let mut config = base_config();
+        config.styles.exceptional = None;
+        config.styles.craftable = None;
+        let names = available_styles(&config.styles);
+        assert_eq!(names.len(), 11);
+        assert!(!names.contains(&"exceptional"));
+        assert!(!names.contains(&"craftable"));
+    }
+
+    // -- class_groups (EDIT-04, PITFALLS.md §10) -------------------------------
+
+    #[test]
+    fn class_groups_returns_three_groups_borrowed_from_the_config() {
+        let config = base_config();
+        let groups = class_groups(&config);
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0], ("WEAPONS", config.weapon_classes.as_slice()));
+        assert_eq!(groups[1], ("ARMOUR", config.armour_classes.as_slice()));
+        assert_eq!(groups[2], ("FLASKS & CHARMS", config.flask_charm_classes.as_slice()));
+        assert_eq!(groups[0].1.len(), 12);
+        assert_eq!(groups[1].1.len(), 6);
+        assert_eq!(groups[2].1.len(), 3);
+    }
+
+    // -- set_class / is_class_selected (EDIT-04, empty-vec guard) --------------
+
+    #[test]
+    fn set_class_on_an_empty_selection_yields_some_with_one_entry() {
+        let mut when = When::default();
+        set_class(&mut when, "Boots", true);
+        assert_eq!(when.class, Some(vec!["Boots".to_string()]));
+        assert!(is_class_selected(&when, "Boots"));
+    }
+
+    #[test]
+    fn deselecting_the_last_remaining_class_yields_none_never_an_empty_vec() {
+        let mut when = When::default();
+        set_class(&mut when, "Boots", true);
+        set_class(&mut when, "Boots", false);
+        assert_eq!(when.class, None, "must collapse to None, never Some(vec![])");
+        assert!(!is_class_selected(&when, "Boots"));
+    }
+
+    #[test]
+    fn deselecting_one_of_several_classes_leaves_the_others_selected_in_click_order() {
+        let mut when = When::default();
+        set_class(&mut when, "Boots", true);
+        set_class(&mut when, "Helmets", true);
+        set_class(&mut when, "Gloves", true);
+        set_class(&mut when, "Helmets", false);
+        assert_eq!(
+            when.class,
+            Some(vec!["Boots".to_string(), "Gloves".to_string()]),
+            "selection order is click order, not config order"
+        );
+    }
+
+    #[test]
+    fn selecting_an_already_selected_class_does_not_duplicate_it() {
+        let mut when = When::default();
+        set_class(&mut when, "Boots", true);
+        set_class(&mut when, "Boots", true);
+        assert_eq!(when.class, Some(vec!["Boots".to_string()]));
+    }
+
+    // -- rarity (EDIT-05) ---------------------------------------------------------
+
+    #[test]
+    fn set_rarity_gte_emits_the_compact_gte_string() {
+        let mut when = When::default();
+        set_rarity(&mut when, RarityOp::Gte, Rarity::Magic);
+        let rule = Rule { enabled: None, name: None, style: "C".to_string(), when: Some(when) };
+        let json = serde_json::to_string(&rule).unwrap();
+        assert!(json.contains("\">=Magic\""), "got: {json}");
+    }
+
+    #[test]
+    fn set_rarity_eq_emits_the_bare_form() {
+        let mut when = When::default();
+        set_rarity(&mut when, RarityOp::Eq, Rarity::Rare);
+        let rule = Rule { enabled: None, name: None, style: "C".to_string(), when: Some(when) };
+        let json = serde_json::to_string(&rule).unwrap();
+        assert!(json.contains("\"Rare\""), "got: {json}");
+        assert!(!json.contains("==Rare"), "Eq must serialize bare, not with ==, got: {json}");
+    }
+
+    #[test]
+    fn clear_rarity_yields_none() {
+        let mut when = When::default();
+        set_rarity(&mut when, RarityOp::Eq, Rarity::Rare);
+        clear_rarity(&mut when);
+        assert_eq!(when.rarity, None);
+    }
+
+    // -- defence picker (EDIT-06, roadmap criterion 5) -----------------------------
+
+    #[test]
+    fn ticking_armour_and_energy_shield_leaving_evasion_off_matches_criterion_5_struct_state() {
+        let mut when = When::default();
+        set_defence(&mut when, Defence::Armour, true);
+        set_defence(&mut when, Defence::EnergyShield, true);
+        set_defence(&mut when, Defence::Evasion, false);
+
+        assert_eq!(when.base_armour.as_ref().unwrap().min, Some(1));
+        assert_eq!(when.base_energy_shield.as_ref().unwrap().min, Some(1));
+        assert_eq!(when.base_evasion.as_ref().unwrap().eq, Some(0));
+    }
+
+    #[test]
+    fn criterion_5_defence_combination_emits_exact_filter_lines() {
+        let mut when = When::default();
+        set_defence(&mut when, Defence::Armour, true);
+        set_defence(&mut when, Defence::EnergyShield, true);
+        set_defence(&mut when, Defence::Evasion, false);
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(filter.contains("BaseArmour > 0"), "got:\n{filter}");
+        assert!(filter.contains("BaseEnergyShield > 0"), "got:\n{filter}");
+        assert!(filter.contains("BaseEvasion 0"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn turning_the_defence_group_off_emits_no_defence_line_at_all() {
+        let mut when = When::default();
+        enable_defence_group(&mut when);
+        assert!(defence_group_enabled(&when));
+        clear_defence_group(&mut when);
+        assert!(!defence_group_enabled(&when));
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(!filter.contains("BaseArmour"), "got:\n{filter}");
+        assert!(!filter.contains("BaseEvasion"), "got:\n{filter}");
+        assert!(!filter.contains("BaseEnergyShield"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn enable_defence_group_writes_all_three_attributes_explicitly() {
+        let mut when = When::default();
+        enable_defence_group(&mut when);
+        assert_eq!(when.base_armour.as_ref().unwrap().eq, Some(0));
+        assert_eq!(when.base_evasion.as_ref().unwrap().eq, Some(0));
+        assert_eq!(when.base_energy_shield.as_ref().unwrap().eq, Some(0));
+    }
+
+    #[test]
+    fn defence_group_enabled_reads_true_for_a_partially_specified_rule_without_rewriting_it() {
+        // Mirrors dynamic_base.json rule 6: baseEvasion: {"eq": 0} alone.
+        let when = When {
+            base_evasion: Some(NumericCondition { eq: Some(0), min: None, max: None }),
+            ..Default::default()
+        };
+        assert!(defence_group_enabled(&when));
+        assert!(when.base_armour.is_none(), "must not be rewritten just by being displayed");
+        assert!(when.base_energy_shield.is_none());
+    }
+
+    #[test]
+    fn defence_ticked_is_true_only_for_the_min_one_encoding() {
+        let mut when = When::default();
+        set_defence(&mut when, Defence::Armour, true);
+        assert!(defence_ticked(&when, Defence::Armour));
+        set_defence(&mut when, Defence::Armour, false);
+        assert!(!defence_ticked(&when, Defence::Armour));
+    }
+
+    // -- sockets / quality / corrupted (EDIT-07/EDIT-08) ---------------------------
+
+    #[test]
+    fn set_sockets_min_yields_the_expected_condition_and_emits_gte() {
+        let mut when = When::default();
+        set_sockets_min(&mut when, 3);
+        assert_eq!(
+            when.sockets,
+            Some(NumericCondition { eq: None, min: Some(3), max: None })
+        );
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(filter.contains("Sockets >= 3"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn clear_sockets_yields_none_and_emits_no_sockets_line() {
+        let mut when = When::default();
+        set_sockets_min(&mut when, 3);
+        clear_sockets(&mut when);
+        assert_eq!(when.sockets, None);
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(!filter.contains("Sockets"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn set_and_clear_quality_min_mirrors_sockets() {
+        let mut when = When::default();
+        set_quality_min(&mut when, 5);
+        assert_eq!(
+            when.quality,
+            Some(NumericCondition { eq: None, min: Some(5), max: None })
+        );
+        clear_quality(&mut when);
+        assert_eq!(when.quality, None);
+    }
+
+    #[test]
+    fn set_corrupted_false_emits_corrupted_false() {
+        let mut when = When::default();
+        set_corrupted(&mut when, Some(false));
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(filter.contains("Corrupted False"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn set_corrupted_none_emits_no_corrupted_line() {
+        let mut when = When::default();
+        set_corrupted(&mut when, None);
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(!filter.contains("Corrupted"), "got:\n{filter}");
+    }
+
+    // -- clearing one condition leaves the others untouched (roadmap criterion 6) --
+
+    #[test]
+    fn clearing_one_condition_leaves_the_others_untouched_in_the_emitted_block() {
+        let mut when = When::default();
+        set_class(&mut when, "Boots", true);
+        set_sockets_min(&mut when, 2);
+        set_corrupted(&mut when, Some(false));
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when.clone()),
+        }]);
+        let before = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(before.contains("Class \"Boots\""));
+        assert!(before.contains("Sockets >= 2"));
+        assert!(before.contains("Corrupted False"));
+
+        // Clear only sockets.
+        clear_sockets(&mut when);
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let after = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+
+        assert!(after.contains("Class \"Boots\""), "the class line must be untouched");
+        assert!(after.contains("Corrupted False"), "the corrupted line must be untouched");
+        assert!(!after.contains("Sockets"), "only the sockets line should be gone");
     }
 }

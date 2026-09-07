@@ -128,9 +128,37 @@ pub fn row_label(text: &str) -> LayoutJob {
     job
 }
 
+/// The condition summary shown under a collapsed rule row.
+///
+/// Deliberately **not** the display font: a summary is mixed-case content
+/// (`"Rings, Amulets, Belts · Unidentified Tier ≥ 4"`), and Cinzel is an all-caps display face,
+/// so this stays in the default proportional family where lowercase is legible.
+///
+/// Sized one step under [`row_label`] rather than `.small()`, and in the muted-active tone
+/// rather than [`DISABLED_TEXT`]. The first cut used both, which made the line that actually
+/// identifies a rule the hardest thing in the stripe to read — and painted live content in the
+/// palette's *disabled* colour (author, 2026-09-07).
+pub fn row_summary(text: &str) -> egui::RichText {
+    egui::RichText::new(text)
+        .size(ROW_SUMMARY_SIZE)
+        .color(TAB_ACTIVE)
+}
+
+/// Summary text size — below [`row_label`]'s 14.0 so the hierarchy still reads, but far above
+/// egui's `.small()`.
+pub const ROW_SUMMARY_SIZE: f32 = 13.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_row_summary_stays_readable_and_subordinate() {
+        // It is the text that identifies a rule at a glance, so it must not drift back toward
+        // `.small()`; it is also not a heading, so it must stay under `row_label`'s 14.0.
+        assert!(ROW_SUMMARY_SIZE >= 12.0, "too small to scan");
+        assert!(ROW_SUMMARY_SIZE < 14.0, "must stay below a row label");
+    }
 
     #[test]
     fn palette_constants_match_the_d24_hex_table() {

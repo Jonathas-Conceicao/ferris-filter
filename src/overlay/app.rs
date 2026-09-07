@@ -700,14 +700,7 @@ fn row_header_text(row: &view_model::RuleRow) -> String {
 /// Only while collapsed: an expanded row's editors already show every condition in full, so
 /// repeating the summary above them would be redundant and cost scarce vertical space.
 fn row_summary_label(ui: &mut egui::Ui, row: &view_model::RuleRow) {
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(&row.summary)
-                .color(theme::DISABLED_TEXT)
-                .small(),
-        )
-        .wrap(),
-    );
+    ui.add(egui::Label::new(theme::row_summary(&row.summary)).wrap());
 }
 
 #[cfg(test)]

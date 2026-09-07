@@ -196,14 +196,26 @@ pub fn available_styles(styles: &Styles) -> Vec<&'static str> {
     names
 }
 
-/// EDIT-04: the three class groups the picker offers (D-10), borrowed from the config —
+/// EDIT-04: the class groups the picker offers (D-10), borrowed from the config —
 /// `PITFALLS.md` §10: class lists must never be hardcoded in the presentation layer.
+///
+/// Jewellery was added 2026-09-07 after live use: `config.json`'s rules already matched Rings,
+/// Amulets and Belts, but no list existed to source them from, so they could not be selected in
+/// the editor at all.
+///
+/// Empty groups are omitted rather than rendered as a bare header. A `dynamic.json` seeded
+/// before `jewelleryClasses` existed parses with an empty list (the field is
+/// `#[serde(default)]`), and an empty collapsible section would read as a bug.
 pub fn class_groups(config: &Config) -> Vec<(&'static str, &[String])> {
-    vec![
+    [
         ("WEAPONS", config.weapon_classes.as_slice()),
         ("ARMOUR", config.armour_classes.as_slice()),
+        ("JEWELLERY", config.jewellery_classes.as_slice()),
         ("FLASKS & CHARMS", config.flask_charm_classes.as_slice()),
     ]
+    .into_iter()
+    .filter(|(_, classes)| !classes.is_empty())
+    .collect()
 }
 
 /// EDIT-04: `true` if `class` is currently selected on `when`.
@@ -572,16 +584,49 @@ mod tests {
     // -- class_groups (EDIT-04, PITFALLS.md §10) -------------------------------
 
     #[test]
-    fn class_groups_returns_three_groups_borrowed_from_the_config() {
+    fn class_groups_are_borrowed_from_the_config_in_order() {
         let config = base_config();
         let groups = class_groups(&config);
-        assert_eq!(groups.len(), 3);
+        assert_eq!(groups.len(), 4);
         assert_eq!(groups[0], ("WEAPONS", config.weapon_classes.as_slice()));
         assert_eq!(groups[1], ("ARMOUR", config.armour_classes.as_slice()));
-        assert_eq!(groups[2], ("FLASKS & CHARMS", config.flask_charm_classes.as_slice()));
+        assert_eq!(groups[2], ("JEWELLERY", config.jewellery_classes.as_slice()));
+        assert_eq!(groups[3], ("FLASKS & CHARMS", config.flask_charm_classes.as_slice()));
         assert_eq!(groups[0].1.len(), 12);
         assert_eq!(groups[1].1.len(), 6);
-        assert_eq!(groups[2].1.len(), 3);
+        assert_eq!(groups[3].1.len(), 3);
+    }
+
+    #[test]
+    fn jewellery_is_offered_and_comes_from_the_config_not_a_literal() {
+        // Regression: `config.json`'s own rules matched Rings/Amulets/Belts, but no list
+        // existed to source them from, so the picker could not offer them at all
+        // (reported from live use 2026-09-07).
+        let config = base_config();
+        let groups = class_groups(&config);
+        let jewellery = groups
+            .iter()
+            .find(|(name, _)| *name == "JEWELLERY")
+            .expect("the picker must offer a jewellery group");
+        assert_eq!(
+            jewellery.1,
+            ["Rings", "Amulets", "Belts"],
+            "jewellery classes must come from config.jewelleryClasses"
+        );
+    }
+
+    #[test]
+    fn an_empty_group_is_omitted_rather_than_rendered_as_a_bare_header() {
+        // A `dynamic.json` seeded before `jewelleryClasses` existed parses with an empty list
+        // (the field is `#[serde(default)]`). An empty collapsible section would read as a bug.
+        let mut config = base_config();
+        config.jewellery_classes = Vec::new();
+        let groups = class_groups(&config);
+        assert_eq!(groups.len(), 3);
+        assert!(
+            !groups.iter().any(|(name, _)| *name == "JEWELLERY"),
+            "an empty group must not be offered"
+        );
     }
 
     // -- set_class / is_class_selected (EDIT-04, empty-vec guard) --------------

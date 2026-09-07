@@ -32,6 +32,7 @@
   ],
   "armourClasses": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
   "flaskCharmClasses": ["Life Flasks", "Mana Flasks", "Charms"],
+  "jewelleryClasses": ["Rings", "Amulets", "Belts"],
 
   "alwaysShow": {
     "currency": { "style": "tiered S-F (base lists are curated data, kept outside this model)" },

@@ -436,6 +436,15 @@ pub struct Config {
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
     pub flask_charm_classes: Vec<String>,
+    /// Rings / Amulets / Belts. Added 2026-09-07 so the overlay's class picker can offer
+    /// jewellery — `config.json`'s own rules already use these classes, but there was no list
+    /// to source them from, leaving them unreachable in the editor (EDIT-04 requires options
+    /// come from config, never a hardcoded list — `PITFALLS.md` §10).
+    ///
+    /// `#[serde(default)]` rather than required, so a `dynamic.json` seeded before this field
+    /// existed still loads. An absent list yields an empty group, which the picker omits.
+    #[serde(default)]
+    pub jewellery_classes: Vec<String>,
     pub always_show: AlwaysShow,
     pub fallthrough: String,
     /// Ordered declarative policy rules (RULE-01). Optional during the migration —

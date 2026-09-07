@@ -621,6 +621,24 @@ impl eframe::App for OverlayApp {
             // indicator that already says the filter is out of date again.
             self.apply_state = ApplyState::Unapplied;
             self.apply_message = None;
+
+            // Re-project the working model into `config` immediately before writing it.
+            //
+            // The sync near the top of this function runs BEFORE the row controls below have
+            // mutated `working`, so by the time we get here `self.config` still holds the
+            // pre-edit snapshot. Saving it wrote the state as of the *previous* frame, which
+            // put `dynamic.json` permanently one edit behind: the rule you just added only
+            // reached disk on the save triggered by your NEXT edit. Symptom, reported from
+            // live use 2026-09-07: add a rule -> Apply (rule missing from the filter) ->
+            // delete it -> Apply (the deleted rule now appears).
+            //
+            // Deriving here rather than trusting the frame-top sync makes the save independent
+            // of where in the frame the edit happened, so no future control can reintroduce
+            // this by being added in the wrong place.
+            if let (Some(config), Ok(working)) = (self.config.as_mut(), self.rules.as_ref()) {
+                config.rules = Some(working.to_rules());
+            }
+
             if let Some(config) = &self.config {
                 if let Err(message) = store::save(config, &self.store_path) {
                     self.last_save_error = Some(message);

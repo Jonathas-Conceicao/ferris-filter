@@ -13,8 +13,26 @@
 //! names from [`edit::class_groups`] — never a hardcoded literal in this file
 //! (`PITFALLS.md` §10: hand-typed class names already caused a real in-game defect in v0.2).
 //!
-//! Plan 14-03 fills this file in across three tasks: style + classes (this commit), then rarity
-//! + the defence group, then sockets/quality/corrupted plus an EDIT-08 audit comment.
+//! ---
+//!
+//! EDIT-08 condition inventory — every condition this editor exposes has exactly one documented
+//! way to be switched off, and switching one off changes nothing about the others:
+//!
+//! - **style** — always present (a rule must have a style); not a condition, no off switch.
+//! - **classes** — off by deselecting every class in every group; [`edit::set_class`] already
+//!   collapses the last deselection to `None` (its own doc comment explains why), so no separate
+//!   "classes off" toggle is needed here.
+//! - **rarity** — one `circular_toggle` ([`render_rarity`]).
+//! - **defences** — one `circular_toggle` for the *group* ([`render_defence`]); the three
+//!   checkboxes underneath never gain their own separate on/off state, only a ticked/unticked
+//!   value while the group is on.
+//! - **sockets** — one `circular_toggle` ([`render_sockets`]).
+//! - **quality** — one `circular_toggle` ([`render_quality`]).
+//! - **corrupted** — one `circular_toggle` ([`render_corrupted`]), deliberately reusing the same
+//!   enable-toggle vocabulary as every other condition instead of a bespoke tri-state widget
+//!   (RESEARCH Pattern 2) — do not "improve" this into a three-way cycling control.
+//!
+//! This inventory is auditable by reading this file, not by clicking through the accordion.
 
 use crate::models::config::{Config, Rarity, RarityOp, Rule};
 
@@ -40,6 +58,12 @@ pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id:
     changed |= render_rarity(ui, rule, id);
     ui.add_space(8.0);
     changed |= render_defence(ui, rule, id);
+    ui.add_space(8.0);
+    changed |= render_sockets(ui, rule, id);
+    ui.add_space(8.0);
+    changed |= render_quality(ui, rule, id);
+    ui.add_space(8.0);
+    changed |= render_corrupted(ui, rule, id);
 
     changed
 }
@@ -210,6 +234,122 @@ fn render_defence(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
                 edit::set_defence(edit::when_mut(rule), defence, ticked);
                 changed = true;
             }
+        }
+    });
+
+    changed
+}
+
+/// EDIT-07/D-13: sockets as a minimum-value field with its own enable toggle. `DragValue`
+/// already implements click-to-type entry (RESEARCH "Don't Hand-Roll") — no hand-rolled
+/// text-entry-plus-parse-on-blur widget is built here.
+fn render_sockets(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("SOCKETS").color(theme::LABEL_TAN).small());
+
+    let mut enabled = rule.when.as_ref().is_some_and(|when| when.sockets.is_some());
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            if enabled {
+                edit::set_sockets_min(edit::when_mut(rule), 1);
+            } else if let Some(when) = rule.when.as_mut() {
+                edit::clear_sockets(when);
+            }
+            changed = true;
+        }
+        ui.label("min sockets");
+
+        if enabled {
+            let mut min = rule
+                .when
+                .as_ref()
+                .and_then(|when| when.sockets.as_ref())
+                .and_then(|nc| nc.min)
+                .unwrap_or(1);
+            if ui
+                .add(egui::DragValue::new(&mut min).range(0..=6).speed(0.2))
+                .changed()
+            {
+                edit::set_sockets_min(edit::when_mut(rule), min);
+                changed = true;
+            }
+        }
+    });
+
+    changed
+}
+
+/// EDIT-07/D-13: quality as a minimum-value field with its own enable toggle — mirrors
+/// [`render_sockets`] exactly, over the `quality` field instead of `sockets`.
+fn render_quality(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("QUALITY").color(theme::LABEL_TAN).small());
+
+    let mut enabled = rule.when.as_ref().is_some_and(|when| when.quality.is_some());
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            if enabled {
+                edit::set_quality_min(edit::when_mut(rule), 1);
+            } else if let Some(when) = rule.when.as_mut() {
+                edit::clear_quality(when);
+            }
+            changed = true;
+        }
+        ui.label("min quality");
+
+        if enabled {
+            let mut min = rule
+                .when
+                .as_ref()
+                .and_then(|when| when.quality.as_ref())
+                .and_then(|nc| nc.min)
+                .unwrap_or(1);
+            if ui
+                .add(egui::DragValue::new(&mut min).range(0..=20).speed(0.2))
+                .changed()
+            {
+                edit::set_quality_min(edit::when_mut(rule), min);
+                changed = true;
+            }
+        }
+    });
+
+    changed
+}
+
+/// EDIT-07/EDIT-08/D-13/D-14: corrupted deliberately reuses the same enable-toggle + value
+/// vocabulary as every other condition (RESEARCH Pattern 2) instead of a bespoke tri-state
+/// widget — `None` is "unset" (no condition at all, the same mechanism as every other
+/// condition's "off" state), `Some(false)`/`Some(true)` is an ordinary two-way value. Do not
+/// "improve" this into a three-way cycling control; that would make `corrupted` the only
+/// condition in this editor with its own bespoke interaction pattern.
+fn render_corrupted(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("CORRUPTED").color(theme::LABEL_TAN).small());
+
+    let mut enabled = rule.when.as_ref().and_then(|when| when.corrupted).is_some();
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            if enabled {
+                edit::set_corrupted(edit::when_mut(rule), Some(false));
+            } else if let Some(when) = rule.when.as_mut() {
+                edit::set_corrupted(when, None);
+            }
+            changed = true;
+        }
+
+        if enabled {
+            let mut value =
+                rule.when.as_ref().and_then(|when| when.corrupted).unwrap_or(false);
+            let mut value_changed = false;
+            value_changed |= ui.selectable_value(&mut value, false, "False").changed();
+            value_changed |= ui.selectable_value(&mut value, true, "True").changed();
+            if value_changed {
+                edit::set_corrupted(edit::when_mut(rule), Some(value));
+                changed = true;
+            }
+        } else {
+            ui.label("unset");
         }
     });
 

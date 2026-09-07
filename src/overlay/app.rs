@@ -17,13 +17,24 @@
 //! file's scale — a handful of rules) rather than cached and hand-kept in
 //! sync. `PITFALLS.md` §8: if a bug can only be found by clicking, it belongs
 //! in one of those library modules, not here.
+//!
+//! Plan 14-04 adds Apply: a button below the rule list that is the second caller of Phase 12's
+//! dynamic-module compile-and-write pair (D-15, both unchanged by this plan — grep the diff),
+//! reading whatever autosave most recently wrote to `self.store_path`. [`super::apply`] holds the
+//! pure `ApplyState`/`ApplyOutcome`/message types (D-18); this file only decides *when* to call
+//! into the dynamic module and how to fold its `Result`s into that state — the same "library
+//! owns the logic, this file owns the calling" split every other control in this file already
+//! follows.
 
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
 
+use crate::compile::InputPaths;
+use crate::dynamic;
 use crate::models::config::Config;
 
+use super::apply::{self, ApplyOutcome, ApplyState};
 use super::edit::{RuleId, WorkingRules};
 use super::hotkey::HotkeyStatus;
 use super::layout;
@@ -111,6 +122,20 @@ pub struct OverlayApp {
     /// process down or vanish into a console the GUI subsystem has none of). Plan 14-04 owns
     /// the wider error/status surface this eventually joins.
     last_save_error: Option<String>,
+
+    /// Whether `dynamic.filter` currently matches the saved `dynamic.json`, as far as this
+    /// session knows (D-03). Every frame that sets [`Self::dirty`] also moves this to
+    /// [`ApplyState::Unapplied`] — see the single consuming block near the end of [`ui`](
+    /// eframe::App::ui) that both flushes the autosave and makes that transition, so the two can
+    /// never drift apart. A successful Apply moves it to [`ApplyState::Applied`]; a failed one
+    /// leaves it exactly as it was (D-17).
+    apply_state: ApplyState,
+
+    /// The most recent Apply outcome's rendered text — [`apply::success_message`] on success
+    /// (D-16's reload instruction), or a `DynamicError`'s display string on failure (D-17).
+    /// Cleared on the next edit alongside [`Self::apply_state`], so a stale "Wrote ..." message
+    /// never lingers once the stripe already says the filter is out of date again.
+    apply_message: Option<String>,
 }
 
 impl OverlayApp {
@@ -156,6 +181,8 @@ impl OverlayApp {
             confirm_delete: None,
             dirty: false,
             last_save_error: None,
+            apply_state: ApplyState::NeverApplied,
+            apply_message: None,
         }
     }
 }
@@ -504,6 +531,73 @@ impl eframe::App for OverlayApp {
                     });
                 }
             }
+
+            // D-15/D-16/D-17: Apply, below the rule list. Reads whatever autosave most recently
+            // wrote to `self.store_path` -- deliberately independent of whether `self.rules`
+            // parsed for editing this session, since the on-disk store is the thing being
+            // compiled, not the in-memory working model. `compile_store` and `write_filter` are
+            // called here exactly once each and never re-implemented (D-15): `write_filter`'s
+            // temp-file-in-the-destination-directory rename is what keeps the game from ever
+            // reading a half-written filter, and the destination is on OneDrive, where a
+            // cross-volume rename would fail -- reusing it, rather than writing the bytes
+            // directly, is what keeps that guarantee here too.
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.label(theme::row_label(apply::indicator(self.apply_state)));
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                if ui.button("APPLY").clicked() {
+                    let store_dir = self
+                        .store_path
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("."));
+                    let paths = InputPaths::relative_to(store_dir);
+
+                    let outcome = match dynamic::compile_store(&paths, &self.store_path) {
+                        Ok(compiled) => match dynamic::default_destination() {
+                            Some(dest_dir) => match dynamic::write_filter(&dest_dir, &compiled.text)
+                            {
+                                Ok(written) => ApplyOutcome::Written(written),
+                                Err(err) => ApplyOutcome::Failed(err.to_string()),
+                            },
+                            // D-17: an unresolvable default destination is a rendered failure,
+                            // not a panic -- USERPROFILE is unset off Windows, and this codebase
+                            // has no `--dest`-style override UI this phase (out of scope).
+                            None => ApplyOutcome::Failed(
+                                "Cannot resolve the default PoE2 config folder \
+                                 (USERPROFILE is not set)."
+                                    .to_string(),
+                            ),
+                        },
+                        Err(err) => ApplyOutcome::Failed(err.to_string()),
+                    };
+
+                    match outcome {
+                        ApplyOutcome::Written(written) => {
+                            self.apply_message = Some(apply::success_message(&written));
+                            self.apply_state = self.apply_state.on_apply_success();
+                        }
+                        ApplyOutcome::Failed(message) => {
+                            self.apply_message = Some(message);
+                            self.apply_state = self.apply_state.on_apply_failure();
+                        }
+                    }
+                }
+            });
+            if let Some(message) = &self.apply_message {
+                let text_color = if self.apply_state == ApplyState::Applied {
+                    theme::LABEL_TAN
+                } else {
+                    theme::WARM_ACCENT
+                };
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(10.0);
+                    ui.colored_label(text_color, message);
+                });
+            }
         });
 
         // Task 3 / D-02, D-04: exactly one coalesced, atomic write per frame -- never per
@@ -519,6 +613,14 @@ impl eframe::App for OverlayApp {
         // branch above, ahead of the body) silently reintroduces "lose the last edit on Quit" --
         // there is no automated test that would catch that regression, only this ordering itself.
         if self.dirty {
+            // D-03: every frame that sets `dirty` also sets `ApplyState::Unapplied` -- doing it
+            // here, in the single block that already consumes `dirty`, means it can never be
+            // forgotten at one of the several call sites that set `dirty = true` above (row
+            // moves, toggle, delete, add, and every condition edit). The stale outcome text from
+            // a prior Apply is cleared too, so the stripe never shows "Wrote ..." next to an
+            // indicator that already says the filter is out of date again.
+            self.apply_state = ApplyState::Unapplied;
+            self.apply_message = None;
             if let Some(config) = &self.config {
                 if let Err(message) = store::save(config, &self.store_path) {
                     self.last_save_error = Some(message);

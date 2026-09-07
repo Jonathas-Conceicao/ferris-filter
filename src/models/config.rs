@@ -127,7 +127,7 @@ pub struct Styles {
     #[serde(rename = "Recycle")] pub recycle: Style,
     pub unchanged: Style,
     pub hidden: Style,
-    pub unidentified: Style,
+    pub kite: Style,
     /// Exceptional-gear highlight (EXC-04): pink text+border 255 121 198, Dracula bg,
     /// Pink beam, Pink Cross minimap, no sound, no font. Modeled on Recycle but pink.
     /// A SEPARATE style from S so its color can be retuned independently.
@@ -351,7 +351,7 @@ pub struct When {
 ///
 /// The `style` field is a plain `String` resolved against the `Styles` struct keys at
 /// generate-time. Valid values: `"S"`, `"A"`, `"B"`, `"C"`, `"D"`, `"E"`, `"F"`,
-/// `"unchanged"`, `"hidden"`, `"Recycle"`, `"unidentified"`, `"exceptional"`,
+/// `"unchanged"`, `"hidden"`, `"Recycle"`, `"kite"`, `"exceptional"`,
 /// `"craftable"` (requires the optional `styles.craftable` field to be defined).
 /// An unknown style name is a **hard error** at generate-time (Phase 6 validation — not enforced by serde here).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -372,7 +372,7 @@ pub struct Rule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Style tier name — must match a `Styles` key
-    /// (S/A/B/C/D/E/F/unchanged/hidden/Recycle/unidentified/exceptional/craftable).
+    /// (S/A/B/C/D/E/F/unchanged/hidden/Recycle/kite/exceptional/craftable).
     /// Validation (unknown-style hard error) is deferred to generate-time (Phase 6).
     pub style: String,
     /// Optional match conditions. Absent/empty `when` matches everything.
@@ -558,7 +558,7 @@ mod tests {
                 "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
-                "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "kite":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "exceptional":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
             },
             "build": {"weapons":[],"armour":[],"armourTypes":{}},
@@ -924,7 +924,7 @@ mod tests {
             "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
             "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
             "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
-            "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
+            "kite":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
         }"#;
         let styles: Result<Styles, _> = serde_json::from_str(styles_json);
         assert!(

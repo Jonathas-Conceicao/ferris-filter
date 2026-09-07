@@ -22,7 +22,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 
 | Path | Purpose |
 |------|---------|
-| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `styles` (the Dracula tier palette + `unchanged`/`hidden`/`unidentified`), `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` and `styles`, then regenerate. |
+| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `styles` (the Dracula tier palette + `unchanged`/`hidden`/`kite`), `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` and `styles`, then regenerate. |
 | `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each policy block is headed `Show # <rule name>` (from the `name` field in `config.json`). |
 | `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. `sync --league <name\|slug>` targets a specific poe.ninja league (useful during a league transition, when the automatic pick resolves to the outgoing league). |
 | `dynamic_base.json` (repo root) | **Committed template** for the dynamic filter (v0.4). A full `Config` like `config.json`, but with no `areaLevel` conditions and no rule `name`s — dynamic rules are identified by their **index in the `rules` array**. `ferrisfilter apply` seeds `dynamic.json` from it, and `apply --reset` restores from it to start a filter over without losing the baseline. |
@@ -134,7 +134,9 @@ Show # Human description (optional-slug)
 - `WaystoneTier` — PoE2 map (Waystone) tier.
 - `BaseArmour` / `BaseEvasion` / `BaseEnergyShield` — base defence values.
 - `UnidentifiedItemTier` — confirmed PoE2 (author-tested, v0.2): highlights high-tier
-  unidentified items (e.g. `UnidentifiedItemTier >= 4`). Used by the unidentified rules.
+  unidentified items (e.g. `UnidentifiedItemTier >= 4`). Used by the unidentified rules, which
+  wear the `kite` style. Note the condition and the style are independent: the condition is what
+  matches, `kite` is only how a match is drawn.
 - `GemLevel`, `MapTier` (PoE1), `MemoryStrands`, etc. — exist in the grammar but verify
   PoE2 applicability before relying on them.
 
@@ -310,7 +312,7 @@ at generate-time. Current styles:
 | `Recycle` | Show | Green text/border, Dracula bg, Green beam, Green cross minimap |
 | `unchanged` | Show | No color/font/minimap/beam overrides — native rarity color and game defaults |
 | `hidden` | Hide | No color overrides, font 21, DisableDropSound — Alt-reveals as de-emphasized |
-| `unidentified` | Show | No color overrides (native rarity), Orange beam, Orange Kite minimap, alert sound |
+| `kite` | Show | No color overrides (native rarity), Orange beam, Orange Kite minimap, alert sound. A **locator** style, not a value tier — it says "go look over there" without claiming worth, which is why its orange sits outside the Dracula ladder. Renamed from `unidentified` on 2026-09-07: the old name described the rules that happened to use it rather than what it does, so seeing it offered for an unrelated rule in the overlay picker read as nonsense. |
 
 ### `classGroups`
 

@@ -183,6 +183,6 @@ fn cmd_apply(
     );
     // PoE2 never re-reads a filter on its own, and no external process can make it. Saying so is
     // not a nicety: a tool that writes silently reads as broken when drops do not change.
-    println!("Reload it in-game: Options → Game → Item Filter → Refresh");
+    println!("Reload it in-game: Options > Game > Item Filter > Refresh");
     Ok(())
 }

@@ -186,7 +186,7 @@ pub fn set_style(rule: &mut Rule, style: &str) {
 /// (T-14-03).
 pub fn available_styles(styles: &Styles) -> Vec<&'static str> {
     let mut names = vec![
-        "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "unidentified",
+        "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite",
     ];
     if styles.exceptional.is_some() {
         names.push("exceptional");
@@ -841,7 +841,7 @@ mod tests {
         config.rules = Some(vec![Rule {
             enabled: None,
             name: None,
-            style: "unidentified".to_string(),
+            style: "kite".to_string(),
             when: Some(when),
         }]);
 
@@ -864,7 +864,7 @@ mod tests {
         config.rules = Some(vec![Rule {
             enabled: None,
             name: None,
-            style: "unidentified".to_string(),
+            style: "kite".to_string(),
             when: Some(when),
         }]);
 

@@ -20,7 +20,7 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified, exceptional, craftable \
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, kite, exceptional, craftable \
              (craftable must be defined in the config's styles object)")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
@@ -94,7 +94,7 @@ pub fn generate_as(
 /// Resolve a style name to the matching `&Style` in `Styles`.
 ///
 /// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
-/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/unidentified/exceptional/craftable.
+/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/kite/exceptional/craftable.
 ///
 /// FUTURE (style flexibility): this match hardcodes the style vocabulary, so adding a style
 /// means editing this arm and the `Styles` struct. To let any config define and use new
@@ -117,7 +117,7 @@ fn resolve_style<'a>(
         "Recycle" => &styles.recycle,
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
-        "unidentified" => &styles.unidentified,
+        "kite" => &styles.kite,
         // Optional style — present only when the config defines it. A rule referencing
         // "exceptional" against a config that omits it is treated as an unknown style.
         "exceptional" if styles.exceptional.is_some() => styles.exceptional.as_ref().unwrap(),

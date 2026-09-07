@@ -22,7 +22,13 @@ use std::path::{Path, PathBuf};
 /// D-16's exact reload instruction. Its wording matters — this is the one string in this phase a
 /// player standing in front of the game reads literally, so it is a named constant rather than
 /// inlined at each use site.
-pub const RELOAD_INSTRUCTION: &str = "Options → Game → Item Filter → Refresh";
+/// Deliberately ASCII. The stripe renders this in the Cinzel display family, which has no
+/// arrow glyph, so a → came out as a tofu box in the confirmation line (reported from live use
+/// 2026-09-07, screenshot poe2_print005). `install_fonts` now gives that family a fallback
+/// chain, but the fallback fonts are not guaranteed to carry U+2192 either — and this is the
+/// one string whose job is to tell the player how to make their filter take effect, so it does
+/// not get to depend on glyph coverage.
+pub const RELOAD_INSTRUCTION: &str = "Options > Game > Item Filter > Refresh";
 
 /// Whether the filter on disk (`dynamic.filter`) currently matches the saved rule store
 /// (`dynamic.json`), as far as this overlay session knows.
@@ -69,7 +75,7 @@ pub enum ApplyOutcome {
 }
 
 /// The message rendered in the stripe after a successful Apply: names the written file and
-/// states how to make the game read it. The exact substring `Options → Game → Item Filter →
+/// states how to make the game read it. The exact substring `Options > Game > Item Filter >
 /// Refresh` is asserted verbatim below — PoE2 never re-reads a filter on its own
 /// (`PITFALLS.md` §1), so a tool that writes silently reads as broken.
 pub fn success_message(written: &Path) -> String {
@@ -98,7 +104,7 @@ mod tests {
         let msg = success_message(Path::new(r"C:\Games\PoE2\dynamic.filter"));
         assert!(msg.contains("dynamic.filter"), "got: {msg}");
         assert!(
-            msg.contains("Options → Game → Item Filter → Refresh"),
+            msg.contains("Options > Game > Item Filter > Refresh"),
             "the reload instruction must appear verbatim, got: {msg}"
         );
     }

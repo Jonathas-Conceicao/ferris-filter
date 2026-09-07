@@ -85,11 +85,23 @@ pub fn install_fonts(ctx: &egui::Context) {
         DISPLAY_FONT.to_owned(),
         egui::FontData::from_static(include_bytes!("../../assets/Cinzel-Regular.ttf")).into(),
     );
-    fonts
+    // Seed the display family with the default proportional chain BEFORE inserting Cinzel at
+    // the front, so any glyph Cinzel lacks falls through instead of rendering as a tofu box.
+    // `or_default()` creates an EMPTY family for a new name — the first cut relied on that and
+    // left Cinzel with no fallback at all, which is why an arrow in the Apply confirmation came
+    // out as a box (screenshot poe2_print005). Cinzel is an all-caps display face with a narrow
+    // repertoire, so it will not be the last word on punctuation or symbols.
+    let default_chain = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    let family = fonts
         .families
         .entry(FontFamily::Name(DISPLAY_FONT.into()))
-        .or_default()
-        .insert(0, DISPLAY_FONT.to_owned());
+        .or_default();
+    family.extend(default_chain);
+    family.insert(0, DISPLAY_FONT.to_owned());
     ctx.set_fonts(fonts);
 }
 

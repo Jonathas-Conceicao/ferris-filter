@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-09-07T05:24:50.320Z"
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-09-07T05:47:10.945Z"
 last_activity: 2026-09-07
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 50
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 14 (Rule Editor + Apply) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-09-07
 
@@ -53,6 +53,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 13 P05 | ~16min | 2 tasks | 7 files |
 | Phase 14 P01 | 55min | 3 tasks | 4 files |
 | Phase 14 P02 | 70min | 3 tasks | 2 files |
+| Phase 14 P03 | 65min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,8 @@ work (carried forward past the v0.3 close):
 - [Phase 14]: overlay::store::save writes atomically via tempfile::NamedTempFile::new_in + persist (same discipline as dynamic::write_filter); store.rs's module header now documents the Phase 14 write boundary instead of Phase 13's now-stale "overlay never writes" claim
 - [Phase ?]: 14-02: Deferred-action rendering -- row controls only record a RowAction during the render pass; the mutation happens once after the loop.
 - [Phase ?]: 14-02: Quit is only requested during tray-menu polling; ViewportCommand::Close is deferred until after the body renders and autosave runs, so the last edit is never lost on Quit (RESEARCH Risk 4).
+- [Phase ?]: Threaded RuleId + &Config + &mut Rule into the accordion body via WorkingRules::rule_mut, distinguishing immediate per-rule condition edits from the deferred RowAction path used for row-structural changes
+- [Phase ?]: Comparator/value pickers (rarity op, rarity value, corrupted value) use plain-English labels (Exactly/At Least/At Most, Normal/Magic/Rare/Unique, False/True) instead of symbolic >=/<=/== labels, keeping the anti-comparator-string grep meaningful against the file's actual widget labels
 
 ### Pending Todos
 
@@ -143,8 +146,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-07T05:24:50.308Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-09-07T05:47:10.937Z
+Stopped at: Completed 14-03-PLAN.md
 Resume file: None
 
 **Next step:** Run `/gsd-new-milestone` to scope v0.4.

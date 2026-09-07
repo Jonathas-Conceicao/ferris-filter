@@ -446,6 +446,17 @@ impl eframe::App for OverlayApp {
                                             }
                                         });
 
+                                    // The wrapped summary sits under the header while the row is
+                                    // collapsed. It cannot live in the header itself
+                                    // (`CollapsingHeader` hardcodes `TextWrapMode::Extend`), and
+                                    // it is not repeated when open because the editors below
+                                    // already show every condition in full.
+                                    if !is_open {
+                                        if let Some(row) = display_rows.get(ordinal) {
+                                            row_summary_label(ui, row);
+                                        }
+                                    }
+
                                     if header.header_response.clicked() {
                                         next_expanded = if is_open { None } else { Some(id) };
                                     }
@@ -669,11 +680,76 @@ enum RowAction {
     Add,
 }
 
-/// One collapsed-row header line: ordinal, style, an explicit `[DISABLED]` marker for a
-/// disabled rule (D-19/`PITFALLS.md` §9: still listed, never omitted, so a row's position in
-/// the accordion always matches its position in `dynamic.json`), and the `view_model`-derived
-/// condition summary.
+/// One row's header line: ordinal, style, and an explicit `[DISABLED]` marker for a disabled
+/// rule (D-19/`PITFALLS.md` §9: still listed, never omitted, so a row's position in the
+/// accordion always matches its position in `dynamic.json`).
+///
+/// The condition summary is deliberately NOT here. `CollapsingHeader` builds its header galley
+/// with a hardcoded `TextWrapMode::Extend`, so header text can never wrap — a long summary ran
+/// off the 460px stripe and was simply unreadable (reported from live use 2026-09-07, screenshot
+/// poe2_print004). Widening the stripe for a handful of long rules was explicitly not wanted, so
+/// the summary moved to [`row_summary_label`], a wrapped label the caller renders beneath the
+/// header while the row is collapsed.
 fn row_header_text(row: &view_model::RuleRow) -> String {
     let marker = if row.enabled { "" } else { " [DISABLED]" };
-    format!("{:02}  {}{}  —  {}", row.ordinal, row.style, marker, row.summary)
+    format!("{:02}  {}{}", row.ordinal, row.style, marker)
+}
+
+/// The wrapped condition summary shown under a **collapsed** row.
+///
+/// Only while collapsed: an expanded row's editors already show every condition in full, so
+/// repeating the summary above them would be redundant and cost scarce vertical space.
+fn row_summary_label(ui: &mut egui::Ui, row: &view_model::RuleRow) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(&row.summary)
+                .color(theme::DISABLED_TEXT)
+                .small(),
+        )
+        .wrap(),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(ordinal: usize, style: &str, enabled: bool, summary: &str) -> view_model::RuleRow {
+        view_model::RuleRow {
+            ordinal,
+            enabled,
+            style: style.to_string(),
+            name: None,
+            summary: summary.to_string(),
+        }
+    }
+
+    #[test]
+    fn the_header_carries_identity_only_never_the_summary() {
+        // Regression: the summary used to live in the header, where `CollapsingHeader`'s
+        // hardcoded `TextWrapMode::Extend` ran it off the 460px stripe unreadably. It belongs
+        // in `row_summary_label`, which wraps. Putting it back here would silently reintroduce
+        // the clipping, and nothing about the header's own rendering would look wrong.
+        let long = "Rings, Amulets, Belts, Body Armours +17 more \u{b7} Unidentified Tier \u{2265} 4";
+        let header = row_header_text(&row(8, "unidentified", true, long));
+        assert_eq!(header, "08  unidentified");
+        assert!(
+            !header.contains("Rings"),
+            "the summary must not be in the header: {header}"
+        );
+    }
+
+    #[test]
+    fn a_disabled_row_is_marked_in_the_header() {
+        // D-19 / PITFALLS §9: a disabled rule stays listed in place, so its ordinal still
+        // matches its index in dynamic.json — the marker is how it reads as disabled.
+        let header = row_header_text(&row(3, "hidden", false, "anything"));
+        assert_eq!(header, "03  hidden [DISABLED]");
+    }
+
+    #[test]
+    fn the_ordinal_is_zero_padded_so_rows_stay_aligned() {
+        assert!(row_header_text(&row(0, "S", true, "")).starts_with("00  "));
+        assert!(row_header_text(&row(12, "S", true, "")).starts_with("12  "));
+    }
 }

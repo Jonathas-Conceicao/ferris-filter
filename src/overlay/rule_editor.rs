@@ -389,8 +389,12 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
         let slider_changed = ui
             .scope(|ui| {
                 let spacing = ui.spacing_mut();
-                // Leave room for the value box the slider draws to its right.
-                spacing.slider_width = (ui_width - 72.0).max(120.0);
+                // Bounded, not "fill the row". The first cut used available-width minus a
+                // margin, which ran the rail past the stripe's right edge and pushed the handle
+                // and the value box out of sight entirely (screenshot poe2_print004). A five-
+                // position scale needs only enough room to separate its stops, and the value
+                // box needs room to sit beside it inside 460px.
+                spacing.slider_width = (ui_width - 96.0).clamp(120.0, 200.0);
                 spacing.slider_rail_height = 6.0;
 
                 let visuals = ui.visuals_mut();

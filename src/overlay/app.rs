@@ -5,26 +5,32 @@
 //! hotkey for their events (plan 13-02); turning those events into an actual
 //! show/hide of the window that does not steal keyboard focus from the game, by
 //! delegating the decision to [`super::visibility`] and the OS call to
-//! [`super::win`] (plan 13-03); and — this plan (13-04) — rendering the
-//! read-only rule list loaded once at startup via [`super::store`] and
-//! [`super::view_model`], in the PoE2-idiom chrome from [`super::theme`] and
-//! [`super::widgets`]. This file itself contains no show/hide branching logic,
-//! no rule-summarizing logic, and no palette values of its own — it advances
-//! the state machine, asks it for the effect, and performs that one effect; it
-//! holds the rows [`super::view_model::rule_rows`] already computed and paints
-//! them through [`super::widgets`]. `PITFALLS.md` §8: if a bug can only be
-//! found by clicking, it belongs in one of those library modules, not here.
+//! [`super::win`] (plan 13-03); and — starting with plan 14-02 — the editable
+//! accordion: [`super::edit::WorkingRules`] loaded once at startup via
+//! [`super::store`], rendered in the PoE2-idiom chrome from [`super::theme`] and
+//! [`super::widgets`], with expansion state keyed by [`super::edit::RuleId`]
+//! (D-19) so a reorder never leaves the accordion pointed at the wrong rule.
+//! This file itself contains no rule-mutation logic and no palette values of
+//! its own — every mutation is a call into [`super::edit`], and every
+//! summarizing string comes from [`super::view_model::rule_rows`], recomputed
+//! from the current [`super::edit::WorkingRules`] each frame (cheap at this
+//! file's scale — a handful of rules) rather than cached and hand-kept in
+//! sync. `PITFALLS.md` §8: if a bug can only be found by clicking, it belongs
+//! in one of those library modules, not here.
 
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
 
+use crate::models::config::{Config, Rule};
+
+use super::edit::{RuleId, WorkingRules};
 use super::hotkey::HotkeyStatus;
 use super::layout;
 use super::store;
 use super::theme;
 use super::tray::{self, OverlayCommand, TrayHandles};
-use super::view_model::{self, RuleRow};
+use super::view_model;
 use super::visibility::{self, Visibility};
 use super::widgets;
 use super::win::{self, OverlayWindow};
@@ -63,13 +69,29 @@ pub struct OverlayApp {
     /// frames, and always `None` off Windows.
     window: Option<OverlayWindow>,
 
-    /// The read-only rule list (D-19), loaded once at startup via
-    /// [`store::load`] and mapped by [`view_model::rule_rows`]. `Err` holds
-    /// the rendered message a malformed or missing `dynamic.json` produced —
-    /// the stripe shows this text in place of the list rather than crashing
-    /// (T-13-13). Never reloaded during a session; nothing in this phase
-    /// mutates the store, so there is nothing to refresh from (D-20).
-    rows: Result<Vec<RuleRow>, String>,
+    /// The editable working model (D-18/D-19), loaded once at startup via [`store::load`] and
+    /// built with [`WorkingRules::from_rules`]. `Err` holds the rendered message a malformed or
+    /// missing `dynamic.json` produced — the stripe shows this text in place of the list rather
+    /// than crashing (T-13-13). Every mutation (add/delete/move/toggle/edit-a-condition) is a
+    /// call into `super::edit`'s pure functions; this file only decides *when* to call them.
+    rules: Result<WorkingRules, String>,
+
+    /// The rest of the loaded store — everything in `Config` except `rules`, which
+    /// [`Self::rules`] owns. Autosave (Task 3) writes this back with `rules` replaced by
+    /// [`WorkingRules::to_rules`]; plan 14-03's condition pickers read their option lists
+    /// (styles, class groups) from here. `None` exactly when [`Self::rules`] is `Err` — the
+    /// store either loaded as a whole or it didn't.
+    config: Option<Config>,
+
+    /// Where [`Self::config`]/[`Self::rules`] were loaded from, and where autosave (Task 3)
+    /// writes back to.
+    store_path: std::path::PathBuf,
+
+    /// Which rule's accordion body is open, or `None` if the list is fully collapsed. Keyed by
+    /// `RuleId`, never an index or array position (D-19, `PITFALLS.md` §9) — a reorder swaps
+    /// `WorkingRules`' array positions but never invalidates a `RuleId`, so this field is never
+    /// re-resolved after a move.
+    expanded: Option<RuleId>,
 }
 
 impl OverlayApp {
@@ -80,10 +102,18 @@ impl OverlayApp {
         hotkey_manager: Option<GlobalHotKeyManager>,
         hotkey_status: HotkeyStatus,
     ) -> Self {
-        // D-19/D-20: read-only, one shot, at startup. Nothing here seeds a filter or writes
-        // anything beyond `store::load`'s own seed-if-absent (Phase 12's `ensure_store`).
+        // Loaded once at startup (D-20: nothing in this phase reloads the store mid-session --
+        // every subsequent change to it flows the other direction, through autosave). Seeding
+        // an absent store is `store::load`'s own job (Phase 12's `ensure_store`), not this
+        // constructor's.
         let (base, store_path) = store::default_paths();
-        let rows = store::load(&base, &store_path).map(|view| view_model::rule_rows(&view.config));
+        let (config, rules) = match store::load(&base, &store_path) {
+            Ok(view) => {
+                let rule_list = view.config.rules.clone().unwrap_or_default();
+                (Some(view.config), Ok(WorkingRules::from_rules(rule_list)))
+            }
+            Err(message) => (None, Err(message)),
+        };
 
         Self {
             docked: false,
@@ -100,7 +130,10 @@ impl OverlayApp {
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
             window: None,
-            rows,
+            rules,
+            config,
+            store_path,
+            expanded: None,
         }
     }
 }
@@ -223,22 +256,73 @@ impl eframe::App for OverlayApp {
             });
             ui.add_space(6.0);
 
-            // D-19: read-only, in ordinal order, no status chrome (no store path, no price
-            // source, no destination folder). Content fills only the top of the stripe; the
-            // remainder stays empty panel ground rather than shrinking the window (D-23) --
-            // the ScrollArea below only grows as tall as its rows, it does not stretch to
-            // fill the CentralPanel.
-            match &self.rows {
-                Ok(rows) => {
+            // D-01: an accordion, not a detail pane -- clicking a row expands its controls in
+            // place, rows above/below stay visible, and the stripe never resizes (controls
+            // stack vertically inside the row instead). D-19: expansion is keyed by `RuleId`,
+            // never an index or array position, so an up/down move (Task 3) can never leave the
+            // accordion pointed at the wrong rule. Content fills only the top of the stripe; the
+            // remainder stays empty panel ground rather than shrinking the window (D-23) -- the
+            // ScrollArea below only grows as tall as its rows, it does not stretch to fill the
+            // CentralPanel.
+            match &self.rules {
+                Ok(working) => {
+                    // Summaries are recomputed from the live working model every frame, reusing
+                    // `view_model::rule_rows`'s existing summary derivation (the same one-line
+                    // collapsed text 13-04 rendered) rather than duplicating that logic here.
+                    // `config.rules` is kept in sync with `working` first so the two can never
+                    // drift, including once Task 3 adds mutation.
+                    if let Some(config) = self.config.as_mut() {
+                        config.rules = Some(working.to_rules());
+                    }
+                    let display_rows = self
+                        .config
+                        .as_ref()
+                        .map(view_model::rule_rows)
+                        .unwrap_or_default();
+
+                    // Snapshot this frame's starting expansion state once, so every row's
+                    // `is_open` reflects the same moment regardless of what an earlier row in
+                    // this same frame's loop does to `next_expanded`.
+                    let expanded_at_frame_start = self.expanded;
+                    let mut next_expanded = expanded_at_frame_start;
+
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
-                            for row in rows {
-                                widgets::zebra_row(ui, row.ordinal, |ui| {
-                                    render_rule_row(ui, row);
+                            for (ordinal, (id, rule)) in working.rows().iter().enumerate() {
+                                let id = *id;
+                                let is_open = expanded_at_frame_start == Some(id);
+                                let header_text = display_rows
+                                    .get(ordinal)
+                                    .map(row_header_text)
+                                    .unwrap_or_else(|| rule.style.clone());
+
+                                widgets::zebra_row(ui, ordinal, |ui| {
+                                    let header = egui::CollapsingHeader::new(header_text)
+                                        .id_salt(id)
+                                        .open(Some(is_open))
+                                        .show(ui, |ui| {
+                                            render_rule_body(ui, rule);
+                                        });
+
+                                    if header.header_response.clicked() {
+                                        next_expanded = if is_open { None } else { Some(id) };
+                                    }
+
+                                    // Scroll the just-opened row into view -- fires exactly once
+                                    // on the frame a row transitions closed -> open, never on
+                                    // every frame it stays open (which would fight the player's
+                                    // own scrolling).
+                                    if !is_open && next_expanded == Some(id) {
+                                        header
+                                            .header_response
+                                            .scroll_to_me(Some(egui::Align::TOP));
+                                    }
                                 });
                             }
                         });
+
+                    self.expanded = next_expanded;
                 }
                 Err(message) => {
                     ui.horizontal_wrapped(|ui| {
@@ -251,22 +335,31 @@ impl eframe::App for OverlayApp {
     }
 }
 
-/// Renders one rule row's ordinal, style, and condition summary. A disabled rule (D-19: still
-/// listed, never omitted — `PITFALLS.md` §9's ordinal-identity guard) renders in
-/// `theme::DISABLED_TEXT` with an explicit `DISABLED` marker rather than being skipped.
-fn render_rule_row(ui: &mut egui::Ui, row: &RuleRow) {
-    let text_color = if row.enabled {
-        theme::LABEL_TAN
-    } else {
-        theme::DISABLED_TEXT
-    };
+/// One collapsed-row header line: ordinal, style, an explicit `[DISABLED]` marker for a
+/// disabled rule (D-19/`PITFALLS.md` §9: still listed, never omitted, so a row's position in
+/// the accordion always matches its position in `dynamic.json`), and the `view_model`-derived
+/// condition summary.
+fn row_header_text(row: &view_model::RuleRow) -> String {
+    let marker = if row.enabled { "" } else { " [DISABLED]" };
+    format!("{:02}  {}{}  —  {}", row.ordinal, row.style, marker, row.summary)
+}
 
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{:02}", row.ordinal)).color(text_color).monospace());
-        ui.label(egui::RichText::new(&row.style).color(theme::VALUE_TEXT));
-        if !row.enabled {
-            ui.label(egui::RichText::new("DISABLED").color(theme::DISABLED_TEXT).small());
-        }
-    });
-    ui.label(egui::RichText::new(&row.summary).color(text_color).small());
+/// The expanded row's body.
+///
+/// Plan 14-02 (this file) renders only a placeholder naming the rule being edited — plan 14-03
+/// replaces this with the actual condition editors (style/class/rarity/defence/sockets/quality/
+/// corrupted). Kept as a single call site so the accordion, the `RuleId` identity handling, and
+/// the save path (Task 3) can be judged on their own, independent of the conditions UI. Returns
+/// whether anything changed, for the caller's dirty-tracking — always `false` here since nothing
+/// in this plan can yet mutate a rule from inside its own body.
+fn render_rule_body(ui: &mut egui::Ui, rule: &Rule) -> bool {
+    ui.label(
+        egui::RichText::new(format!(
+            "(\"{}\" rule — condition editors arrive in plan 14-03)",
+            rule.style
+        ))
+        .color(theme::DISABLED_TEXT)
+        .small(),
+    );
+    false
 }

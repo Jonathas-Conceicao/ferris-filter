@@ -64,6 +64,8 @@ pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id:
     changed |= render_quality(ui, rule, id);
     ui.add_space(8.0);
     changed |= render_corrupted(ui, rule, id);
+    ui.add_space(8.0);
+    changed |= render_unidentified_tier(ui, rule, id);
 
     changed
 }
@@ -309,6 +311,58 @@ fn render_quality(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
                 .changed()
             {
                 edit::set_quality_min(edit::when_mut(rule), min);
+                changed = true;
+            }
+        }
+    });
+
+    changed
+}
+
+/// Unidentified item tier as a minimum-value field with its own enable toggle — mirrors
+/// [`render_sockets`], over `unidentified_tier`.
+///
+/// Added 2026-09-07 after live use: `dynamic_base.json`'s rules 7 and 8 carry this condition
+/// and the collapsed summary showed it, but nothing could change it. EDIT-07 enumerated only
+/// sockets, quality and corrupted, so the gap came from the requirement, not from execution.
+///
+/// The range stops at 10 because PoE2's unidentified tier indicator tops out well below that;
+/// the model's `min` is `u32`, so the widget is bounded at 0 rather than clamping a signed value.
+fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(
+        egui::RichText::new("UNIDENTIFIED TIER")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
+
+    let mut enabled = rule
+        .when
+        .as_ref()
+        .is_some_and(|when| when.unidentified_tier.is_some());
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            if enabled {
+                edit::set_unidentified_tier_min(edit::when_mut(rule), 4);
+            } else if let Some(when) = rule.when.as_mut() {
+                edit::clear_unidentified_tier(when);
+            }
+            changed = true;
+        }
+        ui.label("min tier");
+
+        if enabled {
+            let mut min = rule
+                .when
+                .as_ref()
+                .and_then(|when| when.unidentified_tier.as_ref())
+                .map(|ut| ut.min)
+                .unwrap_or(4);
+            if ui
+                .add(egui::DragValue::new(&mut min).range(0..=10).speed(0.2))
+                .changed()
+            {
+                edit::set_unidentified_tier_min(edit::when_mut(rule), min);
                 changed = true;
             }
         }

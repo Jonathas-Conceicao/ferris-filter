@@ -13,7 +13,8 @@
 //! "currently expanded" state would silently point at whatever rule now occupies that slot.
 
 use crate::models::config::{
-    Config, NumericCondition, Rarity, RarityComparator, RarityOp, Rule, Styles, When,
+    Config, NumericCondition, Rarity, RarityComparator, RarityOp, Rule, Styles, UnidentifiedTier,
+    When,
 };
 
 // ---------------------------------------------------------------------------
@@ -353,6 +354,24 @@ pub fn set_quality_min(when: &mut When, min: i64) {
 /// EDIT-07/EDIT-08: clears the quality condition entirely.
 pub fn clear_quality(when: &mut When) {
     when.quality = None;
+}
+
+/// Sets the unidentified-item-tier minimum, emitting `UnidentifiedItemTier >= min`.
+///
+/// Added 2026-09-07 after live use: `dynamic_base.json`'s rules 7 and 8 both carry this
+/// condition and the collapsed summary displayed it, but no control existed to change it.
+/// EDIT-07 enumerated only sockets, quality and corrupted, so the gap was inherited from the
+/// requirement rather than introduced in execution.
+///
+/// `min` is `u32` in the model (unlike sockets/quality, which are `i64`) — a negative tier is
+/// meaningless, so the caller must clamp rather than cast.
+pub fn set_unidentified_tier_min(when: &mut When, min: u32) {
+    when.unidentified_tier = Some(UnidentifiedTier { min });
+}
+
+/// EDIT-08: clears the unidentified-tier condition entirely, emitting nothing.
+pub fn clear_unidentified_tier(when: &mut When) {
+    when.unidentified_tier = None;
 }
 
 /// EDIT-07/EDIT-08: sets (or, via `None`, clears) the corrupted condition. `Some(false)` emits
@@ -783,6 +802,75 @@ mod tests {
         assert!(defence_ticked(&when, Defence::Armour));
         set_defence(&mut when, Defence::Armour, false);
         assert!(!defence_ticked(&when, Defence::Armour));
+    }
+
+    // -- unidentified tier (gap found in live use 2026-09-07) ----------------------
+
+    #[test]
+    fn set_unidentified_tier_min_emits_the_threshold_line() {
+        let mut when = When::default();
+        set_unidentified_tier_min(&mut when, 4);
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unidentified".to_string(),
+            when: Some(when),
+        }]);
+
+        let filter =
+            crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(
+            filter.contains("UnidentifiedItemTier >= 4"),
+            "got:\n{filter}"
+        );
+    }
+
+    #[test]
+    fn clearing_the_unidentified_tier_emits_no_line_at_all() {
+        let mut when = When::default();
+        set_unidentified_tier_min(&mut when, 4);
+        clear_unidentified_tier(&mut when);
+        assert!(when.unidentified_tier.is_none());
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unidentified".to_string(),
+            when: Some(when),
+        }]);
+
+        let filter =
+            crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        assert!(
+            !filter.contains("UnidentifiedItemTier"),
+            "a disabled control must contribute nothing (EDIT-08); got:\n{filter}"
+        );
+    }
+
+    #[test]
+    fn the_base_rules_that_already_use_unidentified_tier_are_now_reachable() {
+        // Regression: rules 7 and 8 of dynamic_base.json carry this condition and the collapsed
+        // summary displayed it, but no control could change it. If this list ever empties, the
+        // editor control has lost the rules it exists to serve.
+        let config = base_config();
+        let with_tier = config
+            .rules
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| {
+                r.when
+                    .as_ref()
+                    .is_some_and(|w| w.unidentified_tier.is_some())
+            })
+            .count();
+        assert!(
+            with_tier >= 2,
+            "expected the base rule set to still use unidentifiedTier, found {with_tier}"
+        );
     }
 
     // -- sockets / quality / corrupted (EDIT-07/EDIT-08) ---------------------------

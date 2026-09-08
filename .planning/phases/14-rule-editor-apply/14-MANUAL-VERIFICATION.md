@@ -263,13 +263,23 @@ as nonsense when offered for an unrelated rule. Renamed to `kite`, after its min
 **Result:** PASS -- author, 2026-09-08.
 ---
 
+## 12. Full-row click targets (017b643)
+
+Clicking the empty space on either header line — the arrows/title/delete line or the rule-index
+line — expands and collapses the rule, not just the text itself. The layout invariant this depends
+on is that the filler is allocated *after* the buttons, so they keep their own hit areas.
+
+1. Click the empty space to the right of a rule's title. **Expected:** the rule expands.
+2. Click the empty space on the index line. **Expected:** the rule collapses again.
+3. Click an arrow, the toggle, and the delete control. **Expected:** each still does its own job
+   rather than expanding the row.
+
+**Result:** PASS -- author, 2026-09-08.
+---
+
 ## Not separately confirmed
 
-- **Full-row click targets (`017b643`)** — clicking the empty space on either header line to
-  expand a rule, rather than only the text itself. Implemented and unit-tested for the layout
-  invariant it depends on (the filler is allocated *after* the buttons so they keep their own hit
-  areas), but not called out in its own in-game check. Low risk: a regression here is immediately
-  obvious the first time anyone opens a rule.
+Nothing outstanding. All twelve checks across both passes are approved.
 
 ---
 

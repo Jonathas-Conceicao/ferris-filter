@@ -126,13 +126,70 @@ work (carried forward past the v0.3 close):
 - **`Cargo.toml` is still `version = "0.1.0"`** while tags read v0.1/v0.2/v0.3 — confirm whether
   the crate version is meant to track milestone tags.
 
-- **Full-row click targets (`017b643`) never separately confirmed in-game** — implemented and
-  unit-tested for the layout invariant they depend on, but not given their own check in
-  `14-MANUAL-VERIFICATION.md`. Low risk; a regression is obvious the first time a rule is opened.
-
 ### Blockers/Concerns
 
 None open.
+
+## Requested, Not Yet Scoped
+
+Asked for by the author on **2026-09-08**, explicitly **before v0.4 closes**. No code work has
+started — the author paused the session here and will resume. Both are editor-side features; the
+groundwork below was confirmed by reading the code, not assumed.
+
+### R1 — Raw-text `BaseType` list, with `class` demoted to an optional condition
+
+Target output, which the author has been hand-writing into filters:
+
+```
+Show # Change Bases
+  Rarity == Normal
+  BaseType == "Heavy Belt" "Utility Belt" "Armoured Cap" "Sacred Focus"
+```
+
+Note there is **no `Class` line** — that is the point of the request. Today the overlay's rule
+body always renders the class picker, so a base-type-only rule cannot be expressed there.
+
+**What already exists (verified 2026-09-08):**
+- `When::base_type: Option<Vec<String>>` is already in the model (`src/models/config.rs:341`),
+  already `skip_serializing_if`, and already emitted as
+  `BaseType == "A" "B"` by the emitter (`src/emitter.rs:418`).
+- `overlay::view_model`'s `summarize_list` already documents itself as rendering "a name list
+  (class or base type)".
+
+**So the work is overlay-side:** a text-entry control for the list, and giving `class` the same
+enable/disable treatment every other condition already has (`EDIT-08`'s off-switch inventory in
+`rule_editor.rs` covers seven conditions; class is the one that is always-on). The author's second
+motive is that this also makes a freshly added rule cleaner — a new rule currently opens with the
+full class picker expanded.
+
+**Open questions for the discussion:** how the raw list is parsed (one per line, or
+comma/quote-separated?); whether typos are validated against anything (poe2db base names are not
+in the repo) or accepted verbatim; and whether an empty list collapses to `None` the way
+`edit::set_class` already does, to avoid emitting a malformed bare `BaseType` line.
+
+### R2 — Optional per-rule `name`, shown in the editor and written to the filter
+
+Wanted as `Show # rule 0 - Exceptional bases`, primarily so rules are easier to identify in the
+overlay's own list.
+
+**What already exists (verified 2026-09-08):**
+- `Rule::name: Option<String>` is already in the model (`src/models/config.rs:373`).
+- The emitter already writes `{Show|Hide} # {label}` where `label` is `rule.name` falling back to
+  a derived `"rule {idx}"` (`src/emitter.rs:336-345`). The author's desired
+  `# rule 0 - Exceptional bases` is just a `name` of `"rule 0 - Exceptional bases"`.
+
+**So the work is again overlay-side:** a name field in the rule body, and using the name in the
+row header where `row_header_text` currently shows `{ordinal}  {style}`.
+
+**Watch out:** `dynamic_base.json` deliberately ships **without** rule names — `CLAUDE.md` states
+dynamic rules are identified by their **index in the `rules` array**, and `PITFALLS.md` §9 is about
+ordinal identity being fragile. Adding names must not quietly become a second identity scheme; the
+session-only `RuleId` stays the identity, and a name is a label. Worth deciding explicitly whether
+a name auto-populates with the derived `"rule N"` (which would then go stale on reorder) or stays
+empty until typed.
+
+**Suggested route:** a new Phase 15 via `/gsd-phase --insert 15`, then the standard
+discuss → plan → execute chain. Phase 14 can be verified and closed independently first.
 
 ## Deferred Items
 
@@ -162,5 +219,5 @@ Last session: 2026-09-08T00:00:00.000Z
 Stopped at: Completed 14-04-PLAN.md — Phase 14 fully implemented and manually verified
 Resume file: None
 
-**Next step:** Run phase verification for Phase 14, then `/gsd-audit-milestone 0.4` and
-`/gsd-complete-milestone` to ship v0.4.
+**Next step:** Run phase verification for Phase 14. Then, before any milestone audit, scope the
+two features under *Requested, Not Yet Scoped* — the author asked for both before v0.4 closes.

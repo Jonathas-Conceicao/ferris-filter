@@ -188,12 +188,12 @@ line carries the reload path.
 
 ## Next Phase Readiness
 
-- Phase 14 is functionally complete: all six checkpoint checks plus five second-pass checks are
-  approved in `14-MANUAL-VERIFICATION.md`.
-- One item is implemented and tested but not separately confirmed in-game — the full-row click
-  targets (`017b643`). Recorded under *Not separately confirmed* in the manual record. Low risk:
-  a regression is obvious the first time anyone opens a rule.
-- Ready for phase verification, then `/gsd-audit-milestone 0.4` and `/gsd-complete-milestone`.
+- Phase 14 is functionally complete: all twelve checks in `14-MANUAL-VERIFICATION.md` are
+  approved across both passes, with nothing outstanding.
+- **The milestone does not close here.** The author asked (2026-09-08) for two further editor
+  features before v0.4 ships — a raw-text `BaseType` list with `class` demoted to an optional
+  condition, and an optional per-rule `name`. Both are recorded in `STATE.md` under *Requested,
+  not yet scoped*. Phase verification for 14 can run now; the milestone audit should wait.
 
 ---
 *Phase: 14-rule-editor-apply*

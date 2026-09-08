@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Completed 14-04-PLAN.md
+stopped_at: Phase 15 added to the roadmap; not yet discussed
 last_updated: "2026-09-08T00:00:00.000Z"
 last_activity: 2026-09-08
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 3
   total_plans: 13
   completed_plans: 13
@@ -26,6 +26,7 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 14 (Rule Editor + Apply) — ALL PLANS COMPLETE, phase verification pending
+Next phase: 15 (BaseType Lists and Rule Names) — added 2026-09-08, not yet discussed or planned
 Plan: 4 of 4 (complete)
 Status: 14-04's blocking checkpoint cleared — six checks approved 2026-09-08, plus five
 second-pass checks covering the out-of-band live-use fix stream. See
@@ -59,6 +60,13 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 14 P04 | ~90min + 2-day fix stream | 3 tasks | 15 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 15 added (2026-09-08): **BaseType Lists and Rule Names** — raw `BaseType` list input with
+  `class` demoted to an optional condition, and optional per-rule names shown in the editor and
+  emitted as the block comment. Requested by the author explicitly **before v0.4 closes**, so the
+  milestone audit waits on it. Detail and groundwork under *Requested, Not Yet Scoped* below.
 
 ### Decisions
 
@@ -130,11 +138,12 @@ work (carried forward past the v0.3 close):
 
 None open.
 
-## Requested, Not Yet Scoped
+## Phase 15 Source Material — the author's two requests
 
-Asked for by the author on **2026-09-08**, explicitly **before v0.4 closes**. No code work has
-started — the author paused the session here and will resume. Both are editor-side features; the
-groundwork below was confirmed by reading the code, not assumed.
+Asked for by the author on **2026-09-08**, explicitly **before v0.4 closes**, and now scoped as
+**Phase 15** in ROADMAP.md. No code work has started. Both are editor-side features; the groundwork
+below was confirmed by reading the code, not assumed. This is the raw request as given — feed it to
+`/gsd-discuss-phase 15` rather than re-deriving it.
 
 ### R1 — Raw-text `BaseType` list, with `class` demoted to an optional condition
 
@@ -188,8 +197,8 @@ session-only `RuleId` stays the identity, and a name is a label. Worth deciding 
 a name auto-populates with the derived `"rule N"` (which would then go stale on reorder) or stays
 empty until typed.
 
-**Suggested route:** a new Phase 15 via `/gsd-phase --insert 15`, then the standard
-discuss → plan → execute chain. Phase 14 can be verified and closed independently first.
+**Route:** Phase 15 exists in ROADMAP.md as of 2026-09-08. Next is `/gsd-discuss-phase 15`, then
+plan and execute. Phase 14 can be verified and closed independently first.
 
 ## Deferred Items
 
@@ -216,8 +225,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 ## Session Continuity
 
 Last session: 2026-09-08T00:00:00.000Z
-Stopped at: Completed 14-04-PLAN.md — Phase 14 fully implemented and manually verified
+Stopped at: Phase 14 fully implemented and manually verified; Phase 15 added to the roadmap
 Resume file: None
 
-**Next step:** Run phase verification for Phase 14. Then, before any milestone audit, scope the
-two features under *Requested, Not Yet Scoped* — the author asked for both before v0.4 closes.
+**Next step:** `/gsd-discuss-phase 15`. Phase 14's verification can run before or after — it is
+independent. The v0.4 milestone audit waits on Phase 15 shipping.

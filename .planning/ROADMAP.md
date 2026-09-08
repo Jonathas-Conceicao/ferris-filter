@@ -49,6 +49,7 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 - [x] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless (completed 2026-09-04)
 - [x] **Phase 13: Overlay Shell** — an always-on-top window over PoE2 with a global toggle hotkey (completed 2026-09-06)
 - [ ] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store
+- [ ] **Phase 15: BaseType Lists and Rule Names** — a rule can match by base-type list alone, with `class` demoted to an optional condition, and can carry a name that shows in the editor and heads its filter block
 
 ## Phase Details
 
@@ -145,9 +146,41 @@ Plans:
 - [x] 14-01-PLAN.md — pure mutation layer (RuleId/WorkingRules + every condition set/clear), atomic store::save, and the flask/reorder end-to-end tests
 - [x] 14-02-PLAN.md — the accordion, painted toggle/arrow controls, add/delete/reorder/enable, and the per-frame autosave
 - [x] 14-03-PLAN.md — the condition editors: style, classes, rarity, defences, sockets, quality, corrupted
-- [ ] 14-04-PLAN.md — Apply + reload instruction + unapplied indicator, CLAUDE.md, and the manual in-game checklist
+- [x] 14-04-PLAN.md — Apply + reload instruction + unapplied indicator, CLAUDE.md, and the manual in-game checklist
 
 **UI hint**: yes
+
+### Phase 15: BaseType Lists and Rule Names
+
+**Goal**: A rule can match on a raw `BaseType` list with no `Class` line at all — `class` becomes an
+optional condition like every other, so turning it off both enables base-type-only rules and makes a
+freshly added rule open clean. A rule can also carry an optional name, shown in the editor's row
+header and emitted as its block comment.
+**Depends on**: Phase 14
+**Requirements**: TBD (run /gsd-discuss-phase 15)
+**Success Criteria** (what must be TRUE):
+
+  1. A rule with a base-type list and no classes emits a block with a `BaseType ==` line and **no**
+     `Class` line — the author's hand-written *Change Bases* rule is expressible in the editor.
+  2. `class` has the same independent off switch every other condition has (EDIT-08's inventory),
+     and its picker is hidden when off.
+  3. A named rule emits `Show # <name>`; an unnamed one still falls back to the derived `rule {idx}`
+     label, so existing stores are unaffected.
+  4. A rule's name shows in the overlay row header, without becoming a second identity scheme —
+     `RuleId` stays the identity and the array index stays the precedence (PITFALLS.md §9).
+  5. `config.json → universal.filter` is byte-for-byte unchanged; no fixture re-baselining.
+
+**Plans**: not yet planned
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 15 to break down)
+
+**UI hint**: yes
+
+**Groundwork already in place** (verified 2026-09-08, before planning): `When::base_type` and
+`Rule::name` both already exist in the model and are already emitted — `src/models/config.rs:341`
+and `:373`, `src/emitter.rs:418` and `:336-345`. Both features are expected to be overlay-side
+work, not model or emitter work.
 
 ## Progress
 
@@ -166,7 +199,8 @@ Plans:
 | 11. Callable Compile API | v0.4 | 2/2 | Complete | 2026-09-03 |
 | 12. Dynamic Rule Store | v0.4 | 2/2 | Complete | 2026-09-04 |
 | 13. Overlay Shell | v0.4 | 5/5 | Complete   | 2026-09-06 |
-| 14. Rule Editor + Apply | v0.4 | 3/4 | In Progress|  |
+| 14. Rule Editor + Apply | v0.4 | 4/4 | Verification pending |  |
+| 15. BaseType Lists and Rule Names | v0.4 | 0/0 | Not planned |  |
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 shipped 2026-06-27. v0.4 roadmap defined 2026-09-03.*

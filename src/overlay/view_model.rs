@@ -42,23 +42,24 @@ pub struct RuleRow {
 /// `Config` from before Phase 6, or a hand-stripped store) yields an empty vec, not an error —
 /// an empty read-only list is a valid, renderable state.
 pub fn rule_rows(config: &Config) -> Vec<RuleRow> {
+    let groups = super::edit::class_groups(config);
     config
         .rules
         .as_deref()
         .unwrap_or(&[])
         .iter()
         .enumerate()
-        .map(|(ordinal, rule)| rule_row(ordinal, rule))
+        .map(|(ordinal, rule)| rule_row(ordinal, rule, &groups))
         .collect()
 }
 
-fn rule_row(ordinal: usize, rule: &Rule) -> RuleRow {
+fn rule_row(ordinal: usize, rule: &Rule, groups: &[(&str, &[String])]) -> RuleRow {
     RuleRow {
         ordinal,
         enabled: rule.enabled != Some(false),
         style: rule.style.clone(),
         name: rule.name.clone(),
-        summary: summarize(rule.when.as_ref()),
+        summary: summarize(rule.when.as_ref(), groups),
     }
 }
 
@@ -66,7 +67,7 @@ fn rule_row(ordinal: usize, rule: &Rule) -> RuleRow {
 /// area level, armour, evasion, energy shield, quality, sockets, corrupted, base type,
 /// unidentified tier. Absent conditions contribute nothing to the string — never a placeholder
 /// like `none` or `-`.
-fn summarize(when: Option<&When>) -> String {
+fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
     let Some(when) = when else {
         return "matches everything".to_string();
     };
@@ -74,7 +75,7 @@ fn summarize(when: Option<&When>) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     if let Some(classes) = &when.class {
-        parts.push(summarize_list(classes));
+        parts.push(summarize_classes(classes, groups));
     }
     if let Some(rarity) = &when.rarity {
         parts.push(format!(
@@ -118,6 +119,60 @@ fn summarize(when: Option<&When>) -> String {
     } else {
         parts.join(" · ")
     }
+}
+
+/// Renders a rule's class list, collapsing any fully-selected group to `All Weapons`,
+/// `All Armour`, and so on before falling back to [`summarize_list`] for whatever is left over.
+///
+/// A rule covering every weapon class listed twelve names and truncated to
+/// `Bows, Crossbows, Foci, One Hand Maces +8 more`, which says almost nothing (author,
+/// 2026-09-08). `All Weapons` says exactly what the rule does in two words.
+///
+/// **"All", not "Any".** The filter matches an item whose class is any one of the listed names,
+/// so "Any Weapon" would describe the matching operation — but a summary describes what a rule
+/// *covers*, and "Any Weapon" reads like it might match one unspecified weapon. "All Weapons" is
+/// unambiguous about coverage.
+///
+/// Groups are checked against the config's own class lists, so a group only collapses when every
+/// member the config defines is present. Adding a class to `config.json` correctly stops an
+/// existing rule from reading as "All" until that class is selected too.
+fn summarize_classes(classes: &[String], groups: &[(&str, &[String])]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut remaining: Vec<String> = classes.to_vec();
+
+    for (group, members) in groups {
+        if members.is_empty() {
+            continue;
+        }
+        let fully_selected = members.iter().all(|m| classes.iter().any(|c| c == m));
+        if fully_selected {
+            parts.push(format!("All {}", title_case(group)));
+            remaining.retain(|c| !members.iter().any(|m| m == c));
+        }
+    }
+
+    if !remaining.is_empty() {
+        parts.push(summarize_list(&remaining));
+    }
+    parts.join(", ")
+}
+
+/// `"FLASKS & CHARMS"` -> `"Flasks & Charms"`. The picker's group labels are shouted to match the
+/// game's own section headers; a summary sentence is not.
+fn title_case(label: &str) -> String {
+    label
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Renders a name list (class or base type), truncating past [`MAX_CLASSES_SHOWN`] entries to
@@ -326,15 +381,77 @@ mod tests {
         assert_eq!(rule_rows(&config)[0].summary, "Evasion 0");
     }
 
+    fn summarize_for(classes: &[&str]) -> String {
+        let when = When {
+            class: Some(classes.iter().map(|s| s.to_string()).collect()),
+            ..Default::default()
+        };
+        rule_rows(&with_rules(vec![rule("unchanged", Some(when))]))[0]
+            .summary
+            .clone()
+    }
+
+    #[test]
+    fn a_fully_selected_group_collapses_to_all_of_it() {
+        let config = base_config();
+        let summary = summarize_for(
+            &config
+                .armour_classes
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(summary, "All Armour", "got: {summary}");
+    }
+
+    #[test]
+    fn one_missing_class_stops_a_group_collapsing() {
+        // The whole point of checking against the config lists: adding a class to config.json
+        // must stop an existing rule reading as "All" until that class is selected too.
+        let config = base_config();
+        let mut classes: Vec<&str> = config.armour_classes.iter().map(|s| s.as_str()).collect();
+        classes.pop();
+        let summary = summarize_for(&classes);
+        assert!(!summary.contains("All Armour"), "got: {summary}");
+    }
+
+    #[test]
+    fn several_groups_collapse_together_and_leftovers_still_list() {
+        let config = base_config();
+        let mut classes: Vec<&str> = config.armour_classes.iter().map(|s| s.as_str()).collect();
+        classes.extend(config.jewellery_classes.iter().map(|s| s.as_str()));
+        classes.push("Bows"); // one weapon, so WEAPONS must not collapse
+        let summary = summarize_for(&classes);
+        assert!(summary.contains("All Armour"), "got: {summary}");
+        assert!(summary.contains("All Jewellery"), "got: {summary}");
+        assert!(summary.contains("Bows"), "got: {summary}");
+        assert!(!summary.contains("All Weapons"), "got: {summary}");
+    }
+
+    #[test]
+    fn group_labels_are_title_cased_not_shouted() {
+        let config = base_config();
+        let summary = summarize_for(
+            &config
+                .flask_charm_classes
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(summary, "All Flasks & Charms", "got: {summary}");
+    }
+
     #[test]
     fn a_class_list_longer_than_four_truncates_with_a_more_suffix() {
+        // Six weapon classes out of twelve: enough to truncate, not a whole group, so this
+        // still exercises truncation now that a fully-selected group collapses instead.
         let classes = [
-            "Body Armours",
-            "Helmets",
-            "Gloves",
-            "Boots",
-            "Shields",
-            "Bucklers",
+            "Bows",
+            "Crossbows",
+            "Foci",
+            "One Hand Maces",
+            "Quivers",
+            "Quarterstaves",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -347,7 +464,7 @@ mod tests {
         let summary = rule_rows(&config)[0].summary.clone();
 
         assert!(
-            summary.starts_with("Body Armours, Helmets, Gloves, Boots +2 more"),
+            summary.starts_with("Bows, Crossbows, Foci, One Hand Maces +2 more"),
             "got: {summary}"
         );
         assert!(!summary.contains("Shields"), "a truncated list must not spell out the rest");

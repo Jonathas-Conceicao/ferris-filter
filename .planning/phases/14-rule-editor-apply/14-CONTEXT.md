@@ -42,6 +42,15 @@ This is the last phase of v0.4.
 ### Persistence — the store and the filter move independently
 
 - **D-02: `dynamic.json` autosaves on every edit; `dynamic.filter` changes ONLY on Apply.**
+  > **SUPERSEDED 2026-09-08 — edits stay in memory; Apply writes both files.** After using the
+  > editor, the author asked for a Revert button beside Apply and for changes to be held until
+  > applied. Apply is now the single writer: it persists `dynamic.json` and then compiles
+  > `dynamic.filter` from it, in that order (compiling first would reproduce the stale-Apply bug
+  > fixed in 3375ad4). Revert restores the last written state.
+  >
+  > This reverses the crash-safety argument below, knowingly: a crash or Quit now discards
+  > unsaved edits. What replaces it is visibility plus a deliberate discard — the unsaved-changes
+  > indicator says the state exists, and Revert is how you throw it away on purpose.
   Author: *"autosave the json, change the .filter only on apply"*. The store is per-user,
   git-ignored state, so losing tuning work to a stray Quit is the worse failure; the filter is what
   the game reads, so it changes only when the player says so.

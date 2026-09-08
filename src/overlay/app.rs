@@ -32,7 +32,7 @@ use global_hotkey::GlobalHotKeyManager;
 
 use crate::compile::InputPaths;
 use crate::dynamic;
-use crate::models::config::Config;
+use crate::models::config::{Config, Rule};
 
 use super::apply::{self, ApplyOutcome, ApplyState};
 use super::edit::{RuleId, WorkingRules};
@@ -136,6 +136,13 @@ pub struct OverlayApp {
     /// Cleared on the next edit alongside [`Self::apply_state`], so a stale "Wrote ..." message
     /// never lingers once the stripe already says the filter is out of date again.
     apply_message: Option<String>,
+
+    /// The last rule set actually written to `dynamic.json` — the state Revert restores to.
+    ///
+    /// Set at load and refreshed on every successful Apply. Since 2026-09-08 edits live only in
+    /// memory until Apply (see the note on the dirty block below), so this is the difference
+    /// between what is on disk and what is on screen.
+    baseline: Vec<Rule>,
 }
 
 impl OverlayApp {
@@ -174,6 +181,13 @@ impl OverlayApp {
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
             window: None,
+            // The on-disk state Revert restores to. Taken before `rules` is moved into the
+            // struct, so a load failure simply yields an empty baseline rather than diverging
+            // from what is on screen.
+            baseline: rules
+                .as_ref()
+                .map(|working| working.to_rules())
+                .unwrap_or_default(),
             rules,
             config,
             store_path,
@@ -605,7 +619,34 @@ impl eframe::App for OverlayApp {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
+                if self.dirty && ui.button("REVERT").clicked() {
+                    // Restores the last state written to disk. `from_rules` mints fresh
+                    // RuleIds, so any expansion or pending delete keyed by an old id would
+                    // dangle -- both are cleared rather than left pointing at nothing.
+                    self.rules = Ok(WorkingRules::from_rules(self.baseline.clone()));
+                    self.expanded = None;
+                    self.confirm_delete = None;
+                    self.dirty = false;
+                    self.apply_message = None;
+                    self.apply_state = ApplyState::Applied;
+                }
                 if ui.button("APPLY").clicked() {
+                    // Since edits are in-memory (D-02, revised 2026-09-08), Apply is the only
+                    // writer: persist the store, THEN compile the filter from it. In that order,
+                    // because compile_store reads dynamic.json from disk — compiling first would
+                    // reproduce exactly the stale-Apply bug fixed in 3375ad4, where the filter
+                    // was built from the previous state.
+                    if let (Some(config), Ok(working)) =
+                        (self.config.as_mut(), self.rules.as_ref())
+                    {
+                        config.rules = Some(working.to_rules());
+                    }
+                    if let Some(config) = &self.config {
+                        if let Err(message) = store::save(config, &self.store_path) {
+                            self.last_save_error = Some(message);
+                        }
+                    }
+
                     let store_dir = self
                         .store_path
                         .parent()
@@ -635,6 +676,10 @@ impl eframe::App for OverlayApp {
                         ApplyOutcome::Written(written) => {
                             self.apply_message = Some(apply::success_message(&written));
                             self.apply_state = self.apply_state.on_apply_success();
+                            if let Ok(working) = self.rules.as_ref() {
+                                self.baseline = working.to_rules();
+                            }
+                            self.dirty = false;
                         }
                         ApplyOutcome::Failed(message) => {
                             self.apply_message = Some(message);
@@ -691,16 +736,18 @@ impl eframe::App for OverlayApp {
             // Deriving here rather than trusting the frame-top sync makes the save independent
             // of where in the frame the edit happened, so no future control can reintroduce
             // this by being added in the wrong place.
-            if let (Some(config), Ok(working)) = (self.config.as_mut(), self.rules.as_ref()) {
-                config.rules = Some(working.to_rules());
-            }
-
-            if let Some(config) = &self.config {
-                if let Err(message) = store::save(config, &self.store_path) {
-                    self.last_save_error = Some(message);
-                }
-            }
-            self.dirty = false;
+            // NOTE: this block no longer writes anything. Edits stay in memory until Apply
+            // (D-02, revised 2026-09-08 at the author's request, alongside the Revert button)
+            // -- Apply is now the single writer of both dynamic.json and dynamic.filter.
+            //
+            // `dirty` therefore stays true until an Apply or a Revert clears it, rather than
+            // being consumed each frame: it is what makes those two buttons appear, and what
+            // `ApplyState::Unapplied` reflects.
+            //
+            // The trade this accepts: a crash or a Quit now loses unsaved edits. Autosave was
+            // originally chosen to avoid exactly that, so the Revert button and the
+            // unsaved-changes indicator are what replace it -- the state is visible, and
+            // discarding it is deliberate rather than incidental.
         }
 
         if quit_requested {

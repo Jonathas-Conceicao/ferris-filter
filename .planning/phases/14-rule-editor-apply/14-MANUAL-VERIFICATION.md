@@ -45,8 +45,7 @@ visible.
 below the expanded one disappearing, or a visible one-frame flicker between collapsed and
 expanded states (RESEARCH Assumption A1).
 
-**Result:**
-
+**Result:** PASS -- author, 2026-09-08. Verified against a row layout that had changed substantially since this checklist was written (full-width clickable header with hover highlight, the summary moved to its own wrapped line beneath).
 ---
 
 ## 2. Scroll-into-view near the bottom (RESEARCH Assumption A2)
@@ -66,8 +65,7 @@ fighting the scroll, even near the bottom of a long list.
 controls (e.g. the corrupted toggle) remain below the visible area with no way to scroll to them,
 or the scroll position ends up wrong entirely (e.g. scrolled to the top instead of the opened row).
 
-**Result:**
-
+**Result:** PASS -- author, 2026-09-08. Closes RESEARCH Assumption A2 / Open Question 2: `scroll_to_me` on the header response does bring the expanded body into view, not just the header line.
 ---
 
 ## 3. Painted glyphs — reorder arrows and circular toggles (RESEARCH Pitfall 4 / Assumption A3)
@@ -89,8 +87,7 @@ this phase's new painted controls (arrows, circular toggle) are the same risk ca
 **Failure would look like:** any tofu/placeholder box in place of an arrow or toggle, the toggle
 rendering as a square, or the checked/unchecked states being indistinguishable without color.
 
-**Result:**
-
+**Result:** PASS -- author, 2026-09-08. Arrows and circular toggles render as shapes. Note the separate tofu defect found the same day in the Apply confirmation line, fixed at its root in `theme::install_fonts` (commit c9b62b9).
 ---
 
 ## 4. Apply end to end, in-game (D-15/D-16)
@@ -111,8 +108,7 @@ player must reload it manually — PoE2 never re-reads a filter on its own.
 **Failure would look like:** Apply reporting success but the in-game filter not changing after a
 Refresh, or no reload instruction appearing at all.
 
-**Result:**
-
+**Result:** PASS -- author, 2026-09-08. Apply writes the filter and the game picks it up after Options > Game > Item Filter > Refresh.
 ---
 
 ## 5. The unapplied-changes indicator (D-03)
@@ -134,8 +130,7 @@ stripe must always say so.
 color without different wording, or the indicator still saying "out of date" after a successful
 Apply.
 
-**Result:**
-
+**Result:** PASS -- author, 2026-09-08, **against the autosave persistence model**. Superseded the same day: the author asked for changes to stay in memory until Apply, with a Revert alongside it. See the note under this section.
 ---
 
 ## 6. Roadmap criterion 2, by hand — the flask case
@@ -159,8 +154,7 @@ filter`. This item is the in-game confirmation of the same behavior.)
 the rule, or the toggle not surviving Apply (i.e., the disabled state doesn't make it into the
 compiled filter).
 
-**Result:**
-
+**Result:** PASS -- author, 2026-09-08. The milestone motivating example works by hand, end to end.
 ---
 
 ### If something fails

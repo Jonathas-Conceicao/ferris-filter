@@ -717,10 +717,12 @@ the exact `render_rule_body` vertical stack Phase 14 established, using the same
 | A2 | Cloning `when.base_type` once per frame for display (Pattern 2) has no perceptible performance cost | Pattern 2 | Very low — the list is at most a handful of short strings, rendered at 460px scale; 14-RESEARCH's Pattern 5 already established that whole-`Config` clones/serializes at this data scale are sub-millisecond on local NTFS, and this is a far smaller structure |
 | A3 | `ui.data_mut`'s temp storage (Pattern 1) is not garbage-collected mid-session in a way that would reset an open panel while the player is actively looking at it | Pattern 1 | Low-Medium — egui's `IdTypeMap` temp-data GC prunes entries not *touched* for some number of frames, but this data is touched every frame the control renders (i.e., every frame the rule's accordion is expanded), so it cannot be pruned while visibly in use. It could reset to the model-derived seed if the row is collapsed and left untouched for a long time and then reopened — treated here as acceptable, matching the author's own "either way works for now" tone on D-08's data-loss question, not as a defect |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact visual treatment of the base-type remove control** (glyph vs. text label, size,
    placement relative to the wrapped name).
+   - **RESOLVED: see 15-02 Task 3** — the recommendation was taken: a plain `Remove` text button,
+     with a grep acceptance criterion banning `✕`/`×`/`✖` so the glyph cannot creep back in later.
    - What we know: `\u{2715}` is a near-certain repeat of a glyph-rendering defect this codebase
      has already hit twice; a text label (`"Remove"`) is the proven-safe fallback already used for
      row deletion in `app.rs`.
@@ -734,6 +736,9 @@ the exact `render_rule_body` vertical stack Phase 14 established, using the same
 2. **Whether a long base name (e.g. "Expert Feathered Sallet") wrapped via `egui::Label::new(name)
    .wrap()` reads comfortably next to a remove button inside 460px**, or needs the remove control
    moved to its own line below the wrapped name instead of beside it.
+   - **RESOLVED: see 15-03 manual-check item 3** — inherently a look-at-it question
+     (`PITFALLS.md` §8), so it is routed to the in-game checklist with the horizontal layout tried
+     first and the two-line fallback named there, rather than guessed at here.
    - What we know: `egui::Label::wrap()` is already proven working in this exact file's row-summary
      rendering (`theme::row_summary` + `.wrap()` in `app.rs`'s `row_summary_label`), and a
      `ui.horizontal` layout gives each subsequent widget the *remaining* available width (which

@@ -121,21 +121,21 @@ fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
     }
 }
 
-/// Renders a rule's class list, collapsing any fully-selected group to `All Weapons`,
-/// `All Armour`, and so on before falling back to [`summarize_list`] for whatever is left over.
+/// Renders a rule's class list, collapsing any fully-selected group to `Any Weapons`,
+/// `Any Armour`, and so on before falling back to [`summarize_list`] for whatever is left over.
 ///
 /// A rule covering every weapon class listed twelve names and truncated to
 /// `Bows, Crossbows, Foci, One Hand Maces +8 more`, which says almost nothing (author,
-/// 2026-09-08). `All Weapons` says exactly what the rule does in two words.
+/// 2026-09-08). `Any Weapons` says exactly what the rule does in two words.
 ///
-/// **"All", not "Any".** The filter matches an item whose class is any one of the listed names,
-/// so "Any Weapon" would describe the matching operation — but a summary describes what a rule
-/// *covers*, and "Any Weapon" reads like it might match one unspecified weapon. "All Weapons" is
-/// unambiguous about coverage.
+/// **"Any", not "All".** A summary reads as the rule's own matching test — `Any Jewellery ·
+/// Rarity = Normal` is the question asked of each item as it drops, and any one class in the
+/// list satisfies it. "Any Jewellery" reads like the item must somehow be all three at once
+/// (author, 2026-09-08, reversing the first cut).
 ///
 /// Groups are checked against the config's own class lists, so a group only collapses when every
 /// member the config defines is present. Adding a class to `config.json` correctly stops an
-/// existing rule from reading as "All" until that class is selected too.
+/// existing rule from reading as "Any <group>" until that class is selected too.
 fn summarize_classes(classes: &[String], groups: &[(&str, &[String])]) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut remaining: Vec<String> = classes.to_vec();
@@ -146,7 +146,7 @@ fn summarize_classes(classes: &[String], groups: &[(&str, &[String])]) -> String
         }
         let fully_selected = members.iter().all(|m| classes.iter().any(|c| c == m));
         if fully_selected {
-            parts.push(format!("All {}", title_case(group)));
+            parts.push(format!("Any {}", title_case(group)));
             remaining.retain(|c| !members.iter().any(|m| m == c));
         }
     }
@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fully_selected_group_collapses_to_all_of_it() {
+    fn a_fully_selected_group_collapses_to_any_of_it() {
         let config = base_config();
         let summary = summarize_for(
             &config
@@ -401,18 +401,18 @@ mod tests {
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>(),
         );
-        assert_eq!(summary, "All Armour", "got: {summary}");
+        assert_eq!(summary, "Any Armour", "got: {summary}");
     }
 
     #[test]
     fn one_missing_class_stops_a_group_collapsing() {
         // The whole point of checking against the config lists: adding a class to config.json
-        // must stop an existing rule reading as "All" until that class is selected too.
+        // must stop an existing rule reading as "Any <group>" until that class is selected too.
         let config = base_config();
         let mut classes: Vec<&str> = config.armour_classes.iter().map(|s| s.as_str()).collect();
         classes.pop();
         let summary = summarize_for(&classes);
-        assert!(!summary.contains("All Armour"), "got: {summary}");
+        assert!(!summary.contains("Any Armour"), "got: {summary}");
     }
 
     #[test]
@@ -422,10 +422,10 @@ mod tests {
         classes.extend(config.jewellery_classes.iter().map(|s| s.as_str()));
         classes.push("Bows"); // one weapon, so WEAPONS must not collapse
         let summary = summarize_for(&classes);
-        assert!(summary.contains("All Armour"), "got: {summary}");
-        assert!(summary.contains("All Jewellery"), "got: {summary}");
+        assert!(summary.contains("Any Armour"), "got: {summary}");
+        assert!(summary.contains("Any Jewellery"), "got: {summary}");
         assert!(summary.contains("Bows"), "got: {summary}");
-        assert!(!summary.contains("All Weapons"), "got: {summary}");
+        assert!(!summary.contains("Any Weapons"), "got: {summary}");
     }
 
     #[test]
@@ -438,7 +438,7 @@ mod tests {
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>(),
         );
-        assert_eq!(summary, "All Flasks & Charms", "got: {summary}");
+        assert_eq!(summary, "Any Flasks & Charms", "got: {summary}");
     }
 
     #[test]

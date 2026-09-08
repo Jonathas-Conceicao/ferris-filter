@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: executing
-stopped_at: Phase 15 added to the roadmap; not yet discussed
-last_updated: "2026-09-08T00:00:00.000Z"
+status: 14-04's blocking checkpoint cleared — six checks approved 2026-09-08, plus five
+stopped_at: Phase 15 context gathered
+last_updated: "2026-09-08T18:13:05.246Z"
 last_activity: 2026-09-08
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
   completed_plans: 13
-  percent: 50
+  percent: 100
 ---
 
 # Project State
@@ -159,9 +159,11 @@ Note there is **no `Class` line** — that is the point of the request. Today th
 body always renders the class picker, so a base-type-only rule cannot be expressed there.
 
 **What already exists (verified 2026-09-08):**
+
 - `When::base_type: Option<Vec<String>>` is already in the model (`src/models/config.rs:341`),
   already `skip_serializing_if`, and already emitted as
   `BaseType == "A" "B"` by the emitter (`src/emitter.rs:418`).
+
 - `overlay::view_model`'s `summarize_list` already documents itself as rendering "a name list
   (class or base type)".
 
@@ -182,6 +184,7 @@ Wanted as `Show # rule 0 - Exceptional bases`, primarily so rules are easier to 
 overlay's own list.
 
 **What already exists (verified 2026-09-08):**
+
 - `Rule::name: Option<String>` is already in the model (`src/models/config.rs:373`).
 - The emitter already writes `{Show|Hide} # {label}` where `label` is `rule.name` falling back to
   a derived `"rule {idx}"` (`src/emitter.rs:336-345`). The author's desired
@@ -224,9 +227,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-08T00:00:00.000Z
-Stopped at: Phase 14 fully implemented and manually verified; Phase 15 added to the roadmap
-Resume file: None
+Last session: --stopped-at
+Stopped at: Phase 15 context gathered
+Resume file: --resume-file
 
 **Next step:** `/gsd-discuss-phase 15`. Phase 14's verification can run before or after — it is
 independent. The v0.4 milestone audit waits on Phase 15 shipping.

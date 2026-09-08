@@ -396,6 +396,94 @@ pub fn set_corrupted(when: &mut When, value: Option<bool>) {
     when.corrupted = value;
 }
 
+// ---------------------------------------------------------------------------
+// Base-type list and rule name (Phase 15, EDIT-10/EDIT-11)
+// ---------------------------------------------------------------------------
+
+/// EDIT-10/D-14: parses one commit of the base-type add field.
+///
+/// A bare typed name (no `"` anywhere in the input) yields exactly one entry, trimmed. Input
+/// containing a double quote is treated as the `BaseType == "A" "B"` form the author copies out
+/// of hand-written filters: every quoted span becomes its own entry, in the order it appears,
+/// with any text between spans (whitespace, or the `BaseType ==` prefix itself if pasted whole)
+/// ignored, and an empty span dropped. Blank or whitespace-only input yields an empty vec.
+///
+/// This is the whole of it — trimming and quote-stripping is string hygiene on input, not the
+/// validation D-05 forbids. There is no list of legitimate base names to check against here or
+/// anywhere else in this module: a typo is stored exactly as typed, and PoE2 itself is the only
+/// oracle that warns about it, at filter load time.
+pub fn parse_base_type_entry(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if trimmed.contains('"') {
+        let mut out = Vec::new();
+        let mut chars = trimmed.char_indices().peekable();
+        while let Some((start, c)) = chars.next() {
+            if c == '"' {
+                if let Some(end) = trimmed[start + 1..].find('"') {
+                    let inner = trimmed[start + 1..start + 1 + end].trim();
+                    if !inner.is_empty() {
+                        out.push(inner.to_string());
+                    }
+                    // Skip the iterator past the closing quote so it isn't reconsidered as the
+                    // opening quote of the next span.
+                    while let Some((i, _)) = chars.peek() {
+                        if *i > start + 1 + end {
+                            break;
+                        }
+                        chars.next();
+                    }
+                }
+            }
+        }
+        out
+    } else {
+        vec![trimmed.to_string()]
+    }
+}
+
+/// EDIT-10: appends `name` to `when.base_type`, creating the list if absent, skipping an
+/// empty-after-trim name and skipping an entry already present verbatim (the same dedup guard
+/// [`set_class`] uses for classes). Accepts whatever text is given, unmodified beyond trimming —
+/// D-05's accept-what-is-typed principle applies here exactly as it does to [`parse_base_type_entry`].
+pub fn add_base_type(when: &mut When, name: &str) {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let list = when.base_type.get_or_insert_with(Vec::new);
+    if !list.iter().any(|existing| existing == trimmed) {
+        list.push(trimmed.to_string());
+    }
+}
+
+/// EDIT-10/D-02: removes the entry at `index`, from any position in the list. A no-op if `index`
+/// is out of range.
+///
+/// Collapses `when.base_type` to `None` when the removal empties the list, mirroring
+/// [`set_class`]'s own empty-vec guard: `src/emitter.rs` writes the `BaseType ==` line straight
+/// from the vec with no emptiness check, so `Some(vec![])` would emit a malformed, empty
+/// `BaseType ==` line that fails to load in-game — the same defect class as the invalid
+/// `Class "Tablet"` rows removed in v0.2.
+pub fn remove_base_type(when: &mut When, index: usize) {
+    if let Some(list) = when.base_type.as_mut() {
+        if index < list.len() {
+            list.remove(index);
+        }
+        if list.is_empty() {
+            when.base_type = None;
+        }
+    }
+}
+
+/// EDIT-10/EDIT-08: clears the base-type condition entirely — the base-type condition's own off
+/// switch (used by plan 15-02).
+pub fn clear_base_type(when: &mut When) {
+    when.base_type = None;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -981,6 +1069,114 @@ mod tests {
         }]);
         let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
         assert!(!filter.contains("Corrupted"), "got:\n{filter}");
+    }
+
+    // -- base types (EDIT-10) ------------------------------------------------------
+
+    #[test]
+    fn parse_base_type_entry_splits_a_pasted_quoted_list() {
+        let parsed = parse_base_type_entry(
+            "\"Heavy Belt\" \"Utility Belt\" \"Armoured Cap\" \"Sacred Focus\"",
+        );
+        assert_eq!(
+            parsed,
+            vec![
+                "Heavy Belt".to_string(),
+                "Utility Belt".to_string(),
+                "Armoured Cap".to_string(),
+                "Sacred Focus".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_base_type_entry_strips_surrounding_quotes_from_a_single_name() {
+        assert_eq!(
+            parse_base_type_entry("\"Heavy Belt\""),
+            vec!["Heavy Belt".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_base_type_entry_on_blank_input_yields_nothing() {
+        assert_eq!(parse_base_type_entry(""), Vec::<String>::new());
+        assert_eq!(parse_base_type_entry("   "), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_base_type_entry_keeps_an_unknown_name_verbatim() {
+        // D-05: a typo is stored, not rejected -- there is no base-name list in this module or
+        // anywhere else in the codebase to check against.
+        assert_eq!(
+            parse_base_type_entry("Sacerd Focus"),
+            vec!["Sacerd Focus".to_string()]
+        );
+    }
+
+    #[test]
+    fn add_base_type_ignores_an_exact_duplicate() {
+        let mut when = When::default();
+        add_base_type(&mut when, "Heavy Belt");
+        add_base_type(&mut when, "Heavy Belt");
+        assert_eq!(when.base_type, Some(vec!["Heavy Belt".to_string()]));
+    }
+
+    #[test]
+    fn removing_the_last_base_type_yields_none_never_an_empty_vec() {
+        let mut when = When::default();
+        add_base_type(&mut when, "Heavy Belt");
+        remove_base_type(&mut when, 0);
+        assert_eq!(
+            when.base_type, None,
+            "must collapse to None, never Some(vec![])"
+        );
+    }
+
+    #[test]
+    fn removing_from_the_middle_keeps_the_others_in_order() {
+        let mut when = When::default();
+        add_base_type(&mut when, "Heavy Belt");
+        add_base_type(&mut when, "Utility Belt");
+        add_base_type(&mut when, "Armoured Cap");
+        remove_base_type(&mut when, 1);
+        assert_eq!(
+            when.base_type,
+            Some(vec!["Heavy Belt".to_string(), "Armoured Cap".to_string()])
+        );
+    }
+
+    #[test]
+    fn remove_base_type_out_of_range_is_a_no_op() {
+        let mut when = When::default();
+        add_base_type(&mut when, "Heavy Belt");
+        remove_base_type(&mut when, 5);
+        assert_eq!(when.base_type, Some(vec!["Heavy Belt".to_string()]));
+    }
+
+    #[test]
+    fn clear_base_type_yields_none() {
+        let mut when = When::default();
+        add_base_type(&mut when, "Heavy Belt");
+        clear_base_type(&mut when);
+        assert_eq!(when.base_type, None);
+    }
+
+    #[test]
+    fn an_emptied_base_type_list_emits_no_base_type_line() {
+        let mut when = When::default();
+        add_base_type(&mut when, "Heavy Belt");
+        remove_base_type(&mut when, 0);
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
+        assert!(!filter.contains("BaseType"), "got:\n{filter}");
     }
 
     // -- clearing one condition leaves the others untouched (roadmap criterion 6) --

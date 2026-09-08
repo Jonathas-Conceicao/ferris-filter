@@ -782,9 +782,19 @@ enum RowAction {
 /// poe2_print004). Widening the stripe for a handful of long rules was explicitly not wanted, so
 /// the summary moved to [`row_summary_label`], a wrapped label the caller renders beneath the
 /// header while the row is collapsed.
+/// D-10: `<index>  <style>[ - name]`, in that order — the name is appended only when the rule
+/// has one, and never replaces the style. An unnamed row's text is unchanged from before Phase
+/// 15: this is display text only, formatted from [`view_model::RuleRow::name`]; nothing about a
+/// rule's identity, expansion state, deletion, or reordering is ever keyed off it (D-13,
+/// `PITFALLS.md` §9) — `RuleId` stays the identity and array position stays the precedence.
 fn row_header_text(row: &view_model::RuleRow) -> String {
     let marker = if row.enabled { "" } else { " [DISABLED]" };
-    format!("{:02}  {}{}", row.ordinal, row.style, marker)
+    match &row.name {
+        Some(name) if !name.is_empty() => {
+            format!("{:02}  {}{} - {}", row.ordinal, row.style, marker, name)
+        }
+        _ => format!("{:02}  {}{}", row.ordinal, row.style, marker),
+    }
 }
 
 /// The wrapped condition summary shown under a **collapsed** row.
@@ -806,6 +816,16 @@ mod tests {
             style: style.to_string(),
             name: None,
             summary: summary.to_string(),
+        }
+    }
+
+    fn row_named(ordinal: usize, style: &str, enabled: bool, name: &str) -> view_model::RuleRow {
+        view_model::RuleRow {
+            ordinal,
+            enabled,
+            style: style.to_string(),
+            name: Some(name.to_string()),
+            summary: String::new(),
         }
     }
 
@@ -836,5 +856,18 @@ mod tests {
     fn the_ordinal_is_zero_padded_so_rows_stay_aligned() {
         assert!(row_header_text(&row(0, "S", true, "")).starts_with("00  "));
         assert!(row_header_text(&row(12, "S", true, "")).starts_with("12  "));
+    }
+
+    #[test]
+    fn a_named_row_shows_its_name_after_the_style() {
+        // D-10: `<index> <style>[ - name]` -- the style stays, the name is appended.
+        let header = row_header_text(&row_named(0, "unchanged", true, "Change Bases"));
+        assert_eq!(header, "00  unchanged - Change Bases");
+    }
+
+    #[test]
+    fn a_disabled_named_row_keeps_the_marker_before_the_name() {
+        let header = row_header_text(&row_named(3, "hidden", false, "Change Bases"));
+        assert_eq!(header, "03  hidden [DISABLED] - Change Bases");
     }
 }

@@ -64,9 +64,9 @@ fn rule_row(ordinal: usize, rule: &Rule, groups: &[(&str, &[String])]) -> RuleRo
 }
 
 /// Joins the present conditions of a `when` block with ` · ` in a fixed order: class, rarity,
-/// area level, armour, evasion, energy shield, quality, sockets, corrupted, base type,
-/// unidentified tier. Absent conditions contribute nothing to the string — never a placeholder
-/// like `none` or `-`.
+/// area level, armour, evasion, energy shield, quality, sockets, corrupted, base type (labelled
+/// `Bases:`, D-15), unidentified tier. Absent conditions contribute nothing to the string — never
+/// a placeholder like `none` or `-`.
 fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
     let Some(when) = when else {
         return "matches everything".to_string();
@@ -108,7 +108,10 @@ fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
         parts.push(format!("Corrupted {c}"));
     }
     if let Some(base_types) = &when.base_type {
-        parts.push(summarize_list(base_types));
+        // D-15: labelled explicitly. With `class` now optional (Phase 15), a base-type-only
+        // rule's summary would otherwise be a bare name list, structurally identical to a class
+        // list -- ambiguous about which condition it describes.
+        parts.push(format!("Bases: {}", summarize_list(base_types)));
     }
     if let Some(ut) = &when.unidentified_tier {
         parts.push(format!("Unidentified Tier ≥ {}", ut.min));
@@ -468,6 +471,46 @@ mod tests {
             "got: {summary}"
         );
         assert!(!summary.contains("Shields"), "a truncated list must not spell out the rest");
+    }
+
+    #[test]
+    fn base_types_are_labelled_in_the_summary() {
+        // D-15: with `class` now optional (Phase 15), a bare name list is ambiguous about which
+        // condition it describes -- the explicit `Bases:` label disambiguates it.
+        let when = When {
+            base_type: Some(vec!["Heavy Belt".to_string(), "Utility Belt".to_string()]),
+            ..Default::default()
+        };
+        let config = with_rules(vec![rule("unchanged", Some(when))]);
+        let summary = rule_rows(&config)[0].summary.clone();
+        assert!(
+            summary.contains("Bases: Heavy Belt, Utility Belt"),
+            "got: {summary}"
+        );
+    }
+
+    #[test]
+    fn a_long_base_type_list_is_still_truncated_after_the_label() {
+        let names: Vec<String> = [
+            "Heavy Belt",
+            "Utility Belt",
+            "Armoured Cap",
+            "Sacred Focus",
+            "Leather Belt",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let when = When {
+            base_type: Some(names),
+            ..Default::default()
+        };
+        let config = with_rules(vec![rule("unchanged", Some(when))]);
+        let summary = rule_rows(&config)[0].summary.clone();
+        assert!(
+            summary.contains("Bases: Heavy Belt, Utility Belt, Armoured Cap, Sacred Focus +1 more"),
+            "got: {summary}"
+        );
     }
 
     #[test]

@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Phase 15 planned — 3 plans, checker passed
+stopped_at: Phase 15 executing — wave 1 of 3
 last_updated: "2026-09-08T21:09:21.809Z"
-last_activity: 2026-09-08
+last_activity: 2026-09-08 — Phase 15 execution started
 progress:
   total_phases: 7
   completed_phases: 3
@@ -21,17 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-03)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 14 — Rule Editor + Apply
+**Current focus:** Phase 15 — BaseType Lists and Rule Names
 
 ## Current Position
 
-Phase: 14 (Rule Editor + Apply) — ALL PLANS COMPLETE, phase verification pending
-Next phase: 15 (BaseType Lists and Rule Names) — discussed and planned 2026-09-08 (D-01..D-16
-locked in 15-CONTEXT.md; 3 plans, 3 waves); ready to execute
-Plan: 4 of 4 (complete)
-Status: 14-04's blocking checkpoint cleared — six checks approved 2026-09-08, plus five
-second-pass checks covering the out-of-band live-use fix stream. See
-`.planning/phases/14-rule-editor-apply/14-MANUAL-VERIFICATION.md`.
+Phase: 15 (BaseType Lists and Rule Names) — EXECUTING
+Previous phase: 14 (Rule Editor + Apply) — all 4 plans complete, phase verification still pending
+Plan: 0 of 3 complete (waves 1 -> 2 -> 3, sequential)
+Status: Executing Phase 15. Phase 14's twelve manual checks are all approved — see
+`.planning/phases/14-rule-editor-apply/14-MANUAL-VERIFICATION.md` — but its VERIFICATION.md has
+not been written, which is why completed_phases stays at 3.
 Last activity: 2026-09-08
 
 ## Performance Metrics

@@ -130,7 +130,7 @@ stripe must always say so.
 color without different wording, or the indicator still saying "out of date" after a successful
 Apply.
 
-**Result:** PASS -- author, 2026-09-08, **against the autosave persistence model**. Superseded the same day: the author asked for changes to stay in memory until Apply, with a Revert alongside it. See the note under this section.
+**Result:** PASS -- author, 2026-09-08, **against the autosave persistence model**. Superseded the same day: the author asked for changes to stay in memory until Apply, with a Revert alongside it. **Re-verified 2026-09-08 against the replacement model** -- see check 8 in the second pass below, which is the authoritative result for this behaviour.
 ---
 
 ## 6. Roadmap criterion 2, by hand — the flask case
@@ -157,6 +157,122 @@ compiled filter).
 **Result:** PASS -- author, 2026-09-08. The milestone motivating example works by hand, end to end.
 ---
 
+---
+
+# Second pass — the out-of-band fix stream (2026-09-08)
+
+Checks 1-6 above were written against the state of the editor at the end of plan 14-04's
+implementation. Between that checklist being authored and the phase closing, eleven further
+commits landed in response to the author using the editor against a live game: a jewellery class
+group, the missing unidentified-tier control and its slider, a readable wrapped summary, full-row
+click targets, the `kite` rename, a font-fallback fix, the stale-Apply fix, Revert with an
+in-memory persistence model, and the "Any" summary wording.
+
+Those are not covered by checks 1-6, and one of them (Revert) invalidated check 5 outright. This
+second pass covers what the first could not have.
+
+**Everything below requires relaunching the overlay** — a running `ff.exe` predates these fixes.
+
+---
+
+## 7. Apply writes the state you pressed it on (regression: 3375ad4, re-risked by 6b7c46c)
+
+The defect: Apply compiled the store *before* the frame's edits reached it, so each Apply wrote
+the previous edit's state — a create-then-apply, delete-then-apply cycle showed the created rule
+only on the *second* Apply. Fixed in `3375ad4` by re-projecting the working model into the config
+immediately before writing, and put back at risk by `6b7c46c`, which made Apply the single writer
+and therefore made the persist-then-compile ordering load-bearing (`compile_store` reads the store
+from disk; compiling first would reintroduce the same off-by-one through a different route).
+
+1. Add a rule with **+ ADD RULE**, then click **APPLY**.
+2. Delete that rule, then click **APPLY** again.
+3. Inspect `dynamic.filter` (or the in-game result) after each Apply. **Expected:** each write
+   reflects the store as of the moment Apply was pressed — the new rule present after step 1,
+   absent after step 2.
+
+**Failure would look like:** the added rule missing from the first Apply's output and appearing in
+the second's — the original symptom exactly.
+
+**Result:** PASS -- author, 2026-09-08. The original repro no longer reproduces.
+---
+
+## 8. Revert, and the indicator under the in-memory model (supersedes check 5)
+
+D-02 was reversed on 2026-09-08: edits are held in memory and Apply is the only writer, with a
+Revert to discard. Check 5 above tested the indicator against the autosave model it replaced, so
+its pass does not carry over.
+
+1. With no unsaved changes, look at the controls near Apply. **Expected:** no Revert button — it
+   appears only when there is something to discard.
+2. Make any edit. **Expected:** Revert appears, and the indicator's *wording* says the written
+   filter no longer matches the rules.
+3. Click **REVERT**. **Expected:** the rule list returns to its last-applied state, the indicator
+   reads clean, and Revert disappears again.
+4. Make another edit and click **APPLY** instead. **Expected:** the indicator reads clean, Revert
+   disappears, and both `dynamic.json` and `dynamic.filter` now hold the edit.
+
+**Expected, not a defect:** Revert collapses any expanded row and cancels a pending delete
+confirm. Rebuilding the rule list mints fresh `RuleId`s, so a retained expansion would point at a
+rule that no longer exists.
+
+**Known trade-off, accepted:** unsaved edits do not survive the process. D-02 originally chose
+autosave specifically to protect against that; the replacement trades crash-safety for deliberate
+discard. Recorded in `14-CONTEXT.md` under D-02 as superseded.
+
+**Result:** PASS -- author, 2026-09-08.
+---
+
+## 9. The Apply confirmation renders without tofu (c9b62b9)
+
+The confirmation line came out with placeholder boxes where its arrows should have been
+(screenshot `poe2_print005`) — the same defect class as Phase 13's tofu `✕`, and the same root
+cause: `FontDefinitions`' `entry().or_default()` creates an *empty* family, so Cinzel was
+registered with no fallback chain at all. Fixed at the root, plus the instruction text itself was
+moved to plain ASCII.
+
+1. Click **APPLY** and read the confirmation line. **Expected:** `Options > Game > Item Filter >
+   Refresh`, every character rendered — no boxes, no missing glyphs.
+
+**Result:** PASS -- author, 2026-09-08. Now reads with `>` separators and renders clean.
+---
+
+## 10. The jewellery group and the "Any <group>" summary (35b695e, f43dcc2)
+
+1. Expand a rule and open its class picker. **Expected:** a **JEWELLERY** group alongside
+   WEAPONS / ARMOUR / FLASKS & CHARMS, holding Rings, Amulets and Belts.
+2. Select all three, then collapse the rule. **Expected:** the summary line reads
+   `Any Jewellery`, not the three class names listed out.
+3. Deselect one. **Expected:** the summary stops collapsing and lists the remaining classes.
+
+**On the wording:** "Any", not "All" — a summary reads as the rule's own matching test, and any
+one class in the list satisfies it (author, 2026-09-08, reversing the first cut).
+
+**Result:** PASS -- author, 2026-09-08.
+---
+
+## 11. The `kite` style rename (c9b62b9)
+
+`unidentified` named the rules that happened to use the style rather than what it does, which read
+as nonsense when offered for an unrelated rule. Renamed to `kite`, after its minimap icon.
+
+1. Open any rule's style dropdown. **Expected:** `kite` is listed; `unidentified` is not.
+2. Confirm the overlay loaded at all. An un-migrated `dynamic.json` naming a style that no longer
+   exists is a hard error at compile time by design, so a clean launch is itself the check that
+   the rename reached `config.json`, `dynamic_base.json` and `dynamic.json` together.
+
+**Result:** PASS -- author, 2026-09-08.
+---
+
+## Not separately confirmed
+
+- **Full-row click targets (`017b643`)** — clicking the empty space on either header line to
+  expand a rule, rather than only the text itself. Implemented and unit-tested for the layout
+  invariant it depends on (the filler is allocated *after* the buttons so they keep their own hit
+  areas), but not called out in its own in-game check. Low risk: a regression here is immediately
+  obvious the first time anyone opens a rule.
+
+---
+
 ### If something fails
 
 Route a FAIL to the plan that owns the behavior — do not re-diagnose from scratch:
@@ -169,7 +285,9 @@ Route a FAIL to the plan that owns the behavior — do not re-diagnose from scra
 | Apply doesn't write the filter, doesn't report the reload path, or doesn't surface a failure | 14-04 | `overlay::apply`, the Apply button in `app.rs` |
 | The unapplied-changes indicator doesn't update on edit or Apply | 14-04 | `overlay::apply::ApplyState`/`indicator`, the `if self.dirty` block in `app.rs` |
 | Autosave doesn't persist an edit, or `dynamic.json` fails to load afterward | 14-01 / 14-02 | `overlay::store::save`, the per-frame coalesced autosave |
+| Revert doesn't restore, or an edit survives the process unexpectedly | 14-04 (post-plan) | the in-memory `baseline` + Revert button in `app.rs` (`6b7c46c`, superseding D-02) |
+| A collapsed summary lists classes that should read as `Any <group>` | 14-04 (post-plan) | `overlay::view_model::summarize_classes` |
 
 ---
 
-*Checklist authored: 2026-09-07. Phase: 14-Rule Editor + Apply, Plan 04.*
+*Checklist authored: 2026-09-07. Second pass (checks 7-11) added 2026-09-08. Phase: 14-Rule Editor + Apply, Plan 04.*

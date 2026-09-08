@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
 status: executing
-stopped_at: Completed 14-03-PLAN.md
-last_updated: "2026-09-07T05:47:10.945Z"
-last_activity: 2026-09-07
+stopped_at: Completed 14-04-PLAN.md
+last_updated: "2026-09-08T00:00:00.000Z"
+last_activity: 2026-09-08
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
   percent: 50
 ---
 
@@ -25,10 +25,12 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 
 ## Current Position
 
-Phase: 14 (Rule Editor + Apply) — EXECUTING
-Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-09-07
+Phase: 14 (Rule Editor + Apply) — ALL PLANS COMPLETE, phase verification pending
+Plan: 4 of 4 (complete)
+Status: 14-04's blocking checkpoint cleared — six checks approved 2026-09-08, plus five
+second-pass checks covering the out-of-band live-use fix stream. See
+`.planning/phases/14-rule-editor-apply/14-MANUAL-VERIFICATION.md`.
+Last activity: 2026-09-08
 
 ## Performance Metrics
 
@@ -54,6 +56,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 14 P01 | 55min | 3 tasks | 4 files |
 | Phase 14 P02 | 70min | 3 tasks | 2 files |
 | Phase 14 P03 | 65min | 3 tasks | 3 files |
+| Phase 14 P04 | ~90min + 2-day fix stream | 3 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -101,6 +104,11 @@ work (carried forward past the v0.3 close):
 - [Phase ?]: 14-02: Quit is only requested during tray-menu polling; ViewportCommand::Close is deferred until after the body renders and autosave runs, so the last edit is never lost on Quit (RESEARCH Risk 4).
 - [Phase ?]: Threaded RuleId + &Config + &mut Rule into the accordion body via WorkingRules::rule_mut, distinguishing immediate per-rule condition edits from the deferred RowAction path used for row-structural changes
 - [Phase ?]: Comparator/value pickers (rarity op, rarity value, corrupted value) use plain-English labels (Exactly/At Least/At Most, Normal/Magic/Rare/Unique, False/True) instead of symbolic >=/<=/== labels, keeping the anti-comparator-string grep meaningful against the file's actual widget labels
+- [Phase 14]: **D-02 REVERSED** (2026-09-08, author request after live use) -- edits are held in memory and Apply is the single writer, with a Revert to discard. The autosave model D-02 originally chose is preserved in 14-CONTEXT.md as superseded. Accepted trade-off: unsaved edits die with the process; what replaces the crash-safety is visibility (the indicator) plus deliberate discard (Revert).
+- [Phase 14]: Apply persists the store and THEN compiles from it -- load-bearing order, because `dynamic::compile_store` reads the store from disk. Compiling first reintroduces the stale-Apply off-by-one fixed in 3375ad4 through a different route.
+- [Phase 14]: The `unidentified` style is renamed `kite`, after its minimap icon -- the old name described the rules that used it rather than what it does. Breaking for any config naming the old name (unknown style is a hard generate-time error, by design).
+- [Phase 14]: A fully-selected class group summarises as "Any <group>", not "All" -- a summary reads as the rule's own matching test, and any one class in the list satisfies it (author, reversing the first cut the same day).
+- [Phase 14]: Running the overlay holds a lock on `target\debug\ff.exe`, so `cargo test` fails with "Access is denied" while the stripe is up (cargo builds all bin targets for integration tests). Use `cargo test --lib`, or point CARGO_TARGET_DIR at a scratch path.
 
 ### Pending Todos
 
@@ -117,6 +125,10 @@ work (carried forward past the v0.3 close):
 
 - **`Cargo.toml` is still `version = "0.1.0"`** while tags read v0.1/v0.2/v0.3 — confirm whether
   the crate version is meant to track milestone tags.
+
+- **Full-row click targets (`017b643`) never separately confirmed in-game** — implemented and
+  unit-tested for the layout invariant they depend on, but not given their own check in
+  `14-MANUAL-VERIFICATION.md`. Low risk; a regression is obvious the first time a rule is opened.
 
 ### Blockers/Concerns
 
@@ -146,8 +158,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-07T05:47:10.937Z
-Stopped at: Completed 14-03-PLAN.md
+Last session: 2026-09-08T00:00:00.000Z
+Stopped at: Completed 14-04-PLAN.md — Phase 14 fully implemented and manually verified
 Resume file: None
 
-**Next step:** Run `/gsd-new-milestone` to scope v0.4.
+**Next step:** Run phase verification for Phase 14, then `/gsd-audit-milestone 0.4` and
+`/gsd-complete-milestone` to ship v0.4.

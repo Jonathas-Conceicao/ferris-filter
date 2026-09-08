@@ -18,11 +18,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over a running Path of Exile 2, styled in PoE2's own Options-menu palette (Cinzel display font,
   bronze header plate, zebra-striped rows). A Ferris tray icon with a Show/Quit menu keeps the
   process reachable while the stripe is hidden; a system-wide `Ctrl+Shift+Z` hotkey summons and hides
-  it without alt-tabbing and without stealing keyboard focus from the game. The stripe currently
-  shows the rules in `dynamic.json` **read-only**, in ordinal order — editing lands in Phase 14.
+  it without alt-tabbing and without stealing keyboard focus from the game. The stripe lists the
+  rules in `dynamic.json` in ordinal order and is a full editor for them — see below.
+- **The overlay rule editor** — every rule in the stripe expands in place into its own controls for
+  style, item classes (grouped Weapons / Armour / Jewellery / Flasks & Charms), rarity, base
+  defences, sockets, quality, corrupted state, and unidentified tier. Rules reorder with up/down
+  arrows, enable and disable without being deleted, append with **+ ADD RULE**, and delete behind
+  an inline confirm. A collapsed rule shows a one-line summary of what it matches, with a
+  fully-selected class group collapsing to `Any Weapons` / `Any Armour` / `Any Jewellery` /
+  `Any Flasks & Charms`.
+- **APPLY and REVERT** — edits are held in memory until **Apply**, which saves `dynamic.json` and
+  compiles `dynamic.filter` straight into the game folder, then repeats the reload path the game
+  requires (*Options > Game > Item Filter > Refresh*), because PoE2 never re-reads a filter on its
+  own. **Revert** appears only while there are unsaved changes and discards them. The stripe always
+  states, in words, whether the written filter still matches the saved rules.
+- **`sync --league <name|slug>`** — target a specific poe.ninja league by name or url slug. Needed
+  when the automatic pick resolves to the outgoing league during a league transition, or when a new
+  league is live but poe.ninja has not yet flagged it as indexed.
+- **`generate --tiers <path>` / `apply --tiers <path>`** — override tier cutoffs while keeping live
+  prices, so an exalt-denominated early-league tier table can be used against a young economy
+  without editing the committed `tiers.json`.
 - **`ff-cli` — the short-name console CLI**, identical to `ferrisfilter`, just shorter to type.
   Holds the console entry point `ff` used before it became the GUI binary. `ferrisfilter` itself
   is unchanged.
+
+### Changed
+
+- **The `unidentified` style is renamed `kite`**, after the minimap icon it paints. The old name
+  described the rules that happened to use it rather than what it does, which read as nonsense when
+  the overlay offered it for an unrelated rule. Any config naming `unidentified` must be updated —
+  an unknown style name is a hard error at generate time, by design.
 
 ## [0.3.0] - 2026-06-27
 

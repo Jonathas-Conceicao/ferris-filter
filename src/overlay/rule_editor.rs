@@ -110,6 +110,8 @@ pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id:
     ui.add_space(8.0);
     changed |= render_classes(ui, rule, config, id);
     ui.add_space(8.0);
+    changed |= render_base_types(ui, rule, id);
+    ui.add_space(8.0);
     changed |= render_rarity(ui, rule, id);
     ui.add_space(8.0);
     changed |= render_defence(ui, rule, id);
@@ -285,6 +287,123 @@ fn render_classes(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleI
                         }
                     }
                 });
+        }
+    }
+
+    changed
+}
+
+/// EDIT-10/D-01/D-02/D-03/D-05/D-14/D-16: the base-type list, sitting directly after the class
+/// control (D-16 — class and base type are the two "which item is this" conditions).
+///
+/// Gated behind its own `circular_toggle`, backed by [`panel_open`] the same way
+/// [`render_name`]/[`render_classes`] are (RESEARCH Pattern 1): there is no sensible base type to
+/// seed on enable, so a derived toggle would flicker shut exactly as it would for name/class.
+/// Off hides the list and the add field entirely and calls [`edit::clear_base_type`]; on writes
+/// only the open state and adds no default entry, keeping a freshly-opened panel empty (D-09's
+/// spirit extended to base types).
+///
+/// While open, an **owned clone** of the rule's base-type list is taken once at the top and
+/// rendered one row per entry — never a live borrow — so the remove button below can call
+/// [`edit::remove_base_type`] without mutating the array mid-walk. A remove click records the
+/// index in a single `Option<usize>`; the removal is applied once, after the loop ends (Pattern
+/// 2, mirroring `app.rs`'s `RowAction` collect-then-apply discipline, scoped to this one
+/// function). The remove control is a plain `Remove` text button, matching `app.rs`'s existing
+/// `Delete` button, deliberately not a Unicode close/cross glyph — this codebase has already
+/// shipped that exact tofu-box rendering defect twice (Phase 13's header close control, Phase
+/// 14's reorder arrows).
+///
+/// The add field commits on Enter (the response losing focus in the same frame `Key::Enter` was
+/// pressed) or the `+ ADD` button — and only those two, so clicking elsewhere never commits a
+/// half-typed name (this deliberately differs from [`render_name`], where any loss of focus
+/// commits). On commit the buffer is parsed by [`edit::parse_base_type_entry`] (D-14's quote
+/// stripping and paste splitting) and each result is appended via [`edit::add_base_type`]; the
+/// buffer is then cleared and refocused so several names can be typed in a row with only Enter
+/// between them (D-03). This file decides nothing about what an entry's text becomes — that
+/// hygiene lives entirely in `edit::` (D-18).
+fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("BASE TYPES").color(theme::LABEL_TAN).small());
+
+    let open_id = egui::Id::new((id, "base-type-open"));
+    let mut enabled = panel_open(
+        ui,
+        open_id,
+        rule.when.as_ref().is_some_and(|when| when.base_type.is_some()),
+    );
+
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            set_panel_open(ui, open_id, enabled);
+            if !enabled {
+                if let Some(when) = rule.when.as_mut() {
+                    edit::clear_base_type(when);
+                }
+            }
+            // Ticking ON writes nothing else here -- no default entry is added.
+            changed = true;
+        }
+        ui.label("match base types");
+    });
+
+    if enabled {
+        // Owned clone -- NOT a live borrow of `rule.when.base_type` -- so the remove button below
+        // can freely call `edit::remove_base_type` without fighting the borrow checker or
+        // mutating the array mid-walk (Pattern 2).
+        let items: Vec<String> = rule
+            .when
+            .as_ref()
+            .and_then(|when| when.base_type.clone())
+            .unwrap_or_default();
+
+        let mut remove_at: Option<usize> = None;
+        for (i, name) in items.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.small_button("Remove").clicked() {
+                    remove_at = Some(i); // recorded, not applied -- Pattern 2
+                }
+                ui.add(egui::Label::new(name).wrap());
+            });
+        }
+        if let Some(i) = remove_at {
+            if let Some(when) = rule.when.as_mut() {
+                edit::remove_base_type(when, i);
+            }
+            changed = true;
+        }
+
+        let buf_id = egui::Id::new((id, "base-type-buf"));
+        let mut buf = ui.data_mut(|d| d.get_temp_mut_or_default::<String>(buf_id).clone());
+
+        let mut text_response = None;
+        let mut add_clicked = false;
+        ui.horizontal(|ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut buf)
+                    .id_salt((id, "base-type-edit"))
+                    .hint_text("Add base type\u{2026}"),
+            );
+            if response.changed() {
+                ui.data_mut(|d| d.insert_temp(buf_id, buf.clone()));
+            }
+            add_clicked = ui.small_button("+ ADD").clicked();
+            text_response = Some(response);
+        });
+        let response = text_response.expect("ui.horizontal always runs its closure");
+
+        let commit_by_enter =
+            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if commit_by_enter || add_clicked {
+            let parsed = edit::parse_base_type_entry(&buf);
+            if !parsed.is_empty() {
+                let when = edit::when_mut(rule);
+                for name in parsed {
+                    edit::add_base_type(when, &name);
+                }
+                changed = true;
+            }
+            ui.data_mut(|d| d.insert_temp(buf_id, String::new()));
+            response.request_focus();
         }
     }
 
@@ -844,5 +963,120 @@ mod tests {
             None,
             "opening the panel must not pre-select a class (D-09)"
         );
+    }
+
+    // -- render_base_types -------------------------------------------------------------------
+
+    #[test]
+    fn render_base_types_never_adds_an_entry_on_its_own() {
+        let ctx = headless_ctx();
+        let mut wr = edit::WorkingRules::from_rules(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(When::default()),
+        }]);
+        let id = wr.rows()[0].0;
+
+        for _ in 0..2 {
+            ctx.run_ui(RawInput::default(), |ui| {
+                let rule = wr.rule_mut(id).unwrap();
+                render_base_types(ui, rule, id);
+            })
+            .drop_without_applying_deltas();
+        }
+
+        assert_eq!(wr.rule(id).unwrap().when.as_ref().unwrap().base_type, None);
+    }
+
+    #[test]
+    fn the_base_type_list_survives_the_frame_after_the_toggle_was_clicked() {
+        let ctx = headless_ctx();
+        let mut wr = edit::WorkingRules::from_rules(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(When::default()),
+        }]);
+        let id = wr.rows()[0].0;
+
+        // Frame 1: no input -- neither the list nor the add field exists while the toggle is off.
+        ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_base_types(ui, rule, id);
+        })
+        .drop_without_applying_deltas();
+        let rects = ctx.interactive_rects_last_pass();
+        assert_eq!(
+            rects.len(),
+            1,
+            "a closed base-type panel renders exactly one interactive widget: its toggle"
+        );
+        let toggle_rect = rects[0];
+
+        // Frame 2: click the toggle, switching the panel on.
+        ctx.run_ui(click_at(toggle_rect.center()), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_base_types(ui, rule, id);
+        })
+        .drop_without_applying_deltas();
+
+        // Frame 3: no input at all -- the repaint that would expose the flicker.
+        ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_base_types(ui, rule, id);
+        })
+        .drop_without_applying_deltas();
+
+        let rects_after = ctx.interactive_rects_last_pass();
+        assert!(
+            rects_after.len() > 1,
+            "the add field and its + ADD button must still be visible the frame after the \
+             toggle was clicked, even though nothing has been typed (RESEARCH Pitfall 1)"
+        );
+        assert_eq!(
+            wr.rule(id).unwrap().when.as_ref().unwrap().base_type,
+            None,
+            "opening the panel must not add a default base type (D-09's spirit extended here)"
+        );
+    }
+
+    // -- render_rule_body ---------------------------------------------------------------------
+
+    #[test]
+    fn a_new_rule_opens_with_every_condition_untouched() {
+        let ctx = headless_ctx();
+        let config = base_config();
+        let mut wr = edit::WorkingRules::from_rules(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(When::default()),
+        }]);
+        let id = wr.rows()[0].0;
+
+        for _ in 0..2 {
+            ctx.run_ui(RawInput::default(), |ui| {
+                let rule = wr.rule_mut(id).unwrap();
+                let changed = render_rule_body(ui, rule, &config, id);
+                assert!(!changed, "render_rule_body must not change the rule with no input");
+            })
+            .drop_without_applying_deltas();
+        }
+
+        let rule = wr.rule(id).unwrap();
+        assert_eq!(rule.name, None, "a new rule has nothing checked (D-09)");
+        let when = rule.when.as_ref().unwrap();
+        assert_eq!(when.class, None);
+        assert_eq!(when.rarity, None);
+        assert_eq!(when.area_level, None);
+        assert_eq!(when.base_armour, None);
+        assert_eq!(when.base_evasion, None);
+        assert_eq!(when.base_energy_shield, None);
+        assert_eq!(when.quality, None);
+        assert_eq!(when.sockets, None);
+        assert_eq!(when.corrupted, None);
+        assert_eq!(when.base_type, None);
+        assert_eq!(when.unidentified_tier, None);
     }
 }

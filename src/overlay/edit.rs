@@ -484,6 +484,33 @@ pub fn clear_base_type(when: &mut When) {
     when.base_type = None;
 }
 
+/// EDIT-11/D-11: sets the rule's name, trimmed. An empty-after-trim name stores `None` rather
+/// than `Some("")`: `src/emitter.rs`'s `rule.name.as_deref().unwrap_or(&derived_label)` falls
+/// back to the derived `rule {idx}` label only on `None`, so `Some("")` would emit a bare
+/// `Show # ` and silently lose the label an unnamed rule would have had. No other normalisation
+/// is performed — D-05's accept-what-is-typed principle extends to names, and
+/// `TextEdit::singleline` already forecloses the only character (a newline) that could break the
+/// comment line, so this function must not sanitize, escape, or truncate.
+///
+/// A name is a label, never an identity (D-13): [`WorkingRules`]'s `RuleId` stays the identity
+/// and array position stays the precedence — nothing anywhere may look a rule up by name.
+pub fn set_name(rule: &mut Rule, name: &str) {
+    let trimmed = name.trim();
+    rule.name = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+}
+
+/// EDIT-11/EDIT-08/D-12: clears the rule's name — the name's own off switch.
+pub fn clear_name(rule: &mut Rule) {
+    rule.name = None;
+}
+
+/// EDIT-10/EDIT-08/D-08: discards the whole class list in one call — `class`'s own off switch.
+/// Reaches the same end state [`set_class`] reaches by deselecting every class one at a time (and
+/// the same reason: `None`, not `Some(vec![])`), just in a single step for the picker's toggle.
+pub fn clear_class(when: &mut When) {
+    when.class = None;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1177,6 +1204,116 @@ mod tests {
         let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
             .expect("generate");
         assert!(!filter.contains("BaseType"), "got:\n{filter}");
+    }
+
+    // -- rule name and class discard (EDIT-11/D-08/D-11/D-12/D-13) -----------------
+
+    #[test]
+    fn set_name_stores_the_trimmed_name() {
+        let mut r = rule("unchanged");
+        set_name(&mut r, "  Change Bases  ");
+        assert_eq!(r.name, Some("Change Bases".to_string()));
+    }
+
+    #[test]
+    fn set_name_on_whitespace_only_yields_none_so_the_derived_label_still_wins() {
+        let mut r = rule("unchanged");
+        set_name(&mut r, "   ");
+        assert_eq!(r.name, None);
+    }
+
+    #[test]
+    fn clear_name_yields_none() {
+        let mut r = rule("unchanged");
+        set_name(&mut r, "Change Bases");
+        clear_name(&mut r);
+        assert_eq!(r.name, None);
+    }
+
+    #[test]
+    fn a_named_rule_emits_its_name_as_the_block_comment() {
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: Some("Change Bases".to_string()),
+            style: "unchanged".to_string(),
+            when: None,
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
+        assert!(filter.contains("Show # Change Bases"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn an_unnamed_rule_still_emits_the_derived_rule_index_label() {
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: None,
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
+        assert!(filter.contains("Show # rule 0"), "got:\n{filter}");
+    }
+
+    #[test]
+    fn clear_class_discards_the_whole_list_and_emits_no_class_line() {
+        let mut when = When::default();
+        set_class(&mut when, "Body Armours", true);
+        clear_class(&mut when);
+        assert_eq!(when.class, None);
+
+        let mut config = base_config();
+        config.rules = Some(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
+        assert!(!filter.contains("Class "), "got:\n{filter}");
+    }
+
+    #[test]
+    fn the_change_bases_rule_emits_base_types_and_no_class_line() {
+        // The phase's motivating example, in the author's own hand-written form:
+        //   Show # Change Bases
+        //     Rarity == Normal
+        //     BaseType == "Heavy Belt" "Utility Belt" "Armoured Cap" "Sacred Focus"
+        let mut when = When::default();
+        set_class(&mut when, "Body Armours", true);
+        clear_class(&mut when);
+        add_base_type(&mut when, "Heavy Belt");
+        add_base_type(&mut when, "Utility Belt");
+        add_base_type(&mut when, "Armoured Cap");
+        add_base_type(&mut when, "Sacred Focus");
+        set_rarity(&mut when, RarityOp::Eq, Rarity::Normal);
+
+        let mut named_rule = Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        };
+        set_name(&mut named_rule, "Change Bases");
+
+        let mut config = base_config();
+        config.rules = Some(vec![named_rule]);
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
+
+        assert!(filter.contains("Show # Change Bases"), "got:\n{filter}");
+        assert!(filter.contains("Rarity == Normal"), "got:\n{filter}");
+        assert!(
+            filter.contains(
+                "BaseType == \"Heavy Belt\" \"Utility Belt\" \"Armoured Cap\" \"Sacred Focus\""
+            ),
+            "got:\n{filter}"
+        );
+        assert!(!filter.contains("Class "), "got:\n{filter}");
     }
 
     // -- clearing one condition leaves the others untouched (roadmap criterion 6) --

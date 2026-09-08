@@ -47,6 +47,35 @@ use super::edit::{self, RuleId};
 use super::theme;
 use super::widgets;
 
+/// Ephemeral, presentation-only "is this optional-value panel open" state, keyed by an `egui::Id`
+/// the caller has already salted with the rule's [`RuleId`] plus a control discriminator (e.g.
+/// `(id, "name-open")`).
+///
+/// Deliberately **not** derived from `Option::is_some()` every frame the way every other
+/// condition's toggle is (`rarity`, `sockets`, `quality`, `corrupted`, `unidentified_tier`,
+/// `defence`) — [`render_name`], `render_classes`'s off switch and `render_base_types`'s off
+/// switch write *nothing* to the model when switched on (D-09 forbids auto-selecting a class,
+/// D-11 forbids auto-filling a name, and there is no sensible default base type), so a toggle
+/// that re-derived its checked-state from the model each frame would read back `false` on the
+/// very next repaint and the panel would flicker shut before the player could click or type
+/// anything (RESEARCH Pattern 1 / Pitfall 1).
+///
+/// Deliberately **not** stored in [`super::edit`] or `WorkingRules` either: this state carries no
+/// stake in the emitted filter (`PITFALLS.md` §8's accepted "no test story" surface for
+/// presentation-only state), and giving it a home in the pure layer would mean inventing a
+/// second persisted per-rule identity scheme alongside `RuleId` — exactly what D-13 and
+/// `PITFALLS.md` §9 warn against. Because the id is salted with `RuleId`, this state is
+/// automatically discarded whenever Revert mints fresh ids for a freshly reloaded rule set.
+fn panel_open(ui: &mut egui::Ui, salt_id: egui::Id, seed: bool) -> bool {
+    ui.data_mut(|d| *d.get_temp_mut_or(salt_id, seed))
+}
+
+/// Writes the ephemeral panel-open state described on [`panel_open`]. Called once, by the click
+/// handler that flips the toggle — never by the render loop re-deriving a value every frame.
+fn set_panel_open(ui: &mut egui::Ui, salt_id: egui::Id, open: bool) {
+    ui.data_mut(|d| d.insert_temp(salt_id, open));
+}
+
 /// Renders one expanded rule's condition editors. Returns `true` if any control changed the
 /// rule this frame, for the caller's autosave dirty-tracking (D-02).
 ///
@@ -58,6 +87,8 @@ use super::widgets;
 pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId) -> bool {
     let mut changed = false;
 
+    changed |= render_name(ui, rule, id);
+    ui.add_space(8.0);
     changed |= render_style(ui, rule, config, id);
     ui.add_space(8.0);
     changed |= render_classes(ui, rule, config, id);
@@ -73,6 +104,73 @@ pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id:
     changed |= render_corrupted(ui, rule, id);
     ui.add_space(8.0);
     changed |= render_unidentified_tier(ui, rule, id);
+
+    changed
+}
+
+/// EDIT-11/D-10/D-11/D-12/D-16: a rule's optional name, rendered first in the body — a name
+/// labels the whole rule and is not a condition, so it sits above `style` rather than beside the
+/// other toggles (D-16).
+///
+/// Backed by [`panel_open`] rather than `rule.name.is_some()` (RESEARCH Pattern 1): D-11 forbids
+/// auto-filling a name on enable, so a toggle that re-derived its checked-state from the model
+/// every frame would read back `false` the very next repaint and the field would flicker shut
+/// before the player could type anything.
+fn render_name(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
+    let mut changed = false;
+    ui.label(egui::RichText::new("NAME").color(theme::LABEL_TAN).small());
+
+    let open_id = egui::Id::new((id, "name-open"));
+    let mut enabled = panel_open(ui, open_id, rule.name.is_some());
+
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            set_panel_open(ui, open_id, enabled);
+            if !enabled {
+                // D-12: unticking discards the stored name, matching every other off switch's
+                // clear_* = None behavior rather than secretly retaining hidden text.
+                edit::clear_name(rule);
+            }
+            // Ticking ON writes nothing else here (D-11) -- the field stays empty until typed.
+            changed = true;
+        }
+        ui.label("has a name");
+    });
+
+    if enabled {
+        // A per-rule text buffer held in the same ephemeral store, seeded once from the rule's
+        // current name. Must be temp-stored rather than re-derived from `rule.name` every frame:
+        // `edit::set_name` trims on commit, so re-deriving the buffer from the (not-yet-committed)
+        // model each frame would delete a trailing space the instant the player typed one
+        // mid-name.
+        let buf_id = egui::Id::new((id, "name-buf"));
+        let mut buf = ui.data_mut(|d| {
+            d.get_temp_mut_or_insert_with(buf_id, || rule.name.clone().unwrap_or_default())
+                .clone()
+        });
+
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut buf)
+                .id_salt((id, "name-edit"))
+                .hint_text("unnamed"),
+        );
+        if response.changed() {
+            ui.data_mut(|d| d.insert_temp(buf_id, buf.clone()));
+        }
+        // Commit on losing focus for any reason -- on Enter, and also on clicking away, because a
+        // name typed and then clicked away from should not be silently discarded (this
+        // deliberately differs from the base-type add field, where a half-typed entry must NOT be
+        // committed by a stray click).
+        if response.lost_focus() {
+            edit::set_name(rule, &buf);
+            changed = true;
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                // Enter specifically -- keep the keyboard in the field so a run of edits doesn't
+                // need the mouse.
+                response.request_focus();
+            }
+        }
+    }
 
     changed
 }
@@ -473,4 +571,165 @@ fn render_corrupted(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     });
 
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    /// A one-frame click-and-release at `pos`, mirroring `widgets.rs`'s own test harness exactly
+    /// (no second harness is invented for this file's controls).
+    fn click_at(pos: Pos2) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
+            events: vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::default(),
+                },
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::default(),
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// A no-input frame sharing `click_at`'s own 400x400 screen rect, so a control's layout is
+    /// identical across a click-free frame and a click frame -- without this, `RawInput::default`
+    /// (no `screen_rect` at all) can lay a row out differently than `click_at`'s input does.
+    fn blank_input() -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
+            ..Default::default()
+        }
+    }
+
+    fn headless_ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        ctx
+    }
+
+    fn unnamed_rule() -> Rule {
+        Rule { enabled: None, name: None, style: "unchanged".to_string(), when: None }
+    }
+
+    // -- panel_open / set_panel_open (the shared primitive) --------------------------------
+
+    #[test]
+    fn a_panel_opened_by_a_click_is_still_open_on_the_next_frame_with_a_contrary_seed() {
+        let ctx = headless_ctx();
+        let id = egui::Id::new("test-panel-open");
+
+        ctx.run_ui(RawInput::default(), |ui| {
+            set_panel_open(ui, id, true);
+        })
+        .drop_without_applying_deltas();
+
+        let mut open = false;
+        ctx.run_ui(RawInput::default(), |ui| {
+            open = panel_open(ui, id, false);
+        })
+        .drop_without_applying_deltas();
+
+        assert!(
+            open,
+            "panel_open must return the previously-written state, not the contrary seed passed \
+             on this call"
+        );
+    }
+
+    #[test]
+    fn an_untouched_panel_falls_back_to_its_model_derived_seed() {
+        let ctx = headless_ctx();
+
+        let mut open_true = false;
+        ctx.run_ui(RawInput::default(), |ui| {
+            open_true = panel_open(ui, egui::Id::new("fresh-a"), true);
+        })
+        .drop_without_applying_deltas();
+        assert!(open_true, "a fresh id with a true seed must read true");
+
+        let mut open_false = true;
+        ctx.run_ui(RawInput::default(), |ui| {
+            open_false = panel_open(ui, egui::Id::new("fresh-b"), false);
+        })
+        .drop_without_applying_deltas();
+        assert!(!open_false, "a fresh id with a false seed must read false");
+    }
+
+    // -- render_name -------------------------------------------------------------------------
+
+    #[test]
+    fn render_name_never_auto_fills_a_name() {
+        let ctx = headless_ctx();
+        let mut wr = edit::WorkingRules::from_rules(vec![unnamed_rule()]);
+        let id = wr.rows()[0].0;
+
+        for _ in 0..2 {
+            ctx.run_ui(RawInput::default(), |ui| {
+                let rule = wr.rule_mut(id).unwrap();
+                let changed = render_name(ui, rule, id);
+                assert!(!changed, "render_name must not report a change with no input");
+            })
+            .drop_without_applying_deltas();
+        }
+
+        assert_eq!(wr.rule(id).unwrap().name, None);
+    }
+
+    #[test]
+    fn the_name_field_survives_the_frame_after_its_toggle_was_clicked() {
+        let ctx = headless_ctx();
+        let mut wr = edit::WorkingRules::from_rules(vec![unnamed_rule()]);
+        let id = wr.rows()[0].0;
+
+        // Frame 1: no input, discover the toggle's own rect.
+        ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_name(ui, rule, id);
+        })
+        .drop_without_applying_deltas();
+        let rects = ctx.interactive_rects_last_pass();
+        assert_eq!(
+            rects.len(),
+            1,
+            "a closed name panel renders exactly one interactive widget: its toggle"
+        );
+        let toggle_rect = rects[0];
+
+        // Frame 2: click the toggle, switching the panel on.
+        ctx.run_ui(click_at(toggle_rect.center()), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_name(ui, rule, id);
+        })
+        .drop_without_applying_deltas();
+
+        // Frame 3: no input at all -- the repaint that would expose the flicker.
+        ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_name(ui, rule, id);
+        })
+        .drop_without_applying_deltas();
+
+        let rects_after = ctx.interactive_rects_last_pass();
+        assert!(
+            rects_after.len() > 1,
+            "the name field must still be open the frame after its toggle was clicked, even \
+             though nothing has been typed (RESEARCH Pitfall 1)"
+        );
+        assert_eq!(
+            wr.rule(id).unwrap().name,
+            None,
+            "opening the panel must not auto-fill a name (D-11)"
+        );
+    }
 }

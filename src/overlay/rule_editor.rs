@@ -20,9 +20,17 @@
 //! way to be switched off, and switching one off changes nothing about the others:
 //!
 //! - **style** — always present (a rule must have a style); not a condition, no off switch.
-//! - **classes** — off by deselecting every class in every group; [`edit::set_class`] already
-//!   collapses the last deselection to `None` (its own doc comment explains why), so no separate
-//!   "classes off" toggle is needed here.
+//! - **name** — its own `circular_toggle` ([`render_name`]); off calls [`edit::clear_name`]
+//!   (D-12). Not a condition — a name labels the whole rule — but shares the toggle vocabulary
+//!   and sits first in the body (D-16).
+//! - **classes** — its own `circular_toggle` ([`render_classes`]); off calls
+//!   [`edit::clear_class`] and hides the four `CollapsingHeader` groups entirely rather than
+//!   greying them out (D-06/D-07/D-08). Deselecting every class individually still collapses
+//!   `When.class` to `None` by the other route ([`edit::set_class`]'s own doc comment explains
+//!   why) — the toggle is a second way to reach the same state, not a replacement for it.
+//! - **base types** — its own `circular_toggle` ([`render_base_types`]); off calls
+//!   [`edit::clear_base_type`] and hides the list and add field entirely (D-16, sits directly
+//!   after classes).
 //! - **rarity** — one `circular_toggle` ([`render_rarity`]).
 //! - **defences** — one `circular_toggle` for the *group* ([`render_defence`]); the three
 //!   checkboxes underneath never gain their own separate on/off state, only a ticked/unticked
@@ -36,8 +44,17 @@
 //!   2026-09-07 after live use found the condition displayed in the row summary but uneditable;
 //!   EDIT-07 never named it, so the omission came from the requirement rather than execution.
 //!
-//! Not exposed here: `baseType` (no config list to source exact base names from, and no dynamic
-//! rule uses it) and `areaLevel` (deliberately outside the dynamic vocabulary, DYN-05).
+//! Excluded from this editor entirely: `areaLevel` (deliberately outside the dynamic vocabulary,
+//! DYN-05).
+//!
+//! Three of the toggles above — **name**, **classes** and **base types** — are backed by
+//! [`panel_open`]'s ephemeral, id-keyed state rather than derived from `Option::is_some()` every
+//! frame the way every other toggle in this list is: they have no sensible non-empty value to
+//! write on enable (D-09 forbids a pre-selected class, D-11 forbids an auto-filled name, and
+//! there is no default base type), so a derived toggle would read back `false` on the very next
+//! repaint and the panel would flicker shut before the player could act (RESEARCH Pattern 1 /
+//! Pitfall 1). Do not "simplify" these three into the uniform `Option::is_some()` pattern the
+//! rest of this list uses — that is the exact regression this note exists to prevent.
 //!
 //! This inventory is auditable by reading this file, not by clicking through the accordion.
 
@@ -199,45 +216,76 @@ fn render_style(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId)
     changed
 }
 
-/// EDIT-04/D-10: a grouped, collapsible class picker sourced from the config's own class lists
-/// ([`edit::class_groups`]) — one `CollapsingHeader` per group (WEAPONS / ARMOUR / JEWELLERY /
-/// FLASKS & CHARMS), collapsed by default so two dozen checkboxes never swamp the stripe at once.
-/// Empty groups are omitted by `class_groups` rather than rendered as a bare header. The selected count is
-/// shown in each group's header text so a collapsed group still tells the player something.
+/// EDIT-04/D-06/D-07/D-08/D-09/D-10: a grouped, collapsible class picker sourced from the
+/// config's own class lists ([`edit::class_groups`]) — one `CollapsingHeader` per group
+/// (WEAPONS / ARMOUR / JEWELLERY / FLASKS & CHARMS), collapsed by default so two dozen
+/// checkboxes never swamp the stripe at once. Empty groups are omitted by `class_groups` rather
+/// than rendered as a bare header. The selected count is shown in each group's header text so a
+/// collapsed group still tells the player something.
 ///
-/// EDIT-08 for classes: there is no separate "classes off" toggle; deselecting the last class
-/// already collapses `When.class` to `None` ([`edit::set_class`]'s own doc comment explains
-/// why) — the emptied state IS "classes off".
+/// EDIT-08 for classes: gated behind its own `circular_toggle`, backed by [`panel_open`] rather
+/// than `when.class.is_some()` (RESEARCH Pattern 1) — D-09 forbids pre-selecting a class on
+/// enable, so a derived toggle would flicker shut the frame after being switched on. While the
+/// toggle is off, the four `CollapsingHeader` groups are not rendered at all — absent, not
+/// greyed out and not collapsed-but-present (D-07), unlike [`render_defence`]'s group toggle,
+/// which uses `add_enabled_ui` to grey its three checkboxes out: three checkboxes are worth
+/// keeping visible while off, two dozen class checkboxes are not. Switching the toggle off
+/// discards the class list via [`edit::clear_class`] (D-08) — the same end state
+/// [`edit::set_class`] already reaches when the last class is deselected one at a time, reached
+/// here in one step.
 fn render_classes(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId) -> bool {
     let mut changed = false;
     ui.label(egui::RichText::new("CLASSES").color(theme::LABEL_TAN).small());
 
-    for (group_label, classes) in edit::class_groups(config) {
-        let selected_count = classes
-            .iter()
-            .filter(|class| {
-                rule.when
-                    .as_ref()
-                    .is_some_and(|when| edit::is_class_selected(when, class))
-            })
-            .count();
+    let open_id = egui::Id::new((id, "classes-open"));
+    let mut enabled = panel_open(
+        ui,
+        open_id,
+        rule.when.as_ref().is_some_and(|when| when.class.is_some()),
+    );
 
-        egui::CollapsingHeader::new(format!("{group_label} ({selected_count})"))
-            .id_salt((id, group_label))
-            .default_open(false)
-            .show(ui, |ui| {
-                for class in classes {
-                    let mut selected = rule
-                        .when
-                        .as_ref()
-                        .is_some_and(|when| edit::is_class_selected(when, class));
-                    if ui.checkbox(&mut selected, class.as_str()).changed() {
-                        let when = edit::when_mut(rule);
-                        edit::set_class(when, class, selected);
-                        changed = true;
-                    }
+    ui.horizontal(|ui| {
+        if widgets::circular_toggle(ui, &mut enabled).changed() {
+            set_panel_open(ui, open_id, enabled);
+            if !enabled {
+                if let Some(when) = rule.when.as_mut() {
+                    edit::clear_class(when);
                 }
-            });
+            }
+            // Ticking ON writes nothing else here (D-09) -- no class is pre-selected.
+            changed = true;
+        }
+        ui.label("match classes");
+    });
+
+    if enabled {
+        for (group_label, classes) in edit::class_groups(config) {
+            let selected_count = classes
+                .iter()
+                .filter(|class| {
+                    rule.when
+                        .as_ref()
+                        .is_some_and(|when| edit::is_class_selected(when, class))
+                })
+                .count();
+
+            egui::CollapsingHeader::new(format!("{group_label} ({selected_count})"))
+                .id_salt((id, group_label))
+                .default_open(false)
+                .show(ui, |ui| {
+                    for class in classes {
+                        let mut selected = rule
+                            .when
+                            .as_ref()
+                            .is_some_and(|when| edit::is_class_selected(when, class));
+                        if ui.checkbox(&mut selected, class.as_str()).changed() {
+                            let when = edit::when_mut(rule);
+                            edit::set_class(when, class, selected);
+                            changed = true;
+                        }
+                    }
+                });
+        }
     }
 
     changed
@@ -576,6 +624,7 @@ fn render_corrupted(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::config::When;
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
 
     /// A one-frame click-and-release at `pos`, mirroring `widgets.rs`'s own test harness exactly
@@ -620,6 +669,14 @@ mod tests {
 
     fn unnamed_rule() -> Rule {
         Rule { enabled: None, name: None, style: "unchanged".to_string(), when: None }
+    }
+
+    /// The same fixture `edit.rs`'s own tests load a real `Config` from — a full, valid class
+    /// list to drive `render_classes` against, rather than a hand-built stand-in that could drift
+    /// from what the config-sourced picker actually offers (`PITFALLS.md` §10).
+    fn base_config() -> Config {
+        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
+        serde_json::from_str(json).expect("dynamic_base.json must parse as a Config")
     }
 
     // -- panel_open / set_panel_open (the shared primitive) --------------------------------
@@ -730,6 +787,62 @@ mod tests {
             wr.rule(id).unwrap().name,
             None,
             "opening the panel must not auto-fill a name (D-11)"
+        );
+    }
+
+    // -- render_classes ----------------------------------------------------------------------
+
+    #[test]
+    fn the_class_groups_survive_the_frame_after_the_toggle_was_clicked() {
+        let ctx = headless_ctx();
+        let config = base_config();
+        let mut wr = edit::WorkingRules::from_rules(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(When::default()),
+        }]);
+        let id = wr.rows()[0].0;
+
+        // Frame 1: no input -- with nothing selected, the toggle is the only click-sensing
+        // widget; the four `CollapsingHeader`s do not exist yet.
+        ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_classes(ui, rule, &config, id);
+        })
+        .drop_without_applying_deltas();
+        let rects = ctx.interactive_rects_last_pass();
+        assert_eq!(
+            rects.len(),
+            1,
+            "a closed class panel renders exactly one interactive widget: its toggle"
+        );
+        let toggle_rect = rects[0];
+
+        // Frame 2: click the toggle, switching the panel on.
+        ctx.run_ui(click_at(toggle_rect.center()), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_classes(ui, rule, &config, id);
+        })
+        .drop_without_applying_deltas();
+
+        // Frame 3: no input at all -- the repaint that would expose the flicker.
+        ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_classes(ui, rule, &config, id);
+        })
+        .drop_without_applying_deltas();
+
+        let rects_after = ctx.interactive_rects_last_pass();
+        assert!(
+            rects_after.len() > 1,
+            "the class groups must still be visible the frame after the toggle was clicked, \
+             even though nothing has been selected (RESEARCH Pitfall 1)"
+        );
+        assert_eq!(
+            wr.rule(id).unwrap().when.as_ref().unwrap().class,
+            None,
+            "opening the panel must not pre-select a class (D-09)"
         );
     }
 }

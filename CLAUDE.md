@@ -26,7 +26,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each policy block is headed `Show # <rule name>` (from the `name` field in `config.json`). |
 | `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. `sync --league <name\|slug>` targets a specific poe.ninja league (useful during a league transition, when the automatic pick resolves to the outgoing league). |
 | `dynamic_base.json` (repo root) | **Committed template** for the dynamic filter (v0.4). A full `Config` like `config.json`, but with no `areaLevel` conditions and no rule `name`s — dynamic rules are identified by their **index in the `rules` array**. `ferrisfilter apply` seeds `dynamic.json` from it, and `apply --reset` restores from it to start a filter over without losing the baseline. |
-| `dynamic.json` (repo root) | **Generated + hand/overlay-edited working copy** of the dynamic rule set, seeded from `dynamic_base.json` on first `apply` (CLI) or on the overlay's first launch. **Git-ignored** — per-user state. Rules support `"enabled": false`, which keeps a rule in the file but emits nothing into the filter. The overlay editor (below) **autosaves every edit straight to this file** — nothing here waits for Apply. Two cosmetic round-trip quirks are expected and harmless: an edited rule's `sockets`/`quality`/`areaLevel` objects can grow explicit `"eq": null`/`"min": null` keys (those types lack `skip_serializing_if`), and `classGroups`/`build.armourTypes` — both `HashMap`s — can reshuffle key order between saves. Both are value-equal round-trips on a git-ignored per-user file (asserted by `overlay::store`'s own round-trip test); neither is "fixed" because doing so would touch `config.json`'s own serde attributes and its fixtures. |
+| `dynamic.json` (repo root) | **Generated + hand/overlay-edited working copy** of the dynamic rule set, seeded from `dynamic_base.json` on first `apply` (CLI) or on the overlay's first launch. **Git-ignored** — per-user state. Rules support `"enabled": false`, which keeps a rule in the file but emits nothing into the filter. The overlay editor (below) holds edits in memory; Apply is the single writer that persists this file and then compiles from it — nothing here changes until Apply is pressed, and a **Revert** button discards in-memory edits back to the last applied state. Two cosmetic round-trip quirks are expected and harmless, now surfacing on Apply rather than on every keystroke: an edited rule's `sockets`/`quality`/`areaLevel` objects can grow explicit `"eq": null`/`"min": null` keys (those types lack `skip_serializing_if`), and `classGroups`/`build.armourTypes` — both `HashMap`s — can reshuffle key order between saves. Both are value-equal round-trips on a git-ignored per-user file (asserted by `overlay::store`'s own round-trip test); neither is "fixed" because doing so would touch `config.json`'s own serde attributes and its fixtures. |
 | `dynamic.filter` | **Generated** by `ferrisfilter apply` and written into the game folder. **Git-ignored** at the repo root. A complete, playable filter: policy blocks from `dynamic.json` plus the economy sections priced from `prices.json`. PoE2 does not hot-reload — after `apply`, reload via Options → Game → Item Filter → Refresh. |
 | `tests/fixtures/seed-prices.json`, `tests/fixtures/seed-universal.filter` | **Committed test fixtures** — the frozen seed prices + its generated filter. These are the test oracle (`include_str!` unit tests + `generate_snapshot`/`artifact_guard`). Regenerate the `.filter` fixture only after a deliberate generator change. |
 | `prices-fallback.json` + `tiers-fallback.json` (repo root) | **Committed early-league fallback pair**, always used *together* (their values are calibrated to each other). `generate` loads them instead of `prices.json`/`tiers.json` when `prices.json` is absent/empty (with a warning) or when `--early-game` is passed. Tier membership comes from a poe2filter.com export; cutoffs are **exalt-denominated** (`unit: "exalt"`) so Divine isn't pinned to the A floor. Every base — orbs included — is priced in **exalt at its tier floor** (Divine 20→S, Chaos 2.5→A, Exalt 1→B). No stored rates: `pricer::derive_rates` reads the three anchor orbs (items[0..2]) and expresses them relative to the Chaos Orb (`exalt_in_chaos = value(Exalt)/value(Chaos)` etc.), so quoting the orbs in exalt is enough. The same code on live chaos-quoted data (Chaos = 1c) reproduces the old numbers. The three anchors must share one unit. |
@@ -48,19 +48,37 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > the process.
 >
 > **The rule editor (v0.4, Phase 14):** each rule in the stripe is a row that **expands in place**
-> (an accordion, not a separate edit mode) — clicking it opens its own style/class/rarity/defence/
-> sockets/quality/corrupted controls inline, with the rows above and below still visible, since
-> ordinal position *is* precedence in this model. Up/down arrows reorder a rule (arrows, not
-> drag-and-drop); a circular toggle enables/disables it without deleting it; **+ ADD RULE** appends
-> a new no-op rule at the bottom; deleting asks for an inline confirm. **Every edit autosaves to
-> `dynamic.json` immediately** — there is no separate save step and no unsaved-work risk from
-> closing the overlay. `dynamic.filter`, the file the game actually reads, changes **only** when
-> **Apply** is pressed (compiling the store and writing straight into the game's config folder via
-> the same `dynamic::compile_store`/`write_filter` the CLI's own `apply` subcommand uses), and the
-> stripe always shows whether the written filter currently matches the saved rules — a stale
+> (an accordion, not a separate edit mode) — clicking it opens its own name/style/class/base-type/
+> rarity/defence/sockets/quality/corrupted/unidentified-tier controls inline, with the rows above
+> and below still visible, since ordinal position *is* precedence in this model. Up/down arrows
+> reorder a rule (arrows, not drag-and-drop); a circular toggle enables/disables it without
+> deleting it; **+ ADD RULE** appends a new no-op rule at the bottom; deleting asks for an inline
+> confirm. Edits are held in memory as you make them — Apply is the single writer,
+> persisting the edits to `dynamic.json` and then compiling `dynamic.filter` from it, in that
+> order — and a **Revert** button discards unsaved in-memory edits back to the last applied state
+> (the accepted trade-off: unsaved edits do not survive closing the overlay or the process, in
+> exchange for a visible, deliberate discard instead of a silent autosave). `dynamic.filter`, the
+> file the game actually reads, changes **only** when **Apply** is pressed (via the same
+> `dynamic::compile_store`/`write_filter` the CLI's own `apply` subcommand uses), and the stripe
+> always shows whether the written filter currently matches the in-memory rules — a stale
 > "unapplied changes" state is expected the moment you edit anything, and clears once Apply
 > succeeds. Because PoE2 never re-reads a filter on its own, the stripe also repeats the reload
 > path after every successful Apply: **Options → Game → Item Filter → Refresh**.
+>
+> **Rule name, class off switch, and base-type list (v0.4, Phase 15):** a rule can carry an
+> optional **name**, entered via its own circular toggle at the top of the expanded body; a named
+> rule's row header reads `<index>  <style> - <name>` and the name becomes the emitted filter
+> block's own comment (`Show # <name>`), while an unnamed rule keeps the generator's derived
+> `rule <index>` label — there is no auto-fill, a name is empty until typed. **Classes** gained
+> their own off switch alongside every other condition: switching it off hides the class picker
+> entirely (not greyed out) and discards the selection, which is what makes a base-type-only rule
+> — matching on `BaseType` with no `Class` line at all — expressible in the overlay. **Base types**
+> are entered one at a time directly after the class control: type a name and press Enter or
+> **+ ADD** to commit it to the list, and each listed entry has its own `Remove`; a quoted list
+> pasted straight out of a hand-written filter (`"Heavy Belt" "Utility Belt"`) splits into separate
+> entries. Base names are **not validated** against anything — PoE2 itself warns on an unknown
+> base when the filter loads, which is a better and more current oracle than any list this repo
+> could keep up to date across leagues.
 
 > **Design philosophy (current):** Hide what we don't want, style the few highlights, and let
 > everything else fall through to the game default. Uniques, jewels, gems, quest items,

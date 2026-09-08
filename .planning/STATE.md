@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: 14-04's blocking checkpoint cleared — six checks approved 2026-09-08, plus five
+status: executing
 stopped_at: Phase 15 context gathered
 last_updated: "2026-09-08T18:13:05.246Z"
 last_activity: 2026-09-08
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 3
   total_plans: 13
   completed_plans: 13
-  percent: 100
+  percent: 50
 ---
 
 # Project State
@@ -26,7 +26,8 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 14 (Rule Editor + Apply) — ALL PLANS COMPLETE, phase verification pending
-Next phase: 15 (BaseType Lists and Rule Names) — added 2026-09-08, not yet discussed or planned
+Next phase: 15 (BaseType Lists and Rule Names) — discussed 2026-09-08 (D-01..D-16 locked in
+15-CONTEXT.md); not yet planned
 Plan: 4 of 4 (complete)
 Status: 14-04's blocking checkpoint cleared — six checks approved 2026-09-08, plus five
 second-pass checks covering the out-of-band live-use fix stream. See
@@ -227,9 +228,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: --stopped-at
+Last session: 2026-09-08T18:13:05.246Z
 Stopped at: Phase 15 context gathered
-Resume file: --resume-file
+Resume file: .planning/phases/15-basetype-lists-and-rule-names/15-CONTEXT.md
 
-**Next step:** `/gsd-discuss-phase 15`. Phase 14's verification can run before or after — it is
+**Next step:** `/gsd-plan-phase 15`. Phase 14's verification can run before or after — it is
 independent. The v0.4 milestone audit waits on Phase 15 shipping.

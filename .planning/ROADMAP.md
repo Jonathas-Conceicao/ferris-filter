@@ -170,10 +170,12 @@ header and emitted as its block comment.
      `RuleId` stays the identity and the array index stays the precedence (PITFALLS.md §9).
   5. `config.json → universal.filter` is byte-for-byte unchanged; no fixture re-baselining.
 
-**Plans**: not yet planned
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 15 to break down)
+- [ ] 15-01-PLAN.md — the pure layer: base-type parse/add/remove/clear, set_name/clear_name/clear_class, the name in the row header and the Bases label in the summary
+- [ ] 15-02-PLAN.md — the editor controls: the id-keyed ephemeral panel-open state, the name field, the class off switch, and the item-by-item base-type list
+- [ ] 15-03-PLAN.md — CLAUDE.md corrected and extended, the four-item in-game checklist, and the blocking live check
 
 **UI hint**: yes
 
@@ -200,7 +202,7 @@ work, not model or emitter work.
 | 12. Dynamic Rule Store | v0.4 | 2/2 | Complete | 2026-09-04 |
 | 13. Overlay Shell | v0.4 | 5/5 | Complete   | 2026-09-06 |
 | 14. Rule Editor + Apply | v0.4 | 4/4 | Verification pending |  |
-| 15. BaseType Lists and Rule Names | v0.4 | 0/0 | Not planned |  |
+| 15. BaseType Lists and Rule Names | v0.4 | 0/3 | Planned |  |
 
 ---
 *v0.1 shipped 2026-05-28. v0.2 shipped 2026-06-12. v0.3 shipped 2026-06-27. v0.4 roadmap defined 2026-09-03.*

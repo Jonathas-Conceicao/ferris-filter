@@ -84,7 +84,7 @@ whole milestone. The dynamic path is additive.
   the "hide all flask drops" case.
 
 - [x] **EDIT-03**: Each rule has a style selector populated from the pinned `config.json` styles
-  palette (S–F, `Recycle`, `exceptional`, `hidden`, `unchanged`, `unidentified`).
+  palette (S–F, `Recycle`, `exceptional`, `hidden`, `unchanged`, `kite`).
 
 - [x] **EDIT-04**: Each rule has a multi-select class picker whose options come from the class
   lists already in `config.json`, not a hardcoded list.
@@ -102,8 +102,15 @@ whole milestone. The dynamic path is additive.
 - [x] **EDIT-08**: Every condition control can be toggled off individually, and a disabled control
   contributes nothing to the emitted block (the UI expression of DYN-04).
 
-- [ ] **EDIT-09**: An Apply action writes `dynamic.filter` and tells the player to reload the
+- [x] **EDIT-09**: An Apply action writes `dynamic.filter` and tells the player to reload the
   filter in-game via Options → Game → Item Filter → Refresh.
+
+- [ ] **EDIT-10**: A rule can match on a base-type list entered one item at a time, with individual
+  entries removable at any position, and `class` is an optional condition like every other — so a
+  rule can match purely by base type and emit no `Class` line at all.
+
+- [ ] **EDIT-11**: A rule can carry an optional name, shown in the overlay's row header and emitted
+  as the block's comment; an unnamed rule still gets the emitter's derived `rule {idx}` label.
 
 ## Future Requirements
 
@@ -174,12 +181,15 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | EDIT-06 | Phase 14 | Complete |
 | EDIT-07 | Phase 14 | Complete |
 | EDIT-08 | Phase 14 | Complete |
-| EDIT-09 | Phase 14 | Pending |
+| EDIT-09 | Phase 14 | Complete |
+| EDIT-10 | Phase 15 | Pending |
+| EDIT-11 | Phase 15 | Pending |
 
 **Coverage:**
 
-- v0.4 requirements: 24 total (CORE-04 added 2026-09-03 during phase 11 discussion)
-- Mapped to phases: 24 (100%) ✓
+- v0.4 requirements: 26 total (CORE-04 added 2026-09-03 during phase 11 discussion; EDIT-10 and
+  EDIT-11 added 2026-09-08 when Phase 15 was scoped, at the author's request, before v0.4 closes)
+- Mapped to phases: 26 (100%) ✓
 - Unmapped: 0 ✓
 
 ---

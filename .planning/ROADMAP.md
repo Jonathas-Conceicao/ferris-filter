@@ -157,7 +157,7 @@ optional condition like every other, so turning it off both enables base-type-on
 freshly added rule open clean. A rule can also carry an optional name, shown in the editor's row
 header and emitted as its block comment.
 **Depends on**: Phase 14
-**Requirements**: TBD (run /gsd-discuss-phase 15)
+**Requirements**: EDIT-10, EDIT-11
 **Success Criteria** (what must be TRUE):
 
   1. A rule with a base-type list and no classes emits a block with a `BaseType ==` line and **no**

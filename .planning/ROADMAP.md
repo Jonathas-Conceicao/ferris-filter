@@ -173,9 +173,24 @@ header and emitted as its block comment.
 **Plans**: 3 plans
 
 Plans:
+
+**Wave 1**
 - [ ] 15-01-PLAN.md — the pure layer: base-type parse/add/remove/clear, set_name/clear_name/clear_class, the name in the row header and the Bases label in the summary
+
+**Wave 2** *(blocked on Wave 1 — calls the `edit::` functions Wave 1 creates)*
 - [ ] 15-02-PLAN.md — the editor controls: the id-keyed ephemeral panel-open state, the name field, the class off switch, and the item-by-item base-type list
+
+**Wave 3** *(blocked on Wave 2 — documents and verifies what Wave 2 ships; ends in a blocking human checkpoint)*
 - [ ] 15-03-PLAN.md — CLAUDE.md corrected and extended, the four-item in-game checklist, and the blocking live check
+
+**Cross-cutting constraints** (`must_haves.truths` shared across plans):
+- `config.json → universal.filter` stays byte-for-byte unchanged; `src/emitter.rs` and
+  `src/models/config.rs` are not modified. Asserted by every task in all three plans.
+- The author's *Change Bases* rule — a base-type list with no `Class` line — must be representable
+  as data (15-01), buildable in the editor (15-02), and land in `dynamic.filter` from a running
+  game (15-03). The same requirement, proven at three different levels.
+- Rendering a rule body writes nothing to the rule by itself: no auto-filled name, no auto-selected
+  class, no auto-added base type (D-09/D-11). Enforced in 15-02 and re-checked by hand in 15-03.
 
 **UI hint**: yes
 

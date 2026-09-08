@@ -245,10 +245,11 @@ have their model and emitter halves built:**
   (D-05), not merely postponed — the author's reasoning is that the game already warns on unknown
   bases. If it is ever revisited, the blocker to solve first is where a base-name list comes from
   that does not go stale each league.
-- **`EDIT-09` is still checkbox-unticked in `.planning/REQUIREMENTS.md:105`** and shows `Pending`
-  in the coverage table at line 177, although Phase 14 shipped and manually verified it. Pure
-  bookkeeping lag — flagged here so phase verification or the milestone audit corrects it rather
-  than treating it as a real gap.
+- **`EDIT-09`'s bookkeeping lag — CLOSED 2026-09-08, after this file was written.** It was
+  checkbox-unticked and `Pending` in the coverage table although Phase 14 shipped and manually
+  verified it. Fixed in `864cbee` while adding EDIT-10/EDIT-11, along with EDIT-03 still naming
+  the `unidentified` style that became `kite`. Left recorded here rather than deleted so the
+  trail from "noticed during discussion" to "fixed" stays legible.
 
 </deferred>
 

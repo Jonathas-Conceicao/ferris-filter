@@ -102,6 +102,48 @@ fn set_panel_open(ui: &mut egui::Ui, salt_id: egui::Id, open: bool) {
 /// need their own salt, since they already render inside this row's uniquely-salted
 /// `CollapsingHeader` scope (the accordion in `app.rs`).
 pub fn render_rule_body(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId) -> bool {
+    // The caller renders this body *inside* a scope that blanks button chrome — `app.rs` sets
+    // `widgets.inactive.weak_bg_fill = TRANSPARENT` and `bg_stroke = NONE` so the row header's own
+    // frame stays invisible except on hover (the affordance that says the whole line is
+    // clickable). Everything drawn in here inherits that, which is why the base-type Remove and
+    // + ADD controls shipped as bare text while the row's own Delete — rendered outside that
+    // scope — looked like a button (author, screenshot poe2_print006, 2026-09-09).
+    //
+    // Restoring the palette here rather than in `app.rs` keeps the fix next to the widgets that
+    // need it: any control added to this body in future gets normal chrome without the author of
+    // that control having to know about a scope two files away.
+    ui.scope(|ui| {
+        restore_body_chrome(ui.visuals_mut());
+        render_rule_body_inner(ui, rule, config, id)
+    })
+    .inner
+}
+
+/// Puts back the button chrome the row header's own scope blanks, so controls in a rule body
+/// render as buttons rather than as bare text.
+///
+/// Split out from [`render_rule_body`] so it can be asserted without a window: the defect it
+/// fixes is invisible to every existing test, all of which check that widgets *exist* rather than
+/// that they are drawn with a frame.
+fn restore_body_chrome(v: &mut egui::Visuals) {
+    let restored = theme::poe2_visuals();
+    v.widgets.inactive.weak_bg_fill = restored.widgets.inactive.weak_bg_fill;
+    v.widgets.inactive.bg_stroke = restored.widgets.inactive.bg_stroke;
+    v.widgets.hovered.weak_bg_fill = restored.widgets.hovered.weak_bg_fill;
+    v.widgets.hovered.bg_stroke = restored.widgets.hovered.bg_stroke;
+    v.widgets.active.weak_bg_fill = restored.widgets.active.weak_bg_fill;
+    v.widgets.active.bg_stroke = restored.widgets.active.bg_stroke;
+    // The header's full-width framing is the header's business, not the body's — the class group
+    // headers in here are plain disclosure triangles.
+    v.collapsing_header_frame = restored.collapsing_header_frame;
+}
+
+fn render_rule_body_inner(
+    ui: &mut egui::Ui,
+    rule: &mut Rule,
+    config: &Config,
+    id: RuleId,
+) -> bool {
     let mut changed = false;
 
     changed |= render_name(ui, rule, id);
@@ -386,7 +428,17 @@ fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
                     if ui.small_button("Remove").clicked() {
                         remove_at = Some(i); // recorded, not applied -- Pattern 2
                     }
-                    ui.add(egui::Label::new(name).wrap());
+                    // The button is placed first so it claims the right edge; the name then reads
+                    // from the LEFT edge of what remains. Without this inner flip the name is laid
+                    // out right-to-left too and ends up hugging the button, leaving a ragged left
+                    // margin — which is how it first shipped (author, 2026-09-09).
+                    //
+                    // Nesting is safe here where it was not before: the enclosing
+                    // `allocate_ui_with_layout` has already bounded this row's height, so the
+                    // unconstrained-child problem that produced poe2_print006 cannot recur.
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(name).wrap());
+                    });
                 },
             );
         }
@@ -828,6 +880,94 @@ mod tests {
         let ctx = egui::Context::default();
         ctx.set_fonts(egui::FontDefinitions::empty());
         ctx
+    }
+
+    /// The defect from screenshot poe2_print006: every control in a rule body rendered as bare
+    /// text, because `app.rs` draws the body inside a scope that blanks button chrome to keep the
+    /// row header's own frame invisible.
+    ///
+    /// Reproduces the caller's blanking exactly, then asserts the body puts it back. Every other
+    /// test in this file checks that widgets *exist*; none of them can see that a button has no
+    /// frame, which is why this defect shipped through a green suite twice.
+    #[test]
+    fn a_rule_body_puts_back_the_button_chrome_the_row_header_blanks() {
+        let mut blanked = theme::poe2_visuals();
+        // Exactly what app.rs's header scope does.
+        blanked.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+        blanked.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+        blanked.widgets.hovered.weak_bg_fill = theme::HEADER_PLATE;
+        blanked.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+        blanked.widgets.active.weak_bg_fill = theme::HEADER_PLATE;
+        blanked.widgets.active.bg_stroke = egui::Stroke::NONE;
+        blanked.collapsing_header_frame = true;
+
+        restore_body_chrome(&mut blanked);
+
+        let expected = theme::poe2_visuals();
+        assert_ne!(
+            blanked.widgets.inactive.weak_bg_fill,
+            egui::Color32::TRANSPARENT,
+            "a button in a rule body must have a fill, or it reads as plain text"
+        );
+        assert_eq!(
+            blanked.widgets.inactive.weak_bg_fill,
+            expected.widgets.inactive.weak_bg_fill
+        );
+        assert_eq!(
+            blanked.widgets.hovered.weak_bg_fill,
+            expected.widgets.hovered.weak_bg_fill
+        );
+        assert!(
+            !blanked.collapsing_header_frame,
+            "the full-width header frame belongs to the row header, not to the class groups \
+             inside the body"
+        );
+    }
+
+    /// The same defect as
+    /// [`a_rule_body_puts_back_the_button_chrome_the_row_header_blanks`], but asserted against
+    /// what is actually *painted* rather than against the helper in isolation.
+    ///
+    /// The unit test above passes even if nobody calls `restore_body_chrome` — deleting the call
+    /// from `render_rule_body` compiles clean and leaves it green, which is precisely the hole
+    /// that let this ship. This test renders a real body under the caller's blanked visuals and
+    /// requires a filled button rect in the output, so it fails if the call site goes away.
+    #[test]
+    fn a_button_in_a_rule_body_is_painted_with_a_fill_not_left_as_bare_text() {
+        let mut when = When::default();
+        edit::add_base_type(&mut when, "Heavy Belt");
+        let mut wr = edit::WorkingRules::from_rules(vec![Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        }]);
+        let id = wr.rows()[0].0;
+        let config = base_config();
+
+        let ctx = headless_ctx();
+        // Exactly what app.rs's row-header scope does before it renders the body.
+        let mut blanked = theme::poe2_visuals();
+        blanked.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+        blanked.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+        ctx.set_visuals(blanked);
+
+        let output = ctx.run_ui(blank_input(), |ui| {
+            let rule = wr.rule_mut(id).unwrap();
+            render_rule_body(ui, rule, &config, id);
+        });
+
+        let wanted = theme::poe2_visuals().widgets.inactive.weak_bg_fill;
+        let painted_button = output.shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == wanted)
+        });
+        output.drop_without_applying_deltas();
+
+        assert!(
+            painted_button,
+            "no rect was painted with the theme's button fill ({wanted:?}) — every control in \
+             the body is rendering as bare text, the poe2_print006 defect"
+        );
     }
 
     fn sized_input(height: f32) -> RawInput {

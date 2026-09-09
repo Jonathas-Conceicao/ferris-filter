@@ -73,7 +73,18 @@ the commit condition in `render_name`. This phase has already reversed two plann
 (textarea → item-by-item entry, name-replaces-style → name-appended in the row header), so an
 unflagged interaction default is a live risk here rather than a theoretical one.
 
-**Result:**
+**Result:** PASS -- author, 2026-09-09.
+
+**Both veto invitations declined — the planner's calls stand:**
+
+- *The base-type control's own on/off toggle* stays. It is not clutter; a freshly-added rule opens
+  clean, which is what D-09 asked for.
+- *The name-field-vs-base-type-field commit asymmetry* stays as shipped: the name commits on any
+  focus loss, the base-type field requires Enter or `+ ADD`. Recorded here as **approved**, not
+  merely unobjected-to, so a later reader does not mistake it for an undecided default.
+
+Verified after `d2a52ed`, which restored the button chrome the row-header scope was blanking —
+before that fix every control in the body rendered as bare text rather than as buttons.
 
 ---
 
@@ -93,7 +104,8 @@ Serves: D-01/D-02/D-03, RESEARCH Assumption A1 (focus/scroll while typing).
 subsequent keystroke does nothing until you click the field again, the list scrolling out of view
 while typing, or `Remove` removing the wrong entry or more than one.
 
-**Result:**
+**Result:** PASS -- author, 2026-09-09. Four base names typed with only Enter between them; focus
+is retained across commits, so entry never needs the mouse. Removal from any position works.
 
 ---
 
@@ -112,7 +124,10 @@ Serves: RESEARCH Open Question 2, D-10 (the row header format).
 **Failure would look like:** the long base name's text overlapping the `Remove` button, running
 past the stripe's right edge, or the header line being cut off mid-word.
 
-**Result:**
+**Result:** PASS -- author, 2026-09-09. Verified against the layout as it stands after two
+corrections: rows initially stretched to fill the panel (`ac1b985`), then the names sat
+right-aligned against their buttons (`d2a52ed`). Names now read from the left edge, Remove sits at
+the right, and rows size to their content.
 
 ---
 
@@ -145,7 +160,9 @@ Show # Change Bases
 **Failure would look like:** a stray `Class` line appearing in the emitted block, a base name
 missing from the `BaseType ==` line, or the in-game drop not reflecting the rule after Refresh.
 
-**Result:**
+**Result:** PASS -- author, 2026-09-09. The author's own *Change Bases* rule, built entirely in
+the overlay, reaches the game as a `BaseType ==` block with no `Class` line. This is the phase
+goal and the thing base-type-only matching existed to make possible.
 
 ---
 
@@ -164,3 +181,27 @@ Route a FAIL to the plan that owns the behavior — do not re-diagnose from scra
 ---
 
 *Checklist authored: 2026-09-08. Phase: 15-basetype-lists-and-rule-names, Plan 03.*
+
+---
+
+## Not separately confirmed
+
+Three changes landed **after** this checklist was written, in response to the author looking at the
+running build. Each carries automated tests, and each was visible on screen while items 1-4 were
+being run, but none was given its own recorded check. Listed so a later reader is not misled into
+thinking every line below was exercised deliberately.
+
+- **Summary ordering (`6786622`).** A collapsed rule now reads in the same order as its expanded
+  body — classes, bases, rarity, defences, sockets, quality, corrupted, unidentified tier. Pinned
+  by `the_summary_order_mirrors_the_editor_body_order`, verified by mutation (swapping sockets and
+  quality fails it).
+- **Sockets and quality became sliders (`6786622`), 1..=6 and 1..=30.** Both scales start at 1
+  because `>= 0` matches every item that has ever dropped. **Quality's ceiling of 30 rather than
+  20 is a Claude call the author has not ruled on** — corrupted items exceed the normal cap, so a
+  filter capped at 20 could not describe them. One constant in `edit.rs` (`QUALITY_MAX`) if the
+  author wants 20 instead.
+- **Button chrome in rule bodies (`d2a52ed`).** `app.rs`'s row-header scope blanks
+  `weak_bg_fill`/`bg_stroke` so the header's own frame stays invisible; the body renders inside
+  that scope and inherited it, so every control in an expanded rule drew as bare text. The fix
+  restores the palette in `render_rule_body`, which affects the style dropdown and class group
+  headers as well as the two base-type buttons. Item 1's Result was recorded after this fix.

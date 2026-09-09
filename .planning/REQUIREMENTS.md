@@ -105,11 +105,11 @@ whole milestone. The dynamic path is additive.
 - [x] **EDIT-09**: An Apply action writes `dynamic.filter` and tells the player to reload the
   filter in-game via Options → Game → Item Filter → Refresh.
 
-- [ ] **EDIT-10**: A rule can match on a base-type list entered one item at a time, with individual
+- [x] **EDIT-10**: A rule can match on a base-type list entered one item at a time, with individual
   entries removable at any position, and `class` is an optional condition like every other — so a
   rule can match purely by base type and emit no `Class` line at all.
 
-- [ ] **EDIT-11**: A rule can carry an optional name, shown in the overlay's row header and emitted
+- [x] **EDIT-11**: A rule can carry an optional name, shown in the overlay's row header and emitted
   as the block's comment; an unnamed rule still gets the emitter's derived `rule {idx}` label.
 
 ## Future Requirements
@@ -182,8 +182,8 @@ Explicitly excluded for v0.4. Documented to prevent scope creep.
 | EDIT-07 | Phase 14 | Complete |
 | EDIT-08 | Phase 14 | Complete |
 | EDIT-09 | Phase 14 | Complete |
-| EDIT-10 | Phase 15 | Pending |
-| EDIT-11 | Phase 15 | Pending |
+| EDIT-10 | Phase 15 | Complete |
+| EDIT-11 | Phase 15 | Complete |
 
 **Coverage:**
 

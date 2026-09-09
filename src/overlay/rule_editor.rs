@@ -358,7 +358,13 @@ fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
 
         let mut remove_at: Option<usize> = None;
         for (i, name) in items.iter().enumerate() {
-            ui.horizontal(|ui| {
+            // Right-to-left layout so the button hugs the stripe's right edge and the name takes
+            // whatever is left, wrapping into it (author, 2026-09-09). Laying it out left-to-right
+            // put the button first and left every base name indented behind a ragged column of
+            // buttons; this way the names align and the buttons do.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // `small_button`, matching the row-level Delete control in `app.rs` — both remove
+                // one thing from a list, and they should not look like different kinds of action.
                 if ui.small_button("Remove").clicked() {
                     remove_at = Some(i); // recorded, not applied -- Pattern 2
                 }
@@ -386,7 +392,11 @@ fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
             if response.changed() {
                 ui.data_mut(|d| d.insert_temp(buf_id, buf.clone()));
             }
-            add_clicked = ui.small_button("+ ADD").clicked();
+            // `button`, not `small_button`: every other action affordance in the stripe —
+            // `+ ADD RULE`, `APPLY`, `REVERT` — is a full-size button, and this one committing an
+            // entry is the same kind of act. `small_button` is reserved for the per-item removes
+            // (author, 2026-09-09).
+            add_clicked = ui.button("+ ADD").clicked();
             text_response = Some(response);
         });
         let response = text_response.expect("ui.horizontal always runs its closure");
@@ -518,6 +528,58 @@ fn render_defence(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
 /// EDIT-07/D-13: sockets as a minimum-value field with its own enable toggle. `DragValue`
 /// already implements click-to-type entry (RESEARCH "Don't Hand-Roll") — no hand-rolled
 /// text-entry-plus-parse-on-blur widget is built here.
+/// A full-width slider wearing the PoE2 palette, shared by every bounded numeric condition
+/// (sockets, quality, unidentified tier).
+///
+/// The visuals are overridden in a `scope` rather than globally. egui paints a slider's rail with
+/// `widgets.inactive.bg_fill`, which in this theme is the recessed input fill (#090909) sitting on
+/// a #0D0D0D row — invisible by construction, so the control read as a stray checkbox beside a
+/// number rather than a bar (reported from live use 2026-09-07, screenshot poe2_print003).
+/// Scoping keeps every other widget on the shared theme.
+///
+/// Extracted 2026-09-09 when sockets and quality became sliders too. Written once here rather
+/// than three times: a rail that is invisible in one control and not the others is exactly the
+/// drift this repo has already paid for once.
+///
+/// `ui_width` must be captured by the caller *before* any layout narrows `available_width`.
+fn themed_slider<T: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    ui_width: f32,
+    value: &mut T,
+    range: std::ops::RangeInclusive<T>,
+) -> bool {
+    ui.scope(|ui| {
+        let spacing = ui.spacing_mut();
+        // Bounded, not "fill the row". The first cut used available-width minus a margin, which
+        // ran the rail past the stripe's right edge and pushed the handle and the value box out
+        // of sight entirely (screenshot poe2_print004).
+        spacing.slider_width = (ui_width - 96.0).clamp(120.0, 200.0);
+        spacing.slider_rail_height = 6.0;
+
+        let visuals = ui.visuals_mut();
+        visuals.handle_shape = egui::style::HandleShape::Circle;
+        // The groove: warm and clearly lighter than the row behind it.
+        visuals.widgets.inactive.bg_fill = theme::HEADER_PLATE;
+        visuals.widgets.hovered.bg_fill = theme::HEADER_PLATE;
+        visuals.widgets.active.bg_fill = theme::HEADER_PLATE;
+        // The filled portion and the handle, in the same tone the checkmarks use so an active
+        // value reads consistently across controls. WARM_ACCENT is deliberately not used here —
+        // it is reserved for Reset (D-24).
+        visuals.selection.bg_fill = theme::CONTROL_GLYPH;
+        for state in [
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            state.fg_stroke = egui::Stroke::new(1.0, theme::SECTION_CREAM);
+        }
+
+        ui.add(egui::Slider::new(value, range).integer().trailing_fill(true))
+            .changed()
+    })
+    .inner
+}
+
 fn render_sockets(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
     ui.label(egui::RichText::new("SOCKETS").color(theme::LABEL_TAN).small());
@@ -526,30 +588,34 @@ fn render_sockets(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     ui.horizontal(|ui| {
         if widgets::circular_toggle(ui, &mut enabled).changed() {
             if enabled {
-                edit::set_sockets_min(edit::when_mut(rule), 1);
+                edit::set_sockets_min(edit::when_mut(rule), edit::SOCKETS_DEFAULT);
             } else if let Some(when) = rule.when.as_mut() {
                 edit::clear_sockets(when);
             }
             changed = true;
         }
         ui.label("min sockets");
-
-        if enabled {
-            let mut min = rule
-                .when
-                .as_ref()
-                .and_then(|when| when.sockets.as_ref())
-                .and_then(|nc| nc.min)
-                .unwrap_or(1);
-            if ui
-                .add(egui::DragValue::new(&mut min).range(0..=6).speed(0.2))
-                .changed()
-            {
-                edit::set_sockets_min(edit::when_mut(rule), min);
-                changed = true;
-            }
-        }
     });
+
+    // Captured before the scope below, which narrows `available_width` as it lays out.
+    let ui_width = ui.available_width();
+
+    if enabled {
+        // A slider rather than a drag-value (author, 2026-09-09): six positions are few enough
+        // to show at once, and a drag-value hides the range it accepts — you cannot see that 6
+        // is the ceiling until you hit it. Same treatment as the unidentified-tier control.
+        let mut min = rule
+            .when
+            .as_ref()
+            .and_then(|when| when.sockets.as_ref())
+            .and_then(|nc| nc.min)
+            .unwrap_or(edit::SOCKETS_DEFAULT)
+            .clamp(edit::SOCKETS_MIN, edit::SOCKETS_MAX);
+        if themed_slider(ui, ui_width, &mut min, edit::SOCKETS_MIN..=edit::SOCKETS_MAX) {
+            edit::set_sockets_min(edit::when_mut(rule), min);
+            changed = true;
+        }
+    }
 
     changed
 }
@@ -564,30 +630,33 @@ fn render_quality(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     ui.horizontal(|ui| {
         if widgets::circular_toggle(ui, &mut enabled).changed() {
             if enabled {
-                edit::set_quality_min(edit::when_mut(rule), 1);
+                edit::set_quality_min(edit::when_mut(rule), edit::QUALITY_DEFAULT);
             } else if let Some(when) = rule.when.as_mut() {
                 edit::clear_quality(when);
             }
             changed = true;
         }
         ui.label("min quality");
-
-        if enabled {
-            let mut min = rule
-                .when
-                .as_ref()
-                .and_then(|when| when.quality.as_ref())
-                .and_then(|nc| nc.min)
-                .unwrap_or(1);
-            if ui
-                .add(egui::DragValue::new(&mut min).range(0..=20).speed(0.2))
-                .changed()
-            {
-                edit::set_quality_min(edit::when_mut(rule), min);
-                changed = true;
-            }
-        }
     });
+
+    // Captured before the scope below, which narrows `available_width` as it lays out.
+    let ui_width = ui.available_width();
+
+    if enabled {
+        // Ceiling is 30, not 20 — corrupted items exceed the normal quality cap, and a filter
+        // that cannot express that cannot describe the items most worth calling out.
+        let mut min = rule
+            .when
+            .as_ref()
+            .and_then(|when| when.quality.as_ref())
+            .and_then(|nc| nc.min)
+            .unwrap_or(edit::QUALITY_DEFAULT)
+            .clamp(edit::QUALITY_MIN, edit::QUALITY_MAX);
+        if themed_slider(ui, ui_width, &mut min, edit::QUALITY_MIN..=edit::QUALITY_MAX) {
+            edit::set_quality_min(edit::when_mut(rule), min);
+            changed = true;
+        }
+    }
 
     changed
 }
@@ -641,58 +710,14 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
             .map(|ut| ut.min)
             .unwrap_or(edit::UNIDENTIFIED_TIER_DEFAULT)
             .clamp(edit::UNIDENTIFIED_TIER_MIN, edit::UNIDENTIFIED_TIER_MAX);
-        // Full width on its own row: at 460px the slider needs the space to keep its five
-        // positions distinguishable, which is the whole reason it is a slider and not a
-        // drag-value.
-        //
-        // The visuals below are overridden in a scope rather than globally. egui paints a
-        // slider's rail with `widgets.inactive.bg_fill`, which in this theme is the recessed
-        // input fill (#090909) sitting on a #0D0D0D row — invisible by construction, so the
-        // control read as a stray checkbox beside a number rather than a bar (reported from
-        // live use 2026-09-07, screenshot poe2_print003). Scoping keeps every other widget on
-        // the shared theme.
-        let slider_changed = ui
-            .scope(|ui| {
-                let spacing = ui.spacing_mut();
-                // Bounded, not "fill the row". The first cut used available-width minus a
-                // margin, which ran the rail past the stripe's right edge and pushed the handle
-                // and the value box out of sight entirely (screenshot poe2_print004). A five-
-                // position scale needs only enough room to separate its stops, and the value
-                // box needs room to sit beside it inside 460px.
-                spacing.slider_width = (ui_width - 96.0).clamp(120.0, 200.0);
-                spacing.slider_rail_height = 6.0;
-
-                let visuals = ui.visuals_mut();
-                visuals.handle_shape = egui::style::HandleShape::Circle;
-                // The groove: warm and clearly lighter than the row behind it.
-                visuals.widgets.inactive.bg_fill = theme::HEADER_PLATE;
-                visuals.widgets.hovered.bg_fill = theme::HEADER_PLATE;
-                visuals.widgets.active.bg_fill = theme::HEADER_PLATE;
-                // The filled portion and the handle, in the same tone the checkmarks use so an
-                // active value reads consistently across controls. WARM_ACCENT is deliberately
-                // not used here — it is reserved for Reset (D-24).
-                visuals.selection.bg_fill = theme::CONTROL_GLYPH;
-                for state in [
-                    &mut visuals.widgets.inactive,
-                    &mut visuals.widgets.hovered,
-                    &mut visuals.widgets.active,
-                ] {
-                    state.fg_stroke = egui::Stroke::new(1.0, theme::SECTION_CREAM);
-                }
-
-                ui.add(
-                    egui::Slider::new(
-                        &mut min,
-                        edit::UNIDENTIFIED_TIER_MIN..=edit::UNIDENTIFIED_TIER_MAX,
-                    )
-                    .integer()
-                    .trailing_fill(true),
-                )
-                .changed()
-            })
-            .inner;
-
-        if slider_changed {
+        // Full width on its own row via the shared [`themed_slider`], which carries the palette
+        // fixes this control was the first to need.
+        if themed_slider(
+            ui,
+            ui_width,
+            &mut min,
+            edit::UNIDENTIFIED_TIER_MIN..=edit::UNIDENTIFIED_TIER_MAX,
+        ) {
             edit::set_unidentified_tier_min(edit::when_mut(rule), min);
             changed = true;
         }

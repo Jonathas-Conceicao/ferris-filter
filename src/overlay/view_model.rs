@@ -63,10 +63,19 @@ fn rule_row(ordinal: usize, rule: &Rule, groups: &[(&str, &[String])]) -> RuleRo
     }
 }
 
-/// Joins the present conditions of a `when` block with ` · ` in a fixed order: class, rarity,
-/// area level, armour, evasion, energy shield, quality, sockets, corrupted, base type (labelled
-/// `Bases:`, D-15), unidentified tier. Absent conditions contribute nothing to the string — never
-/// a placeholder like `none` or `-`.
+/// Joins the present conditions of a `when` block with ` · ` in a fixed order.
+///
+/// **The order mirrors `rule_editor::render_rule_body`'s control order**, not the emitter's:
+/// classes, base types (labelled `Bases:`, D-15), rarity, defences, sockets, quality, corrupted,
+/// unidentified tier. A collapsed row and its own expanded body are read seconds apart, so a
+/// reader who learns where a condition sits in one should find it in the same place in the other
+/// (author, 2026-09-09). `areaLevel` has no editor control at all — it is authored only in
+/// `config.json`, never in the overlay — so it stays after rarity, where it has always been.
+///
+/// The coupling is asserted by `the_summary_order_mirrors_the_editor_body_order`, which is the
+/// only thing stopping the two drifting apart the next time a control is added to one of them.
+///
+/// Absent conditions contribute nothing to the string — never a placeholder like `none` or `-`.
 fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
     let Some(when) = when else {
         return "matches everything".to_string();
@@ -74,9 +83,18 @@ fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
 
     let mut parts: Vec<String> = Vec::new();
 
+    // CLASSES
     if let Some(classes) = &when.class {
         parts.push(summarize_classes(classes, groups));
     }
+    // BASE TYPES
+    if let Some(base_types) = &when.base_type {
+        // D-15: labelled explicitly. With `class` now optional (Phase 15), a base-type-only
+        // rule's summary would otherwise be a bare name list, structurally identical to a class
+        // list -- ambiguous about which condition it describes.
+        parts.push(format!("Bases: {}", summarize_list(base_types)));
+    }
+    // RARITY
     if let Some(rarity) = &when.rarity {
         parts.push(format!(
             "Rarity {} {}",
@@ -84,11 +102,13 @@ fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
             rarity_str(rarity.rarity)
         ));
     }
+    // areaLevel has no editor control -- authored in config.json only.
     if let Some(area) = &when.area_level {
         if let Some(s) = summarize_area_level(area) {
             parts.push(s);
         }
     }
+    // DEFENCES
     if let Some(nc) = &when.base_armour {
         parts.extend(summarize_numeric("Armour", nc));
     }
@@ -98,21 +118,19 @@ fn summarize(when: Option<&When>, groups: &[(&str, &[String])]) -> String {
     if let Some(nc) = &when.base_energy_shield {
         parts.extend(summarize_numeric("Energy Shield", nc));
     }
-    if let Some(nc) = &when.quality {
-        parts.extend(summarize_numeric("Quality", nc));
-    }
+    // SOCKETS
     if let Some(nc) = &when.sockets {
         parts.extend(summarize_numeric("Sockets", nc));
     }
+    // QUALITY
+    if let Some(nc) = &when.quality {
+        parts.extend(summarize_numeric("Quality", nc));
+    }
+    // CORRUPTED
     if let Some(c) = when.corrupted {
         parts.push(format!("Corrupted {c}"));
     }
-    if let Some(base_types) = &when.base_type {
-        // D-15: labelled explicitly. With `class` now optional (Phase 15), a base-type-only
-        // rule's summary would otherwise be a bare name list, structurally identical to a class
-        // list -- ambiguous about which condition it describes.
-        parts.push(format!("Bases: {}", summarize_list(base_types)));
-    }
+    // UNIDENTIFIED TIER
     if let Some(ut) = &when.unidentified_tier {
         parts.push(format!("Unidentified Tier ≥ {}", ut.min));
     }
@@ -382,6 +400,94 @@ mod tests {
         };
         let config = with_rules(vec![rule("D", Some(when))]);
         assert_eq!(rule_rows(&config)[0].summary, "Evasion 0");
+    }
+
+    /// The ordering contract between the collapsed summary and the expanded editor body.
+    ///
+    /// `summarize`'s doc comment promises the summary reads in the same order as
+    /// `rule_editor::render_rule_body`'s controls. Nothing in the type system enforces that, and
+    /// the two live in different files, so this test is the enforcement: it builds a rule with
+    /// every condition set at once and pins the sequence.
+    ///
+    /// `render_rule_body` order, as of 2026-09-09: name, style, **classes, base types, rarity,
+    /// defences, sockets, quality, corrupted, unidentified tier**. Name and style are not
+    /// conditions and never appear in a summary; `areaLevel` appears here but has no editor
+    /// control at all, so it holds its historical slot after rarity.
+    ///
+    /// If you add a control to `render_rule_body`, this test should fail until the summary
+    /// agrees with it. That failure is the point — do not reorder the expectation to make it
+    /// pass without moving the summary too.
+    #[test]
+    fn the_summary_order_mirrors_the_editor_body_order() {
+        let when = When {
+            class: Some(vec!["Bows".to_string()]),
+            base_type: Some(vec!["Heavy Belt".to_string()]),
+            rarity: Some(RarityComparator { op: RarityOp::Eq, rarity: Rarity::Normal }),
+            area_level: Some(AreaLevelRange { min: Some(10), max: None }),
+            base_armour: Some(NumericCondition { eq: None, min: Some(1), max: None }),
+            base_evasion: Some(NumericCondition { eq: Some(0), min: None, max: None }),
+            base_energy_shield: Some(NumericCondition { eq: None, min: Some(1), max: None }),
+            sockets: Some(NumericCondition { eq: None, min: Some(2), max: None }),
+            quality: Some(NumericCondition { eq: None, min: Some(5), max: None }),
+            corrupted: Some(true),
+            unidentified_tier: Some(UnidentifiedTier { min: 4 }),
+        };
+        let summary = rule_rows(&with_rules(vec![rule("unchanged", Some(when))]))[0]
+            .summary
+            .clone();
+
+        let labels: Vec<&str> = summary.split(" · ").collect();
+        let leading: Vec<&str> = labels
+            .iter()
+            .map(|part| match part {
+                p if p.starts_with("Bases:") => "base types",
+                p if p.starts_with("Rarity") => "rarity",
+                p if p.starts_with("AreaLevel") || p.starts_with("Area Level") => "area level",
+                p if p.starts_with("Armour") => "armour",
+                p if p.starts_with("Evasion") => "evasion",
+                p if p.starts_with("Energy Shield") => "energy shield",
+                p if p.starts_with("Sockets") => "sockets",
+                p if p.starts_with("Quality") => "quality",
+                p if p.starts_with("Corrupted") => "corrupted",
+                p if p.starts_with("Unidentified Tier") => "unidentified tier",
+                _ => "classes",
+            })
+            .collect();
+
+        assert_eq!(
+            leading,
+            vec![
+                "classes",
+                "base types",
+                "rarity",
+                "area level",
+                "armour",
+                "evasion",
+                "energy shield",
+                "sockets",
+                "quality",
+                "corrupted",
+                "unidentified tier",
+            ],
+            "summary order drifted from render_rule_body's control order; got: {summary}"
+        );
+    }
+
+    /// A base-type-only rule — the author's *Change Bases* shape — leads with its bases.
+    #[test]
+    fn a_rule_with_no_classes_leads_with_its_base_types() {
+        let when = When {
+            base_type: Some(vec!["Heavy Belt".to_string(), "Utility Belt".to_string()]),
+            rarity: Some(RarityComparator { op: RarityOp::Eq, rarity: Rarity::Normal }),
+            ..Default::default()
+        };
+        let summary = rule_rows(&with_rules(vec![rule("unchanged", Some(when))]))[0]
+            .summary
+            .clone();
+        assert!(
+            summary.starts_with("Bases: "),
+            "bases must lead when there are no classes; got: {summary}"
+        );
     }
 
     fn summarize_for(classes: &[&str]) -> String {

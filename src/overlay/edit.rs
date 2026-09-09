@@ -336,6 +336,19 @@ pub fn clear_defence_group(when: &mut When) {
     when.base_energy_shield = None;
 }
 
+/// The bounds the editor offers for the sockets minimum.
+///
+/// A PoE2 item has at most six sockets, and `Sockets >= 0` matches every item ever dropped — a
+/// condition that is switched on and says nothing. The editor therefore starts the scale at 1:
+/// the off switch is how you express "don't filter on sockets" (EDIT-08), not a zero threshold.
+///
+/// Stated here beside the setter they constrain rather than in the presentation layer, the same
+/// way [`UNIDENTIFIED_TIER_MIN`] is (`PITFALLS.md` §10's principle applied to a numeric range).
+pub const SOCKETS_MIN: i64 = 1;
+pub const SOCKETS_MAX: i64 = 6;
+/// What enabling the condition starts at.
+pub const SOCKETS_DEFAULT: i64 = 1;
+
 /// EDIT-07: sets the sockets minimum.
 pub fn set_sockets_min(when: &mut When, min: i64) {
     when.sockets = Some(NumericCondition { eq: None, min: Some(min), max: None });
@@ -345,6 +358,17 @@ pub fn set_sockets_min(when: &mut When, min: i64) {
 pub fn clear_sockets(when: &mut When) {
     when.sockets = None;
 }
+
+/// The bounds the editor offers for the quality minimum.
+///
+/// 20 is the normal cap, but corruption can push an item past it, so the ceiling here is 30
+/// rather than 20 — a filter unable to say "quality above the normal cap" could not describe
+/// exactly the items worth calling out. As with sockets the scale starts at 1: `Quality >= 0`
+/// matches everything, and the off switch is how you mean that.
+pub const QUALITY_MIN: i64 = 1;
+pub const QUALITY_MAX: i64 = 30;
+/// What enabling the condition starts at.
+pub const QUALITY_DEFAULT: i64 = 1;
 
 /// EDIT-07: sets the quality minimum.
 pub fn set_quality_min(when: &mut When, min: i64) {
@@ -513,6 +537,32 @@ pub fn clear_class(when: &mut When) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_numeric_scales_start_at_one_not_zero() {
+        // A `>= 0` threshold matches every item that has ever dropped — a condition switched on
+        // that says nothing. Turning the condition off is how that is expressed.
+        assert_eq!(super::SOCKETS_MIN, 1);
+        assert_eq!(super::QUALITY_MIN, 1);
+        assert_eq!(super::UNIDENTIFIED_TIER_MIN, 1);
+    }
+
+    #[test]
+    fn the_numeric_scales_stop_where_the_game_does() {
+        assert_eq!(super::SOCKETS_MAX, 6, "PoE2 items cap at six sockets");
+        assert_eq!(super::QUALITY_MAX, 30, "20 is the normal cap; corruption exceeds it");
+        assert_eq!(super::UNIDENTIFIED_TIER_MAX, 5);
+    }
+
+    #[test]
+    fn every_scale_default_sits_inside_its_own_bounds() {
+        assert!((super::SOCKETS_MIN..=super::SOCKETS_MAX).contains(&super::SOCKETS_DEFAULT));
+        assert!((super::QUALITY_MIN..=super::QUALITY_MAX).contains(&super::QUALITY_DEFAULT));
+        assert!(
+            (super::UNIDENTIFIED_TIER_MIN..=super::UNIDENTIFIED_TIER_MAX)
+                .contains(&super::UNIDENTIFIED_TIER_DEFAULT)
+        );
+    }
+
     use super::*;
 
     fn rule(style: &str) -> Rule {

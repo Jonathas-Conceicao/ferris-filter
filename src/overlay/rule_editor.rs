@@ -358,18 +358,37 @@ fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
 
         let mut remove_at: Option<usize> = None;
         for (i, name) in items.iter().enumerate() {
-            // Right-to-left layout so the button hugs the stripe's right edge and the name takes
-            // whatever is left, wrapping into it (author, 2026-09-09). Laying it out left-to-right
-            // put the button first and left every base name indented behind a ragged column of
-            // buttons; this way the names align and the buttons do.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // `small_button`, matching the row-level Delete control in `app.rs` — both remove
-                // one thing from a list, and they should not look like different kinds of action.
-                if ui.small_button("Remove").clicked() {
-                    remove_at = Some(i); // recorded, not applied -- Pattern 2
-                }
-                ui.add(egui::Label::new(name).wrap());
-            });
+            // Right-to-left so the button hugs the stripe's right edge and the name takes what is
+            // left, wrapping into it (author, 2026-09-09). Laying it out left-to-right put the
+            // button first and left every base name indented behind a ragged column of buttons.
+            //
+            // **The size argument is load-bearing, not decoration.** `Ui::with_layout` builds its
+            // child through `scope_builder`, which applies no size constraint, so the child
+            // inherits the whole remaining rect — and `Align::Center` on a right-to-left layout is
+            // a *vertical* alignment, which then centres one row inside an entire screenful. The
+            // first cut used `with_layout` and produced exactly that: one base type per screen,
+            // the panel running past the bottom of the stripe (author, screenshot poe2_print006).
+            //
+            // `allocate_ui_with_layout` with an explicit row height is what `Ui::horizontal` does
+            // internally (`egui-0.36.1/src/ui.rs:2370`, `horizontal_with_main_wrap_dyn`) — this is
+            // that recipe with the direction flipped. The height is an initial size, not a cap, so
+            // a long name still wraps to a taller row.
+            let row_size = egui::vec2(
+                ui.available_size_before_wrap().x,
+                ui.spacing().interact_size.y,
+            );
+            ui.allocate_ui_with_layout(
+                row_size,
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    // `small_button`, matching the row-level Delete in `app.rs` — both remove one
+                    // thing from a list and should not look like different kinds of action.
+                    if ui.small_button("Remove").clicked() {
+                        remove_at = Some(i); // recorded, not applied -- Pattern 2
+                    }
+                    ui.add(egui::Label::new(name).wrap());
+                },
+            );
         }
         if let Some(i) = remove_at {
             if let Some(when) = rule.when.as_mut() {
@@ -809,6 +828,64 @@ mod tests {
         let ctx = egui::Context::default();
         ctx.set_fonts(egui::FontDefinitions::empty());
         ctx
+    }
+
+    fn sized_input(height: f32) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, height))),
+            ..Default::default()
+        }
+    }
+
+    /// The base-type rows must size to their content, never to the space available.
+    ///
+    /// `Ui::with_layout` applies no size constraint to its child, so a `right_to_left` layout —
+    /// whose `Align::Center` is a *vertical* alignment — centres a single row inside the entire
+    /// remaining rect. Shipped that way once: one base type per screenful, the panel running past
+    /// the bottom of the stripe (author, screenshot poe2_print006, 2026-09-09).
+    ///
+    /// Rendering the same three entries into a 400px-tall viewport and a 4000px-tall one must
+    /// produce the same height. That equality is the invariant; a row that stretches fails it by
+    /// roughly the difference between the two viewports.
+    #[test]
+    fn the_base_type_rows_size_to_their_content_not_to_the_space_available() {
+        let mut when = When::default();
+        for name in ["Heavy Belt", "Utility Belt", "Armoured Cap"] {
+            edit::add_base_type(&mut when, name);
+        }
+        let rule = Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: Some(when),
+        };
+
+        let measure = |height: f32| -> f32 {
+            let ctx = headless_ctx();
+            let mut wr = edit::WorkingRules::from_rules(vec![rule.clone()]);
+            let id = wr.rows()[0].0;
+            let mut used = 0.0_f32;
+            ctx.run_ui(sized_input(height), |ui| {
+                let r = wr.rule_mut(id).unwrap();
+                render_base_types(ui, r, id);
+                used = ui.min_rect().height();
+            })
+            .drop_without_applying_deltas();
+            used
+        };
+
+        let short = measure(400.0);
+        let tall = measure(4000.0);
+
+        assert!(
+            (short - tall).abs() < 1.0,
+            "base-type panel height tracks the viewport instead of its content: \
+             {short} at 400px vs {tall} at 4000px"
+        );
+        assert!(
+            short < 400.0,
+            "three base types should not fill a 400px viewport; got {short}"
+        );
     }
 
     fn unnamed_rule() -> Rule {

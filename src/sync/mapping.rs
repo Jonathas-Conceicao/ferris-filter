@@ -18,6 +18,10 @@ pub struct Mapping {
     pub item_types: Vec<ItemType>,
     /// Gem fetch/emit configurations. Replaces the singular `gemFilter` (schema v2).
     pub gem_filters: Vec<GemFilter>,
+    /// Per-base-type class corrections, keyed by base type. Defaults to empty so every existing
+    /// mapping.json still parses. See [`ClassOverride`].
+    #[serde(default)]
+    pub class_overrides: std::collections::HashMap<String, ClassOverride>,
 }
 
 /// One poe.ninja stash-item overview type (uniques) → filter category.
@@ -69,10 +73,41 @@ pub struct GemFilter {
     pub background_override: Option<[u8; 3]>,
 }
 
+/// A per-base-type correction to the class (and optionally category) an overview type would
+/// otherwise assign.
+///
+/// poe.ninja's overview types are merchandising buckets, not item classes: the `Currency` feed
+/// carries anything a player trades as currency, whatever its actual `Class`. `mapping.json`
+/// gives each overview type a single `class`, which is right for the overwhelming majority and
+/// wrong for the handful of items that merely *sit* in that bucket. A rule emitted with the wrong
+/// `Class ==` never matches, and nothing warns — the item simply drops unstyled.
+///
+/// This is the data-driven form of the same correction [`super::prices::derive_expedition_class`]
+/// already hard-codes for the Expedition feed, which mixes three classes under one type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassOverride {
+    /// The filter `Class ==` value this base type actually needs.
+    pub class: String,
+    /// Optionally also move it to a different emitted category/section. When absent the item
+    /// keeps the category its overview type assigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Why this override exists — kept in the data so a future reader can re-verify it against
+    /// the source rather than trusting it blindly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 impl Mapping {
     /// Look up the OverviewType entry for the given poe.ninja type string.
     pub fn lookup(&self, type_: &str) -> Option<&OverviewType> {
         self.overview_types.iter().find(|t| t.r#type == type_)
+    }
+
+    /// The class correction for a base type, if one is recorded.
+    pub fn class_override(&self, base_type: &str) -> Option<&ClassOverride> {
+        self.class_overrides.get(base_type)
     }
 }
 

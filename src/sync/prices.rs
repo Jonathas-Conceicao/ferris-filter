@@ -271,6 +271,22 @@ pub fn build_prices(
                 class.clone()
             };
 
+            // A poe.ninja overview type is a merchandising bucket, not an item class, so the
+            // single class `mapping.json` gives it is wrong for anything that merely sits in that
+            // bucket. `Vaal Siphoner` ships in the Currency feed but is an Incubator, so it was
+            // emitted under `Class == "Stackable Currency"` and never matched — the item just
+            // dropped unstyled, with nothing warning (author, 2026-09-10, confirmed in game).
+            //
+            // Data rather than code: same correction `derive_expedition_class` hard-codes above,
+            // but reachable by editing `mapping.json` when the next one turns up.
+            let (item_class, item_category) = match mapping.class_override(&base_type) {
+                Some(ov) => (
+                    ov.class.clone(),
+                    ov.category.clone().unwrap_or_else(|| category.clone()),
+                ),
+                None => (item_class, category.clone()),
+            };
+
             let (chaos, div, exalt) =
                 convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
 
@@ -278,7 +294,7 @@ pub fn build_prices(
                 name: name.clone(),
                 base_type,
                 class: item_class,
-                category: category.clone(),
+                category: item_category,
                 exalt,
                 chaos,
                 div,
@@ -1034,6 +1050,70 @@ mod tests {
     // Expedition feed — logbook → Expedition Logbooks, Saga → Omen,
     // Flux/artifact → Stackable Currency (the mapping default).
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // classOverrides — a base type whose real class differs from the class its
+    // poe.ninja overview bucket assigns.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn build_prices_applies_a_class_override_from_the_mapping() {
+        let mapping: Mapping = serde_json::from_str(
+            r#"{
+                "version": 2,
+                "overviewTypes": [
+                    { "type": "Currency", "category": "Currency", "class": "Stackable Currency", "baseTypeIsName": true }
+                ],
+                "gemFilters": [],
+                "classOverrides": {
+                    "Vaal Siphoner": { "class": "Incubators", "category": "Incubators" }
+                }
+            }"#,
+        )
+        .expect("mapping with classOverrides should parse");
+
+        let overview = make_overview(
+            "divine",
+            &[("chaos", 100.0), ("exalted", 20.0)],
+            &[("vaal-siphoner", "Vaal Siphoner"), ("vaal-orb", "Vaal Orb")],
+            &[("vaal-siphoner", 0.4), ("vaal-orb", 0.2)],
+        );
+
+        let items = super::build_prices(&[("Currency".to_string(), overview)], &mapping)
+            .expect("build_prices should succeed");
+
+        let siphoner = items
+            .iter()
+            .find(|i| i.base_type == "Vaal Siphoner")
+            .expect("Vaal Siphoner present");
+        assert_eq!(
+            siphoner.class, "Incubators",
+            "an overridden base type must not inherit its bucket's class — emitting \
+             Class == \"Stackable Currency\" for an Incubator produces a rule that never matches"
+        );
+        assert_eq!(siphoner.category, "Incubators", "the override also moves its section");
+
+        let orb = items
+            .iter()
+            .find(|i| i.base_type == "Vaal Orb")
+            .expect("Vaal Orb present");
+        assert_eq!(
+            orb.class, "Stackable Currency",
+            "an override must apply to its own base type only, not the whole feed"
+        );
+    }
+
+    /// The committed `mapping.json` must actually carry the Vaal Siphoner correction — the code
+    /// path above is useless if the data ships empty.
+    #[test]
+    fn the_committed_mapping_corrects_vaal_siphoner() {
+        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/mapping.json"));
+        let mapping: Mapping = serde_json::from_str(raw).expect("mapping.json should parse");
+        let ov = mapping
+            .class_override("Vaal Siphoner")
+            .expect("mapping.json must carry the Vaal Siphoner class override");
+        assert_eq!(ov.class, "Incubators");
+        assert_eq!(ov.category.as_deref(), Some("Incubators"));
+    }
+
     #[test]
     fn build_prices_splits_expedition_classes() {
         let expedition_mapping: Mapping = serde_json::from_str(

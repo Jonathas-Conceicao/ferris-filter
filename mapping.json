@@ -96,5 +96,12 @@
       "classes": ["Support Gems"],
       "backgroundOverride": [10, 150, 150]
     }
-  ]
+  ],
+  "classOverrides": {
+    "Vaal Siphoner": {
+      "class": "Incubators",
+      "category": "Incubators",
+      "note": "Ships in the poe.ninja Currency feed but is IncubatorStackable in repoe-fork base_items.json; author confirmed Class == \"Incubators\" matches in game 2026-09-10."
+    }
+  }
 }

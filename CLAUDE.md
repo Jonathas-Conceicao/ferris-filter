@@ -85,9 +85,12 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > I/O. It writes prices and nothing else — `dynamic.filter` still changes only on **Apply**, so the
 > button is safe to press mid-map and the new economy lands on the next Apply you choose to make.
 > The GUI exposes no `--standard`/`--hc`/`--league`/`--tiers` switches: it syncs with the tiers file
-> already in place. If the automatic league pick cannot see the current league (poe.ninja can flag a
-> live league as not indexed), the button reports the resolver's error and `ferrisfilter sync
-> --league <name>` is the workaround.
+> already in place, and league selection is automatic — the first non-hardcore **indexed** league.
+> **The success line names the league it priced against**, because that flag has been wrong about a
+> live league before (during the Forbidden Rites launch poe.ninja flagged the outgoing league as
+> indexed and the new one as not), and a filter priced for last league's economy looks entirely
+> normal. If the line names the wrong league, `ferrisfilter sync --league <name|slug>` is the
+> override; the GUI has none by design.
 >
 > **Design philosophy (current):** Hide what we don't want, style the few highlights, and let
 > everything else fall through to the game default. Uniques, jewels, gems, quest items,

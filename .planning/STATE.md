@@ -220,7 +220,8 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
   Not corrected because the right filter `Class` for it is not confirmable from repoe alone, and a
   wrong guess would break a block that currently works. Needs one in-game check, then a
   `classOverrides` entry in `mapping.json` — the mechanism is already there.
-- **The overlay sync has no league override.** `sync_economy_blocking` uses automatic league
+- **The overlay sync has no league override** (mitigated 2026-09-10: the success line now names
+  the league it priced against, so a wrong pick is visible rather than silent). `sync_economy_blocking` uses automatic league
   resolution, with no equivalent of the CLI's `--league`. That flag exists because poe.ninja can
   flag a live league as not indexed, which is exactly what happened with Forbidden Rites. If the
   auto-pick cannot see the current league, the overlay button will fail with the resolver's message

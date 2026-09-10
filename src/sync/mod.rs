@@ -20,7 +20,8 @@ pub fn cmd_sync(
     let sub = sub.unwrap_or(SyncSubcommand::Prices);
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| miette::miette!("Cannot create async runtime: {e}"))?;
-    rt.block_on(run(standard, hc, league, sub, std::path::Path::new(".")))
+    rt.block_on(run(standard, hc, league, sub, std::path::Path::new(".")))?;
+    Ok(())
 }
 
 /// Refresh `prices.json` in `base_dir`, blocking until it finishes.
@@ -33,7 +34,13 @@ pub fn cmd_sync(
 ///
 /// Nothing here touches `dynamic.filter`. Fresh prices reach the game on the next **Apply**, which
 /// is what makes this safe to run mid-session.
-pub fn sync_economy_blocking(base_dir: &std::path::Path) -> miette::Result<()> {
+/// Returns the league the prices were actually fetched for, so the caller can show it. The
+/// overlay names it in its success line: automatic resolution picks the first non-hardcore
+/// *indexed* league, and poe.ninja's `indexed` flag has been wrong about a live league before —
+/// during the Forbidden Rites launch it flagged the outgoing league instead. A sync that silently
+/// prices your filter for last league's economy looks completely normal, so the league is reported
+/// rather than assumed.
+pub fn sync_economy_blocking(base_dir: &std::path::Path) -> miette::Result<String> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| miette::miette!("Cannot create async runtime: {e}"))?;
     rt.block_on(async {
@@ -48,7 +55,7 @@ async fn run(
     league: Option<String>,
     sub: SyncSubcommand,
     base_dir: &std::path::Path,
-) -> miette::Result<()> {
+) -> miette::Result<String> {
     match sub {
         SyncSubcommand::Prices => {
             let client = ReqwestClient::new()?;
@@ -56,7 +63,8 @@ async fn run(
         }
         SyncSubcommand::Metadata => {
             let client = ReqwestClient::new()?;
-            metadata::cmd_sync_metadata(&client).await
+            metadata::cmd_sync_metadata(&client).await?;
+            Ok(String::new())
         }
     }
 }

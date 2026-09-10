@@ -439,7 +439,7 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     hc: bool,
     league: Option<&str>,
     base_dir: &std::path::Path,
-) -> miette::Result<()> {
+) -> miette::Result<String> {
     use crate::sync::league::{fetch_index_state, resolve_league_with_override};
     use crate::sync::mapping::load_mapping;
 
@@ -602,6 +602,11 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     };
 
     write_prices_atomic(&base_dir.join("prices.json").to_string_lossy(), &prices_file)?;
+    // The resolved league goes back to the caller, not just into the file. The GUI has no console
+    // to read the "Resolved league:" line above, and a sync that silently picks the wrong league
+    // is worse than one that fails: the filter would be priced for someone else's economy and look
+    // entirely normal (author, 2026-09-10).
+    let resolved = league_name.clone();
 
     println!(
         "Wrote {} items to prices.json (league: {}, {} uniques)",
@@ -610,7 +615,7 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         unique_count
     );
 
-    Ok(())
+    Ok(resolved)
 }
 
 /// Format a Unix timestamp (seconds since epoch) as an ISO-8601 UTC string.

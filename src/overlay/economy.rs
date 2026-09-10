@@ -62,8 +62,11 @@ impl SyncOutcome {
 /// sees new prices, and it does not — the same reasoning that makes Apply repeat the in-game reload
 /// path (D-16). Telling them here is cheaper than letting them discover it from a drop that did not
 /// change colour.
-pub fn success_message() -> String {
-    "Economy prices refreshed. Press APPLY to compile them into the filter.".to_string()
+pub fn success_message(league: &str) -> String {
+    if league.is_empty() {
+        return "Economy prices refreshed. Press APPLY to compile them into the filter.".to_string();
+    }
+    format!("Economy prices refreshed from {league}. Press APPLY to compile them into the filter.")
 }
 
 /// What the stripe says when a sync fails.
@@ -78,7 +81,7 @@ pub fn failure_message(err: &str) -> String {
 #[derive(Debug, Default)]
 pub struct EconomySync {
     state: SyncState,
-    rx: Option<Receiver<Result<(), String>>>,
+    rx: Option<Receiver<Result<String, String>>>,
 }
 
 impl EconomySync {
@@ -107,7 +110,7 @@ impl EconomySync {
     /// two writers against `prices.json`.
     pub fn start<F>(&mut self, work: F)
     where
-        F: FnOnce() -> Result<(), String> + Send + 'static,
+        F: FnOnce() -> Result<String, String> + Send + 'static,
     {
         if self.is_running() {
             return;
@@ -131,8 +134,8 @@ impl EconomySync {
             return false;
         };
         match rx.try_recv() {
-            Ok(Ok(())) => {
-                self.state = SyncState::Finished(SyncOutcome::Ok(success_message()));
+            Ok(Ok(league)) => {
+                self.state = SyncState::Finished(SyncOutcome::Ok(success_message(&league)));
                 self.rx = None;
                 true
             }
@@ -183,7 +186,7 @@ mod tests {
     #[test]
     fn a_started_sync_is_running_until_it_reports() {
         let mut sync = EconomySync::new();
-        sync.start(|| Ok(()));
+        sync.start(|| Ok("Forbidden Rites".to_string()));
         assert!(sync.is_running(), "the button must be inert while a sync is in flight");
         settle(&mut sync);
         assert!(!sync.is_running());
@@ -195,7 +198,7 @@ mod tests {
         // only after Apply. A success message that does not say so invites the player to assume
         // the filter already changed.
         let mut sync = EconomySync::new();
-        sync.start(|| Ok(()));
+        sync.start(|| Ok("Forbidden Rites".to_string()));
         settle(&mut sync);
         let SyncState::Finished(outcome) = sync.state() else {
             panic!("expected a finished sync, got {:?}", sync.state());
@@ -204,6 +207,25 @@ mod tests {
         assert!(
             outcome.message().to_ascii_uppercase().contains("APPLY"),
             "success must name Apply; got: {}",
+            outcome.message()
+        );
+    }
+
+    #[test]
+    fn a_successful_sync_names_the_league_it_priced_against() {
+        // Automatic resolution picks the first non-hardcore *indexed* league, and poe.ninja has
+        // had that flag wrong about a live league before -- during the Forbidden Rites launch it
+        // flagged the outgoing league instead. A filter priced for last league's economy looks
+        // entirely normal, so the league has to be stated rather than assumed (author, 2026-09-10).
+        let mut sync = EconomySync::new();
+        sync.start(|| Ok("Forbidden Rites".to_string()));
+        settle(&mut sync);
+        let SyncState::Finished(outcome) = sync.state() else {
+            panic!("expected a finished sync");
+        };
+        assert!(
+            outcome.message().contains("Forbidden Rites"),
+            "the league must appear in the success line; got: {}",
             outcome.message()
         );
     }
@@ -245,7 +267,7 @@ mod tests {
         let (block_tx, block_rx) = std::sync::mpsc::channel::<()>();
         sync.start(move || {
             let _ = block_rx.recv();
-            Ok(())
+            Ok(String::new())
         });
         assert!(sync.is_running());
 
@@ -253,7 +275,7 @@ mod tests {
         let flag = std::sync::Arc::clone(&second_ran);
         sync.start(move || {
             flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
+            Ok(String::new())
         });
         assert!(
             !second_ran.load(std::sync::atomic::Ordering::SeqCst),

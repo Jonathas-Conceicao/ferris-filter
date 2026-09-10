@@ -35,6 +35,7 @@ use crate::dynamic;
 use crate::models::config::{Config, Rule};
 
 use super::apply::{self, ApplyOutcome, ApplyState};
+use super::economy;
 use super::edit::{RuleId, WorkingRules};
 use super::hotkey::HotkeyStatus;
 use super::layout;
@@ -137,6 +138,11 @@ pub struct OverlayApp {
     /// never lingers once the stripe already says the filter is out of date again.
     apply_message: Option<String>,
 
+    /// The economy-sync affordance: a `prices.json` refresh run on a worker thread so a stripe
+    /// drawn over a live game never freezes on network I/O. It writes prices only — the game sees
+    /// them on the next **Apply**, which is what makes it safe to press mid-map.
+    economy: economy::EconomySync,
+
     /// The last rule set actually written to `dynamic.json` — the state Revert restores to.
     ///
     /// Set at load and refreshed on every successful Apply. Since 2026-09-08 edits live only in
@@ -197,6 +203,7 @@ impl OverlayApp {
             last_save_error: None,
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
+            economy: economy::EconomySync::new(),
         }
     }
 }
@@ -249,6 +256,14 @@ impl eframe::App for OverlayApp {
                     self.toggle_requested = true;
                 }
             }
+        }
+
+        // Collect a finished economy sync. The state machine only advances here, so this must
+        // run every frame. A landed result also forces a repaint: the stripe is drawn over a game
+        // that may not be generating input events, so without this the "SYNCING…" label could sit
+        // stale until the player happened to move the mouse over the window.
+        if self.economy.poll() {
+            ui.ctx().request_repaint();
         }
 
         // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here — the
@@ -630,6 +645,32 @@ impl eframe::App for OverlayApp {
                     self.apply_message = None;
                     self.apply_state = ApplyState::Applied;
                 }
+                // Economy sync sits beside Apply because that is the order it is used in:
+                // refresh prices, then compile them. It is deliberately NOT part of Apply — a
+                // sync is dozens of network round trips and can fail, and folding that into the
+                // action that writes the game's filter would make a routine Apply slow and
+                // failure-prone (author, 2026-09-10).
+                //
+                // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the tiers
+                // file already in place, unlike the CLI.
+                let syncing = self.economy.is_running();
+                let sync_label = if syncing { "SYNCING\u{2026}" } else { "SYNC ECONOMY" };
+                if ui
+                    .add_enabled(!syncing, egui::Button::new(sync_label))
+                    .clicked()
+                {
+                    // The store's directory, not the process working directory: the overlay can
+                    // be launched from anywhere, and prices.json must land where Apply will read
+                    // it from.
+                    let base_dir = self
+                        .store_path
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    self.economy.start(move || {
+                        crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
+                    });
+                }
                 if ui.button("APPLY").clicked() {
                     // Since edits are in-memory (D-02, revised 2026-09-08), Apply is the only
                     // writer: persist the store, THEN compile the filter from it. In that order,
@@ -688,6 +729,40 @@ impl eframe::App for OverlayApp {
                     }
                 }
             });
+            // The sync's own status line. Rendered before the Apply message so a fresh sync
+            // result is not hidden underneath a stale Apply one.
+            match self.economy.state() {
+                economy::SyncState::Idle => {}
+                economy::SyncState::Running => {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("Fetching economy prices\u{2026}")
+                                    .color(theme::TAB_ACTIVE),
+                            )
+                            .wrap(),
+                        );
+                    });
+                }
+                economy::SyncState::Finished(outcome) => {
+                    ui.add_space(4.0);
+                    let colour = if outcome.is_failure() {
+                        theme::WARM_ACCENT
+                    } else {
+                        theme::TAB_ACTIVE
+                    };
+                    let text = outcome.message().to_string();
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(text).color(colour)).wrap(),
+                        );
+                    });
+                }
+            }
+
             if let Some(message) = &self.apply_message {
                 let text_color = if self.apply_state == ApplyState::Applied {
                     theme::LABEL_TAN

@@ -203,6 +203,29 @@ empty until typed.
 **Route:** Phase 15 exists in ROADMAP.md as of 2026-09-08. Next is `/gsd-discuss-phase 15`, then
 plan and execute. Phase 14 can be verified and closed independently first.
 
+## Registered, Not Fixed
+
+Found while working, deliberately left alone rather than guessed at (2026-09-10).
+
+- **The overlay never says which price source it used.** `PriceSourcePolicy::Auto` silently falls
+  back to the committed `prices-fallback.json` pair when `prices.json` is absent or empty. The CLI
+  warns on stderr; the overlay has no console (D-17), so a player can Apply a fallback-priced
+  filter believing it is live-priced. The plumbing already exists and is unused:
+  `CompiledFilter.price_source` is documented as "returned, not printed, so the caller decides how
+  to surface it" (D-09), and `grep price_source src/overlay/` finds nothing. A status line beside
+  the Apply confirmation would close it. Author, 2026-09-09: not a priority, exceptional scenarios
+  can wait.
+- **`Breachstone` is emitted as `Stackable Currency` but repoe-fork says `QuestItem`.** Found by
+  the same audit that caught Vaal Siphoner (2 of 1347 priced items disagree; the other was fixed).
+  Not corrected because the right filter `Class` for it is not confirmable from repoe alone, and a
+  wrong guess would break a block that currently works. Needs one in-game check, then a
+  `classOverrides` entry in `mapping.json` — the mechanism is already there.
+- **The overlay sync has no league override.** `sync_economy_blocking` uses automatic league
+  resolution, with no equivalent of the CLI's `--league`. That flag exists because poe.ninja can
+  flag a live league as not indexed, which is exactly what happened with Forbidden Rites. If the
+  auto-pick cannot see the current league, the overlay button will fail with the resolver's message
+  and the CLI is the workaround.
+
 ## Deferred Items
 
 Items acknowledged and deferred at the **v0.3** close on 2026-06-27 (open-artifact audit was

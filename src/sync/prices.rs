@@ -429,11 +429,16 @@ pub fn write_prices_atomic(path: &str, prices: &PricesFile) -> miette::Result<()
 /// 2. Load committed mapping.json.
 /// 3. Fetch each overviewType + gemFilter type from poe.ninja.
 /// 4. build_prices → validate anchors → write prices.json atomically.
+/// `base_dir` is the directory holding `mapping.json` and receiving `prices.json`. It is a
+/// parameter rather than the process working directory because the overlay can be launched from
+/// anywhere — a desktop shortcut, a tray relaunch — while its store lives beside the repo. The CLI
+/// passes `.`, preserving its existing behaviour exactly.
 pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     client: &C,
     standard: bool,
     hc: bool,
     league: Option<&str>,
+    base_dir: &std::path::Path,
 ) -> miette::Result<()> {
     use crate::sync::league::{fetch_index_state, resolve_league_with_override};
     use crate::sync::mapping::load_mapping;
@@ -444,7 +449,8 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     println!("Resolved league: {league_name}");
 
     // Step 2: load committed mapping
-    let mapping = load_mapping("mapping.json")?;
+    let mapping_path = base_dir.join("mapping.json");
+    let mapping = load_mapping(&mapping_path.to_string_lossy())?;
 
     // Step 3: fetch each overview type
     let mut overviews: Vec<(String, ExchangeOverview)> = Vec::new();
@@ -595,7 +601,7 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         items,
     };
 
-    write_prices_atomic("prices.json", &prices_file)?;
+    write_prices_atomic(&base_dir.join("prices.json").to_string_lossy(), &prices_file)?;
 
     println!(
         "Wrote {} items to prices.json (league: {}, {} uniques)",

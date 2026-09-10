@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod apply;
+pub mod economy;
 pub mod edit;
 pub mod hotkey;
 pub mod layout;

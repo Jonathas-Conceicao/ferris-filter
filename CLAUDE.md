@@ -80,6 +80,15 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > base when the filter loads, which is a better and more current oracle than any list this repo
 > could keep up to date across leagues.
 
+> **Economy sync from the overlay (v0.4):** a **SYNC ECONOMY** button beside Apply refreshes
+> `prices.json` in the store's directory, on a worker thread so the stripe never freezes on network
+> I/O. It writes prices and nothing else — `dynamic.filter` still changes only on **Apply**, so the
+> button is safe to press mid-map and the new economy lands on the next Apply you choose to make.
+> The GUI exposes no `--standard`/`--hc`/`--league`/`--tiers` switches: it syncs with the tiers file
+> already in place. If the automatic league pick cannot see the current league (poe.ninja can flag a
+> live league as not indexed), the button reports the resolver's error and `ferrisfilter sync
+> --league <name>` is the workaround.
+>
 > **Design philosophy (current):** Hide what we don't want, style the few highlights, and let
 > everything else fall through to the game default. Uniques, jewels, gems, quest items,
 > waystones, and trials have **no rules** — they show natively. Jewellery, unidentified

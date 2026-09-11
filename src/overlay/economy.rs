@@ -125,6 +125,18 @@ impl EconomySync {
         self.state = SyncState::Running;
     }
 
+    /// Drop a finished sync's message, returning to [`SyncState::Idle`].
+    ///
+    /// Called when the stripe is concealed: the message answers a question the player asked
+    /// before hiding it, and on the next reveal it would read as a report about whatever they are
+    /// about to do. A sync still **in flight** is deliberately untouched — hiding the overlay does
+    /// not cancel the worker, and the button must stay inert until it reports.
+    pub fn clear_message(&mut self) {
+        if matches!(self.state, SyncState::Finished(_)) {
+            self.state = SyncState::Idle;
+        }
+    }
+
     /// Collect a finished sync, if one has landed. Call once per frame.
     ///
     /// Returns `true` when this call moved the state, so the caller can request a repaint rather
@@ -228,6 +240,30 @@ mod tests {
             "the league must appear in the success line; got: {}",
             outcome.message()
         );
+    }
+
+    #[test]
+    fn hiding_the_stripe_clears_a_finished_message_but_not_a_running_sync() {
+        // Clearing: the message answers a question asked before the stripe was hidden, and would
+        // otherwise reappear looking like a report about whatever the player does next.
+        let mut sync = EconomySync::new();
+        sync.start(|| Ok("Forbidden Rites".to_string()));
+        settle(&mut sync);
+        sync.clear_message();
+        assert_eq!(*sync.state(), SyncState::Idle);
+
+        // Not cancelling: hiding the overlay does not stop the worker, so a sync still in flight
+        // must stay Running or the button would go live against a thread still writing the file.
+        let mut running = EconomySync::new();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        running.start(move || {
+            let _ = rx.recv();
+            Ok(String::new())
+        });
+        running.clear_message();
+        assert!(running.is_running(), "an in-flight sync must survive the stripe being hidden");
+        let _ = tx.send(());
+        settle(&mut running);
     }
 
     #[test]

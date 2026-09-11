@@ -304,6 +304,25 @@ impl eframe::App for OverlayApp {
                 }
             }
         }
+        // Concealing the stripe clears both status lines, so the next reveal starts clean.
+        //
+        // They are reports on an action the player has already seen the result of: "Wrote
+        // <path>…" and "Economy prices refreshed from <league>" answer a question asked minutes
+        // ago, and left standing they are indistinguishable from a report about whatever the
+        // player is about to do next (author, 2026-09-11). A message that outlives its own
+        // question is worse than no message.
+        //
+        // Conceal, not Reveal: clearing on the way out means the result stays readable for as
+        // long as the player keeps the stripe open, which is the whole point of showing it.
+        if matches!(
+            visibility::effect_for(self.visibility, next),
+            Some(visibility::Effect::Conceal)
+        ) {
+            self.apply_message = None;
+            self.last_save_error = None;
+            self.economy.clear_message();
+        }
+
         self.visibility = next;
         self.toggle_requested = false;
 
@@ -730,15 +749,21 @@ impl eframe::App for OverlayApp {
                                     }
                                 });
                             }
-                        });
 
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(10.0);
-                        if ui.button("+ ADD RULE").clicked() {
-                            pending_action = Some(RowAction::Add);
-                        }
-                    });
+                            // + ADD RULE belongs INSIDE the scroll area, at the end of the
+                            // list it appends to. Rendered after it, the button had nowhere to
+                            // go once the list filled the remaining height and drew on top of
+                            // the footer's first line — the overlap in screenshot
+                            // poe2_print007 (author, 2026-09-11). Inside, it scrolls with the
+                            // rules, which is also where a reader looks for it.
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(10.0);
+                                if ui.button("+ ADD RULE").clicked() {
+                                    pending_action = Some(RowAction::Add);
+                                }
+                            });
+                        });
 
                     self.expanded = next_expanded;
                     if body_dirty {

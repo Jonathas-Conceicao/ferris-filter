@@ -354,6 +354,190 @@ impl eframe::App for OverlayApp {
                 ui.add_space(4.0);
             }
 
+            // The footer is a bottom panel, and it is claimed BEFORE the rule list is laid out.
+            //
+            // It used to render after the ScrollArea in the same vertical flow, and the
+            // ScrollArea is `auto_shrink([false, true])` — it grows to fit its rows. With few
+            // rules that was fine and the footer sat beneath them. With enough rules (collapsed
+            // or expanded) the list claimed the whole panel and pushed the indicator, REVERT,
+            // SYNC ECONOMY and APPLY off the bottom of the stripe, unreachable at any scroll
+            // position — the controls that write the filter became unclickable precisely when
+            // the filter had the most edits waiting in it (author, 2026-09-10).
+            //
+            // A bottom panel reserves its height first and hands the remainder to the central
+            // content, so the footer is always on screen and the list scrolls inside what is
+            // left. Order is the whole fix: called after the list, `show_inside` would find the
+            // space already taken.
+            //
+            // Rendering the footer before the list means its controls read state as of the
+            // start of this frame. That is safe because a click lands on exactly one widget per
+            // frame — you cannot edit a rule and press APPLY in the same frame — and the row
+            // loop below requests a repaint when it changes anything, so nothing here is more
+            // than one frame stale.
+            // egui 0.36.1 unified SidePanel/TopBottomPanel into one `Panel` type; `bottom` is
+            // non-resizable by construction.
+            egui::Panel::bottom(egui::Id::new("ff-footer"))
+                .frame(egui::Frame::NONE.fill(theme::PANEL_GROUND))
+                .show(ui, |ui| {
+                // D-15/D-16/D-17: Apply, below the rule list. Reads whatever autosave most recently
+                // wrote to `self.store_path` -- deliberately independent of whether `self.rules`
+                // parsed for editing this session, since the on-disk store is the thing being
+                // compiled, not the in-memory working model. `compile_store` and `write_filter` are
+                // called here exactly once each and never re-implemented (D-15): `write_filter`'s
+                // temp-file-in-the-destination-directory rename is what keeps the game from ever
+                // reading a half-written filter, and the destination is on OneDrive, where a
+                // cross-volume rename would fail -- reusing it, rather than writing the bytes
+                // directly, is what keeps that guarantee here too.
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.label(theme::row_label(apply::indicator(self.apply_state)));
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    if self.dirty && ui.button("REVERT").clicked() {
+                        // Restores the last state written to disk. `from_rules` mints fresh
+                        // RuleIds, so any expansion or pending delete keyed by an old id would
+                        // dangle -- both are cleared rather than left pointing at nothing.
+                        self.rules = Ok(WorkingRules::from_rules(self.baseline.clone()));
+                        self.expanded = None;
+                        self.confirm_delete = None;
+                        self.dirty = false;
+                        self.apply_message = None;
+                        self.apply_state = ApplyState::Applied;
+                    }
+                    // Economy sync sits beside Apply because that is the order it is used in:
+                    // refresh prices, then compile them. It is deliberately NOT part of Apply — a
+                    // sync is dozens of network round trips and can fail, and folding that into the
+                    // action that writes the game's filter would make a routine Apply slow and
+                    // failure-prone (author, 2026-09-10).
+                    //
+                    // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the tiers
+                    // file already in place, unlike the CLI.
+                    let syncing = self.economy.is_running();
+                    let sync_label = if syncing { "SYNCING\u{2026}" } else { "SYNC ECONOMY" };
+                    if ui
+                        .add_enabled(!syncing, egui::Button::new(sync_label))
+                        .clicked()
+                    {
+                        // The store's directory, not the process working directory: the overlay can
+                        // be launched from anywhere, and prices.json must land where Apply will read
+                        // it from.
+                        let base_dir = self
+                            .store_path
+                            .parent()
+                            .map(std::path::Path::to_path_buf)
+                            .unwrap_or_else(|| std::path::PathBuf::from("."));
+                        self.economy.start(move || {
+                            crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
+                        });
+                    }
+                    if ui.button("APPLY").clicked() {
+                        // Since edits are in-memory (D-02, revised 2026-09-08), Apply is the only
+                        // writer: persist the store, THEN compile the filter from it. In that order,
+                        // because compile_store reads dynamic.json from disk — compiling first would
+                        // reproduce exactly the stale-Apply bug fixed in 3375ad4, where the filter
+                        // was built from the previous state.
+                        if let (Some(config), Ok(working)) =
+                            (self.config.as_mut(), self.rules.as_ref())
+                        {
+                            config.rules = Some(working.to_rules());
+                        }
+                        if let Some(config) = &self.config {
+                            if let Err(message) = store::save(config, &self.store_path) {
+                                self.last_save_error = Some(message);
+                            }
+                        }
+
+                        let store_dir = self
+                            .store_path
+                            .parent()
+                            .unwrap_or_else(|| std::path::Path::new("."));
+                        let paths = InputPaths::relative_to(store_dir);
+
+                        let outcome = match dynamic::compile_store(&paths, &self.store_path) {
+                            Ok(compiled) => match dynamic::default_destination() {
+                                Some(dest_dir) => match dynamic::write_filter(&dest_dir, &compiled.text)
+                                {
+                                    Ok(written) => ApplyOutcome::Written(written),
+                                    Err(err) => ApplyOutcome::Failed(err.to_string()),
+                                },
+                                // D-17: an unresolvable default destination is a rendered failure,
+                                // not a panic -- USERPROFILE is unset off Windows, and this codebase
+                                // has no `--dest`-style override UI this phase (out of scope).
+                                None => ApplyOutcome::Failed(
+                                    "Cannot resolve the default PoE2 config folder \
+                                     (USERPROFILE is not set)."
+                                        .to_string(),
+                                ),
+                            },
+                            Err(err) => ApplyOutcome::Failed(err.to_string()),
+                        };
+
+                        match outcome {
+                            ApplyOutcome::Written(written) => {
+                                self.apply_message = Some(apply::success_message(&written));
+                                self.apply_state = self.apply_state.on_apply_success();
+                                if let Ok(working) = self.rules.as_ref() {
+                                    self.baseline = working.to_rules();
+                                }
+                                self.dirty = false;
+                            }
+                            ApplyOutcome::Failed(message) => {
+                                self.apply_message = Some(message);
+                                self.apply_state = self.apply_state.on_apply_failure();
+                            }
+                        }
+                    }
+                });
+                // The sync's own status line. Rendered before the Apply message so a fresh sync
+                // result is not hidden underneath a stale Apply one.
+                match self.economy.state() {
+                    economy::SyncState::Idle => {}
+                    economy::SyncState::Running => {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new("Fetching economy prices\u{2026}")
+                                        .color(theme::TAB_ACTIVE),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    }
+                    economy::SyncState::Finished(outcome) => {
+                        ui.add_space(4.0);
+                        let colour = if outcome.is_failure() {
+                            theme::WARM_ACCENT
+                        } else {
+                            theme::TAB_ACTIVE
+                        };
+                        let text = outcome.message().to_string();
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).color(colour)).wrap(),
+                            );
+                        });
+                    }
+                }
+
+                if let Some(message) = &self.apply_message {
+                    let text_color = if self.apply_state == ApplyState::Applied {
+                        theme::LABEL_TAN
+                    } else {
+                        theme::WARM_ACCENT
+                    };
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(10.0);
+                        ui.colored_label(text_color, message);
+                    });
+                }
+                });
+
             match &mut self.rules {
                 Ok(working) => {
                     // Summaries are recomputed from the live working model every frame, reusing
@@ -565,6 +749,11 @@ impl eframe::App for OverlayApp {
                     // `row_ids`/`working.rule_mut` above no longer borrow it once the closures
                     // that used them have returned.
                     if let Some(action) = pending_action {
+                        // The footer renders before this loop, so anything changed here (dirty,
+                        // and therefore whether REVERT is shown) would otherwise not appear until
+                        // the next repaint — which, over a game generating no input events, may
+                        // be a long time coming.
+                        ui.ctx().request_repaint();
                         match action {
                             RowAction::MoveUp(id) => {
                                 if working.move_up(id) {
@@ -617,163 +806,6 @@ impl eframe::App for OverlayApp {
                 }
             }
 
-            // D-15/D-16/D-17: Apply, below the rule list. Reads whatever autosave most recently
-            // wrote to `self.store_path` -- deliberately independent of whether `self.rules`
-            // parsed for editing this session, since the on-disk store is the thing being
-            // compiled, not the in-memory working model. `compile_store` and `write_filter` are
-            // called here exactly once each and never re-implemented (D-15): `write_filter`'s
-            // temp-file-in-the-destination-directory rename is what keeps the game from ever
-            // reading a half-written filter, and the destination is on OneDrive, where a
-            // cross-volume rename would fail -- reusing it, rather than writing the bytes
-            // directly, is what keeps that guarantee here too.
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.label(theme::row_label(apply::indicator(self.apply_state)));
-            });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                if self.dirty && ui.button("REVERT").clicked() {
-                    // Restores the last state written to disk. `from_rules` mints fresh
-                    // RuleIds, so any expansion or pending delete keyed by an old id would
-                    // dangle -- both are cleared rather than left pointing at nothing.
-                    self.rules = Ok(WorkingRules::from_rules(self.baseline.clone()));
-                    self.expanded = None;
-                    self.confirm_delete = None;
-                    self.dirty = false;
-                    self.apply_message = None;
-                    self.apply_state = ApplyState::Applied;
-                }
-                // Economy sync sits beside Apply because that is the order it is used in:
-                // refresh prices, then compile them. It is deliberately NOT part of Apply — a
-                // sync is dozens of network round trips and can fail, and folding that into the
-                // action that writes the game's filter would make a routine Apply slow and
-                // failure-prone (author, 2026-09-10).
-                //
-                // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the tiers
-                // file already in place, unlike the CLI.
-                let syncing = self.economy.is_running();
-                let sync_label = if syncing { "SYNCING\u{2026}" } else { "SYNC ECONOMY" };
-                if ui
-                    .add_enabled(!syncing, egui::Button::new(sync_label))
-                    .clicked()
-                {
-                    // The store's directory, not the process working directory: the overlay can
-                    // be launched from anywhere, and prices.json must land where Apply will read
-                    // it from.
-                    let base_dir = self
-                        .store_path
-                        .parent()
-                        .map(std::path::Path::to_path_buf)
-                        .unwrap_or_else(|| std::path::PathBuf::from("."));
-                    self.economy.start(move || {
-                        crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
-                    });
-                }
-                if ui.button("APPLY").clicked() {
-                    // Since edits are in-memory (D-02, revised 2026-09-08), Apply is the only
-                    // writer: persist the store, THEN compile the filter from it. In that order,
-                    // because compile_store reads dynamic.json from disk — compiling first would
-                    // reproduce exactly the stale-Apply bug fixed in 3375ad4, where the filter
-                    // was built from the previous state.
-                    if let (Some(config), Ok(working)) =
-                        (self.config.as_mut(), self.rules.as_ref())
-                    {
-                        config.rules = Some(working.to_rules());
-                    }
-                    if let Some(config) = &self.config {
-                        if let Err(message) = store::save(config, &self.store_path) {
-                            self.last_save_error = Some(message);
-                        }
-                    }
-
-                    let store_dir = self
-                        .store_path
-                        .parent()
-                        .unwrap_or_else(|| std::path::Path::new("."));
-                    let paths = InputPaths::relative_to(store_dir);
-
-                    let outcome = match dynamic::compile_store(&paths, &self.store_path) {
-                        Ok(compiled) => match dynamic::default_destination() {
-                            Some(dest_dir) => match dynamic::write_filter(&dest_dir, &compiled.text)
-                            {
-                                Ok(written) => ApplyOutcome::Written(written),
-                                Err(err) => ApplyOutcome::Failed(err.to_string()),
-                            },
-                            // D-17: an unresolvable default destination is a rendered failure,
-                            // not a panic -- USERPROFILE is unset off Windows, and this codebase
-                            // has no `--dest`-style override UI this phase (out of scope).
-                            None => ApplyOutcome::Failed(
-                                "Cannot resolve the default PoE2 config folder \
-                                 (USERPROFILE is not set)."
-                                    .to_string(),
-                            ),
-                        },
-                        Err(err) => ApplyOutcome::Failed(err.to_string()),
-                    };
-
-                    match outcome {
-                        ApplyOutcome::Written(written) => {
-                            self.apply_message = Some(apply::success_message(&written));
-                            self.apply_state = self.apply_state.on_apply_success();
-                            if let Ok(working) = self.rules.as_ref() {
-                                self.baseline = working.to_rules();
-                            }
-                            self.dirty = false;
-                        }
-                        ApplyOutcome::Failed(message) => {
-                            self.apply_message = Some(message);
-                            self.apply_state = self.apply_state.on_apply_failure();
-                        }
-                    }
-                }
-            });
-            // The sync's own status line. Rendered before the Apply message so a fresh sync
-            // result is not hidden underneath a stale Apply one.
-            match self.economy.state() {
-                economy::SyncState::Idle => {}
-                economy::SyncState::Running => {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(10.0);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new("Fetching economy prices\u{2026}")
-                                    .color(theme::TAB_ACTIVE),
-                            )
-                            .wrap(),
-                        );
-                    });
-                }
-                economy::SyncState::Finished(outcome) => {
-                    ui.add_space(4.0);
-                    let colour = if outcome.is_failure() {
-                        theme::WARM_ACCENT
-                    } else {
-                        theme::TAB_ACTIVE
-                    };
-                    let text = outcome.message().to_string();
-                    ui.horizontal(|ui| {
-                        ui.add_space(10.0);
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(text).color(colour)).wrap(),
-                        );
-                    });
-                }
-            }
-
-            if let Some(message) = &self.apply_message {
-                let text_color = if self.apply_state == ApplyState::Applied {
-                    theme::LABEL_TAN
-                } else {
-                    theme::WARM_ACCENT
-                };
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(10.0);
-                    ui.colored_label(text_color, message);
-                });
-            }
         });
 
         // Task 3 / D-02, D-04: exactly one coalesced, atomic write per frame -- never per
@@ -883,6 +915,93 @@ fn row_summary_label(ui: &mut egui::Ui, row: &view_model::RuleRow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stripe-sized headless context.
+    fn stripe_ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        ctx
+    }
+
+    fn stripe_input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(460.0, 600.0),
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// Renders a long scrolling list plus a footer, in the two possible orders, and reports where
+    /// the footer landed. `footer_first` is the bottom-panel arrangement `ui()` uses.
+    fn footer_bottom_edge(footer_first: bool) -> (f32, f32) {
+        let ctx = stripe_ctx();
+        let mut footer_rect = egui::Rect::NOTHING;
+        let mut screen_bottom = 0.0_f32;
+
+        ctx.run_ui(stripe_input(), |ui| {
+            // The viewport we handed in via RawInput.screen_rect.
+            screen_bottom = ui.max_rect().max.y;
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut list = |ui: &mut egui::Ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            // Far more rows than fit — the condition that triggered the
+                            // defect. Allocated geometry rather than labels: the headless
+                            // context has no fonts, so text would measure zero-height and the
+                            // list would never grow (which is exactly what the control
+                            // assertion below caught on the first attempt).
+                            for _ in 0..60 {
+                                ui.allocate_space(egui::vec2(400.0, 30.0));
+                            }
+                        });
+                };
+                if footer_first {
+                    egui::Panel::bottom(egui::Id::new("test-footer"))
+                        .show(ui, |ui| {
+                            footer_rect = ui.button("APPLY").rect;
+                        });
+                    list(ui);
+                } else {
+                    list(ui);
+                    footer_rect = ui.button("APPLY").rect;
+                }
+            });
+        })
+        .drop_without_applying_deltas();
+
+        (footer_rect.max.y, screen_bottom)
+    }
+
+    /// APPLY must stay on screen however many rules the list holds.
+    ///
+    /// The footer used to be laid out *after* an `auto_shrink([false, true])` `ScrollArea`, which
+    /// grows to fit its rows. Past a certain number of rules the list claimed the whole panel and
+    /// pushed APPLY off the bottom edge, unreachable at any scroll offset — the control that
+    /// writes the filter became unclickable exactly when the most edits were waiting to be written
+    /// (author, 2026-09-10).
+    ///
+    /// The second assertion is the one that gives the first its meaning: it shows the old
+    /// arrangement really does push the button off-screen with this many rows, so the test would
+    /// have failed before the fix rather than passing for unrelated reasons.
+    #[test]
+    fn the_apply_button_stays_on_screen_however_long_the_rule_list_is() {
+        let (footer_bottom, screen_bottom) = footer_bottom_edge(true);
+        assert!(
+            footer_bottom <= screen_bottom,
+            "APPLY is below the stripe's bottom edge ({footer_bottom} > {screen_bottom}) — \
+             it cannot be clicked at any scroll position"
+        );
+
+        let (old_bottom, screen_bottom) = footer_bottom_edge(false);
+        assert!(
+            old_bottom > screen_bottom,
+            "the pre-fix arrangement was expected to push APPLY off-screen, but it did not \
+             ({old_bottom} <= {screen_bottom}) — this test is no longer exercising the defect"
+        );
+    }
 
     fn row(ordinal: usize, style: &str, enabled: bool, summary: &str) -> view_model::RuleRow {
         view_model::RuleRow {

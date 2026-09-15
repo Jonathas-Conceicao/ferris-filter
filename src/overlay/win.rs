@@ -36,8 +36,11 @@ mod imp {
     // module can never drift to a version eframe itself does not agree with (RESEARCH's stated
     // version-skew hazard).
     use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE};
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowTextW, ShowWindow, SystemParametersInfoW, SPI_GETWORKAREA,
+        SW_HIDE, SW_SHOWNOACTIVATE,
+    };
 
     /// The stripe's own window handle, cached once on the first frame it is available. Never
     /// obtained for, or applied to, any window other than our own.
@@ -79,6 +82,70 @@ mod imp {
             ShowWindow(w.0, SW_HIDE);
         }
     }
+
+    /// The desktop work area — the screen minus the taskbar and any other appbars.
+    ///
+    /// The stripe used to dock against `monitor_size`, which winit reports as the full screen
+    /// resolution. On a 1080p screen with a taskbar that put the bottom of the window, and the
+    /// APPLY row with it, underneath the taskbar (author, screenshot poe2_print008). Taskbar
+    /// height and edge are user settings, so no fixed margin can stand in for asking.
+    pub fn work_area() -> Option<egui::Rect> {
+        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        // SAFETY: `SystemParametersInfoW` with `SPI_GETWORKAREA` writes a `RECT` through the
+        // pointer we pass. The pointer is to a live local of exactly that type, the documented
+        // `uiParam`/`fWinIni` for a read are both zero, and the return value is checked before
+        // the value is used.
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                (&mut rect as *mut RECT).cast(),
+                0,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        let min = egui::pos2(rect.left as f32, rect.top as f32);
+        let max = egui::pos2(rect.right as f32, rect.bottom as f32);
+        let area = egui::Rect::from_min_max(min, max);
+        (area.width() > 1.0 && area.height() > 1.0).then_some(area)
+    }
+
+    /// Whether the window the user is actually working in is the game, or the stripe itself.
+    ///
+    /// Gates the global hotkey: a system-wide binding that fires in a browser or an editor is a
+    /// key the user cannot use for anything else (author, 2026-09-15). The stripe counts as well
+    /// as the game — once it has focus, the same key has to be able to dismiss it, or the only
+    /// way out would be the tray.
+    ///
+    /// Matched on the foreground window's title rather than its process, which keeps this to one
+    /// already-enabled Win32 call and works for both the Steam client (`PathOfExileSteam`) and
+    /// the standalone one. "Exiled Exchange 2", a trade overlay the author runs alongside, does
+    /// not contain this substring.
+    pub fn foreground_is_game_or_overlay(overlay: Option<&OverlayWindow>) -> bool {
+        // SAFETY: `GetForegroundWindow` takes no arguments and returns a handle or null.
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() {
+            return false;
+        }
+        if let Some(w) = overlay {
+            if fg == w.0 {
+                return true;
+            }
+        }
+
+        let mut buf = [0u16; 256];
+        // SAFETY: `GetWindowTextW` writes at most `buf.len()` UTF-16 units into the buffer we
+        // pass and returns how many it wrote, excluding the terminator. The buffer is a live
+        // local and the length is its true capacity.
+        let len = unsafe { GetWindowTextW(fg, buf.as_mut_ptr(), buf.len() as i32) };
+        if len <= 0 {
+            return false;
+        }
+        let title = String::from_utf16_lossy(&buf[..len as usize]);
+        title.to_lowercase().contains("path of exile")
+    }
 }
 
 #[cfg(not(windows))]
@@ -94,6 +161,36 @@ mod imp {
     pub fn reveal(_w: &OverlayWindow) {}
 
     pub fn conceal(_w: &OverlayWindow) {}
+
+    pub fn work_area() -> Option<egui::Rect> {
+        None
+    }
+
+    /// Off Windows there is no foreground-window query here, so the hotkey stays unconditional
+    /// rather than silently never firing.
+    pub fn foreground_is_game_or_overlay(_overlay: Option<&OverlayWindow>) -> bool {
+        true
+    }
 }
 
-pub use imp::{conceal, from_frame, reveal, OverlayWindow};
+pub use imp::{
+    conceal, foreground_is_game_or_overlay, from_frame, reveal, work_area, OverlayWindow,
+};
+
+#[cfg(all(test, windows))]
+mod tests {
+    /// A smoke test for the one new Win32 read: it must come back with a plausible desktop, not
+    /// a zeroed rect. Everything else in this module needs a real window and cannot be tested
+    /// here (PITFALLS.md section 8), but this call needs none.
+    #[test]
+    fn the_work_area_is_a_plausible_desktop() {
+        let Some(area) = super::work_area() else {
+            // A headless or unusual session may legitimately have none; the caller falls back to
+            // the monitor size, so this is not a failure.
+            return;
+        };
+        assert!(area.width() >= 320.0, "work area {area:?} is implausibly narrow");
+        assert!(area.height() >= 240.0, "work area {area:?} is implausibly short");
+        eprintln!("work area on this machine: {area:?}");
+    }
+}

@@ -24,6 +24,18 @@ pub const EDGE_MARGIN: f32 = 12.0;
 /// whole rect stays inside `[0, monitor]` — a tiny monitor or an oversized
 /// requested `width` still yields a sane, sub-screen rect rather than
 /// producing a rect equal to (or larger than) the monitor.
+/// Docks inside an arbitrary usable rect — the desktop **work area**, which excludes the
+/// taskbar — rather than assuming the usable region starts at the origin and spans the whole
+/// screen.
+///
+/// [`dock_rect`] is this with the work area assumed to be the full monitor starting at 0,0, which
+/// is what winit's `monitor_size` describes. That assumption put the bottom of the stripe, and
+/// the APPLY row with it, behind the taskbar (author, screenshot poe2_print008, 2026-09-15).
+pub fn dock_rect_in(work_area: egui::Rect, width: f32) -> egui::Rect {
+    let local = dock_rect(work_area.size(), width);
+    local.translate(work_area.min.to_vec2())
+}
+
 pub fn dock_rect(monitor: egui::Vec2, width: f32) -> egui::Rect {
     // Guard against a degenerate monitor size (zero or negative) so every
     // computation below has a size to work with.
@@ -50,6 +62,44 @@ pub fn dock_rect(monitor: egui::Vec2, width: f32) -> egui::Rect {
     let y_min = margin;
 
     egui::Rect::from_min_size(egui::pos2(x_min, y_min), egui::vec2(w, h))
+}
+
+#[cfg(test)]
+mod work_area_tests {
+    use super::*;
+
+    #[test]
+    fn docking_into_a_work_area_keeps_the_stripe_clear_of_the_taskbar() {
+        // 1080p with a 48px taskbar along the bottom: the work area is shorter than the screen
+        // and the stripe must end inside it, not at the screen's own bottom edge.
+        let screen = egui::vec2(1920.0, 1080.0);
+        let work = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1920.0, 1032.0));
+
+        let docked = dock_rect_in(work, STRIPE_WIDTH);
+        assert!(
+            docked.max.y <= work.max.y,
+            "stripe bottom {} runs past the work area {}",
+            docked.max.y,
+            work.max.y
+        );
+
+        // And the old whole-screen assumption is what put it under the taskbar — without this,
+        // the assertion above could pass for a reason unrelated to the fix.
+        let naive = dock_rect(screen, STRIPE_WIDTH);
+        assert!(
+            naive.max.y > work.max.y,
+            "expected the screen-sized dock to overrun the work area, but it did not"
+        );
+    }
+
+    #[test]
+    fn a_taskbar_on_the_left_shifts_the_stripe_rather_than_only_shrinking_it() {
+        // The work area need not start at the origin; a left or top appbar offsets it.
+        let work = egui::Rect::from_min_max(egui::pos2(80.0, 0.0), egui::pos2(1920.0, 1080.0));
+        let docked = dock_rect_in(work, STRIPE_WIDTH);
+        assert!(docked.min.x >= work.min.x, "stripe starts left of the work area");
+        assert!(docked.max.x <= work.max.x, "stripe runs past the work area's right edge");
+    }
 }
 
 #[cfg(test)]

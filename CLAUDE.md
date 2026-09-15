@@ -43,7 +43,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > **windowed-fullscreen** mode — exclusive fullscreen prevents any external window from drawing
 > above it, and `ff` does not detect this, so a blank/missing stripe means checking the game's
 > display mode first (see `.planning/phases/13-overlay-shell/13-MANUAL-VERIFICATION.md`). Press
-> **`Ctrl+Shift+Z`** (system-wide, hardcoded) to summon or hide the stripe without alt-tabbing; the
+> **`Ctrl+Shift+Z`** (system-wide, hardcoded) to summon or hide the stripe without alt-tabbing —
+> **only while Path of Exile 2 or the stripe itself is the foreground window**, so the binding stays
+> free for other applications; the
 > stripe's own `✕` only **hides** it, and the system tray icon's **Quit** is the only way to exit
 > the process.
 >

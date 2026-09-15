@@ -211,9 +211,15 @@ impl OverlayApp {
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if !self.docked {
+            // The work area (screen minus taskbar) when Windows will tell us, falling back to
+            // the raw monitor size elsewhere. Docking against the monitor put the APPLY row
+            // behind the taskbar (screenshot poe2_print008).
             let monitor_size = ui.ctx().input(|i| i.viewport().monitor_size);
             if let Some(monitor_size) = monitor_size {
-                let rect = layout::dock_rect(monitor_size, layout::STRIPE_WIDTH);
+                let rect = match win::work_area() {
+                    Some(area) => layout::dock_rect_in(area, layout::STRIPE_WIDTH),
+                    None => layout::dock_rect(monitor_size, layout::STRIPE_WIDTH),
+                };
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::OuterPosition(rect.min));
                 ui.ctx()
@@ -236,7 +242,17 @@ impl eframe::App for OverlayApp {
         if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
             if let HotkeyStatus::Registered { id } = &self.hotkey_status {
                 if event.id == *id && event.state == global_hotkey::HotKeyState::Pressed {
-                    self.toggle_requested = true;
+                    // Only while the user is actually in the game — or in the stripe itself, so
+                    // the same key can dismiss it once it has focus. The binding is registered
+                    // system-wide, which is what lets it reach a fullscreen game, but a key that
+                    // also fires in a browser or an editor is a key the user cannot use for
+                    // anything else (author, 2026-09-15).
+                    //
+                    // The event is still drained either way: leaving it queued would make the
+                    // next in-game press replay a stale one.
+                    if win::foreground_is_game_or_overlay(self.window.as_ref()) {
+                        self.toggle_requested = true;
+                    }
                 }
             }
         }
@@ -396,7 +412,18 @@ impl eframe::App for OverlayApp {
             // egui 0.36.1 unified SidePanel/TopBottomPanel into one `Panel` type; `bottom` is
             // non-resizable by construction.
             egui::Panel::bottom(egui::Id::new("ff-footer"))
-                .frame(egui::Frame::NONE.fill(theme::PANEL_GROUND))
+                // An inner margin so the APPLY row is not flush against the window's bottom
+                // edge, where it read as clipped (screenshot poe2_print008).
+                .frame(
+                    egui::Frame::NONE
+                        .fill(theme::PANEL_GROUND)
+                        .inner_margin(egui::Margin {
+                            left: 0,
+                            right: 0,
+                            top: 0,
+                            bottom: 10,
+                        }),
+                )
                 .show(ui, |ui| {
                 // D-15/D-16/D-17: Apply, below the rule list. Reads whatever autosave most recently
                 // wrote to `self.store_path` -- deliberately independent of whether `self.rules`

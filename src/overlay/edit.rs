@@ -202,7 +202,11 @@ pub fn available_styles(styles: &Styles) -> Vec<&'static str> {
 ///
 /// Jewellery was added 2026-09-07 after live use: `config.json`'s rules already matched Rings,
 /// Amulets and Belts, but no list existed to source them from, so they could not be selected in
-/// the editor at all.
+/// the editor at all. `Jewels` joined that group on 2026-09-16 (author request): it is a class in
+/// its own right, not a piece of jewellery, but it is the only member of any group it could form,
+/// and a one-item `JEWELS` header would spend a whole collapsible section on one checkbox. The
+/// grouping is a picker convenience and carries no meaning downstream — nothing here writes a
+/// rule, and the emitter never reads these lists.
 ///
 /// Empty groups are omitted rather than rendered as a bare header. A `dynamic.json` seeded
 /// before `jewelleryClasses` existed parses with an empty list (the field is
@@ -807,8 +811,35 @@ mod tests {
             .expect("the picker must offer a jewellery group");
         assert_eq!(
             jewellery.1,
-            ["Rings", "Amulets", "Belts"],
+            ["Rings", "Amulets", "Belts", "Jewels"],
             "jewellery classes must come from config.jewelleryClasses"
+        );
+    }
+
+    #[test]
+    fn jewels_are_selectable_without_being_written_into_any_rule() {
+        // `Jewels` is offered in the picker (author request, 2026-09-16) so a rule can be built
+        // against it in the overlay. That is a different thing from the *generated* filter having
+        // a jewels rule: GEN-04 keeps jewels falling through to the game default in
+        // `universal.filter`, and `emitter`'s own `generate_no_unique_or_jewels_blocks` holds
+        // that line. Listing the class as picker data must not disturb it — which is the whole
+        // reason these lists are data the emitter never reads.
+        let config = base_config();
+        assert!(
+            class_groups(&config)
+                .iter()
+                .any(|(_, classes)| classes.iter().any(|c| c == "Jewels")),
+            "the picker must offer the Jewels class"
+        );
+        assert!(
+            config
+                .rules
+                .iter()
+                .flatten()
+                .filter_map(|rule| rule.when.as_ref())
+                .filter_map(|when| when.class.as_ref())
+                .all(|classes| !classes.iter().any(|c| c == "Jewels")),
+            "offering Jewels in the picker must not put it into a template rule"
         );
     }
 

@@ -72,7 +72,12 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > rule's row header reads `<index>  <style> - <name>` and the name becomes the emitted filter
 > block's own comment (`Show # <name>`), while an unnamed rule keeps the generator's derived
 > `rule <index>` label — there is no auto-fill, a name is empty until typed. **Classes** gained
-> their own off switch alongside every other condition: switching it off hides the class picker
+> their own off switch alongside every other condition — and the picker's **JEWELLERY** group
+> carries `Jewels` alongside Rings/Amulets/Belts (added 2026-09-16). A jewel is not jewellery, but
+> it is the only class that would ever sit in a group of its own, and a one-item header would spend
+> a whole collapsible section on one checkbox. The groups are picker convenience only: they come
+> from `config.json`'s `jewelleryClasses` (PITFALLS §10 — never hardcoded in the GUI), the emitter
+> never reads them, and listing a class there writes no rule anywhere. The off switch itself: switching it off hides the class picker
 > entirely (not greyed out) and discards the selection, which is what makes a base-type-only rule
 > — matching on `BaseType` with no `Class` line at all — expressible in the overlay. **Base types**
 > are entered one at a time directly after the class control: type a name and press Enter or
@@ -279,8 +284,12 @@ show (highest priority); `AreaLevel ≤25` show all rarities; `AreaLevel ≤65` 
 better (`>=Magic`). Deep endgame (AreaLevel ≥78) surfaces Normal-rarity charms. Everything else
 falls to the `hidden` flask/charm fallback rule.
 
-**Jewels** (`Class "Jewels"`) are always shown — every rarity, every level — at native rarity
-color, font 32, with a cyan diamond minimap icon (`jewels-all`).
+**Jewels** (`Class "Jewels"`) have **no rule in `config.json`** — they fall through to the game
+default (GEN-04), which is what the emitter's `generate_no_unique_or_jewels_blocks` test holds.
+The older "always shown, font 32, cyan diamond (`jewels-all`)" description came from the
+hand-authored poe2filter.com filters in `reference-old-filters/` and has not described
+`universal.filter` since v0.2. The class *is* offered in the overlay's class picker (below), so a
+dynamic rule can target it — that is the editor, not the generated baseline.
 - **Recycle** = items with **both `Sockets >= 1` and `Quality >= 1`**. Shown green regardless
   of zone level; the Recycle rule is first in the rules array so it wins before any hide rule.
 

@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ff-cli` — the short-name console CLI**, identical to `ferrisfilter`, just shorter to type.
   Holds the console entry point `ff` used before it became the GUI binary. `ferrisfilter` itself
   is unchanged.
+- **`Jewels` in the overlay's class picker**, under the **JEWELLERY** group. A jewel is its own
+  item class, not a piece of jewellery, but it is the only class that would ever sit in a group
+  alone, and a one-item header would spend a whole collapsible section on a single checkbox. This
+  is picker data only — sourced from `config.json`'s `jewelleryClasses`, never read by the
+  emitter — so jewels still fall through to the game default in `universal.filter` (GEN-04) and
+  the generated output is byte-for-byte unchanged.
 
 ### Changed
 

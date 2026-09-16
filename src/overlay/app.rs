@@ -996,7 +996,7 @@ mod tests {
             // The viewport we handed in via RawInput.screen_rect.
             screen_bottom = ui.max_rect().max.y;
             egui::CentralPanel::default().show(ui, |ui| {
-                let mut list = |ui: &mut egui::Ui| {
+                let list = |ui: &mut egui::Ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, true])
                         .show(ui, |ui| {

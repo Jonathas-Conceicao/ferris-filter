@@ -30,7 +30,7 @@ fn generate_on_seed() -> String {
             .as_nanos()
     ));
     fs::create_dir_all(&dir).expect("create temp gen dir");
-    for f in ["config.json", "currency.json", "tiers.json"] {
+    for f in ["config.json", "tiers.json"] {
         fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
     }
     fs::copy(
@@ -52,7 +52,7 @@ fn generate_on_seed() -> String {
 
 /// Run `generate --early-game` hermetically against the committed fallback fixtures.
 ///
-/// Copies `config.json`, `currency.json`, `prices-fallback.json`, `tiers-fallback.json`
+/// Copies `config.json`, `prices-fallback.json`, `tiers-fallback.json`
 /// from the manifest dir into a fresh temp dir and runs `generate --early-game --output <out>`.
 /// Returns CRLF-normalized output. Mirrors `generate_on_seed` for the early-game input set.
 fn generate_early_game() -> String {
@@ -65,7 +65,7 @@ fn generate_early_game() -> String {
             .as_nanos()
     ));
     fs::create_dir_all(&dir).expect("create temp early-game gen dir");
-    for f in ["config.json", "currency.json", "prices-fallback.json", "tiers-fallback.json"] {
+    for f in ["config.json", "prices-fallback.json", "tiers-fallback.json"] {
         fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
     }
 
@@ -206,7 +206,7 @@ fn generate_config_flag_reads_alternate_path() {
     // config.json copied under a non-default name; default name deliberately absent.
     fs::copy(manifest.join("config.json"), dir.join("custom-config.json"))
         .expect("copy config.json as custom-config.json");
-    for f in ["currency.json", "prices-fallback.json", "tiers-fallback.json"] {
+    for f in ["prices-fallback.json", "tiers-fallback.json"] {
         fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
     }
 
@@ -478,7 +478,7 @@ fn cap_is_rule_driven() {
 
     // Write the mutated config + other required fallback files into the temp dir.
     std::fs::write(dir.join("config.json"), mutated_config).expect("write mutated config.json");
-    for f in ["currency.json", "prices-fallback.json", "tiers-fallback.json"] {
+    for f in ["prices-fallback.json", "tiers-fallback.json"] {
         std::fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
     }
 

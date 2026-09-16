@@ -17,10 +17,6 @@ name = "ff"
 path = "src/bin/ff.rs"
 
 [[bin]]
-name = "seed_prices"
-path = "src/bin/seed_prices.rs"
-
-[[bin]]
 name = "ff-cli"
 path = "src/bin/ff-cli.rs"
 

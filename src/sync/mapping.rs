@@ -332,12 +332,14 @@ mod tests {
 
     #[test]
     fn mapping_covers_currency_json_categories() {
-        // Ensure every distinct category from currency.json is covered by some overviewType.
-        // These are the categories in currency.json that have confirmed poe.ninja type mappings.
+        // Ensure every category we emit blocks for is covered by some overviewType. The list
+        // below was lifted from the v0.1 `currency.json` tier table (retired 2026-09-16 with the
+        // `seed_prices` migration binary that was its only reader); it is kept as a literal
+        // because it is an assertion about mapping.json, not about that file.
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         let categories: Vec<&str> = m.overview_types.iter().map(|t| t.category.as_str()).collect();
 
-        // Categories that must appear in mapping (from currency.json):
+        // Categories that must appear in mapping:
         let required_categories = [
             "Currency",
             "Breach",
@@ -351,7 +353,7 @@ mod tests {
         for cat in required_categories {
             assert!(
                 categories.contains(&cat),
-                "mapping.json must cover currency.json category: {cat}"
+                "mapping.json must cover category: {cat}"
             );
         }
     }

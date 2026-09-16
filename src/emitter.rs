@@ -781,7 +781,6 @@ mod tests {
             Err(GenerateError::UnknownStyle { style, .. }) => {
                 assert_eq!(style, "NotATier", "error must name the offending style");
             }
-            Err(other) => panic!("expected UnknownStyle, got {:?}", other),
             Ok(_) => panic!("expected generate to reject the unknown style 'NotATier'"),
         }
     }

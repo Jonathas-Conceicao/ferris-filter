@@ -48,6 +48,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emitter — so jewels still fall through to the game default in `universal.filter` (GEN-04) and
   the generated output is byte-for-byte unchanged.
 
+### Removed
+
+- **The `seed_prices` migration binary, `src/models/currency.rs`, and `currency.json`.** The
+  binary was a one-shot from v0.1 Phase 3: before `sync` existed it flattened the hand-maintained
+  `currency.json` tier table into the first `prices.json`, whose output became
+  `tests/fixtures/seed-prices.json`. It ran once and nothing has invoked it since. Worse, its
+  input was never kept in step with the fixture — re-running it today reintroduced `Vaal Infuser`
+  and seven Precursor Tablets, deliberately dropped in Phase 7 for carrying an invalid
+  `Class "Tablet"`, and dropped eight entries added later (Verisium, uncut gems, support gems).
+  So it was not a reproducible-provenance tool but a footgun that still compiled, and it was the
+  source of the `bin.name` kebab-case build warning. `currency.json` had no runtime reader at all
+  (verified: `generate` runs to completion in a directory without it) and only survived because
+  four test helpers copied it into their temp dirs. The five `currency.rs` tests that went with it
+  validated nothing but the deleted file. All recoverable from git history at `6ba59af`.
+
 ### Changed
 
 - **The `unidentified` style is renamed `kite`**, after the minimap icon it paints. The old name

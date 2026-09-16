@@ -158,14 +158,6 @@ mod tests {
     }
 
     impl FakeClient {
-        fn ok(base_items: &str, uniques: &str) -> Self {
-            Self {
-                base_items_response: Ok(base_items.to_string()),
-                uniques_response: Ok(uniques.to_string()),
-                call_count: std::sync::Mutex::new(0),
-            }
-        }
-
         fn err(msg: &str) -> Self {
             Self {
                 base_items_response: Err(msg.to_string()),

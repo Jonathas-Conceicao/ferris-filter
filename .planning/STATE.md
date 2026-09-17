@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: executing
-stopped_at: Phase 15 executing — wave 1 of 3
-last_updated: "2026-09-08T21:09:21.809Z"
-last_activity: 2026-09-08 — Phase 15 execution started
+status: verifying
+stopped_at: Phase 15 complete — awaiting the v0.4 milestone audit
+last_updated: "2026-09-17T00:00:00.000Z"
+last_activity: 2026-09-17 — Phase 15 closed out; live-use fix stream landed; dead seed_prices tooling retired
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 5
   total_plans: 16
-  completed_plans: 13
-  percent: 81
+  completed_plans: 16
+  percent: 100
 ---
 
 # Project State
@@ -25,13 +25,19 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 
 ## Current Position
 
-Phase: 15 (BaseType Lists and Rule Names) — EXECUTING
-Previous phase: 14 (Rule Editor + Apply) — all 4 plans complete, phase verification still pending
-Plan: 0 of 3 complete (waves 1 -> 2 -> 3, sequential)
-Status: Executing Phase 15. Phase 14's twelve manual checks are all approved — see
-`.planning/phases/14-rule-editor-apply/14-MANUAL-VERIFICATION.md` — but its VERIFICATION.md has
-not been written, which is why completed_phases stays at 3.
-Last activity: 2026-09-08
+Phase: 15 (BaseType Lists and Rule Names) — COMPLETE (3 of 3 plans)
+Previous phase: 14 (Rule Editor + Apply) — COMPLETE (4 of 4 plans)
+Status: All 16 plans across Phases 11-15 have SUMMARYs and all 26 v0.4 requirements are checked
+off, so the milestone is scope-complete and `roadmap.analyze` reports 100%. Two artifacts are
+still absent, and they are why this reads `verifying` rather than `completed`:
+
+- **Phases 14 and 15 have no VERIFICATION.md.** Both carry author-approved
+  `*-MANUAL-VERIFICATION.md` files (twelve checks for 14, four for 15, all PASS), but the
+  `gsd-verifier` pass was never run. Phases 11, 12 and 13 each have one, so these two are the
+  exception rather than this milestone's norm.
+- **No `v0.4-MILESTONE-AUDIT.md`.** v0.2 and v0.3 both archive one.
+
+Last activity: 2026-09-17
 
 ## Performance Metrics
 
@@ -123,9 +129,9 @@ work (carried forward past the v0.3 close):
 - **Amend `10-01-SUMMARY.md` prose** — it says `exceptional` is a required `Styles` field; it
   landed as `Option<Style>`. Code is correct and tested; only the prose is stale.
 
-- **Test-only compiler warnings** (pre-existing): unreachable match arm in the emitter
-  unknown-style test (`GenerateError` has a single variant); unused `FakeClient::ok` helper in
-  `sync/metadata.rs`.
+- ~~**Test-only compiler warnings**~~ — RESOLVED 2026-09-17 (`10ffe65`). Both went with the
+  `seed_prices` cleanup: the emitter's unreachable match arm and `sync/metadata.rs`'s unused
+  `FakeClient::ok`. Carried as tech debt since the v0.3 audit; the build is now warning-free.
 
 - **Untracked working-tree files** — decide whether the `ssf_*_config.json` / `ssf_*.filter`
   per-build filters are tracked deliverables or `.gitignore` fodder, and drop the `scratch_*`,

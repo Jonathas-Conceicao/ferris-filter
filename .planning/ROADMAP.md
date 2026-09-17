@@ -5,7 +5,7 @@
 - ✅ **v0.1 Initial Release** — Phases 1-4 (shipped 2026-05-28) — [archive](milestones/v0.1-ROADMAP.md)
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
-- 🔄 **v0.4 Overlay Filter Editor Rework** — Phases 11-14 (started 2026-09-03)
+- 🔄 **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (started 2026-09-03)
 
 ## Phases
 
@@ -48,8 +48,8 @@ Full detail: [milestones/v0.3-ROADMAP.md](milestones/v0.3-ROADMAP.md)
 - [x] **Phase 11: Callable Compile API** — make the generate pipeline callable as a library API so the overlay can drive it without duplicating orchestration (completed 2026-09-03)
 - [x] **Phase 12: Dynamic Rule Store** — `dynamic.json` modeled, persisted, and compiled to a complete `dynamic.filter`, headless (completed 2026-09-04)
 - [x] **Phase 13: Overlay Shell** — an always-on-top window over PoE2 with a global toggle hotkey (completed 2026-09-06)
-- [ ] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store
-- [ ] **Phase 15: BaseType Lists and Rule Names** — a rule can match by base-type list alone, with `class` demoted to an optional condition, and can carry a name that shows in the editor and heads its filter block
+- [x] **Phase 14: Rule Editor + Apply** — the editing UI, wired to the Phase 12 store (completed 2026-09-08)
+- [x] **Phase 15: BaseType Lists and Rule Names** — a rule can match by base-type list alone, with `class` demoted to an optional condition, and can carry a name that shows in the editor and heads its filter block (completed 2026-09-16)
 
 ## Phase Details
 

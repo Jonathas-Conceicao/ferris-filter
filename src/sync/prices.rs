@@ -271,6 +271,22 @@ pub fn build_prices(
                 class.clone()
             };
 
+            // A poe.ninja overview type is a merchandising bucket, not an item class, so the
+            // single class `mapping.json` gives it is wrong for anything that merely sits in that
+            // bucket. `Vaal Siphoner` ships in the Currency feed but is an Incubator, so it was
+            // emitted under `Class == "Stackable Currency"` and never matched — the item just
+            // dropped unstyled, with nothing warning (author, 2026-09-10, confirmed in game).
+            //
+            // Data rather than code: same correction `derive_expedition_class` hard-codes above,
+            // but reachable by editing `mapping.json` when the next one turns up.
+            let (item_class, item_category) = match mapping.class_override(&base_type) {
+                Some(ov) => (
+                    ov.class.clone(),
+                    ov.category.clone().unwrap_or_else(|| category.clone()),
+                ),
+                None => (item_class, category.clone()),
+            };
+
             let (chaos, div, exalt) =
                 convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
 
@@ -278,7 +294,7 @@ pub fn build_prices(
                 name: name.clone(),
                 base_type,
                 class: item_class,
-                category: category.clone(),
+                category: item_category,
                 exalt,
                 chaos,
                 div,
@@ -413,21 +429,28 @@ pub fn write_prices_atomic(path: &str, prices: &PricesFile) -> miette::Result<()
 /// 2. Load committed mapping.json.
 /// 3. Fetch each overviewType + gemFilter type from poe.ninja.
 /// 4. build_prices → validate anchors → write prices.json atomically.
+/// `base_dir` is the directory holding `mapping.json` and receiving `prices.json`. It is a
+/// parameter rather than the process working directory because the overlay can be launched from
+/// anywhere — a desktop shortcut, a tray relaunch — while its store lives beside the repo. The CLI
+/// passes `.`, preserving its existing behaviour exactly.
 pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     client: &C,
     standard: bool,
     hc: bool,
-) -> miette::Result<()> {
-    use crate::sync::league::{fetch_index_state, resolve_league};
+    league: Option<&str>,
+    base_dir: &std::path::Path,
+) -> miette::Result<String> {
+    use crate::sync::league::{fetch_index_state, resolve_league_with_override};
     use crate::sync::mapping::load_mapping;
 
     // Step 1: resolve league
     let state = fetch_index_state(client).await?;
-    let league_name = resolve_league(&state, standard, hc)?;
+    let league_name = resolve_league_with_override(&state, standard, hc, league)?;
     println!("Resolved league: {league_name}");
 
     // Step 2: load committed mapping
-    let mapping = load_mapping("mapping.json")?;
+    let mapping_path = base_dir.join("mapping.json");
+    let mapping = load_mapping(&mapping_path.to_string_lossy())?;
 
     // Step 3: fetch each overview type
     let mut overviews: Vec<(String, ExchangeOverview)> = Vec::new();
@@ -578,7 +601,12 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         items,
     };
 
-    write_prices_atomic("prices.json", &prices_file)?;
+    write_prices_atomic(&base_dir.join("prices.json").to_string_lossy(), &prices_file)?;
+    // The resolved league goes back to the caller, not just into the file. The GUI has no console
+    // to read the "Resolved league:" line above, and a sync that silently picks the wrong league
+    // is worse than one that fails: the filter would be priced for someone else's economy and look
+    // entirely normal (author, 2026-09-10).
+    let resolved = league_name.clone();
 
     println!(
         "Wrote {} items to prices.json (league: {}, {} uniques)",
@@ -587,7 +615,7 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         unique_count
     );
 
-    Ok(())
+    Ok(resolved)
 }
 
 /// Format a Unix timestamp (seconds since epoch) as an ISO-8601 UTC string.
@@ -1033,6 +1061,70 @@ mod tests {
     // Expedition feed — logbook → Expedition Logbooks, Saga → Omen,
     // Flux/artifact → Stackable Currency (the mapping default).
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // classOverrides — a base type whose real class differs from the class its
+    // poe.ninja overview bucket assigns.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn build_prices_applies_a_class_override_from_the_mapping() {
+        let mapping: Mapping = serde_json::from_str(
+            r#"{
+                "version": 2,
+                "overviewTypes": [
+                    { "type": "Currency", "category": "Currency", "class": "Stackable Currency", "baseTypeIsName": true }
+                ],
+                "gemFilters": [],
+                "classOverrides": {
+                    "Vaal Siphoner": { "class": "Incubators", "category": "Incubators" }
+                }
+            }"#,
+        )
+        .expect("mapping with classOverrides should parse");
+
+        let overview = make_overview(
+            "divine",
+            &[("chaos", 100.0), ("exalted", 20.0)],
+            &[("vaal-siphoner", "Vaal Siphoner"), ("vaal-orb", "Vaal Orb")],
+            &[("vaal-siphoner", 0.4), ("vaal-orb", 0.2)],
+        );
+
+        let items = super::build_prices(&[("Currency".to_string(), overview)], &mapping)
+            .expect("build_prices should succeed");
+
+        let siphoner = items
+            .iter()
+            .find(|i| i.base_type == "Vaal Siphoner")
+            .expect("Vaal Siphoner present");
+        assert_eq!(
+            siphoner.class, "Incubators",
+            "an overridden base type must not inherit its bucket's class — emitting \
+             Class == \"Stackable Currency\" for an Incubator produces a rule that never matches"
+        );
+        assert_eq!(siphoner.category, "Incubators", "the override also moves its section");
+
+        let orb = items
+            .iter()
+            .find(|i| i.base_type == "Vaal Orb")
+            .expect("Vaal Orb present");
+        assert_eq!(
+            orb.class, "Stackable Currency",
+            "an override must apply to its own base type only, not the whole feed"
+        );
+    }
+
+    /// The committed `mapping.json` must actually carry the Vaal Siphoner correction — the code
+    /// path above is useless if the data ships empty.
+    #[test]
+    fn the_committed_mapping_corrects_vaal_siphoner() {
+        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/mapping.json"));
+        let mapping: Mapping = serde_json::from_str(raw).expect("mapping.json should parse");
+        let ov = mapping
+            .class_override("Vaal Siphoner")
+            .expect("mapping.json must carry the Vaal Siphoner class override");
+        assert_eq!(ov.class, "Incubators");
+        assert_eq!(ov.category.as_deref(), Some("Incubators"));
+    }
+
     #[test]
     fn build_prices_splits_expedition_classes() {
         let expedition_mapping: Mapping = serde_json::from_str(

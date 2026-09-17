@@ -70,7 +70,16 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 ## Current State
 
-**Shipped:** v0.3 Economy Items & Exceptional Gear (2026-06-27) — `sync` now tracks Verisium and
+**Shipped:** v0.4 Overlay Filter Editor Rework (2026-09-17) — `ff`, a GUI overlay that draws
+over a running Path of Exile 2 and edits filter rules in place. A rule expands into controls for
+style, classes, base types, rarity, defences, sockets, quality, corrupted and unidentified tier;
+Apply is the single writer, compiling `dynamic.json` into `dynamic.filter` straight into the game
+folder, with Revert to discard unsaved edits and a SYNC ECONOMY button that refreshes prices on a
+worker thread. Underneath it: `compile::` as a real library API (Phase 11) and a complete headless
+`dynamic.json → dynamic.filter` pipeline reachable from the CLI alone (Phase 12). ~16,093 LOC Rust;
+368 tests green, build warning-free.
+
+**Prior:** v0.3 Economy Items & Exceptional Gear (2026-06-27) — `sync` now tracks Verisium and
 Lineage Support Gems, Uncut Gems finally match in-game (level kept in `BaseType`, per-subtype plural
 `Class`, no `minLevel` floor), priced gem blocks carry a per-category background over the value-tier
 text/border, and the rule vocabulary gained `corrupted` — driving three exceptional-gear rules
@@ -80,12 +89,17 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** not yet defined — run `/gsd-new-milestone`. Leading candidates are the deferred
-items below: Tablets as a class-less priced category (ECONX-01), generate QoL (`--dry-run`,
-`--diff`, verbose rule logging), and the config-driven style vocabulary (backlog Phase 999.1).
+**Next milestone:** not yet defined — run `/gsd-new-milestone`. The strongest candidate is now
+**overlay robustness**, because v0.4 shipped a GUI whose failure modes were never designed: it can
+only be launched from the repo root, an unloadable store has no recovery from inside the window,
+and an existing `dynamic.json` never receives additive config fields. Longer-standing candidates
+remain: Tablets as a class-less priced category (ECONX-01), generate QoL (`--dry-run`, `--diff`,
+verbose rule logging), and the config-driven style vocabulary (backlog Phase 999.1).
 
-**Open at close:** nothing blocking. Full suite green on `main` at tag `v0.3` (166 tests, 0
-failures).
+**Open at close:** one user-facing blocker, deferred by decision — `ff` cannot be launched by
+double-clicking the exe (`store.rs` resolves paths from the process working directory, which for a
+GUI-subsystem binary started from Explorer is the exe's own folder). It does not affect launching
+from the repo root. Full suite green at tag `v0.4` — 368 tests, 0 failures, build warning-free.
 
 ## Requirements
 
@@ -112,19 +126,21 @@ failures).
 
 ### Active
 
-<!-- v0.4 Overlay Filter Editor Rework — REQ-IDs assigned in REQUIREMENTS.md. -->
+<!-- Empty until /gsd-new-milestone scopes the next one. v0.4's requirements moved to Validated. -->
 
-- [ ] **Core extracted as a library** — rule compiler + pricer usable by both the CLI and the
-  overlay; `generate` / `sync` / `install` behavior and tests unchanged.
-- [ ] **Dynamic rule store** — `dynamic.json` modeled, persisted across restarts, round-tripped.
-- [ ] **Dynamic rule compilation** — `dynamic.json` compiles to `dynamic.filter`, with every
-  condition optional and disabled conditions emitting nothing.
-- [ ] **In-game overlay shell** — always-on-top window over PoE2 with a toggle hotkey.
-- [ ] **Rule editor UI** — ordinal rule list with add / delete / reorder, plus per-rule style,
-  class, rarity, defence, sockets, quality and corrupted controls.
-- [ ] **Apply** — writes `dynamic.filter` into the game folder on demand.
+_None — v0.4 shipped. Run `/gsd-new-milestone` to scope the next set._
 
 ### Deferred (next-milestone candidates)
+
+- [ ] **Overlay robustness** (new at the v0.4 close, from the milestone audit and UAT):
+  - `ff` launchable by double-clicking the exe — anchor the store root somewhere other than the
+    process CWD, and give an unloadable store a recovery path from inside the window
+  - An existing `dynamic.json` should receive additive config fields without `--reset` discarding
+    every rule
+  - Surface `price_source` in the stripe, so a fallback-priced Apply is not silent
+  - A destination override in the GUI, matching the CLI's `--dest`
+  - A league picker, replacing the pinned `sync::OVERLAY_LEAGUE`
+  - A SIGTERM/Ctrl+C console-control handler so `ff` can be stopped from a terminal
 
 - [ ] **BaseType-matched, economy-tiered priced category** (e.g. Tablets): support a priced category that emits `BaseType ==` with **no `Class` line** (tablets have no usable PoE2 filter class). Needs a `Tablets` type in `mapping.json` (spike: confirm poe.ninja serves tablet prices), pricer/emitter support for class-less category blocks, and corrected base names (`Ritual Tablet`/`Abyss Tablet`/…, no "Precursor"). Tablets currently fall through to game default after the v0.2 removal of the invalid `Class "Tablet"` rows.
 - [ ] Generate QoL: `--dry-run`, `--diff`, `-v/--verbose` rule logging, stale-`prices.json` warning (GENX-01..04)
@@ -136,7 +152,9 @@ failures).
 - Hand-maintaining currency/tier base-lists — replaced by `sync` + price-driven tiering
 - Filter rules for jewels, quest items, waystones, trials — these fall through to game default (established design philosophy). *(Jewellery hide and unidentified-tier highlight moved IN-scope in v0.2 — the in-game filter already curates them. **Uncut and Lineage Support gems moved IN-scope in v0.3** as priced, economy-tiered categories; all other gems still fall through.)*
 - Blanket unique styling — only price-tracked uniques get rules; the rest fall through
-- GUI / web interface — CLI only for now
+- ~~GUI / web interface — CLI only for now~~ — **invalidated in v0.4**: `ff` is a GUI overlay. The
+  reasoning held right up until the CLI's real limitation showed itself — a filter cannot be edited
+  while the game is running without leaving the game. A web interface remains out of scope
 - ~~Auto-installing into the game folder~~ — **shipped in v0.1** as the `install` subcommand (copy-only; `install.bat` removed)
 
 ## Context
@@ -213,4 +231,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-03 — v0.4 Overlay Filter Editor Rework scoped. Previously: 2026-06-27 after the v0.3 milestone — full evolution review: v0.3 requirements moved to Validated, Active cleared for v0.4, v0.3 decisions logged, Context refreshed with shipped state; full suite verified green at tag v0.3.*
+*Last updated: 2026-09-17 after the v0.4 milestone*

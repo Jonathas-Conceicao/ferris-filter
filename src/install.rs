@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 /// Build the default PoE2 config folder from %USERPROFILE%. Returns None when USERPROFILE
 /// is unset (e.g. non-Windows), in which case the caller requires an explicit --dest.
-fn default_dest() -> Option<PathBuf> {
+pub(crate) fn default_dest() -> Option<PathBuf> {
     let profile = std::env::var_os("USERPROFILE")?;
     let mut path = PathBuf::from(profile);
     path.push("OneDrive");

@@ -37,14 +37,6 @@ fn valid_tiers() -> String {
         .expect("read repo tiers.json")
 }
 
-/// The repo's real, valid `currency.json`. As of Phase 2, `generate` loads config.json +
-/// currency.json before tiers.json, so any test that intends to fail at *tiers* validation
-/// must supply a valid currency.json (otherwise generate errors on the missing currency file).
-fn valid_currency() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/currency.json"))
-        .expect("read repo currency.json")
-}
-
 /// A missing `config.json` (cwd has no config.json) must produce a non-zero exit
 /// with a "Cannot read" / not-found message.
 ///
@@ -118,10 +110,8 @@ fn missing_tier_in_tiers_json_exits_nonzero() {
     ]"#;
 
     let cfg = valid_config();
-    let cur = valid_currency();
     let dir = make_temp_dir("missing_tier", &[
         ("config.json", &cfg),
-        ("currency.json", &cur),
         ("tiers.json", bad_tiers),
     ]);
 
@@ -152,10 +142,8 @@ fn non_ascending_tiers_json_exits_nonzero() {
     ]"#;
 
     let cfg = valid_config();
-    let cur = valid_currency();
     let dir = make_temp_dir("bad_order", &[
         ("config.json", &cfg),
-        ("currency.json", &cur),
         ("tiers.json", bad_tiers),
     ]);
 

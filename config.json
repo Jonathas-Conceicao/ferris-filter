@@ -12,7 +12,7 @@
     "Recycle":   { "text": [80,250,123],  "border": [80,250,123],  "background": [40,42,54], "font": null, "minimap": { "size": 2, "color": "Green", "shape": "Cross" }, "beam": { "color": "Green", "temp": false }, "sound": null, "action": "Show", "disableDropSound": false },
     "unchanged": { "text": null, "border": null, "background": null, "font": null, "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false },
     "hidden":    { "text": null, "border": null, "background": null, "font": 21,   "minimap": null, "beam": null, "sound": null, "action": "Hide", "disableDropSound": true },
-    "unidentified": { "text": null, "border": null, "background": null, "font": null, "minimap": { "size": 2, "color": "Orange", "shape": "Kite" }, "beam": { "color": "Orange", "temp": false }, "sound": { "id": 2, "vol": 200 }, "action": "Show", "disableDropSound": false },
+    "kite": { "text": null, "border": null, "background": null, "font": null, "minimap": { "size": 2, "color": "Orange", "shape": "Kite" }, "beam": { "color": "Orange", "temp": false }, "sound": { "id": 2, "vol": 200 }, "action": "Show", "disableDropSound": false },
     "exceptional": { "text": [255,121,198], "border": [255,121,198], "background": [40,42,54], "font": null, "minimap": { "size": 2, "color": "Pink", "shape": "Cross" }, "beam": { "color": "Pink", "temp": false }, "sound": null, "action": "Show", "disableDropSound": false }
   },
 
@@ -32,6 +32,7 @@
   ],
   "armourClasses": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
   "flaskCharmClasses": ["Life Flasks", "Mana Flasks", "Charms"],
+  "jewelleryClasses": ["Rings", "Amulets", "Belts", "Jewels"],
 
   "alwaysShow": {
     "currency": { "style": "tiered S-F (base lists are curated data, kept outside this model)" },
@@ -146,7 +147,7 @@
     },
     {
       "name": "unidentified high-tier: weapons + armour",
-      "style": "unidentified",
+      "style": "kite",
       "when": {
         "class": [
           "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Sceptres",
@@ -158,7 +159,7 @@
     },
     {
       "name": "unidentified high-tier: jewellery",
-      "style": "unidentified",
+      "style": "kite",
       "when": {
         "class": ["Rings", "Amulets", "Belts"],
         "unidentifiedTier": { "min": 4 }

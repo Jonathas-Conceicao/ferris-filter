@@ -22,6 +22,14 @@ pub enum Commands {
         /// even when a live prices.json exists
         #[arg(long)]
         early_game: bool,
+        /// Tier-cutoff file to use instead of tiers.json.
+        ///
+        /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
+        /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
+        /// Unlike --early-game this keeps your live prices.json.
+        #[arg(long)]
+        tiers: Option<String>,
+
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
     Sync {
@@ -31,8 +39,44 @@ pub enum Commands {
         /// Target the Hardcore variant (combine with --standard for permanent Hardcore)
         #[arg(long)]
         hc: bool,
+        /// Fetch a specific league by display name or url slug, e.g.
+        /// --league "Forbidden Rites" (or --league forbiddenrites).
+        ///
+        /// Overrides --standard/--hc. Needed during a league transition: poe.ninja lists the
+        /// new league before flagging it as indexed, so the automatic softcore pick still
+        /// resolves to the outgoing league even though the new one already has live data.
+        #[arg(long)]
+        league: Option<String>,
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
+    },
+    /// Compile dynamic.json into dynamic.filter and write it to the PoE2 config folder
+    ///
+    /// Seeds dynamic.json from dynamic_base.json on first run. Unlike `generate`, this both
+    /// compiles and installs — PoE2 still needs the filter reloaded in-game afterwards.
+    Apply {
+        /// Dynamic rule store to compile [default: dynamic.json]
+        #[arg(long, default_value = "dynamic.json")]
+        store: String,
+        /// Template used to seed the store, and to restore it with --reset
+        /// [default: dynamic_base.json]
+        #[arg(long, default_value = "dynamic_base.json")]
+        base: String,
+        /// Destination PoE2 config folder
+        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        #[arg(long)]
+        dest: Option<String>,
+        /// Discard the current store and restore it from the base before compiling
+        #[arg(long)]
+        reset: bool,
+        /// Tier-cutoff file to use instead of tiers.json.
+        ///
+        /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
+        /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
+        /// Unlike --early-game this keeps your live prices.json.
+        #[arg(long)]
+        tiers: Option<String>,
+
     },
     /// Copy a generated .filter into the PoE2 config folder so it takes effect in-game
     Install {

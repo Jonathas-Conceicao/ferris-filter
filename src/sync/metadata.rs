@@ -104,6 +104,9 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
         overview_types: committed.overview_types,
         item_types: committed.item_types,
         gem_filters: committed.gem_filters,
+        // Hand-curated corrections, carried through untouched: RePoE tells us an item's class but
+        // not which poe.ninja bucket ships it, so it cannot re-derive these.
+        class_overrides: committed.class_overrides,
     };
 
     // 4. Validate before persist: refuse to write if overviewTypes is empty.
@@ -155,14 +158,6 @@ mod tests {
     }
 
     impl FakeClient {
-        fn ok(base_items: &str, uniques: &str) -> Self {
-            Self {
-                base_items_response: Ok(base_items.to_string()),
-                uniques_response: Ok(uniques.to_string()),
-                call_count: std::sync::Mutex::new(0),
-            }
-        }
-
         fn err(msg: &str) -> Self {
             Self {
                 base_items_response: Err(msg.to_string()),

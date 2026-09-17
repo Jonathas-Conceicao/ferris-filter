@@ -13,6 +13,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.4.0] - 2026-09-17
+
+**Overlay Filter Editor Rework** — FerrisFilter gains an in-game overlay that edits filter rules
+directly and writes `dynamic.filter` on demand, replacing pre-generated per-build presets. Built on
+a callable compile API and a complete headless dynamic pipeline, with `config.json →
+universal.filter` byte-for-byte untouched throughout: `artifact_guard` and `generate_snapshot`
+passed with zero fixture re-baselining across all five phases. Tagged `v0.4`.
+
+### Added
+
+- **`ff` — the overlay GUI binary**, now `cargo build`'s default output (`default-run = "ff"`).
+  Opens an opaque, undecorated, always-on-top vertical stripe docked to the right screen edge
+  over a running Path of Exile 2, styled in PoE2's own Options-menu palette (Cinzel display font,
+  bronze header plate, zebra-striped rows). A Ferris tray icon with a Show/Quit menu keeps the
+  process reachable while the stripe is hidden; a system-wide `Ctrl+Shift+Z` hotkey summons and hides
+  it without alt-tabbing and without stealing keyboard focus from the game. The stripe lists the
+  rules in `dynamic.json` in ordinal order and is a full editor for them — see below.
+- **The overlay rule editor** — every rule in the stripe expands in place into its own controls for
+  style, item classes (grouped Weapons / Armour / Jewellery / Flasks & Charms), rarity, base
+  defences, sockets, quality, corrupted state, and unidentified tier. Rules reorder with up/down
+  arrows, enable and disable without being deleted, append with **+ ADD RULE**, and delete behind
+  an inline confirm. A collapsed rule shows a one-line summary of what it matches, with a
+  fully-selected class group collapsing to `Any Weapons` / `Any Armour` / `Any Jewellery` /
+  `Any Flasks & Charms`.
+- **APPLY and REVERT** — edits are held in memory until **Apply**, which saves `dynamic.json` and
+  compiles `dynamic.filter` straight into the game folder, then repeats the reload path the game
+  requires (*Options > Game > Item Filter > Refresh*), because PoE2 never re-reads a filter on its
+  own. **Revert** appears only while there are unsaved changes and discards them. The stripe always
+  states, in words, whether the written filter still matches the saved rules.
+- **`sync --league <name|slug>`** — target a specific poe.ninja league by name or url slug. Needed
+  when the automatic pick resolves to the outgoing league during a league transition, or when a new
+  league is live but poe.ninja has not yet flagged it as indexed.
+- **`generate --tiers <path>` / `apply --tiers <path>`** — override tier cutoffs while keeping live
+  prices, so an exalt-denominated early-league tier table can be used against a young economy
+  without editing the committed `tiers.json`.
+- **`ff-cli` — the short-name console CLI**, identical to `ferrisfilter`, just shorter to type.
+  Holds the console entry point `ff` used before it became the GUI binary. `ferrisfilter` itself
+  is unchanged.
+- **`Jewels` in the overlay's class picker**, under the **JEWELLERY** group. A jewel is its own
+  item class, not a piece of jewellery, but it is the only class that would ever sit in a group
+  alone, and a one-item header would spend a whole collapsible section on a single checkbox. This
+  is picker data only — sourced from `config.json`'s `jewelleryClasses`, never read by the
+  emitter — so jewels still fall through to the game default in `universal.filter` (GEN-04) and
+  the generated output is byte-for-byte unchanged.
+
+### Removed
+
+- **The `seed_prices` migration binary, `src/models/currency.rs`, and `currency.json`.** The
+  binary was a one-shot from v0.1 Phase 3: before `sync` existed it flattened the hand-maintained
+  `currency.json` tier table into the first `prices.json`, whose output became
+  `tests/fixtures/seed-prices.json`. It ran once and nothing has invoked it since. Worse, its
+  input was never kept in step with the fixture — re-running it today reintroduced `Vaal Infuser`
+  and seven Precursor Tablets, deliberately dropped in Phase 7 for carrying an invalid
+  `Class "Tablet"`, and dropped eight entries added later (Verisium, uncut gems, support gems).
+  So it was not a reproducible-provenance tool but a footgun that still compiled, and it was the
+  source of the `bin.name` kebab-case build warning. `currency.json` had no runtime reader at all
+  (verified: `generate` runs to completion in a directory without it) and only survived because
+  four test helpers copied it into their temp dirs. The five `currency.rs` tests that went with it
+  validated nothing but the deleted file. All recoverable from git history at `6ba59af`.
+
+### Changed
+
+- **The `unidentified` style is renamed `kite`**, after the minimap icon it paints. The old name
+  described the rules that happened to use it rather than what it does, which read as nonsense when
+  the overlay offered it for an unrelated rule. Any config naming `unidentified` must be updated —
+  an unknown style name is a hard error at generate time, by design.
+
 ## [0.3.0] - 2026-06-27
 
 **Economy Items & Exceptional Gear** — three new/broken poe.ninja economy categories are tracked

@@ -1,22 +1,61 @@
 use crate::error::JsonLoadError;
 use crate::models::prices::PricesFile;
-use crate::models::tiers::{TierEntry, ValidatedTiers};
-use miette::SourceOffset;
+use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
+use miette::{Diagnostic, SourceOffset};
+use thiserror::Error;
+
+/// Everything that can go wrong while reading and validating an input file.
+///
+/// This is a typed error rather than a `miette::Report` so that callers other than the CLI —
+/// notably the overlay front end — can `match` on the failure and decide how to present it
+/// (CORE-04). The CLI converts it to a `miette::Error` at its own boundary.
+///
+/// Every variant that wraps an existing diagnostic does so with `#[error(transparent)]` +
+/// `#[diagnostic(transparent)]`, so miette's rendering — including `JsonLoadError`'s source
+/// span and label — is preserved byte-for-byte. `tests/cli_errors.rs` asserts on that rendered
+/// output and must keep passing unmodified.
+#[derive(Debug, Error, Diagnostic)]
+pub enum LoadError {
+    /// The file could not be read at all (missing, permissions, etc.).
+    ///
+    /// The message deliberately starts with ``Cannot read`` — `tests/cli_errors.rs`
+    /// (`missing_config_json_exits_nonzero_with_message`) asserts on that exact prefix.
+    #[error("Cannot read `{path}`: {source}")]
+    #[diagnostic(code(ferrisfilter::io::read_error))]
+    Read {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The file was read but is malformed or fails type validation. Carries the dotted field
+    /// path and the highlighted source span.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Parse(#[from] JsonLoadError),
+
+    /// `tiers.json` parsed but failed completeness/ordering validation.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Tiers(#[from] TierValidationError),
+}
 
 /// Generic JSON loader that wraps `serde_path_to_error` for field-path-aware errors.
 ///
-/// On success returns the deserialized value. On failure returns a `JsonLoadError`
-/// diagnostic that includes the dotted field path, the byte offset, and the raw source
-/// text — suitable for miette's graphical renderer.
+/// On success returns the deserialized value. On failure returns a `LoadError`:
+/// `Read` if the file could not be read, `Parse` (carrying a `JsonLoadError` diagnostic with
+/// the dotted field path, byte offset and raw source text) if it could not be deserialized.
 ///
 /// # Errors
 ///
-/// - If the file cannot be read, returns a plain `miette::miette!` error.
-/// - If the JSON is malformed or a field fails type validation, returns `JsonLoadError`
+/// - If the file cannot be read, returns `LoadError::Read`.
+/// - If the JSON is malformed or a field fails type validation, returns `LoadError::Parse`
 ///   with the source span highlighted.
-pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> miette::Result<T> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| miette::miette!("Cannot read `{path}`: {e}"))?;
+pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, LoadError> {
+    let content = std::fs::read_to_string(path).map_err(|e| LoadError::Read {
+        path: path.to_string(),
+        source: e,
+    })?;
     let de = &mut serde_json::Deserializer::from_str(&content);
     serde_path_to_error::deserialize(de).map_err(|e| {
         let inner = e.inner();
@@ -37,14 +76,14 @@ pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> miette::Result<T
 /// **Absence vs. malformation:**
 /// - File absent → returns `Ok(None)`. This enables GEN-05: `generate` can warn and skip
 ///   the currency/category blocks rather than aborting with an I/O error.
-/// - File present but malformed → returns `Err(...)` from `load_json` (a `JsonLoadError`
+/// - File present but malformed → returns `Err(...)` from `load_json` (a `LoadError::Parse`
 ///   with the dotted field path). The caller must abort; a corrupted prices.json is not
 ///   a recoverable situation.
 ///
 /// Uses `std::path::Path::exists()` to distinguish absence from malformation, rather than
-/// inspecting the error kind from a failed `fs::read_to_string`, because miette wraps the
-/// underlying `io::Error` and downcasting is fragile.
-pub fn load_prices_optional(path: &str) -> miette::Result<Option<PricesFile>> {
+/// inspecting the error kind from a failed `fs::read_to_string`, because the underlying
+/// `io::Error` is wrapped and downcasting is fragile.
+pub fn load_prices_optional(path: &str) -> Result<Option<PricesFile>, LoadError> {
     if !std::path::Path::new(path).exists() {
         return Ok(None);
     }
@@ -60,9 +99,9 @@ pub fn load_prices_optional(path: &str) -> miette::Result<Option<PricesFile>> {
 ///
 /// # Errors
 ///
-/// - If the file cannot be read or parsed, returns a `JsonLoadError` (field-path aware).
-/// - If tier validation fails, returns the `TierValidationError` as a `miette::Error`.
-pub fn load_tiers(path: &str) -> miette::Result<ValidatedTiers> {
+/// - If the file cannot be read or parsed, returns `LoadError::Read` / `LoadError::Parse`.
+/// - If tier validation fails, returns `LoadError::Tiers`.
+pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
     let entries: Vec<TierEntry> = load_json(path)?;
-    ValidatedTiers::try_from(entries).map_err(miette::Error::from)
+    Ok(ValidatedTiers::try_from(entries)?)
 }

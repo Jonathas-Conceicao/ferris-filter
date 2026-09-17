@@ -127,7 +127,7 @@ pub struct Styles {
     #[serde(rename = "Recycle")] pub recycle: Style,
     pub unchanged: Style,
     pub hidden: Style,
-    pub unidentified: Style,
+    pub kite: Style,
     /// Exceptional-gear highlight (EXC-04): pink text+border 255 121 198, Dracula bg,
     /// Pink beam, Pink Cross minimap, no sound, no font. Modeled on Recycle but pink.
     /// A SEPARATE style from S so its color can be retuned independently.
@@ -351,18 +351,28 @@ pub struct When {
 ///
 /// The `style` field is a plain `String` resolved against the `Styles` struct keys at
 /// generate-time. Valid values: `"S"`, `"A"`, `"B"`, `"C"`, `"D"`, `"E"`, `"F"`,
-/// `"unchanged"`, `"hidden"`, `"Recycle"`, `"unidentified"`, `"exceptional"`,
+/// `"unchanged"`, `"hidden"`, `"Recycle"`, `"kite"`, `"exceptional"`,
 /// `"craftable"` (requires the optional `styles.craftable` field to be defined).
 /// An unknown style name is a **hard error** at generate-time (Phase 6 validation — not enforced by serde here).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Rule {
+    /// Whether this rule contributes a block to the generated filter.
+    ///
+    /// Absent (the default) or `Some(true)` → the rule is active and emits normally.
+    /// `Some(false)` → the rule stays in the file but emits **nothing at all** — not even a
+    /// commented-out block. This is how the overlay switches a rule off without losing its
+    /// configuration; deleting a rule is a separate operation (removal from the array).
+    ///
+    /// Absence is the default so every existing config parses and round-trips unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     /// Optional label emitted as the block comment header (`Show # <name>`).
     /// When absent the emitter derives a label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Style tier name — must match a `Styles` key
-    /// (S/A/B/C/D/E/F/unchanged/hidden/Recycle/unidentified/exceptional/craftable).
+    /// (S/A/B/C/D/E/F/unchanged/hidden/Recycle/kite/exceptional/craftable).
     /// Validation (unknown-style hard error) is deferred to generate-time (Phase 6).
     pub style: String,
     /// Optional match conditions. Absent/empty `when` matches everything.
@@ -426,6 +436,15 @@ pub struct Config {
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
     pub flask_charm_classes: Vec<String>,
+    /// Rings / Amulets / Belts. Added 2026-09-07 so the overlay's class picker can offer
+    /// jewellery — `config.json`'s own rules already use these classes, but there was no list
+    /// to source them from, leaving them unreachable in the editor (EDIT-04 requires options
+    /// come from config, never a hardcoded list — `PITFALLS.md` §10).
+    ///
+    /// `#[serde(default)]` rather than required, so a `dynamic.json` seeded before this field
+    /// existed still loads. An absent list yields an empty group, which the picker omits.
+    #[serde(default)]
+    pub jewellery_classes: Vec<String>,
     pub always_show: AlwaysShow,
     pub fallthrough: String,
     /// Ordered declarative policy rules (RULE-01). Optional during the migration —
@@ -539,7 +558,7 @@ mod tests {
                 "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
-                "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
+                "kite":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
                 "exceptional":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
             },
             "build": {"weapons":[],"armour":[],"armourTypes":{}},
@@ -905,7 +924,7 @@ mod tests {
             "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
             "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
             "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
-            "unidentified":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
+            "kite":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
         }"#;
         let styles: Result<Styles, _> = serde_json::from_str(styles_json);
         assert!(
@@ -917,6 +936,66 @@ mod tests {
             styles.unwrap().exceptional.is_none(),
             "exceptional must be None when absent from config"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Rule.enabled round-trip (DYN-01)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rule_enabled_false_parses() {
+        let rule: Rule = serde_json::from_str(r#"{"enabled": false, "style": "E"}"#)
+            .expect("enabled:false must parse");
+        assert_eq!(rule.enabled, Some(false));
+    }
+
+    #[test]
+    fn rule_enabled_true_parses() {
+        let rule: Rule = serde_json::from_str(r#"{"enabled": true, "style": "E"}"#)
+            .expect("enabled:true must parse");
+        assert_eq!(rule.enabled, Some(true));
+    }
+
+    #[test]
+    fn rule_enabled_absent_is_none() {
+        let rule: Rule =
+            serde_json::from_str(r#"{"style": "E"}"#).expect("absent enabled must parse");
+        assert_eq!(
+            rule.enabled, None,
+            "absence must mean None (treated as enabled), so existing configs are unaffected"
+        );
+    }
+
+    /// The guarantee that keeps `config.json` and the committed fixtures byte-identical:
+    /// a rule that never set `enabled` must not grow the key on serialize.
+    #[test]
+    fn rule_without_enabled_serializes_without_the_key() {
+        let rule = Rule {
+            enabled: None,
+            name: None,
+            style: "E".to_string(),
+            when: None,
+        };
+        let json = serde_json::to_string(&rule).expect("serialize");
+        assert!(
+            !json.contains("enabled"),
+            "enabled:None must be skipped on serialize, got: {json}"
+        );
+    }
+
+    #[test]
+    fn rule_enabled_round_trips() {
+        for value in [Some(true), Some(false), None] {
+            let rule = Rule {
+                enabled: value,
+                name: None,
+                style: "E".to_string(),
+                when: None,
+            };
+            let json = serde_json::to_string(&rule).expect("serialize");
+            let back: Rule = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back.enabled, value, "round-trip failed for {value:?}");
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -944,6 +1023,7 @@ mod tests {
     #[test]
     fn when_corrupted_round_trips() {
         let rule = Rule {
+            enabled: None,
             name: Some("test-corrupted".to_string()),
             style: "E".to_string(),
             when: Some(When {

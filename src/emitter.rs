@@ -20,7 +20,7 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, unidentified, exceptional, craftable \
+             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, kite, exceptional, craftable \
              (craftable must be defined in the config's styles object)")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
@@ -34,14 +34,52 @@ pub enum GenerateError {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Generate the complete filter text from `config` and `priced`.
+/// Which filter is being produced, and from what — the two identifying lines of the header.
+///
+/// Exists so the dynamic path can say `# dynamic.filter` / `# GENERATED FROM dynamic.json`
+/// without changing a byte of the universal path's output. `Default` is exactly the pair the
+/// header hardcoded before v0.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilterIdentity<'a> {
+    /// Filename this filter is conventionally written as, named on the header's first line.
+    pub output_name: &'a str,
+    /// Source file it was compiled from, named on the header's second line.
+    pub source_name: &'a str,
+}
+
+impl Default for FilterIdentity<'_> {
+    fn default() -> Self {
+        FilterIdentity {
+            output_name: "universal.filter",
+            source_name: "config.json",
+        }
+    }
+}
+
+/// Generate the universal filter — `config.json` → `universal.filter`.
+///
+/// A thin delegation to [`generate_as`] with the default identity. Kept as its own function with
+/// an unchanged signature so the universal path is not merely *believed* unaffected by the
+/// identity parameter: it runs the same code it always did, and `generate_matches_generate_as_default`
+/// asserts the two agree.
+pub fn generate(config: &Config, priced: &PricedData) -> Result<String, GenerateError> {
+    generate_as(config, priced, &FilterIdentity::default())
+}
+
+/// Generate the complete filter text from `config` and `priced`, naming the filter and its
+/// source in the header.
 ///
 /// Returns a LF-only `String` ending with exactly one trailing newline.
 /// Pure function — no I/O, no side effects.
-/// Returns `Err(GenerateError::UnknownStyle)` if any rule references an unknown style name.
-pub fn generate(config: &Config, priced: &PricedData) -> Result<String, GenerateError> {
+/// Returns `Err(GenerateError::UnknownStyle)` if any *enabled* rule references an unknown style
+/// name; disabled rules are skipped before their style is resolved.
+pub fn generate_as(
+    config: &Config,
+    priced: &PricedData,
+    identity: &FilterIdentity,
+) -> Result<String, GenerateError> {
     let mut out = String::with_capacity(32_000);
-    emit_header(&mut out);
+    emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
     emit_currency_sections(&mut out, config, &priced.category_blocks);
     emit_unique_sections(&mut out, config, &priced.unique_blocks);
@@ -56,7 +94,7 @@ pub fn generate(config: &Config, priced: &PricedData) -> Result<String, Generate
 /// Resolve a style name to the matching `&Style` in `Styles`.
 ///
 /// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
-/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/unidentified/exceptional/craftable.
+/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/kite/exceptional/craftable.
 ///
 /// FUTURE (style flexibility): this match hardcodes the style vocabulary, so adding a style
 /// means editing this arm and the `Styles` struct. To let any config define and use new
@@ -79,7 +117,7 @@ fn resolve_style<'a>(
         "Recycle" => &styles.recycle,
         "unchanged" => &styles.unchanged,
         "hidden" => &styles.hidden,
-        "unidentified" => &styles.unidentified,
+        "kite" => &styles.kite,
         // Optional style — present only when the config defines it. A rule referencing
         // "exceptional" against a config that omits it is treated as an unknown style.
         "exceptional" if styles.exceptional.is_some() => styles.exceptional.as_ref().unwrap(),
@@ -223,9 +261,14 @@ fn style_for_tier<'a>(styles: &'a crate::models::config::Styles, tier: &str) -> 
 // Section 1: File header comment
 // ---------------------------------------------------------------------------
 
-fn emit_header(out: &mut String) {
-    writeln!(out, "# universal.filter").unwrap();
-    writeln!(out, "# GENERATED FROM config.json — edit the model, not this file (then regenerate).").unwrap();
+fn emit_header(out: &mut String, identity: &FilterIdentity) {
+    writeln!(out, "# {}", identity.output_name).unwrap();
+    writeln!(
+        out,
+        "# GENERATED FROM {} — edit the model, not this file (then regenerate).",
+        identity.source_name
+    )
+    .unwrap();
     writeln!(out, "#").unwrap();
     writeln!(out, "# Block tags link each rule back to the model:").unwrap();
     writeln!(out, "#   [alwaysShow.K]          -> a level-independent highlight").unwrap();
@@ -276,6 +319,20 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
         .iter()
         .enumerate()
     {
+        // A disabled rule emits nothing at all — no block, not even a commented one.
+        // `continue` here rather than filtering the iterator, deliberately: `enumerate()` must
+        // keep walking the whole array so labels stay tied to a rule's index in the source file.
+        // Filtering first would renumber every later rule, so disabling rule 2 would silently
+        // relabel rule 3's block as `rule 2` and break the trace from a filter block back to its
+        // position in the store.
+        //
+        // Skipping before `resolve_style` also means a disabled rule referencing an unknown style
+        // is inert rather than a hard error — a rule the author switched off should not be able to
+        // fail generation.
+        if rule.enabled == Some(false) {
+            continue;
+        }
+
         let derived_label = format!("rule {}", idx);
         let label: &str = rule.name.as_deref().unwrap_or(&derived_label);
         let style = resolve_style(&config.styles, &rule.style, idx, label)?;
@@ -715,6 +772,7 @@ mod tests {
             .rules
             .get_or_insert_with(Vec::new)
             .push(crate::models::config::Rule {
+                enabled: None,
                 name: Some("bad rule".to_string()),
                 style: "NotATier".to_string(),
                 when: None,
@@ -723,7 +781,6 @@ mod tests {
             Err(GenerateError::UnknownStyle { style, .. }) => {
                 assert_eq!(style, "NotATier", "error must name the offending style");
             }
-            Err(other) => panic!("expected UnknownStyle, got {:?}", other),
             Ok(_) => panic!("expected generate to reject the unknown style 'NotATier'"),
         }
     }
@@ -785,6 +842,156 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // FilterIdentity — the header's two identifying lines (12-CONTEXT D-10)
+    // -----------------------------------------------------------------------
+
+    /// The standing guard that parameterizing the header did not move the universal path.
+    /// `generate` delegates to `generate_as` with the default identity, so these must agree
+    /// byte-for-byte — if they ever diverge, `seed-universal.filter` is about to move.
+    #[test]
+    fn generate_matches_generate_as_default() {
+        let (config, priced) = load_inputs();
+        let via_generate = generate(&config, &priced).expect("generate failed");
+        let via_generate_as =
+            generate_as(&config, &priced, &FilterIdentity::default()).expect("generate_as failed");
+        assert_eq!(
+            via_generate, via_generate_as,
+            "generate() and generate_as(default) must produce identical output"
+        );
+    }
+
+    #[test]
+    fn default_identity_is_the_historical_pair() {
+        let d = FilterIdentity::default();
+        assert_eq!(d.output_name, "universal.filter");
+        assert_eq!(d.source_name, "config.json");
+    }
+
+    #[test]
+    fn generate_as_names_the_filter_and_its_source() {
+        let (config, priced) = load_inputs();
+        let output = generate_as(
+            &config,
+            &priced,
+            &FilterIdentity {
+                output_name: "dynamic.filter",
+                source_name: "dynamic.json",
+            },
+        )
+        .expect("generate_as failed");
+
+        let mut lines = output.lines();
+        assert_eq!(lines.next(), Some("# dynamic.filter"));
+        assert_eq!(
+            lines.next(),
+            Some("# GENERATED FROM dynamic.json — edit the model, not this file (then regenerate).")
+        );
+    }
+
+    /// Only the first two lines differ; the legend and philosophy note are untouched (D-11).
+    #[test]
+    fn custom_identity_changes_only_the_first_two_header_lines() {
+        let (config, priced) = load_inputs();
+        let default_out = generate(&config, &priced).expect("generate failed");
+        let custom_out = generate_as(
+            &config,
+            &priced,
+            &FilterIdentity {
+                output_name: "dynamic.filter",
+                source_name: "dynamic.json",
+            },
+        )
+        .expect("generate_as failed");
+
+        let default_rest: Vec<&str> = default_out.lines().skip(2).collect();
+        let custom_rest: Vec<&str> = custom_out.lines().skip(2).collect();
+        assert_eq!(
+            default_rest, custom_rest,
+            "everything after the first two header lines must be identical"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Disabled-rule suppression (DYN-01) — a rule stays in the store but emits nothing
+    // -----------------------------------------------------------------------
+
+    /// Push a rule onto the config and return the index it landed at.
+    fn push_rule(config: &mut Config, enabled: Option<bool>, style: &str) -> usize {
+        use crate::models::config::{Rule, When};
+        let rules = config.rules.get_or_insert_with(Vec::new);
+        rules.push(Rule {
+            enabled,
+            name: None,
+            style: style.to_string(),
+            when: Some(When {
+                sockets: Some(crate::models::config::NumericCondition { min: Some(3), max: None, eq: None }),
+                ..Default::default()
+            }),
+        });
+        rules.len() - 1
+    }
+
+    #[test]
+    fn disabled_rule_emits_no_block_at_all() {
+        let (mut config, priced) = load_inputs();
+        let idx = push_rule(&mut config, Some(false), "E");
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(
+            !output.contains(&format!("# rule {}", idx)),
+            "a disabled rule must emit no block, but `# rule {}` appeared:\n{}",
+            idx,
+            output
+        );
+    }
+
+    #[test]
+    fn enabled_true_and_absent_both_emit() {
+        for enabled in [Some(true), None] {
+            let (mut config, priced) = load_inputs();
+            let idx = push_rule(&mut config, enabled, "E");
+            let output = generate(&config, &priced).expect("generate failed");
+            assert!(
+                output.contains(&format!("# rule {}", idx)),
+                "enabled={:?} must emit a block, but `# rule {}` was absent",
+                enabled,
+                idx
+            );
+        }
+    }
+
+    /// The reason `emit_rules` uses `continue` inside the loop rather than filtering the
+    /// iterator: labels must stay tied to a rule's index in the source file, so disabling one
+    /// rule does not silently relabel the rules after it.
+    #[test]
+    fn disabling_a_rule_does_not_renumber_later_rules() {
+        let (mut config, priced) = load_inputs();
+        let first = push_rule(&mut config, None, "E");
+        let middle = push_rule(&mut config, Some(false), "E");
+        let last = push_rule(&mut config, None, "E");
+
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(output.contains(&format!("# rule {}", first)), "first rule missing");
+        assert!(
+            !output.contains(&format!("# rule {}", middle)),
+            "disabled middle rule must not emit"
+        );
+        assert!(
+            output.contains(&format!("# rule {}", last)),
+            "the rule after a disabled one must keep its own index ({}), not shift down",
+            last
+        );
+    }
+
+    /// A rule the author switched off must not be able to fail generation.
+    #[test]
+    fn disabled_rule_with_unknown_style_is_inert() {
+        let (mut config, priced) = load_inputs();
+        push_rule(&mut config, Some(false), "no-such-style");
+        generate(&config, &priced)
+            .expect("a disabled rule referencing an unknown style must not error");
+    }
+
+    // -----------------------------------------------------------------------
     // Corrupted condition emit tests (EXC-01)
     // -----------------------------------------------------------------------
 
@@ -793,6 +1000,7 @@ mod tests {
         use crate::models::config::{Rule, When};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
+            enabled: None,
             name: Some("test-corrupted-false".to_string()),
             style: "E".to_string(),
             when: Some(When {
@@ -818,6 +1026,7 @@ mod tests {
         use crate::models::config::{Rule, When};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
+            enabled: None,
             name: Some("test-corrupted-true".to_string()),
             style: "E".to_string(),
             when: Some(When {
@@ -838,6 +1047,7 @@ mod tests {
         use crate::models::config::{Rule, When, NumericCondition};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
+            enabled: None,
             name: Some("test-no-corrupted".to_string()),
             style: "E".to_string(),
             when: Some(When {

@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.4
 milestone_name: Overlay Filter Editor Rework
-status: verifying
-stopped_at: Phase 15 complete — awaiting the v0.4 milestone audit
+status: milestone_complete
+stopped_at: v0.4 shipped — archived and tagged
 last_updated: "2026-09-17T00:00:00.000Z"
-last_activity: 2026-09-17 — Phase 15 closed out; live-use fix stream landed; dead seed_prices tooling retired
+last_activity: 2026-09-17 — v0.4 archived, squash-merged to main and tagged
 progress:
   total_phases: 7
   completed_phases: 5
@@ -25,17 +25,16 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 
 ## Current Position
 
-Phase: 15 (BaseType Lists and Rule Names) — COMPLETE (3 of 3 plans)
-Previous phase: 14 (Rule Editor + Apply) — COMPLETE (4 of 4 plans)
-Status: All 16 plans across Phases 11-15 have SUMMARYs and all 26 v0.4 requirements are checked
-off, so the milestone is scope-complete and `roadmap.analyze` reports 100%. Two artifacts are
-still absent, and they are why this reads `verifying` rather than `completed`:
+Milestone: **v0.4 Overlay Filter Editor Rework — SHIPPED 2026-09-17**
+Phase: none in progress. Next milestone not yet scoped.
 
-- **Phases 14 and 15 have no VERIFICATION.md.** Both carry author-approved
-  `*-MANUAL-VERIFICATION.md` files (twelve checks for 14, four for 15, all PASS), but the
-  `gsd-verifier` pass was never run. Phases 11, 12 and 13 each have one, so these two are the
-  exception rather than this milestone's norm.
-- **No `v0.4-MILESTONE-AUDIT.md`.** v0.2 and v0.3 both archive one.
+v0.4 closed with an audit status of `tech_debt`: 26/26 requirements verified across 5/5 phases,
+no unsatisfied requirement and no orphans, but one user-facing blocker deferred by decision —
+`ff` cannot be launched by double-clicking the exe. See *Registered, Not Fixed* below and
+`.planning/milestones/v0.4-MILESTONE-AUDIT.md`.
+
+Start the next milestone with `/gsd-new-milestone`, which defines fresh requirements —
+`.planning/REQUIREMENTS.md` was archived and removed at close.
 
 Last activity: 2026-09-17
 
@@ -43,7 +42,7 @@ Last activity: 2026-09-17
 
 **Velocity:**
 
-- Total plans completed: 26 (v0.1: 14 · v0.2: 7 · v0.3: 5)
+- Total plans completed: 42 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16)
 
 **By Milestone:**
 
@@ -52,6 +51,7 @@ Last activity: 2026-09-17
 | v0.1 Initial Release | 4 | 14 | 127 | 7 days |
 | v0.2 Declarative Rule Model | 3 | 7 | ~38 | 7 days |
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | 15 days |
+| v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).

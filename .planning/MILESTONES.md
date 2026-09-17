@@ -1,5 +1,49 @@
 # Milestones
 
+## v0.4 — Overlay Filter Editor Rework
+
+**Shipped:** 2026-09-17
+**Phases:** 11-15 (5) · **Plans:** 16 · **Tasks:** 34 · **Commits:** 146 · **Tests:** 368 green
+**Timeline:** 2026-09-03 → 2026-09-17 (14 days) · **Code:** ~16,093 lines Rust (+8,971/-404 in src/tests)
+
+**Delivered:** An in-game overlay that edits filter rules directly and writes `dynamic.filter` on
+demand, replacing pre-generated per-build presets — built on a callable compile API and a complete
+headless dynamic pipeline, with `config.json → universal.filter` byte-for-byte untouched throughout.
+
+**Key accomplishments:**
+
+1. **The generate pipeline became a library API** — `compile::load_inputs` + `compile::compile`
+   take caller-supplied paths, return matchable error variants, and report the price source as a
+   value rather than printing it. Proven behavior-preserving across six invocation cases.
+2. **A complete second filter pipeline, headless first** — `dynamic.json` reuses the existing
+   `Rule`/`When` types; `ferrisfilter apply` seeds, compiles and atomically writes
+   `dynamic.filter` into the game folder, economy sections included. Sequenced ahead of the GUI so
+   it was testable on the project's existing terms before any window existed.
+3. **An always-on-top overlay that never steals focus** — raw `ShowWindow(SW_SHOWNOACTIVATE)`
+   rather than `ViewportCommand::Visible`, which is what makes a focus-preserving summon possible
+   over a running game at all.
+4. **A full rule editor with Apply as the single writer** — every condition editable and
+   independently togglable. D-02 reversed mid-phase after live use: edits held in memory, Apply
+   the only writer, Revert to discard.
+5. **Base-type-only rules and rule names** — `class` gained the off switch every other condition
+   had, making the author's hand-written *Change Bases* rule expressible in the editor.
+6. **Economy sync from the overlay, league pinned** — poe.ninja's `indexed` flag was observed
+   flipping between leagues within six hours, so automatic resolution cannot identify the current
+   league and a wrong pick is silent.
+
+**Audit:** `tech_debt` — requirements 26/26 verified (23 outright, 3 partial), phases 5/5,
+integration 10/10, E2E flows 3/4.
+
+**Known gap at close:** `ff` cannot be launched by double-clicking the exe (path resolution from
+the process CWD). Deferred to v0.5 deliberately — the fix is a design decision about where the
+overlay anchors its root, not a patch.
+
+**Verification at close:** full suite green — 368 tests including `artifact_guard` and
+`generate_snapshot` with zero fixture re-baselining across the entire milestone. Build
+warning-free.
+
+---
+
 ## v0.3 — Economy Items & Exceptional Gear
 
 **Shipped:** 2026-06-27

@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.4.0] - 2026-09-17
+
+**Overlay Filter Editor Rework** — FerrisFilter gains an in-game overlay that edits filter rules
+directly and writes `dynamic.filter` on demand, replacing pre-generated per-build presets. Built on
+a callable compile API and a complete headless dynamic pipeline, with `config.json →
+universal.filter` byte-for-byte untouched throughout: `artifact_guard` and `generate_snapshot`
+passed with zero fixture re-baselining across all five phases. Tagged `v0.4`.
+
 ### Added
 
 - **`ff` — the overlay GUI binary**, now `cargo build`'s default output (`default-run = "ff"`).

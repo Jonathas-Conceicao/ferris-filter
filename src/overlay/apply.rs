@@ -82,6 +82,35 @@ pub fn success_message(written: &Path) -> String {
     format!("Wrote {}. Reload it in-game: {RELOAD_INSTRUCTION}", written.display())
 }
 
+/// Decides whether Apply may go on to compile, given how the store save went.
+///
+/// `Ok(())` means proceed. `Err(outcome)` is terminal: the caller must apply that outcome and
+/// **not** compile.
+///
+/// **Why this is a function and not an `if` at the call site.** Apply's contract is "persist the
+/// store, THEN compile the filter from it", and the order is load-bearing because
+/// [`crate::dynamic::compile_store`] reads `dynamic.json` back from disk. The original code
+/// recorded a save failure and then carried on regardless, which inverted the contract in the one
+/// case it exists for: the compile read the *previous* store, the write succeeded, and Apply
+/// reported success. That also advanced the Revert baseline to edits that had never been
+/// persisted and cleared the dirty flag, so the only surviving copy of the player's work was
+/// destroyed by the act of reporting that it had been saved. Found by the v0.4 milestone audit
+/// (BLOCKER-1), confirmed against the running build.
+///
+/// The failure text quotes the save's own message rather than inventing one: the player needs to
+/// know it was the *store* that could not be written, not the filter. Returning an
+/// [`ApplyOutcome::Failed`] rather than leaving the red save line to speak for itself also means
+/// the stripe tells one story — before this, the red save error and the green "Wrote ..." line
+/// rendered at the same time, contradicting each other.
+pub fn guard_save(save: Result<(), String>) -> Result<(), ApplyOutcome> {
+    match save {
+        Ok(()) => Ok(()),
+        Err(message) => Err(ApplyOutcome::Failed(format!(
+            "Could not save the rule store: {message} Nothing was written to the filter."
+        ))),
+    }
+}
+
 /// D-03's short status text. `NeverApplied` and `Unapplied` read identically — both mean "the
 /// written filter does not match these rules" — and `Applied` reads differently in wording, not
 /// just colour, so the signal survives a colourblind or monochrome render (a colour-only signal
@@ -98,6 +127,65 @@ pub fn indicator(state: ApplyState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- guard_save (v0.4 milestone audit, BLOCKER-1) --------------------------
+
+    #[test]
+    fn a_successful_save_lets_apply_proceed_to_the_compile() {
+        assert_eq!(guard_save(Ok(())), Ok(()));
+    }
+
+    #[test]
+    fn a_failed_save_stops_apply_before_it_compiles() {
+        // The regression this exists for: the old code recorded the error and compiled anyway,
+        // which read the PREVIOUS store off disk, wrote it successfully, and reported success.
+        let stopped = guard_save(Err("permission denied".to_string()));
+        assert!(
+            stopped.is_err(),
+            "a failed save must be terminal -- compiling after it builds the filter from the \
+             previous store and then reports success"
+        );
+        assert!(
+            !matches!(stopped, Err(ApplyOutcome::Written(_))),
+            "a failed save can never produce a Written outcome"
+        );
+    }
+
+    #[test]
+    fn the_failure_names_the_store_as_the_thing_that_could_not_be_written() {
+        // The player has to be able to tell "your rules are not saved" from "the filter did not
+        // get written" -- they imply completely different recovery.
+        let Err(ApplyOutcome::Failed(message)) = guard_save(Err("disk full".to_string())) else {
+            panic!("expected a Failed outcome");
+        };
+        assert!(message.contains("disk full"), "must quote the underlying cause: {message}");
+        assert!(
+            message.to_lowercase().contains("store"),
+            "must say it was the store that failed: {message}"
+        );
+        assert!(
+            message.to_lowercase().contains("nothing was written"),
+            "must say the filter was left alone: {message}"
+        );
+    }
+
+    #[test]
+    fn a_failed_apply_never_advances_the_state_to_applied() {
+        // Pairs with the guard: the outcome is only half of it. The indicator must keep saying
+        // the filter is out of date, from every prior state.
+        for state in [ApplyState::NeverApplied, ApplyState::Unapplied, ApplyState::Applied] {
+            assert_eq!(
+                state.on_apply_failure(),
+                state,
+                "a failure must leave {state:?} exactly as it was"
+            );
+        }
+        assert_eq!(
+            indicator(ApplyState::NeverApplied.on_apply_failure()),
+            indicator(ApplyState::NeverApplied),
+            "the player must still be told the filter does not match their rules"
+        );
+    }
 
     #[test]
     fn success_message_names_the_written_path_and_contains_the_exact_reload_instruction() {

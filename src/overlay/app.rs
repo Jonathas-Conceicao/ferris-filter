@@ -490,10 +490,20 @@ impl eframe::App for OverlayApp {
                         {
                             config.rules = Some(working.to_rules());
                         }
-                        if let Some(config) = &self.config {
-                            if let Err(message) = store::save(config, &self.store_path) {
-                                self.last_save_error = Some(message);
-                            }
+                        // A failed save is TERMINAL -- `apply::guard_save` turns it into the
+                        // outcome, and the compile below is then structurally unreachable. It has
+                        // to be: `compile_store` reads dynamic.json back from disk, so compiling
+                        // after a failed save builds the filter from the PREVIOUS store, writes it
+                        // successfully, and reports success -- while advancing `baseline` and
+                        // clearing `dirty`, destroying the only copy of the edits. That is the
+                        // v0.4 milestone audit's BLOCKER-1; the save result is no longer merely
+                        // recorded and stepped over.
+                        let save = match &self.config {
+                            Some(config) => store::save(config, &self.store_path),
+                            None => Ok(()),
+                        };
+                        if let Err(message) = &save {
+                            self.last_save_error = Some(message.clone());
                         }
 
                         let store_dir = self
@@ -502,27 +512,35 @@ impl eframe::App for OverlayApp {
                             .unwrap_or_else(|| std::path::Path::new("."));
                         let paths = InputPaths::relative_to(store_dir);
 
-                        let outcome = match dynamic::compile_store(&paths, &self.store_path) {
-                            Ok(compiled) => match dynamic::default_destination() {
-                                Some(dest_dir) => match dynamic::write_filter(&dest_dir, &compiled.text)
-                                {
-                                    Ok(written) => ApplyOutcome::Written(written),
-                                    Err(err) => ApplyOutcome::Failed(err.to_string()),
+                        let outcome = match apply::guard_save(save) {
+                            Err(stopped) => stopped,
+                            Ok(()) => match dynamic::compile_store(&paths, &self.store_path) {
+                                Ok(compiled) => match dynamic::default_destination() {
+                                    Some(dest_dir) => {
+                                        match dynamic::write_filter(&dest_dir, &compiled.text) {
+                                            Ok(written) => ApplyOutcome::Written(written),
+                                            Err(err) => ApplyOutcome::Failed(err.to_string()),
+                                        }
+                                    }
+                                    // D-17: an unresolvable default destination is a rendered
+                                    // failure, not a panic -- USERPROFILE is unset off Windows,
+                                    // and this codebase has no `--dest`-style override UI this
+                                    // phase (out of scope).
+                                    None => ApplyOutcome::Failed(
+                                        "Cannot resolve the default PoE2 config folder \
+                                         (USERPROFILE is not set)."
+                                            .to_string(),
+                                    ),
                                 },
-                                // D-17: an unresolvable default destination is a rendered failure,
-                                // not a panic -- USERPROFILE is unset off Windows, and this codebase
-                                // has no `--dest`-style override UI this phase (out of scope).
-                                None => ApplyOutcome::Failed(
-                                    "Cannot resolve the default PoE2 config folder \
-                                     (USERPROFILE is not set)."
-                                        .to_string(),
-                                ),
+                                Err(err) => ApplyOutcome::Failed(err.to_string()),
                             },
-                            Err(err) => ApplyOutcome::Failed(err.to_string()),
                         };
 
                         match outcome {
                             ApplyOutcome::Written(written) => {
+                                // Only reachable when the save succeeded, so clearing the stale
+                                // save error here cannot hide a live one.
+                                self.last_save_error = None;
                                 self.apply_message = Some(apply::success_message(&written));
                                 self.apply_state = self.apply_state.on_apply_success();
                                 if let Ok(working) = self.rules.as_ref() {

@@ -310,15 +310,16 @@ Local, offline-config tool; `security_enforcement` is not disabled but the attac
 | A2 | Silently ignoring a legacy inline `styles` section is acceptable (vs warn or error) | Architecture | User loses `craftable` from local dynamic.json unnoticed; decision for user |
 | A3 | Case-insensitive shadow check on required names is wanted | Validation | Over-strict rejection of a style like `s`; PITFALLS §23 recommends it |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Legacy inline `styles` handling**
    - Known: the user's `dynamic.json` carries `craftable`; `ssf_*` configs carry inline styles.
    - Unclear: silent ignore vs warning vs hard error.
    - Recommendation: silent ignore plus a one-line note in the CLAUDE.md/CHANGELOG; hard error is more faithful to "clear error" but breaks the overlay's existing store on first launch.
-2. **Should `--styles` be added?** CONTEXT leaves it to the planner. Recommendation: yes on `generate` and `apply` — one `with_styles` method and one clap arg; it also removes the need to say "unsupported" for ssf configs.
-3. **Duplicate keys in styles.json** are swallowed by `IndexMap` deserialization. Recommendation: accept the gap unless a custom visitor is cheap; note in the plan.
-4. **Rule-reference check location** (loader vs `load_inputs`). Recommendation: `load_inputs`, since both configs (static and dynamic) pass through it.
+   - **RESOLVED (OD-1):** hard load error naming the file, overriding the silent-ignore recommendation. Phase 18 removes `dynamic.json` anyway.
+2. **Should `--styles` be added?** CONTEXT leaves it to the planner. Recommendation: yes on `generate` and `apply` — one `with_styles` method and one clap arg; it also removes the need to say "unsupported" for ssf configs. **RESOLVED (OD-2):** added on `generate` and `apply`.
+3. **Duplicate keys in styles.json** are swallowed by `IndexMap` deserialization. Recommendation: accept the gap unless a custom visitor is cheap; note in the plan. **RESOLVED (OD-3):** rejected at load by a custom visitor naming the duplicate.
+4. **Rule-reference check location** (loader vs `load_inputs`). Recommendation: `load_inputs`, since both configs (static and dynamic) pass through it. **RESOLVED:** `compile::load_inputs` (`check_rules`).
 
 ## Sources
 

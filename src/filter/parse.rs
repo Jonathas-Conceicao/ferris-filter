@@ -4,6 +4,8 @@
 //! serialization stays the raw lines. Grammar problems become diagnostics, never errors (D-10,
 //! D-12). Comments are ordinary comments; only GGG's grammar is interpreted (D-04).
 
+use std::borrow::Cow;
+
 use super::block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
 use super::diag::{FilterDiagnostic, Severity};
 use super::disabled;
@@ -84,7 +86,24 @@ pub(crate) fn build(ls: &[Line], next_id: &mut u64) -> (Vec<Item>, Vec<FilterDia
 
         // Disabled (commented-out) block?
         if is_comment_line(text) {
-            if let Some(d) = disabled::detect(ls, i) {
+            if let Some(mut d) = disabled::detect(ls, i) {
+                if d.state == DisabledState::Valid {
+                    // can_enable() must agree with set_enabled(true): enabled, the block has to
+                    // cover exactly the same lines.
+                    let e = enabled_extent(ls, i, d.end);
+                    if e != d.end {
+                        let message = if e > d.end {
+                            "enabled, the block would also take the lines below it".to_string()
+                        } else {
+                            format!("enabled, the block would end at line {e}")
+                        };
+                        d.state = DisabledState::Invalid(vec![FilterDiagnostic {
+                            line: d.end.min(e) + 1,
+                            severity: Severity::Warning,
+                            message,
+                        }]);
+                    }
+                }
                 let start = lead_start(ls, pending, i);
                 flush(&mut items, pending, start);
                 if let DisabledState::Invalid(reasons) = &d.state {
@@ -210,19 +229,30 @@ pub(crate) fn build(ls: &[Line], next_id: &mut u64) -> (Vec<Item>, Vec<FilterDia
 }
 
 /// Collect the body of the live block whose header is line `h`. Returns the body and the
-/// exclusive end (one past the last keyword line, or past a directly following run of
-/// commented-out body lines).
+/// exclusive end (one past the last keyword line, or past the trailing run of commented-out body
+/// lines described below).
 fn scan_live_body(
     ls: &[Line],
     h: usize,
     diags: &mut Vec<FilterDiagnostic>,
 ) -> (Vec<BodyLine>, usize) {
-    let n = ls.len();
+    scan_live_body_with(ls.len(), |k| Cow::Borrowed(ls[k].text()), h, diags)
+}
+
+/// [`scan_live_body`] over an arbitrary line view of `n` lines, so a disabled block's extent once
+/// enabled can be computed without building the enabled lines (`enabled_extent`).
+fn scan_live_body_with<'a>(
+    n: usize,
+    text_at: impl Fn(usize) -> Cow<'a, str>,
+    h: usize,
+    diags: &mut Vec<FilterDiagnostic>,
+) -> (Vec<BodyLine>, usize) {
     let mut body = Vec::new();
     let mut end = h + 1;
     let mut k = h + 1;
     while k < n {
-        let text = ls[k].text();
+        let text = text_at(k);
+        let text = text.as_ref();
         if is_comment_line(text) {
             if disabled::is_header(text) {
                 break;
@@ -272,16 +302,46 @@ fn scan_live_body(
         }
         k += 1;
     }
-    // A commented-out body line (`#\tSetFontSize 40`) directly after the last keyword line belongs
-    // to this block, not to the next block's leading comments (WR-03). `disabled::detect` applies
-    // the same rule one `#` deeper, so disabling and enabling keep the same extent. The run must be
-    // laid out like the block's own last body line (`disabled::classify_inner`), so a heading such
-    // as `# Corrupted items` stays with the block below.
-    let est = (end > h + 1).then(|| disabled::lead_ws(ls[end - 1].text()));
-    while end < n && disabled::is_commented_body(ls[end].text(), end, est) {
-        end += 1;
+    // Trailing run (WR-03): the comment lines directly after the last keyword line are scanned
+    // until the first line that is not a comment or is a heading/prose. A
+    // commented-out body line laid out like this block's body (`#\tSetFontSize 40`, see
+    // `disabled::classify_inner`) extends the block, together with any neutral comment lines
+    // (`#`, `## ...`) before it. `disabled::detect` applies the same rule one `#` deeper, so
+    // disabling and enabling keep the same extent, and a heading such as `# Corrupted items`
+    // stays with the block below.
+    let last = (end > h + 1).then(|| text_at(end - 1));
+    let est = last.as_deref().map(disabled::lead_ws);
+    let mut j = end;
+    while j < n {
+        let text = text_at(j);
+        let text = text.as_ref();
+        let Some(inner) = disabled::uncomment_once(text) else {
+            break;
+        };
+        match disabled::classify_inner(text, inner, j, est) {
+            disabled::Inner::Neutral => {}
+            disabled::Inner::Body { .. } => end = j + 1,
+            disabled::Inner::Header | disabled::Inner::Prose => break,
+        }
+        j += 1;
     }
     (body, end)
+}
+
+/// Where the disabled block with header `h` and current extent `h..end` would end once enabled
+/// (one `#` removed from each owned line). `disabled::detect` mirrors the live rules, and this is
+/// the check that it did: a block whose enabled extent differs is not enableable.
+fn enabled_extent(ls: &[Line], h: usize, end: usize) -> usize {
+    let mut scratch = Vec::new();
+    let view = |k: usize| {
+        let t = ls[k].text();
+        if (h..end).contains(&k) {
+            disabled::enabled_text(t)
+        } else {
+            Cow::Borrowed(t)
+        }
+    };
+    scan_live_body_with(ls.len(), view, h, &mut scratch).1
 }
 
 #[cfg(test)]

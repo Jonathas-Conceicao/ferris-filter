@@ -6,6 +6,8 @@
 //! keyword and stays an ordinary comment. The inner lines go through the same tokenizer and shape
 //! validator as live lines; failures make the block `Invalid` (kept byte-for-byte), never an error.
 
+use std::borrow::Cow;
+
 use super::block::{BlockKeyword, BodyLine, DisabledState};
 use super::diag::{FilterDiagnostic, Severity};
 use super::keywords::{lookup, Keyword, Kind};
@@ -56,8 +58,9 @@ pub(crate) enum Inner {
         line: BodyLine,
         problem: Option<String>,
     },
-    /// Not grammar, or not laid out like this block's body: an ordinary comment.
-    Prose(String),
+    /// Not grammar, or not laid out like this block's body: an ordinary comment that ends the
+    /// block (it belongs to whatever follows).
+    Prose,
 }
 
 /// Leading spaces/tabs of `s`.
@@ -100,7 +103,6 @@ fn body_or_prose(
     keyword: Option<&'static Keyword>,
     tokens: Option<TokenizedLine>,
     problem: Option<String>,
-    prose: impl FnOnce() -> String,
 ) -> Inner {
     if indent_ok(inner, problem.is_none(), est) {
         Inner::Body {
@@ -112,7 +114,7 @@ fn body_or_prose(
             },
         }
     } else {
-        Inner::Prose(prose())
+        Inner::Prose
     }
 }
 
@@ -131,26 +133,22 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize, est: Option<&str
                         Inner::Header
                     } else {
                         // A header word with trailing text: enabled, it would start a new block.
-                        Inner::Prose(format!("`{word}` would start a new block"))
+                        Inner::Prose
                     }
                 }
                 // Enabled, an `Import` would end the block early.
                 Some(kw) if kw.kind == Kind::Directive => {
-                    Inner::Prose(format!("`{}` cannot appear inside a block", kw.name))
+                    Inner::Prose
                 }
                 Some(kw) => {
                     let problem = validate_shape(kw, inner, &t).err();
-                    body_or_prose(inner, k, est, Some(kw), Some(t), problem, || {
-                        format!("`{word}` line is not laid out like the block body")
-                    })
+                    body_or_prose(inner, k, est, Some(kw), Some(t), problem)
                 }
                 // Body-indented (`#\tFutureKw 3`): a disabled unknown-keyword line, owned like the
                 // live line it came from (WR-02) but never enableable.
                 None => {
                     let problem = Some(format!("unknown keyword `{word}`"));
-                    body_or_prose(inner, k, est, None, Some(t), problem, || {
-                        format!("`{word}` is not filter grammar")
-                    })
+                    body_or_prose(inner, k, est, None, Some(t), problem)
                 }
             }
         }
@@ -165,70 +163,82 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize, est: Option<&str
             let kw = lookup(&word);
             match kw {
                 Some(kw) if !matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) => {
-                    Inner::Prose(format!("not filter grammar: {}", e.message))
+                    Inner::Prose
                 }
-                _ => {
-                    let msg = e.message;
-                    let prose = format!("not filter grammar: {msg}");
-                    body_or_prose(inner, k, est, kw, None, Some(msg), || prose)
-                }
+                _ => body_or_prose(inner, k, est, kw, None, Some(e.message)),
             }
         }
     }
 }
 
-/// True when `text` is a commented-out body line of a block whose established body indentation is
-/// `est`: one `#` away from a line that extends that block. A run of these after a live block's
-/// last line belongs to that block (WR-03), so a commented-out condition moves with its rule.
-pub(crate) fn is_commented_body(text: &str, k: usize, est: Option<&str>) -> bool {
-    uncomment_once(text)
-        .is_some_and(|inner| matches!(classify_inner(text, inner, k, est), Inner::Body { .. }))
+/// `text` with exactly one `#` removed (the first one), as `set_enabled(true)` writes it.
+pub(crate) fn enabled_text(text: &str) -> Cow<'_, str> {
+    match text.find('#') {
+        Some(0) => Cow::Borrowed(&text[1..]),
+        Some(p) => {
+            let mut s = text.to_string();
+            s.remove(p);
+            Cow::Owned(s)
+        }
+        None => Cow::Borrowed(text),
+    }
 }
 
+/// Detect the disabled block whose header is line `h`.
+///
+/// The extent mirrors the live rules of `parse::scan_live_body` one `#` deeper:
+/// - a disabled body line (`Inner::Body`) always extends the block, with any neutral lines before
+///   it (they are the disabled form of the live block's interior blank and comment lines);
+/// - a doubly commented-out body line (`##\tKw ...`) extends it only within the trailing run after
+///   the last body line, which a blank (`#`) line or a heading/prose comment closes, just like the
+///   live trailing run;
+/// - the first prose line, header, or uncommented line ends the scan (WR-04). That prose and
+///   anything after it is the next block's leading run or standalone comment text, never part of
+///   this block, so enabling can never turn prose into a live line (CR-01).
 pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
     let keyword = detect_header(ls[h].text())?;
     let mut body = Vec::new();
     let mut reasons: Vec<FilterDiagnostic> = Vec::new();
-    // Non-grammar lines seen after the current `end`. They only become reasons once a later
-    // grammar line pulls them inside the owned range (enabling would turn them into live lines);
-    // trailing prose stays an ordinary comment outside the block.
-    let mut pending: Vec<FilterDiagnostic> = Vec::new();
     // Established body indentation: lead of the last body line's inner text (see `indent_ok`).
     let mut est: Option<&str> = None;
+    // Whether the trailing run after the last body line is still open for `##` body lines.
+    let mut run_open = true;
     let mut end = h + 1;
-    let mut k = h + 1;
-    while k < ls.len() {
-        let text = ls[k].text();
+    for (k, l) in ls.iter().enumerate().skip(h + 1) {
+        let text = l.text();
         let Some(inner) = uncomment_once(text) else {
             break;
         };
-        let reason = |message: String| FilterDiagnostic {
-            line: k + 1,
-            severity: Severity::Warning,
-            message,
-        };
         match classify_inner(text, inner, k, est) {
-            Inner::Header => break,
-            Inner::Neutral => {
-                // A commented-out body line directly after the last owned line (`##\tKw ...`)
-                // mirrors the live rule in `parse::scan_live_body`, so disable/enable keep the
-                // same extent.
-                if k == end && is_commented_body(inner, k, est) {
-                    end = k + 1;
-                }
-            }
-            Inner::Prose(m) => pending.push(reason(m)),
+            Inner::Header | Inner::Prose => break,
+            Inner::Neutral => match uncomment_once(inner) {
+                // `##...`: the disabled form of a live comment line.
+                Some(inner2) => match classify_inner(inner, inner2, k, est) {
+                    Inner::Body { .. } => {
+                        if run_open {
+                            end = k + 1;
+                        }
+                    }
+                    Inner::Neutral => {}
+                    Inner::Header | Inner::Prose => run_open = false,
+                },
+                // `#` alone: the disabled form of a live blank line.
+                None => run_open = false,
+            },
             Inner::Body { line, problem } => {
-                reasons.append(&mut pending);
-                if let Some(m) = problem {
-                    reasons.push(reason(m));
+                if let Some(message) = problem {
+                    reasons.push(FilterDiagnostic {
+                        line: k + 1,
+                        severity: Severity::Warning,
+                        message,
+                    });
                 }
                 body.push(line);
                 est = Some(lead_ws(inner));
+                run_open = true;
                 end = k + 1;
             }
         }
-        k += 1;
     }
     let state = if reasons.is_empty() {
         DisabledState::Valid
@@ -316,45 +326,55 @@ mod tests {
     }
 
     #[test]
-    fn interior_prose_blocks_enabling() {
-        // CR-01: prose between grammar lines would become a live unknown-keyword line.
-        let d = p("#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n");
+    fn prose_ends_disabled_block() {
+        // CR-01 / iteration-2 WR-04: prose after a disabled body line ends the block, exactly as
+        // it ends the live trailing run, so it can never be enabled into a live line. What follows
+        // it is standalone comment text (or the next block's leading run).
+        let src = "#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n";
+        let mut d = p(src);
         let b = d.blocks().next().unwrap();
-        assert_eq!(b.owned(), 0..4);
-        assert!(!b.can_enable());
-        match b.disabled_state().unwrap() {
-            DisabledState::Invalid(r) => {
-                assert_eq!(r.len(), 1);
-                assert_eq!(r[0].line, 3);
-                assert!(r[0].message.contains("`note` is not filter grammar"));
-            }
-            other => panic!("{other:?}"),
-        }
+        assert_eq!(b.owned(), 0..2);
+        assert!(b.can_enable());
+        let id = b.id();
+        d.set_enabled(id, true).unwrap();
+        assert_eq!(
+            d.serialize(),
+            "Show\n\tRarity Rare\n# note here\n#\tClass \"Bows\"\n"
+        );
+        assert_eq!(d.block(id).unwrap().owned(), 0..2);
+        assert!(d.diagnostics().is_empty());
     }
 
     #[test]
     fn can_enable_agrees_with_enable() {
-        // WR-01: tag lines, bare numbers, commented directives and header words with trailing
-        // text inside the owned range make the block un-enableable instead of silently passing.
-        for src in [
-            "#Show\n#\tRarity Rare\n# $tag\n#\tClass \"Bows\"\n",
-            "#Show\n#\tRarity Rare\n#\t123\n#\tClass \"Bows\"\n",
-            "#Show\n#\tRarity Rare\n#Import \"x\"\n#\tClass \"Bows\"\n",
-            "#Show\n#\tRarity Rare\n#Show Continue\n#\tClass \"Bows\"\n",
+        // WR-01 (iteration 1) and iteration-2 WR-04: can_enable() is true exactly when
+        // set_enabled(true) succeeds, and a refused enable leaves the bytes untouched.
+        for (src, owned, enableable) in [
+            ("#Show\n#\tRarity Rare\n# $tag\n#\tClass \"Bows\"\n", 0..2, true),
+            ("#Show\n#\tRarity Rare\n#\t123\n#\tClass \"Bows\"\n", 0..4, false),
+            ("#Show\n#\tRarity Rare\n#Import \"x\"\n#\tClass \"Bows\"\n", 0..2, true),
+            ("#Show\n#\tRarity Rare\n#Show Continue\n#\tClass \"Bows\"\n", 0..2, true),
+            ("#Show\n#\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n", 0..2, true),
+            // Enabled, the stray condition below the blank line would join the block.
+            ("#Show\n#\tRarity Rare\n\n\tClass \"Bows\"\n", 0..2, false),
+            // A blank (`#`) line closes the doubly commented trailing run, as it does live.
+            ("#Show\n#\tRarity Rare\n#\n##\tSetFontSize 40\nHide\n", 0..2, true),
+            ("#Show\n#\tRarity Rare\n## note\n##\tSetFontSize 40\nHide\n", 0..2, true),
+            ("#Show\n#\tRarity Rare\n###\n##\tSetFontSize 40\nHide\n", 0..4, true),
         ] {
             let mut d = p(src);
             let id = d.blocks().next().unwrap().id();
             let b = d.block(id).unwrap();
-            assert_eq!(b.owned(), 0..4, "{src:?}");
-            assert!(!b.can_enable(), "{src:?}");
-            assert!(d.set_enabled(id, true).is_err(), "{src:?}");
-            assert_eq!(d.serialize(), src);
+            assert_eq!(b.owned(), owned, "{src:?}");
+            assert_eq!(b.can_enable(), enableable, "{src:?}");
+            let r = d.set_enabled(id, true);
+            assert_eq!(r.is_ok(), enableable, "{src:?}: {r:?}");
+            if enableable {
+                assert_eq!(d.block(id).unwrap().owned(), owned, "{src:?}");
+            } else {
+                assert_eq!(d.serialize(), src);
+            }
         }
-        // Trailing tag lines stay ordinary comments.
-        let d = p("#Show\n#\tRarity Rare\n# $tag\n");
-        let b = d.blocks().next().unwrap();
-        assert_eq!(b.owned(), 0..2);
-        assert!(b.can_enable());
     }
 
     #[test]

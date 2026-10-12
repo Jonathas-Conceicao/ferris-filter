@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use super::block::{BlockId, DisabledState, Item};
 use super::diag::{FilterDiagnostic, Severity};
+use super::disabled;
 use super::lines::{Eol, Line};
 use super::parse;
 use super::Document;
@@ -149,14 +150,7 @@ impl Document {
         for i in owned {
             let l = &self.lines[i];
             let text = if enabled {
-                match l.text().find('#') {
-                    Some(p) => {
-                        let mut s = l.text().to_string();
-                        s.remove(p);
-                        s
-                    }
-                    None => l.text().to_string(),
-                }
+                disabled::enabled_text(l.text()).into_owned()
             } else {
                 format!("#{}", l.text())
             };
@@ -379,6 +373,8 @@ mod tests {
             "Show\n  Rarity Rare\n  FutureKw 3\nHide\n",
             "Show\n\tRarity Rare\n# Class weapons below\nHide\n",
             "Show\n\tRarity Rare\n#\tSetFontSize 40\nHide\n",
+            // Iteration-2 WR-04: prose then a commented condition is the next block's leading run.
+            "Show\n\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n",
         ] {
             let mut d = p(src);
             let id = ids(&d)[0];
@@ -397,6 +393,75 @@ mod tests {
             Err(EditError::CannotEnable { .. })
         ));
         assert_eq!(s(&d), before);
+    }
+
+    /// Every short document over a pool of tricky lines: for each block, `can_enable()` agrees
+    /// with `set_enabled(true)`, a successful disable re-enables byte-identically when the disabled
+    /// form is enableable, and a refused edit leaves the bytes untouched.
+    #[test]
+    fn exhaustive_small_documents_agree() {
+        const POOL: [&str; 12] = [
+            "\tRarity Rare",
+            "#\tRarity Rare",
+            "#\tSetFontSize 40",
+            "##\tSetFontSize 40",
+            "# note",
+            "# Corrupted items",
+            "#",
+            "",
+            "#\tFutureKw 3",
+            "#ff:name x",
+            "#  Note: x",
+            "\tClass \"Bows\"",
+        ];
+        let mut docs = 0usize;
+        for head in ["Show", "#Show"] {
+            for code in 0..POOL.len().pow(4) {
+                let mut lines = vec![head];
+                let mut c = code;
+                for _ in 0..4 {
+                    lines.push(POOL[c % POOL.len()]);
+                    c /= POOL.len();
+                }
+                lines.push("Hide");
+                let src = lines.join("\n") + "\n";
+                check_agreement(&src);
+                docs += 1;
+            }
+        }
+        assert_eq!(docs, 2 * 12usize.pow(4));
+    }
+
+    fn check_agreement(src: &str) {
+        let d0 = p(src);
+        for id in ids(&d0) {
+            let mut d = d0.clone();
+            let b = d.block(id).unwrap();
+            if b.is_enabled() {
+                match d.set_enabled(id, false) {
+                    Ok(()) => {
+                        if d.block(id).unwrap().can_enable() {
+                            d.set_enabled(id, true)
+                                .unwrap_or_else(|e| panic!("{src:?}: re-enable: {e}"));
+                            assert_eq!(s(&d), src, "re-enable changed bytes");
+                        }
+                    }
+                    Err(_) => assert_eq!(s(&d), src, "refused disable changed bytes"),
+                }
+            } else {
+                let can = b.can_enable();
+                let r = d.set_enabled(id, true);
+                assert_eq!(can, r.is_ok(), "{src:?}: can_enable={can} but {r:?}");
+                match r {
+                    Ok(()) => {
+                        d.set_enabled(id, false)
+                            .unwrap_or_else(|e| panic!("{src:?}: re-disable: {e}"));
+                        assert_eq!(s(&d), src, "re-disable changed bytes");
+                    }
+                    Err(_) => assert_eq!(s(&d), src, "refused enable changed bytes"),
+                }
+            }
+        }
     }
 
     #[test]
@@ -433,28 +498,27 @@ mod tests {
     }
 
     #[test]
-    fn enable_with_interior_prose_refused() {
-        // CR-01: neither a parsed nor a replaced disabled block may enable prose as grammar.
+    fn enable_never_turns_prose_into_grammar() {
+        // CR-01 / iteration-2 WR-04: prose ends a disabled block, so enabling leaves it a comment.
         let src = "#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n";
         let mut d = p(src);
         let id = ids(&d)[0];
+        d.set_enabled(id, true).unwrap();
+        assert_eq!(s(&d), "Show\n\tRarity Rare\n# note here\n#\tClass \"Bows\"\n");
+        assert!(d.diagnostics().is_empty());
+
+        // A replacement whose prose sits between body lines is not one block, so it is refused.
+        let src = "Show\n\tRarity Rare\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
         assert!(matches!(
-            d.set_enabled(id, true),
-            Err(EditError::CannotEnable { .. })
+            d.replace_block_lines(
+                id,
+                vec!["#Show".into(), "# hello world".into(), "#\tRarity Rare".into()],
+            ),
+            Err(EditError::NotOneBlock)
         ));
         assert_eq!(s(&d), src);
-
-        let mut d = p("Show\n\tRarity Rare\n");
-        let id = ids(&d)[0];
-        d.replace_block_lines(
-            id,
-            vec!["#Show".into(), "# hello world".into(), "#\tRarity Rare".into()],
-        )
-        .unwrap();
-        let before = s(&d);
-        assert!(!d.block(id).unwrap().can_enable());
-        assert!(d.set_enabled(id, true).is_err());
-        assert_eq!(s(&d), before);
     }
 
     #[test]

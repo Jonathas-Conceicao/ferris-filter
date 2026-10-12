@@ -451,7 +451,7 @@ mod tests {
             "# Sockets 3 is good",
             "#  Note: these are weapons",
             "#   [[0100]] Section",
-            "#Corrupted True",
+            "# Class weapons below",
         ] {
             let src = format!("Show\n\tRarity Rare\n{heading}\nShow\n\tCorrupted True\n");
             let d = p(&src);
@@ -463,6 +463,12 @@ mod tests {
         let d = p("Show\n  Rarity Rare\n#  SetFontSize 40\n#  FutureKw 3\n# heading\nHide\n");
         assert_eq!(blocks(&d)[0].owned(), 0..4);
         assert_eq!(blocks(&d)[1].leading(), 4..5);
+        // Iteration-3 CR-01: a clean commented condition is a disabled condition at any
+        // indentation, as its live form is a body line at any indentation.
+        for line in ["#Corrupted True", "#    SetFontSize 40", "# Rarity Rare"] {
+            let d = p(&format!("Show\n\tRarity Rare\n{line}\nHide\n"));
+            assert_eq!(blocks(&d)[0].owned(), 0..3, "{line:?}");
+        }
     }
 
     #[test]

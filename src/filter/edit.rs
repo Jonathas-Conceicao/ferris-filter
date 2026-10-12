@@ -28,7 +28,9 @@ pub enum EditError {
     #[error("the replacement would produce an invalid enabled block ({} problem(s))", diagnostics.len())]
     InvalidBlock { diagnostics: Vec<FilterDiagnostic> },
     /// The commented-out form would not read back as this same block, so it could not be enabled
-    /// again unchanged (e.g. a compact header with trailing tokens such as `Show Continue`).
+    /// again unchanged (e.g. a compact header with trailing tokens such as `Show Continue`, or a
+    /// valid block directly followed by a comment line and then a commented condition, which in
+    /// disabled form reads as a rule with a cut-off condition).
     #[error("the block cannot be disabled as-is: its commented-out form would not read back as the same block; fix the block first")]
     CannotDisable,
     #[error("the edit would not leave exactly one block in place")]
@@ -91,6 +93,9 @@ struct Expect {
     owned_len: usize,
     enabled: Option<bool>,
     reject_errors: bool,
+    /// The edited block must come out enableable: disabling a clean live block must never leave a
+    /// disabled rule that cannot be turned back on.
+    enableable: bool,
 }
 
 impl Document {
@@ -131,6 +136,7 @@ impl Document {
                         b.is_enabled(),
                         b.lead_start,
                         b.end,
+                        b.can_enable(),
                     ));
                 }
                 idx += 1;
@@ -139,10 +145,13 @@ impl Document {
         if idx != old_ids.len() {
             return Err(Fail::Structure);
         }
-        let Some((header, owned_len, enabled, lead, end)) = span else {
+        let Some((header, owned_len, enabled, lead, end, can_enable)) = span else {
             return Err(Fail::Structure);
         };
         if header != ex.header || owned_len != ex.owned_len {
+            return Err(Fail::Structure);
+        }
+        if ex.enableable && !can_enable {
             return Err(Fail::Structure);
         }
         if ex.enabled.is_some_and(|e| e != enabled) {
@@ -216,11 +225,22 @@ impl Document {
             return Err(EditError::CannotEnable { reasons });
         }
         let owned = b.owned();
+        // A live block with no Error/Warning diagnostic in its span is valid grammar, so its
+        // disabled form must read back as an enableable rule. Otherwise disabling would strand it
+        // (iteration-3 CR-01: e.g. a comment line followed by a commented condition right below
+        // the block, which in disabled form reads as a rule with a dropped condition).
+        let clean = !enabled
+            && !self.diagnostics.iter().any(|d| {
+                matches!(d.severity, Severity::Error | Severity::Warning)
+                    && d.line > owned.start
+                    && d.line <= owned.end
+            });
         let ex = Expect {
             header: b.header_line(),
             owned_len: owned.len(),
             enabled: Some(enabled),
             reject_errors: enabled,
+            enableable: clean,
         };
         let mut new_lines = self.lines.clone();
         for i in owned {
@@ -302,6 +322,7 @@ impl Document {
             owned_len: n,
             enabled: None,
             reject_errors: false,
+            enableable: false,
         };
         self.commit(lines, pos, ex).map_err(|f| match f {
             Fail::Structure => EditError::NotOneBlock,
@@ -354,6 +375,7 @@ impl Document {
             owned_len,
             enabled: None,
             reject_errors: false,
+            enableable: false,
         };
         self.commit(lines, pos, ex)
             .map_err(|_| EditError::WouldReattributeLines)
@@ -384,6 +406,7 @@ impl Document {
             owned_len,
             enabled: None,
             reject_errors: false,
+            enableable: false,
         };
         self.commit(lines, pos, ex)
             .map_err(|_| EditError::WouldReattributeLines)
@@ -453,8 +476,6 @@ mod tests {
             "Show\n  Rarity Rare\n  FutureKw 3\nHide\n",
             "Show\n\tRarity Rare\n# Class weapons below\nHide\n",
             "Show\n\tRarity Rare\n#\tSetFontSize 40\nHide\n",
-            // Iteration-2 WR-04: prose then a commented condition is the next block's leading run.
-            "Show\n\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n",
         ] {
             let mut d = p(src);
             let id = ids(&d)[0];
@@ -462,6 +483,14 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{src:?}: {e}"));
             assert!(!d.block(id).unwrap().is_enabled(), "{src:?}");
         }
+        // Iteration-3 CR-01: prose then a commented condition is the next block's leading run.
+        // Disabled, the text would read as a rule whose condition was cut off, which cannot be
+        // enabled; a clean block is never disabled into that, so the disable is refused.
+        let src = "Show\n\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        assert!(matches!(d.set_enabled(id, false), Err(EditError::CannotDisable)));
+        assert_eq!(s(&d), src);
         // Enabling the disabled unknown-keyword block back is refused, bytes untouched.
         let mut d = p("Show\n\tRarity Rare\n\tFutureKw 3\n");
         let id = ids(&d)[0];
@@ -481,7 +510,10 @@ mod tests {
     /// leaves the bytes untouched.
     #[test]
     fn exhaustive_small_documents_agree() {
-        const POOL: [&str; 12] = [
+        // Tab-, space-, mixed- and un-indented lines (iteration-3 CR-01 / WR-01), prose that can
+        // sit between conditions (`# note`, `# Corrupted items`, `#  Note: x`), and the header-only
+        // heading shapes of iteration-3 WR-02.
+        const POOL: [&str; 16] = [
             "\tRarity Rare",
             "#\tRarity Rare",
             "#\tSetFontSize 40",
@@ -494,6 +526,10 @@ mod tests {
             "#ff:name x",
             "#  Note: x",
             "\tClass \"Bows\"",
+            "    Class \"Bows\"",
+            "#    Class \"Bows\"",
+            "#Rarity Rare",
+            "Rarity Rare",
         ];
         let mut docs = 0usize;
         for head in ["Show", "#Show"] {
@@ -510,7 +546,49 @@ mod tests {
                 docs += 1;
             }
         }
-        assert_eq!(docs, 2 * 12usize.pow(4));
+        assert_eq!(docs, 2 * 16usize.pow(4));
+    }
+
+    /// Clean commented grammar lines (any indentation) in the run of commented lines below the
+    /// disabled header `h`, up to a header, a `#ff:` line or a non-comment line: the conditions and
+    /// actions a reader takes the rule to contain.
+    fn commented_conditions(d: &Document, h: usize) -> usize {
+        let mut n = 0;
+        for j in h + 1..d.line_count() {
+            let text = d.line_text(j);
+            let Some(inner) = disabled::uncomment_once(text) else {
+                break;
+            };
+            if d.line_at(j).ff_marker().is_some() {
+                break;
+            }
+            match disabled::classify_inner(text, inner, j, None) {
+                disabled::Inner::Header => break,
+                disabled::Inner::Body { problem: None, .. } => n += 1,
+                _ => {}
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn enable_never_drops_a_commented_condition() {
+        // Iteration-3 CR-01: the review's inputs, enabled whole or refused.
+        for src in [
+            "#Show\n#\tRarity Rare\n#    Class \"Bows\"\n",
+            "#Show\n#Rarity Rare\n#\tClass \"Bows\"\n",
+            "#Hide\n#\tRarity Normal\n# only these bases\n#\tBaseType == \"X\"\n",
+            "#Hide\n#\tRarity Normal\n# Corrupted items\n#\n#\tBaseType == \"X\"\nShow\n",
+        ] {
+            let mut d = p(src);
+            let id = ids(&d)[0];
+            let want = commented_conditions(&d, 0);
+            match d.set_enabled(id, true) {
+                Ok(()) => assert!(d.block(id).unwrap().body().len() >= want, "{src:?}"),
+                Err(EditError::CannotEnable { .. }) => assert_eq!(s(&d), src),
+                Err(e) => panic!("{src:?}: {e}"),
+            }
+        }
     }
 
     /// Line ranges of every block other than `skip`, as `(leading start, end)`.
@@ -558,8 +636,16 @@ mod tests {
             let mut d = d0.clone();
             let b = d.block(id).unwrap();
             if b.is_enabled() {
+                let owned = b.owned();
+                let clean = !d.diagnostics().iter().any(|x| {
+                    matches!(x.severity, Severity::Error | Severity::Warning)
+                        && x.line > owned.start
+                        && x.line <= owned.end
+                });
                 match d.set_enabled(id, false) {
                     Ok(()) => {
+                        // A clean block is never disabled into a rule that cannot be enabled back.
+                        assert!(!clean || d.block(id).unwrap().can_enable(), "{src:?}");
                         if d.block(id).unwrap().can_enable() {
                             d.set_enabled(id, true)
                                 .unwrap_or_else(|e| panic!("{src:?}: re-enable: {e}"));
@@ -570,10 +656,15 @@ mod tests {
                 }
             } else {
                 let can = b.can_enable();
+                let want = commented_conditions(&d, b.header_line());
                 let r = d.set_enabled(id, true);
                 assert_eq!(can, r.is_ok(), "{src:?}: can_enable={can} but {r:?}");
                 match r {
                     Ok(()) => {
+                        // Iteration-3 CR-01: enabling never writes a rule with fewer conditions
+                        // than the commented run it came from.
+                        let got = d.block(id).unwrap().body().len();
+                        assert!(got >= want, "{src:?}: enabled {got} body lines, text has {want}");
                         d.set_enabled(id, false)
                             .unwrap_or_else(|e| panic!("{src:?}: re-disable: {e}"));
                         assert_eq!(s(&d), src, "re-disable changed bytes");
@@ -620,12 +711,21 @@ mod tests {
     #[test]
     fn enable_never_turns_prose_into_grammar() {
         // CR-01 / iteration-2 WR-04: prose ends a disabled block, so enabling leaves it a comment.
-        let src = "#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n";
+        let src = "#Show\n#\tRarity Rare\n# note here\n#\tSetFontSize 40 extra\n";
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_enabled(id, true).unwrap();
-        assert_eq!(s(&d), "Show\n\tRarity Rare\n# note here\n#\tClass \"Bows\"\n");
+        assert_eq!(s(&d), "Show\n\tRarity Rare\n# note here\n#\tSetFontSize 40 extra\n");
         assert!(d.diagnostics().is_empty());
+        // Iteration-3 CR-01: a clean condition below the prose would be dropped, so refuse.
+        let src = "#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        assert!(matches!(
+            d.set_enabled(id, true),
+            Err(EditError::CannotEnable { .. })
+        ));
+        assert_eq!(s(&d), src);
 
         // A replacement whose prose sits between body lines is not one block, so it is refused.
         let src = "Show\n\tRarity Rare\n";

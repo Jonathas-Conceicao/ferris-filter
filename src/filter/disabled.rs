@@ -8,7 +8,7 @@
 
 use super::block::{BlockKeyword, BodyLine, DisabledState};
 use super::diag::{FilterDiagnostic, Severity};
-use super::keywords::{lookup, Keyword, Kind, ValueShape};
+use super::keywords::{lookup, Keyword, Kind};
 use super::lines::Line;
 use super::parse::block_keyword;
 use super::tokenize::{tokenize, validate_shape, TokenizedLine};
@@ -56,9 +56,13 @@ pub(crate) enum Inner {
         line: BodyLine,
         problem: Option<String>,
     },
-    /// Not grammar. Owned only when a later body line pulls it inside the range, and then it
-    /// blocks enabling.
+    /// Not grammar, or not laid out like this block's body: an ordinary comment.
     Prose(String),
+}
+
+/// Leading spaces/tabs of `s`.
+pub(crate) fn lead_ws(s: &str) -> &str {
+    &s[..s.len() - s.trim_start_matches([' ', '\t']).len()]
 }
 
 /// Body-style indentation after the `#` (tab or at least two spaces), as `disable` produces from an
@@ -67,17 +71,54 @@ fn body_indented(inner: &str) -> bool {
     inner.starts_with('\t') || inner.starts_with("  ")
 }
 
-/// A `QuotedList` line with several values of which some are unquoted, and no body-style
-/// indentation after the `#`, reads as prose: `# Class weapons below`.
-fn prose_shaped(kw: &Keyword, inner: &str, t: &TokenizedLine) -> bool {
-    kw.value == ValueShape::QuotedList
-        && !body_indented(inner)
-        && t.values.len() >= 2
-        && t.values.iter().any(|v| !inner[v.clone()].starts_with('"'))
+/// The one rule (shared by the live trailing run and disabled-block detection) deciding whether a
+/// commented line that is not a header reads as a disabled body line of the current block.
+///
+/// `est` is the established body indentation: the leading whitespace of the block's previous body
+/// line (live text, or the text after the `#` for a disabled block), `None` before the first one.
+/// - Once established, the line must be indented exactly like it. A line with a problem (bad
+///   values, unknown keyword, untokenizable) must additionally be indented at all: an unindented
+///   `#Note here` under an unindented body is prose.
+/// - Before the first body line, a clean grammar line counts at any indentation; a line with a
+///   problem only when body-indented (tab or two spaces).
+///
+/// So `# Corrupted items` under a tab-indented body, `#  Note: x` under a tab-indented body, and
+/// `# Quality gear below` directly under a header are all prose, while the disabled form of any
+/// live body line laid out like its neighbours is a body line.
+fn indent_ok(inner: &str, clean: bool, est: Option<&str>) -> bool {
+    let lead = lead_ws(inner);
+    match est {
+        Some(e) => lead == e && (clean || !lead.is_empty()),
+        None => clean || body_indented(inner),
+    }
 }
 
-/// Classify the inner text of the `#`-prefixed line `text` at 0-based line `k`.
-pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
+fn body_or_prose(
+    inner: &str,
+    k: usize,
+    est: Option<&str>,
+    keyword: Option<&'static Keyword>,
+    tokens: Option<TokenizedLine>,
+    problem: Option<String>,
+    prose: impl FnOnce() -> String,
+) -> Inner {
+    if indent_ok(inner, problem.is_none(), est) {
+        Inner::Body {
+            problem,
+            line: BodyLine {
+                line: k,
+                keyword,
+                tokens,
+            },
+        }
+    } else {
+        Inner::Prose(prose())
+    }
+}
+
+/// Classify the inner text of the `#`-prefixed line `text` at 0-based line `k`, given the block's
+/// established body indentation `est` (see [`indent_ok`]).
+pub(crate) fn classify_inner(text: &str, inner: &str, k: usize, est: Option<&str>) -> Inner {
     match tokenize(inner) {
         Ok(t) => {
             let Some(r) = t.keyword.clone() else {
@@ -85,18 +126,6 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
             };
             let word = &inner[r];
             match lookup(word) {
-                // Body-indented (`#\tFutureKw 3`): a disabled unknown-keyword line, owned like the
-                // live line it came from (WR-02) but never enableable.
-                None if body_indented(inner) => Inner::Body {
-                    problem: Some(format!("unknown keyword `{word}`")),
-                    line: BodyLine {
-                        line: k,
-                        keyword: None,
-                        tokens: Some(t),
-                    },
-                },
-                // Enabling would produce a live unknown-keyword line.
-                None => Inner::Prose(format!("`{word}` is not filter grammar")),
                 Some(kw) if kw.kind == Kind::BlockHeader => {
                     if is_header(text) {
                         Inner::Header
@@ -109,58 +138,51 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
                 Some(kw) if kw.kind == Kind::Directive => {
                     Inner::Prose(format!("`{}` cannot appear inside a block", kw.name))
                 }
-                Some(kw) if prose_shaped(kw, inner, &t) => {
-                    Inner::Prose(format!("`{word}` line reads as prose, not filter grammar"))
+                Some(kw) => {
+                    let problem = validate_shape(kw, inner, &t).err();
+                    body_or_prose(inner, k, est, Some(kw), Some(t), problem, || {
+                        format!("`{word}` line is not laid out like the block body")
+                    })
                 }
-                Some(kw) => Inner::Body {
-                    problem: validate_shape(kw, inner, &t).err(),
-                    line: BodyLine {
-                        line: k,
-                        keyword: Some(kw),
-                        tokens: Some(t),
-                    },
-                },
+                // Body-indented (`#\tFutureKw 3`): a disabled unknown-keyword line, owned like the
+                // live line it came from (WR-02) but never enableable.
+                None => {
+                    let problem = Some(format!("unknown keyword `{word}`"));
+                    body_or_prose(inner, k, est, None, Some(t), problem, || {
+                        format!("`{word}` is not filter grammar")
+                    })
+                }
             }
         }
         Err(e) => {
-            // A malformed line extends the block when it starts with a known grammar word, or
-            // when it is body-indented (`#\t123`, the disabled form of a bad live body line).
-            // Otherwise (`# $tag`) it is prose.
+            // A malformed line (`#\t123`, the disabled form of a bad live body line) extends the
+            // block only when laid out like a body line; otherwise (`# $tag`) it is prose.
             let word: String = inner
                 .trim_start_matches([' ', '\t'])
                 .chars()
                 .take_while(|c| c.is_ascii_alphabetic())
                 .collect();
-            match lookup(&word) {
-                Some(kw) if matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) => {
-                    Inner::Body {
-                        problem: Some(e.message),
-                        line: BodyLine {
-                            line: k,
-                            keyword: Some(kw),
-                            tokens: None,
-                        },
-                    }
+            let kw = lookup(&word);
+            match kw {
+                Some(kw) if !matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) => {
+                    Inner::Prose(format!("not filter grammar: {}", e.message))
                 }
-                None if body_indented(inner) => Inner::Body {
-                    problem: Some(e.message),
-                    line: BodyLine {
-                        line: k,
-                        keyword: None,
-                        tokens: None,
-                    },
-                },
-                _ => Inner::Prose(format!("not filter grammar: {}", e.message)),
+                _ => {
+                    let msg = e.message;
+                    let prose = format!("not filter grammar: {msg}");
+                    body_or_prose(inner, k, est, kw, None, Some(msg), || prose)
+                }
             }
         }
     }
 }
 
-/// True when `text` is a commented-out body line: one `#` away from a line that extends a block.
-/// A run of these directly after a block's last line belongs to that block (WR-03), so a
-/// commented-out condition moves with its rule instead of becoming the next block's comment.
-pub(crate) fn is_commented_body(text: &str, k: usize) -> bool {
-    uncomment_once(text).is_some_and(|inner| matches!(classify_inner(text, inner, k), Inner::Body { .. }))
+/// True when `text` is a commented-out body line of a block whose established body indentation is
+/// `est`: one `#` away from a line that extends that block. A run of these after a live block's
+/// last line belongs to that block (WR-03), so a commented-out condition moves with its rule.
+pub(crate) fn is_commented_body(text: &str, k: usize, est: Option<&str>) -> bool {
+    uncomment_once(text)
+        .is_some_and(|inner| matches!(classify_inner(text, inner, k, est), Inner::Body { .. }))
 }
 
 pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
@@ -171,6 +193,8 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
     // grammar line pulls them inside the owned range (enabling would turn them into live lines);
     // trailing prose stays an ordinary comment outside the block.
     let mut pending: Vec<FilterDiagnostic> = Vec::new();
+    // Established body indentation: lead of the last body line's inner text (see `indent_ok`).
+    let mut est: Option<&str> = None;
     let mut end = h + 1;
     let mut k = h + 1;
     while k < ls.len() {
@@ -183,13 +207,13 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
             severity: Severity::Warning,
             message,
         };
-        match classify_inner(text, inner, k) {
+        match classify_inner(text, inner, k, est) {
             Inner::Header => break,
             Inner::Neutral => {
                 // A commented-out body line directly after the last owned line (`##\tKw ...`)
                 // mirrors the live rule in `parse::scan_live_body`, so disable/enable keep the
                 // same extent.
-                if k == end && is_commented_body(inner, k) {
+                if k == end && is_commented_body(inner, k, est) {
                     end = k + 1;
                 }
             }
@@ -200,6 +224,7 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                     reasons.push(reason(m));
                 }
                 body.push(line);
+                est = Some(lead_ws(inner));
                 end = k + 1;
             }
         }
@@ -330,6 +355,39 @@ mod tests {
         let b = d.blocks().next().unwrap();
         assert_eq!(b.owned(), 0..2);
         assert!(b.can_enable());
+    }
+
+    #[test]
+    fn headings_with_grammar_words_do_not_invalidate_disabled_rules() {
+        // Iteration-2 WR-01: a heading that starts with a grammar word (or is indented unlike the
+        // body) is not a disabled condition, so a valid disabled rule stays enableable.
+        for heading in [
+            "# Corrupted items",
+            "# Quality gear below",
+            "# ItemLevel >= 80 only",
+            "# Continue below",
+            "# Sockets 3 is good",
+            "#  Note: these are weapons",
+            "#   [[0100]] Section",
+        ] {
+            let src = format!("#Show\n#\tRarity Rare\n{heading}\nShow\n");
+            let mut d = p(&src);
+            let b: Vec<_> = d.blocks().collect();
+            assert_eq!(b[0].owned(), 0..2, "{heading:?}");
+            assert!(b[0].can_enable(), "{heading:?}");
+            assert_eq!(b[1].leading(), 2..3, "{heading:?}");
+            let id = b[0].id();
+            d.set_enabled(id, true)
+                .unwrap_or_else(|e| panic!("{heading:?}: {e}"));
+            assert_eq!(
+                d.serialize(),
+                format!("Show\n\tRarity Rare\n{heading}\nShow\n")
+            );
+        }
+        // Directly under a header (no body yet), a line with a problem must be body-indented.
+        let d = p("#Show\n# Corrupted items\nShow\n");
+        assert_eq!(d.blocks().next().unwrap().owned(), 0..1);
+        assert!(d.blocks().next().unwrap().can_enable());
     }
 
     #[test]

@@ -274,8 +274,11 @@ fn scan_live_body(
     }
     // A commented-out body line (`#\tSetFontSize 40`) directly after the last keyword line belongs
     // to this block, not to the next block's leading comments (WR-03). `disabled::detect` applies
-    // the same rule one `#` deeper, so disabling and enabling keep the same extent.
-    while end < n && disabled::is_commented_body(ls[end].text(), end) {
+    // the same rule one `#` deeper, so disabling and enabling keep the same extent. The run must be
+    // laid out like the block's own last body line (`disabled::classify_inner`), so a heading such
+    // as `# Corrupted items` stays with the block below.
+    let est = (end > h + 1).then(|| disabled::lead_ws(ls[end - 1].text()));
+    while end < n && disabled::is_commented_body(ls[end].text(), end, est) {
         end += 1;
     }
     (body, end)
@@ -370,6 +373,32 @@ mod tests {
         let d = p("Show\n\tRarity Rare\n\n#\tSetFontSize 40\nHide\n");
         assert_eq!(blocks(&d)[0].owned(), 0..2);
         assert_eq!(blocks(&d)[1].leading(), 3..4);
+    }
+
+    #[test]
+    fn trailing_headings_with_grammar_words_stay_with_next_block() {
+        // Iteration-2 WR-01: a commented line extends a live block only when laid out like its
+        // body; headings that start with a grammar word stay the next block's leading comments.
+        for heading in [
+            "# Corrupted items",
+            "# Quality gear below",
+            "# ItemLevel >= 80 only",
+            "# Continue below",
+            "# Sockets 3 is good",
+            "#  Note: these are weapons",
+            "#   [[0100]] Section",
+            "#Corrupted True",
+        ] {
+            let src = format!("Show\n\tRarity Rare\n{heading}\nShow\n\tCorrupted True\n");
+            let d = p(&src);
+            let b = blocks(&d);
+            assert_eq!(b[0].owned(), 0..2, "{heading:?}");
+            assert_eq!(b[1].leading(), 2..3, "{heading:?}");
+        }
+        // Laid out like the body, the commented line is still a disabled condition (WR-03).
+        let d = p("Show\n  Rarity Rare\n#  SetFontSize 40\n#  FutureKw 3\n# heading\nHide\n");
+        assert_eq!(blocks(&d)[0].owned(), 0..4);
+        assert_eq!(blocks(&d)[1].leading(), 4..5);
     }
 
     #[test]

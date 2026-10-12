@@ -97,7 +97,7 @@ Plans:
 **Goal:** Show an info message when the filter is loaded in-game, the way FilterBlade does
 (observed 2026-10-11: `Name: filterblade` / `Version: 0.10.4.2026.283.13` / `Last update: 11 October
 2026 at 04:29 PM`). The main target is **offline** filters, i.e. local `.filter` files, since that is
-how FerrisFilter delivers filters. Message content should come from configuration (see 999.8).
+how FerrisFilter delivers filters (but see spike results: offline filters cannot show it). Message content should come from configuration (see 999.8).
 
 **Research (2026-10-11).** The same FilterBlade filter was installed in two ways:
 `OnlineFilters/pgWoKpuQ` (a GGG online-filter subscription, which *shows* the message) and
@@ -123,15 +123,37 @@ The header lines end in LF and the body uses CRLF. `#hash` is the **MD5 of the b
 (everything after line 10, CRLF kept); this was verified to match. The online files have no `.filter`
 extension and are named by the online filter's id.
 
-**Spike before designing (unverified):**
-1. Put the same header (with a correct body hash) on a local `.filter` in the game root and see
-   whether the game shows the message for offline filters at all. If it doesn't, the message is
-   tied to the online-filter path.
-2. If (1) fails, try writing a file into `OnlineFilters/` under a made-up id. Risk: the game
-   may re-sync, overwrite, or delete files there that don't match a server subscription. Also
-   check which fields are required and how `#errors`, `#realm` and `#version` are used.
-3. Find out whether the in-game text is limited to name/version/last-update, or whether any
-   field (or comment line) can carry free text. 999.4 depends on the answer.
+**Spike results (2026-10-12, author-tested in-game).** The test filters were the current
+`dynamic.filter` with a FerrisFilter version of the online header and a correct body hash.
+- **The offline header is ignored.** `ff-header-test.filter`, `ff-badhash-test.filter` (wrong hash)
+  and `ff-freetext-test.filter` (free text in `#name`/`#filterVersion`/`#errors`) all appeared in
+  the dropdown and loaded with only the stock "Item Filter loaded successfully." message. An offline
+  file cannot produce the load message, whatever its header says.
+- **`OnlineFilters/` is a cache, not a source.** Two hand-written files placed there (`ffTEST01`,
+  `ffTEST02`) never appeared in the dropdown, and the game left them untouched. The online list
+  comes from the account's filters on the server; the folder only holds downloaded copies.
+- **Local edits to a subscribed online filter are overwritten.** The header of the real FilterBlade
+  copy (`OnlineFilters/pgWoKpuQ`) was rewritten with marker values (`#name`, `#filterVersion`,
+  `#errors`, `#filterType`, a 2030 `#lastUpdate`), with the body and its hash left intact. When the
+  filter was loaded, the game replaced the file with the server's version, byte-for-byte. So the
+  game checks against the server, not against `#hash`, and the local file is not something we can
+  patch.
+
+**Consequence:** the load message is only available to filters that really are **online**, meaning
+filters stored on the player's pathofexile.com account. Getting it means publishing the
+FerrisFilter output to the account instead of (or as well as) writing a local file.
+
+**Next spikes (unverified):**
+1. Cheap manual check: create an online filter on pathofexile.com by hand, paste a FerrisFilter
+   output into it, subscribe in-game, and confirm the message shows. Also note which displayed
+   fields map to which values entered on the site (name/version/last update), whether any can carry
+   free text (999.4 depends on this), and whether the `CustomAlertSound "uwu.mp3"` still works from
+   an online filter.
+2. Automated path: GGG's developer API appears to expose item-filter create/update endpoints under
+   an OAuth scope (FilterBlade's auto-updater is believed to use this). Confirm the endpoints, the
+   scope, and what app registration GGG requires. This would replace `install`/`apply`'s local copy
+   with an account upload, which is outward-facing and needs explicit opt-in. Also check
+   whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
 **Plans:** TBD

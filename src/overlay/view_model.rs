@@ -28,7 +28,7 @@ pub struct RuleRow {
     /// `true` unless the rule is `enabled: Some(false)`.
     pub enabled: bool,
     /// The raw `style` field (e.g. `"S"`, `"unchanged"`, `"hidden"`) — not resolved against
-    /// `Styles`; this is a display label, not a validated reference.
+    /// the `StyleSet`; this is a display label, not a validated reference.
     pub style: String,
     /// The rule's `name`, if authored. `dynamic_base.json`'s rules have none — ordinal is the
     /// identity there, not the name.

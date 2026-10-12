@@ -9,7 +9,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::models::config::{
-    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, Styles,
+    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, StyleSet,
 };
 use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
@@ -20,13 +20,14 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
     #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             valid styles: S, A, B, C, D, E, F, Recycle, unchanged, hidden, kite, exceptional, craftable \
-             (craftable must be defined in the config's styles object)")]
+             defined styles: {available}")]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
         rule_index: usize,
         rule_name: String,
         style: String,
+        /// The names defined in the loaded StyleSet, comma-separated, in file order.
+        available: String,
     },
 }
 
@@ -91,46 +92,21 @@ pub fn generate_as(
 // Style resolver
 // ---------------------------------------------------------------------------
 
-/// Resolve a style name to the matching `&Style` in `Styles`.
+/// Resolve a style name to the matching `&Style` in the `StyleSet`.
 ///
-/// Returns `Err(GenerateError::UnknownStyle)` for any name not in the closed set
-/// S/A/B/C/D/E/F/Recycle/unchanged/hidden/kite/exceptional/craftable.
-///
-/// FUTURE (style flexibility): this match hardcodes the style vocabulary, so adding a style
-/// means editing this arm and the `Styles` struct. To let any config define and use new
-/// styles, back `Styles` with a name→`Style` map and resolve by lookup here instead of a
-/// match. See the matching FUTURE note on `models::config::Styles`.
+/// Returns `Err(GenerateError::UnknownStyle)` (listing the defined names) for any name the set
+/// does not contain.
 fn resolve_style<'a>(
-    styles: &'a Styles,
+    styles: &'a StyleSet,
     style: &str,
     idx: usize,
     name: &str,
 ) -> Result<&'a Style, GenerateError> {
-    Ok(match style {
-        "S" => &styles.s,
-        "A" => &styles.a,
-        "B" => &styles.b,
-        "C" => &styles.c,
-        "D" => &styles.d,
-        "E" => &styles.e,
-        "F" => &styles.f,
-        "Recycle" => &styles.recycle,
-        "unchanged" => &styles.unchanged,
-        "hidden" => &styles.hidden,
-        "kite" => &styles.kite,
-        // Optional style — present only when the config defines it. A rule referencing
-        // "exceptional" against a config that omits it is treated as an unknown style.
-        "exceptional" if styles.exceptional.is_some() => styles.exceptional.as_ref().unwrap(),
-        // Optional style — present only when the config defines it. A rule referencing
-        // "craftable" against a config that omits it is treated as an unknown style.
-        "craftable" if styles.craftable.is_some() => styles.craftable.as_ref().unwrap(),
-        other => {
-            return Err(GenerateError::UnknownStyle {
-                rule_index: idx,
-                rule_name: name.to_string(),
-                style: other.to_string(),
-            })
-        }
+    styles.get(style).ok_or_else(|| GenerateError::UnknownStyle {
+        rule_index: idx,
+        rule_name: name.to_string(),
+        style: style.to_string(),
+        available: styles.names().collect::<Vec<_>>().join(", "),
     })
 }
 
@@ -240,21 +216,14 @@ fn emit_style_actions(out: &mut String, style: &Style) {
 // Style-by-tier resolver (used by pricer sections)
 // ---------------------------------------------------------------------------
 
-/// Resolve the `Style` for a tier letter from the config's `Styles`.
+/// Resolve the `Style` for a tier letter from the config's `StyleSet`.
 ///
-/// Panics with a descriptive message on unknown tier letters (invariant: pricer only
-/// produces S/A/B/C/D/E/F).
-fn style_for_tier<'a>(styles: &'a crate::models::config::Styles, tier: &str) -> &'a Style {
-    match tier {
-        "S" => &styles.s,
-        "A" => &styles.a,
-        "B" => &styles.b,
-        "C" => &styles.c,
-        "D" => &styles.d,
-        "E" => &styles.e,
-        "F" => &styles.f,
-        other => panic!("Unknown tier '{}' in priced data", other),
-    }
+/// Panics with a descriptive message on unknown tier letters (invariant: pricer only produces
+/// S/A/B/C/D/E/F, and `StyleSet::validate` guarantees those are defined).
+fn style_for_tier<'a>(styles: &'a StyleSet, tier: &str) -> &'a Style {
+    styles
+        .get(tier)
+        .unwrap_or_else(|| panic!("Unknown tier '{}' in priced data", tier))
 }
 
 // ---------------------------------------------------------------------------
@@ -765,7 +734,7 @@ mod tests {
     #[test]
     fn generate_rejects_unknown_style_name() {
         // RULE-03 / Phase-5 deferral: a rule referencing a style name outside the
-        // closed Styles set must fail generate-time with GenerateError::UnknownStyle
+        // name absent from the StyleSet must fail generate-time with GenerateError::UnknownStyle
         // naming the offending style.
         let (mut config, priced) = load_inputs();
         config

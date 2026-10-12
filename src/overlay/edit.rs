@@ -13,7 +13,7 @@
 //! "currently expanded" state would silently point at whatever rule now occupies that slot.
 
 use crate::models::config::{
-    Config, NumericCondition, Rarity, RarityComparator, RarityOp, Rule, Styles, UnidentifiedTier,
+    Config, NumericCondition, Rarity, RarityComparator, RarityOp, Rule, StyleSet, UnidentifiedTier,
     When,
 };
 
@@ -179,22 +179,11 @@ pub fn set_style(rule: &mut Rule, style: &str) {
     rule.style = style.to_string();
 }
 
-/// EDIT-03: the style names selectable from the picker, in the fixed display order the game's
-/// own tier system uses (S..F, then the named styles). Reads directly from the loaded `Styles`
-/// struct — `exceptional`/`craftable` only appear if the config actually defines them, so this
-/// can never offer a style name that would fail `emitter::resolve_style`'s generate-time check
-/// (T-14-03).
-pub fn available_styles(styles: &Styles) -> Vec<&'static str> {
-    let mut names = vec![
-        "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite",
-    ];
-    if styles.exceptional.is_some() {
-        names.push("exceptional");
-    }
-    if styles.craftable.is_some() {
-        names.push("craftable");
-    }
-    names
+/// EDIT-03: the style names selectable from the picker, in file order. The names come straight
+/// from the loaded `StyleSet` (styles.json), and the emitter resolves rule styles by looking up
+/// the same set, so any name offered here resolves at generate-time (T-14-03).
+pub fn available_styles(styles: &StyleSet) -> Vec<&str> {
+    styles.names().collect()
 }
 
 /// EDIT-04: the class groups the picker offers (D-10), borrowed from the config —
@@ -766,20 +755,33 @@ mod tests {
     fn dynamic_base_json_offers_exactly_twelve_styles() {
         let config = base_config();
         let names = available_styles(&config.styles);
-        assert_eq!(names.len(), 12, "dynamic_base.json defines exceptional but not craftable");
-        assert!(names.contains(&"exceptional"));
-        assert!(!names.contains(&"craftable"));
+        assert_eq!(
+            names,
+            [
+                "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite",
+                "exceptional"
+            ]
+        );
     }
 
     #[test]
-    fn a_styles_struct_with_neither_optional_style_offers_eleven() {
+    fn removing_exceptional_offers_eleven() {
         let mut config = base_config();
-        config.styles.exceptional = None;
-        config.styles.craftable = None;
+        config.styles.remove("exceptional");
         let names = available_styles(&config.styles);
         assert_eq!(names.len(), 11);
         assert!(!names.contains(&"exceptional"));
         assert!(!names.contains(&"craftable"));
+    }
+
+    #[test]
+    fn an_added_style_is_offered_last() {
+        let mut config = base_config();
+        let st = config.styles.get("unchanged").unwrap().clone();
+        config.styles.insert("craftable", st);
+        let names = available_styles(&config.styles);
+        assert_eq!(names.len(), 13);
+        assert_eq!(names.last(), Some(&"craftable"));
     }
 
     // -- class_groups (EDIT-04, PITFALLS.md §10) -------------------------------

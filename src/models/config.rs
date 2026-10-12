@@ -100,52 +100,6 @@ pub struct Style {
 }
 
 // ---------------------------------------------------------------------------
-// Styles named-fields struct (D-11)
-// Replaces HashMap<String, Style> for deterministic, type-safe tier access.
-// JSON keys stay "S","A","B","C","D","E","F","Recycle","unchanged","hidden";
-// serde renames map the uppercase JSON keys to snake_case Rust fields.
-// ---------------------------------------------------------------------------
-
-/// All style tiers as named fields — deterministic access, no HashMap lookup.
-/// The JSON object keys are the original uppercase tier names; serde renames handle the mapping.
-/// `deny_unknown_fields` ensures an unknown tier key (e.g. a typo "SS") fails deserialization.
-///
-/// FUTURE (style flexibility): the set of style names is hardcoded here and in
-/// `emitter::resolve_style`. A config cannot define an arbitrary new style without a code
-/// change (`craftable` was added this way). To make styles fully config-driven, replace these
-/// named fields with a `HashMap<String, Style>` (or keep S–F/unchanged/hidden as the known
-/// palette and add an open `extra: HashMap<String, Style>`), have `resolve_style` look up by
-/// name in that map, and validate at load-time that every `rule.style` resolves. See the
-/// matching FUTURE note in `emitter::resolve_style`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Styles {
-    #[serde(rename = "S")]       pub s: Style,
-    #[serde(rename = "A")]       pub a: Style,
-    #[serde(rename = "B")]       pub b: Style,
-    #[serde(rename = "C")]       pub c: Style,
-    #[serde(rename = "D")]       pub d: Style,
-    #[serde(rename = "E")]       pub e: Style,
-    #[serde(rename = "F")]       pub f: Style,
-    #[serde(rename = "Recycle")] pub recycle: Style,
-    pub unchanged: Style,
-    pub hidden: Style,
-    pub kite: Style,
-    /// Exceptional-gear highlight (EXC-04): pink text+border 255 121 198, Dracula bg,
-    /// Pink beam, Pink Cross minimap, no sound, no font. Modeled on Recycle but pink.
-    /// A SEPARATE style from S so its color can be retuned independently.
-    /// Optional (like `craftable`) so older custom configs that omit it still parse;
-    /// a rule referencing `"exceptional"` against a config that omits it is an UnknownStyle error.
-    #[serde(default)]
-    pub exceptional: Option<Style>,
-    /// Optional extra style for craftable-base highlighting (used by custom configs such as
-    /// `ssf_icewolf_config.json`). Absent in the default `config.json`, so it stays `None`
-    /// there — additive, no impact on the committed filter or fixtures.
-    #[serde(default)]
-    pub craftable: Option<Style>,
-}
-
-// ---------------------------------------------------------------------------
 // StyleSet — config-driven named styles (Phase 17, STYLE-01/02)
 // ---------------------------------------------------------------------------
 
@@ -495,10 +449,8 @@ pub struct When {
 /// Rules are evaluated in order; the first matching rule wins (first-match-wins semantics).
 /// A rule with no `when` matches everything and acts as a catch-all/fallback.
 ///
-/// The `style` field is a plain `String` resolved against the `Styles` struct keys at
-/// generate-time. Valid values: `"S"`, `"A"`, `"B"`, `"C"`, `"D"`, `"E"`, `"F"`,
-/// `"unchanged"`, `"hidden"`, `"Recycle"`, `"kite"`, `"exceptional"`,
-/// `"craftable"` (requires the optional `styles.craftable` field to be defined).
+/// The `style` field is a plain `String` resolved against the loaded `StyleSet` (`styles.json`)
+/// at generate-time: it must be one of the set's names. Any style defined in the set may be used.
 /// An unknown style name is a **hard error** at generate-time (Phase 6 validation — not enforced by serde here).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -517,8 +469,7 @@ pub struct Rule {
     /// When absent the emitter derives a label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Style tier name — must match a `Styles` key
-    /// (S/A/B/C/D/E/F/unchanged/hidden/Recycle/kite/exceptional/craftable).
+    /// Style name — must be a key of the loaded `StyleSet` (styles.json).
     /// Validation (unknown-style hard error) is deferred to generate-time (Phase 6).
     pub style: String,
     /// Optional match conditions. Absent/empty `when` matches everything.
@@ -575,9 +526,8 @@ pub struct Meta {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Config {
     pub meta: Meta,
-    /// Tier styles as named fields (D-11): deterministic, type-safe, complete-by-construction.
-    /// Replaces the former HashMap<String, Style>. Access via config.styles.s, config.styles.recycle, etc.
-    pub styles: Styles,
+    /// Named styles, in file order. Look up by name with `StyleSet::get`.
+    pub styles: StyleSet,
     pub build: Build,
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
@@ -620,21 +570,13 @@ mod tests {
     }
 
     #[test]
-    fn config_styles_named_fields() {
-        // D-11: styles is a typed Styles struct — access tier styles by named field,
-        // not by map lookup. This test verifies the new interface compiles and works.
+    fn config_styles_lookup_by_name() {
+        // Styles are a name -> Style map; tiers are looked up by name.
         let config: Config = serde_json::from_str(CONFIG_JSON).unwrap();
-        // Verify named field access works for all tiers
-        assert_eq!(config.styles.s.action, StyleAction::Show);
-        assert_eq!(config.styles.a.action, StyleAction::Show);
-        assert_eq!(config.styles.b.action, StyleAction::Show);
-        assert_eq!(config.styles.c.action, StyleAction::Show);
-        assert_eq!(config.styles.d.action, StyleAction::Show);
-        assert_eq!(config.styles.e.action, StyleAction::Show);
-        assert_eq!(config.styles.f.action, StyleAction::Show);
-        assert_eq!(config.styles.recycle.action, StyleAction::Show);
-        assert_eq!(config.styles.unchanged.action, StyleAction::Show);
-        assert_eq!(config.styles.hidden.action, StyleAction::Hide);
+        for name in ["S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged"] {
+            assert_eq!(config.styles.get(name).unwrap().action, StyleAction::Show, "{name}");
+        }
+        assert_eq!(config.styles.get("hidden").unwrap().action, StyleAction::Hide);
     }
 
     #[test]
@@ -643,17 +585,14 @@ mod tests {
         let serialized = serde_json::to_string(&first).unwrap();
         let second: Config = serde_json::from_str(&serialized).unwrap();
         // D-06: semantic round-trip — the deserialized values must be equal.
-        // Styles is now a typed struct (D-11), so PartialEq is deterministic
-        // (no HashMap key-ordering non-determinism).
+        // StyleSet is insertion-ordered, so PartialEq is deterministic.
         assert_eq!(first, second, "config round-trip produced semantically different result");
     }
 
     #[test]
     fn config_rejects_unknown_key() {
-        // Note: the "styles": {} here will now fail BEFORE reaching the unknown-key check
-        // because all Styles fields are required (missing "S", "A", etc.).
-        // The test still passes because it only asserts is_err() — any deserialization
-        // error (missing required styles fields OR unknown "minimip" key) satisfies it.
+        // An empty "styles": {} parses (required-style checks happen in StyleSet::validate),
+        // so the error here comes from the unknown "minimip" key.
         let bad = r#"{
             "meta": {"name":"test","palette":"x","background":[0,0,0]},
             "styles": {},
@@ -671,9 +610,10 @@ mod tests {
 
     #[test]
     fn config_rejects_bad_enum_color() {
-        // inject an invalid color name "Mauve" into the S style minimap
-        let bad = CONFIG_JSON.replace("\"Pink\"", "\"Mauve\"");
-        let result: Result<Config, _> = serde_json::from_str(&bad);
+        // inject an invalid color name "Mauve" into styles.json
+        let styles_json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
+        let bad = styles_json.replace("\"Pink\"", "\"Mauve\"");
+        let result: Result<StyleSet, _> = serde_json::from_str(&bad);
         assert!(result.is_err(), "expected error for unknown FilterColor 'Mauve', got Ok");
     }
 
@@ -1027,7 +967,7 @@ mod tests {
     fn config_has_exceptional_style() {
         let config: Config = serde_json::from_str(CONFIG_JSON)
             .expect("config.json should parse with exceptional style defined");
-        let exceptional = config.styles.exceptional.as_ref()
+        let exceptional = config.styles.get("exceptional")
             .expect("config.json must define the exceptional style");
         assert_eq!(
             exceptional.action,
@@ -1054,7 +994,7 @@ mod tests {
         assert_eq!(mm.shape, MinimapShape::Cross, "exceptional minimap shape must be Cross");
     }
 
-    /// Verify that a `Styles` object that omits `"exceptional"` still parses (WR-01 fix).
+    /// Verify that a styles object that omits `"exceptional"` still parses (WR-01 fix).
     /// This models SSF custom configs like `ssf_icewolf_config.json` which predate Phase 10.
     #[test]
     fn styles_without_exceptional_parses_as_none() {
@@ -1072,15 +1012,12 @@ mod tests {
             "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
             "kite":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
         }"#;
-        let styles: Result<Styles, _> = serde_json::from_str(styles_json);
+        let styles: StyleSet = serde_json::from_str(styles_json)
+            .expect("styles without 'exceptional' must parse (WR-01 regression check)");
+        styles.validate().expect("the 11-style set is valid");
         assert!(
-            styles.is_ok(),
-            "Styles without 'exceptional' must parse successfully (WR-01 regression check): {:?}",
-            styles.err()
-        );
-        assert!(
-            styles.unwrap().exceptional.is_none(),
-            "exceptional must be None when absent from config"
+            styles.get("exceptional").is_none(),
+            "exceptional must be absent when not in the file"
         );
     }
 
@@ -1195,36 +1132,28 @@ mod tests {
         "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite", "exceptional",
     ];
 
-    fn ordered_from_struct(s: &Styles) -> Vec<(&'static str, &Style)> {
-        vec![
-            ("S", &s.s),
-            ("A", &s.a),
-            ("B", &s.b),
-            ("C", &s.c),
-            ("D", &s.d),
-            ("E", &s.e),
-            ("F", &s.f),
-            ("Recycle", &s.recycle),
-            ("unchanged", &s.unchanged),
-            ("hidden", &s.hidden),
-            ("kite", &s.kite),
-            ("exceptional", s.exceptional.as_ref().expect("exceptional must be Some")),
-        ]
-    }
-
     #[test]
-    fn styles_json_equals_hardcoded_styles_struct_from_config_and_dynamic_base() {
+    fn styles_json_matches_both_config_files() {
         let set = StyleSet::committed_for_tests();
         assert_eq!(set.names().collect::<Vec<_>>(), COMMITTED_ORDER);
         for src in [CONFIG_JSON, DYNAMIC_BASE_JSON] {
             let cfg: Config = serde_json::from_str(src).unwrap();
-            let ordered = ordered_from_struct(&cfg.styles);
-            let names: Vec<&str> = ordered.iter().map(|(n, _)| *n).collect();
-            assert_eq!(set.names().collect::<Vec<_>>(), names);
-            for (name, style) in ordered {
-                assert_eq!(set.get(name), Some(style), "style {name} differs");
+            assert_eq!(
+                cfg.styles.names().collect::<Vec<_>>(),
+                set.names().collect::<Vec<_>>(),
+                "name order differs"
+            );
+            for name in COMMITTED_ORDER {
+                assert_eq!(set.get(name), cfg.styles.get(name), "style {name} differs");
             }
         }
+        let s = set.get("S").unwrap();
+        assert_eq!(s.font, Some(37));
+        assert_eq!(s.sound.as_ref().unwrap().custom.as_deref(), Some("uwu.mp3"));
+        let h = set.get("hidden").unwrap();
+        assert_eq!(h.action, StyleAction::Hide);
+        assert_eq!(h.font, Some(21));
+        assert!(h.disable_drop_sound);
     }
 
     fn sparse(action: &str) -> String {

@@ -92,12 +92,19 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.3: Filter load info message (BACKLOG)
+### Phase 999.3: Filter load info message — online filters only (BACKLOG, deferred)
+
+**Status (2026-10-12):** deferred. The in-game load message **is only possible for online
+filters**, i.e. filters stored on the player's pathofexile.com account. FerrisFilter's local
+`.filter` output cannot show it (see the spike results below). This item stays parked until we decide to
+publish filters to the account, which is a later, outward-facing feature (see "Next spikes"). The
+economy-overview half of the original idea moved to the overlay (999.4) and no longer depends on
+this item.
 
 **Goal:** Show an info message when the filter is loaded in-game, the way FilterBlade does
 (observed 2026-10-11: `Name: filterblade` / `Version: 0.10.4.2026.283.13` / `Last update: 11 October
-2026 at 04:29 PM`). The main target is **offline** filters, i.e. local `.filter` files, since that is
-how FerrisFilter delivers filters (but see spike results: offline filters cannot show it). Message content should come from configuration (see 999.8).
+2026 at 04:29 PM`), by publishing FerrisFilter output as an online filter. Message content should
+come from configuration (see 999.8).
 
 **Research (2026-10-11).** The same FilterBlade filter was installed in two ways:
 `OnlineFilters/pgWoKpuQ` (a GGG online-filter subscription, which *shows* the message) and
@@ -147,8 +154,8 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
 1. Cheap manual check: create an online filter on pathofexile.com by hand, paste a FerrisFilter
    output into it, subscribe in-game, and confirm the message shows. Also note which displayed
    fields map to which values entered on the site (name/version/last update), whether any can carry
-   free text (999.4 depends on this), and whether the `CustomAlertSound "uwu.mp3"` still works from
-   an online filter.
+   free text (that would let a future version echo 999.4's economy summary in-game), and whether the
+   `CustomAlertSound "uwu.mp3"` still works from an online filter.
 2. Automated path: GGG's developer API appears to expose item-filter create/update endpoints under
    an OAuth scope (FilterBlade's auto-updater is believed to use this). Confirm the endpoints, the
    scope, and what app registration GGG requires. This would replace `install`/`apply`'s local copy
@@ -162,15 +169,17 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.4: Economy change summary in the load message (BACKLOG)
+### Phase 999.4: Economy change summary in the overlay (BACKLOG)
 
-**Goal:** Extend the load message (999.3, a hard dependency) with a short economy overview of
-what changed since the last sync, either per item ("Cultivation Orb up x% since last update") or
-aggregated by category ("Temple Currencies up x%"). This needs a previous price snapshot to diff
-against: `sync` currently overwrites `prices.json`, so it has to keep the prior snapshot (or a
-history). Open questions: per-item vs per-category granularity, how many lines fit before the
-message becomes noise, the threshold for "notable" movement, and whether tier changes (an item
-moving from B to A) are more useful to report than raw percentages.
+**Goal:** Show a short overview in the **overlay** of how the economy changed since the last sync,
+either per item ("Cultivation Orb up x% since last update") or aggregated by category ("Temple
+Currencies up x%"). It is overlay-only and does **not** appear in-game: the in-game load message
+is limited to online filters (999.3), so this no longer depends on it. A natural home is
+beside **SYNC ECONOMY**, shown after a successful sync. This needs a previous price snapshot to
+diff against: `sync` currently overwrites `prices.json`, so it has to keep the prior snapshot (or
+a history). Open questions: per-item vs per-category granularity, how much to show before it
+becomes noise, the threshold for "notable" movement, and whether tier changes (an item moving
+from B to A) are more useful to report than raw percentages.
 **Requirements:** TBD
 **Plans:** TBD
 
@@ -239,7 +248,7 @@ Plans:
 ### Phase 999.8: Overlay configuration tab (BACKLOG)
 
 **Goal:** Add a configuration tab to the overlay, separate from the rule editor, where users
-can configure (a) the load message (999.3/999.4), (b) the loot styles in `styles.json` (the tier
+can configure (a) the load message (999.3, once online publishing exists) and the overlay economy summary (999.4), (b) the loot styles in `styles.json` (the tier
 palette and any custom styles; builds on 999.1/999.5 so styles are data rather than a hardcoded
 vocabulary), and (c) the economy tiering, meaning the tier cutoffs (`tiers.json`) and not the
 prices themselves. Edits should follow the overlay's existing model: held in memory, persisted

@@ -111,7 +111,23 @@ Plans:
   2. A rule naming an unknown style, or an invalid `styles.json`, stops with a clear error at load time that names the problem
   3. `generate` output is unchanged: `artifact_guard` and `generate_snapshot` pass with the `seed-universal.filter` fixture byte-identical and not re-baselined
 
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+
+- [ ] 17-01-PLAN.md — styles.json (today's 12 styles), ordered StyleSet + StyleError validation, load_styles, equality test vs the old struct; harnesses copy styles.json
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 17-02-PLAN.md — Emitter and overlay picker resolve styles by name from StyleSet; hardcoded Styles struct deleted; Hide-style/new-style behavior locked by tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 17-03-PLAN.md — styles.json becomes the single source: config.json/dynamic_base.json lose styles; load-time rule-reference check; inline styles section rejected
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 17-04-PLAN.md — --styles on generate/apply, end-to-end success-criteria tests, CLAUDE.md + CHANGELOG
 
 ### Phase 18: Filter as Store & Economy Section
 

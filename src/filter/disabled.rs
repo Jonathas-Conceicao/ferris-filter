@@ -81,8 +81,17 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                         if is_header(text) {
                             break;
                         }
+                        // A header word with trailing text: enabled, it would start a new block.
+                        pending.push(reason(format!(
+                            "`{}` would start a new block",
+                            &inner[r.clone()]
+                        )));
                     }
-                    Some(kw) if kw.kind == Kind::Directive => {}
+                    // Enabled, an `Import` would end the block early.
+                    Some(kw) if kw.kind == Kind::Directive => pending.push(reason(format!(
+                        "`{}` cannot appear inside a block",
+                        kw.name
+                    ))),
                     Some(kw) => {
                         reasons.append(&mut pending);
                         if let Err(m) = validate_shape(kw, inner, &t) {
@@ -98,14 +107,18 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                 }
             }
             Err(e) => {
-                // A malformed line only counts when it starts with a known grammar word.
+                // A malformed line only extends the block when it starts with a known grammar
+                // word. Otherwise (`# $tag`, `#\t123`) it is prose, which still blocks enabling
+                // once a later grammar line pulls it inside the owned range.
                 let word: String = inner
                     .trim_start_matches([' ', '\t'])
                     .chars()
                     .take_while(|c| c.is_ascii_alphabetic())
                     .collect();
-                if let Some(kw) = lookup(&word) {
-                    if matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) {
+                match lookup(&word) {
+                    Some(kw)
+                        if matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) =>
+                    {
                         reasons.append(&mut pending);
                         reasons.push(reason(e.message));
                         body.push(BodyLine {
@@ -115,6 +128,7 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                         });
                         end = k + 1;
                     }
+                    _ => pending.push(reason(format!("not filter grammar: {}", e.message))),
                 }
             }
         }
@@ -220,6 +234,31 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn can_enable_agrees_with_enable() {
+        // WR-01: tag lines, bare numbers, commented directives and header words with trailing
+        // text inside the owned range make the block un-enableable instead of silently passing.
+        for src in [
+            "#Show\n#\tRarity Rare\n# $tag\n#\tClass \"Bows\"\n",
+            "#Show\n#\tRarity Rare\n#\t123\n#\tClass \"Bows\"\n",
+            "#Show\n#\tRarity Rare\n#Import \"x\"\n#\tClass \"Bows\"\n",
+            "#Show\n#\tRarity Rare\n#Show Continue\n#\tClass \"Bows\"\n",
+        ] {
+            let mut d = p(src);
+            let id = d.blocks().next().unwrap().id();
+            let b = d.block(id).unwrap();
+            assert_eq!(b.owned(), 0..4, "{src:?}");
+            assert!(!b.can_enable(), "{src:?}");
+            assert!(d.set_enabled(id, true).is_err(), "{src:?}");
+            assert_eq!(d.serialize(), src);
+        }
+        // Trailing tag lines stay ordinary comments.
+        let d = p("#Show\n#\tRarity Rare\n# $tag\n");
+        let b = d.blocks().next().unwrap();
+        assert_eq!(b.owned(), 0..2);
+        assert!(b.can_enable());
     }
 
     #[test]

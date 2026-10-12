@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-10-12T20:23:52.825Z"
 last_activity: 2026-10-12
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.5 Generic Filter Editor & Initial App Configuration — defining requirements
+**Current focus:** v0.5 Generic Filter Editor & Initial App Configuration — Phase 16 (Lossless Filter Parser) next
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 16 of 22 (Lossless Filter Parser) — not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-10-12 — Milestone v0.5 started
+Status: Roadmap created, ready to plan
+Last activity: 2026-10-12 — v0.5 roadmap created (Phases 16-22)
+
+Progress: [░░░░░░░░░░] 0% (0/7 phases)
 
 ## Performance Metrics
 
@@ -257,7 +259,7 @@ Last session: 2026-09-08T18:13:05.246Z
 Stopped at: Phase 15 planned — 3 plans across 3 waves, plan-checker passed
 Resume file: .planning/phases/15-basetype-lists-and-rule-names/15-01-PLAN.md
 
-**Next step:** `/gsd-execute-phase 15`. Phase 14's verification can run before or after — it is
-independent. The v0.4 milestone audit waits on Phase 15 shipping.
+**Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is
+independent and can run in parallel.
 
 **Planned Phase:** 15 (basetype-lists-and-rule-names) — 3 plans — 2026-09-08T21:09:21.802Z

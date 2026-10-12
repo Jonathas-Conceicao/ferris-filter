@@ -6,6 +6,7 @@
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
+- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-22 (in progress)
 
 ## Phases
 
@@ -57,40 +58,118 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 </details>
 
 
+## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-22)
+
+**Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
+output, with the style palette and economy tier cutoffs configurable from the overlay.
+
+- [ ] **Phase 16: Lossless Filter Parser** - Parse any PoE2 filter and write it back byte-identical
+- [ ] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged
+- [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section
+- [ ] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks
+- [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles
+- [ ] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay
+- [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
+
+### Phase 16: Lossless Filter Parser
+**Goal**: Any working PoE2 filter can be parsed and written back without changing a byte the user did not edit
+**Depends on**: Nothing (first phase)
+**Requirements**: PARSE-01, PARSE-02, PARSE-03, PARSE-04
+**Success Criteria** (what must be TRUE):
+  1. The real FilterBlade/NeverSink filter, the `reference-old-filters/` files, poe2filter.com exports and a FerrisFilter-generated filter all open without error; an unrecognized keyword is kept as an opaque line instead of failing the load
+  2. Every block type, condition, operator and action documented at pathofexile.com/item-filter/about is recognized, including `Continue`, `Import` and `Minimal`
+  3. Parsing a filter and saving it with no edits writes a byte-identical file, for CRLF, LF, mixed endings, a BOM and a missing final newline, and for the real FilterBlade sample (the phase exit gate)
+  4. Editing one block and saving changes only that block's lines; every other byte of the file is untouched
+**Plans**: TBD
+
+### Phase 17: Config-Driven Styles
+**Goal**: Named styles are data in a committed `styles.json`, not a hardcoded vocabulary, and the static `generate` path is unaffected
+**Depends on**: Nothing (independent of Phase 16; can run in parallel with it)
+**Requirements**: STYLE-01, STYLE-02, STYLE-04
+**Success Criteria** (what must be TRUE):
+  1. User adds a new named style to `styles.json`, uses it from a rule, and `generate` emits it with no code change
+  2. A rule naming an unknown style, or an invalid `styles.json`, stops with a clear error at load time that names the problem
+  3. `generate` output is unchanged: `artifact_guard` and `generate_snapshot` pass with the `seed-universal.filter` fixture byte-identical and not re-baselined
+**Plans**: TBD
+
+### Phase 18: Filter as Store & Economy Section
+**Goal**: The filter file is the only store, and the economy-priced blocks live in a fenced section FerrisFilter can regenerate without touching anything else
+**Depends on**: Phase 16, Phase 17
+**Requirements**: STORE-01, STORE-03, STORE-04, STORE-05, ECON-01, ECON-03, ECON-04, EDIT-09, EDIT-10
+**Success Criteria** (what must be TRUE):
+  1. By default `apply` and the overlay's Apply edit the game-folder `dynamic.filter` directly; `dynamic.json`, `dynamic_base.json`, the overlay JSON store and the `apply --reset/--base/--store` flags are gone, and the breaking change is in `CHANGELOG.md`
+  2. `ff` launched from anywhere, including a double-click on the exe, finds `styles.json`, `tiers.json` and `prices.json` without relying on the working directory
+  3. Apply regenerates the economy section, placed after the general rules between comment markers, from `prices.json`, `tiers.json` and the styles, and changes no byte outside the markers; re-applying with nothing new produces identical bytes
+  4. User can add an economy section to a new empty filter or to a foreign filter that has none, and can remove it again; a new filter starts empty
+  5. Apply refuses to overwrite a filter that changed on disk after it was loaded and says why; the first write to a filter keeps a backup copy of the original
+**Plans**: TBD
+
+### Phase 19: Overlay Rule List Over Parsed Blocks
+**Goal**: Users can open any filter in the overlay and manage its blocks as a rule list, with the economy section kept out of the way
+**Depends on**: Phase 18
+**Requirements**: EDIT-03, EDIT-04, EDIT-05, EDIT-07, EDIT-08, ECON-02
+**Success Criteria** (what must be TRUE):
+  1. The overlay lists every block of a loaded filter, including NeverSink's roughly 460 blocks, stays responsive while scrolling, and a search box narrows the list
+  2. User can add, delete, duplicate and reorder rules, and switch a block between `Show`, `Hide` and `Minimal` and toggle `Continue`
+  3. Disabling a rule comments its block out; commented-out blocks in a loaded filter appear as disabled rules and can be enabled
+  4. The economy section does not appear as rules; the list shows a summary such as "+ 42 locked rule blocks"
+  5. Edits stay in memory until Apply writes the filter; Revert discards unsaved edits
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 20: Full-Grammar Block Editing
+**Goal**: Users can edit every condition and action of any block, and apply named styles that stay linked to `styles.json`
+**Depends on**: Phase 19
+**Requirements**: EDIT-01, EDIT-02, EDIT-06, STYLE-03
+**Success Criteria** (what must be TRUE):
+  1. Every condition on any block is viewable and editable with all its operators and multi-value lists; no condition is read-only and no block is "unsupported"
+  2. Every action on any block is viewable and editable: colours, font size, built-in and custom alert sounds, minimap icon, beam effect and drop-sound toggles
+  3. User applies a named style to a rule and the rule's style actions are set from it
+  4. A rule that uses a named style keeps a comment tag in the filter; after the style changes, the rule's actions update on the next Apply
+  5. Editing one value rewrites only that value (a `Class "x"` is never turned into `Class == "x"` unless the user changes it)
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 21: Overlay Configuration Tab
+**Goal**: Users can configure styles, tier cutoffs and the active filter from a configuration tab separate from the rule editor
+**Depends on**: Phase 17, Phase 18, Phase 19
+**Requirements**: CONF-01, CONF-02, CONF-03, CONF-04, STORE-02
+**Success Criteria** (what must be TRUE):
+  1. The overlay has a configuration tab, separate from the rule editor
+  2. User adds, edits and deletes named styles (text, border and background colour picker, font size, sound, minimap icon, beam); built-in styles cannot be deleted
+  3. User edits the economy tier cutoffs in `tiers.json` (not prices); an invalid cutoff shows inline and cannot be applied
+  4. The tab has its own Apply and Revert, and Apply writes all of its files or none of them
+  5. User selects a different filter in the game folder from this tab and the choice is remembered across launches
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 22: Single-Instance Overlay
+**Goal**: Launching `ff` twice never produces two stripes
+**Depends on**: Nothing (independent of other phases)
+**Requirements**: INST-01
+**Success Criteria** (what must be TRUE):
+  1. Launching `ff` while it is already running brings up the running stripe and the second process exits
+  2. This works even when the running stripe is hidden to the tray
+  3. Only one stripe window exists and the hotkey keeps working after repeated launches
+**Plans**: TBD
+
+### Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 16. Lossless Filter Parser | 0/? | Not started | - |
+| 17. Config-Driven Styles | 0/? | Not started | - |
+| 18. Filter as Store & Economy Section | 0/? | Not started | - |
+| 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
+| 20. Full-Grammar Block Editing | 0/? | Not started | - |
+| 21. Overlay Configuration Tab | 0/? | Not started | - |
+| 22. Single-Instance Overlay | 0/? | Not started | - |
+
 ## Backlog
 
-### Phase 999.1: Config-driven styles (no hardcoded vocabulary) (BACKLOG)
+### Phase 999.1: Config-driven styles — promoted to Phase 17 (v0.5)
 
-**Goal:** Any config should be able to define and use new named styles without a code change.
-Today the style vocabulary is hardcoded in the `Styles` struct (`src/models/config.rs`) and
-`emitter::resolve_style` (`src/emitter.rs`) — adding `craftable` (for `ssf_icewolf_config.json`)
-required editing both. Replace the named-field `Styles` struct with a name→`Style` map (or keep
-S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` map), resolve styles
-by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
-`FUTURE` comments already mark both code locations.
-**Requirements:** TBD
-**Plans:** 3/4 plans executed
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.2: Overlay single-instance guard (BACKLOG)
-
-**Goal:** Launching `ff` while it is already running should surface the existing stripe instead of
-opening a second one. Discovered by the author during Phase 13 wave-2 verification (2026-09-04):
-a second launch opens a second stripe window, and only the first instance owns the `Shift+Z`
-registration — the second correctly reports the conflict in its tray tooltip (D-10), so the
-failure is visible rather than silent, but two stripes and one working hotkey is not the intended
-shape for a tray app that gets double-clicked. Fix shape: acquire a named mutex at startup; if it
-is already held, signal the running instance to show itself and exit rather than creating a
-window. Small, self-contained, and touches only the overlay entry point.
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
+### Phase 999.2: Overlay single-instance guard — promoted to Phase 22 (v0.5)
 
 ### Phase 999.3: Filter load info message — online filters only (BACKLOG, deferred)
 
@@ -187,46 +266,9 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.5: Drop `dynamic.json`; styles move to `styles.json` (BACKLOG)
+### Phase 999.5: Drop `dynamic.json`; styles move to `styles.json` — promoted to Phases 17-18 (v0.5)
 
-**Goal:** Remove `dynamic.json` (and its `dynamic_base.json` template) as the dynamic filter's
-source of truth. The **filter file itself** holds the rules, and it is edited through 999.6's
-parse-and-edit support. The other inputs stay as separate files: economy cache `prices.json`, tier
-cutoffs `tiers.json`, the `prices-fallback.json`/`tiers-fallback.json` early-league pair, and
-`mapping.json` for sync. The named style definitions (the Dracula tier palette plus
-`unchanged`/`hidden`/`kite` and custom styles) move into a new **`styles.json` at the repo root**,
-so styles stay shared and editable without a rule store.
-
-**Intentional trade-off:** with no rule store, a filter can no longer be fully regenerated from
-config. It is edited in place instead. This is the point: it goes together with 999.6, where any
-filter (ours or not) can be loaded, edited and used. `config.json` → `universal.filter` (the static
-`generate` path and its byte-for-byte fixture) is out of scope unless we decide otherwise. Open
-questions: how economy-priced sections are found and refreshed inside an edited filter (markers or
-comments around generated blocks?), and whether `styles.json` is split out of `config.json` or
-copied from it (relates to 999.1).
-
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.6: Parse and edit arbitrary filters (full grammar) (BACKLOG)
-
-**Goal:** Load any working PoE2 filter, not just FerrisFilter output (e.g. FilterBlade or
-poe2filter.com exports, or hand-written ones), and edit it. The rule model has to cover the full
-filter grammar: every condition, operator, and action, plus `Continue`, `Import`, and
-`Minimal`. Anything the editor doesn't understand must still round-trip losslessly instead of
-being dropped. This is the foundation for 999.5 and 999.7 and is probably big enough to be its own
-milestone. The current `when` vocabulary and named-style model (see 999.1) would have to grow
-into, or sit beside, a general block representation.
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
+### Phase 999.6: Parse and edit arbitrary filters — promoted to Phases 16, 19-20 (v0.5)
 
 ### Phase 999.7: Unmaintained (locked) rules and layering over a base filter (BACKLOG)
 
@@ -245,14 +287,14 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.8: Overlay configuration tab (BACKLOG)
+### Phase 999.8: Overlay configuration tab — partially promoted (BACKLOG)
 
-**Goal:** Add a configuration tab to the overlay, separate from the rule editor, where users
-can configure (a) the load message (999.3, once online publishing exists) and the overlay economy summary (999.4), (b) the loot styles in `styles.json` (the tier
-palette and any custom styles; builds on 999.1/999.5 so styles are data rather than a hardcoded
-vocabulary), and (c) the economy tiering, meaning the tier cutoffs (`tiers.json`) and not the
-prices themselves. Edits should follow the overlay's existing model: held in memory, persisted
-only on Apply, and discardable with Revert.
+**Promoted to Phase 21 (v0.5):** the configuration tab itself, the loot styles in `styles.json`
+and the economy tier cutoffs (`tiers.json`).
+
+**Remaining goal:** configuration of the load message (999.3, once online publishing exists) and of
+the overlay economy summary (999.4). Edits should follow the overlay's existing model: held in
+memory, persisted only on Apply, and discardable with Revert.
 
 **Requirements:** TBD
 **Plans:** TBD

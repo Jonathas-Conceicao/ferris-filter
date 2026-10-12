@@ -140,12 +140,44 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| PARSE-01 | Phase 16 | Pending |
+| PARSE-02 | Phase 16 | Pending |
+| PARSE-03 | Phase 16 | Pending |
+| PARSE-04 | Phase 16 | Pending |
+| EDIT-01 | Phase 20 | Pending |
+| EDIT-02 | Phase 20 | Pending |
+| EDIT-03 | Phase 19 | Pending |
+| EDIT-04 | Phase 19 | Pending |
+| EDIT-05 | Phase 19 | Pending |
+| EDIT-06 | Phase 20 | Pending |
+| EDIT-07 | Phase 19 | Pending |
+| EDIT-08 | Phase 19 | Pending |
+| EDIT-09 | Phase 18 | Pending |
+| EDIT-10 | Phase 18 | Pending |
+| ECON-01 | Phase 18 | Pending |
+| ECON-02 | Phase 19 | Pending |
+| ECON-03 | Phase 18 | Pending |
+| ECON-04 | Phase 18 | Pending |
+| STORE-01 | Phase 18 | Pending |
+| STORE-02 | Phase 21 | Pending |
+| STORE-03 | Phase 18 | Pending |
+| STORE-04 | Phase 18 | Pending |
+| STORE-05 | Phase 18 | Pending |
+| STYLE-01 | Phase 17 | Pending |
+| STYLE-02 | Phase 17 | Pending |
+| STYLE-03 | Phase 20 | Pending |
+| STYLE-04 | Phase 17 | Pending |
+| CONF-01 | Phase 21 | Pending |
+| CONF-02 | Phase 21 | Pending |
+| CONF-03 | Phase 21 | Pending |
+| CONF-04 | Phase 21 | Pending |
+| INST-01 | Phase 22 | Pending |
 
 **Coverage:**
 - v0.5 requirements: 32 total
-- Mapped to phases: 0
-- Unmapped: 32 ⚠️
+- Mapped to phases: 32
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-12 after initial definition*
+*Last updated: 2026-10-12 after roadmap creation (traceability filled)*

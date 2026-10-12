@@ -5,11 +5,14 @@
 //! checked before it replaces the document's lines, so an `Err` leaves the [`Document`] untouched.
 //! Only the edited block's lines change; all other bytes stay as they were. After a successful
 //! edit the whole index is rebuilt over the new lines and every block keeps its [`BlockId`] by
-//! position (an edit never adds or removes a block, which is checked).
+//! position. The rebuilt index is checked against the old one: no block is added or removed, and
+//! every other item (block, comment run, import, opaque line) keeps its line range, shifted only
+//! by the edit's line-count change, and its classification. An edit that would re-attribute lines
+//! between other blocks is refused with [`EditError::WouldReattributeLines`].
 
 use thiserror::Error;
 
-use super::block::{BlockId, DisabledState, Item};
+use super::block::{BlockId, BlockKeyword, DisabledState, Item};
 use super::diag::{FilterDiagnostic, Severity};
 use super::disabled;
 use super::lines::{Eol, Line};
@@ -34,11 +37,53 @@ pub enum EditError {
     EmbeddedNewline,
     #[error("invalid metadata: {0}")]
     InvalidMeta(String),
+    /// The edit would change which lines belong to some other block or comment run (e.g. a
+    /// commented condition moving from one block to its neighbour), so it was not applied.
+    #[error("the edit would change which lines belong to the surrounding blocks; nothing was changed")]
+    WouldReattributeLines,
 }
 
 enum Fail {
+    /// The edited block itself, or the block count, came out wrong.
     Structure,
+    /// Some other item changed its range or classification.
+    Neighbours,
     Errors(Vec<FilterDiagnostic>),
+}
+
+/// Range and classification of one top-level item, comparable across an edit.
+#[derive(PartialEq, Eq)]
+enum Sig {
+    Trivia(usize, usize),
+    Import(usize),
+    Opaque(usize),
+    Block {
+        lead: usize,
+        header: usize,
+        end: usize,
+        keyword: BlockKeyword,
+        enabled: bool,
+        can_enable: bool,
+        body: usize,
+    },
+}
+
+fn sig(it: &Item, shift: isize) -> Sig {
+    let m = |i: usize| i.saturating_add_signed(shift);
+    match it {
+        Item::Trivia(r) => Sig::Trivia(m(r.start), m(r.end)),
+        Item::Import { line, .. } => Sig::Import(m(*line)),
+        Item::Opaque(line) => Sig::Opaque(m(*line)),
+        Item::Block(b) => Sig::Block {
+            lead: m(b.lead_start),
+            header: m(b.header),
+            end: m(b.end),
+            keyword: b.keyword,
+            enabled: b.is_enabled(),
+            can_enable: b.can_enable(),
+            body: b.body.len(),
+        },
+    }
 }
 
 struct Expect {
@@ -103,6 +148,7 @@ impl Document {
         if ex.enabled.is_some_and(|e| e != enabled) {
             return Err(Fail::Structure);
         }
+        self.check_neighbours(&items, pos, new_lines.len())?;
         if ex.reject_errors && enabled {
             // Warnings count too: an unknown keyword or trailing header tokens in a block the
             // tool just enabled is still a block the game refuses (D-11).
@@ -122,6 +168,36 @@ impl Document {
         self.lines = new_lines;
         self.items = items;
         self.diagnostics = diags;
+        Ok(())
+    }
+
+    /// Every item other than the edited block (position `pos` among blocks) must keep its range,
+    /// shifted by the line-count change when it lies below the edit, and its classification. The
+    /// edited block must keep its leading-run start. Edits only touch lines inside the edited
+    /// block's span, so anything else is a re-attribution the caller did not ask for.
+    fn check_neighbours(&self, items: &[Item], pos: usize, new_len: usize) -> Result<(), Fail> {
+        if items.len() != self.items.len() {
+            return Err(Fail::Neighbours);
+        }
+        let delta = new_len as isize - self.lines.len() as isize;
+        let mut blocks_seen = 0usize;
+        let mut after = false;
+        for (old, new) in self.items.iter().zip(items) {
+            if let (Item::Block(o), Item::Block(n)) = (old, new) {
+                if blocks_seen == pos {
+                    blocks_seen += 1;
+                    after = true;
+                    if o.lead_start != n.lead_start {
+                        return Err(Fail::Neighbours);
+                    }
+                    continue;
+                }
+                blocks_seen += 1;
+            }
+            if sig(old, if after { delta } else { 0 }) != sig(new, 0) {
+                return Err(Fail::Neighbours);
+            }
+        }
         Ok(())
     }
 
@@ -159,6 +235,7 @@ impl Document {
         self.commit(new_lines, pos, ex).map_err(|f| match f {
             Fail::Structure if !enabled => EditError::CannotDisable,
             Fail::Structure => EditError::NotOneBlock,
+            Fail::Neighbours => EditError::WouldReattributeLines,
             Fail::Errors(reasons) => EditError::CannotEnable { reasons },
         })
     }
@@ -228,6 +305,7 @@ impl Document {
         };
         self.commit(lines, pos, ex).map_err(|f| match f {
             Fail::Structure => EditError::NotOneBlock,
+            Fail::Neighbours => EditError::WouldReattributeLines,
             Fail::Errors(diagnostics) => EditError::InvalidBlock { diagnostics },
         })
     }
@@ -277,7 +355,8 @@ impl Document {
             enabled: None,
             reject_errors: false,
         };
-        self.commit(lines, pos, ex).map_err(|_| EditError::NotOneBlock)
+        self.commit(lines, pos, ex)
+            .map_err(|_| EditError::WouldReattributeLines)
     }
 
     /// Remove every `#ff:<key>` line attached to the block. Removing an absent key is a no-op.
@@ -306,7 +385,8 @@ impl Document {
             enabled: None,
             reject_errors: false,
         };
-        self.commit(lines, pos, ex).map_err(|_| EditError::NotOneBlock)
+        self.commit(lines, pos, ex)
+            .map_err(|_| EditError::WouldReattributeLines)
     }
 }
 
@@ -397,7 +477,8 @@ mod tests {
 
     /// Every short document over a pool of tricky lines: for each block, `can_enable()` agrees
     /// with `set_enabled(true)`, a successful disable re-enables byte-identically when the disabled
-    /// form is enableable, and a refused edit leaves the bytes untouched.
+    /// form is enableable, metadata edits never move another block's lines, and a refused edit
+    /// leaves the bytes untouched.
     #[test]
     fn exhaustive_small_documents_agree() {
         const POOL: [&str; 12] = [
@@ -432,9 +513,48 @@ mod tests {
         assert_eq!(docs, 2 * 12usize.pow(4));
     }
 
+    /// Line ranges of every block other than `skip`, as `(leading start, end)`.
+    fn spans_except(d: &Document, skip: BlockId) -> Vec<(BlockId, usize, usize)> {
+        d.blocks()
+            .filter(|b| b.id() != skip)
+            .map(|b| (b.id(), b.span().start, b.span().end))
+            .collect()
+    }
+
     fn check_agreement(src: &str) {
         let d0 = p(src);
         for id in ids(&d0) {
+            // Metadata edits either keep every other block's lines in place or are refused
+            // with the bytes untouched (iteration-2 WR-03).
+            let mut d = d0.clone();
+            let others = spans_except(&d, id);
+            let old_end = d.block(id).unwrap().span().end;
+            match d.set_meta(id, "name", "y") {
+                Ok(()) => {
+                    assert_eq!(d.meta_get(id, "name"), Some("y"), "{src:?}");
+                    let shifted: Vec<_> = others
+                        .iter()
+                        .map(|&(o, a, z)| {
+                            if a >= old_end { (o, a + 1, z + 1) } else { (o, a, z) }
+                        })
+                        .collect();
+                    assert_eq!(spans_except(&d, id), shifted, "{src:?}");
+                    let before = s(&d);
+                    match d.remove_meta(id, "name") {
+                        // Removing what set_meta inserted restores the original bytes.
+                        Ok(()) if d0.meta_get(id, "name").is_none() => {
+                            assert_eq!(s(&d), src, "set+remove meta changed bytes")
+                        }
+                        Ok(()) => {}
+                        Err(EditError::WouldReattributeLines) => {
+                            assert!(d0.meta_get(id, "name").is_some(), "{src:?}");
+                            assert_eq!(s(&d), before, "refused remove_meta changed bytes");
+                        }
+                        Err(e) => panic!("{src:?}: remove_meta: {e}"),
+                    }
+                }
+                Err(_) => assert_eq!(s(&d), src, "refused set_meta changed bytes"),
+            }
             let mut d = d0.clone();
             let b = d.block(id).unwrap();
             if b.is_enabled() {
@@ -717,6 +837,46 @@ mod tests {
             d.remove_meta(BlockId(9999), "name"),
             Err(EditError::UnknownBlock)
         ));
+    }
+
+    #[test]
+    fn edit_never_reattributes_neighbour_lines() {
+        // Iteration-2 WR-03: removing the `#ff:` line would hand `#	SetFontSize 40` from
+        // Hide's leading comments to Show's trailing run. Refused, nothing changes.
+        let src = "Show
+	Rarity Rare
+#ff:name x
+#	SetFontSize 40
+Hide
+";
+        let mut d = p(src);
+        let all = ids(&d);
+        assert_eq!(d.block(all[0]).unwrap().owned(), 0..2);
+        assert_eq!(d.block(all[1]).unwrap().leading(), 2..4);
+        assert!(matches!(
+            d.remove_meta(all[1], "name"),
+            Err(EditError::WouldReattributeLines)
+        ));
+        assert_eq!(s(&d), src);
+        assert_eq!(d.meta_get(all[1], "name"), Some("x"));
+        // Rewriting the value in place is fine.
+        d.set_meta(all[1], "name", "z").unwrap();
+        assert_eq!(d.block(all[0]).unwrap().owned(), 0..2);
+        assert_eq!(d.meta_get(all[1], "name"), Some("z"));
+        // Without anything for the neighbour to take, removal works.
+        let mut d = p("Show
+	Rarity Rare
+#ff:name x
+# about Hide
+Hide
+");
+        let all = ids(&d);
+        d.remove_meta(all[1], "name").unwrap();
+        assert_eq!(s(&d), "Show
+	Rarity Rare
+# about Hide
+Hide
+");
     }
 
     #[test]

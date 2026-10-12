@@ -119,7 +119,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 17-02-PLAN.md — Emitter and overlay picker resolve styles by name from StyleSet; hardcoded Styles struct deleted; Hide-style/new-style behavior locked by tests
+- [x] 17-02-PLAN.md — Emitter and overlay picker resolve styles by name from StyleSet; hardcoded Styles struct deleted; Hide-style/new-style behavior locked by tests
 
 **Wave 3** *(blocked on Wave 2 completion)*
 

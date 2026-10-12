@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Edits touch only the edited block's lines (enable/disable, replace lines, set or remove a
   metadata key) and never produce an enabled block with an Error or Warning diagnostic, nor move
   lines between other blocks (such an edit is refused unchanged);
-  commented-out blocks are recognized as disabled rules (valid or invalid), and FerrisFilter's own
+  commented-out blocks are recognized as disabled rules (valid or invalid), a disabled rule is
+  enabled only whole (one whose commented conditions are split by a comment line, or which would
+  enable as a bare catch-all, is refused), and FerrisFilter's own
   `#ff:<key> <value>` metadata comments are exposed. Library and tests only; no CLI or overlay
   change.
 

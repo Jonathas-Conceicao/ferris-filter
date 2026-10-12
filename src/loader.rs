@@ -1,4 +1,5 @@
 use crate::error::JsonLoadError;
+use crate::models::config::{StyleError, StyleSet};
 use crate::models::prices::PricesFile;
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 use miette::{Diagnostic, SourceOffset};
@@ -38,6 +39,11 @@ pub enum LoadError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Tiers(#[from] TierValidationError),
+
+    /// `styles.json` parsed but failed validation (missing required style, bad custom sound).
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Styles(#[from] StyleError),
 }
 
 /// Generic JSON loader that wraps `serde_path_to_error` for field-path-aware errors.
@@ -104,4 +110,75 @@ pub fn load_prices_optional(path: &str) -> Result<Option<PricesFile>, LoadError>
 pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
     let entries: Vec<TierEntry> = load_json(path)?;
     Ok(ValidatedTiers::try_from(entries)?)
+}
+
+/// Load and validate `styles.json`.
+///
+/// The file's top level is the name -> style map, so a parse error's dotted path starts at the
+/// style name (e.g. `S.font`). `validate()` always runs here because
+/// `emitter::style_for_tier` panics if S..F are absent.
+///
+/// # Errors
+///
+/// - Unreadable file or bad JSON/duplicate name: `LoadError::Read` / `LoadError::Parse`.
+/// - Failed validation: `LoadError::Styles`.
+pub fn load_styles(path: &str) -> Result<StyleSet, LoadError> {
+    let set: StyleSet = load_json(path)?;
+    set.validate()?;
+    Ok(set)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STYLES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
+
+    fn load_text(text: &str) -> Result<StyleSet, LoadError> {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("styles.json");
+        std::fs::write(&p, text).unwrap();
+        load_styles(p.to_str().unwrap())
+    }
+
+    #[test]
+    fn load_styles_reads_committed_file() {
+        assert_eq!(load_text(STYLES).unwrap().len(), 12);
+    }
+
+    #[test]
+    fn load_styles_missing_path_is_read_error() {
+        let err = load_styles("definitely/not/here/styles.json").unwrap_err();
+        assert!(matches!(err, LoadError::Read { .. }));
+        assert!(err.to_string().starts_with("Cannot read `"), "{err}");
+    }
+
+    #[test]
+    fn load_styles_bad_type_reports_path_from_style_name() {
+        let bad = STYLES.replacen("\"font\": 37", "\"font\": \"BROKEN\"", 1);
+        let err = load_text(&bad).unwrap_err();
+        assert!(matches!(err, LoadError::Parse(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("S.font"), "{msg}");
+        assert!(msg.contains("expected u8"), "{msg}");
+    }
+
+    #[test]
+    fn load_styles_missing_required_style_is_styles_error() {
+        let mut v: serde_json::Value = serde_json::from_str(STYLES).unwrap();
+        v.as_object_mut().unwrap().remove("E");
+        let err = load_text(&v.to_string()).unwrap_err();
+        assert!(matches!(err, LoadError::Styles(StyleError::MissingRequired(_))));
+        assert!(err.to_string().contains('E'));
+    }
+
+    #[test]
+    fn load_styles_rejects_duplicate_name() {
+        let dup = STYLES.replacen("{
+", "{
+  \"S\": { \"text\": null, \"border\": null, \"background\": null, \"font\": null, \"minimap\": null, \"beam\": null, \"sound\": null, \"action\": \"Show\", \"disableDropSound\": false },
+", 1);
+        let err = load_text(&dup).unwrap_err();
+        assert!(err.to_string().contains("duplicate style name"), "{err}");
+    }
 }

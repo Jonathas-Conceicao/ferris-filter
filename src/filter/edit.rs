@@ -1,5 +1,5 @@
-//! Minimal block-scoped edit API (PARSE-04): enable/disable, replace a block's lines, set a
-//! `#ff:` key.
+//! Minimal block-scoped edit API (PARSE-04): enable/disable, replace a block's lines, set or
+//! remove a `#ff:` key.
 //!
 //! Every operation validates first and mutates after: the candidate line vector is rebuilt and
 //! checked before it replaces the document's lines, so an `Err` leaves the [`Document`] untouched.
@@ -251,6 +251,13 @@ impl Document {
         if value.contains(['\n', '\r']) {
             return Err(EditError::InvalidMeta("value contains a line break".into()));
         }
+        // The reader trims surrounding spaces/tabs, so store exactly what reads back.
+        let value = value.trim_matches([' ', '\t']);
+        if value.is_empty() {
+            return Err(EditError::InvalidMeta(
+                "empty value; use remove_meta to clear a key".into(),
+            ));
+        }
         let pos = self.block_pos(id)?;
         let b = self.block(id).ok_or(EditError::UnknownBlock)?;
         let header = b.header_line();
@@ -272,6 +279,35 @@ impl Document {
         };
         let ex = Expect {
             header: new_header,
+            owned_len,
+            enabled: None,
+            reject_errors: false,
+        };
+        self.commit(lines, pos, ex).map_err(|_| EditError::NotOneBlock)
+    }
+
+    /// Remove every `#ff:<key>` line attached to the block. Removing an absent key is a no-op.
+    pub fn remove_meta(&mut self, id: BlockId, key: &str) -> Result<(), EditError> {
+        let pos = self.block_pos(id)?;
+        let b = self.block(id).ok_or(EditError::UnknownBlock)?;
+        let header = b.header_line();
+        let owned_len = b.owned().len();
+        let doomed: Vec<usize> = b
+            .leading()
+            .filter(|&i| self.lines[i].ff_marker().is_some_and(|(k, _)| k == key))
+            .collect();
+        if doomed.is_empty() {
+            return Ok(());
+        }
+        let lines: Vec<Line> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !doomed.contains(i))
+            .map(|(_, l)| l.clone())
+            .collect();
+        let ex = Expect {
+            header: header - doomed.len(),
             owned_len,
             enabled: None,
             reject_errors: false,
@@ -587,6 +623,36 @@ mod tests {
         let id = ids(&d)[0];
         d.set_meta(id, "name", "x").unwrap();
         assert_eq!(s(&d), "# a\n#ff:name x\n#ff:style S\nShow\n");
+    }
+
+    #[test]
+    fn meta_value_round_trips_and_remove() {
+        // WR-05: what is written is what reads back; empty is refused; remove_meta clears.
+        let mut d = p("# a\nShow\n");
+        let id = ids(&d)[0];
+        d.set_meta(id, "name", "  padded \t").unwrap();
+        assert_eq!(s(&d), "# a\n#ff:name padded\nShow\n");
+        assert_eq!(d.meta_get(id, "name"), Some("padded"));
+        assert!(matches!(d.set_meta(id, "name", ""), Err(EditError::InvalidMeta(_))));
+        assert!(matches!(d.set_meta(id, "name", " \t "), Err(EditError::InvalidMeta(_))));
+        assert_eq!(s(&d), "# a\n#ff:name padded\nShow\n");
+        d.set_meta(id, "style", "S").unwrap();
+        d.remove_meta(id, "name").unwrap();
+        assert_eq!(s(&d), "# a\n#ff:style S\nShow\n");
+        assert_eq!(d.meta_get(id, "name"), None);
+        d.remove_meta(id, "name").unwrap();
+        assert_eq!(s(&d), "# a\n#ff:style S\nShow\n");
+        // Duplicates are all removed, other blocks untouched, ids stable.
+        let mut d = p("#ff:name a\n#ff:name b\nShow\n\n#ff:name c\nHide\n");
+        let all = ids(&d);
+        d.remove_meta(all[0], "name").unwrap();
+        assert_eq!(s(&d), "Show\n\n#ff:name c\nHide\n");
+        assert_eq!(ids(&d), all);
+        assert_eq!(d.meta_get(all[1], "name"), Some("c"));
+        assert!(matches!(
+            d.remove_meta(BlockId(9999), "name"),
+            Err(EditError::UnknownBlock)
+        ));
     }
 
     #[test]

@@ -12,6 +12,7 @@ use super::block::{BlockKeyword, BodyLine, DisabledState};
 use super::diag::{FilterDiagnostic, Severity};
 use super::keywords::{lookup, Keyword, Kind};
 use super::lines::Line;
+use super::meta::parse_ff_line;
 use super::parse::block_keyword;
 use super::tokenize::{tokenize, validate_shape, TokenizedLine};
 
@@ -192,7 +193,7 @@ pub(crate) fn enabled_text(text: &str) -> Cow<'_, str> {
 /// - a doubly commented-out body line (`##\tKw ...`) extends it only within the trailing run after
 ///   the last body line, which a blank (`#`) line or a heading/prose comment closes, just like the
 ///   live trailing run;
-/// - the first prose line, header, or uncommented line ends the scan (WR-04). That prose and
+/// - the first prose line, `#ff:` line, header, or uncommented line ends the scan (WR-04). That prose and
 ///   anything after it is the next block's leading run or standalone comment text, never part of
 ///   this block, so enabling can never turn prose into a live line (CR-01).
 pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
@@ -209,6 +210,11 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
         let Some(inner) = uncomment_once(text) else {
             break;
         };
+        // A `#ff:` line belongs to the header run of the block below it (D-05), never inside
+        // another block.
+        if parse_ff_line(text).is_some() {
+            break;
+        }
         match classify_inner(text, inner, k, est) {
             Inner::Header | Inner::Prose => break,
             Inner::Neutral => match uncomment_once(inner) {
@@ -408,6 +414,24 @@ mod tests {
         let d = p("#Show\n# Corrupted items\nShow\n");
         assert_eq!(d.blocks().next().unwrap().owned(), 0..1);
         assert!(d.blocks().next().unwrap().can_enable());
+    }
+
+    #[test]
+    fn ff_line_is_never_pulled_into_a_block() {
+        // Iteration-2 WR-02: a `#ff:` line belongs to the header run of the block below it, even
+        // when a commented body line follows it, in the disabled and the live case alike.
+        for src in [
+            "#Show\n#\tRarity Rare\n#ff:name x\n#\tSetFontSize 40\nHide\n",
+            "Show\n\tRarity Rare\n#ff:name x\n#\tSetFontSize 40\nHide\n",
+            "#Show\n#\tRarity Rare\n  #ff:name x\n#\tSetFontSize 40\nHide\n",
+        ] {
+            let d = p(src);
+            let b: Vec<_> = d.blocks().collect();
+            assert_eq!(b[0].owned(), 0..2, "{src:?}");
+            assert!(b[0].is_enabled() || b[0].can_enable(), "{src:?}");
+            assert_eq!(b[1].leading(), 2..4, "{src:?}");
+            assert_eq!(d.meta_get(b[1].id(), "name"), Some("x"), "{src:?}");
+        }
     }
 
     #[test]

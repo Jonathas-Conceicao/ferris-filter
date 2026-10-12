@@ -11,6 +11,7 @@ use super::diag::{FilterDiagnostic, Severity};
 use super::disabled;
 use super::keywords::{lookup, Keyword, Kind};
 use super::lines::Line;
+use super::meta;
 use super::tokenize::{tokenize, validate_shape, TokenError, TokenizedLine};
 
 pub(crate) enum Class {
@@ -303,7 +304,7 @@ fn scan_live_body_with<'a>(
         k += 1;
     }
     // Trailing run (WR-03): the comment lines directly after the last keyword line are scanned
-    // until the first line that is not a comment or is a heading/prose. A
+    // until the first line that is not a comment, is a heading/prose, or is a `#ff:` line. A
     // commented-out body line laid out like this block's body (`#\tSetFontSize 40`, see
     // `disabled::classify_inner`) extends the block, together with any neutral comment lines
     // (`#`, `## ...`) before it. `disabled::detect` applies the same rule one `#` deeper, so
@@ -318,6 +319,9 @@ fn scan_live_body_with<'a>(
         let Some(inner) = disabled::uncomment_once(text) else {
             break;
         };
+        if meta::parse_ff_line(text).is_some() {
+            break;
+        }
         match disabled::classify_inner(text, inner, j, est) {
             disabled::Inner::Neutral => {}
             disabled::Inner::Body { .. } => end = j + 1,

@@ -504,6 +504,30 @@ mod tests {
         assert_eq!(s(&d), before);
     }
 
+    #[test]
+    fn disable_mixed_indentation() {
+        // Iteration-3 WR-01: a valid live block whose body lines are indented differently can be
+        // disabled, and the disabled form enables back byte-identically.
+        for src in [
+            "Show\n\tRarity Rare\n    Class \"Bows\"\nHide\n",
+            "Show\n    Rarity Rare\n\tClass \"Bows\"\nHide\n",
+            "Show\n\tRarity Rare\nClass \"Bows\"\nHide\n",
+            "Show\r\n  Rarity Rare\r\n\tClass \"Bows\"\r\nSockets >= 2\r\n",
+        ] {
+            let mut d = p(src);
+            let id = ids(&d)[0];
+            let n = d.block(id).unwrap().body().len();
+            d.set_enabled(id, false)
+                .unwrap_or_else(|e| panic!("{src:?}: {e}"));
+            let b = d.block(id).unwrap();
+            assert_eq!(b.body().len(), n, "{src:?}");
+            assert!(b.can_enable(), "{src:?}");
+            d.set_enabled(id, true)
+                .unwrap_or_else(|e| panic!("{src:?}: {e}"));
+            assert_eq!(s(&d), src);
+        }
+    }
+
     /// Every short document over a pool of tricky lines: for each block, `can_enable()` agrees
     /// with `set_enabled(true)`, a successful disable re-enables byte-identically when the disabled
     /// form is enableable, metadata edits never move another block's lines, and a refused edit

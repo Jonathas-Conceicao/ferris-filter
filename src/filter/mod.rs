@@ -8,6 +8,7 @@
 pub mod diag;
 pub mod keywords;
 pub mod lines;
+pub mod tokenize;
 
 pub use diag::{FilterDiagnostic, LoadError, Severity};
 pub use lines::{Eol, Line};

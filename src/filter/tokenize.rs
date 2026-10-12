@@ -220,6 +220,13 @@ pub fn validate_shape(kw: &Keyword, line: &str, t: &TokenizedLine) -> Result<(),
                 && (vals[0].eq_ignore_ascii_case("true") || vals[0].eq_ignore_ascii_case("false")),
             "True or False",
         ),
+        ValueShape::OptionalBool => need(
+            n == 0
+                || (n == 1
+                    && (vals[0].eq_ignore_ascii_case("true")
+                        || vals[0].eq_ignore_ascii_case("false"))),
+            "no value, or True or False",
+        ),
         ValueShape::Int => need(
             n >= 1 && vals.iter().all(|v| is_int(v)),
             "one or more integers",
@@ -432,6 +439,8 @@ mod tests {
     #[test]
     fn shape_accepts_real_world_forms() {
         for l in [
+            "DisableDropSound True",
+            "DisableDropSound",
             "SetTextColor 1 2 3",
             "SetTextColor 1 2 3 4",
             "MinimapIcon 0 Red Circle",

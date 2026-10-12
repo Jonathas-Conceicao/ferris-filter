@@ -252,16 +252,51 @@ fn edit_disable_enable_roundtrip_filterblade() {
     let orig = fixture();
     let mut doc = parse(&orig).unwrap();
     let ids = enabled_ids(&doc);
-    let mut done = 0;
-    for id in ids.into_iter().step_by(50) {
-        if doc.set_enabled(id, false).is_ok() {
-            assert!(!doc.block(id).unwrap().is_enabled());
-            doc.set_enabled(id, true).unwrap();
-            done += 1;
-        }
+    assert_eq!(ids.len(), 460);
+    for id in ids {
+        doc.set_enabled(id, false)
+            .unwrap_or_else(|e| panic!("disable {id:?}: {e}"));
+        assert!(!doc.block(id).unwrap().is_enabled());
+        doc.set_enabled(id, true)
+            .unwrap_or_else(|e| panic!("re-enable {id:?}: {e}"));
     }
-    assert!(done >= 5, "only {done} blocks round-tripped");
     assert_bytes_eq("disable/enable", &doc.to_bytes(), &orig);
+}
+
+#[test]
+fn edit_disable_enable_roundtrip_seed_universal() {
+    // Space-indented, generator-written blocks: every one must disable and enable back exactly.
+    let orig = fs::read(manifest().join("tests/fixtures/seed-universal.filter")).unwrap();
+    let mut doc = parse(&orig).unwrap();
+    let ids = enabled_ids(&doc);
+    assert!(!ids.is_empty());
+    for id in ids {
+        doc.set_enabled(id, false)
+            .unwrap_or_else(|e| panic!("disable {id:?}: {e}"));
+        doc.set_enabled(id, true)
+            .unwrap_or_else(|e| panic!("re-enable {id:?}: {e}"));
+    }
+    assert_bytes_eq("seed disable/enable", &doc.to_bytes(), &orig);
+}
+
+#[test]
+fn edit_enable_disable_roundtrip_filterblade() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let ids: Vec<BlockId> = doc
+        .blocks()
+        .filter(|b| !b.is_enabled())
+        .map(|b| b.id())
+        .collect();
+    assert!(!ids.is_empty());
+    for id in ids {
+        assert!(doc.block(id).unwrap().can_enable(), "{id:?}");
+        doc.set_enabled(id, true)
+            .unwrap_or_else(|e| panic!("enable {id:?}: {e}"));
+        doc.set_enabled(id, false)
+            .unwrap_or_else(|e| panic!("re-disable {id:?}: {e}"));
+    }
+    assert_bytes_eq("enable/disable", &doc.to_bytes(), &orig);
 }
 
 #[test]

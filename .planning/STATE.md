@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: executing
-stopped_at: Completed 16-03-PLAN.md
-last_updated: "2026-10-12T22:22:26.593Z"
+status: verifying
+stopped_at: None
+last_updated: "2026-10-12T22:25:56.934Z"
 last_activity: 2026-10-12
 progress:
   total_phases: 17
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 
 Phase: 16 (lossless-filter-parser) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-10-12
 
-Progress: [████████░░] 75%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -122,6 +122,7 @@ work (carried forward past the v0.3 close):
 - Phase 16-01: parser fixtures use scoped -text (tests/fixtures/parser/*.filter), not global
 - Phase 16-02: keyword table is 80 entries, Ops None|Compare, lenient shape validation (no range/name checks)
 - 16-03: block metadata accessors live on Document (block_meta/meta_get); disabled-block reasons are Info diagnostics, never Error
+- 16-04: edits rebuild whole index and remap BlockIds by position; edit refused if block count/header/owned length/enabled state would change
 
 ### Pending Todos
 
@@ -261,8 +262,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-12T22:22:26.586Z
-Stopped at: Completed 16-03-PLAN.md
+Last session: Completed-16-04-PLAN.md
+Stopped at: None
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

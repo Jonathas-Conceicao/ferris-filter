@@ -27,7 +27,8 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 **: Saving a filter with no edits writes a byte-identical file. Line endings, BOM,
   indentation, comments and spacing are all preserved. This is verified against the real
   FilterBlade/NeverSink filter.
-- [ ] **PARSE-04**: Saving after editing one block changes only that block's lines. Every other byte
+- [x] **PARSE-04
+**: Saving after editing one block changes only that block's lines. Every other byte
   of the file is untouched.
 
 ### Rule Editor (EDIT)

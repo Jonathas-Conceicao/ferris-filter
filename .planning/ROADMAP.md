@@ -115,7 +115,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 17-01-PLAN.md — styles.json (today's 12 styles), ordered StyleSet + StyleError validation, load_styles, equality test vs the old struct; harnesses copy styles.json
+- [x] 17-01-PLAN.md — styles.json (today's 12 styles), ordered StyleSet + StyleError validation, load_styles, equality test vs the old struct; harnesses copy styles.json
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -210,7 +210,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
-| 17. Config-Driven Styles | 0/? | Not started | - |
+| 17. Config-Driven Styles | 1/4 | In Progress|  |
 | 18. Filter as Store & Economy Section | 0/? | Not started | - |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
@@ -299,7 +299,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** TBD
+**Plans:** 1/4 plans executed
 
 Plans:
 

@@ -17,9 +17,11 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Filter Parsing (PARSE)
 
-- [ ] **PARSE-01**: User can open any working PoE2 filter without error: FilterBlade/NeverSink,
+- [x] **PARSE-01
+**: User can open any working PoE2 filter without error: FilterBlade/NeverSink,
   poe2filter.com, hand-written, or FerrisFilter output.
-- [ ] **PARSE-02**: Every block type, condition, operator and action documented at
+- [x] **PARSE-02
+**: Every block type, condition, operator and action documented at
   pathofexile.com/item-filter/about is recognized, including `Continue`, `Import` and `Minimal`.
 - [x] **PARSE-03
 **: Saving a filter with no edits writes a byte-identical file. Line endings, BOM,

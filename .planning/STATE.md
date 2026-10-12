@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
-stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-10-12T22:13:22.884Z"
+stopped_at: Completed 16-02-PLAN.md
+last_updated: "2026-10-12T22:16:33.897Z"
 last_activity: 2026-10-12
 progress:
   total_phases: 17
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 ## Current Position
 
 Phase: 16 (lossless-filter-parser) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-10-12
 
-Progress: [███░░░░░░░] 25%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 14 P02 | 70min | 3 tasks | 2 files |
 | Phase 14 P03 | 65min | 3 tasks | 3 files |
 | Phase 14 P04 | ~90min + 2-day fix stream | 3 tasks | 15 files |
+| Phase 16 P02 | 20m | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,7 @@ work (carried forward past the v0.3 close):
 - [Phase 14]: A fully-selected class group summarises as "Any <group>", not "All" -- a summary reads as the rule's own matching test, and any one class in the list satisfies it (author, reversing the first cut the same day).
 - [Phase 14]: Running the overlay holds a lock on `target\debug\ff.exe`, so `cargo test` fails with "Access is denied" while the stripe is up (cargo builds all bin targets for integration tests). Use `cargo test --lib`, or point CARGO_TARGET_DIR at a scratch path.
 - Phase 16-01: parser fixtures use scoped -text (tests/fixtures/parser/*.filter), not global
+- Phase 16-02: keyword table is 80 entries, Ops None|Compare, lenient shape validation (no range/name checks)
 
 ### Pending Todos
 
@@ -257,8 +259,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-12T22:13:22.876Z
-Stopped at: Completed 16-01-PLAN.md
+Last session: 2026-10-12T22:16:33.890Z
+Stopped at: Completed 16-02-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

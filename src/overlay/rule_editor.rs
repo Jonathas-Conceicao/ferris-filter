@@ -1037,7 +1037,9 @@ mod tests {
     /// from what the config-sourced picker actually offers (`PITFALLS.md` §10).
     fn base_config() -> Config {
         let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
-        serde_json::from_str(json).expect("dynamic_base.json must parse as a Config")
+        let mut config: Config = serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
+        config.styles = crate::models::config::StyleSet::committed_for_tests();
+        config
     }
 
     // -- panel_open / set_panel_open (the shared primitive) --------------------------------

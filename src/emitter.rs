@@ -569,6 +569,8 @@ mod tests {
             "/config.json"
         )))
         .expect("config.json parse failed");
+        let mut config = config;
+        config.styles = StyleSet::committed_for_tests();
 
         let prices_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
         let prices: PricesFile = serde_json::from_str(prices_src).expect("prices.json parse failed");
@@ -747,10 +749,101 @@ mod tests {
                 when: None,
             });
         match generate(&config, &priced) {
-            Err(GenerateError::UnknownStyle { style, .. }) => {
+            Err(e @ GenerateError::UnknownStyle { .. }) => {
+                let GenerateError::UnknownStyle { style, .. } = &e;
                 assert_eq!(style, "NotATier", "error must name the offending style");
+                let msg = e.to_string();
+                assert!(msg.contains("NotATier"), "{msg}");
+                assert!(msg.contains("exceptional"), "list comes from the set: {msg}");
             }
             Ok(_) => panic!("expected generate to reject the unknown style 'NotATier'"),
+        }
+    }
+
+    fn bare_style(action: crate::models::config::StyleAction) -> Style {
+        Style {
+            text: None,
+            border: None,
+            background: None,
+            font: None,
+            minimap: None,
+            beam: None,
+            sound: None,
+            action,
+            disable_drop_sound: false,
+        }
+    }
+
+    fn named_rule(name: &str, style: &str) -> crate::models::config::Rule {
+        crate::models::config::Rule {
+            enabled: None,
+            name: Some(name.to_string()),
+            style: style.to_string(),
+            when: None,
+        }
+    }
+
+    /// Block text from the header line `header` up to the next blank line.
+    fn block_after<'a>(output: &'a str, header: &str) -> &'a str {
+        let start = output.find(header).unwrap_or_else(|| panic!("missing {header:?}"));
+        let rest = &output[start..];
+        rest.split("\n\n").next().unwrap()
+    }
+
+    /// STYLE-01 (D-07): a style added to the set and used by a rule emits with no code change.
+    #[test]
+    fn a_new_style_in_the_set_emits_with_no_code_change() {
+        use crate::models::config::StyleAction;
+        let (mut config, priced) = load_inputs();
+        let mut st = bare_style(StyleAction::Show);
+        st.text = Some([1, 2, 3]);
+        st.font = Some(30);
+        config.styles.insert("craftable", st);
+        config.rules.get_or_insert_with(Vec::new).push(named_rule("brand new style", "craftable"));
+        let output = generate(&config, &priced).expect("generate failed");
+        let block = block_after(&output, "Show # brand new style");
+        assert!(block.contains("SetTextColor 1 2 3 255"), "{block}");
+        assert!(block.contains("SetFontSize 30"), "{block}");
+    }
+
+    /// D-08: the style's action decides Show/Hide.
+    #[test]
+    fn a_hide_style_decides_the_block_header() {
+        let (mut config, priced) = load_inputs();
+        config.rules.get_or_insert_with(Vec::new).push(named_rule("hidden by style", "hidden"));
+        let output = generate(&config, &priced).expect("generate failed");
+        assert!(output.contains("\nHide # hidden by style\n"), "missing Hide header");
+    }
+
+    /// D-09: a Hide style keeps every visual line under its Hide header.
+    #[test]
+    fn a_hide_style_carries_full_visuals() {
+        use crate::models::config::{Beam, Minimap, Sound, StyleAction};
+        let (mut config, priced) = load_inputs();
+        let mut st = bare_style(StyleAction::Hide);
+        st.text = Some([10, 20, 30]);
+        st.border = Some([40, 50, 60]);
+        st.background = Some([70, 80, 90]);
+        st.font = Some(33);
+        st.sound = Some(Sound { id: Some(3), custom: None, vol: 100 });
+        st.minimap = Some(Minimap { size: 1, color: FilterColor::Red, shape: MinimapShape::Star });
+        st.beam = Some(Beam { color: FilterColor::Red, temp: false });
+        st.disable_drop_sound = true;
+        config.styles.insert("loudhide", st);
+        config.rules.get_or_insert_with(Vec::new).push(named_rule("loud hide", "loudhide"));
+        let output = generate(&config, &priced).expect("generate failed");
+        let block = block_after(&output, "Hide # loud hide");
+        for line in [
+            "SetTextColor 10 20 30 255",
+            "SetBorderColor 40 50 60 255",
+            "SetBackgroundColor 70 80 90 255",
+            "SetFontSize 33",
+            "PlayAlertSound 3 100",
+            "MinimapIcon 1 Red Star",
+            "PlayEffect Red",
+            "DisableDropSound",
+        ] {
+            assert!(block.contains(line), "missing {line:?} in:\n{block}");
         }
     }
 
@@ -773,11 +866,12 @@ mod tests {
     /// a `Rarity == Unique` block keyed on the unique's BASE TYPE.
     #[test]
     fn generate_emits_unique_block_when_present() {
-        let config: Config = serde_json::from_str(include_str!(concat!(
+        let mut config: Config = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/config.json"
         )))
         .expect("config.json parse failed");
+        config.styles = StyleSet::committed_for_tests();
 
         let priced = PricedData {
             category_blocks: vec![],

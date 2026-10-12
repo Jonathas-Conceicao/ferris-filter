@@ -297,6 +297,7 @@ mod tests {
     fn compile_store_produces_a_complete_filter_with_economy_sections() {
         let dir = tempfile::tempdir().unwrap();
         fs::copy(repo_file("tiers.json"), dir.path().join("tiers.json")).unwrap();
+        fs::copy(repo_file("styles.json"), dir.path().join("styles.json")).unwrap();
         fs::copy(fixture("seed-prices.json"), dir.path().join("prices.json")).unwrap();
         let store = dir.path().join(STORE_FILE);
         ensure_store(&repo_file(BASE_FILE), &store).expect("seed");

@@ -369,6 +369,7 @@ mod tests {
     fn load_inputs_reports_live_when_prices_present() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
@@ -382,6 +383,7 @@ mod tests {
     fn load_inputs_falls_back_when_live_prices_absent() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
@@ -398,6 +400,7 @@ mod tests {
     fn load_inputs_reports_absent_when_no_prices_anywhere() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
         ]);
         let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
@@ -411,6 +414,7 @@ mod tests {
     fn force_fallback_reports_forced() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles.json")),
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
             // A live prices.json is present and must be ignored under ForceFallback.
@@ -431,6 +435,7 @@ mod tests {
     fn force_fallback_errors_when_fallback_prices_missing() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
         ]);
         let err = load_inputs(
@@ -461,6 +466,7 @@ mod tests {
     fn compile_produces_filter_text_from_loaded_inputs() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);

@@ -162,7 +162,7 @@ fn corpus_generated_dynamic() {
     use ferrisfilter::{compile, dynamic};
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    for f in ["dynamic_base.json", "tiers.json", "config.json"] {
+    for f in ["dynamic_base.json", "tiers.json", "config.json", "styles.json"] {
         fs::copy(manifest().join(f), dir.join(f)).unwrap();
     }
     fs::copy(

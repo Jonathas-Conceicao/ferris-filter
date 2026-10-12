@@ -108,6 +108,7 @@ mod tests {
         let dir = must("tempdir", tempfile::tempdir());
         let base = repo_file(dynamic::BASE_FILE);
         let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
 
         let view = must("load should seed and succeed", load(&base, &store));
         assert!(view.seeded);
@@ -120,6 +121,7 @@ mod tests {
         let dir = must("tempdir", tempfile::tempdir());
         let base = repo_file(dynamic::BASE_FILE);
         let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
         must("copy template", fs::copy(&base, &store));
 
         let view = must(
@@ -134,6 +136,7 @@ mod tests {
         let dir = must("tempdir", tempfile::tempdir());
         let base = repo_file(dynamic::BASE_FILE);
         let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
         must("copy template", fs::copy(&base, &store));
 
         let text = must("read store", fs::read_to_string(&store));
@@ -156,6 +159,7 @@ mod tests {
         let dir = must("tempdir", tempfile::tempdir());
         let base = repo_file(dynamic::BASE_FILE);
         let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
         let original = b"{\"not\": \"a valid Config, but present\"}".to_vec();
         must("write original store", fs::write(&store, &original));
 

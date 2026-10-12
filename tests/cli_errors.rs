@@ -37,6 +37,12 @@ fn valid_tiers() -> String {
         .expect("read repo tiers.json")
 }
 
+/// The repo's real, valid `styles.json`.
+fn valid_styles() -> String {
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"))
+        .expect("read repo styles.json")
+}
+
 /// A missing `config.json` (cwd has no config.json) must produce a non-zero exit
 /// with a "Cannot read" / not-found message.
 ///
@@ -76,6 +82,7 @@ fn malformed_config_json_reports_field_path_and_expected_type() {
     let dir = make_temp_dir("bad_cfg_type", &[
         ("config.json", &bad_config),
         ("tiers.json", &tiers_src),
+        ("styles.json", &valid_styles()),
     ]);
 
     Command::cargo_bin("ferrisfilter")
@@ -113,6 +120,7 @@ fn missing_tier_in_tiers_json_exits_nonzero() {
     let dir = make_temp_dir("missing_tier", &[
         ("config.json", &cfg),
         ("tiers.json", bad_tiers),
+        ("styles.json", &valid_styles()),
     ]);
 
     Command::cargo_bin("ferrisfilter")
@@ -145,6 +153,7 @@ fn non_ascending_tiers_json_exits_nonzero() {
     let dir = make_temp_dir("bad_order", &[
         ("config.json", &cfg),
         ("tiers.json", bad_tiers),
+        ("styles.json", &valid_styles()),
     ]);
 
     Command::cargo_bin("ferrisfilter")

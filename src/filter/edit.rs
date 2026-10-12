@@ -99,9 +99,15 @@ impl Document {
             return Err(Fail::Structure);
         }
         if ex.reject_errors && enabled {
+            // Warnings count too: an unknown keyword or trailing header tokens in a block the
+            // tool just enabled is still a block the game refuses (D-11).
             let errs: Vec<FilterDiagnostic> = diags
                 .iter()
-                .filter(|d| d.severity == Severity::Error && d.line > lead && d.line <= end)
+                .filter(|d| {
+                    matches!(d.severity, Severity::Error | Severity::Warning)
+                        && d.line > lead
+                        && d.line <= end
+                })
                 .cloned()
                 .collect();
             if !errs.is_empty() {
@@ -326,6 +332,31 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn enable_with_interior_prose_refused() {
+        // CR-01: neither a parsed nor a replaced disabled block may enable prose as grammar.
+        let src = "#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        assert!(matches!(
+            d.set_enabled(id, true),
+            Err(EditError::CannotEnable { .. })
+        ));
+        assert_eq!(s(&d), src);
+
+        let mut d = p("Show\n\tRarity Rare\n");
+        let id = ids(&d)[0];
+        d.replace_block_lines(
+            id,
+            vec!["#Show".into(), "# hello world".into(), "#\tRarity Rare".into()],
+        )
+        .unwrap();
+        let before = s(&d);
+        assert!(!d.block(id).unwrap().can_enable());
+        assert!(d.set_enabled(id, true).is_err());
+        assert_eq!(s(&d), before);
     }
 
     #[test]

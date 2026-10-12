@@ -48,6 +48,10 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
     let keyword = detect_header(ls[h].text())?;
     let mut body = Vec::new();
     let mut reasons: Vec<FilterDiagnostic> = Vec::new();
+    // Non-grammar lines seen after the current `end`. They only become reasons once a later
+    // grammar line pulls them inside the owned range (enabling would turn them into live lines);
+    // trailing prose stays an ordinary comment outside the block.
+    let mut pending: Vec<FilterDiagnostic> = Vec::new();
     let mut end = h + 1;
     let mut k = h + 1;
     while k < ls.len() {
@@ -67,8 +71,12 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                     continue;
                 };
                 match lookup(&inner[r.clone()]) {
-                    // Unknown first word: prose.
-                    None => {}
+                    // Unknown first word: prose. Enabling it would produce a live
+                    // unknown-keyword line, so inside the owned range it blocks enabling.
+                    None => pending.push(reason(format!(
+                        "`{}` is not filter grammar",
+                        &inner[r.clone()]
+                    ))),
                     Some(kw) if kw.kind == Kind::BlockHeader => {
                         if is_header(text) {
                             break;
@@ -76,6 +84,7 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                     }
                     Some(kw) if kw.kind == Kind::Directive => {}
                     Some(kw) => {
+                        reasons.append(&mut pending);
                         if let Err(m) = validate_shape(kw, inner, &t) {
                             reasons.push(reason(m));
                         }
@@ -97,6 +106,7 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
                     .collect();
                 if let Some(kw) = lookup(&word) {
                     if matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) {
+                        reasons.append(&mut pending);
                         reasons.push(reason(e.message));
                         body.push(BodyLine {
                             line: k,
@@ -193,6 +203,31 @@ mod tests {
         let b = d.blocks().next().unwrap();
         assert_eq!(b.owned(), 0..2);
         assert!(matches!(d.items()[1], Item::Trivia(ref r) if *r == (2..3)));
+    }
+
+    #[test]
+    fn interior_prose_blocks_enabling() {
+        // CR-01: prose between grammar lines would become a live unknown-keyword line.
+        let d = p("#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n");
+        let b = d.blocks().next().unwrap();
+        assert_eq!(b.owned(), 0..4);
+        assert!(!b.can_enable());
+        match b.disabled_state().unwrap() {
+            DisabledState::Invalid(r) => {
+                assert_eq!(r.len(), 1);
+                assert_eq!(r[0].line, 3);
+                assert!(r[0].message.contains("`note` is not filter grammar"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailing_prose_keeps_block_valid() {
+        let d = p("#Show\n#\tRarity Rare\n# note here\n");
+        let b = d.blocks().next().unwrap();
+        assert_eq!(b.owned(), 0..2);
+        assert!(b.can_enable());
     }
 
     #[test]

@@ -210,9 +210,11 @@ impl Document {
         }
         if let Item::Block(c) = &items[0] {
             if c.is_enabled() {
+                // Unknown keywords and trailing header tokens are Warnings when loaded from a
+                // file, but an enabled block the tool writes must be fully valid (D-11).
                 let errs: Vec<FilterDiagnostic> = diags
                     .iter()
-                    .filter(|d| d.severity == Severity::Error)
+                    .filter(|d| matches!(d.severity, Severity::Error | Severity::Warning))
                     .cloned()
                     .collect();
                 if !errs.is_empty() {
@@ -475,6 +477,31 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn replace_with_warning_level_problems_refused() {
+        // WR-04: unknown keywords and compact headers are not valid enabled grammar.
+        let src = "Show\n\tRarity Rare\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        for cand in [
+            vec!["Show".to_string(), "\tFooBar 1".to_string()],
+            vec!["Show Rarity Rare".to_string()],
+        ] {
+            assert!(
+                matches!(
+                    d.replace_block_lines(id, cand.clone()),
+                    Err(EditError::InvalidBlock { .. })
+                ),
+                "{cand:?}"
+            );
+        }
+        assert_eq!(s(&d), src);
+        // A disabled candidate may still carry such lines.
+        d.replace_block_lines(id, vec!["#Show".into(), "#\tFooBar 1".into()])
+            .unwrap();
+        assert!(!d.block(id).unwrap().can_enable());
     }
 
     #[test]

@@ -36,6 +36,10 @@ impl Line {
     pub fn eol(&self) -> Eol {
         self.eol
     }
+    /// If this line is a `#ff:<key> [value]` metadata/marker comment, its key and value view.
+    pub fn ff_marker(&self) -> Option<(&str, Option<&str>)> {
+        super::meta::parse_ff_line(&self.text)
+    }
 }
 
 /// Split into (had_bom, lines). Every byte of the input lands in exactly one place.

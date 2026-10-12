@@ -229,7 +229,7 @@ mod tests {
             "/tests/fixtures/parser/filterblade.filter"
         ));
         let mut misses = std::collections::BTreeSet::new();
-        for line in src.lines() {
+        for line in src.split('\n') {
             let t = line.trim_start();
             if t.is_empty() || t.starts_with('#') {
                 continue;

@@ -5,11 +5,16 @@
 //! the input byte-for-byte. The library never prints and does no file IO; the only `Err` is
 //! non-UTF-8 input ([`LoadError`]). Grammar problems become [`FilterDiagnostic`]s.
 
+pub mod block;
 pub mod diag;
+mod disabled;
 pub mod keywords;
 pub mod lines;
+pub mod meta;
+mod parse;
 pub mod tokenize;
 
+pub use block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
 pub use diag::{FilterDiagnostic, LoadError, Severity};
 pub use lines::{Eol, Line};
 
@@ -20,6 +25,9 @@ pub struct Document {
     bom: bool,
     lines: Vec<Line>,
     diagnostics: Vec<FilterDiagnostic>,
+    items: Vec<Item>,
+    #[allow(dead_code)] // consumed by block insertion in later phases
+    next_id: u64,
 }
 
 /// Parse filter bytes. Fails only if the input is not valid UTF-8.
@@ -28,10 +36,14 @@ pub fn parse(input: &[u8]) -> Result<Document, LoadError> {
         valid_up_to: e.valid_up_to(),
     })?;
     let (bom, lines) = lines::split(text);
+    let mut next_id = 0u64;
+    let (items, diagnostics) = parse::build(&lines, &mut next_id);
     Ok(Document {
         bom,
         lines,
-        diagnostics: Vec::new(),
+        diagnostics,
+        items,
+        next_id,
     })
 }
 
@@ -44,6 +56,37 @@ impl Document {
     }
     pub fn diagnostics(&self) -> &[FilterDiagnostic] {
         &self.diagnostics
+    }
+    /// Top-level partition: every line index belongs to exactly one item, in order.
+    pub fn items(&self) -> &[Item] {
+        &self.items
+    }
+    pub fn blocks(&self) -> impl Iterator<Item = &Block> {
+        self.items.iter().filter_map(|i| match i {
+            Item::Block(b) => Some(b),
+            _ => None,
+        })
+    }
+    pub fn block(&self, id: BlockId) -> Option<&Block> {
+        self.blocks().find(|b| b.id() == id)
+    }
+    /// `#ff:` settings attached to a block, in order, as `(key, value)` (missing value = "").
+    pub fn block_meta(&self, id: BlockId) -> Vec<(&str, &str)> {
+        let Some(b) = self.block(id) else {
+            return Vec::new();
+        };
+        b.leading()
+            .filter_map(|i| self.lines[i].ff_marker())
+            .map(|(k, v)| (k, v.unwrap_or("")))
+            .collect()
+    }
+    /// First `#ff:<key>` value attached to the block. Foreign header comments are never a name.
+    pub fn meta_get(&self, id: BlockId, key: &str) -> Option<&str> {
+        let b = self.block(id)?;
+        b.leading()
+            .filter_map(|i| self.lines[i].ff_marker())
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, v)| v)
     }
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -89,7 +132,7 @@ mod tests {
     fn bom_flag() {
         let d = parse(b"\xEF\xBB\xBF").unwrap();
         assert!(d.has_bom());
-        assert!(d.lines().is_empty());
+        assert!(d.lines.is_empty());
     }
 
     #[test]
@@ -98,5 +141,18 @@ mod tests {
             parse(b"\xFF\xFE"),
             Err(LoadError::InvalidUtf8 { valid_up_to: 0 })
         ));
+    }
+}
+
+#[cfg(test)]
+impl Document {
+    pub(crate) fn line_at(&self, i: usize) -> &Line {
+        &self.lines[i]
+    }
+    pub(crate) fn line_text(&self, i: usize) -> &str {
+        self.lines[i].text()
+    }
+    pub(crate) fn line_count(&self) -> usize {
+        self.lines.len()
     }
 }

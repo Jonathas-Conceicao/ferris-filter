@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: planning
-stopped_at: Phase 15 planned — 3 plans across 3 waves, plan-checker passed
-last_updated: "2026-10-12T22:08:51.707Z"
-last_activity: 2026-10-12 — v0.5 roadmap created (Phases 16-22)
+status: executing
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-10-12T22:13:22.884Z"
+last_activity: 2026-10-12
 progress:
   total_phases: 17
   completed_phases: 0
   total_plans: 4
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 25
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.5 Generic Filter Editor & Initial App Configuration — Phase 16 (Lossless Filter Parser) next
+**Current focus:** Phase 16 — lossless-filter-parser
 
 ## Current Position
 
-Phase: 16 of 22 (Lossless Filter Parser) — not started
-Plan: —
-Status: Roadmap created, ready to plan
-Last activity: 2026-10-12 — v0.5 roadmap created (Phases 16-22)
+Phase: 16 (lossless-filter-parser) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-10-12
 
-Progress: [░░░░░░░░░░] 0% (0/7 phases)
+Progress: [███░░░░░░░] 25%
 
 ## Performance Metrics
 
@@ -117,6 +117,7 @@ work (carried forward past the v0.3 close):
 - [Phase 14]: The `unidentified` style is renamed `kite`, after its minimap icon -- the old name described the rules that used it rather than what it does. Breaking for any config naming the old name (unknown style is a hard generate-time error, by design).
 - [Phase 14]: A fully-selected class group summarises as "Any <group>", not "All" -- a summary reads as the rule's own matching test, and any one class in the list satisfies it (author, reversing the first cut the same day).
 - [Phase 14]: Running the overlay holds a lock on `target\debug\ff.exe`, so `cargo test` fails with "Access is denied" while the stripe is up (cargo builds all bin targets for integration tests). Use `cargo test --lib`, or point CARGO_TARGET_DIR at a scratch path.
+- Phase 16-01: parser fixtures use scoped -text (tests/fixtures/parser/*.filter), not global
 
 ### Pending Todos
 
@@ -256,9 +257,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-08T18:13:05.246Z
-Stopped at: Phase 15 planned — 3 plans across 3 waves, plan-checker passed
-Resume file: .planning/phases/15-basetype-lists-and-rule-names/15-01-PLAN.md
+Last session: 2026-10-12T22:13:22.876Z
+Stopped at: Completed 16-01-PLAN.md
+Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is
 independent and can run in parallel.

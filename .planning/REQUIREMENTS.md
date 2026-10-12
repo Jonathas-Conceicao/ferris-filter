@@ -21,7 +21,8 @@ output, with the style palette and economy tier cutoffs configurable from the ov
   poe2filter.com, hand-written, or FerrisFilter output.
 - [ ] **PARSE-02**: Every block type, condition, operator and action documented at
   pathofexile.com/item-filter/about is recognized, including `Continue`, `Import` and `Minimal`.
-- [ ] **PARSE-03**: Saving a filter with no edits writes a byte-identical file. Line endings, BOM,
+- [x] **PARSE-03
+**: Saving a filter with no edits writes a byte-identical file. Line endings, BOM,
   indentation, comments and spacing are all preserved. This is verified against the real
   FilterBlade/NeverSink filter.
 - [ ] **PARSE-04**: Saving after editing one block changes only that block's lines. Every other byte

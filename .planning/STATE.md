@@ -3,12 +3,13 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: planning
-last_updated: "2026-10-12T20:23:52.825Z"
-last_activity: 2026-10-12
+stopped_at: Phase 15 planned — 3 plans across 3 waves, plan-checker passed
+last_updated: "2026-10-12T22:08:51.707Z"
+last_activity: 2026-10-12 — v0.5 roadmap created (Phases 16-22)
 progress:
-  total_phases: 7
+  total_phases: 17
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
   percent: 0
 ---
@@ -262,4 +263,4 @@ Resume file: .planning/phases/15-basetype-lists-and-rule-names/15-01-PLAN.md
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is
 independent and can run in parallel.
 
-**Planned Phase:** 15 (basetype-lists-and-rule-names) — 3 plans — 2026-09-08T21:09:21.802Z
+**Planned Phase:** 16 (Lossless Filter Parser) — 4 plans — 2026-10-12T22:08:51.700Z

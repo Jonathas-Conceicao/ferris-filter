@@ -57,7 +57,6 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
-
 ## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-22)
 
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
@@ -72,85 +71,122 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 
 ### Phase 16: Lossless Filter Parser
+
 **Goal**: Any working PoE2 filter can be parsed and written back without changing a byte the user did not edit
 **Depends on**: Nothing (first phase)
 **Requirements**: PARSE-01, PARSE-02, PARSE-03, PARSE-04
 **Success Criteria** (what must be TRUE):
+
   1. The real FilterBlade/NeverSink filter, the `reference-old-filters/` files, poe2filter.com exports and a FerrisFilter-generated filter all open without error; an unrecognized keyword is kept as an opaque line instead of failing the load
   2. Every block type, condition, operator and action documented at pathofexile.com/item-filter/about is recognized, including `Continue`, `Import` and `Minimal`
   3. Parsing a filter and saving it with no edits writes a byte-identical file, for CRLF, LF, mixed endings, a BOM and a missing final newline, and for the real FilterBlade sample (the phase exit gate)
   4. Editing one block and saving changes only that block's lines; every other byte of the file is untouched
-**Plans**: TBD
+
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+
+- [ ] 16-01-PLAN.md — Raw-line document model + byte-identical serializer; FilterBlade fixture committed under a scoped `-text` rule
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 16-02-PLAN.md — The single GGG keyword table and quote-aware line tokenizer/shape validator
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 16-03-PLAN.md — Block index (stable BlockIds, attached comments, `#ff:` metadata, disabled-block classification) + real-filter corpus gate
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 16-04-PLAN.md — Block-scoped edit API (enable/disable, replace lines, set_meta) proving PARSE-04 + CHANGELOG
 
 ### Phase 17: Config-Driven Styles
+
 **Goal**: Named styles are data in a committed `styles.json`, not a hardcoded vocabulary, and the static `generate` path is unaffected
 **Depends on**: Nothing (independent of Phase 16; can run in parallel with it)
 **Requirements**: STYLE-01, STYLE-02, STYLE-04
 **Success Criteria** (what must be TRUE):
+
   1. User adds a new named style to `styles.json`, uses it from a rule, and `generate` emits it with no code change
   2. A rule naming an unknown style, or an invalid `styles.json`, stops with a clear error at load time that names the problem
   3. `generate` output is unchanged: `artifact_guard` and `generate_snapshot` pass with the `seed-universal.filter` fixture byte-identical and not re-baselined
+
 **Plans**: TBD
 
 ### Phase 18: Filter as Store & Economy Section
+
 **Goal**: The filter file is the only store, and the economy-priced blocks live in a fenced section FerrisFilter can regenerate without touching anything else
 **Depends on**: Phase 16, Phase 17
 **Requirements**: STORE-01, STORE-03, STORE-04, STORE-05, ECON-01, ECON-03, ECON-04, EDIT-09, EDIT-10
 **Success Criteria** (what must be TRUE):
+
   1. By default `apply` and the overlay's Apply edit the game-folder `dynamic.filter` directly; `dynamic.json`, `dynamic_base.json`, the overlay JSON store and the `apply --reset/--base/--store` flags are gone, and the breaking change is in `CHANGELOG.md`
   2. `ff` launched from anywhere, including a double-click on the exe, finds `styles.json`, `tiers.json` and `prices.json` without relying on the working directory
   3. Apply regenerates the economy section, placed after the general rules between comment markers, from `prices.json`, `tiers.json` and the styles, and changes no byte outside the markers; re-applying with nothing new produces identical bytes
   4. User can add an economy section to a new empty filter or to a foreign filter that has none, and can remove it again; a new filter starts empty
   5. Apply refuses to overwrite a filter that changed on disk after it was loaded and says why; the first write to a filter keeps a backup copy of the original
+
 **Plans**: TBD
 
 ### Phase 19: Overlay Rule List Over Parsed Blocks
+
 **Goal**: Users can open any filter in the overlay and manage its blocks as a rule list, with the economy section kept out of the way
 **Depends on**: Phase 18
 **Requirements**: EDIT-03, EDIT-04, EDIT-05, EDIT-07, EDIT-08, ECON-02
 **Success Criteria** (what must be TRUE):
+
   1. The overlay lists every block of a loaded filter, including NeverSink's roughly 460 blocks, stays responsive while scrolling, and a search box narrows the list
   2. User can add, delete, duplicate and reorder rules, and switch a block between `Show`, `Hide` and `Minimal` and toggle `Continue`
   3. Disabling a rule comments its block out; commented-out blocks in a loaded filter appear as disabled rules and can be enabled
   4. The economy section does not appear as rules; the list shows a summary such as "+ 42 locked rule blocks"
   5. Edits stay in memory until Apply writes the filter; Revert discards unsaved edits
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 20: Full-Grammar Block Editing
+
 **Goal**: Users can edit every condition and action of any block, and apply named styles that stay linked to `styles.json`
 **Depends on**: Phase 19
 **Requirements**: EDIT-01, EDIT-02, EDIT-06, STYLE-03
 **Success Criteria** (what must be TRUE):
+
   1. Every condition on any block is viewable and editable with all its operators and multi-value lists; no condition is read-only and no block is "unsupported"
   2. Every action on any block is viewable and editable: colours, font size, built-in and custom alert sounds, minimap icon, beam effect and drop-sound toggles
   3. User applies a named style to a rule and the rule's style actions are set from it
   4. A rule that uses a named style keeps a comment tag in the filter; after the style changes, the rule's actions update on the next Apply
   5. Editing one value rewrites only that value (a `Class "x"` is never turned into `Class == "x"` unless the user changes it)
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 21: Overlay Configuration Tab
+
 **Goal**: Users can configure styles, tier cutoffs and the active filter from a configuration tab separate from the rule editor
 **Depends on**: Phase 17, Phase 18, Phase 19
 **Requirements**: CONF-01, CONF-02, CONF-03, CONF-04, STORE-02
 **Success Criteria** (what must be TRUE):
+
   1. The overlay has a configuration tab, separate from the rule editor
   2. User adds, edits and deletes named styles (text, border and background colour picker, font size, sound, minimap icon, beam); built-in styles cannot be deleted
   3. User edits the economy tier cutoffs in `tiers.json` (not prices); an invalid cutoff shows inline and cannot be applied
   4. The tab has its own Apply and Revert, and Apply writes all of its files or none of them
   5. User selects a different filter in the game folder from this tab and the choice is remembered across launches
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 22: Single-Instance Overlay
+
 **Goal**: Launching `ff` twice never produces two stripes
 **Depends on**: Nothing (independent of other phases)
 **Requirements**: INST-01
 **Success Criteria** (what must be TRUE):
+
   1. Launching `ff` while it is already running brings up the running stripe and the second process exits
   2. This works even when the running stripe is hidden to the tray
   3. Only one stripe window exists and the hotkey keeps working after repeated launches
+
 **Plans**: TBD
 
 ### Progress
@@ -211,13 +247,16 @@ extension and are named by the online filter's id.
 
 **Spike results (2026-10-12, author-tested in-game).** The test filters were the current
 `dynamic.filter` with a FerrisFilter version of the online header and a correct body hash.
+
 - **The offline header is ignored.** `ff-header-test.filter`, `ff-badhash-test.filter` (wrong hash)
   and `ff-freetext-test.filter` (free text in `#name`/`#filterVersion`/`#errors`) all appeared in
   the dropdown and loaded with only the stock "Item Filter loaded successfully." message. An offline
   file cannot produce the load message, whatever its header says.
+
 - **`OnlineFilters/` is a cache, not a source.** Two hand-written files placed there (`ffTEST01`,
   `ffTEST02`) never appeared in the dropdown, and the game left them untouched. The online list
   comes from the account's filters on the server; the folder only holds downloaded copies.
+
 - **Local edits to a subscribed online filter are overwritten.** The header of the real FilterBlade
   copy (`OnlineFilters/pgWoKpuQ`) was rewritten with marker values (`#name`, `#filterVersion`,
   `#errors`, `#filterType`, a 2030 `#lastUpdate`), with the body and its hash left intact. When the
@@ -230,11 +269,13 @@ filters stored on the player's pathofexile.com account. Getting it means publish
 FerrisFilter output to the account instead of (or as well as) writing a local file.
 
 **Next spikes (unverified):**
+
 1. Cheap manual check: create an online filter on pathofexile.com by hand, paste a FerrisFilter
    output into it, subscribe in-game, and confirm the message shows. Also note which displayed
    fields map to which values entered on the site (name/version/last update), whether any can carry
    free text (that would let a future version echo 999.4's economy summary in-game), and whether the
    `CustomAlertSound "uwu.mp3"` still works from an online filter.
+
 2. Automated path: GGG's developer API appears to expose item-filter create/update endpoints under
    an OAuth scope (FilterBlade's auto-updater is believed to use this). Confirm the endpoints, the
    scope, and what app registration GGG requires. This would replace `install`/`apply`'s local copy

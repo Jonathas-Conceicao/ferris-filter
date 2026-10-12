@@ -463,6 +463,23 @@ mod tests {
         let d = p("Show\n  Rarity Rare\n#  SetFontSize 40\n#  FutureKw 3\n# heading\nHide\n");
         assert_eq!(blocks(&d)[0].owned(), 0..4);
         assert_eq!(blocks(&d)[1].leading(), 4..5);
+        // Iteration-3 WR-02: a header-only block (a catch-all) never takes the next block's
+        // heading, however it is indented.
+        for src in [
+            "Show\n#  Note: these are weapons\nHide\n",
+            "Show # catch-all\n# Rarity is irrelevant here\nHide\n",
+            "Show\n#\tSee notes below\nHide\n",
+            "Show\n#\tFutureKw 3\nHide\n",
+        ] {
+            let d = p(src);
+            let b = blocks(&d);
+            assert_eq!(b[0].owned(), 0..1, "{src:?}");
+            assert_eq!(b[1].leading(), 1..2, "{src:?}");
+        }
+        // A body-indented line that starts with a known condition word is read as the block's
+        // broken commented condition (the disabled form of `Show\n\tRarity =< Rare`).
+        let d = p("Show # catch-all\n#  Rarity is irrelevant here\nHide\n");
+        assert_eq!(blocks(&d)[0].owned(), 0..2);
         // Iteration-3 CR-01: a clean commented condition is a disabled condition at any
         // indentation, as its live form is a body line at any indentation.
         for line in ["#Corrupted True", "#    SetFontSize 40", "# Rarity Rare"] {

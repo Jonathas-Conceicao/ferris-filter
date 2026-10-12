@@ -81,19 +81,23 @@ pub(crate) fn lead_ws(s: &str) -> &str {
 /// - A line with a problem (bad values, unknown keyword, untokenizable) is a body line only when
 ///   the block already has a body and the line is indented, exactly like that body. This is the
 ///   disabled form of a broken live line (`#\tFutureKw 3` under `#\tRarity Rare`).
-/// - Directly under a header (no body yet), a line with a problem is a body line only when
-///   body-indented (tab or two spaces).
+/// - Directly under a header (no body yet), a line with a problem is a body line only when it is
+///   body-indented (tab or two spaces) and starts with a known condition/action word: the broken
+///   first condition `#\tRarity =< Rare` is owned, while `#  Note: x` or `#\tSee notes below`
+///   after a header-only catch-all is the next block's heading (iteration-3 WR-02). `detect`
+///   still refuses to enable a disabled header whose next line is a body-indented line it did not
+///   take (`#\tFutureKw 3`), since enabled the bare header would be a catch-all.
 ///
 /// So `# Corrupted items` and `#  Note: x` under a tab-indented body are prose, while the disabled
 /// form of every clean live body line is a body line.
-fn indent_ok(inner: &str, clean: bool, est: Option<&str>) -> bool {
+fn indent_ok(inner: &str, clean: bool, known: bool, est: Option<&str>) -> bool {
     if clean {
         return true;
     }
     let lead = lead_ws(inner);
     match est {
         Some(e) => lead == e && !lead.is_empty(),
-        None => body_indented(inner),
+        None => known && body_indented(inner),
     }
 }
 
@@ -143,7 +147,7 @@ fn body_or_prose(
     tokens: Option<TokenizedLine>,
     problem: Option<String>,
 ) -> Inner {
-    if indent_ok(inner, problem.is_none(), est) {
+    if indent_ok(inner, problem.is_none(), keyword.is_some(), est) {
         Inner::Body {
             problem,
             line: BodyLine {
@@ -263,6 +267,17 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
         match classify_inner(text, inner, k, est) {
             Inner::Header => break,
             Inner::Prose => {
+                // Directly under the header, a body-indented line not taken as a condition
+                // (`#\tFutureKw 3`) may still be the rule's broken first condition rather than a
+                // heading: enabled, the header alone would be a catch-all (for `Hide`, hiding
+                // everything), so refuse (WR-02).
+                if body.is_empty() && body_indented(inner) {
+                    reasons.push(FilterDiagnostic {
+                        line: k + 1,
+                        severity: Severity::Warning,
+                        message: "the indented line below the header reads as a broken condition; enabled, the rule would match every item".into(),
+                    });
+                }
                 // Prose ends the block, but a clean condition further down the same commented
                 // run reads as part of this rule: enabling would drop it, so refuse (CR-01).
                 if let Some(j) = clean_grammar_ahead(ls, k + 1) {
@@ -537,10 +552,37 @@ mod tests {
                 format!("Show\n\tRarity Rare\n{heading}\nShow\n")
             );
         }
-        // Directly under a header (no body yet), a line with a problem must be body-indented.
+        // Directly under a header (no body yet), a line with a problem is never a body line.
         let d = p("#Show\n# Corrupted items\nShow\n");
         assert_eq!(d.blocks().next().unwrap().owned(), 0..1);
         assert!(d.blocks().next().unwrap().can_enable());
+    }
+
+    #[test]
+    fn header_only_disabled_block_leaves_heading_and_never_enables_as_catch_all() {
+        // Iteration-3 WR-02: the heading below a disabled header-only block stays the next
+        // block's leading comment. When that line is body-indented it may instead be the rule's
+        // broken first condition, and enabled the bare header would match every item, so the
+        // block is Invalid: never enabled as a catch-all.
+        for (src, enableable) in [
+            ("#Show\n#  Note: these are weapons\nHide\n", false),
+            ("#Show\n#\tSee notes below\nHide\n", false),
+            ("#Show # catch-all\n# Rarity is irrelevant here\nHide\n", true),
+            ("#Hide\n#\tFutureKw 3\nShow\n", false),
+            ("#Show\n# Note: weapons\nHide\n", true),
+            ("#Show\n#Note: weapons\nHide\n", true),
+        ] {
+            let mut d = p(src);
+            let b: Vec<_> = d.blocks().collect();
+            assert_eq!(b[0].owned(), 0..1, "{src:?}");
+            assert_eq!(b[1].leading(), 1..2, "{src:?}");
+            assert_eq!(b[0].can_enable(), enableable, "{src:?}");
+            let id = b[0].id();
+            assert_eq!(d.set_enabled(id, true).is_ok(), enableable, "{src:?}");
+            if !enableable {
+                assert_eq!(d.serialize(), src);
+            }
+        }
     }
 
     #[test]

@@ -843,9 +843,20 @@ mod tests {
         }
         assert_eq!(s(&d), src);
         // A disabled candidate may still carry such lines.
-        d.replace_block_lines(id, vec!["#Show".into(), "#\tFooBar 1".into()])
-            .unwrap();
+        d.replace_block_lines(
+            id,
+            vec!["#Show".into(), "#\tRarity Rare".into(), "#\tFooBar 1".into()],
+        )
+        .unwrap();
         assert!(!d.block(id).unwrap().can_enable());
+        // Directly under a header, an unknown word reads as the next block's heading (iteration-3
+        // WR-02), so that candidate is not one block.
+        let before = s(&d);
+        assert!(matches!(
+            d.replace_block_lines(id, vec!["#Show".into(), "#\tFooBar 1".into()]),
+            Err(EditError::NotOneBlock)
+        ));
+        assert_eq!(s(&d), before);
     }
 
     #[test]

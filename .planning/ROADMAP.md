@@ -319,3 +319,17 @@ many questions before it becomes a chore, whether presets are full filters or la
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.10: Raw-text block editing (BACKLOG)
+
+**Goal:** An "Edit as text" escape hatch on a rule in the overlay: edit the block's raw filter text
+directly, with the edit validated by the Phase 16 parser before it's accepted (an enabled block must
+always be valid grammar). Proposed during v0.5 discussion (Phase 20, 2026-10-12) and deferred by the
+author. v0.5 covers the full grammar with structured controls, so this is for power users and
+odd cases.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

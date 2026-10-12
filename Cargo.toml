@@ -36,6 +36,7 @@ egui    = "0.36"
 global-hotkey = "0.8"
 tray-icon = "0.24"
 image   = { version = "0.25", default-features = false, features = ["png"] }
+indexmap = { version = "2", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

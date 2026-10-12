@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de;
+use indexmap::IndexMap;
+use miette::Diagnostic;
+use thiserror::Error;
 
 // ---------------------------------------------------------------------------
 // Closed-vocabulary enums (D-07)
@@ -140,6 +143,149 @@ pub struct Styles {
     /// there — additive, no impact on the committed filter or fixtures.
     #[serde(default)]
     pub craftable: Option<Style>,
+}
+
+// ---------------------------------------------------------------------------
+// StyleSet — config-driven named styles (Phase 17, STYLE-01/02)
+// ---------------------------------------------------------------------------
+
+/// Reasons a parsed `styles.json` is rejected by [`StyleSet::validate`].
+#[derive(Debug, Error, Diagnostic)]
+pub enum StyleError {
+    #[error(
+        "styles file is missing required style(s): {} (S, A, B, C, D, E, F, unchanged and hidden are required)",
+        .0.join(", ")
+    )]
+    #[diagnostic(code(ferrisfilter::styles::missing))]
+    MissingRequired(Vec<String>),
+
+    #[error(
+        "style name \"{name}\" differs only by case from the required style \"{required}\"; \
+         names that differ only by case from a required style are reserved"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::shadows_required))]
+    ShadowsRequired { name: String, required: String },
+
+    #[error(
+        "style \"{style}\" has an invalid sound.custom {value:?}: it must not contain a double quote or control character"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::bad_custom_sound))]
+    InvalidCustomSound { style: String, value: String },
+}
+
+/// Named styles in file order. The top level of `styles.json` *is* this map.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct StyleSet(IndexMap<String, Style>);
+
+impl<'de> Deserialize<'de> for StyleSet {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = StyleSet;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map of style name to style")
+            }
+            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<StyleSet, A::Error> {
+                let mut out = IndexMap::new();
+                while let Some((name, style)) = map.next_entry::<String, Style>()? {
+                    if out.contains_key(&name) {
+                        return Err(de::Error::custom(format!("duplicate style name \"{name}\"")));
+                    }
+                    out.insert(name, style);
+                }
+                Ok(StyleSet(out))
+            }
+        }
+        deserializer.deserialize_map(V)
+    }
+}
+
+impl StyleSet {
+    /// Styles every config needs: the economy emitter reads S..F, rules lean on
+    /// `unchanged`/`hidden`. `kite`, `Recycle` and `exceptional` are deliberately optional.
+    pub const REQUIRED: [&'static str; 9] =
+        ["S", "A", "B", "C", "D", "E", "F", "unchanged", "hidden"];
+
+    pub fn get(&self, name: &str) -> Option<&Style> {
+        self.0.get(name)
+    }
+
+    /// Style names in file order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn from_pairs<I, N>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (N, Style)>,
+        N: Into<String>,
+    {
+        StyleSet(pairs.into_iter().map(|(n, s)| (n.into(), s)).collect())
+    }
+
+    pub fn validate(&self) -> Result<(), StyleError> {
+        let missing: Vec<String> = Self::REQUIRED
+            .iter()
+            .filter(|r| !self.0.contains_key(**r))
+            .map(|r| r.to_string())
+            .collect();
+        if !missing.is_empty() {
+            return Err(StyleError::MissingRequired(missing));
+        }
+        for name in self.0.keys() {
+            if Self::REQUIRED.contains(&name.as_str()) {
+                continue;
+            }
+            if let Some(req) = Self::REQUIRED.iter().find(|r| r.eq_ignore_ascii_case(name)) {
+                return Err(StyleError::ShadowsRequired {
+                    name: name.clone(),
+                    required: req.to_string(),
+                });
+            }
+        }
+        for (name, style) in &self.0 {
+            if let Some(value) = style.sound.as_ref().and_then(|s| s.custom.as_ref()) {
+                if value.chars().any(|c| c == '"' || c.is_control()) {
+                    return Err(StyleError::InvalidCustomSound {
+                        style: name.clone(),
+                        value: value.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert(&mut self, name: &str, style: Style) {
+        self.0.insert(name.to_string(), style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove(&mut self, name: &str) -> Option<Style> {
+        self.0.shift_remove(name)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn committed_for_tests() -> StyleSet {
+        let set: StyleSet = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles.json"
+        )))
+        .unwrap_or_else(|e| panic!("committed styles.json failed to parse: {e}"));
+        set.validate()
+            .unwrap_or_else(|e| panic!("committed styles.json failed validation: {e}"));
+        set
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,5 +1182,141 @@ mod tests {
         assert_eq!(rule, restored);
         // None-valued fields must not appear in the serialized form
         assert!(serialized.contains("\"corrupted\":false"));
+    }
+    // -----------------------------------------------------------------------
+    // StyleSet (Phase 17)
+    // -----------------------------------------------------------------------
+
+    const STYLES_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
+    const DYNAMIC_BASE_JSON: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
+
+    const COMMITTED_ORDER: [&str; 12] = [
+        "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite", "exceptional",
+    ];
+
+    fn ordered_from_struct(s: &Styles) -> Vec<(&'static str, &Style)> {
+        vec![
+            ("S", &s.s),
+            ("A", &s.a),
+            ("B", &s.b),
+            ("C", &s.c),
+            ("D", &s.d),
+            ("E", &s.e),
+            ("F", &s.f),
+            ("Recycle", &s.recycle),
+            ("unchanged", &s.unchanged),
+            ("hidden", &s.hidden),
+            ("kite", &s.kite),
+            ("exceptional", s.exceptional.as_ref().expect("exceptional must be Some")),
+        ]
+    }
+
+    #[test]
+    fn styles_json_equals_hardcoded_styles_struct_from_config_and_dynamic_base() {
+        let set = StyleSet::committed_for_tests();
+        assert_eq!(set.names().collect::<Vec<_>>(), COMMITTED_ORDER);
+        for src in [CONFIG_JSON, DYNAMIC_BASE_JSON] {
+            let cfg: Config = serde_json::from_str(src).unwrap();
+            let ordered = ordered_from_struct(&cfg.styles);
+            let names: Vec<&str> = ordered.iter().map(|(n, _)| *n).collect();
+            assert_eq!(set.names().collect::<Vec<_>>(), names);
+            for (name, style) in ordered {
+                assert_eq!(set.get(name), Some(style), "style {name} differs");
+            }
+        }
+    }
+
+    fn sparse(action: &str) -> String {
+        format!(
+            r#"{{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"{action}","disableDropSound":false}}"#
+        )
+    }
+
+    fn set_json(names: &[&str]) -> String {
+        let body: Vec<String> = names
+            .iter()
+            .map(|n| format!("\"{n}\":{}", sparse(if *n == "hidden" { "Hide" } else { "Show" })))
+            .collect();
+        format!("{{{}}}", body.join(","))
+    }
+
+    const REQ: [&str; 9] = ["S", "A", "B", "C", "D", "E", "F", "unchanged", "hidden"];
+
+    #[test]
+    fn styleset_missing_required_names_every_missing_style() {
+        let names: Vec<&str> = REQ.iter().copied().filter(|n| *n != "E").collect();
+        let set: StyleSet = serde_json::from_str(&set_json(&names)).unwrap();
+        match set.validate() {
+            Err(StyleError::MissingRequired(m)) => assert_eq!(m, vec!["E"]),
+            other => panic!("unexpected {other:?}"),
+        }
+        let names: Vec<&str> =
+            REQ.iter().copied().filter(|n| *n != "unchanged" && *n != "hidden").collect();
+        let set: StyleSet = serde_json::from_str(&set_json(&names)).unwrap();
+        match set.validate() {
+            Err(StyleError::MissingRequired(m)) => assert_eq!(m, vec!["unchanged", "hidden"]),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn styleset_rejects_duplicate_style_name() {
+        let dup = format!(r#"{{"S":{0},"S":{0}}}"#, sparse("Show"));
+        let err = serde_json::from_str::<StyleSet>(&dup).unwrap_err().to_string();
+        assert!(err.contains("duplicate style name \"S\""), "{err}");
+    }
+
+    #[test]
+    fn styleset_rejects_names_shadowing_required_by_case() {
+        for bad in ["s", "Hidden"] {
+            let mut all: Vec<&str> = REQ.to_vec();
+            all.push(bad);
+            let set: StyleSet = serde_json::from_str(&set_json(&all)).unwrap();
+            match set.validate() {
+                Err(StyleError::ShadowsRequired { name, .. }) => assert_eq!(name, bad),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        let mut all: Vec<&str> = REQ.to_vec();
+        all.extend(["hidden2", "craftable"]);
+        let set: StyleSet = serde_json::from_str(&set_json(&all)).unwrap();
+        set.validate().unwrap();
+    }
+
+    #[test]
+    fn styleset_rejects_quote_or_control_char_in_custom_sound() {
+        for bad in ["a\\\"b", "a\\nb"] {
+            let mut set = StyleSet::committed_for_tests();
+            let mut st = set.get("S").unwrap().clone();
+            let json = format!(r#"{{"id":null,"custom":"{bad}","vol":100}}"#);
+            st.sound = Some(serde_json::from_str(&json).unwrap());
+            set.insert("S", st);
+            match set.validate() {
+                Err(StyleError::InvalidCustomSound { style, .. }) => assert_eq!(style, "S"),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        StyleSet::committed_for_tests().validate().unwrap();
+    }
+
+    #[test]
+    fn styleset_keeps_file_order_with_extra_user_style() {
+        let mut set = StyleSet::committed_for_tests();
+        let st = set.get("unchanged").unwrap().clone();
+        set.insert("craftable", st);
+        set.validate().unwrap();
+        assert_eq!(set.names().last(), Some("craftable"));
+        assert_eq!(set.len(), 13);
+        assert!(set.remove("exceptional").is_some());
+        assert_eq!(set.len(), 12);
+    }
+
+    #[test]
+    fn styleset_rejects_bad_colour_and_unknown_field() {
+        let bad = STYLES_JSON.replacen("\"Pink\"", "\"Mauve\"", 1);
+        assert!(serde_json::from_str::<StyleSet>(&bad).is_err());
+        let bad = STYLES_JSON.replacen("\"font\"", "\"fnot\"", 1);
+        assert!(serde_json::from_str::<StyleSet>(&bad).is_err());
     }
 }

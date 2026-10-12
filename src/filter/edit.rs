@@ -313,6 +313,19 @@ mod tests {
     }
 
     #[test]
+    fn disable_enable_with_trailing_commented_condition() {
+        // WR-03: the trailing commented-out line moves with its block in both states.
+        let src = "Show\n\tRarity Rare\n#\tSetFontSize 40\nHide\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        d.set_enabled(id, false).unwrap();
+        assert_eq!(s(&d), "#Show\n#\tRarity Rare\n##\tSetFontSize 40\nHide\n");
+        assert_eq!(d.block(id).unwrap().owned(), 0..3);
+        d.set_enabled(id, true).unwrap();
+        assert_eq!(s(&d), src);
+    }
+
+    #[test]
     fn disable_leaves_leading_comments() {
         let src = "# note\n#ff:name x\nShow\n\tRarity Rare\n";
         let mut d = p(src);

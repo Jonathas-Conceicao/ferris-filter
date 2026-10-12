@@ -8,15 +8,16 @@
 
 use super::block::{BlockKeyword, BodyLine, DisabledState};
 use super::diag::{FilterDiagnostic, Severity};
-use super::keywords::{lookup, Kind};
+use super::keywords::{lookup, Keyword, Kind, ValueShape};
 use super::lines::Line;
 use super::parse::block_keyword;
-use super::tokenize::{tokenize, validate_shape};
+use super::tokenize::{tokenize, validate_shape, TokenizedLine};
 
 pub(crate) struct Disabled {
     pub keyword: BlockKeyword,
     pub body: Vec<BodyLine>,
-    /// Exclusive end: one past the last keyword line (or the header when there is no body).
+    /// Exclusive end: one past the last body line (or the header when there is no body), including
+    /// a directly following run of doubly commented-out body lines.
     pub end: usize,
     pub state: DisabledState,
 }
@@ -44,6 +45,100 @@ pub(crate) fn is_header(text: &str) -> bool {
     detect_header(text).is_some()
 }
 
+/// How one disabled line's inner text (after its first `#`) would behave if enabled.
+pub(crate) enum Inner {
+    /// Blank or a pure comment (`##...`): neutral, owned only when inside the range.
+    Neutral,
+    /// A commented-out block header: ends the block.
+    Header,
+    /// A grammar line that extends the block. `problem` makes the block un-enableable.
+    Body {
+        line: BodyLine,
+        problem: Option<String>,
+    },
+    /// Not grammar. Owned only when a later body line pulls it inside the range, and then it
+    /// blocks enabling.
+    Prose(String),
+}
+
+/// A `QuotedList` line with several values of which some are unquoted, and no body-style
+/// indentation (tab or two spaces) after the `#`, reads as prose: `# Class weapons below`.
+fn prose_shaped(kw: &Keyword, inner: &str, t: &TokenizedLine) -> bool {
+    let indented = inner.starts_with('\t') || inner.starts_with("  ");
+    kw.value == ValueShape::QuotedList
+        && !indented
+        && t.values.len() >= 2
+        && t.values.iter().any(|v| !inner[v.clone()].starts_with('"'))
+}
+
+/// Classify the inner text of the `#`-prefixed line `text` at 0-based line `k`.
+pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
+    match tokenize(inner) {
+        Ok(t) => {
+            let Some(r) = t.keyword.clone() else {
+                return Inner::Neutral;
+            };
+            let word = &inner[r];
+            match lookup(word) {
+                // Enabling would produce a live unknown-keyword line.
+                None => Inner::Prose(format!("`{word}` is not filter grammar")),
+                Some(kw) if kw.kind == Kind::BlockHeader => {
+                    if is_header(text) {
+                        Inner::Header
+                    } else {
+                        // A header word with trailing text: enabled, it would start a new block.
+                        Inner::Prose(format!("`{word}` would start a new block"))
+                    }
+                }
+                // Enabled, an `Import` would end the block early.
+                Some(kw) if kw.kind == Kind::Directive => {
+                    Inner::Prose(format!("`{}` cannot appear inside a block", kw.name))
+                }
+                Some(kw) if prose_shaped(kw, inner, &t) => {
+                    Inner::Prose(format!("`{word}` line reads as prose, not filter grammar"))
+                }
+                Some(kw) => Inner::Body {
+                    problem: validate_shape(kw, inner, &t).err(),
+                    line: BodyLine {
+                        line: k,
+                        keyword: Some(kw),
+                        tokens: Some(t),
+                    },
+                },
+            }
+        }
+        Err(e) => {
+            // A malformed line only extends the block when it starts with a known grammar word.
+            // Otherwise (`# $tag`, `#\t123`) it is prose.
+            let word: String = inner
+                .trim_start_matches([' ', '\t'])
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .collect();
+            match lookup(&word) {
+                Some(kw) if matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) => {
+                    Inner::Body {
+                        problem: Some(e.message),
+                        line: BodyLine {
+                            line: k,
+                            keyword: Some(kw),
+                            tokens: None,
+                        },
+                    }
+                }
+                _ => Inner::Prose(format!("not filter grammar: {}", e.message)),
+            }
+        }
+    }
+}
+
+/// True when `text` is a commented-out body line: one `#` away from a line that extends a block.
+/// A run of these directly after a block's last line belongs to that block (WR-03), so a
+/// commented-out condition moves with its rule instead of becoming the next block's comment.
+pub(crate) fn is_commented_body(text: &str, k: usize) -> bool {
+    uncomment_once(text).is_some_and(|inner| matches!(classify_inner(text, inner, k), Inner::Body { .. }))
+}
+
 pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
     let keyword = detect_header(ls[h].text())?;
     let mut body = Vec::new();
@@ -64,72 +159,24 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
             severity: Severity::Warning,
             message,
         };
-        match tokenize(inner) {
-            Ok(t) => {
-                let Some(r) = &t.keyword else {
-                    k += 1;
-                    continue;
-                };
-                match lookup(&inner[r.clone()]) {
-                    // Unknown first word: prose. Enabling it would produce a live
-                    // unknown-keyword line, so inside the owned range it blocks enabling.
-                    None => pending.push(reason(format!(
-                        "`{}` is not filter grammar",
-                        &inner[r.clone()]
-                    ))),
-                    Some(kw) if kw.kind == Kind::BlockHeader => {
-                        if is_header(text) {
-                            break;
-                        }
-                        // A header word with trailing text: enabled, it would start a new block.
-                        pending.push(reason(format!(
-                            "`{}` would start a new block",
-                            &inner[r.clone()]
-                        )));
-                    }
-                    // Enabled, an `Import` would end the block early.
-                    Some(kw) if kw.kind == Kind::Directive => pending.push(reason(format!(
-                        "`{}` cannot appear inside a block",
-                        kw.name
-                    ))),
-                    Some(kw) => {
-                        reasons.append(&mut pending);
-                        if let Err(m) = validate_shape(kw, inner, &t) {
-                            reasons.push(reason(m));
-                        }
-                        body.push(BodyLine {
-                            line: k,
-                            keyword: Some(kw),
-                            tokens: Some(t),
-                        });
-                        end = k + 1;
-                    }
+        match classify_inner(text, inner, k) {
+            Inner::Header => break,
+            Inner::Neutral => {
+                // A commented-out body line directly after the last owned line (`##\tKw ...`)
+                // mirrors the live rule in `parse::scan_live_body`, so disable/enable keep the
+                // same extent.
+                if k == end && is_commented_body(inner, k) {
+                    end = k + 1;
                 }
             }
-            Err(e) => {
-                // A malformed line only extends the block when it starts with a known grammar
-                // word. Otherwise (`# $tag`, `#\t123`) it is prose, which still blocks enabling
-                // once a later grammar line pulls it inside the owned range.
-                let word: String = inner
-                    .trim_start_matches([' ', '\t'])
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphabetic())
-                    .collect();
-                match lookup(&word) {
-                    Some(kw)
-                        if matches!(kw.kind, Kind::Condition | Kind::Action | Kind::Modifier) =>
-                    {
-                        reasons.append(&mut pending);
-                        reasons.push(reason(e.message));
-                        body.push(BodyLine {
-                            line: k,
-                            keyword: Some(kw),
-                            tokens: None,
-                        });
-                        end = k + 1;
-                    }
-                    _ => pending.push(reason(format!("not filter grammar: {}", e.message))),
+            Inner::Prose(m) => pending.push(reason(m)),
+            Inner::Body { line, problem } => {
+                reasons.append(&mut pending);
+                if let Some(m) = problem {
+                    reasons.push(reason(m));
                 }
+                body.push(line);
+                end = k + 1;
             }
         }
         k += 1;

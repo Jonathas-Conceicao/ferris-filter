@@ -210,7 +210,8 @@ pub(crate) fn build(ls: &[Line], next_id: &mut u64) -> (Vec<Item>, Vec<FilterDia
 }
 
 /// Collect the body of the live block whose header is line `h`. Returns the body and the
-/// exclusive end (one past the last keyword line).
+/// exclusive end (one past the last keyword line, or past a directly following run of
+/// commented-out body lines).
 fn scan_live_body(
     ls: &[Line],
     h: usize,
@@ -270,6 +271,12 @@ fn scan_live_body(
             },
         }
         k += 1;
+    }
+    // A commented-out body line (`#\tSetFontSize 40`) directly after the last keyword line belongs
+    // to this block, not to the next block's leading comments (WR-03). `disabled::detect` applies
+    // the same rule one `#` deeper, so disabling and enabling keep the same extent.
+    while end < n && disabled::is_commented_body(ls[end].text(), end) {
+        end += 1;
     }
     (body, end)
 }
@@ -346,6 +353,37 @@ mod tests {
         let d = p("Show\n\tRarity Rare\n# mid\n\n\tClass \"Bows\"\n");
         assert_eq!(blocks(&d)[0].owned(), 0..5);
         assert_eq!(blocks(&d)[0].body().len(), 2);
+    }
+
+    #[test]
+    fn trailing_commented_condition_stays_with_its_block() {
+        // WR-03 (1): `#\tSetFontSize 40` belongs to Show, not to Hide's leading comments.
+        let d = p("Show\n\tRarity Rare\n#\tSetFontSize 40\nHide\n");
+        let b = blocks(&d);
+        assert_eq!(b[0].owned(), 0..3);
+        assert_eq!(b[1].span(), 3..4);
+        assert_eq!(b[0].body().len(), 1);
+        // Prose and a blank line still end the run.
+        let d = p("Show\n\tRarity Rare\n# about Hide\nHide\n");
+        assert_eq!(blocks(&d)[0].owned(), 0..2);
+        assert_eq!(blocks(&d)[1].leading(), 2..3);
+        let d = p("Show\n\tRarity Rare\n\n#\tSetFontSize 40\nHide\n");
+        assert_eq!(blocks(&d)[0].owned(), 0..2);
+        assert_eq!(blocks(&d)[1].leading(), 3..4);
+    }
+
+    #[test]
+    fn disabled_block_does_not_absorb_prose_with_grammar_word() {
+        // WR-03 (2): `# Class weapons below` is Hide's leading comment, not a disabled condition.
+        let d = p("#Show\n#\tRarity Rare\n# Class weapons below\nHide\n");
+        let b = blocks(&d);
+        assert_eq!(b[0].owned(), 0..2);
+        assert!(b[0].can_enable());
+        assert_eq!(b[1].leading(), 2..3);
+        // Indented like a body, the same words are grammar.
+        let d = p("#Show\n#\tRarity Rare\n#\tClass Rings Amulets\n");
+        assert_eq!(blocks(&d)[0].owned(), 0..3);
+        assert!(blocks(&d)[0].can_enable());
     }
 
     #[test]

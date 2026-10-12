@@ -8,47 +8,52 @@ FerrisFilter is a Rust CLI tool that compiles a human-editable configuration int
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Current Milestone: v0.4 Overlay Filter Editor Rework
+## Current Milestone: v0.5 Generic Filter Editor & Initial App Configuration
 
-**Goal:** FerrisFilter gains an in-game overlay that edits filter rules directly and writes a
-`dynamic.filter` on demand, replacing pre-generated per-build presets.
+**Goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own output,
+with the style palette and economy tier cutoffs configurable from the overlay.
 
 **Target features:**
 
-- **In-game overlay** — an always-on-top window over PoE2, becoming the primary way the tool is
-  used. Reference point: Exiled Exchange 2, the popular PoE2 price-check overlay.
-- **Persisted dynamic rule store** — `dynamic.json` in the repo directory, surviving restarts.
-- **Rule editor** — recreate any `rules` block from the overlay. Rules are ordinal-indexed (no
-  `name` field). Per rule: a style selector over the known styles (S–F, `Recycle`,
-  `exceptional`, `hidden`, `unchanged`, `unidentified`), a multi-select class picker, a rarity
-  selector, a three-checkbox defence picker covering all seven PoE2 armour types, and
-  sockets / quality / corrupted.
-- **Every condition independently togglable** — a disabled condition emits nothing into the
-  generated block. Maps directly onto `When`'s all-`Option` shape.
-- **Apply** — compiles `dynamic.json` into `dynamic.filter` in the game folder.
-- **Core as a library** — the rule compiler and pricer are extracted so the overlay and the CLI
-  are two front ends over one core; `generate` / `sync` / `install` survive unchanged.
+- **Parse and edit any filter (backlog 999.6)** — load any working PoE2 filter (FilterBlade /
+  NeverSink, poe2filter.com, hand-written) and edit it. Full PoE2 grammar: every condition,
+  operator and action, plus `Continue`, `Import`, `Minimal`. Anything the editor does not
+  understand is saved back unchanged; a FilterBlade/NeverSink filter is byte-identical after
+  load and save.
+- **Drop `dynamic.json` (backlog 999.5)** — the filter file itself holds the rules.
+  `dynamic.json` and its `dynamic_base.json` template go away. Style definitions move to a new
+  repo-root **`styles.json`**. `prices.json`, `tiers.json`, the fallback pair and `mapping.json`
+  stay as they are. Giving up full regeneration of the dynamic filter is intentional.
+- **Config-driven styles (backlog 999.1)** — named styles are data looked up by name, not a
+  hardcoded `Styles` struct plus `emitter::resolve_style` match; unknown style names are caught
+  at load time.
+- **Overlay configuration tab, partial (backlog 999.8)** — a tab separate from the rule editor for
+  editing styles (`styles.json`) and tier cutoffs (`tiers.json`, not prices), following the
+  overlay's in-memory edit + Apply/Revert model. **No load message** (see below).
+- **Overlay single-instance guard (backlog 999.2)** — launching `ff` while it is running brings up
+  the existing stripe instead of opening a second one.
 
 **Key context:**
 
-- **Economy tiering and the style palette are pinned** this milestone — not dynamically editable.
-  Only the `rules` array becomes dynamic.
-- **`areaLevel` leaves the dynamic vocabulary.** Live editing replaces level bands, so dynamic
-  rules carry no area-level conditions. `config.json` keeps the field, so `universal.filter`,
-  `seed-universal.filter` and `artifact_guard` are untouched.
-- **PoE2 does not hot-reload filters** (author-confirmed) and no external app can force it. Apply
-  writes the file; the player hits refresh in the in-game options menu. This is a known
-  constraint, not a defect to engineer around — so there is no filesystem-watching or
-  instant-write machinery, and the batch-edit-then-Apply model is the correct one.
-- **No named presets or profiles** — a single persisted live state. The four `ssf_*_config.json`
-  presets are retired by this milestone; per-build differences (weapon classes, defence type)
-  become ordinary rule edits.
-- **Defence semantics:** ticked = `> 0`, unticked = `0`. The three checkboxes yield exactly
-  2³−1 = 7 non-empty combinations, matching PoE2's seven armour types. The group disabled means
-  no defence conditions are emitted at all (for flasks, currency and other non-gear classes).
-- **The overlay is new ground.** Every prior milestone produced a headless, deterministic
-  compiler locked by a byte-for-byte oracle; a GUI has no equivalent test story, and windowing
-  over a fullscreen DirectX game is a discipline this repo has never touched.
+- **The in-game load message is online-only** (spike 2026-10-12, backlog 999.3): the game ignores
+  the online-filter header on local `.filter` files, `OnlineFilters/` is a cache synced from the
+  server, and edits there are overwritten on load. Deferred until account publishing exists.
+- **Out of scope:** economy change summary (999.4), locked rules / `Import` layering (999.7),
+  presets (999.9).
+- **`config.json` → `universal.filter`** (the static `generate` path, `seed-universal.filter`,
+  `artifact_guard`) is untouched unless explicitly decided otherwise.
+- **Grammar reference:** the official filter docs describe PoE1; the PoE2 condition/action list
+  must be assembled by research. The FilterBlade/NeverSink filter is the real-world test material
+  for load-and-save.
+- **Biggest open design question:** how the economy-priced sections are found and refreshed inside
+  a filter that has been edited by hand.
+
+<details>
+<summary>✅ v0.4 Overlay Filter Editor Rework — SHIPPED 2026-09-17</summary>
+
+See Current State below and [v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md).
+
+</details>
 
 <details>
 <summary>✅ v0.3 Economy Items & Exceptional Gear — SHIPPED 2026-06-27</summary>
@@ -89,7 +94,8 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** not yet defined — run `/gsd-new-milestone`. The strongest candidate is now
+**Next milestone:** v0.5 Generic Filter Editor & Initial App Configuration (started 2026-10-12, see
+Current Milestone). Still-open candidate from the v0.4 close:
 **overlay robustness**, because v0.4 shipped a GUI whose failure modes were never designed: it can
 only be launched from the repo root, an unloadable store has no recovery from inside the window,
 and an existing `dynamic.json` never receives additive config fields. Longer-standing candidates
@@ -126,9 +132,13 @@ from the repo root. Full suite green at tag `v0.4` — 368 tests, 0 failures, bu
 
 ### Active
 
-<!-- Empty until /gsd-new-milestone scopes the next one. v0.4's requirements moved to Validated. -->
+v0.5 requirements are defined in `.planning/REQUIREMENTS.md` (REQ-IDs + traceability). Summary:
 
-_None — v0.4 shipped. Run `/gsd-new-milestone` to scope the next set._
+- [ ] Parse, edit and save any PoE2 filter losslessly (999.6)
+- [ ] Filter file replaces `dynamic.json` as the rule store; styles live in `styles.json` (999.5)
+- [ ] Style vocabulary is data, resolved by name (999.1)
+- [ ] Overlay configuration tab for styles and tier cutoffs (999.8, partial)
+- [ ] Single-instance `ff` (999.2)
 
 ### Deferred (next-milestone candidates)
 
@@ -231,4 +241,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-17 after the v0.4 milestone*
+*Last updated: 2026-10-12 at the start of milestone v0.5*

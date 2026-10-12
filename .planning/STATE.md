@@ -1,42 +1,33 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.4
-milestone_name: Overlay Filter Editor Rework
-status: milestone_complete
-stopped_at: v0.4 shipped — archived and tagged
-last_updated: "2026-09-17T00:00:00.000Z"
-last_activity: 2026-09-17 — v0.4 archived, squash-merged to main and tagged
+milestone: v0.5
+milestone_name: Generic Filter Editor & Initial App Configuration
+status: planning
+last_updated: "2026-10-12T20:23:52.825Z"
+last_activity: 2026-10-12
 progress:
-  total_phases: 7
-  completed_phases: 5
-  total_plans: 16
-  completed_plans: 16
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-03)
+See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 15 — BaseType Lists and Rule Names
+**Current focus:** v0.5 Generic Filter Editor & Initial App Configuration — defining requirements
 
 ## Current Position
 
-Milestone: **v0.4 Overlay Filter Editor Rework — SHIPPED 2026-09-17**
-Phase: none in progress. Next milestone not yet scoped.
-
-v0.4 closed with an audit status of `tech_debt`: 26/26 requirements verified across 5/5 phases,
-no unsatisfied requirement and no orphans, but one user-facing blocker deferred by decision —
-`ff` cannot be launched by double-clicking the exe. See *Registered, Not Fixed* below and
-`.planning/milestones/v0.4-MILESTONE-AUDIT.md`.
-
-Start the next milestone with `/gsd-new-milestone`, which defines fresh requirements —
-`.planning/REQUIREMENTS.md` was archived and removed at close.
-
-Last activity: 2026-09-17
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-10-12 — Milestone v0.5 started
 
 ## Performance Metrics
 
@@ -221,11 +212,13 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
   to surface it" (D-09), and `grep price_source src/overlay/` finds nothing. A status line beside
   the Apply confirmation would close it. Author, 2026-09-09: not a priority, exceptional scenarios
   can wait.
+
 - **`Breachstone` is emitted as `Stackable Currency` but repoe-fork says `QuestItem`.** Found by
   the same audit that caught Vaal Siphoner (2 of 1347 priced items disagree; the other was fixed).
   Not corrected because the right filter `Class` for it is not confirmable from repoe alone, and a
   wrong guess would break a block that currently works. Needs one in-game check, then a
   `classOverrides` entry in `mapping.json` — the mechanism is already there.
+
 - **The overlay league is pinned to `Forbidden Rites` in `sync::OVERLAY_LEAGUE` and must be
   updated each league.** poe.ninja's `indexed` flag flips between leagues — observed reversing
   within six hours on 2026-09-10/11 — so automatic resolution cannot identify the current league.

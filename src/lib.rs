@@ -12,6 +12,7 @@ pub mod compile;
 pub mod dynamic;
 pub mod emitter;
 pub mod error;
+pub mod filter;
 pub mod install;
 pub mod loader;
 pub mod overlay;

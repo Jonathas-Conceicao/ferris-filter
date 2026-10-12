@@ -207,3 +207,155 @@ fn corpus_unknown_keyword_kept_opaque() {
     assert_eq!(diags[0].severity, Severity::Warning);
     assert_eq!(doc.blocks().count(), 1);
 }
+
+// ---- PARSE-04: block-scoped edits (plan 16-04) ----
+
+use ferrisfilter::filter::{BlockId, Document};
+
+fn byte_offset(doc: &Document, line_idx: usize) -> usize {
+    let bom = if doc.has_bom() { 3 } else { 0 };
+    bom + doc.lines()[..line_idx]
+        .iter()
+        .map(|l| l.text().len() + l.eol().as_str().len())
+        .sum::<usize>()
+}
+
+fn fixture() -> Vec<u8> {
+    fs::read(manifest().join("tests/fixtures/parser/filterblade.filter")).unwrap()
+}
+
+fn enabled_ids(doc: &Document) -> Vec<BlockId> {
+    doc.blocks().filter(|b| b.is_enabled()).map(|b| b.id()).collect()
+}
+
+#[test]
+fn edit_replace_one_block_filterblade() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let id = enabled_ids(&doc)[99];
+    let b = doc.block(id).unwrap();
+    let owned = b.owned();
+    let start = byte_offset(&doc, owned.start);
+    let old_end = byte_offset(&doc, owned.end);
+    let header = doc.lines()[b.header_line()].text().to_string();
+    doc.replace_block_lines(id, vec![header.clone(), "\tRarity Unique".to_string()])
+        .unwrap();
+    let out = doc.to_bytes();
+    let region = format!("{header}\r\n\tRarity Unique\r\n");
+    assert_bytes_eq("edit prefix", &out[..start], &orig[..start]);
+    assert_bytes_eq("edit region", &out[start..start + region.len()], region.as_bytes());
+    assert_bytes_eq("edit suffix", &out[start + region.len()..], &orig[old_end..]);
+}
+
+#[test]
+fn edit_disable_enable_roundtrip_filterblade() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let ids = enabled_ids(&doc);
+    let mut done = 0;
+    for id in ids.into_iter().step_by(50) {
+        if doc.set_enabled(id, false).is_ok() {
+            assert!(!doc.block(id).unwrap().is_enabled());
+            doc.set_enabled(id, true).unwrap();
+            done += 1;
+        }
+    }
+    assert!(done >= 5, "only {done} blocks round-tripped");
+    assert_bytes_eq("disable/enable", &doc.to_bytes(), &orig);
+}
+
+#[test]
+fn edit_crlf_preserved() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let ids = enabled_ids(&doc);
+    let header = doc.lines()[doc.block(ids[10]).unwrap().header_line()]
+        .text()
+        .to_string();
+    doc.replace_block_lines(
+        ids[10],
+        vec![header, "\tClass \"Bows\"".to_string(), "\tRarity Rare".to_string()],
+    )
+    .unwrap();
+    doc.set_meta(ids[20], "name", "x y").unwrap();
+    let out = doc.to_bytes();
+    for (i, &c) in out.iter().enumerate() {
+        if c == b'\n' {
+            assert!(i > 0 && out[i - 1] == b'\r', "lone LF at offset {i}");
+        }
+    }
+}
+
+#[test]
+fn edit_set_meta_inserts_only_one_line() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let id = enabled_ids(&doc)[42];
+    let at = byte_offset(&doc, doc.block(id).unwrap().header_line());
+    doc.set_meta(id, "name", "Exceptional 3 socks").unwrap();
+    let mut want = orig[..at].to_vec();
+    want.extend_from_slice(b"#ff:name Exceptional 3 socks\r\n");
+    want.extend_from_slice(&orig[at..]);
+    assert_bytes_eq("set_meta", &doc.to_bytes(), &want);
+    assert_eq!(doc.meta_get(id, "name"), Some("Exceptional 3 socks"));
+}
+
+#[test]
+fn edit_no_final_newline() {
+    let mut doc = parse(b"Hide\nShow\n\tRarity Rare").unwrap();
+    let id = doc.blocks().nth(1).unwrap().id();
+    doc.replace_block_lines(
+        id,
+        vec!["Show".into(), "\tRarity Unique".into(), "\tSockets 3".into()],
+    )
+    .unwrap();
+    assert_bytes_eq(
+        "no final newline",
+        &doc.to_bytes(),
+        b"Hide\nShow\n\tRarity Unique\n\tSockets 3",
+    );
+}
+
+#[test]
+fn edit_ids_stable_filterblade() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let heads = |d: &Document| -> Vec<(BlockId, String)> {
+        d.blocks()
+            .map(|b| (b.id(), d.lines()[b.header_line()].text().to_string()))
+            .collect()
+    };
+    let before = heads(&doc);
+    let target = enabled_ids(&doc)[7];
+    doc.set_meta(target, "style", "S").unwrap();
+    let header = before.iter().find(|(i, _)| *i == target).unwrap().1.clone();
+    doc.replace_block_lines(target, vec![header, "\tRarity Rare".into()])
+        .unwrap();
+    assert_eq!(heads(&doc), before);
+}
+
+#[test]
+fn parse_never_panics_on_prefixes() {
+    fn probe(bytes: &[u8]) {
+        if let Ok(doc) = parse(bytes) {
+            assert_eq!(doc.to_bytes(), bytes);
+        }
+    }
+    let fx = fixture();
+    let mut n = 0;
+    while n <= fx.len() {
+        probe(&fx[..n]);
+        n += 997;
+    }
+    let sample = "\u{feff}# c\r\n#ff:name x\r\nShow # t\r\n\tBaseType == \"a # b\"\r\n\tSetFontSize 30\r\n#Hide\r\n#\tRarity Rare\r\nImport \"x\" Optional\r\nHide\r\n\té=>\r\n";
+    for n in 0..=sample.len() {
+        if sample.is_char_boundary(n) {
+            probe(&sample.as_bytes()[..n]);
+        }
+    }
+    for g in [
+        "\"", "#", "=>", "Show \"", "#Show\n#\t", "\r\r\n", "\u{feff}\u{feff}", "Show\n\t\"", "#Show\n#\tRarity \"",
+    ] {
+        probe(g.as_bytes());
+    }
+}

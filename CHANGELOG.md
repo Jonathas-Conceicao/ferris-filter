@@ -11,7 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- Lossless filter parser library module `ferrisfilter::filter`: parses any PoE2 filter in GGG's
+  grammar (full keyword table including Continue/Import/Minimal; unknown keywords are kept with a
+  warning) and writes it back byte-identical when unedited (CRLF/LF/mixed endings, BOM, no final
+  newline), verified on the committed FilterBlade/NeverSink fixture under `tests/fixtures/parser/`.
+  Edits touch only the edited block's lines (enable/disable, replace lines, set a metadata key),
+  commented-out blocks are recognized as disabled rules (valid or invalid), and FerrisFilter's own
+  `#ff:<key> <value>` metadata comments are exposed. Library and tests only; no CLI or overlay
+  change.
 
 ## [0.4.0] - 2026-09-17
 

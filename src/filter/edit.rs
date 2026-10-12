@@ -23,6 +23,10 @@ pub enum EditError {
     CannotEnable { reasons: Vec<FilterDiagnostic> },
     #[error("the replacement would produce an invalid enabled block ({} problem(s))", diagnostics.len())]
     InvalidBlock { diagnostics: Vec<FilterDiagnostic> },
+    /// The commented-out form would not read back as this same block, so it could not be enabled
+    /// again unchanged (e.g. a compact header with trailing tokens such as `Show Continue`).
+    #[error("the block cannot be disabled as-is: its commented-out form would not read back as the same block; fix the block first")]
+    CannotDisable,
     #[error("the edit would not leave exactly one block in place")]
     NotOneBlock,
     #[error("replacement lines must not contain line breaks")]
@@ -159,6 +163,7 @@ impl Document {
             new_lines[i] = Line::new(text, l.eol());
         }
         self.commit(new_lines, pos, ex).map_err(|f| match f {
+            Fail::Structure if !enabled => EditError::CannotDisable,
             Fail::Structure => EditError::NotOneBlock,
             Fail::Errors(reasons) => EditError::CannotEnable { reasons },
         })
@@ -322,6 +327,48 @@ mod tests {
         assert_eq!(s(&d), "#Show\n#\tRarity Rare\n##\tSetFontSize 40\nHide\n");
         assert_eq!(d.block(id).unwrap().owned(), 0..3);
         d.set_enabled(id, true).unwrap();
+        assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn disable_blocks_with_bad_or_unknown_last_line() {
+        // WR-02: the remedy for a broken enabled block is disabling it, so these must work. The
+        // disabled form is then Invalid (cannot be enabled back until fixed).
+        for src in [
+            "Show\n\tRarity Rare\n\tFutureKw 3\n",
+            "Show\n\tRarity Rare\n\t123\n",
+            "Show\n\tRarity Rare\n\tRarity =< Rare\n",
+            "Show\n  Rarity Rare\n  FutureKw 3\nHide\n",
+            "Show\n\tRarity Rare\n# Class weapons below\nHide\n",
+            "Show\n\tRarity Rare\n#\tSetFontSize 40\nHide\n",
+        ] {
+            let mut d = p(src);
+            let id = ids(&d)[0];
+            d.set_enabled(id, false)
+                .unwrap_or_else(|e| panic!("{src:?}: {e}"));
+            assert!(!d.block(id).unwrap().is_enabled(), "{src:?}");
+        }
+        // Enabling the disabled unknown-keyword block back is refused, bytes untouched.
+        let mut d = p("Show\n\tRarity Rare\n\tFutureKw 3\n");
+        let id = ids(&d)[0];
+        d.set_enabled(id, false).unwrap();
+        assert!(!d.block(id).unwrap().can_enable());
+        let before = s(&d);
+        assert!(matches!(
+            d.set_enabled(id, true),
+            Err(EditError::CannotEnable { .. })
+        ));
+        assert_eq!(s(&d), before);
+    }
+
+    #[test]
+    fn disable_compact_header_is_dedicated_error() {
+        // `#Show Continue` is not a disabled header (it would swallow prose like
+        // `# Show items above 80`), so the block cannot be disabled until its header is fixed.
+        let src = "Show Continue\n\tRarity Rare\n";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        assert!(matches!(d.set_enabled(id, false), Err(EditError::CannotDisable)));
         assert_eq!(s(&d), src);
     }
 

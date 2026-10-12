@@ -61,12 +61,17 @@ pub(crate) enum Inner {
     Prose(String),
 }
 
+/// Body-style indentation after the `#` (tab or at least two spaces), as `disable` produces from an
+/// indented live line. Prose comments conventionally use `# ` with a single space.
+fn body_indented(inner: &str) -> bool {
+    inner.starts_with('\t') || inner.starts_with("  ")
+}
+
 /// A `QuotedList` line with several values of which some are unquoted, and no body-style
-/// indentation (tab or two spaces) after the `#`, reads as prose: `# Class weapons below`.
+/// indentation after the `#`, reads as prose: `# Class weapons below`.
 fn prose_shaped(kw: &Keyword, inner: &str, t: &TokenizedLine) -> bool {
-    let indented = inner.starts_with('\t') || inner.starts_with("  ");
     kw.value == ValueShape::QuotedList
-        && !indented
+        && !body_indented(inner)
         && t.values.len() >= 2
         && t.values.iter().any(|v| !inner[v.clone()].starts_with('"'))
 }
@@ -80,6 +85,16 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
             };
             let word = &inner[r];
             match lookup(word) {
+                // Body-indented (`#\tFutureKw 3`): a disabled unknown-keyword line, owned like the
+                // live line it came from (WR-02) but never enableable.
+                None if body_indented(inner) => Inner::Body {
+                    problem: Some(format!("unknown keyword `{word}`")),
+                    line: BodyLine {
+                        line: k,
+                        keyword: None,
+                        tokens: Some(t),
+                    },
+                },
                 // Enabling would produce a live unknown-keyword line.
                 None => Inner::Prose(format!("`{word}` is not filter grammar")),
                 Some(kw) if kw.kind == Kind::BlockHeader => {
@@ -108,8 +123,9 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
             }
         }
         Err(e) => {
-            // A malformed line only extends the block when it starts with a known grammar word.
-            // Otherwise (`# $tag`, `#\t123`) it is prose.
+            // A malformed line extends the block when it starts with a known grammar word, or
+            // when it is body-indented (`#\t123`, the disabled form of a bad live body line).
+            // Otherwise (`# $tag`) it is prose.
             let word: String = inner
                 .trim_start_matches([' ', '\t'])
                 .chars()
@@ -126,6 +142,14 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize) -> Inner {
                         },
                     }
                 }
+                None if body_indented(inner) => Inner::Body {
+                    problem: Some(e.message),
+                    line: BodyLine {
+                        line: k,
+                        keyword: None,
+                        tokens: None,
+                    },
+                },
                 _ => Inner::Prose(format!("not filter grammar: {}", e.message)),
             }
         }

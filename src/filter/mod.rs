@@ -6,6 +6,7 @@
 //! non-UTF-8 input ([`LoadError`]). Grammar problems become [`FilterDiagnostic`]s.
 
 pub mod diag;
+pub mod keywords;
 pub mod lines;
 
 pub use diag::{FilterDiagnostic, LoadError, Severity};

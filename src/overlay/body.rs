@@ -13,16 +13,17 @@
 
 use egui::{Align, Layout, RichText, vec2};
 
-use crate::filter::keywords::{Keyword, Kind, RARITIES, ValueShape};
+use crate::filter::keywords::{COLOURS, Keyword, Kind, RARITIES, SHAPES, ValueShape};
 use crate::filter::tokenize::Operator;
-use crate::filter::{BlockId, LinePatch};
+use crate::filter::{BlockId, BlockKeyword, LinePatch};
 
 use super::classes::ClassCatalog;
-use super::grammar::{self, BoolOrName, EncodeError, Value};
+use super::grammar::{self, BoolOrName, Effect, EncodeError, Minimap, SoundRef, Value};
 use super::rule_list::{ListUi, PendingRow};
-use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, WorkingFilter};
+use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
 use super::theme;
 use super::widgets;
+use crate::models::config::Style;
 
 const LABEL_W: f32 = 120.0;
 const OP_W: f32 = 104.0;
@@ -1339,6 +1340,808 @@ fn bool_or_name_control(
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Pure action edits
+// ---------------------------------------------------------------------------------------------
+
+/// Colour edit. A 3-token line keeps its 3-token form while the alpha stays 255.
+pub(crate) fn rgba_edit(id: BlockId, entry: &BodyEntry, new: [u8; 4]) -> Option<RowAction> {
+    values_edit(
+        id,
+        entry,
+        &Value::Rgba {
+            rgba: new,
+            had_alpha: entry.values.len() >= 4,
+        },
+    )
+    .ok()
+    .flatten()
+}
+
+/// Font size edit; `None` when unchanged.
+pub(crate) fn font_edit(id: BlockId, entry: &BodyEntry, new: i64) -> Option<RowAction> {
+    values_edit(id, entry, &Value::FontSize(new)).ok().flatten()
+}
+
+/// Minimap icon edit; `None` when the encoded value is unchanged.
+pub(crate) fn minimap_edit(id: BlockId, entry: &BodyEntry, m: Minimap) -> Option<RowAction> {
+    values_edit(id, entry, &Value::Minimap(m)).ok().flatten()
+}
+
+/// Beam edit; `None` when unchanged.
+pub(crate) fn effect_edit(id: BlockId, entry: &BodyEntry, e: Effect) -> Option<RowAction> {
+    values_edit(id, entry, &Value::Effect(e)).ok().flatten()
+}
+
+/// Built-in alert sound edit. A line written without a volume keeps none until it is touched.
+pub(crate) fn sound_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    sound: SoundRef,
+    volume: Option<i64>,
+) -> Option<RowAction> {
+    values_edit(id, entry, &Value::Sound { id: sound, volume })
+        .ok()
+        .flatten()
+}
+
+/// Custom sound edit. A file name with quotes or control characters is refused with the hint.
+pub(crate) fn custom_sound_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    file: &str,
+    volume: Option<i64>,
+) -> Result<Option<RowAction>, String> {
+    let file = file.trim();
+    if file.is_empty() {
+        return Ok(None);
+    }
+    values_edit(
+        id,
+        entry,
+        &Value::CustomSound {
+            file: file.to_string(),
+            volume,
+        },
+    )
+    .map_err(|_| BAD_TEXT_HINT.to_string())
+}
+
+/// Whether an optional-boolean action line currently reads as on (bare or `True`).
+fn optional_bool_on(entry: &BodyEntry) -> bool {
+    !matches!(entry.values.first().map(String::as_str), Some("False"))
+}
+
+/// Toggle edit for `DisableDropSound`-style lines. A bare line is never given an explicit `True`
+/// unless the user changes it.
+pub(crate) fn optional_bool_edit(id: BlockId, entry: &BodyEntry, on: bool) -> Option<RowAction> {
+    (on != optional_bool_on(entry)).then(|| {
+        edit(
+            id,
+            entry,
+            LinePatch::Values(if on { "True" } else { "False" }.to_string()),
+        )
+    })
+}
+
+/// Whether `style` writes the `keyword` action line.
+pub(crate) fn style_owned(style: &Style, keyword: &str) -> bool {
+    crate::emitter::style_action_lines(style)
+        .iter()
+        .any(|l| l.split_whitespace().next() == Some(keyword))
+}
+
+/// The action keywords already present in the block (each is single-instance).
+pub(crate) fn added_actions(entries: &[BodyEntry]) -> Vec<&'static str> {
+    entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Action)
+        .filter_map(|e| e.keyword.map(|k| k.name))
+        .collect()
+}
+
+/// The hint under a font size outside the range the game renders readably.
+pub(crate) fn font_hint(size: i64) -> Option<&'static str> {
+    (!(18..=45).contains(&size)).then_some("Readable in game: 18-45")
+}
+
+/// What picking an action does: it is added at once with its default value.
+pub(crate) fn pick_action(id: BlockId, kw: &'static Keyword) -> Option<RowAction> {
+    grammar::default_line(kw).map(|text| RowAction::AddLine {
+        id,
+        kind: LineKind::Action,
+        text,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// The ACTIONS group
+// ---------------------------------------------------------------------------------------------
+
+const NO_ACTIONS: &str = "No actions: matching items keep the game's look.";
+const SIZE_CHOICES: [(&str, i64); 4] =
+    [("Large", 0), ("Medium", 1), ("Small", 2), ("Hide icon", -1)];
+
+fn filter_colour(name: &str) -> egui::Color32 {
+    let (r, g, b) = match name {
+        "Red" => (255, 85, 85),
+        "Green" => (80, 250, 123),
+        "Blue" => (98, 140, 255),
+        "Brown" => (160, 100, 50),
+        "White" => (248, 248, 242),
+        "Yellow" => (241, 250, 140),
+        "Cyan" => (139, 233, 253),
+        "Grey" => (150, 150, 150),
+        "Orange" => (255, 184, 108),
+        "Pink" => (255, 121, 198),
+        "Purple" => (189, 147, 249),
+        _ => (136, 133, 110),
+    };
+    egui::Color32::from_rgb(r, g, b)
+}
+
+fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 6.0, colour);
+}
+
+/// Segmented Show/Hide/Minimal selector plus `Continue to later rules`, locked on a known style.
+fn disposition_line(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
+    let row = ctx.row;
+    let id = row.id;
+    let locked = matches!(row.style, StyleState::Known(_));
+    ui.horizontal(|ui| {
+        for (kw, word) in [
+            (BlockKeyword::Show, "Show"),
+            (BlockKeyword::Hide, "Hide"),
+            (BlockKeyword::Minimal, "Minimal"),
+        ] {
+            let selected = row.keyword == kw;
+            let (text_color, fill) = if locked {
+                (theme::DISABLED_TEXT, theme::ROW_BASE)
+            } else if selected {
+                (theme::SECTION_CREAM, theme::HEADER_PLATE)
+            } else {
+                (theme::LABEL_TAN, theme::ROW_BASE)
+            };
+            let fill = if locked && selected {
+                theme::HEADER_PLATE
+            } else {
+                fill
+            };
+            let btn = egui::Button::new(RichText::new(word).color(text_color)).fill(fill);
+            if ui.add_enabled(!locked, btn).clicked() && !selected {
+                actions.push(RowAction::SetKeyword(id, kw));
+            }
+        }
+    });
+    let mut cont = row.has_continue;
+    let cb = egui::Checkbox::new(
+        &mut cont,
+        RichText::new("Continue to later rules").color(if locked {
+            theme::DISABLED_TEXT
+        } else {
+            theme::LABEL_TAN
+        }),
+    );
+    if ui.add_enabled(!locked, cb).changed() {
+        actions.push(RowAction::SetContinue(id, cont));
+    }
+    if locked {
+        ui.add(
+            egui::Label::new(
+                RichText::new("The style decides Show or Hide. Remove the style to choose here.")
+                    .size(theme::ROW_SUMMARY_SIZE)
+                    .color(theme::TAB_ACTIVE),
+            )
+            .wrap(),
+        );
+    }
+}
+
+/// The ACTIONS section of an expanded row: disposition first, then one card per action line.
+pub fn actions_group(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let id = ctx.row.id;
+    let known = match &ctx.row.style {
+        StyleState::Known(n) => Some(n.clone()),
+        _ => None,
+    };
+    let added = added_actions(ctx.entries);
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        caption(ui, "ACTIONS");
+        if known.is_none() {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let btn = ui.add_enabled(
+                    ctx.editable,
+                    egui::Button::new(RichText::new("+ action").size(theme::ROW_SUMMARY_SIZE)),
+                );
+                let disabled = |k: &Keyword| added.contains(&k.name).then_some("(added)");
+                picked = picker_popup(ui, &btn, &grammar::action_groups(), false, &disabled);
+            });
+        }
+    });
+    if let Some(kw) = picked
+        && let Some(a) = pick_action(id, kw)
+    {
+        actions.push(a);
+    }
+    ui.spacing_mut().item_spacing.y = 4.0;
+    disposition_line(ui, ctx, actions);
+
+    let lines: Vec<&BodyEntry> = ctx
+        .entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Action)
+        .collect();
+    if lines.is_empty() {
+        ui.label(
+            RichText::new(NO_ACTIONS)
+                .size(theme::ROW_SUMMARY_SIZE)
+                .color(theme::LABEL_TAN),
+        );
+        return;
+    }
+    let style = known.as_deref().and_then(|n| ctx.working.style(n));
+    for (idx, e) in lines.into_iter().enumerate() {
+        match e.keyword {
+            Some(kw) if ctx.editable => {
+                let lock = known.as_deref().map(|n| {
+                    let owned = style.is_some_and(|s| style_owned(s, kw.name));
+                    (n, owned)
+                });
+                action_card(ui, ctx, e, kw, idx, lock, list, actions);
+            }
+            _ => {
+                card_frame(idx).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    raw_row(ui, e, false, list, actions, id);
+                });
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn action_card(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    entry: &BodyEntry,
+    kw: &'static Keyword,
+    idx: usize,
+    lock: Option<(&str, bool)>,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let id = ctx.row.id;
+    ui.push_id((id, kw.name, entry.ordinal), |ui| {
+        let card = Card {
+            id,
+            entry,
+            kw,
+            bad_id: ui.make_persistent_id("bad-text"),
+            num_bad_id: ui.make_persistent_id("bad-int"),
+            classes: ctx.classes,
+        };
+        let tokens: Vec<&str> = entry.values.iter().map(String::as_str).collect();
+        let value = grammar::decode(kw, &tokens);
+        let mut primary: Option<egui::Response> = None;
+        let framed = card_frame(idx).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [LABEL_W, 24.0],
+                    egui::Label::new(
+                        RichText::new(grammar::display_name(kw.name))
+                            .size(14.0)
+                            .color(if lock.is_some() {
+                                theme::DISABLED_TEXT
+                            } else {
+                                theme::VALUE_TEXT
+                            }),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(kw.name);
+                match lock {
+                    Some((name, true)) => {
+                        widgets::badge(
+                            ui,
+                            "from style",
+                            &format!("Set by style \"{name}\". Remove the style to edit it."),
+                        );
+                    }
+                    Some((name, false)) => {
+                        widgets::badge(
+                            ui,
+                            "locked",
+                            &format!(
+                                "Style \"{name}\" is applied, so edits here would be overwritten. Remove the style to edit it."
+                            ),
+                        );
+                    }
+                    None => {
+                        if widgets::remove_x_button(ui, "Remove this action").clicked() {
+                            actions.push(remove(id, entry));
+                        }
+                    }
+                }
+            });
+            if lock.is_some() {
+                ui.label(
+                    RichText::new(current_values(entry))
+                        .size(14.0)
+                        .color(theme::DISABLED_TEXT),
+                );
+            } else {
+                primary = action_controls(ui, &card, &value, list, actions);
+            }
+            if ui
+                .data(|d| d.get_temp::<bool>(card.bad_id))
+                .unwrap_or(false)
+            {
+                hint(ui, BAD_TEXT_HINT);
+            }
+            if let Some(msg) = error_for(list, id, entry.line) {
+                hint(ui, msg);
+            }
+        });
+        if list.focus_line == Some((id, entry.line)) {
+            framed.response.scroll_to_me(Some(Align::Center));
+            if let Some(p) = primary {
+                p.request_focus();
+            }
+            list.focus_line = None;
+        }
+    });
+}
+
+fn action_controls(
+    ui: &mut egui::Ui,
+    card: &Card,
+    value: &Value,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) -> Option<egui::Response> {
+    match value {
+        Value::Rgba { rgba, .. } => {
+            if let Some(n) = widgets::colour_swatch(ui, *rgba)
+                && let Some(a) = rgba_edit(card.id, card.entry, n)
+            {
+                actions.push(a);
+            }
+            None
+        }
+        Value::FontSize(n) => font_control(ui, card, *n, actions),
+        Value::Sound {
+            id: SoundRef::Id(i),
+            volume,
+        } => sound_control(ui, card, *i, *volume, actions),
+        Value::CustomSound { file, volume } => {
+            custom_sound_control(ui, card, file, *volume, list, actions)
+        }
+        Value::Minimap(m) => {
+            minimap_control(ui, card, m, actions);
+            None
+        }
+        Value::Effect(e) => {
+            effect_control(ui, card, e, actions);
+            None
+        }
+        Value::OptionalBool(_) => {
+            optional_bool_control(ui, card, actions);
+            None
+        }
+        _ => Some(raw_value_control(ui, card, list, actions)),
+    }
+}
+
+/// Slider plus exact number field. Returns the new value when the user changed it.
+fn slider_pair(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash,
+    current: i64,
+    range: (i64, i64),
+    invalid: &mut bool,
+) -> (Option<i64>, egui::Response) {
+    let mut v = current;
+    let s = widgets::themed_slider(ui, &mut v, range.0, range.1, false);
+    let n = widgets::number_field(ui, salt, &mut v, 56.0);
+    *invalid |= n.invalid;
+    let changed = (s.changed() || n.response.changed()) && v != current;
+    (changed.then_some(v), n.response)
+}
+
+fn font_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    current: i64,
+    actions: &mut Vec<RowAction>,
+) -> Option<egui::Response> {
+    let mut invalid = false;
+    let mut new = None;
+    let mut primary = None;
+    ui.horizontal(|ui| {
+        let (n, r) = slider_pair(ui, card.salt("num"), current, (1, 45), &mut invalid);
+        new = n;
+        primary = Some(r);
+    });
+    if invalid {
+        hint(ui, WHOLE_NUMBER_HINT);
+    }
+    if let Some(msg) = font_hint(new.unwrap_or(current)) {
+        ui.label(
+            RichText::new(msg)
+                .size(theme::ROW_SUMMARY_SIZE)
+                .color(theme::TAB_ACTIVE),
+        );
+    }
+    if let Some(n) = new
+        && let Some(a) = font_edit(card.id, card.entry, n)
+    {
+        actions.push(a);
+    }
+    primary
+}
+
+fn sound_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    sound: i64,
+    volume: Option<i64>,
+    actions: &mut Vec<RowAction>,
+) -> Option<egui::Response> {
+    let mut invalid = false;
+    let (mut new_id, mut new_vol) = (None, None);
+    let mut primary = None;
+    ui.horizontal(|ui| {
+        caption(ui, "Sound");
+        let (n, r) = slider_pair(ui, card.salt("sid"), sound, (1, 16), &mut invalid);
+        new_id = n;
+        primary = Some(r);
+    });
+    ui.horizontal(|ui| {
+        caption(ui, "Volume");
+        let shown = volume.unwrap_or(100);
+        new_vol = slider_pair(ui, card.salt("svol"), shown, (0, 300), &mut invalid).0;
+    });
+    if invalid {
+        hint(ui, WHOLE_NUMBER_HINT);
+    }
+    if (new_id.is_some() || new_vol.is_some())
+        && let Some(a) = sound_edit(
+            card.id,
+            card.entry,
+            SoundRef::Id(new_id.unwrap_or(sound)),
+            new_vol.or(volume),
+        )
+    {
+        actions.push(a);
+    }
+    primary
+}
+
+fn custom_sound_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    file: &str,
+    volume: Option<i64>,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) -> Option<egui::Response> {
+    let tid = ui.make_persistent_id(card.salt("file"));
+    let key = (card.id, card.entry.line);
+    let mut resp = None;
+    let mut commit = None;
+    ui.horizontal(|ui| {
+        caption(ui, "File");
+        let (r, c) = draft_field(ui, tid, file, 160.0, list, key);
+        resp = Some(r);
+        commit = c;
+    });
+    caption(ui, "The file must be in the game folder.");
+    if let Some(text) = commit {
+        match custom_sound_edit(card.id, card.entry, &text, volume) {
+            Ok(Some(a)) => {
+                ui.data_mut(|d| d.insert_temp(card.bad_id, false));
+                actions.push(a);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                ui.data_mut(|d| d.insert_temp(card.bad_id, true));
+            }
+        }
+    }
+    let mut invalid = false;
+    let mut new_vol = None;
+    ui.horizontal(|ui| {
+        caption(ui, "Volume");
+        new_vol = slider_pair(
+            ui,
+            card.salt("cvol"),
+            volume.unwrap_or(100),
+            (0, 300),
+            &mut invalid,
+        )
+        .0;
+    });
+    if invalid {
+        hint(ui, WHOLE_NUMBER_HINT);
+    }
+    if let Some(v) = new_vol
+        && let Ok(Some(a)) = custom_sound_edit(card.id, card.entry, file, Some(v))
+    {
+        actions.push(a);
+    }
+    resp
+}
+
+fn colour_combo(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &str,
+    allow_none: bool,
+) -> Option<String> {
+    let mut picked = None;
+    dot(ui, filter_colour(current));
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(current)
+        .width(104.0)
+        .show_ui(ui, |ui| {
+            let mut names: Vec<&str> = COLOURS.to_vec();
+            if allow_none {
+                names.push("None");
+            }
+            for c in names {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    dot(ui, filter_colour(c));
+                    if ui.selectable_label(c == current, c).clicked() && c != current {
+                        picked = Some(c.to_string());
+                    }
+                });
+            }
+        });
+    picked
+}
+
+fn minimap_control(ui: &mut egui::Ui, card: &Card, m: &Minimap, actions: &mut Vec<RowAction>) {
+    let (size, colour, shape) = match m {
+        Minimap::Icon {
+            size,
+            colour,
+            shape,
+        } => (*size, colour.clone(), shape.clone()),
+        Minimap::Hidden(_) => (-1, "White".to_string(), "Circle".to_string()),
+    };
+    let hidden = matches!(m, Minimap::Hidden(_));
+    let mut next: Option<Minimap> = None;
+    let icon = |size: i64, colour: &str, shape: &str| Minimap::Icon {
+        size,
+        colour: colour.to_string(),
+        shape: shape.to_string(),
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+        let label = SIZE_CHOICES
+            .iter()
+            .find(|(_, v)| *v == size)
+            .map_or_else(|| size.to_string(), |(l, _)| (*l).to_string());
+        egui::ComboBox::from_id_salt(card.salt("msize"))
+            .selected_text(label)
+            .width(104.0)
+            .show_ui(ui, |ui| {
+                for (l, v) in SIZE_CHOICES {
+                    if ui.selectable_label(v == size, l).clicked() && v != size {
+                        next = Some(if v == -1 {
+                            Minimap::Hidden(vec!["-1".to_string()])
+                        } else {
+                            icon(v, &colour, &shape)
+                        });
+                    }
+                }
+            });
+        if hidden {
+            return;
+        }
+        if let Some(c) = colour_combo(ui, card.salt("mcol"), &colour, false) {
+            next = Some(icon(size, &c, &shape));
+        }
+        egui::ComboBox::from_id_salt(card.salt("mshape"))
+            .selected_text(shape.as_str())
+            .width(104.0)
+            .show_ui(ui, |ui| {
+                for s in SHAPES {
+                    if ui.selectable_label(*s == shape, *s).clicked() && *s != shape {
+                        next = Some(icon(size, &colour, s));
+                    }
+                }
+            });
+    });
+    if let Some(n) = next
+        && let Some(a) = minimap_edit(card.id, card.entry, n)
+    {
+        actions.push(a);
+    }
+}
+
+fn effect_control(ui: &mut egui::Ui, card: &Card, e: &Effect, actions: &mut Vec<RowAction>) {
+    let (colour, temp) = match e {
+        Effect::None => ("None".to_string(), false),
+        Effect::Colour { colour, temp } => (colour.clone(), *temp),
+    };
+    let mut next: Option<Effect> = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+        if let Some(c) = colour_combo(ui, card.salt("ecol"), &colour, true) {
+            next = Some(if c == "None" {
+                Effect::None
+            } else {
+                Effect::Colour { colour: c, temp }
+            });
+        }
+        let mut t = temp;
+        let none = matches!(e, Effect::None);
+        let changed = ui
+            .add_enabled_ui(!none, |ui| {
+                let c = widgets::circular_toggle(ui, &mut t).changed();
+                ui.label(
+                    RichText::new("Temporary")
+                        .size(14.0)
+                        .color(theme::VALUE_TEXT),
+                );
+                c
+            })
+            .inner;
+        if changed && t != temp {
+            next = Some(Effect::Colour {
+                colour: colour.clone(),
+                temp: t,
+            });
+        }
+    });
+    if let Some(n) = next
+        && let Some(a) = effect_edit(card.id, card.entry, n)
+    {
+        actions.push(a);
+    }
+}
+
+fn optional_bool_control(ui: &mut egui::Ui, card: &Card, actions: &mut Vec<RowAction>) {
+    let current = optional_bool_on(card.entry);
+    let mut on = current;
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed = widgets::circular_toggle(ui, &mut on).changed();
+        ui.label(RichText::new("On").size(14.0).color(theme::VALUE_TEXT));
+    });
+    if changed && let Some(a) = optional_bool_edit(card.id, card.entry, on) {
+        actions.push(a);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The STYLE group
+// ---------------------------------------------------------------------------------------------
+
+const STYLE_NONE_HELP: &str = "Apply a style to set this rule's look from your Styles tab.";
+const STYLE_KNOWN_EXPLAIN: &str = "This rule's look comes from the style. Edits to the style reach it when you press Apply. Hand edits here are overwritten.";
+const STYLE_UNKNOWN_EXPLAIN: &str = "No style with this name exists, so this rule keeps its current actions and nothing is rewritten on Apply.";
+const STYLE_UNCHECKED_EXPLAIN: &str =
+    "styles.json could not be read; this style is not applied until it loads.";
+
+/// A dropdown of every style (with a swatch of its text colour). Returns the picked name.
+fn style_combo(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    current: Option<&str>,
+    placeholder: &str,
+) -> Option<String> {
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(current.unwrap_or(placeholder))
+        .width(160.0)
+        .show_ui(ui, |ui| {
+            if current.is_none() {
+                let _ = ui.selectable_label(true, "(none)");
+            }
+            for name in ctx.working.style_names() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if let Some(t) = ctx.working.style(&name).and_then(|s| s.text) {
+                        dot(ui, egui::Color32::from_rgb(t[0], t[1], t[2]));
+                    }
+                    if ui
+                        .selectable_label(Some(name.as_str()) == current, &name)
+                        .clicked()
+                        && Some(name.as_str()) != current
+                    {
+                        picked = Some(name.clone());
+                    }
+                });
+            }
+        });
+    picked
+}
+
+fn body_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    ui.add(
+        egui::Label::new(
+            RichText::new(text)
+                .size(theme::ROW_SUMMARY_SIZE)
+                .color(color),
+        )
+        .wrap(),
+    );
+}
+
+/// The STYLE section: pick a named style, or see which style a rule carries and remove it.
+pub fn style_group(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
+    let id = ctx.row.id;
+    caption(ui, "STYLE");
+    ui.add_enabled_ui(ctx.editable, |ui| {
+        let (title, tag, explain, colour) = match &ctx.row.style {
+            StyleState::None => {
+                if let Some(n) = style_combo(ui, ctx, (id, "style-pick"), None, "(none)") {
+                    actions.push(RowAction::ApplyStyle(id, n));
+                }
+                body_text(ui, STYLE_NONE_HELP, theme::TAB_ACTIVE);
+                return;
+            }
+            StyleState::Known(n) => (
+                format!("Style: {n}"),
+                Some(n.clone()),
+                STYLE_KNOWN_EXPLAIN,
+                theme::SECTION_CREAM,
+            ),
+            StyleState::Unknown(n) => (
+                format!("Unknown style \"{n}\""),
+                None,
+                STYLE_UNKNOWN_EXPLAIN,
+                theme::WARM_ACCENT_TEXT,
+            ),
+            StyleState::Unchecked(n) => (
+                format!("Style: {n}"),
+                None,
+                STYLE_UNCHECKED_EXPLAIN,
+                theme::SECTION_CREAM,
+            ),
+        };
+        egui::Frame::new()
+            .fill(theme::HEADER_PLATE)
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(title).size(14.0).color(colour));
+                    let placeholder = "Pick a style\u{2026}";
+                    if let Some(n) =
+                        style_combo(ui, ctx, (id, "style-change"), tag.as_deref(), placeholder)
+                    {
+                        actions.push(RowAction::ApplyStyle(id, n));
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .button(RichText::new("Remove style").size(theme::ROW_SUMMARY_SIZE))
+                            .clicked()
+                        {
+                            actions.push(RowAction::RemoveStyle(id));
+                        }
+                    });
+                });
+                body_text(ui, explain, theme::TAB_ACTIVE);
+            });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1889,5 +2692,221 @@ mod tests {
         list.line_error = Some((id, 1, "nope".into()));
         assert_eq!(error_for(&list, id, 1), Some("nope"));
         assert_eq!(error_for(&list, id, 2), None);
+    }
+
+    // ----- 20-08: actions -----
+
+    const ALL_ACTIONS: &str = "Show\n    SetTextColor 255 121 198 128\n    SetFontSize 37\n    MinimapIcon 0 Pink Circle\n    PlayEffect Pink Temp\n    PlayAlertSound 6 300\n    CustomAlertSound \"uwu.mp3\" 300\n    DisableDropSound\n";
+
+    #[test]
+    fn rgba_edits_keep_form() {
+        let (_, id, e) = entries_of("Show\n    SetTextColor 255 121 198\n");
+        assert_eq!(rgba_edit(id, &e[0], [255, 121, 198, 255]), None);
+        assert_eq!(
+            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255])).as_deref(),
+            Some("255 0 198")
+        );
+        assert_eq!(
+            values_of(rgba_edit(id, &e[0], [255, 121, 198, 128])).as_deref(),
+            Some("255 121 198 128")
+        );
+        let (_, id, e) = entries_of("Show\n    SetTextColor 255 121 198 255\n");
+        assert_eq!(
+            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255])).as_deref(),
+            Some("255 0 198 255")
+        );
+    }
+
+    #[test]
+    fn minimap_effect_sound_edits() {
+        let (_, id, e) = entries_of("Show\n    MinimapIcon 0 Pink Circle\n");
+        let small = Minimap::Icon {
+            size: 2,
+            colour: "Pink".into(),
+            shape: "Circle".into(),
+        };
+        assert_eq!(
+            values_of(minimap_edit(id, &e[0], small)).as_deref(),
+            Some("2 Pink Circle")
+        );
+        assert_eq!(
+            values_of(minimap_edit(id, &e[0], Minimap::Hidden(vec!["-1".into()]))).as_deref(),
+            Some("-1")
+        );
+        let (_, id, e) = entries_of("Show\n    PlayEffect Red\n");
+        assert_eq!(
+            values_of(effect_edit(
+                id,
+                &e[0],
+                Effect::Colour {
+                    colour: "Red".into(),
+                    temp: true
+                }
+            ))
+            .as_deref(),
+            Some("Red Temp")
+        );
+        let (_, id, e) = entries_of("Show\n    PlayAlertSound 6 300\n");
+        assert_eq!(
+            values_of(sound_edit(id, &e[0], SoundRef::Id(6), Some(200))).as_deref(),
+            Some("6 200")
+        );
+        let (_, id, e) = entries_of("Show\n    PlayAlertSound 6\n");
+        assert_eq!(sound_edit(id, &e[0], SoundRef::Id(6), None), None);
+    }
+
+    #[test]
+    fn custom_sound_edits() {
+        let (_, id, e) = entries_of("Show\n    CustomAlertSound \"uwu.mp3\" 300\n");
+        assert_eq!(
+            custom_sound_edit(id, &e[0], "bad\"name.mp3", Some(300)),
+            Err("Values cannot contain quotes or control characters".to_string())
+        );
+        assert_eq!(
+            values_of(custom_sound_edit(id, &e[0], "alert.mp3", Some(300)).unwrap()).as_deref(),
+            Some("\"alert.mp3\" 300")
+        );
+    }
+
+    #[test]
+    fn optional_bool_edits() {
+        let (_, id, e) = entries_of("Show\n    DisableDropSound\n");
+        assert_eq!(optional_bool_edit(id, &e[0], true), None);
+        assert_eq!(
+            values_of(optional_bool_edit(id, &e[0], false)).as_deref(),
+            Some("False")
+        );
+        let (_, id, e) = entries_of("Show\n    DisableDropSound False\n");
+        assert_eq!(optional_bool_edit(id, &e[0], false), None);
+        assert_eq!(
+            values_of(optional_bool_edit(id, &e[0], true)).as_deref(),
+            Some("True")
+        );
+    }
+
+    #[test]
+    fn added_actions_and_picking() {
+        let (_, id, e) =
+            entries_of("Show\n    SetFontSize 30\n    PlayEffect Red\n    Class \"Rings\"\n");
+        assert_eq!(added_actions(&e), vec!["SetFontSize", "PlayEffect"]);
+        let kw = crate::filter::keywords::lookup("SetBackgroundColor").unwrap();
+        assert_eq!(
+            pick_action(id, kw),
+            Some(RowAction::AddLine {
+                id,
+                kind: LineKind::Action,
+                text: "SetBackgroundColor 40 42 54 255".into()
+            })
+        );
+    }
+
+    #[test]
+    fn font_hint_range() {
+        assert_eq!(font_hint(12), Some("Readable in game: 18-45"));
+        assert_eq!(font_hint(30), None);
+    }
+
+    #[test]
+    fn expanded_actions_are_idle() {
+        let wf = WorkingFilter::from_text(ALL_ACTIONS);
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+    }
+
+    #[test]
+    fn empty_actions_state_exists() {
+        assert!(include_str!("body.rs").contains(NO_ACTIONS));
+        let wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        assert!(a.is_empty());
+    }
+
+    // ----- 20-08: styles -----
+
+    fn styled(src: &str) -> WorkingFilter {
+        let mut wf = WorkingFilter::from_text(src);
+        wf.set_styles(Ok(crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles.json"
+        ))
+        .unwrap()));
+        wf
+    }
+
+    #[test]
+    fn style_owned_follows_style_output() {
+        let set = crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"))
+            .unwrap();
+        assert!(style_owned(set.get("S").unwrap(), "SetFontSize"));
+        assert!(style_owned(set.get("S").unwrap(), "PlayEffect"));
+        for (_, kw) in grammar::action_groups()
+            .iter()
+            .flat_map(|(g, ks)| ks.iter().map(move |k| (*g, k)))
+        {
+            assert!(!style_owned(set.get("unchanged").unwrap(), kw.name));
+        }
+    }
+
+    #[test]
+    fn styled_rows_render_idle_in_every_state() {
+        for src in [
+            "Show\n    Class \"Rings\"\n    SetFontSize 20\n",
+            "#ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n    SetTextColor 255 121 198 255\n",
+            "#ff:style Nope\nShow\n    Class \"Rings\"\n    SetFontSize 20\n",
+        ] {
+            let wf = styled(src);
+            let ctx = headless_ctx();
+            let mut list = ListUi::default();
+            list.expanded = Some(wf.rows()[0].id);
+            for _ in 0..2 {
+                let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                assert!(a.is_empty(), "{src}: idle frame emitted {a:?}");
+            }
+        }
+        let mut wf = WorkingFilter::from_text("#ff:style S\nShow\n    Class \"Rings\"\n");
+        wf.set_styles(Err("unreadable".into()));
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        assert!(frame_of(&ctx, input(vec![]), &wf, &mut list, None).is_empty());
+    }
+
+    #[test]
+    fn known_style_row_offers_remove_style() {
+        let wf = styled("#ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n");
+        assert!(matches!(
+            wf.rows()[0].style,
+            super::super::rules::StyleState::Known(_)
+        ));
+        let id = wf.rows()[0].id;
+        let mut found = false;
+        'scan: for y in (20..400).step_by(8) {
+            for x in (300..456).step_by(8) {
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                let a = frame_of(
+                    &ctx,
+                    input(click_events(Pos2::new(x as f32, y as f32))),
+                    &wf,
+                    &mut list,
+                    None,
+                );
+                if a.contains(&RowAction::RemoveStyle(id)) {
+                    found = true;
+                    break 'scan;
+                }
+            }
+        }
+        assert!(found, "no click position emitted RemoveStyle");
     }
 }

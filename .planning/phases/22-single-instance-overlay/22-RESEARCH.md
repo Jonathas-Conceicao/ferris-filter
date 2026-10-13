@@ -210,13 +210,14 @@ No relevant change; named mutex/event is the long-standing idiom. `windows-sys` 
 | A2 | Elevated-vs-normal produces ACCESS_DENIED on CreateMutexW | Pitfall 1 | Edge case only; message box path still prevents two stripes |
 | A3 | `cargo check` for a non-Windows target is not run in CI/locally | Structure | Stub could rot; low risk, mirrors win.rs convention |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the 50 ms/heartbeat polling really run while the stripe is SW_HIDE'd?**
    - Known: tray Show already relies on it and the code comments assert a ~10 Hz heartbeat.
    - Unclear: not re-verified in this session (ff must not be launched).
    - Recommendation: manual test "hidden then launch second"; fallback is watcher thread + `ctx.request_repaint()`.
-2. **Should an already-visible stripe be brought to front?** It is always-on-top, so no action needed; recommend none.
+   - RESOLVED: 22-02 relies on the existing `request_repaint_after(50ms)` + eframe hidden-window heartbeat (same path tray Show uses); manual check 2 in 22-MANUAL-VERIFICATION.md verifies it, and the documented fallback if it fails is a watcher thread that waits on the show event and calls `ctx.request_repaint()`.
+2. **Should an already-visible stripe be brought to front?** It is always-on-top, so no action needed; recommend none. RESOLVED: no action; the poll only reveals a hidden stripe and acks.
 
 ## Environment Availability
 

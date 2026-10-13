@@ -298,7 +298,15 @@ Plans:
   2. This works even when the running stripe is hidden to the tray
   3. Only one stripe window exists and the hotkey keeps working after repeated launches
 
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+**Wave 1**
+
+- [ ] 22-01-PLAN.md — `src/overlay/instance.rs` single-instance gate (Local named mutex, show/ack events, MessageBox, debug/release names) + windows-sys features, with in-process tests
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 22-02-PLAN.md — Wire the gate into `launch()` and `OverlayApp::update` (reveal, never toggle; bypasses the foreground gate), docs, changelog, manual verification script
 
 ### Progress
 

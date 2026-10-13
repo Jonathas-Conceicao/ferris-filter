@@ -591,8 +591,8 @@ pub fn config_warning(name: &str) -> String {
     )
 }
 
-pub fn applied_message(styles: usize) -> String {
-    format!("Applied config: {styles} styles, 7 tiers.")
+pub fn applied_message(styles: usize, tiers: usize) -> String {
+    format!("Applied config: {styles} styles, {tiers} tiers.")
 }
 
 pub fn not_applied_message(reason: &str) -> String {
@@ -1014,7 +1014,7 @@ mod tests {
             config_warning("kite"),
             "config.json uses \"kite\", so ferrisfilter generate will fail until you add the style back or change those rules."
         );
-        assert_eq!(applied_message(12), "Applied config: 12 styles, 7 tiers.");
+        assert_eq!(applied_message(12, 7), "Applied config: 12 styles, 7 tiers.");
         assert_eq!(
             not_applied_message("x"),
             "Config not applied: x. Nothing was changed on disk."

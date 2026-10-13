@@ -1001,9 +1001,9 @@ impl OverlayApp {
                 let wrote = report.styles_written || report.tiers_written;
                 self.config_message = Some((
                     if wrote {
-                        format!("{} {OUT_OF_DATE_MESSAGE}", applied_message(report.styles))
+                        format!("{} {OUT_OF_DATE_MESSAGE}", applied_message(report.styles, report.tiers))
                     } else {
-                        applied_message(report.styles)
+                        applied_message(report.styles, report.tiers)
                     },
                     false,
                 ));

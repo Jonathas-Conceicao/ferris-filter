@@ -782,6 +782,11 @@ mod windows_tests {
         // Review iteration 2, WR-01: the running instance is ready but stops answering (it
         // was told to Quit) and releases the name while the launcher is asking. The launcher
         // must become the new first instance, not report "not responding" and leave nothing.
+        //
+        // The quitting side drops its guard only after it has seen a show request (review
+        // iteration 3, IN-03). That proves the launcher was already inside `request_until_acked`
+        // when the name was released, so this passes only through the re-check, never through a
+        // first `acquire_named` that happened to land after the drop.
         let n = test_names("quitmid");
         let (acquired_tx, acquired_rx) = mpsc::channel();
         let quitting = {
@@ -790,13 +795,27 @@ mod windows_tests {
                 let mut g = first(&n);
                 g.mark_ready();
                 acquired_tx.send(()).unwrap();
-                std::thread::sleep(Duration::from_millis(150));
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut saw_request = false;
+                while Instant::now() < deadline {
+                    if g.take_show_request() {
+                        saw_request = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                // Never acked: this instance is quitting.
                 drop(g);
+                saw_request
             })
         };
         acquired_rx.recv().unwrap();
         let launch = launch_named(&n, 1000, 500);
-        quitting.join().unwrap();
+        let saw_request = quitting.join().unwrap();
+        assert!(
+            saw_request,
+            "the launcher never asked the quitting instance"
+        );
         assert!(matches!(launch, Launch::Run(_)));
         // And it really holds the name now.
         assert!(matches!(acquire_named(&n), Acquired::AlreadyRunning));

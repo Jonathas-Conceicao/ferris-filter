@@ -11,6 +11,7 @@ pub mod apply;
 pub mod economy;
 pub mod hotkey;
 pub mod layout;
+pub mod rule_list;
 pub mod rules;
 pub mod text_entry;
 pub mod theme;

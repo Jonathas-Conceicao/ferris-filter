@@ -236,7 +236,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 20-06-PLAN.md — Style state on rows, ApplyStyle/RemoveStyle, model-level style lock, Apply rewrites styled rules from fresh styles.json, class catalogue loading
+- [x] 20-06-PLAN.md — Style state on rows, ApplyStyle/RemoveStyle, model-level style lock, Apply rewrites styled rules from fresh styles.json, class catalogue loading
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -289,7 +289,7 @@ Plans:
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
-| 20. Full-Grammar Block Editing | 5/9 | In Progress|  |
+| 20. Full-Grammar Block Editing | 6/9 | In Progress|  |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 

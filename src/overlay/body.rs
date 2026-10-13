@@ -18,7 +18,7 @@ use crate::filter::tokenize::Operator;
 use crate::filter::{BlockId, LinePatch};
 
 use super::classes::ClassCatalog;
-use super::grammar::{self, EncodeError, Value};
+use super::grammar::{self, BoolOrName, EncodeError, Value};
 use super::rule_list::{ListUi, PendingRow};
 use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, WorkingFilter};
 use super::theme;
@@ -323,6 +323,8 @@ struct Card<'a> {
     entry: &'a BodyEntry,
     kw: &'static Keyword,
     bad_id: egui::Id,
+    num_bad_id: egui::Id,
+    classes: Option<&'a ClassCatalog>,
 }
 
 impl Card<'_> {
@@ -366,6 +368,8 @@ fn condition_card(
             entry,
             kw,
             bad_id: ui.make_persistent_id("bad-text"),
+            num_bad_id: ui.make_persistent_id("bad-int"),
+            classes: ctx.classes,
         };
         let tokens: Vec<&str> = entry.values.iter().map(String::as_str).collect();
         let value = grammar::decode(kw, &tokens);
@@ -444,6 +448,29 @@ fn value_controls(
 ) -> Option<egui::Response> {
     match value {
         Value::Ints(xs) if xs.len() == 1 => int_control(ui, card, xs[0], actions),
+        Value::Ints(xs) => {
+            ints_control(ui, card, xs, actions);
+            None
+        }
+        Value::List(names) => {
+            list_control(ui, card, names, actions);
+            None
+        }
+        Value::CountNames { count, names } => {
+            count_names_control(ui, card, *count, names, actions);
+            None
+        }
+        Value::Sockets {
+            count: Some(c),
+            colours,
+        } => {
+            sockets_control(ui, card, *c, colours, actions);
+            None
+        }
+        Value::BoolOrName(b) => {
+            bool_or_name_control(ui, card, b, list, actions);
+            None
+        }
         Value::Bool { value } => {
             bool_control(ui, card, *value, actions);
             None
@@ -623,6 +650,417 @@ fn raw_value_control(
         actions.push(a);
     }
     resp
+}
+
+// ---------------------------------------------------------------------------------------------
+// List-shaped controls
+// ---------------------------------------------------------------------------------------------
+
+type Salt = (BlockId, &'static str, usize, &'static str);
+
+/// Edit for a changed list of quoted names; an empty list removes the line.
+pub(crate) fn list_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    new: &[String],
+) -> Result<Option<RowAction>, EncodeError> {
+    values_edit(id, entry, &Value::List(new.to_vec()))
+}
+
+/// `items` with `class` added at the end (when checked and absent) or removed (when unchecked),
+/// keeping the order of everything else.
+pub(crate) fn class_toggle(items: &[String], class: &str, checked: bool) -> Vec<String> {
+    if checked {
+        let mut out = items.to_vec();
+        if !out.iter().any(|c| c == class) {
+            out.push(class.to_string());
+        }
+        out
+    } else {
+        items.iter().filter(|c| *c != class).cloned().collect()
+    }
+}
+
+/// Edit for a `count "name" ...` line. No names left removes the line.
+pub(crate) fn count_names_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    count: Option<i64>,
+    names: &[String],
+) -> Result<Option<RowAction>, EncodeError> {
+    values_edit(
+        id,
+        entry,
+        &Value::CountNames {
+            count,
+            names: names.to_vec(),
+        },
+    )
+}
+
+/// Edit for a socket line: a count plus colour slots (`5GRG`).
+pub(crate) fn sockets_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    count: i64,
+    colours: &str,
+) -> Option<RowAction> {
+    values_edit(
+        id,
+        entry,
+        &Value::Sockets {
+            count: Some(count),
+            colours: colours.to_string(),
+        },
+    )
+    .ok()
+    .flatten()
+}
+
+/// `colours` with slot `i` set to `choice`; `None` (Any) drops the slot.
+pub(crate) fn set_slot(colours: &str, i: usize, choice: Option<char>) -> String {
+    let mut v: Vec<char> = colours.chars().collect();
+    match (choice, v.get_mut(i)) {
+        (Some(c), Some(slot)) => *slot = c,
+        (None, Some(_)) => {
+            v.remove(i);
+        }
+        _ => {}
+    }
+    v.into_iter().collect()
+}
+
+/// `Any` writes `True`; `Named` writes the quoted name.
+pub(crate) fn bool_or_name_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    any: bool,
+    name: &str,
+) -> Result<Option<RowAction>, EncodeError> {
+    let v = if any {
+        BoolOrName::Bool(true)
+    } else {
+        BoolOrName::Name(name.to_string())
+    };
+    values_edit(id, entry, &Value::BoolOrName(v))
+}
+
+/// Edit for a multi-value whole-number line (`ItemLevel 60 65`).
+pub(crate) fn ints_edit(id: BlockId, entry: &BodyEntry, xs: &[i64]) -> Option<RowAction> {
+    values_edit(id, entry, &Value::Ints(xs.to_vec()))
+        .ok()
+        .flatten()
+}
+
+fn chip_hint(kw: &Keyword) -> &'static str {
+    if kw.name == "BaseType" {
+        "Add a base type\u{2026}"
+    } else if kw.name.contains("Mod") {
+        "Add a mod\u{2026}"
+    } else {
+        "Add an entry\u{2026}"
+    }
+}
+
+/// A removable selected-value chip; true when its X was clicked.
+fn selected_chip(ui: &mut egui::Ui, label: &str) -> bool {
+    let mut removed = false;
+    egui::Frame::new()
+        .fill(theme::INPUT_FILL)
+        .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
+        .inner_margin(egui::Margin {
+            left: 4,
+            right: 0,
+            top: 0,
+            bottom: 0,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(label)
+                        .size(theme::ROW_SUMMARY_SIZE)
+                        .color(theme::VALUE_TEXT),
+                );
+                removed = widgets::remove_x_button(ui, &format!("Remove {label}")).clicked();
+            });
+        });
+    removed
+}
+
+/// A chip list with the quoted-paste add field. Returns the new list when it changed.
+fn list_chips(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash,
+    items: &[String],
+    hint_text: &str,
+) -> Option<Vec<String>> {
+    let out = widgets::chip_list(ui, salt, items, hint_text, 160.0);
+    if let Some(msg) = &out.rejected {
+        hint(ui, msg);
+    }
+    let mut next = items.to_vec();
+    let mut changed = false;
+    if let Some(i) = out.removed
+        && i < next.len()
+    {
+        next.remove(i);
+        changed = true;
+    }
+    for a in out.added {
+        if !next.contains(&a) {
+            next.push(a);
+            changed = true;
+        }
+    }
+    changed.then_some(next)
+}
+
+/// The grouped class picker: chips for what is selected, then one collapsible group per
+/// catalogue group (labels and members come from config.json). Natural height, no inner scroll
+/// area (Pitfall 8). Returns the new class list when the user changed it.
+fn class_picker(
+    ui: &mut egui::Ui,
+    salt: Salt,
+    catalog: &ClassCatalog,
+    selected: &[String],
+) -> Option<Vec<String>> {
+    let mut result = None;
+    let unknown: Vec<&String> = selected.iter().filter(|c| !catalog.contains(c)).collect();
+    let known: Vec<&String> = selected.iter().filter(|c| catalog.contains(c)).collect();
+    if !selected.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            for c in unknown.iter().chain(known.iter().take(6)) {
+                if selected_chip(ui, c) {
+                    result = Some(class_toggle(selected, c, false));
+                }
+            }
+        });
+        if known.len() > 6 {
+            caption(ui, &format!("+{} more", known.len() - 6));
+        }
+    }
+    for (label, classes) in catalog.groups() {
+        let n = classes.iter().filter(|c| selected.contains(c)).count();
+        egui::CollapsingHeader::new(
+            RichText::new(format!("{label} ({n})"))
+                .size(theme::ROW_SUMMARY_SIZE)
+                .color(theme::LABEL_TAN),
+        )
+        .id_salt((salt, *label))
+        .default_open(false)
+        .show(ui, |ui| {
+            for c in classes {
+                let mut on = selected.contains(c);
+                if ui.checkbox(&mut on, c.as_str()).changed() {
+                    result = Some(class_toggle(selected, c, on));
+                }
+            }
+        });
+    }
+    result
+}
+
+fn list_control(ui: &mut egui::Ui, card: &Card, names: &[String], actions: &mut Vec<RowAction>) {
+    let next = match card.classes {
+        Some(cat) if card.kw.name == "Class" => class_picker(ui, card.salt("class"), cat, names),
+        _ => list_chips(ui, card.salt("chips"), names, chip_hint(card.kw)),
+    };
+    if let Some(next) = next {
+        let res = list_edit(card.id, card.entry, &next);
+        card.commit(ui, res, actions);
+    }
+}
+
+fn ints_control(ui: &mut egui::Ui, card: &Card, xs: &[i64], actions: &mut Vec<RowAction>) {
+    let items: Vec<String> = xs.iter().map(i64::to_string).collect();
+    let out = widgets::chip_list(
+        ui,
+        card.salt("ints"),
+        &items,
+        "Add a whole number\u{2026}",
+        160.0,
+    );
+    let mut next = xs.to_vec();
+    let mut changed = false;
+    let mut bad = ui
+        .data(|d| d.get_temp::<bool>(card.num_bad_id))
+        .unwrap_or(false);
+    if let Some(i) = out.removed
+        && i < next.len()
+    {
+        next.remove(i);
+        changed = true;
+    }
+    for a in out.added {
+        match a.trim().parse::<i64>() {
+            Ok(n) => {
+                next.push(n);
+                changed = true;
+                bad = false;
+            }
+            Err(_) => bad = true,
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(card.num_bad_id, bad));
+    if bad {
+        hint(ui, WHOLE_NUMBER_HINT);
+    }
+    if changed && let Some(a) = ints_edit(card.id, card.entry, &next) {
+        actions.push(a);
+    }
+}
+
+fn count_names_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    count: Option<i64>,
+    names: &[String],
+    actions: &mut Vec<RowAction>,
+) {
+    let mut new_count = count;
+    if let Some(c) = count {
+        let mut v = c;
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            let lead = if card.entry.op == Some(Operator::Ge) {
+                "At least"
+            } else {
+                "Count"
+            };
+            ui.label(RichText::new(lead).size(14.0).color(theme::VALUE_TEXT));
+            let s = widgets::themed_slider(ui, &mut v, 0, 6, false);
+            let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
+            changed = s.changed() || n.response.changed();
+            ui.label(
+                RichText::new("of these:")
+                    .size(14.0)
+                    .color(theme::VALUE_TEXT),
+            );
+        });
+        if changed && v != c {
+            new_count = Some(v);
+        }
+    } else {
+        caption(ui, "Any of these:");
+    }
+    let next = list_chips(ui, card.salt("names"), names, chip_hint(card.kw));
+    if next.is_none() && new_count == count {
+        return;
+    }
+    let res = count_names_edit(
+        card.id,
+        card.entry,
+        new_count,
+        next.as_deref().unwrap_or(names),
+    );
+    card.commit(ui, res, actions);
+}
+
+const SLOT_CHOICES: [(&str, Option<char>); 7] = [
+    ("Any", None),
+    ("R", Some('R')),
+    ("G", Some('G')),
+    ("B", Some('B')),
+    ("W", Some('W')),
+    ("A", Some('A')),
+    ("D", Some('D')),
+];
+
+fn sockets_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    count: i64,
+    colours: &str,
+    actions: &mut Vec<RowAction>,
+) {
+    let mut v = count;
+    let mut new_colours = colours.to_string();
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let s = widgets::themed_slider(ui, &mut v, 0, 6, false);
+        let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
+        changed = s.changed() || n.response.changed();
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+        for (i, ch) in colours.chars().enumerate() {
+            let mut picked: Option<Option<char>> = None;
+            egui::ComboBox::from_id_salt((card.salt("slot"), i))
+                .selected_text(ch.to_string())
+                .width(56.0)
+                .show_ui(ui, |ui| {
+                    for (label, c) in SLOT_CHOICES {
+                        if ui.selectable_label(c == Some(ch), label).clicked() && c != Some(ch) {
+                            picked = Some(c);
+                        }
+                    }
+                });
+            if let Some(c) = picked {
+                new_colours = set_slot(&new_colours, i, c);
+                changed = true;
+            }
+        }
+        let small = |t: &str| egui::Button::new(RichText::new(t).size(theme::ROW_SUMMARY_SIZE));
+        if colours.chars().count() < 6 && ui.add(small("+ socket")).clicked() {
+            new_colours.push('R');
+            changed = true;
+        }
+        if !colours.is_empty() && ui.add(small("Remove")).clicked() {
+            new_colours.pop();
+            changed = true;
+        }
+    });
+    if changed
+        && (v != count || new_colours != colours)
+        && let Some(a) = sockets_edit(card.id, card.entry, v, &new_colours)
+    {
+        actions.push(a);
+    }
+}
+
+fn bool_or_name_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    current: &BoolOrName,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let named_id = ui.make_persistent_id(card.salt("named"));
+    let is_name = matches!(current, BoolOrName::Name(_));
+    let named = ui.data(|d| d.get_temp::<bool>(named_id)).unwrap_or(is_name);
+    let mut any = !named && matches!(current, BoolOrName::Bool(true));
+    let mut nm = named;
+    let (mut any_changed, mut nm_changed) = (false, false);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        any_changed = widgets::toggle_chip(ui, "Any", &mut any).changed();
+        nm_changed = widgets::toggle_chip(ui, "Named", &mut nm).changed();
+    });
+    let mut show_name = named;
+    if any_changed && any {
+        ui.data_mut(|d| d.insert_temp(named_id, false));
+        show_name = false;
+        let res = bool_or_name_edit(card.id, card.entry, true, "");
+        card.commit(ui, res, actions);
+    } else if nm_changed && nm {
+        ui.data_mut(|d| d.insert_temp(named_id, true));
+        show_name = true;
+    }
+    if show_name {
+        let tid = ui.make_persistent_id(card.salt("name"));
+        let cur = match current {
+            BoolOrName::Name(n) => n.as_str(),
+            BoolOrName::Bool(_) => "",
+        };
+        let width = ui.available_width().max(80.0);
+        let (_, commit) = draft_field(ui, tid, cur, width, list, (card.id, card.entry.line));
+        if let Some(text) = commit {
+            let res = bool_or_name_edit(card.id, card.entry, false, &text);
+            card.commit(ui, res, actions);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -851,6 +1289,144 @@ mod tests {
         for _ in 0..2 {
             assert!(frame_of(&ctx, input(vec![]), &wf, &mut list, None).is_empty());
         }
+    }
+
+    fn values_of(a: Option<RowAction>) -> Option<String> {
+        match a {
+            Some(RowAction::EditLine {
+                patch: LinePatch::Values(t),
+                ..
+            }) => Some(t),
+            _ => None,
+        }
+    }
+
+    fn committed_catalog() -> ClassCatalog {
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let cfg = crate::loader::load_config(
+            &format!("{dir}/config.json"),
+            &format!("{dir}/styles.json"),
+        )
+        .unwrap();
+        ClassCatalog::from_config(&cfg)
+    }
+
+    #[test]
+    fn list_edits_remove_the_line_when_emptied() {
+        let (_, id, e) = entries_of("Show\n    Class \"Amulets\"\n");
+        let two = ["Amulets".to_string(), "Rings".to_string()];
+        assert_eq!(
+            values_of(list_edit(id, &e[0], &two).unwrap()),
+            Some("\"Amulets\" \"Rings\"".to_string())
+        );
+        assert!(matches!(
+            list_edit(id, &e[0], &[]).unwrap(),
+            Some(RowAction::RemoveLine { .. })
+        ));
+        assert_eq!(
+            list_edit(id, &e[0], &["Amulets".to_string()]).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn class_toggle_appends_and_removes_in_order() {
+        let items = vec!["Amulets".to_string(), "Rings".to_string()];
+        assert_eq!(
+            class_toggle(&items, "Belts", true),
+            ["Amulets", "Rings", "Belts"]
+        );
+        assert_eq!(class_toggle(&items, "Amulets", false), ["Rings"]);
+        assert_eq!(class_toggle(&items, "Rings", true), items);
+    }
+
+    #[test]
+    fn class_card_with_a_catalogue_is_idle_and_keeps_unknown_classes() {
+        let wf = WorkingFilter::from_text(
+            "Show\n    Class \"Amulets\" \"Custom Thing\"\n    BaseType == \"Heavy Belt\"\n    HasExplicitMod >=1 \"Tyrannical\"\n    Sockets >= 5GGG\n    ItemLevel 60 65\n    TransfiguredGem True\n",
+        );
+        let cat = committed_catalog();
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, Some(&cat));
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+        // And without a catalogue the Class card falls back to the chip list.
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        assert!(frame_of(&headless_ctx(), input(vec![]), &wf, &mut list, None).is_empty());
+    }
+
+    #[test]
+    fn base_type_chip_commit_appends_both_entries() {
+        let (_, id, e) = entries_of("Show\n    BaseType == \"Utility Belt\"\n");
+        let items = vec![
+            "Utility Belt".to_string(),
+            "Heavy Belt".to_string(),
+            "Armoured Cap".to_string(),
+        ];
+        assert_eq!(
+            values_of(list_edit(id, &e[0], &items).unwrap()),
+            Some("\"Utility Belt\" \"Heavy Belt\" \"Armoured Cap\"".to_string())
+        );
+    }
+
+    #[test]
+    fn count_names_edits_keep_the_operator_and_remove_when_empty() {
+        let (_, id, e) = entries_of("Show\n    HasExplicitMod >=1 \"Tyrannical\"\n");
+        assert_eq!(e[0].op, Some(Operator::Ge));
+        let r = count_names_edit(id, &e[0], Some(2), &["Tyrannical".to_string()]).unwrap();
+        assert_eq!(values_of(r), Some("2 \"Tyrannical\"".to_string()));
+        let r = count_names_edit(id, &e[0], Some(1), &[]).unwrap();
+        assert!(matches!(r, Some(RowAction::RemoveLine { .. })));
+        let r = count_names_edit(id, &e[0], Some(1), &["Tyrannical".to_string()]).unwrap();
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn sockets_edits_and_slots() {
+        let (_, id, e) = entries_of("Show\n    Sockets >= 5GGG\n");
+        assert_eq!(e[0].values, ["5GGG"]);
+        let colours = set_slot("GGG", 1, Some('R'));
+        assert_eq!(colours, "GRG");
+        assert_eq!(
+            values_of(sockets_edit(id, &e[0], 5, &colours)),
+            Some("5GRG".to_string())
+        );
+        assert_eq!(set_slot("GRG", 1, None), "GG");
+        assert_eq!(
+            values_of(sockets_edit(id, &e[0], 5, "")),
+            Some("5".to_string())
+        );
+        assert_eq!(sockets_edit(id, &e[0], 5, "GGG"), None);
+    }
+
+    #[test]
+    fn transfigured_gem_any_and_named() {
+        let (_, id, e) = entries_of("Show\n    TransfiguredGem False\n");
+        assert_eq!(
+            values_of(bool_or_name_edit(id, &e[0], true, "").unwrap()),
+            Some("True".to_string())
+        );
+        assert_eq!(
+            values_of(bool_or_name_edit(id, &e[0], false, "Arc of Surging").unwrap()),
+            Some("\"Arc of Surging\"".to_string())
+        );
+        assert_eq!(
+            bool_or_name_edit(id, &e[0], false, "a\"b"),
+            Err(EncodeError::BadText)
+        );
+    }
+
+    #[test]
+    fn multi_int_chip_add_appends() {
+        let (_, id, e) = entries_of("Show\n    ItemLevel 60 65\n");
+        assert_eq!(
+            values_of(ints_edit(id, &e[0], &[60, 65, 70])),
+            Some("60 65 70".to_string())
+        );
     }
 
     #[test]

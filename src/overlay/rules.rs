@@ -9,16 +9,57 @@
 //! foreign header comment text (`$type->currency %D4 !slug`) is never a name, never part of a
 //! label and never searched.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::dynamic::{BlockingError, blocking_errors};
-use crate::filter::keywords::Kind;
+use crate::filter::keywords::{Keyword, Kind};
 use crate::filter::section::{self, SectionSpan};
+use crate::filter::tokenize::Operator;
 use crate::filter::{
-    Block, BlockId, BlockKeyword, Document, FilterDiagnostic, Severity, parse as parse_filter,
+    Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, Severity,
+    parse as parse_filter,
 };
 
 /// Refusal copy for enabling a commented-out block that is not valid grammar (UI-SPEC).
+/// Refusal copy for a line edit whose target line changed since the frame started.
+pub const STALE_LINE_STATUS: &str =
+    "That line changed before the edit landed; nothing was changed.";
+/// Refusal copy for line edits on a block whose lines the model cannot structure.
+pub const NOT_EDITABLE_STATUS: &str = "This rule's lines can't be edited here.";
+
+/// Which section of the body a new line belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LineKind {
+    Condition,
+    Action,
+}
+
+/// Typed role of one body line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    Condition,
+    Action,
+    Modifier,
+    Opaque,
+}
+
+/// One body line of a block, typed for the editor body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyEntry {
+    /// Document line index.
+    pub line: usize,
+    pub kind: EntryKind,
+    pub keyword: Option<&'static Keyword>,
+    pub op: Option<Operator>,
+    /// Raw value tokens as written, quotes kept.
+    pub values: Vec<String>,
+    /// Full raw line text.
+    pub text: String,
+    /// 0-based occurrence of this keyword (case-insensitive) within the block; opaque entries
+    /// count among themselves.
+    pub ordinal: usize,
+}
+
 const CANNOT_ENABLE_STATUS: &str =
     "Can't enable: the commented lines are not valid filter grammar.";
 
@@ -40,6 +81,46 @@ pub enum RowAction {
     SetName(BlockId, String),
     ClearName(BlockId),
     AddRule,
+    EditLine {
+        id: BlockId,
+        line: usize,
+        expect: String,
+        patch: LinePatch,
+    },
+    AddLine {
+        id: BlockId,
+        kind: LineKind,
+        text: String,
+    },
+    RemoveLine {
+        id: BlockId,
+        line: usize,
+        expect: String,
+    },
+}
+
+/// Keep only the last `EditLine` per `(id, line, patch variant)`, at the position of the last;
+/// every other action is untouched and in order.
+pub fn coalesce_edits(actions: Vec<RowAction>) -> Vec<RowAction> {
+    let key = |a: &RowAction| match a {
+        RowAction::EditLine {
+            id, line, patch, ..
+        } => Some((*id, *line, std::mem::discriminant(patch))),
+        _ => None,
+    };
+    let mut keep = vec![true; actions.len()];
+    for i in 0..actions.len() {
+        if let Some(k) = key(&actions[i])
+            && actions[i + 1..].iter().any(|b| key(b) == Some(k))
+        {
+            keep[i] = false;
+        }
+    }
+    actions
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(a, k)| k.then_some(a))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -47,6 +128,8 @@ pub struct ActionOutcome {
     pub changed: bool,
     pub status: Option<String>,
     pub focus: Option<BlockId>,
+    /// Doc line index of a line `AddLine` created.
+    pub line: Option<usize>,
 }
 
 /// Economy section state, projected: includes the staged add/remove.
@@ -109,6 +192,13 @@ pub struct WorkingFilter {
     generation: u64,
     dirty: bool,
     search_cache: Option<(String, u64, Vec<usize>)>,
+}
+
+fn refused(msg: String) -> ActionOutcome {
+    ActionOutcome {
+        status: Some(msg),
+        ..ActionOutcome::default()
+    }
 }
 
 /// Number of blocks in a filter text (0 when it does not parse).
@@ -407,8 +497,102 @@ impl WorkingFilter {
         self.refresh_projection();
     }
 
+    /// Whether the block's body lines accept line edits: false for an unknown id and for an
+    /// invalid disabled block (its lines are commented prose the parser cannot structure).
+    pub fn body_editable(&self, id: BlockId) -> bool {
+        self.doc
+            .block(id)
+            .is_some_and(|b| !matches!(b.disabled_state(), Some(DisabledState::Invalid(_))))
+    }
+
+    /// Every body line of a block, in file order, typed for the editor body. Computed on demand
+    /// for the single expanded row; empty for an unknown id.
+    pub fn body_view(&self, id: BlockId) -> Vec<BodyEntry> {
+        let Some(b) = self.doc.block(id) else {
+            return Vec::new();
+        };
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut out = Vec::new();
+        for bl in b.body() {
+            let Some(text) = self.doc.lines().get(bl.line).map(|l| l.text()) else {
+                continue;
+            };
+            let kind = match (bl.keyword, bl.tokens.as_ref()) {
+                (Some(k), Some(_)) => match k.kind {
+                    Kind::Condition => EntryKind::Condition,
+                    Kind::Action => EntryKind::Action,
+                    Kind::Modifier => EntryKind::Modifier,
+                    _ => EntryKind::Opaque,
+                },
+                _ => EntryKind::Opaque,
+            };
+            let keyword = if kind == EntryKind::Opaque {
+                None
+            } else {
+                bl.keyword
+            };
+            // Disabled-block token ranges are relative to the text after the first `#`.
+            let base = if b.is_enabled() {
+                text
+            } else {
+                match text.find('#') {
+                    Some(i) => &text[i + 1..],
+                    None => text,
+                }
+            };
+            let (op, values) = match (&keyword, bl.tokens.as_ref()) {
+                (Some(_), Some(t)) => (
+                    t.operator.as_ref().map(|(_, o)| *o),
+                    t.values
+                        .iter()
+                        .filter_map(|r| base.get(r.clone()))
+                        .map(str::to_string)
+                        .collect(),
+                ),
+                _ => (None, Vec::new()),
+            };
+            let key = keyword.map_or_else(String::new, |k| k.name.to_ascii_lowercase());
+            let n = seen.entry(key).or_insert(0);
+            let ordinal = *n;
+            *n += 1;
+            out.push(BodyEntry {
+                line: bl.line,
+                kind,
+                keyword,
+                op,
+                values,
+                text: text.to_string(),
+                ordinal,
+            });
+        }
+        out
+    }
+
+    /// Guard shared by the line actions: the id must be an editable row, and (for edits and
+    /// removals) the addressed line must still read as the widget saw it.
+    fn line_refusal(&self, id: BlockId, target: Option<(usize, &str)>) -> Option<String> {
+        if self.row(id).is_none() || !self.body_editable(id) {
+            return Some(NOT_EDITABLE_STATUS.to_string());
+        }
+        match target {
+            Some((at, expect)) if !self.line_matches(at, expect) => {
+                Some(STALE_LINE_STATUS.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// Current text of a doc line when it equals `expect` (bounds-checked).
+    fn line_matches(&self, line: usize, expect: &str) -> bool {
+        self.doc
+            .lines()
+            .get(line)
+            .is_some_and(|l| l.text() == expect)
+    }
+
     pub fn apply_action(&mut self, action: RowAction) -> ActionOutcome {
         let mut focus = None;
+        let mut line = None;
         let mut status = None;
         let result: Result<(), String> = match action {
             RowAction::SetEnabled(id, on) => {
@@ -417,6 +601,7 @@ impl WorkingFilter {
                         changed: false,
                         status: Some(CANNOT_ENABLE_STATUS.to_string()),
                         focus: None,
+                        line: None,
                     };
                 }
                 self.doc.set_enabled(id, on).map_err(|e| e.to_string())
@@ -490,6 +675,59 @@ impl WorkingFilter {
                 }
             }
             RowAction::ClearName(id) => self.doc.remove_meta(id, "name").map_err(|e| e.to_string()),
+            RowAction::EditLine {
+                id,
+                line: at,
+                expect,
+                patch,
+            } => {
+                if let Some(msg) = self.line_refusal(id, Some((at, &expect))) {
+                    return refused(msg);
+                }
+                self.doc
+                    .patch_line(id, at, patch)
+                    .map_err(|e| e.to_string())
+            }
+            RowAction::RemoveLine {
+                id,
+                line: at,
+                expect,
+            } => {
+                if let Some(msg) = self.line_refusal(id, Some((at, &expect))) {
+                    return refused(msg);
+                }
+                self.doc.remove_body_line(id, at).map_err(|e| e.to_string())
+            }
+            RowAction::AddLine { id, kind, text } => {
+                if let Some(msg) = self.line_refusal(id, None) {
+                    return refused(msg);
+                }
+                let want = match kind {
+                    LineKind::Condition => EntryKind::Condition,
+                    LineKind::Action => EntryKind::Action,
+                };
+                let view = self.body_view(id);
+                let after = view
+                    .iter()
+                    .rfind(|e| e.kind == want)
+                    .map(|e| e.line)
+                    .or_else(|| match kind {
+                        LineKind::Condition => None,
+                        LineKind::Action => view.last().map(|e| e.line),
+                    })
+                    .or_else(|| self.doc.block(id).map(Block::header_line));
+                match after {
+                    None => Err(NOT_EDITABLE_STATUS.to_string()),
+                    Some(after) => match self.doc.insert_body_line(id, after, &text) {
+                        Ok(new) => {
+                            focus = Some(id);
+                            line = Some(new);
+                            Ok(())
+                        }
+                        Err(e) => Err(e.to_string()),
+                    },
+                }
+            }
         };
         match result {
             Ok(()) => {
@@ -498,12 +736,14 @@ impl WorkingFilter {
                     changed: true,
                     status,
                     focus,
+                    line,
                 }
             }
             Err(msg) => ActionOutcome {
                 changed: false,
                 status: Some(msg),
                 focus: None,
+                line: None,
             },
         }
     }
@@ -876,5 +1116,208 @@ mod tests {
     fn count_blocks_counts() {
         assert_eq!(count_blocks(THREE), 3);
         assert_eq!(count_blocks(""), 0);
+    }
+
+    // ---- body view and line actions ----
+
+    use crate::filter::tokenize::Operator as Op;
+
+    fn edit(wf: &WorkingFilter, id: BlockId, i: usize, patch: LinePatch) -> RowAction {
+        let e = wf
+            .body_view(id)
+            .into_iter()
+            .find(|e| e.line == i)
+            .expect("entry");
+        RowAction::EditLine {
+            id,
+            line: i,
+            expect: e.text,
+            patch,
+        }
+    }
+
+    #[test]
+    fn body_view_types_every_line_in_order() {
+        let t = "Show\n  Class \"Rings\" \"Amulets\"\n  ItemLevel >= 70\n  ItemLevel <= 80\n  SetFontSize 37\n  Continue\n  FutureKw 3\n";
+        let wf = WorkingFilter::from_text(t);
+        let id = wf.rows()[0].id;
+        let v = wf.body_view(id);
+        let kinds: Vec<_> = v.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                EntryKind::Condition,
+                EntryKind::Condition,
+                EntryKind::Condition,
+                EntryKind::Action,
+                EntryKind::Modifier,
+                EntryKind::Opaque
+            ]
+        );
+        assert_eq!(v[0].op, None);
+        assert_eq!(v[0].values, vec!["\"Rings\"", "\"Amulets\""]);
+        assert_eq!((v[1].ordinal, v[2].ordinal), (0, 1));
+        assert_eq!((v[1].op, v[2].op), (Some(Op::Ge), Some(Op::Le)));
+        for e in &v {
+            assert_eq!(e.text, wf.doc.lines()[e.line].text());
+        }
+        assert!(wf.body_editable(id));
+        assert!(wf.body_view(BlockId(9999)).is_empty());
+        assert!(!wf.body_editable(BlockId(9999)));
+    }
+
+    #[test]
+    fn body_view_disabled_blocks() {
+        let wf = WorkingFilter::from_text("#Show\n#  Rarity>=Magic\n");
+        let id = wf.rows()[0].id;
+        let v = wf.body_view(id);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].op, Some(Op::Ge));
+        assert_eq!(v[0].values, vec!["Magic"]);
+        assert!(wf.body_editable(id));
+        let bad = WorkingFilter::from_text("# Show\n#   Rarity Bogus\n");
+        let id = bad.rows()[0].id;
+        assert!(!bad.body_view(id).is_empty());
+        assert!(!bad.body_editable(id));
+    }
+
+    #[test]
+    fn edit_line_values_operator_and_revert() {
+        let mut wf = WorkingFilter::from_text("Show\n  ItemLevel >= 70\n");
+        let id = wf.rows()[0].id;
+        let a = edit(&wf, id, 1, LinePatch::Values("75".into()));
+        assert!(wf.apply_action(a).changed);
+        assert!(wf.text().contains("ItemLevel >= 75"));
+        assert!(wf.is_dirty());
+        let a = edit(&wf, id, 1, LinePatch::Operator(Some(Op::Le)));
+        assert!(wf.apply_action(a).changed);
+        assert!(wf.text().contains("ItemLevel <= 75"));
+        wf.revert();
+        assert_eq!(wf.text(), "Show\n  ItemLevel >= 70\n");
+        assert!(!wf.is_dirty());
+    }
+
+    #[test]
+    fn stale_and_unsupported_line_edits_are_refused() {
+        let mut wf = WorkingFilter::from_text("Show\n  ItemLevel >= 70\n");
+        let id = wf.rows()[0].id;
+        let before = wf.text();
+        let o = wf.apply_action(RowAction::EditLine {
+            id,
+            line: 1,
+            expect: "  ItemLevel >= 99".into(),
+            patch: LinePatch::Values("75".into()),
+        });
+        assert!(!o.changed);
+        assert_eq!(o.status.as_deref(), Some(STALE_LINE_STATUS));
+        let o = wf.apply_action(RowAction::RemoveLine {
+            id,
+            line: 40,
+            expect: "x".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(STALE_LINE_STATUS));
+        let a = edit(&wf, id, 1, LinePatch::Values("Bogus Token \"".into()));
+        let o = wf.apply_action(a);
+        assert!(!o.changed && o.status.is_some());
+        assert_eq!(wf.text(), before);
+        let o = wf.apply_action(RowAction::AddLine {
+            id: BlockId(9999),
+            kind: LineKind::Condition,
+            text: "Quality >= 1".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(NOT_EDITABLE_STATUS));
+        let mut bad = WorkingFilter::from_text("# Show\n#   Rarity Bogus\n");
+        let id = bad.rows()[0].id;
+        let o = bad.apply_action(RowAction::RemoveLine {
+            id,
+            line: 1,
+            expect: "#   Rarity Bogus".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(NOT_EDITABLE_STATUS));
+    }
+
+    #[test]
+    fn add_line_placement() {
+        let mut wf = WorkingFilter::from_text("Show\n  Class \"Rings\"\n  SetFontSize 37\n");
+        let id = wf.rows()[0].id;
+        let o = wf.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Condition,
+            text: "Quality >= 1".into(),
+        });
+        assert!(o.changed);
+        assert_eq!((o.focus, o.line), (Some(id), Some(2)));
+        assert_eq!(
+            wf.text(),
+            "Show\n  Class \"Rings\"\n  Quality >= 1\n  SetFontSize 37\n"
+        );
+        wf.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Action,
+            text: "SetFontSize 40".into(),
+        });
+        assert!(wf.text().ends_with("  SetFontSize 37\n  SetFontSize 40\n"));
+
+        let mut bare = WorkingFilter::from_text("Show\n  SetFontSize 37\n");
+        let id = bare.rows()[0].id;
+        bare.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Condition,
+            text: "Quality >= 1".into(),
+        });
+        assert_eq!(bare.text(), "Show\n  Quality >= 1\n  SetFontSize 37\n");
+        let mut cond_only = WorkingFilter::from_text("Show\n  Quality >= 1\n");
+        let id = cond_only.rows()[0].id;
+        cond_only.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Action,
+            text: "SetFontSize 40".into(),
+        });
+        assert_eq!(cond_only.text(), "Show\n  Quality >= 1\n  SetFontSize 40\n");
+    }
+
+    #[test]
+    fn remove_line_and_opaque_edit() {
+        let mut wf = WorkingFilter::from_text("Show\n  ItemLevel >= 70\n  FutureKw 3\n");
+        let id = wf.rows()[0].id;
+        let a = edit(&wf, id, 2, LinePatch::Whole("FutureKw 4".into()));
+        assert!(wf.apply_action(a).changed);
+        assert!(wf.text().contains("  FutureKw 4\n"));
+        let a = edit(&wf, id, 2, LinePatch::Whole("ItemLevel >= 70".into()));
+        assert!(wf.apply_action(a).changed);
+        let kinds: Vec<_> = wf.body_view(id).iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![EntryKind::Condition, EntryKind::Condition]);
+        let before = wf.text();
+        let a = edit(&wf, id, 2, LinePatch::Whole("Class".into()));
+        let o = wf.apply_action(a);
+        assert!(!o.changed && o.status.is_some());
+        assert_eq!(wf.text(), before);
+        let e = wf.body_view(id)[0].clone();
+        let o = wf.apply_action(RowAction::RemoveLine {
+            id,
+            line: e.line,
+            expect: e.text,
+        });
+        assert!(o.changed);
+        assert_eq!(wf.text(), "Show\n  ItemLevel >= 70\n");
+    }
+
+    #[test]
+    fn coalesce_keeps_last_edit_per_line() {
+        let (a, b) = (BlockId(1), BlockId(2));
+        let ed = |l: usize, v: &str| RowAction::EditLine {
+            id: a,
+            line: l,
+            expect: String::new(),
+            patch: LinePatch::Values(v.into()),
+        };
+        let out = coalesce_edits(vec![
+            ed(1, "71"),
+            RowAction::SetEnabled(b, false),
+            ed(1, "72"),
+        ]);
+        assert_eq!(out, vec![RowAction::SetEnabled(b, false), ed(1, "72")]);
+        let out = coalesce_edits(vec![ed(1, "71"), ed(2, "72")]);
+        assert_eq!(out, vec![ed(1, "71"), ed(2, "72")]);
     }
 }

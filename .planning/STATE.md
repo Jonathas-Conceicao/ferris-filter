@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
-stopped_at: Completed 21-05-PLAN.md
-last_updated: "2026-10-13T05:47:28.287Z"
+stopped_at: Completed 21-06-PLAN.md
+last_updated: "2026-10-13T05:55:17.320Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 37
-  completed_plans: 36
-  percent: 29
+  completed_plans: 37
+  percent: 35
 ---
 
 # Project State
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 ## Current Position
 
 Phase: 21 (Overlay Configuration Tab) -- executing
-Plan: 5 of 6 complete (21-06 app wiring next)
-Status: In progress
+Plan: 6 of 6 complete (21-06 app wiring next)
+Status: Ready to execute
 Last activity: 2026-10-13
 
 Progress: [█████████░] 93%
@@ -72,6 +72,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 21 P03 | 15min | 2 tasks | 6 files |
 | Phase 21 P04 | 25min | 2 tasks | 2 files |
 | Phase 21 P05 | 35min | 2 tasks | 4 files |
+| Phase 21 P06 | 45min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -142,6 +143,7 @@ work (carried forward past the v0.3 close):
 - [Phase 21]: Spaced style names allowed (tag round trip proven); render_tiers never sorts
 - [Phase 21]: remove_meta works on disabled blocks; dangling style tags dropped there too
 - [Phase 21]: Config colour picker is opaque; show_sections owns its ScrollArea; Keep editing dismisses the outside-edit guard
+- [Phase 21]: CONFIG Apply marks filter out of date only when a file was written; RELOAD keeps config edits unless root changes
 
 ### Pending Todos
 
@@ -281,8 +283,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T05:47:28.278Z
-Stopped at: Completed 21-05-PLAN.md
+Last session: 2026-10-13T05:55:17.313Z
+Stopped at: Completed 21-06-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

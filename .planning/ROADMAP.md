@@ -67,7 +67,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (executed 2026-10-13; awaiting human UAT)
 - [x] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks (completed 2026-10-13)
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (executed 2026-10-13; awaiting human UAT)
-- [ ] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay
+- [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 
 ### Phase 16: Lossless Filter Parser
@@ -283,7 +283,7 @@ Plans:
 
 **Wave 4** *(blocked on 21-05)*
 
-- [ ] 21-06-PLAN.md — App wiring: RULES|CONFIG tabs, config footer, filter selection + switch guard, out-of-date indicator; docs + UAT script
+- [x] 21-06-PLAN.md — App wiring: RULES|CONFIG tabs, config footer, filter selection + switch guard, out-of-date indicator; docs + UAT script
 
 **UI hint**: yes
 
@@ -309,7 +309,7 @@ Plans:
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
-| 21. Overlay Configuration Tab | 5/6 | In Progress|  |
+| 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 
 ## Backlog

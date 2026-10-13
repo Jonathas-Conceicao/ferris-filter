@@ -200,7 +200,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 19-06-PLAN.md — Wire the rule list into the stripe; Apply/Revert over the edited document; refusal lines; Phase 18 notice and ADD ECONOMY SECTION button removed
+- [x] 19-06-PLAN.md — Wire the rule list into the stripe; Apply/Revert over the edited document; refusal lines; Phase 18 notice and ADD ECONOMY SECTION button removed
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
@@ -260,7 +260,7 @@ Plans:
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
-| 19. Overlay Rule List Over Parsed Blocks | 5/7 | In Progress|  |
+| 19. Overlay Rule List Over Parsed Blocks | 6/7 | In Progress|  |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
@@ -347,7 +347,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 5/7 plans executed
+**Plans:** 6/7 plans executed
 
 Plans:
 

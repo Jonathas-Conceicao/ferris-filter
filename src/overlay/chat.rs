@@ -13,8 +13,10 @@
 //! the safe wrappers in `win.rs`. Tests drive everything through fake sinks.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::time::Duration;
 
 use super::apply::{self, ApplyOutcome};
+use super::win;
 
 /// The chat command sent to the game. A compile-time constant: no setting or UI value can reach
 /// the clipboard text.
@@ -233,6 +235,87 @@ impl ReloadSend {
             Err(TryRecvError::Disconnected) => {
                 self.rx = None;
                 Some(Err(WORKER_STOPPED.to_string()))
+            }
+        }
+    }
+}
+
+/// How many times the modifier check polls, and how far apart.
+const MODIFIER_POLLS: u32 = 12;
+const MODIFIER_POLL_MS: u64 = 25;
+
+/// The production [`InputSink`] over the safe wrappers in `win.rs`. Never constructed in tests.
+pub struct WinSink {
+    game: win::GameWindow,
+    owner: Option<win::ClipboardOwner>,
+    /// The clipboard text before our write; `Some(None)` means it held no text.
+    saved: Option<Option<String>>,
+    /// The clipboard sequence number right after our write.
+    ours: Option<u32>,
+}
+
+impl WinSink {
+    pub fn new(game: win::GameWindow, owner: Option<win::ClipboardOwner>) -> Self {
+        WinSink {
+            game,
+            owner,
+            saved: None,
+            ours: None,
+        }
+    }
+}
+
+impl InputSink for WinSink {
+    fn run(&mut self, step: &Step) -> Result<(), String> {
+        match step {
+            Step::FocusGame => win::focus_game(&self.game),
+            Step::VerifyForeground => {
+                if win::game_is_foreground(&self.game) {
+                    Ok(())
+                } else {
+                    Err("the game window did not take focus".to_string())
+                }
+            }
+            Step::VerifyModifiersUp => {
+                for i in 0..MODIFIER_POLLS {
+                    if !win::modifiers_held() {
+                        return Ok(());
+                    }
+                    if i + 1 < MODIFIER_POLLS {
+                        std::thread::sleep(Duration::from_millis(MODIFIER_POLL_MS));
+                    }
+                }
+                Err("a modifier key (Ctrl, Shift or Alt) was held down".to_string())
+            }
+            Step::SaveClipboard => {
+                self.saved = Some(win::read_clipboard_text(self.owner)?);
+                Ok(())
+            }
+            Step::SetClipboard(text) => {
+                self.ours = Some(win::write_clipboard_text(self.owner, text)?);
+                Ok(())
+            }
+            Step::Tap(k) => win::send_tap(k.vk()),
+            Step::Chord(m, k) => win::send_chord(m.vk(), k.vk()),
+            Step::Wait(ms) => {
+                std::thread::sleep(Duration::from_millis(*ms));
+                Ok(())
+            }
+            Step::RestoreClipboard => {
+                let saved = self.saved.take();
+                let ours = self.ours.take();
+                // Only when nothing else wrote the clipboard since our write; otherwise leave
+                // whatever the user copied meanwhile alone. The saved text is never logged.
+                if ours == Some(win::clipboard_sequence()) {
+                    match saved {
+                        Some(Some(text)) => {
+                            win::write_clipboard_text(self.owner, &text)?;
+                        }
+                        Some(None) => win::clear_clipboard(self.owner)?,
+                        None => {}
+                    }
+                }
+                Ok(())
             }
         }
     }

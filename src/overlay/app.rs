@@ -27,6 +27,7 @@
 //! `PITFALLS.md` §8: if a bug can only be found by clicking, it belongs in a library module.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
@@ -40,6 +41,7 @@ use crate::safe_write::WriteOutcome;
 use crate::settings::{self, Settings};
 
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
+use super::chat;
 use super::classes::ClassCatalog;
 use super::config_state::{
     self, ConfigApplyError, ConfigState, OUT_OF_DATE_MESSAGE, OutsideEdit, applied_message,
@@ -117,6 +119,12 @@ pub struct OverlayApp {
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
+
+    /// The one-shot `/reloaditemfilter` worker. At most one in flight: one Apply click, one
+    /// command.
+    reload: chat::ReloadSend,
+    /// The Apply whose reload result has not landed yet.
+    reload_pending: Option<PendingReload>,
 
     /// The edited document (Some exactly when `filter` loaded). Every row operation edits this
     /// in memory; Apply is the single writer.
@@ -583,6 +591,39 @@ fn settings_with_reload(current: &Settings, on: bool) -> Settings {
     }
 }
 
+/// A reload that was started and has not reported yet.
+struct PendingReload {
+    path: PathBuf,
+    extras: String,
+    /// The interim status line; the result replaces it only while it is still showing.
+    interim: String,
+}
+
+/// The status line once the reload worker reports, or `None` when the interim line is gone
+/// (stripe concealed, an edit or a later message replaced it) and the later message stays.
+fn landed_reload_message(
+    current: Option<&str>,
+    pending: &PendingReload,
+    result: &Result<(), String>,
+) -> Option<String> {
+    if current != Some(pending.interim.as_str()) {
+        return None;
+    }
+    Some(format!(
+        "{}{}",
+        apply::reload_result_message(&pending.path, result),
+        pending.extras
+    ))
+}
+
+/// The status line when no reload was sent: the success line, the reason and the Refresh reminder.
+fn skipped_reload_message(path: &Path, extras: &str, reason: chat::SkipReason) -> String {
+    format!(
+        "{}{extras}",
+        apply::not_reloaded_message(path, reason.text())
+    )
+}
+
 impl OverlayApp {
     /// Builds the app state around a tray and hotkey already constructed on
     /// the main thread (thread affinity -- see `overlay::launch`).
@@ -629,6 +670,8 @@ impl OverlayApp {
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
+            reload: chat::ReloadSend::default(),
+            reload_pending: None,
             working,
             list: ListUi::default(),
             query: String::new(),
@@ -737,6 +780,8 @@ impl OverlayApp {
     fn reset_filter_state(&mut self) {
         self.filter = Self::load_filter(self.game_dir.as_deref(), self.settings.filter_name());
         self.working = working_from(&self.filter);
+        // A switched or reloaded filter makes an interim reload line meaningless.
+        self.reload_pending = None;
         self.list.clear_ids();
         self.query.clear();
         self.list_status = None;
@@ -800,7 +845,7 @@ impl OverlayApp {
 
     /// The one Apply path: write the edited document (and any staged economy op) through
     /// [`apply_working`], then re-key the list's view state to the re-parsed document.
-    fn run_apply(&mut self) {
+    fn run_apply(&mut self, ctx: &egui::Context) {
         let (Ok(root), Ok(loaded), Some(working)) =
             (&self.root, &mut self.filter, &mut self.working)
         else {
@@ -816,9 +861,50 @@ impl OverlayApp {
         self.styles_mtime = styles_mtime_at(root);
         working.set_styles(load_styles_at(root));
         let (outcome, extras, needs_reload) = apply_working(root, loaded, working);
+        // Only a Written outcome ever decides; the setting is checked before any window search.
+        let decision = chat::decide(
+            &outcome,
+            self.settings.reload_after_apply(),
+            self.reload.is_running(),
+            win::find_game_window,
+        );
+        let owner = self.window.as_ref().map(win::clipboard_owner);
         match outcome {
             ApplyOutcome::Written(path) => {
-                self.apply_message = Some(format!("{}{extras}", apply::success_message(&path)));
+                match decision {
+                    Some(chat::Decision::Send(game)) => {
+                        let interim = format!("{}{extras}", apply::reloading_message(&path));
+                        self.apply_message = Some(interim.clone());
+                        let repaint = ctx.clone();
+                        let started = self.reload.start(
+                            move || {
+                                let mut sink = chat::WinSink::new(game, owner);
+                                chat::execute(&mut sink, &chat::reload_steps())
+                            },
+                            move || repaint.request_repaint(),
+                        );
+                        if started {
+                            self.reload_pending = Some(PendingReload {
+                                path: path.clone(),
+                                extras: extras.clone(),
+                                interim,
+                            });
+                        } else {
+                            self.apply_message = Some(skipped_reload_message(
+                                &path,
+                                &extras,
+                                chat::SkipReason::Busy,
+                            ));
+                        }
+                    }
+                    Some(chat::Decision::Skip(reason)) => {
+                        self.apply_message = Some(skipped_reload_message(&path, &extras, reason));
+                    }
+                    None => {
+                        self.apply_message =
+                            Some(format!("{}{extras}", apply::success_message(&path)));
+                    }
+                }
                 self.apply_state = self.apply_state.on_apply_success();
                 self.config_changed_pending = false;
             }
@@ -1305,6 +1391,16 @@ impl eframe::App for OverlayApp {
         if self.economy.poll() {
             ui.ctx().request_repaint();
         }
+        // The reload result lands after the worker's last step; the line is only replaced if it
+        // is still the interim one.
+        if let Some(result) = self.reload.poll() {
+            if let Some(p) = self.reload_pending.take()
+                && let Some(msg) = landed_reload_message(self.apply_message.as_deref(), &p, &result)
+            {
+                self.apply_message = Some(msg);
+            }
+            ui.ctx().request_repaint();
+        }
 
         // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here; the
         // actual close-the-viewport send is deferred to after the body renders. Quit is still the
@@ -1566,7 +1662,8 @@ impl eframe::App for OverlayApp {
                                 apply_button
                             };
                             if apply_button.clicked() {
-                                self.run_apply();
+                                let egui_ctx = ui.ctx().clone();
+                                self.run_apply(&egui_ctx);
                             }
                         });
                         // Every message lives in one capped area so a long one can never push
@@ -2025,6 +2122,59 @@ mod tests {
         let next = settings_with_filter(&current, "ssf.filter");
         assert_eq!(next.filter_name(), "ssf.filter");
         assert_eq!(next.extra.get("future"), current.extra.get("future"));
+    }
+
+    fn pending(interim: &str) -> super::PendingReload {
+        super::PendingReload {
+            path: std::path::PathBuf::from("C:/g/dynamic.filter"),
+            extras: " [x]".to_string(),
+            interim: interim.to_string(),
+        }
+    }
+
+    #[test]
+    fn landed_reload_message_replaces_only_the_interim_line() {
+        use super::landed_reload_message;
+        let p = pending("interim");
+        let ok = landed_reload_message(Some("interim"), &p, &Ok(())).unwrap();
+        assert!(
+            ok.contains("Reloaded in game") && ok.ends_with(" [x]"),
+            "{ok}"
+        );
+        let err = landed_reload_message(
+            Some("interim"),
+            &p,
+            &Err("the game window did not take focus".to_string()),
+        )
+        .unwrap();
+        assert!(
+            err.contains("Options > Game > Item Filter > Refresh"),
+            "{err}"
+        );
+        assert!(
+            err.contains("could not reload in game: the game window did not take focus"),
+            "{err}"
+        );
+        assert!(err.ends_with(" [x]"));
+        assert_eq!(landed_reload_message(None, &p, &Ok(())), None);
+        assert_eq!(landed_reload_message(Some("other"), &p, &Ok(())), None);
+    }
+
+    #[test]
+    fn skipped_reload_message_keeps_the_refresh_reminder() {
+        use super::skipped_reload_message;
+        use crate::overlay::chat::SkipReason;
+        let path = std::path::Path::new("C:/g/dynamic.filter");
+        for reason in [
+            SkipReason::SettingOff,
+            SkipReason::Busy,
+            SkipReason::GameNotRunning,
+        ] {
+            let m = skipped_reload_message(path, " [x]", reason);
+            assert!(m.contains("Options > Game > Item Filter > Refresh"), "{m}");
+            assert!(m.contains(reason.text()), "{m}");
+            assert!(m.ends_with(" [x]"));
+        }
     }
 
     #[test]

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: verifying
-stopped_at: Completed 20-09-PLAN.md
-last_updated: "2026-10-13T04:18:33.754Z"
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-10-13T05:31:26.309Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 5
-  total_plans: 31
-  completed_plans: 31
+  total_plans: 37
+  completed_plans: 32
   percent: 29
 ---
 
@@ -67,6 +67,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 18 P05 | 25min | 2 tasks | 4 files |
 | Phase 19 P02 | 25min | 2 tasks | 4 files |
 | Phase 20 P01 | 25min | 3 tasks | 5 files |
+| Phase 21 P01 | 15min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -134,6 +135,7 @@ work (carried forward past the v0.3 close):
 - [Phase 19-03]: Only Error diagnostics in enabled non-economy blocks block Apply; rules-only Apply allowed via EconomyOp::Keep
 - [Phase 20]: 20-01: Whole patch refuses only new Errors; other line ops refuse new Errors and Warnings; set_continue/set_block_keyword stay lenient on invalid disabled blocks
 - [Phase 20-07]: Condition cards: value controls on line 2; list shapes and Rarity start as pending rows; opaque lines are raw Whole-edit rows; refused raw edits surface via ListUi.line_error
+- [Phase 21]: Spaced style names allowed (tag round trip proven); render_tiers never sorts
 
 ### Pending Todos
 
@@ -273,8 +275,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T04:18:33.746Z
-Stopped at: Completed 20-09-PLAN.md
+Last session: 2026-10-13T05:31:26.302Z
+Stopped at: Completed 21-01-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

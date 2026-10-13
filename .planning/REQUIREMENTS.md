@@ -116,10 +116,10 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 ### Configuration Tab (CONF)
 
 - [ ] **CONF-01**: The overlay has a configuration tab, separate from the rule editor.
-- [ ] **CONF-02**: User can add, edit and delete named styles: text, border and background colour
+- [x] **CONF-02**: User can add, edit and delete named styles: text, border and background colour
   (colour picker), font size, sound, minimap icon and beam. Built-in styles cannot be deleted.
 
-- [ ] **CONF-03**: User can edit the economy tier cutoffs in `tiers.json` (not prices). Invalid
+- [x] **CONF-03**: User can edit the economy tier cutoffs in `tiers.json` (not prices). Invalid
   cutoffs are shown inline and cannot be applied.
 
 - [ ] **CONF-04**: The configuration tab has its own Apply and Revert, and Apply writes all of its
@@ -203,8 +203,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STYLE-03 | Phase 20 | Complete (UAT pending) |
 | STYLE-04 | Phase 17 | Complete |
 | CONF-01 | Phase 21 | Pending |
-| CONF-02 | Phase 21 | Pending |
-| CONF-03 | Phase 21 | Pending |
+| CONF-02 | Phase 21 | Complete |
+| CONF-03 | Phase 21 | Complete |
 | CONF-04 | Phase 21 | Pending |
 | INST-01 | Phase 22 | Pending |
 

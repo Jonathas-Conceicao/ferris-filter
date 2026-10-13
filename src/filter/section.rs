@@ -33,23 +33,37 @@ pub struct SectionSpan {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error, Diagnostic)]
 pub enum SectionError {
-    #[error("economy section is damaged: `#ff:economy-end` on line {line} has no `#ff:economy-begin` above it; fix or delete the marker by hand, nothing was written")]
+    #[error(
+        "economy section is damaged: `#ff:economy-end` on line {line} has no `#ff:economy-begin` above it; fix or delete the marker by hand, nothing was written"
+    )]
     EndWithoutBegin { line: usize },
-    #[error("economy section is damaged: `#ff:economy-begin` on line {line} has no `#ff:economy-end` below it; fix or delete the marker by hand, nothing was written")]
+    #[error(
+        "economy section is damaged: `#ff:economy-begin` on line {line} has no `#ff:economy-end` below it; fix or delete the marker by hand, nothing was written"
+    )]
     BeginWithoutEnd { line: usize },
-    #[error("economy section is damaged: `#ff:economy-end` on line {end} comes before `#ff:economy-begin` on line {begin}; fix the markers by hand, nothing was written")]
+    #[error(
+        "economy section is damaged: `#ff:economy-end` on line {end} comes before `#ff:economy-begin` on line {begin}; fix the markers by hand, nothing was written"
+    )]
     EndBeforeBegin { begin: usize, end: usize },
-    #[error("economy section is damaged: `#ff:economy-begin` appears more than once (lines {lines:?}); delete the extra marker by hand, nothing was written")]
+    #[error(
+        "economy section is damaged: `#ff:economy-begin` appears more than once (lines {lines:?}); delete the extra marker by hand, nothing was written"
+    )]
     DuplicateBegin { lines: Vec<usize> },
-    #[error("economy section is damaged: `#ff:economy-end` appears more than once (lines {lines:?}); delete the extra marker by hand, nothing was written")]
+    #[error(
+        "economy section is damaged: `#ff:economy-end` appears more than once (lines {lines:?}); delete the extra marker by hand, nothing was written"
+    )]
     DuplicateEnd { lines: Vec<usize> },
-    #[error("economy section is damaged: an economy marker on line {line} sits inside a rule block; move it out by hand, nothing was written")]
+    #[error(
+        "economy section is damaged: an economy marker on line {line} sits inside a rule block; move it out by hand, nothing was written"
+    )]
     MarkerInsideBlock { line: usize },
     #[error("this filter has no economy section")]
     NoSection,
     #[error("this filter already has an economy section (begin marker on line {line})")]
     AlreadyPresent { line: usize },
-    #[error("the generated body contains an economy marker on its line {line}; refusing to splice it")]
+    #[error(
+        "the generated body contains an economy marker on its line {line}; refusing to splice it"
+    )]
     BodyContainsMarker { line: usize },
     #[error("could not parse the filter: {0}")]
     Parse(String),
@@ -94,7 +108,7 @@ pub fn find(doc: &Document) -> Result<Option<SectionSpan>, SectionError> {
             return Err(SectionError::EndBeforeBegin {
                 begin: b + 1,
                 end: e + 1,
-            })
+            });
         }
         (Some(&b), Some(&e)) => SectionSpan { begin: b, end: e },
     };
@@ -309,7 +323,11 @@ pub fn migrate_v04(text: &str) -> Result<Option<String>, SectionError> {
     push_line(&mut out, "", eol);
     let mut last_eol = eol;
     for l in &lines[banner..] {
-        let e = if l.eol() == Eol::None { last_eol } else { l.eol() };
+        let e = if l.eol() == Eol::None {
+            last_eol
+        } else {
+            l.eol()
+        };
         last_eol = e;
         push_line(&mut out, l.text(), e);
     }
@@ -328,7 +346,8 @@ mod tests {
         "/tests/fixtures/v04-dynamic.filter"
     ));
 
-    const BODY: &str = "# --- X ---\nShow # X1\n  Class == \"Rings\"\n\nShow # X2\n  Class == \"Belts\"\n";
+    const BODY: &str =
+        "# --- X ---\nShow # X1\n  Class == \"Rings\"\n\nShow # X2\n  Class == \"Belts\"\n";
 
     fn conv(s: &str, eol: &str) -> String {
         s.replace('\n', eol)
@@ -372,13 +391,19 @@ mod tests {
     #[test]
     fn find_end_only() {
         let s = format!("Show\n{END_LINE}\n");
-        assert_eq!(find(&doc(&s)), Err(SectionError::EndWithoutBegin { line: 2 }));
+        assert_eq!(
+            find(&doc(&s)),
+            Err(SectionError::EndWithoutBegin { line: 2 })
+        );
     }
 
     #[test]
     fn find_begin_only() {
         let s = format!("Show\n{BEGIN_LINE}\n");
-        assert_eq!(find(&doc(&s)), Err(SectionError::BeginWithoutEnd { line: 2 }));
+        assert_eq!(
+            find(&doc(&s)),
+            Err(SectionError::BeginWithoutEnd { line: 2 })
+        );
     }
 
     #[test]
@@ -486,7 +511,10 @@ mod tests {
     #[test]
     fn add_layout_lf() {
         let a = add("Show # A\n", "Hide\n").unwrap();
-        assert_eq!(a, format!("Show # A\n\n{BEGIN_LINE}\n\nHide\n\n{END_LINE}\n"));
+        assert_eq!(
+            a,
+            format!("Show # A\n\n{BEGIN_LINE}\n\nHide\n\n{END_LINE}\n")
+        );
     }
 
     #[test]
@@ -550,7 +578,10 @@ mod tests {
         let d = doc(&s);
         let span = find(&d).unwrap().unwrap();
         for m in [span.begin, span.end] {
-            assert!(d.blocks().all(|b| !b.span().contains(&m)), "marker line {m} in a block");
+            assert!(
+                d.blocks().all(|b| !b.span().contains(&m)),
+                "marker line {m} in a block"
+            );
         }
         let blocks: Vec<_> = d.blocks().collect();
         assert_eq!(d.block_meta(blocks[0].id()), Vec::<(&str, &str)>::new());
@@ -571,7 +602,10 @@ mod tests {
             assert!(in_trivia, "marker line {m} not trivia");
             assert!(d.blocks().all(|b| !b.span().contains(&m)));
         }
-        assert_eq!(d.blocks().count(), doc(x).blocks().count() + doc(BODY).blocks().count());
+        assert_eq!(
+            d.blocks().count(),
+            doc(x).blocks().count() + doc(BODY).blocks().count()
+        );
         let r = refresh(&a, "Show # Only\n").unwrap();
         assert_eq!(doc(&r).blocks().count(), doc(x).blocks().count() + 1);
     }
@@ -643,10 +677,11 @@ mod tests {
         assert!(names.contains(&"#ff:name Chance bases"));
         assert!(!m.contains("#ff:name rule 4"));
         let begin = m.lines().position(|l| l == BEGIN_LINE).unwrap();
-        assert!(m
-            .lines()
-            .enumerate()
-            .all(|(i, l)| i < begin || !l.starts_with("#ff:name ")));
+        assert!(
+            m.lines()
+                .enumerate()
+                .all(|(i, l)| i < begin || !l.starts_with("#ff:name "))
+        );
         // the name line sits directly above its header and attaches to it
         let d = doc(&m);
         let named: Vec<_> = d

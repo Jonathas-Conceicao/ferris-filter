@@ -11,8 +11,8 @@ pub struct IndexState {
 
 #[derive(serde::Deserialize)]
 pub struct EconomyLeague {
-    pub name: String,    // e.g. "Fate of the Vaal" — USE THIS as league= query param
-    pub url: String,     // slug e.g. "vaal" / "standard" / "hardcore"
+    pub name: String, // e.g. "Fate of the Vaal" — USE THIS as league= query param
+    pub url: String,  // slug e.g. "vaal" / "standard" / "hardcore"
     pub hardcore: bool,
     pub indexed: bool,
 }
@@ -42,7 +42,7 @@ pub struct ExchangeCore {
     pub items: Vec<ExchangeItem>,
     #[serde(default)]
     pub rates: HashMap<String, f64>, // keys: "chaos", "exalted", ...
-    pub primary: String,             // e.g. "divine"
+    pub primary: String, // e.g. "divine"
 }
 
 #[derive(serde::Deserialize)]
@@ -197,7 +197,10 @@ mod tests {
         assert_eq!(ov.core.primary, "divine");
         let line = &ov.lines[0];
         assert_eq!(line.name, "Temporalis", "name is the unique display name");
-        assert_eq!(line.base_type, "Silk Robe", "baseType is the filter base type");
+        assert_eq!(
+            line.base_type, "Silk Robe",
+            "baseType is the filter base type"
+        );
         assert_eq!(line.category.as_deref(), Some("Body Armour"));
         assert!((line.primary_value - 19364.0).abs() < 0.001);
     }

@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use super::keywords::{Keyword, Ops, ValueShape, COLOURS, RARITIES, SHAPES};
+use super::keywords::{COLOURS, Keyword, Ops, RARITIES, SHAPES, ValueShape};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operator {
@@ -127,7 +127,7 @@ pub fn tokenize(text: &str) -> Result<TokenizedLine, TokenError> {
                 return Err(TokenError {
                     col: j + 1,
                     message: format!("unknown operator `{run}`"),
-                })
+                });
             }
         }
         i = k;

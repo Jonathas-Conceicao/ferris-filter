@@ -49,7 +49,10 @@ mod tests {
             parse_ff_line("#ff:economy-begin"),
             Some(("economy-begin", None))
         );
-        assert_eq!(parse_ff_line("#ff:economy-end   "), Some(("economy-end", None)));
+        assert_eq!(
+            parse_ff_line("#ff:economy-end   "),
+            Some(("economy-end", None))
+        );
     }
 
     #[test]

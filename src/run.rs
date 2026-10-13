@@ -41,7 +41,13 @@ pub fn run() -> miette::Result<()> {
             early_game,
             tiers,
             styles,
-        } => cmd_generate(&config, &output, early_game, tiers.as_deref(), styles.as_deref())?,
+        } => cmd_generate(
+            &config,
+            &output,
+            early_game,
+            tiers.as_deref(),
+            styles.as_deref(),
+        )?,
         Commands::Apply {
             filter,
             add_economy,
@@ -184,8 +190,8 @@ fn cmd_apply(
             eprintln!("note: --styles {s} — using it instead of styles.json");
             inputs = inputs.with_styles(under_root(&root, s));
         }
-        let (body, source) = dynamic::economy_body(&inputs, PriceSourcePolicy::Auto)
-            .map_err(miette::Error::from)?;
+        let (body, source) =
+            dynamic::economy_body(&inputs, PriceSourcePolicy::Auto).map_err(miette::Error::from)?;
         match source {
             PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty) => {
                 eprintln!(

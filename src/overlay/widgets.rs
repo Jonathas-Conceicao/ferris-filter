@@ -30,8 +30,7 @@ pub struct HeaderResponse {
 pub fn header_plate(ui: &mut egui::Ui, title: &str) -> HeaderResponse {
     let height = 40.0;
     let width = ui.available_width();
-    let (rect, _response) =
-        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let (rect, _response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
 
     let painter = ui.painter();
     painter.rect_filled(rect, 0.0, theme::HEADER_PLATE);
@@ -50,7 +49,11 @@ pub fn header_plate(ui: &mut egui::Ui, title: &str) -> HeaderResponse {
         egui::pos2(rect.right() - 20.0, rect.center().y),
         egui::vec2(close_size, close_size),
     );
-    let close_response = ui.interact(close_rect, ui.id().with("header-close"), egui::Sense::click());
+    let close_response = ui.interact(
+        close_rect,
+        ui.id().with("header-close"),
+        egui::Sense::click(),
+    );
 
     let stroke_color = if close_response.hovered() {
         theme::SECTION_CREAM
@@ -154,7 +157,11 @@ pub enum ArrowDirection {
 /// the control, keeping the row's control layout stable across rows.
 pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool) -> egui::Response {
     let size = 16.0;
-    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), sense);
 
     let color = if !enabled {
@@ -185,8 +192,11 @@ pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool)
         ],
     };
 
-    ui.painter()
-        .add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
 
     response
 }
@@ -280,7 +290,10 @@ mod tests {
         })
         .drop_without_applying_deltas();
 
-        assert!(clicked, "an enabled arrow button must report clicked() on click");
+        assert!(
+            clicked,
+            "an enabled arrow button must report clicked() on click"
+        );
     }
 
     #[test]
@@ -299,6 +312,9 @@ mod tests {
         })
         .drop_without_applying_deltas();
 
-        assert!(!clicked, "a disabled arrow button must never report clicked()");
+        assert!(
+            !clicked,
+            "a disabled arrow button must never report clicked()"
+        );
     }
 }

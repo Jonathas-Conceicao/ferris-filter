@@ -228,7 +228,10 @@ mod tests {
         std::fs::write(&cfg_p, v.to_string()).unwrap();
         let err = load_config(cfg_p.to_str().unwrap(), styles_p.to_str().unwrap()).unwrap_err();
         assert!(
-            matches!(err, LoadError::Styles(StyleError::InlineStylesSection { .. })),
+            matches!(
+                err,
+                LoadError::Styles(StyleError::InlineStylesSection { .. })
+            ),
             "{err}"
         );
     }
@@ -309,7 +312,10 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_str(STYLES).unwrap();
         v.as_object_mut().unwrap().remove("E");
         let err = load_text(&v.to_string()).unwrap_err();
-        assert!(matches!(err, LoadError::Styles(StyleError::MissingRequired(_))));
+        assert!(matches!(
+            err,
+            LoadError::Styles(StyleError::MissingRequired(_))
+        ));
         assert!(err.to_string().contains('E'));
     }
 

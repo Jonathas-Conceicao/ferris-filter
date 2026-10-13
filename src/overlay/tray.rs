@@ -141,6 +141,9 @@ mod tests {
             command_for_menu(&MenuId::new("quit"), &handles),
             Some(OverlayCommand::Quit)
         );
-        assert_eq!(command_for_menu(&MenuId::new("something-else"), &handles), None);
+        assert_eq!(
+            command_for_menu(&MenuId::new("something-else"), &handles),
+            None
+        );
     }
 }

@@ -32,26 +32,20 @@ pub fn resolve_league(state: &IndexState, standard: bool, hc: bool) -> miette::R
             .find(|l| l.hardcore && l.url != "hardcore")
             .map(|l| l.name.clone())
             .ok_or_else(|| {
-                miette::miette!(
-                    "No active hardcore trade league found in poe.ninja index-state"
-                )
+                miette::miette!("No active hardcore trade league found in poe.ninja index-state")
             }),
         (true, false) => state
             .economy_leagues
             .iter()
             .find(|l| l.url == "standard")
             .map(|l| l.name.clone())
-            .ok_or_else(|| {
-                miette::miette!("Standard league not found in poe.ninja index-state")
-            }),
+            .ok_or_else(|| miette::miette!("Standard league not found in poe.ninja index-state")),
         (true, true) => state
             .economy_leagues
             .iter()
             .find(|l| l.url == "hardcore")
             .map(|l| l.name.clone())
-            .ok_or_else(|| {
-                miette::miette!("Hardcore league not found in poe.ninja index-state")
-            }),
+            .ok_or_else(|| miette::miette!("Hardcore league not found in poe.ninja index-state")),
     }
 }
 
@@ -89,7 +83,9 @@ pub fn resolve_league_with_override(
                 .map(|l| format!("  {} ({})", l.name, l.url))
                 .collect::<Vec<_>>()
                 .join("\n");
-            miette::miette!("No league matching `{wanted}` in poe.ninja index-state.\nAvailable:\n{available}")
+            miette::miette!(
+                "No league matching `{wanted}` in poe.ninja index-state.\nAvailable:\n{available}"
+            )
         })
 }
 
@@ -253,20 +249,22 @@ mod tests {
         )
         .expect_err("an unknown league must not silently fall back to another one");
         let msg = format!("{err}");
-        assert!(msg.contains("Forbidden Rights"), "names what was asked for: {msg}");
-        assert!(msg.contains("Forbidden Rites"), "lists the real options: {msg}");
+        assert!(
+            msg.contains("Forbidden Rights"),
+            "names what was asked for: {msg}"
+        );
+        assert!(
+            msg.contains("Forbidden Rites"),
+            "lists the real options: {msg}"
+        );
         assert!(msg.contains("runesofaldur"), "lists slugs too: {msg}");
     }
 
     #[test]
     fn override_takes_precedence_over_the_standard_and_hc_flags() {
-        let name = resolve_league_with_override(
-            &transition_state(),
-            true,
-            true,
-            Some("Forbidden Rites"),
-        )
-        .unwrap();
+        let name =
+            resolve_league_with_override(&transition_state(), true, true, Some("Forbidden Rites"))
+                .unwrap();
         assert_eq!(
             name, "Forbidden Rites",
             "an explicit league is the caller being specific; flags must not override it"

@@ -51,7 +51,9 @@ pub enum DynamicError {
     },
 
     /// The filter is not UTF-8; never lossy-converted.
-    #[error("`{path}` is not valid UTF-8; FerrisFilter only edits UTF-8 filters and will not convert it")]
+    #[error(
+        "`{path}` is not valid UTF-8; FerrisFilter only edits UTF-8 filters and will not convert it"
+    )]
     NotUtf8 { path: String },
 
     /// Refresh/remove was asked of a file that does not exist.
@@ -73,7 +75,9 @@ pub enum DynamicError {
     },
 
     /// Neither live nor fallback prices exist.
-    #[error("No price data: neither prices.json nor prices-fallback.json was found, so the economy section was left as it is")]
+    #[error(
+        "No price data: neither prices.json nor prices-fallback.json was found, so the economy section was left as it is"
+    )]
     #[diagnostic(help("Run `ff-cli sync` (or SYNC ECONOMY in the overlay) and apply again."))]
     EconomyUnavailable,
 
@@ -124,12 +128,12 @@ impl LoadedFilter {
                 return Err(DynamicError::FilterUnreadable {
                     path: shown(),
                     source: e,
-                })
+                });
             }
         };
         crate::filter::parse(&bytes).map_err(|_| DynamicError::NotUtf8 { path: shown() })?;
-        let mut text =
-            String::from_utf8(bytes.clone()).map_err(|_| DynamicError::NotUtf8 { path: shown() })?;
+        let mut text = String::from_utf8(bytes.clone())
+            .map_err(|_| DynamicError::NotUtf8 { path: shown() })?;
         let mut migrated = false;
         match crate::filter::section::migrate_v04(&text) {
             Ok(Some(m)) => {
@@ -141,7 +145,7 @@ impl LoadedFilter {
                 return Err(DynamicError::Section {
                     path: shown(),
                     source: e,
-                })
+                });
             }
         }
         Ok(Self {
@@ -215,18 +219,15 @@ pub struct ApplyReport {
 /// The only writer. Never writes on open; the residual TOCTOU window is accepted (see
 /// [`crate::safe_write`]). On success the loaded baseline becomes the written bytes; on error
 /// `loaded` is unchanged.
-pub fn apply_file(
-    loaded: &mut LoadedFilter,
-    op: ApplyOp<'_>,
-) -> Result<ApplyReport, DynamicError> {
+pub fn apply_file(loaded: &mut LoadedFilter, op: ApplyOp<'_>) -> Result<ApplyReport, DynamicError> {
     let shown = loaded.path.display().to_string();
     if !loaded.existed() && matches!(op, ApplyOp::Refresh(_) | ApplyOp::RemoveEconomy) {
         return Err(DynamicError::FilterNotFound { path: shown });
     }
     let new_text = apply_text(&loaded.text, op).map_err(|e| match e {
-        crate::filter::section::SectionError::NoSection => {
-            DynamicError::NoEconomySection { path: shown.clone() }
-        }
+        crate::filter::section::SectionError::NoSection => DynamicError::NoEconomySection {
+            path: shown.clone(),
+        },
         other => DynamicError::Section {
             path: shown.clone(),
             source: other,
@@ -276,9 +277,12 @@ mod tests {
 
     fn seed_body() -> String {
         let dir = seed_dir();
-        economy_body(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("body")
-            .0
+        economy_body(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("body")
+        .0
     }
 
     fn copy_fixture(dir: &Path, name: &str) -> PathBuf {
@@ -361,8 +365,11 @@ mod tests {
     #[test]
     fn economy_body_live_and_absent() {
         let dir = seed_dir();
-        let (text, src) =
-            economy_body(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto).unwrap();
+        let (text, src) = economy_body(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .unwrap();
         assert_eq!(src, PriceSource::Live);
         assert!(!text.is_empty());
         let empty = tempfile::tempdir().unwrap();
@@ -486,5 +493,4 @@ mod tests {
         assert!(crate::safe_write::backup_path(&p).exists());
         assert_ne!(after.as_bytes(), &with[..]);
     }
-
 }

@@ -3,7 +3,7 @@
 //! Fixtures are read with `fs::read` and never normalized (no CRLF->LF), so the test sees exactly
 //! the bytes the checkout produced.
 
-use ferrisfilter::filter::{parse, BlockKeyword, LoadError};
+use ferrisfilter::filter::{BlockKeyword, LoadError, parse};
 use std::fs;
 use std::path::Path;
 
@@ -122,7 +122,10 @@ fn corpus_filterblade() {
         .blocks()
         .filter(|b| b.is_enabled())
         .flat_map(|b| b.body().iter())
-        .filter(|l| l.keyword.is_some_and(|k| k.name.eq_ignore_ascii_case("continue")))
+        .filter(|l| {
+            l.keyword
+                .is_some_and(|k| k.name.eq_ignore_ascii_case("continue"))
+        })
         .count();
     assert_eq!(continue_lines, 40);
     assert!(!doc.items().iter().any(|i| matches!(i, Item::Import { .. })));
@@ -146,7 +149,10 @@ fn corpus_filterblade() {
     assert_eq!(disabled, expected);
 
     for b in doc.blocks() {
-        assert!(doc.meta_get(b.id(), "name").is_none(), "D-07: foreign comments are not a name");
+        assert!(
+            doc.meta_get(b.id(), "name").is_none(),
+            "D-07: foreign comments are not a name"
+        );
     }
 }
 
@@ -228,7 +234,10 @@ fn fixture() -> Vec<u8> {
 }
 
 fn enabled_ids(doc: &Document) -> Vec<BlockId> {
-    doc.blocks().filter(|b| b.is_enabled()).map(|b| b.id()).collect()
+    doc.blocks()
+        .filter(|b| b.is_enabled())
+        .map(|b| b.id())
+        .collect()
 }
 
 #[test]
@@ -246,8 +255,16 @@ fn edit_replace_one_block_filterblade() {
     let out = doc.to_bytes();
     let region = format!("{header}\r\n\tRarity Unique\r\n");
     assert_bytes_eq("edit prefix", &out[..start], &orig[..start]);
-    assert_bytes_eq("edit region", &out[start..start + region.len()], region.as_bytes());
-    assert_bytes_eq("edit suffix", &out[start + region.len()..], &orig[old_end..]);
+    assert_bytes_eq(
+        "edit region",
+        &out[start..start + region.len()],
+        region.as_bytes(),
+    );
+    assert_bytes_eq(
+        "edit suffix",
+        &out[start + region.len()..],
+        &orig[old_end..],
+    );
 }
 
 #[test]
@@ -312,7 +329,11 @@ fn edit_crlf_preserved() {
         .to_string();
     doc.replace_block_lines(
         ids[10],
-        vec![header, "\tClass \"Bows\"".to_string(), "\tRarity Rare".to_string()],
+        vec![
+            header,
+            "\tClass \"Bows\"".to_string(),
+            "\tRarity Rare".to_string(),
+        ],
     )
     .unwrap();
     doc.set_meta(ids[20], "name", "x y").unwrap();
@@ -344,7 +365,11 @@ fn edit_no_final_newline() {
     let id = doc.blocks().nth(1).unwrap().id();
     doc.replace_block_lines(
         id,
-        vec!["Show".into(), "\tRarity Unique".into(), "\tSockets 3".into()],
+        vec![
+            "Show".into(),
+            "\tRarity Unique".into(),
+            "\tSockets 3".into(),
+        ],
     )
     .unwrap();
     assert_bytes_eq(
@@ -392,7 +417,15 @@ fn parse_never_panics_on_prefixes() {
         }
     }
     for g in [
-        "\"", "#", "=>", "Show \"", "#Show\n#\t", "\r\r\n", "\u{feff}\u{feff}", "Show\n\t\"", "#Show\n#\tRarity \"",
+        "\"",
+        "#",
+        "=>",
+        "Show \"",
+        "#Show\n#\t",
+        "\r\r\n",
+        "\u{feff}\u{feff}",
+        "Show\n\t\"",
+        "#Show\n#\tRarity \"",
     ] {
         probe(g.as_bytes());
     }

@@ -10,11 +10,11 @@ use std::borrow::Cow;
 
 use super::block::{BlockKeyword, BodyLine, DisabledState};
 use super::diag::{FilterDiagnostic, Severity};
-use super::keywords::{lookup, Keyword, Kind, ValueShape};
+use super::keywords::{Keyword, Kind, ValueShape, lookup};
 use super::lines::Line;
 use super::meta::parse_ff_line;
 use super::parse::block_keyword;
-use super::tokenize::{tokenize, validate_shape, TokenizedLine};
+use super::tokenize::{TokenizedLine, tokenize, validate_shape};
 
 pub(crate) struct Disabled {
     pub keyword: BlockKeyword,
@@ -180,9 +180,7 @@ pub(crate) fn classify_inner(text: &str, inner: &str, k: usize, est: Option<&str
                     }
                 }
                 // Enabled, an `Import` would end the block early.
-                Some(kw) if kw.kind == Kind::Directive => {
-                    Inner::Prose
-                }
+                Some(kw) if kw.kind == Kind::Directive => Inner::Prose,
                 Some(kw) => {
                     let problem = validate_shape(kw, inner, &t).err().or_else(|| {
                         prose_shaped(kw, inner, &t)
@@ -336,7 +334,7 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{parse, BlockKeyword, DisabledState, Document, Item, Severity};
+    use crate::filter::{BlockKeyword, DisabledState, Document, Item, Severity, parse};
 
     fn p(s: &str) -> Document {
         parse(s.as_bytes()).unwrap()
@@ -374,10 +372,11 @@ mod tests {
         }
         assert!(!b.can_enable());
         assert!(!d.diagnostics().is_empty());
-        assert!(d
-            .diagnostics()
-            .iter()
-            .all(|x| x.severity != Severity::Error));
+        assert!(
+            d.diagnostics()
+                .iter()
+                .all(|x| x.severity != Severity::Error)
+        );
     }
 
     #[test]
@@ -430,8 +429,14 @@ mod tests {
         // refused with the bytes untouched.
         for (src, line) in [
             ("#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n", 4),
-            ("#Hide\n#\tRarity Normal\n# only these bases\n#\tBaseType == \"X\"\n", 4),
-            ("#Show\n#\tRarity Rare\n# note\n#\n#    Class \"Bows\"\nHide\n", 5),
+            (
+                "#Hide\n#\tRarity Normal\n# only these bases\n#\tBaseType == \"X\"\n",
+                4,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n# note\n#\n#    Class \"Bows\"\nHide\n",
+                5,
+            ),
             ("#Show\n#\tRarity Rare\n# $tag\n## x\n#Class \"Bows\"\n", 5),
         ] {
             let mut d = p(src);
@@ -496,19 +501,51 @@ mod tests {
         // set_enabled(true) succeeds, and a refused enable leaves the bytes untouched.
         for (src, owned, enableable) in [
             // Iteration-3 CR-01: a clean condition below the prose that ended the block refuses.
-            ("#Show\n#\tRarity Rare\n# $tag\n#\tClass \"Bows\"\n", 0..2, false),
-            ("#Show\n#\tRarity Rare\n#\t123\n#\tClass \"Bows\"\n", 0..4, false),
-            ("#Show\n#\tRarity Rare\n#Import \"x\"\n#\tClass \"Bows\"\n", 0..2, false),
-            ("#Show\n#\tRarity Rare\n#Show Continue\n#\tClass \"Bows\"\n", 0..2, false),
-            ("#Show\n#\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n", 0..2, false),
+            (
+                "#Show\n#\tRarity Rare\n# $tag\n#\tClass \"Bows\"\n",
+                0..2,
+                false,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n#\t123\n#\tClass \"Bows\"\n",
+                0..4,
+                false,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n#Import \"x\"\n#\tClass \"Bows\"\n",
+                0..2,
+                false,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n#Show Continue\n#\tClass \"Bows\"\n",
+                0..2,
+                false,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n",
+                0..2,
+                false,
+            ),
             ("#Show\n#\tRarity Rare\n# $tag\nHide\n", 0..2, true),
             ("#Show\n#\tRarity Rare\n#Import \"x\"\nHide\n", 0..2, true),
             // Enabled, the stray condition below the blank line would join the block.
             ("#Show\n#\tRarity Rare\n\n\tClass \"Bows\"\n", 0..2, false),
             // A blank (`#`) line closes the doubly commented trailing run, as it does live.
-            ("#Show\n#\tRarity Rare\n#\n##\tSetFontSize 40\nHide\n", 0..2, true),
-            ("#Show\n#\tRarity Rare\n## note\n##\tSetFontSize 40\nHide\n", 0..2, true),
-            ("#Show\n#\tRarity Rare\n###\n##\tSetFontSize 40\nHide\n", 0..4, true),
+            (
+                "#Show\n#\tRarity Rare\n#\n##\tSetFontSize 40\nHide\n",
+                0..2,
+                true,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n## note\n##\tSetFontSize 40\nHide\n",
+                0..2,
+                true,
+            ),
+            (
+                "#Show\n#\tRarity Rare\n###\n##\tSetFontSize 40\nHide\n",
+                0..4,
+                true,
+            ),
         ] {
             let mut d = p(src);
             let id = d.blocks().next().unwrap().id();
@@ -567,7 +604,10 @@ mod tests {
         for (src, enableable) in [
             ("#Show\n#  Note: these are weapons\nHide\n", false),
             ("#Show\n#\tSee notes below\nHide\n", false),
-            ("#Show # catch-all\n# Rarity is irrelevant here\nHide\n", true),
+            (
+                "#Show # catch-all\n# Rarity is irrelevant here\nHide\n",
+                true,
+            ),
             ("#Hide\n#\tFutureKw 3\nShow\n", false),
             ("#Show\n# Note: weapons\nHide\n", true),
             ("#Show\n#Note: weapons\nHide\n", true),

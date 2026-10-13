@@ -38,8 +38,8 @@ mod imp {
     use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::{HWND, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowTextW, ShowWindow, SystemParametersInfoW, SPI_GETWORKAREA,
-        SW_HIDE, SW_SHOWNOACTIVATE,
+        GetForegroundWindow, GetWindowTextW, SPI_GETWORKAREA, SW_HIDE, SW_SHOWNOACTIVATE,
+        ShowWindow, SystemParametersInfoW,
     };
 
     /// The stripe's own window handle, cached once on the first frame it is available. Never
@@ -90,18 +90,18 @@ mod imp {
     /// APPLY row with it, underneath the taskbar (author, screenshot poe2_print008). Taskbar
     /// height and edge are user settings, so no fixed margin can stand in for asking.
     pub fn work_area() -> Option<egui::Rect> {
-        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
         // SAFETY: `SystemParametersInfoW` with `SPI_GETWORKAREA` writes a `RECT` through the
         // pointer we pass. The pointer is to a live local of exactly that type, the documented
         // `uiParam`/`fWinIni` for a read are both zero, and the return value is checked before
         // the value is used.
         let ok = unsafe {
-            SystemParametersInfoW(
-                SPI_GETWORKAREA,
-                0,
-                (&mut rect as *mut RECT).cast(),
-                0,
-            )
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut rect as *mut RECT).cast(), 0)
         };
         if ok == 0 {
             return None;
@@ -174,7 +174,7 @@ mod imp {
 }
 
 pub use imp::{
-    conceal, foreground_is_game_or_overlay, from_frame, reveal, work_area, OverlayWindow,
+    OverlayWindow, conceal, foreground_is_game_or_overlay, from_frame, reveal, work_area,
 };
 
 #[cfg(all(test, windows))]
@@ -189,8 +189,14 @@ mod tests {
             // the monitor size, so this is not a failure.
             return;
         };
-        assert!(area.width() >= 320.0, "work area {area:?} is implausibly narrow");
-        assert!(area.height() >= 240.0, "work area {area:?} is implausibly short");
+        assert!(
+            area.width() >= 320.0,
+            "work area {area:?} is implausibly narrow"
+        );
+        assert!(
+            area.height() >= 240.0,
+            "work area {area:?} is implausibly short"
+        );
         eprintln!("work area on this machine: {area:?}");
     }
 }

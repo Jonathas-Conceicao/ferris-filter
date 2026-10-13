@@ -198,6 +198,9 @@ mod tests {
 
     #[test]
     fn poe2_visuals_is_dark_mode_derived() {
-        assert!(poe2_visuals().dark_mode, "poe2_visuals must start from Visuals::dark()");
+        assert!(
+            poe2_visuals().dark_mode,
+            "poe2_visuals must start from Visuals::dark()"
+        );
     }
 }

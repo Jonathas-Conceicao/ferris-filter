@@ -132,7 +132,10 @@ mod tests {
         let mut state = ShownUnfocused;
         for _ in 0..20 {
             state = advance(state, false, false);
-            assert_eq!(state, ShownUnfocused, "must not hide before ever being focused");
+            assert_eq!(
+                state, ShownUnfocused,
+                "must not hide before ever being focused"
+            );
         }
     }
 

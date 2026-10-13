@@ -89,9 +89,10 @@ impl Block {
         &self.body
     }
     pub fn has_continue(&self) -> bool {
-        self.body
-            .iter()
-            .any(|b| b.keyword.is_some_and(|k| k.name.eq_ignore_ascii_case("continue")))
+        self.body.iter().any(|b| {
+            b.keyword
+                .is_some_and(|k| k.name.eq_ignore_ascii_case("continue"))
+        })
     }
 }
 

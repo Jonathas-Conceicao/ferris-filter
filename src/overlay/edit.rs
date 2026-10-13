@@ -82,7 +82,10 @@ impl WorkingRules {
     /// working model — callers do `edit::set_style(wr.rule_mut(id)?, "S")`, never touch `rows`
     /// directly.
     pub fn rule_mut(&mut self, id: RuleId) -> Option<&mut Rule> {
-        self.rows.iter_mut().find(|(rid, _)| *rid == id).map(|(_, r)| r)
+        self.rows
+            .iter_mut()
+            .find(|(rid, _)| *rid == id)
+            .map(|(_, r)| r)
     }
 
     /// D-06/D-07: appends a new rule at the end — `{"style": "unchanged", "when": {}}`, enabled.
@@ -274,9 +277,17 @@ pub enum Defence {
 /// being displayed; only [`enable_defence_group`] writes all three explicitly.
 pub fn set_defence(when: &mut When, defence: Defence, ticked: bool) {
     let nc = Some(if ticked {
-        NumericCondition { eq: None, min: Some(1), max: None }
+        NumericCondition {
+            eq: None,
+            min: Some(1),
+            max: None,
+        }
     } else {
-        NumericCondition { eq: Some(0), min: None, max: None }
+        NumericCondition {
+            eq: Some(0),
+            min: None,
+            max: None,
+        }
     });
     match defence {
         Defence::Armour => when.base_armour = nc,
@@ -309,7 +320,13 @@ pub fn defence_group_enabled(when: &When) -> bool {
 /// unticked, starting from a rule with no defence condition at all, must still emit
 /// `BaseEvasion 0` once the group itself is on.
 pub fn enable_defence_group(when: &mut When) {
-    let off = || Some(NumericCondition { eq: Some(0), min: None, max: None });
+    let off = || {
+        Some(NumericCondition {
+            eq: Some(0),
+            min: None,
+            max: None,
+        })
+    };
     if when.base_armour.is_none() {
         when.base_armour = off();
     }
@@ -344,7 +361,11 @@ pub const SOCKETS_DEFAULT: i64 = 1;
 
 /// EDIT-07: sets the sockets minimum.
 pub fn set_sockets_min(when: &mut When, min: i64) {
-    when.sockets = Some(NumericCondition { eq: None, min: Some(min), max: None });
+    when.sockets = Some(NumericCondition {
+        eq: None,
+        min: Some(min),
+        max: None,
+    });
 }
 
 /// EDIT-07/EDIT-08: clears the sockets condition entirely.
@@ -365,7 +386,11 @@ pub const QUALITY_DEFAULT: i64 = 1;
 
 /// EDIT-07: sets the quality minimum.
 pub fn set_quality_min(when: &mut When, min: i64) {
-    when.quality = Some(NumericCondition { eq: None, min: Some(min), max: None });
+    when.quality = Some(NumericCondition {
+        eq: None,
+        min: Some(min),
+        max: None,
+    });
 }
 
 /// EDIT-07/EDIT-08: clears the quality condition entirely.
@@ -513,7 +538,11 @@ pub fn clear_base_type(when: &mut When) {
 /// and array position stays the precedence — nothing anywhere may look a rule up by name.
 pub fn set_name(rule: &mut Rule, name: &str) {
     let trimmed = name.trim();
-    rule.name = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+    rule.name = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    };
 }
 
 /// EDIT-11/EDIT-08/D-12: clears the rule's name — the name's own off switch.
@@ -542,7 +571,11 @@ mod tests {
     #[test]
     fn the_numeric_scales_stop_where_the_game_does() {
         assert_eq!(super::SOCKETS_MAX, 6, "PoE2 items cap at six sockets");
-        assert_eq!(super::QUALITY_MAX, 30, "20 is the normal cap; corruption exceeds it");
+        assert_eq!(
+            super::QUALITY_MAX,
+            30,
+            "20 is the normal cap; corruption exceeds it"
+        );
         assert_eq!(super::UNIDENTIFIED_TIER_MAX, 5);
     }
 
@@ -559,7 +592,12 @@ mod tests {
     use super::*;
 
     fn rule(style: &str) -> Rule {
-        Rule { enabled: None, name: None, style: style.to_string(), when: None }
+        Rule {
+            enabled: None,
+            name: None,
+            style: style.to_string(),
+            when: None,
+        }
     }
 
     /// A `RuleId` guaranteed not to resolve against `wr`: added then immediately deleted, so the
@@ -573,9 +611,12 @@ mod tests {
     }
 
     fn base_config() -> Config {
-        let json =
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
-        let mut config: Config = serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
+        let json = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v04-dynamic-base.json"
+        ));
+        let mut config: Config =
+            serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
         config.styles = crate::models::config::StyleSet::committed_for_tests();
         config
     }
@@ -676,7 +717,11 @@ mod tests {
         let c_id = wr.rows()[2].0;
         assert!(wr.delete(b_id));
         assert_eq!(wr.rows().len(), 2);
-        assert_eq!(wr.position(c_id), Some(1), "C keeps its own id after B is removed");
+        assert_eq!(
+            wr.position(c_id),
+            Some(1),
+            "C keeps its own id after B is removed"
+        );
         assert!(wr.rule(b_id).is_none());
     }
 
@@ -760,7 +805,17 @@ mod tests {
         assert_eq!(
             names,
             [
-                "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite",
+                "S",
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "Recycle",
+                "unchanged",
+                "hidden",
+                "kite",
                 "exceptional"
             ]
         );
@@ -795,8 +850,14 @@ mod tests {
         assert_eq!(groups.len(), 4);
         assert_eq!(groups[0], ("WEAPONS", config.weapon_classes.as_slice()));
         assert_eq!(groups[1], ("ARMOUR", config.armour_classes.as_slice()));
-        assert_eq!(groups[2], ("JEWELLERY", config.jewellery_classes.as_slice()));
-        assert_eq!(groups[3], ("FLASKS & CHARMS", config.flask_charm_classes.as_slice()));
+        assert_eq!(
+            groups[2],
+            ("JEWELLERY", config.jewellery_classes.as_slice())
+        );
+        assert_eq!(
+            groups[3],
+            ("FLASKS & CHARMS", config.flask_charm_classes.as_slice())
+        );
         assert_eq!(groups[0].1.len(), 12);
         assert_eq!(groups[1].1.len(), 6);
         assert_eq!(groups[3].1.len(), 3);
@@ -876,7 +937,10 @@ mod tests {
         let mut when = When::default();
         set_class(&mut when, "Boots", true);
         set_class(&mut when, "Boots", false);
-        assert_eq!(when.class, None, "must collapse to None, never Some(vec![])");
+        assert_eq!(
+            when.class, None,
+            "must collapse to None, never Some(vec![])"
+        );
         assert!(!is_class_selected(&when, "Boots"));
     }
 
@@ -908,7 +972,12 @@ mod tests {
     fn set_rarity_gte_emits_the_compact_gte_string() {
         let mut when = When::default();
         set_rarity(&mut when, RarityOp::Gte, Rarity::Magic);
-        let rule = Rule { enabled: None, name: None, style: "C".to_string(), when: Some(when) };
+        let rule = Rule {
+            enabled: None,
+            name: None,
+            style: "C".to_string(),
+            when: Some(when),
+        };
         let json = serde_json::to_string(&rule).unwrap();
         assert!(json.contains("\">=Magic\""), "got: {json}");
     }
@@ -917,10 +986,18 @@ mod tests {
     fn set_rarity_eq_emits_the_bare_form() {
         let mut when = When::default();
         set_rarity(&mut when, RarityOp::Eq, Rarity::Rare);
-        let rule = Rule { enabled: None, name: None, style: "C".to_string(), when: Some(when) };
+        let rule = Rule {
+            enabled: None,
+            name: None,
+            style: "C".to_string(),
+            when: Some(when),
+        };
         let json = serde_json::to_string(&rule).unwrap();
         assert!(json.contains("\"Rare\""), "got: {json}");
-        assert!(!json.contains("==Rare"), "Eq must serialize bare, not with ==, got: {json}");
+        assert!(
+            !json.contains("==Rare"),
+            "Eq must serialize bare, not with ==, got: {json}"
+        );
     }
 
     #[test]
@@ -960,7 +1037,8 @@ mod tests {
             when: Some(when),
         }]);
 
-        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(filter.contains("BaseArmour > 0"), "got:\n{filter}");
         assert!(filter.contains("BaseEnergyShield > 0"), "got:\n{filter}");
         assert!(filter.contains("BaseEvasion 0"), "got:\n{filter}");
@@ -981,7 +1059,8 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when),
         }]);
-        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(!filter.contains("BaseArmour"), "got:\n{filter}");
         assert!(!filter.contains("BaseEvasion"), "got:\n{filter}");
         assert!(!filter.contains("BaseEnergyShield"), "got:\n{filter}");
@@ -1000,11 +1079,18 @@ mod tests {
     fn defence_group_enabled_reads_true_for_a_partially_specified_rule_without_rewriting_it() {
         // Mirrors dynamic_base.json rule 6: baseEvasion: {"eq": 0} alone.
         let when = When {
-            base_evasion: Some(NumericCondition { eq: Some(0), min: None, max: None }),
+            base_evasion: Some(NumericCondition {
+                eq: Some(0),
+                min: None,
+                max: None,
+            }),
             ..Default::default()
         };
         assert!(defence_group_enabled(&when));
-        assert!(when.base_armour.is_none(), "must not be rewritten just by being displayed");
+        assert!(
+            when.base_armour.is_none(),
+            "must not be rewritten just by being displayed"
+        );
         assert!(when.base_energy_shield.is_none());
     }
 
@@ -1045,8 +1131,8 @@ mod tests {
             when: Some(when),
         }]);
 
-        let filter =
-            crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(
             filter.contains("UnidentifiedItemTier >= 4"),
             "got:\n{filter}"
@@ -1068,8 +1154,8 @@ mod tests {
             when: Some(when),
         }]);
 
-        let filter =
-            crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(
             !filter.contains("UnidentifiedItemTier"),
             "a disabled control must contribute nothing (EDIT-08); got:\n{filter}"
@@ -1107,7 +1193,11 @@ mod tests {
         set_sockets_min(&mut when, 3);
         assert_eq!(
             when.sockets,
-            Some(NumericCondition { eq: None, min: Some(3), max: None })
+            Some(NumericCondition {
+                eq: None,
+                min: Some(3),
+                max: None
+            })
         );
 
         let mut config = base_config();
@@ -1117,7 +1207,8 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when),
         }]);
-        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(filter.contains("Sockets >= 3"), "got:\n{filter}");
     }
 
@@ -1135,7 +1226,8 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when),
         }]);
-        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(!filter.contains("Sockets"), "got:\n{filter}");
     }
 
@@ -1145,7 +1237,11 @@ mod tests {
         set_quality_min(&mut when, 5);
         assert_eq!(
             when.quality,
-            Some(NumericCondition { eq: None, min: Some(5), max: None })
+            Some(NumericCondition {
+                eq: None,
+                min: Some(5),
+                max: None
+            })
         );
         clear_quality(&mut when);
         assert_eq!(when.quality, None);
@@ -1163,7 +1259,8 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when),
         }]);
-        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(filter.contains("Corrupted False"), "got:\n{filter}");
     }
 
@@ -1179,7 +1276,8 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when),
         }]);
-        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let filter = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(!filter.contains("Corrupted"), "got:\n{filter}");
     }
 
@@ -1417,7 +1515,8 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when.clone()),
         }]);
-        let before = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let before = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
         assert!(before.contains("Class \"Boots\""));
         assert!(before.contains("Sockets >= 2"));
         assert!(before.contains("Corrupted False"));
@@ -1430,10 +1529,20 @@ mod tests {
             style: "unchanged".to_string(),
             when: Some(when),
         }]);
-        let after = crate::emitter::generate(&config, &crate::pricer::PricedData::empty()).expect("generate");
+        let after = crate::emitter::generate(&config, &crate::pricer::PricedData::empty())
+            .expect("generate");
 
-        assert!(after.contains("Class \"Boots\""), "the class line must be untouched");
-        assert!(after.contains("Corrupted False"), "the corrupted line must be untouched");
-        assert!(!after.contains("Sockets"), "only the sockets line should be gone");
+        assert!(
+            after.contains("Class \"Boots\""),
+            "the class line must be untouched"
+        );
+        assert!(
+            after.contains("Corrupted False"),
+            "the corrupted line must be untouched"
+        );
+        assert!(
+            !after.contains("Sockets"),
+            "only the sockets line should be gone"
+        );
     }
 }

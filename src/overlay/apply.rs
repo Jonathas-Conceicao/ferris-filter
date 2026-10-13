@@ -69,12 +69,18 @@ pub enum ApplyOutcome {
 /// Refresh` is asserted verbatim below — PoE2 never re-reads a filter on its own
 /// (`PITFALLS.md` §1), so a tool that writes silently reads as broken.
 pub fn success_message(written: &Path) -> String {
-    format!("Wrote {}. Reload it in-game: {RELOAD_INSTRUCTION}", written.display())
+    format!(
+        "Wrote {}. Reload it in-game: {RELOAD_INSTRUCTION}",
+        written.display()
+    )
 }
 
 /// The message rendered after an Apply that found nothing to change.
 pub fn unchanged_message(path: &Path) -> String {
-    format!("{} is already up to date; nothing was written", path.display())
+    format!(
+        "{} is already up to date; nothing was written",
+        path.display()
+    )
 }
 
 /// True only for the guarded-write refusal "the filter changed on disk since it was loaded" --
@@ -137,7 +143,8 @@ pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
             "The filter does not exist yet. ADD ECONOMY SECTION creates it.".to_string()
         }
         FilterState::NoSection => {
-            "The filter has no economy section. ADD ECONOMY SECTION adds one at the end.".to_string()
+            "The filter has no economy section. ADD ECONOMY SECTION adds one at the end."
+                .to_string()
         }
         FilterState::Damaged => {
             "The economy section markers are damaged. Fix them by hand, then RELOAD.".to_string()
@@ -175,7 +182,11 @@ mod tests {
     fn a_failed_apply_never_advances_the_state_to_applied() {
         // Pairs with the guard: the outcome is only half of it. The indicator must keep saying
         // the filter is out of date, from every prior state.
-        for state in [ApplyState::NeverApplied, ApplyState::Unapplied, ApplyState::Applied] {
+        for state in [
+            ApplyState::NeverApplied,
+            ApplyState::Unapplied,
+            ApplyState::Applied,
+        ] {
             assert_eq!(
                 state.on_apply_failure(),
                 state,
@@ -201,25 +212,42 @@ mod tests {
 
     #[test]
     fn indicator_reads_identically_for_never_applied_and_unapplied() {
-        assert_eq!(indicator(ApplyState::NeverApplied), indicator(ApplyState::Unapplied));
+        assert_eq!(
+            indicator(ApplyState::NeverApplied),
+            indicator(ApplyState::Unapplied)
+        );
     }
 
     #[test]
     fn indicator_differs_once_applied() {
-        assert_ne!(indicator(ApplyState::Unapplied), indicator(ApplyState::Applied));
-        assert_ne!(indicator(ApplyState::NeverApplied), indicator(ApplyState::Applied));
+        assert_ne!(
+            indicator(ApplyState::Unapplied),
+            indicator(ApplyState::Applied)
+        );
+        assert_ne!(
+            indicator(ApplyState::NeverApplied),
+            indicator(ApplyState::Applied)
+        );
     }
 
     #[test]
     fn on_apply_success_moves_any_starting_state_to_applied() {
-        for start in [ApplyState::NeverApplied, ApplyState::Unapplied, ApplyState::Applied] {
+        for start in [
+            ApplyState::NeverApplied,
+            ApplyState::Unapplied,
+            ApplyState::Applied,
+        ] {
             assert_eq!(start.on_apply_success(), ApplyState::Applied);
         }
     }
 
     #[test]
     fn on_apply_failure_leaves_every_starting_state_unchanged() {
-        for start in [ApplyState::NeverApplied, ApplyState::Unapplied, ApplyState::Applied] {
+        for start in [
+            ApplyState::NeverApplied,
+            ApplyState::Unapplied,
+            ApplyState::Applied,
+        ] {
             assert_eq!(start.on_apply_failure(), start);
         }
     }
@@ -234,9 +262,8 @@ mod tests {
     #[test]
     fn changed_on_disk_is_recognised_only_for_that_refusal() {
         use crate::dynamic::DynamicError;
-        let yes = DynamicError::Write(crate::safe_write::WriteError::ChangedOnDisk {
-            path: "p".into(),
-        });
+        let yes =
+            DynamicError::Write(crate::safe_write::WriteError::ChangedOnDisk { path: "p".into() });
         assert!(is_changed_on_disk(&yes));
         assert!(!is_changed_on_disk(&DynamicError::EconomyUnavailable));
     }
@@ -284,7 +311,11 @@ mod tests {
 
     #[test]
     fn footer_clean_states_hide_reload() {
-        for st in [FilterState::Absent, FilterState::NoSection, FilterState::HasSection] {
+        for st in [
+            FilterState::Absent,
+            FilterState::NoSection,
+            FilterState::HasSection,
+        ] {
             assert!(!footer_actions(true, st, false).reload, "{st:?}");
         }
     }

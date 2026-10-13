@@ -202,7 +202,10 @@ pub fn load_inputs(
     let config: Config = loader::load_config(&path_str(&paths.config), &path_str(&paths.styles))?;
     config
         .styles
-        .check_rules(config.rules.as_deref().unwrap_or(&[]), &path_str(&paths.styles))
+        .check_rules(
+            config.rules.as_deref().unwrap_or(&[]),
+            &path_str(&paths.styles),
+        )
         .map_err(LoadError::from)?;
 
     let (priced, price_source) = load_priced(paths, policy)?;
@@ -264,7 +267,11 @@ fn load_priced(
                     path: path_str(&paths.prices_fallback),
                 })?;
             let tiers = loader::load_tiers(&path_str(&paths.tiers_fallback))?;
-            (Some(prices), tiers, PriceSource::Fallback(FallbackReason::Forced))
+            (
+                Some(prices),
+                tiers,
+                PriceSource::Fallback(FallbackReason::Forced),
+            )
         }
         PriceSourcePolicy::Auto => {
             match loader::load_prices_optional(&path_str(&paths.prices))? {
@@ -322,7 +329,11 @@ pub fn compile_as(
     inputs: &CompileInputs,
     identity: &FilterIdentity,
 ) -> Result<String, CompileError> {
-    Ok(emitter::generate_as(&inputs.config, &inputs.priced, identity)?)
+    Ok(emitter::generate_as(
+        &inputs.config,
+        &inputs.priced,
+        identity,
+    )?)
 }
 
 /// `Path` → `&str` for the loader's string-based API.
@@ -446,8 +457,11 @@ mod tests {
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
-        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load_economy");
+        let inputs = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load_economy");
         assert_eq!(inputs.price_source, PriceSource::Live);
         assert!(!inputs.priced.category_blocks.is_empty());
     }
@@ -459,8 +473,11 @@ mod tests {
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
         ]);
-        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load_economy");
+        let inputs = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load_economy");
         assert_eq!(
             inputs.price_source,
             PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty)
@@ -473,8 +490,11 @@ mod tests {
             ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
         ]);
-        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load_economy");
+        let inputs = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load_economy");
         assert_eq!(inputs.price_source, PriceSource::Absent);
         assert!(inputs.priced.category_blocks.is_empty());
         assert!(inputs.priced.unique_blocks.is_empty());
@@ -488,15 +508,21 @@ mod tests {
             PriceSourcePolicy::ForceFallback,
         )
         .unwrap_err();
-        assert!(matches!(err, CompileError::ForcedFallbackMissing { .. }), "got {err:?}");
+        assert!(
+            matches!(err, CompileError::ForcedFallbackMissing { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
     fn load_economy_malformed_styles_is_a_load_error_naming_the_path() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(dir.path().join("styles.json"), "{ not json").unwrap();
-        let err = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .unwrap_err();
+        let err = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .unwrap_err();
         assert!(matches!(err, CompileError::Load(_)), "got {err:?}");
         assert!(err.to_string().contains("styles.json"), "got {err}");
     }
@@ -508,8 +534,11 @@ mod tests {
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
-        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load_economy");
+        let inputs = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load_economy");
         let via_compile = compile_economy(&inputs).expect("compile_economy");
         let direct = emitter::generate_economy(&inputs.styles, &inputs.priced).unwrap();
         assert_eq!(via_compile, direct);
@@ -523,8 +552,11 @@ mod tests {
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
-        let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load");
+        let inputs = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load");
         assert_eq!(inputs.price_source, PriceSource::Live);
         assert!(!inputs.priced.category_blocks.is_empty());
     }
@@ -538,8 +570,11 @@ mod tests {
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
         ]);
-        let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load");
+        let inputs = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load");
         assert_eq!(
             inputs.price_source,
             PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty)
@@ -553,8 +588,11 @@ mod tests {
             ("styles.json", &repo_file("styles.json")),
             ("tiers.json", &repo_file("tiers.json")),
         ]);
-        let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load");
+        let inputs = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load");
         assert_eq!(inputs.price_source, PriceSource::Absent);
         assert!(inputs.priced.category_blocks.is_empty());
         assert!(inputs.priced.unique_blocks.is_empty());
@@ -625,16 +663,22 @@ mod tests {
     #[test]
     fn load_inputs_attaches_the_twelve_committed_styles() {
         let dir = inputs_with_config(&fs::read_to_string(repo_file("config.json")).unwrap());
-        let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load");
+        let inputs = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load");
         assert_eq!(inputs.config.styles.len(), 12);
     }
 
     #[test]
     fn load_inputs_rejects_an_enabled_rule_with_an_unknown_style() {
         let dir = inputs_with_config(&config_with_rule_style("nope", None));
-        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect_err("unknown style must fail at load");
+        let err = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect_err("unknown style must fail at load");
         let msg = err.to_string();
         assert!(msg.contains("nope"), "{msg}");
         assert!(msg.contains("rule 1") || msg.contains("(\""), "{msg}");
@@ -645,8 +689,11 @@ mod tests {
     #[test]
     fn load_inputs_ignores_a_disabled_rule_with_an_unknown_style() {
         let dir = inputs_with_config(&config_with_rule_style("nope", Some(false)));
-        load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("a disabled rule is inert");
+        load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("a disabled rule is inert");
     }
 
     #[test]
@@ -656,8 +703,11 @@ mod tests {
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
-        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect_err("must fail without styles.json");
+        let err = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect_err("must fail without styles.json");
         let msg = err.to_string();
         assert!(msg.starts_with("Cannot read `"), "{msg}");
         assert!(msg.contains("styles.json"), "{msg}");
@@ -674,11 +724,20 @@ mod tests {
         e["font"] = serde_json::json!(30);
         v["styles"] = serde_json::json!({ "S": styles["S"].clone(), "E": e });
         let dir = inputs_with_config(&serde_json::to_string(&v).unwrap());
-        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect_err("a differing inline styles section must be rejected");
+        let err = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect_err("a differing inline styles section must be rejected");
         let msg = err.to_string();
-        assert!(msg.contains("config.json") && msg.contains("styles.json"), "{msg}");
-        assert!(msg.contains(": E."), "names only the differing style: {msg}");
+        assert!(
+            msg.contains("config.json") && msg.contains("styles.json"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains(": E."),
+            "names only the differing style: {msg}"
+        );
         assert!(!msg.contains("--styles"), "{msg}");
     }
 
@@ -689,11 +748,17 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
         let styles: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(repo_file("styles.json")).unwrap()).unwrap();
-        for inline in [serde_json::json!({}), serde_json::json!({ "hidden": styles["hidden"].clone() })] {
+        for inline in [
+            serde_json::json!({}),
+            serde_json::json!({ "hidden": styles["hidden"].clone() }),
+        ] {
             v["styles"] = inline;
             let dir = inputs_with_config(&serde_json::to_string(&v).unwrap());
-            let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-                .expect("a matching inline section loses nothing and is dropped");
+            let inputs = load_inputs(
+                &InputPaths::relative_to(dir.path()),
+                PriceSourcePolicy::Auto,
+            )
+            .expect("a matching inline section loses nothing and is dropped");
             assert!(inputs.config.legacy_styles.is_none());
         }
     }
@@ -701,8 +766,11 @@ mod tests {
     #[test]
     fn missing_config_surfaces_as_a_load_read_error() {
         let dir = temp_inputs(&[("tiers.json", &repo_file("tiers.json"))]);
-        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect_err("must fail without config.json");
+        let err = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect_err("must fail without config.json");
         assert!(
             matches!(err, CompileError::Load(LoadError::Read { .. })),
             "expected Load(Read), got {err:?}"
@@ -718,10 +786,16 @@ mod tests {
             ("tiers.json", &repo_file("tiers.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
-        let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect("load");
+        let inputs = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load");
         let text = compile(&inputs).expect("compile");
-        assert!(text.starts_with('#'), "filter should open with a comment header");
+        assert!(
+            text.starts_with('#'),
+            "filter should open with a comment header"
+        );
         assert!(text.ends_with('\n'));
         assert!(text.contains("Show # "));
     }

@@ -64,7 +64,8 @@ impl SyncOutcome {
 /// change colour.
 pub fn success_message(league: &str) -> String {
     if league.is_empty() {
-        return "Economy prices refreshed. Press APPLY to compile them into the filter.".to_string();
+        return "Economy prices refreshed. Press APPLY to compile them into the filter."
+            .to_string();
     }
     format!("Economy prices refreshed from {league}. Press APPLY to compile them into the filter.")
 }
@@ -199,7 +200,10 @@ mod tests {
     fn a_started_sync_is_running_until_it_reports() {
         let mut sync = EconomySync::new();
         sync.start(|| Ok("Forbidden Rites".to_string()));
-        assert!(sync.is_running(), "the button must be inert while a sync is in flight");
+        assert!(
+            sync.is_running(),
+            "the button must be inert while a sync is in flight"
+        );
         settle(&mut sync);
         assert!(!sync.is_running());
     }
@@ -261,7 +265,10 @@ mod tests {
             Ok(String::new())
         });
         running.clear_message();
-        assert!(running.is_running(), "an in-flight sync must survive the stripe being hidden");
+        assert!(
+            running.is_running(),
+            "an in-flight sync must survive the stripe being hidden"
+        );
         let _ = tx.send(());
         settle(&mut running);
     }
@@ -288,7 +295,10 @@ mod tests {
         let mut sync = EconomySync::new();
         sync.start(|| panic!("boom"));
         settle(&mut sync);
-        assert!(!sync.is_running(), "a dead worker must not leave the sync stuck as Running");
+        assert!(
+            !sync.is_running(),
+            "a dead worker must not leave the sync stuck as Running"
+        );
         let SyncState::Finished(outcome) = sync.state() else {
             panic!("expected a finished sync");
         };

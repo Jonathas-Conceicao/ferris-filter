@@ -19,8 +19,10 @@ use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum GenerateError {
-    #[error("rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
-             defined styles: {available}")]
+    #[error(
+        "rule {rule_index} (\"{rule_name}\") references unknown style \"{style}\"; \
+             defined styles: {available}"
+    )]
     #[diagnostic(code(ferrisfilter::generate::unknown_style))]
     UnknownStyle {
         rule_index: usize,
@@ -100,7 +102,10 @@ pub fn generate_as(
     emit_rules(&mut out, config)?;
     emit_currency_sections(&mut out, &config.styles, &priced.category_blocks)?;
     emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks)?;
-    debug_assert!(out.ends_with('\n'), "generate() output must end with exactly one newline");
+    debug_assert!(
+        out.ends_with('\n'),
+        "generate() output must end with exactly one newline"
+    );
     Ok(out)
 }
 
@@ -115,7 +120,10 @@ pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String
     let mut out = String::with_capacity(32_000);
     emit_currency_sections(&mut out, styles, &priced.category_blocks)?;
     emit_unique_sections(&mut out, styles, &priced.unique_blocks)?;
-    debug_assert!(out.ends_with('\n'), "generate_economy() output must end with a newline");
+    debug_assert!(
+        out.ends_with('\n'),
+        "generate_economy() output must end with a newline"
+    );
     Ok(out)
 }
 
@@ -133,12 +141,14 @@ fn resolve_style<'a>(
     idx: usize,
     name: &str,
 ) -> Result<&'a Style, GenerateError> {
-    styles.get(style).ok_or_else(|| GenerateError::UnknownStyle {
-        rule_index: idx,
-        rule_name: name.to_string(),
-        style: style.to_string(),
-        available: styles.names().collect::<Vec<_>>().join(", "),
-    })
+    styles
+        .get(style)
+        .ok_or_else(|| GenerateError::UnknownStyle {
+            rule_index: idx,
+            rule_name: name.to_string(),
+            style: style.to_string(),
+            available: styles.names().collect::<Vec<_>>().join(", "),
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +229,12 @@ fn emit_style_actions(out: &mut String, style: &Style) {
     }
     // 4. Background color
     if let Some(rgb) = style.background {
-        writeln!(out, "  SetBackgroundColor {} {} {} 255", rgb[0], rgb[1], rgb[2]).unwrap();
+        writeln!(
+            out,
+            "  SetBackgroundColor {} {} {} 255",
+            rgb[0], rgb[1], rgb[2]
+        )
+        .unwrap();
     }
     // 5. Border color
     if let Some(rgb) = style.border {
@@ -253,9 +268,9 @@ fn emit_style_actions(out: &mut String, style: &Style) {
 /// produces S/A/B/C/D/E/F and `generate_as` validates the set (which requires those) first, so
 /// this is a defensive typed error rather than an expected path.
 fn style_for_tier<'a>(styles: &'a StyleSet, tier: &str) -> Result<&'a Style, GenerateError> {
-    styles
-        .get(tier)
-        .ok_or_else(|| GenerateError::UnknownTier { tier: tier.to_string() })
+    styles.get(tier).ok_or_else(|| GenerateError::UnknownTier {
+        tier: tier.to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -272,14 +287,38 @@ fn emit_header(out: &mut String, identity: &FilterIdentity) {
     .unwrap();
     writeln!(out, "#").unwrap();
     writeln!(out, "# Block tags link each rule back to the model:").unwrap();
-    writeln!(out, "#   [alwaysShow.K]          -> a level-independent highlight").unwrap();
+    writeln!(
+        out,
+        "#   [alwaysShow.K]          -> a level-independent highlight"
+    )
+    .unwrap();
     writeln!(out, "#   [areaLevelBands \"R\".K]  -> band R, show-key K").unwrap();
-    writeln!(out, "#   [styles.X]              -> the style entry applied").unwrap();
+    writeln!(
+        out,
+        "#   [styles.X]              -> the style entry applied"
+    )
+    .unwrap();
     writeln!(out, "#").unwrap();
-    writeln!(out, "# Philosophy: HIDE what we don't want, STYLE the few highlights, let everything").unwrap();
-    writeln!(out, "# else fall through to the game default (uniques, jewels, gems, jewellery, quest").unwrap();
-    writeln!(out, "# items, waystones, trials, unidentified — no rules touch them).").unwrap();
-    writeln!(out, "# Currency base lists are curated data kept outside the model (carried over here).").unwrap();
+    writeln!(
+        out,
+        "# Philosophy: HIDE what we don't want, STYLE the few highlights, let everything"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# else fall through to the game default (uniques, jewels, gems, jewellery, quest"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# items, waystones, trials, unidentified — no rules touch them)."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# Currency base lists are curated data kept outside the model (carried over here)."
+    )
+    .unwrap();
     writeln!(out).unwrap();
 }
 
@@ -313,13 +352,7 @@ fn emit_numeric(out: &mut String, attr: &str, nc: &crate::models::config::Numeri
 /// Each rule compiles to exactly one Show/Hide block. The style name is resolved
 /// via `resolve_style`; an unknown name is a hard error (RULE-03 / T-06-01).
 fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
-    for (idx, rule) in config
-        .rules
-        .as_deref()
-        .unwrap_or(&[])
-        .iter()
-        .enumerate()
-    {
+    for (idx, rule) in config.rules.as_deref().unwrap_or(&[]).iter().enumerate() {
         // A disabled rule emits nothing at all — no block, not even a commented one.
         // `continue` here rather than filtering the iterator, deliberately: `enumerate()` must
         // keep walking the whole array so labels stay tied to a rule's index in the source file.
@@ -446,12 +479,36 @@ fn emit_currency_sections(
     styles: &StyleSet,
     blocks: &[CategoryBlock],
 ) -> Result<(), GenerateError> {
-    writeln!(out, "#============================================================").unwrap();
-    writeln!(out, "# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]").unwrap();
-    writeln!(out, "# Each block's tier letter = the styles.<tier> applied. Base lists are").unwrap();
-    writeln!(out, "# curated data carried over from the prior filter (not stored in the model).").unwrap();
-    writeln!(out, "# Gems are intentionally omitted (fall through to game default).").unwrap();
-    writeln!(out, "#============================================================").unwrap();
+    writeln!(
+        out,
+        "#============================================================"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# Each block's tier letter = the styles.<tier> applied. Base lists are"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# curated data carried over from the prior filter (not stored in the model)."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "# Gems are intentionally omitted (fall through to game default)."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "#============================================================"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 
     for category in blocks {
@@ -602,8 +659,8 @@ fn derive_block_label(category: &str, tier: &str, class: &str) -> String {
 mod tests {
     use super::*;
     use crate::models::config::Config;
-    use crate::models::{prices::PricesFile, tiers::TierEntry};
     use crate::models::tiers::ValidatedTiers;
+    use crate::models::{prices::PricesFile, tiers::TierEntry};
 
     fn load_inputs() -> (Config, PricedData) {
         let config: Config = serde_json::from_str(include_str!(concat!(
@@ -614,8 +671,12 @@ mod tests {
         let mut config = config;
         config.styles = StyleSet::committed_for_tests();
 
-        let prices_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
-        let prices: PricesFile = serde_json::from_str(prices_src).expect("prices.json parse failed");
+        let prices_src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-prices.json"
+        ));
+        let prices: PricesFile =
+            serde_json::from_str(prices_src).expect("prices.json parse failed");
 
         let tiers_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
         let tier_entries: Vec<TierEntry> =
@@ -623,7 +684,8 @@ mod tests {
         let tiers = ValidatedTiers::try_from(tier_entries).expect("tiers.json validation failed");
 
         let rates = crate::pricer::derive_rates(&prices.items).expect("derive_rates failed");
-        let priced = crate::pricer::price_tiers(&prices, &tiers, &rates).expect("price_tiers failed");
+        let priced =
+            crate::pricer::price_tiers(&prices, &tiers, &rates).expect("price_tiers failed");
 
         (config, priced)
     }
@@ -679,7 +741,11 @@ mod tests {
         // Count updated in 10-02 Task 2: Phase 10 added 3 exceptional Show blocks (74 + 3 = 77).
         // Prior baseline: 08-02 added Verisium (2), Uncut Gems (4), Lineage Support Gems (2)
         // blocks (+8 total); tiers.json cutoff changes removed some mid-range tiers (net: 74).
-        assert_eq!(show_count, 77, "expected 77 Show blocks, got {}", show_count);
+        assert_eq!(
+            show_count, 77,
+            "expected 77 Show blocks, got {}",
+            show_count
+        );
         assert_eq!(hide_count, 3, "expected 3 Hide blocks, got {}", hide_count);
     }
 
@@ -707,7 +773,9 @@ mod tests {
         // Each block must carry Corrupted False
         // Extract each block's text by locating the header and scanning until the next blank line.
         let extract_block = |header: &str| -> String {
-            let start = output.find(header).expect(&format!("block not found: {header}"));
+            let start = output
+                .find(header)
+                .expect(&format!("block not found: {header}"));
             let slice = &output[start..];
             let end = slice.find("\n\n").unwrap_or(slice.len());
             slice[..end].to_string()
@@ -718,14 +786,32 @@ mod tests {
         let block_quality = extract_block("Show # exceptional quality");
 
         // Sockets thresholds
-        assert!(block_2h.contains("Sockets >= 3"), "2h/body block must have Sockets >= 3");
-        assert!(block_1h.contains("Sockets >= 2"), "1h block must have Sockets >= 2");
-        assert!(block_quality.contains("Quality >= 24"), "quality block must have Quality >= 24");
+        assert!(
+            block_2h.contains("Sockets >= 3"),
+            "2h/body block must have Sockets >= 3"
+        );
+        assert!(
+            block_1h.contains("Sockets >= 2"),
+            "1h block must have Sockets >= 2"
+        );
+        assert!(
+            block_quality.contains("Quality >= 24"),
+            "quality block must have Quality >= 24"
+        );
 
         // Corrupted False on all three
-        assert!(block_2h.contains("Corrupted False"), "2h/body block must have Corrupted False");
-        assert!(block_1h.contains("Corrupted False"), "1h block must have Corrupted False");
-        assert!(block_quality.contains("Corrupted False"), "quality block must have Corrupted False");
+        assert!(
+            block_2h.contains("Corrupted False"),
+            "2h/body block must have Corrupted False"
+        );
+        assert!(
+            block_1h.contains("Corrupted False"),
+            "1h block must have Corrupted False"
+        );
+        assert!(
+            block_quality.contains("Corrupted False"),
+            "quality block must have Corrupted False"
+        );
 
         // Pink exceptional style on all three
         for (label, block) in [
@@ -756,7 +842,9 @@ mod tests {
         }
 
         // Ordering: all exceptional blocks appear BEFORE the recycle block (T-10-04)
-        let recycle_pos = output.find("Show # recycle").expect("recycle block not found");
+        let recycle_pos = output
+            .find("Show # recycle")
+            .expect("recycle block not found");
         let exc_2h_pos = output.find("Show # exceptional sockets 2h/body").unwrap();
         let exc_1h_pos = output.find("Show # exceptional sockets 1h").unwrap();
         let exc_quality_pos = output.find("Show # exceptional quality").unwrap();
@@ -792,13 +880,20 @@ mod tests {
             });
         match generate(&config, &priced) {
             Err(e @ GenerateError::UnknownStyle { .. }) => {
-                let GenerateError::UnknownStyle { style, .. } = &e else { unreachable!() };
+                let GenerateError::UnknownStyle { style, .. } = &e else {
+                    unreachable!()
+                };
                 assert_eq!(style, "NotATier", "error must name the offending style");
                 let msg = e.to_string();
                 assert!(msg.contains("NotATier"), "{msg}");
-                assert!(msg.contains("exceptional"), "list comes from the set: {msg}");
+                assert!(
+                    msg.contains("exceptional"),
+                    "list comes from the set: {msg}"
+                );
             }
-            other => panic!("expected generate to reject the unknown style 'NotATier', got {other:?}"),
+            other => {
+                panic!("expected generate to reject the unknown style 'NotATier', got {other:?}")
+            }
         }
     }
 
@@ -842,7 +937,9 @@ mod tests {
 
     /// Block text from the header line `header` up to the next blank line.
     fn block_after<'a>(output: &'a str, header: &str) -> &'a str {
-        let start = output.find(header).unwrap_or_else(|| panic!("missing {header:?}"));
+        let start = output
+            .find(header)
+            .unwrap_or_else(|| panic!("missing {header:?}"));
         let rest = &output[start..];
         rest.split("\n\n").next().unwrap()
     }
@@ -856,7 +953,10 @@ mod tests {
         st.text = Some([1, 2, 3]);
         st.font = Some(30);
         config.styles.insert("craftable", st);
-        config.rules.get_or_insert_with(Vec::new).push(named_rule("brand new style", "craftable"));
+        config
+            .rules
+            .get_or_insert_with(Vec::new)
+            .push(named_rule("brand new style", "craftable"));
         let output = generate(&config, &priced).expect("generate failed");
         let block = block_after(&output, "Show # brand new style");
         assert!(block.contains("SetTextColor 1 2 3 255"), "{block}");
@@ -867,9 +967,15 @@ mod tests {
     #[test]
     fn a_hide_style_decides_the_block_header() {
         let (mut config, priced) = load_inputs();
-        config.rules.get_or_insert_with(Vec::new).push(named_rule("hidden by style", "hidden"));
+        config
+            .rules
+            .get_or_insert_with(Vec::new)
+            .push(named_rule("hidden by style", "hidden"));
         let output = generate(&config, &priced).expect("generate failed");
-        assert!(output.contains("\nHide # hidden by style\n"), "missing Hide header");
+        assert!(
+            output.contains("\nHide # hidden by style\n"),
+            "missing Hide header"
+        );
     }
 
     /// D-09: a Hide style keeps every visual line under its Hide header.
@@ -882,12 +988,26 @@ mod tests {
         st.border = Some([40, 50, 60]);
         st.background = Some([70, 80, 90]);
         st.font = Some(33);
-        st.sound = Some(Sound { id: Some(3), custom: None, vol: 100 });
-        st.minimap = Some(Minimap { size: 1, color: FilterColor::Red, shape: MinimapShape::Star });
-        st.beam = Some(Beam { color: FilterColor::Red, temp: false });
+        st.sound = Some(Sound {
+            id: Some(3),
+            custom: None,
+            vol: 100,
+        });
+        st.minimap = Some(Minimap {
+            size: 1,
+            color: FilterColor::Red,
+            shape: MinimapShape::Star,
+        });
+        st.beam = Some(Beam {
+            color: FilterColor::Red,
+            temp: false,
+        });
         st.disable_drop_sound = true;
         config.styles.insert("loudhide", st);
-        config.rules.get_or_insert_with(Vec::new).push(named_rule("loud hide", "loudhide"));
+        config
+            .rules
+            .get_or_insert_with(Vec::new)
+            .push(named_rule("loud hide", "loudhide"));
         let output = generate(&config, &priced).expect("generate failed");
         let block = block_after(&output, "Hide # loud hide");
         for line in [
@@ -990,7 +1110,10 @@ mod tests {
     const BANNER: &str = "#============================================================";
 
     fn economy_tail(full: &str) -> String {
-        let idx = full.lines().position(|l| l == BANNER).expect("banner present");
+        let idx = full
+            .lines()
+            .position(|l| l == BANNER)
+            .expect("banner present");
         let mut s = full.lines().skip(idx).collect::<Vec<_>>().join("\n");
         s.push('\n');
         s
@@ -1052,7 +1175,9 @@ mod tests {
         assert_eq!(lines.next(), Some("# dynamic.filter"));
         assert_eq!(
             lines.next(),
-            Some("# GENERATED FROM dynamic.json — edit the model, not this file (then regenerate).")
+            Some(
+                "# GENERATED FROM dynamic.json — edit the model, not this file (then regenerate)."
+            )
         );
     }
 
@@ -1092,7 +1217,11 @@ mod tests {
             name: None,
             style: style.to_string(),
             when: Some(When {
-                sockets: Some(crate::models::config::NumericCondition { min: Some(3), max: None, eq: None }),
+                sockets: Some(crate::models::config::NumericCondition {
+                    min: Some(3),
+                    max: None,
+                    eq: None,
+                }),
                 ..Default::default()
             }),
         });
@@ -1138,7 +1267,10 @@ mod tests {
         let last = push_rule(&mut config, None, "E");
 
         let output = generate(&config, &priced).expect("generate failed");
-        assert!(output.contains(&format!("# rule {}", first)), "first rule missing");
+        assert!(
+            output.contains(&format!("# rule {}", first)),
+            "first rule missing"
+        );
         assert!(
             !output.contains(&format!("# rule {}", middle)),
             "disabled middle rule must not emit"
@@ -1212,14 +1344,18 @@ mod tests {
 
     #[test]
     fn emit_rules_omits_corrupted_when_none() {
-        use crate::models::config::{Rule, When, NumericCondition};
+        use crate::models::config::{NumericCondition, Rule, When};
         let (mut config, priced) = load_inputs();
         config.rules.get_or_insert_with(Vec::new).push(Rule {
             enabled: None,
             name: Some("test-no-corrupted".to_string()),
             style: "E".to_string(),
             when: Some(When {
-                sockets: Some(NumericCondition { eq: None, min: Some(1), max: None }),
+                sockets: Some(NumericCondition {
+                    eq: None,
+                    min: Some(1),
+                    max: None,
+                }),
                 corrupted: None,
                 ..Default::default()
             }),
@@ -1244,21 +1380,51 @@ mod tests {
         // Walk blocks: a block starts at a "Show"/"Hide" line and ends at a blank line.
         for block in output.split("\n\n") {
             let header = block.lines().next().unwrap_or("");
-            let bg_count = block.lines().filter(|l| l.trim_start().starts_with("SetBackgroundColor")).count();
+            let bg_count = block
+                .lines()
+                .filter(|l| l.trim_start().starts_with("SetBackgroundColor"))
+                .count();
             if header.contains("# Uncut Gems") {
-                assert!(block.contains("SetBackgroundColor 80 70 55 255"), "uncut gem block must carry 80 70 55 bg:\n{block}");
-                assert!(!block.contains("SetBackgroundColor 40 42 54 255"), "uncut gem block must not keep the Dracula bg:\n{block}");
-                assert_eq!(bg_count, 1, "uncut gem block must have exactly one SetBackgroundColor:\n{block}");
+                assert!(
+                    block.contains("SetBackgroundColor 80 70 55 255"),
+                    "uncut gem block must carry 80 70 55 bg:\n{block}"
+                );
+                assert!(
+                    !block.contains("SetBackgroundColor 40 42 54 255"),
+                    "uncut gem block must not keep the Dracula bg:\n{block}"
+                );
+                assert_eq!(
+                    bg_count, 1,
+                    "uncut gem block must have exactly one SetBackgroundColor:\n{block}"
+                );
             }
             if header.contains("# Lineage Support Gems") {
-                assert!(block.contains("SetBackgroundColor 10 150 150 255"), "lineage gem block must carry 10 150 150 bg:\n{block}");
-                assert!(!block.contains("SetBackgroundColor 40 42 54 255"), "lineage gem block must not keep the Dracula bg:\n{block}");
-                assert_eq!(bg_count, 1, "lineage gem block must have exactly one SetBackgroundColor:\n{block}");
+                assert!(
+                    block.contains("SetBackgroundColor 10 150 150 255"),
+                    "lineage gem block must carry 10 150 150 bg:\n{block}"
+                );
+                assert!(
+                    !block.contains("SetBackgroundColor 40 42 54 255"),
+                    "lineage gem block must not keep the Dracula bg:\n{block}"
+                );
+                assert_eq!(
+                    bg_count, 1,
+                    "lineage gem block must have exactly one SetBackgroundColor:\n{block}"
+                );
             }
             if header.contains("# Verisium") {
-                assert!(block.contains("SetBackgroundColor 40 42 54 255"), "Verisium must keep the Dracula bg:\n{block}");
-                assert!(!block.contains("SetBackgroundColor 80 70 55"), "Verisium must not get the uncut override:\n{block}");
-                assert!(!block.contains("SetBackgroundColor 10 150 150"), "Verisium must not get the lineage override:\n{block}");
+                assert!(
+                    block.contains("SetBackgroundColor 40 42 54 255"),
+                    "Verisium must keep the Dracula bg:\n{block}"
+                );
+                assert!(
+                    !block.contains("SetBackgroundColor 80 70 55"),
+                    "Verisium must not get the uncut override:\n{block}"
+                );
+                assert!(
+                    !block.contains("SetBackgroundColor 10 150 150"),
+                    "Verisium must not get the lineage override:\n{block}"
+                );
             }
         }
     }

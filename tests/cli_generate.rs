@@ -65,7 +65,12 @@ fn generate_early_game() -> String {
             .as_nanos()
     ));
     fs::create_dir_all(&dir).expect("create temp early-game gen dir");
-    for f in ["config.json", "styles.json", "prices-fallback.json", "tiers-fallback.json"] {
+    for f in [
+        "config.json",
+        "styles.json",
+        "prices-fallback.json",
+        "tiers-fallback.json",
+    ] {
         fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
     }
 
@@ -73,7 +78,12 @@ fn generate_early_game() -> String {
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
-        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .success();
 
@@ -101,7 +111,11 @@ fn split_blocks(filter: &str) -> Vec<Vec<String>> {
                 }
             }
             // Start new block with just the keyword
-            let keyword = if line.starts_with("Show") { "Show" } else { "Hide" };
+            let keyword = if line.starts_with("Show") {
+                "Show"
+            } else {
+                "Hide"
+            };
             current = Some(vec![keyword.to_string()]);
         } else if let Some(ref mut blk) = current {
             let trimmed = line.trim();
@@ -225,7 +239,10 @@ fn generate_config_flag_reads_alternate_path() {
         .assert()
         .success();
 
-    assert!(out_path.exists(), "generate --config did not produce output");
+    assert!(
+        out_path.exists(),
+        "generate --config did not produce output"
+    );
 }
 
 /// Regression: `--standard`/`--hc` are reachable from the bare `sync` command, so
@@ -472,8 +489,8 @@ fn cap_is_rule_driven() {
 
     // Read config.json and mutate the areaLevel.max=75 sentinel to 60.
     // CAP-01 (build weapons) and CAP-02 (build armour) both use max:75; replacing all is fine.
-    let config_text = std::fs::read_to_string(manifest.join("config.json"))
-        .expect("read config.json");
+    let config_text =
+        std::fs::read_to_string(manifest.join("config.json")).expect("read config.json");
     let mutated_config = config_text.replace("\"max\": 75", "\"max\": 60");
 
     // Write the mutated config + other required fallback files into the temp dir.
@@ -486,7 +503,12 @@ fn cap_is_rule_driven() {
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
-        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .success();
 
@@ -524,7 +546,13 @@ fn pricer_section_present_and_unchanged() {
     // With tiers.json (S=30c, A=20c, B=12c) and seed-prices.json:
     // Currency A and B have no items (nothing lands between 12c and 30c for currency);
     // S, C, D, E, F do have items.
-    for tier in &["Currency S", "Currency C", "Currency D", "Currency E", "Currency F"] {
+    for tier in &[
+        "Currency S",
+        "Currency C",
+        "Currency D",
+        "Currency E",
+        "Currency F",
+    ] {
         assert!(
             output.contains(&format!("Show # {}", tier)),
             "Currency tier block '{}' not found in output",
@@ -615,12 +643,20 @@ fn new_style_in_styles_json_is_emitted_with_no_code_change() {
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
-        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .success();
 
     let out = normalize(&fs::read_to_string(&out_path).unwrap());
-    assert!(out.contains("SetTextColor 1 2 3 255"), "custom style colour missing");
+    assert!(
+        out.contains("SetTextColor 1 2 3 255"),
+        "custom style colour missing"
+    );
     assert!(out.contains("SetFontSize 31"), "custom style font missing");
 }
 
@@ -646,13 +682,22 @@ fn generate_styles_flag_reads_alternate_path() {
         .assert()
         .success();
     let with_flag = normalize(&fs::read_to_string(&out_path).unwrap());
-    assert_eq!(with_flag, generate_early_game(), "alt styles file must match the default run");
+    assert_eq!(
+        with_flag,
+        generate_early_game(),
+        "alt styles file must match the default run"
+    );
 
     // Same directory without the flag: styles.json is absent, so it must fail naming it.
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
-        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .failure()
         .stderr(contains("styles.json"));

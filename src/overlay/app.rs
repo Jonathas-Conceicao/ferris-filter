@@ -380,193 +380,201 @@ impl eframe::App for OverlayApp {
         let state = self.filter_state();
         let actions = apply::footer_actions(self.root.is_ok(), state, self.needs_reload);
 
-        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| {
-            // The header's close control hides the stripe; it is never the way the process exits
-            // (that is tray -> Quit alone). widgets::header_plate does the painting; this file
-            // only decides what a click on it does.
-            let header = widgets::header_plate(ui, "FERRISFILTER");
-            if header.close_clicked && self.visibility != Visibility::Hidden {
-                if let Some(window) = &self.window {
-                    win::conceal(window);
+        egui::CentralPanel::default()
+            .frame(panel_frame)
+            .show(ui, |ui| {
+                // The header's close control hides the stripe; it is never the way the process exits
+                // (that is tray -> Quit alone). widgets::header_plate does the painting; this file
+                // only decides what a click on it does.
+                let header = widgets::header_plate(ui, "FERRISFILTER");
+                if header.close_clicked && self.visibility != Visibility::Hidden {
+                    if let Some(window) = &self.window {
+                        win::conceal(window);
+                    }
+                    self.visibility = Visibility::Hidden;
                 }
-                self.visibility = Visibility::Hidden;
-            }
 
-            // The footer is a bottom panel, claimed BEFORE the central content is laid out, so it
-            // reserves its height first and is always on screen however much the content above
-            // it holds. Called after the content, the panel would find the space already taken
-            // and APPLY could be pushed off the bottom edge, unreachable (author, 2026-09-10).
-            egui::Panel::bottom(egui::Id::new("ff-footer"))
-                // An inner margin so the APPLY row is not flush against the window's bottom
-                // edge, where it read as clipped (screenshot poe2_print008).
-                .frame(
-                    egui::Frame::NONE
-                        .fill(theme::PANEL_GROUND)
-                        .inner_margin(egui::Margin {
-                            left: 0,
-                            right: 0,
-                            top: 0,
-                            bottom: 10,
-                        }),
-                )
-                .show(ui, |ui| {
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
+                // The footer is a bottom panel, claimed BEFORE the central content is laid out, so it
+                // reserves its height first and is always on screen however much the content above
+                // it holds. Called after the content, the panel would find the space already taken
+                // and APPLY could be pushed off the bottom edge, unreachable (author, 2026-09-10).
+                egui::Panel::bottom(egui::Id::new("ff-footer"))
+                    // An inner margin so the APPLY row is not flush against the window's bottom
+                    // edge, where it read as clipped (screenshot poe2_print008).
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(theme::PANEL_GROUND)
+                            .inner_margin(egui::Margin {
+                                left: 0,
+                                right: 0,
+                                top: 0,
+                                bottom: 10,
+                            }),
+                    )
+                    .show(ui, |ui| {
                         ui.add_space(10.0);
-                        ui.label(theme::row_label(apply::indicator(self.apply_state)));
-                    });
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(10.0);
-                        if actions.reload && ui.button("RELOAD").clicked() {
-                            self.reload();
-                        }
-                        // Economy sync sits beside Apply because that is the order it is used in:
-                        // refresh prices, then apply them. It is deliberately NOT part of Apply --
-                        // a sync is dozens of network round trips and can fail, and folding that
-                        // into the action that writes the game's filter would make a routine Apply
-                        // slow and failure-prone (author, 2026-09-10).
-                        //
-                        // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the
-                        // tiers file already in place, unlike the CLI.
-                        let syncing = self.economy.is_running();
-                        let sync_label = if syncing { "SYNCING\u{2026}" } else { "SYNC ECONOMY" };
-                        if ui
-                            .add_enabled(actions.sync && !syncing, egui::Button::new(sync_label))
-                            .clicked()
-                        {
-                            // The app root, not the process working directory: the overlay can be
-                            // launched from anywhere, and prices.json must land where Apply will
-                            // read it from.
-                            if let Ok(root) = &self.root {
-                                let base_dir = root.clone();
-                                self.economy.start(move || {
-                                    crate::sync::sync_economy_blocking(&base_dir)
-                                        .map_err(|e| e.to_string())
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            ui.label(theme::row_label(apply::indicator(self.apply_state)));
+                        });
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            if actions.reload && ui.button("RELOAD").clicked() {
+                                self.reload();
+                            }
+                            // Economy sync sits beside Apply because that is the order it is used in:
+                            // refresh prices, then apply them. It is deliberately NOT part of Apply --
+                            // a sync is dozens of network round trips and can fail, and folding that
+                            // into the action that writes the game's filter would make a routine Apply
+                            // slow and failure-prone (author, 2026-09-10).
+                            //
+                            // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the
+                            // tiers file already in place, unlike the CLI.
+                            let syncing = self.economy.is_running();
+                            let sync_label = if syncing {
+                                "SYNCING\u{2026}"
+                            } else {
+                                "SYNC ECONOMY"
+                            };
+                            if ui
+                                .add_enabled(
+                                    actions.sync && !syncing,
+                                    egui::Button::new(sync_label),
+                                )
+                                .clicked()
+                            {
+                                // The app root, not the process working directory: the overlay can be
+                                // launched from anywhere, and prices.json must land where Apply will
+                                // read it from.
+                                if let Ok(root) = &self.root {
+                                    let base_dir = root.clone();
+                                    self.economy.start(move || {
+                                        crate::sync::sync_economy_blocking(&base_dir)
+                                            .map_err(|e| e.to_string())
+                                    });
+                                }
+                            }
+                            if actions.add_economy && ui.button("ADD ECONOMY SECTION").clicked() {
+                                self.run_apply(true);
+                            }
+                            if ui
+                                .add_enabled(actions.apply, egui::Button::new("APPLY"))
+                                .clicked()
+                            {
+                                self.run_apply(false);
+                            }
+                        });
+                        // The sync's own status line. Rendered before the Apply message so a fresh
+                        // sync result is not hidden underneath a stale Apply one.
+                        match self.economy.state() {
+                            economy::SyncState::Idle => {}
+                            economy::SyncState::Running => {
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.add_space(10.0);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new("Fetching economy prices\u{2026}")
+                                                .color(theme::TAB_ACTIVE),
+                                        )
+                                        .wrap(),
+                                    );
+                                });
+                            }
+                            economy::SyncState::Finished(outcome) => {
+                                ui.add_space(4.0);
+                                let colour = if outcome.is_failure() {
+                                    theme::WARM_ACCENT
+                                } else {
+                                    theme::TAB_ACTIVE
+                                };
+                                let text = outcome.message().to_string();
+                                ui.horizontal(|ui| {
+                                    ui.add_space(10.0);
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(text).color(colour))
+                                            .wrap(),
+                                    );
                                 });
                             }
                         }
-                        if actions.add_economy && ui.button("ADD ECONOMY SECTION").clicked() {
-                            self.run_apply(true);
+
+                        if let Some(message) = &self.apply_message {
+                            let text_color =
+                                if self.apply_state == ApplyState::Applied && !self.needs_reload {
+                                    theme::LABEL_TAN
+                                } else {
+                                    theme::WARM_ACCENT
+                                };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add_space(10.0);
+                                ui.colored_label(text_color, message);
+                            });
                         }
-                        if ui
-                            .add_enabled(actions.apply, egui::Button::new("APPLY"))
-                            .clicked()
-                        {
-                            self.run_apply(false);
+                        if self.needs_reload {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add_space(10.0);
+                                ui.colored_label(
+                                    theme::WARM_ACCENT,
+                                    "The filter changed on disk. RELOAD re-reads it and discards \
+                                 in-memory state.",
+                                );
+                            });
                         }
                     });
-                    // The sync's own status line. Rendered before the Apply message so a fresh
-                    // sync result is not hidden underneath a stale Apply one.
-                    match self.economy.state() {
-                        economy::SyncState::Idle => {}
-                        economy::SyncState::Running => {
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(10.0);
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new("Fetching economy prices\u{2026}")
-                                            .color(theme::TAB_ACTIVE),
-                                    )
-                                    .wrap(),
-                                );
-                            });
-                        }
-                        economy::SyncState::Finished(outcome) => {
-                            ui.add_space(4.0);
-                            let colour = if outcome.is_failure() {
-                                theme::WARM_ACCENT
-                            } else {
-                                theme::TAB_ACTIVE
-                            };
-                            let text = outcome.message().to_string();
-                            ui.horizontal(|ui| {
-                                ui.add_space(10.0);
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(text).color(colour))
-                                        .wrap(),
-                                );
-                            });
-                        }
-                    }
 
-                    if let Some(message) = &self.apply_message {
-                        let text_color = if self.apply_state == ApplyState::Applied
-                            && !self.needs_reload
-                        {
-                            theme::LABEL_TAN
-                        } else {
-                            theme::WARM_ACCENT
-                        };
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(10.0);
-                            ui.colored_label(text_color, message);
-                        });
-                    }
-                    if self.needs_reload {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(10.0);
-                            ui.colored_label(
-                                theme::WARM_ACCENT,
-                                "The filter changed on disk. RELOAD re-reads it and discards \
-                                 in-memory state.",
-                            );
-                        });
-                    }
-                });
-
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(theme::section_header("FILTER"));
-            });
-            ui.add_space(6.0);
-
-            // Status block: root, filter path and state, v0.4 notice, rule-editing notice.
-            let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
-            let mut lines: Vec<(egui::Color32, String)> = Vec::new();
-            if let Err(message) = &self.root {
-                lines.push((theme::WARM_ACCENT, message.clone()));
-            }
-            match &self.filter {
-                Ok(loaded) => {
-                    lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
-                    let text = match (state, loaded.has_section()) {
-                        (FilterState::Damaged, Err(err)) => err.to_string(),
-                        _ => apply::filter_state_message(state, false),
-                    };
-                    let colour = if state == FilterState::Damaged {
-                        theme::WARM_ACCENT
-                    } else {
-                        theme::LABEL_TAN
-                    };
-                    lines.push((colour, text));
-                }
-                Err(message) => lines.push((theme::WARM_ACCENT, message.clone())),
-            }
-            if migrated {
-                lines.push((
-                    theme::LABEL_TAN,
-                    "This is a v0.4 dynamic.filter. It will be converted on the next APPLY (a \
-                     .ffbak backup of the original is kept)."
-                        .to_string(),
-                ));
-            }
-            lines.push((
-                theme::TAB_ACTIVE,
-                "Rule editing returns in the next update. APPLY refreshes only the economy \
-                 section."
-                    .to_string(),
-            ));
-            for (colour, text) in lines {
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
-                    ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).wrap());
+                    ui.label(theme::section_header("FILTER"));
                 });
-                ui.add_space(4.0);
-            }
-        });
+                ui.add_space(6.0);
+
+                // Status block: root, filter path and state, v0.4 notice, rule-editing notice.
+                let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
+                let mut lines: Vec<(egui::Color32, String)> = Vec::new();
+                if let Err(message) = &self.root {
+                    lines.push((theme::WARM_ACCENT, message.clone()));
+                }
+                match &self.filter {
+                    Ok(loaded) => {
+                        lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
+                        let text = match (state, loaded.has_section()) {
+                            (FilterState::Damaged, Err(err)) => err.to_string(),
+                            _ => apply::filter_state_message(state, false),
+                        };
+                        let colour = if state == FilterState::Damaged {
+                            theme::WARM_ACCENT
+                        } else {
+                            theme::LABEL_TAN
+                        };
+                        lines.push((colour, text));
+                    }
+                    Err(message) => lines.push((theme::WARM_ACCENT, message.clone())),
+                }
+                if migrated {
+                    lines.push((
+                        theme::LABEL_TAN,
+                        "This is a v0.4 dynamic.filter. It will be converted on the next APPLY (a \
+                     .ffbak backup of the original is kept)."
+                            .to_string(),
+                    ));
+                }
+                lines.push((
+                    theme::TAB_ACTIVE,
+                    "Rule editing returns in the next update. APPLY refreshes only the economy \
+                 section."
+                        .to_string(),
+                ));
+                for (colour, text) in lines {
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).wrap());
+                    });
+                    ui.add_space(4.0);
+                }
+            });
 
         if quit_requested {
             // Quit is the only path that ends the process.

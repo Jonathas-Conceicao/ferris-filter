@@ -44,7 +44,9 @@ pub enum RootError {
 /// fallback. And `apply`/the overlay never read `config.json` -- they need `styles.json`, so a
 /// folder holding only `config.json` could not serve them anyway.
 fn is_root(dir: &Path) -> bool {
-    crate::compile::InputPaths::relative_to(dir).styles.is_file()
+    crate::compile::InputPaths::relative_to(dir)
+        .styles
+        .is_file()
 }
 
 /// Pure resolver: see the module docs for the order.

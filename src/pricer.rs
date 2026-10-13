@@ -78,8 +78,7 @@ const UNCUT_GEMS_CATEGORY: &str = "Uncut Gems";
 /// by the emitter. The ordering (Skill, Spirit, Support) is fixed and deterministic.
 /// Phase 8 builds this string at the pricer boundary; the emitter emits it verbatim
 /// when `TierGroup.is_multi_class` is true (set by the pricer for this group).
-const UNCUT_GEM_MULTICLASS: &str =
-    r#""Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems""#;
+const UNCUT_GEM_MULTICLASS: &str = r#""Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems""#;
 
 /// A price-tiered unique block (one or more base types at the same tier).
 #[derive(Debug, Clone)]
@@ -312,10 +311,12 @@ pub fn price_tiers(
                 .iter()
                 .position(|&t| t == tier.as_str())
                 .unwrap_or(TIER_ORDER.len());
-            let entry = unique_best.entry(item.base_type.clone()).or_insert_with(|| {
-                unique_base_order.push(item.base_type.clone());
-                (new_idx, tier.clone())
-            });
+            let entry = unique_best
+                .entry(item.base_type.clone())
+                .or_insert_with(|| {
+                    unique_base_order.push(item.base_type.clone());
+                    (new_idx, tier.clone())
+                });
             if new_idx < entry.0 {
                 *entry = (new_idx, tier.clone());
             }
@@ -363,16 +364,20 @@ pub fn price_tiers(
         for &tier in TIER_ORDER {
             if is_uncut_gems {
                 // Collect all items in this tier across all three subtype classes.
-                let all_items: Vec<TieredItem> = ["Uncut Skill Gems", "Uncut Spirit Gems", "Uncut Support Gems"]
-                    .iter()
-                    .flat_map(|cls| {
-                        let key = (cat.clone(), tier.to_string(), cls.to_string());
-                        category_tier_class_items
-                            .get(&key)
-                            .cloned()
-                            .unwrap_or_default()
-                    })
-                    .collect();
+                let all_items: Vec<TieredItem> = [
+                    "Uncut Skill Gems",
+                    "Uncut Spirit Gems",
+                    "Uncut Support Gems",
+                ]
+                .iter()
+                .flat_map(|cls| {
+                    let key = (cat.clone(), tier.to_string(), cls.to_string());
+                    category_tier_class_items
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect();
 
                 if !all_items.is_empty() {
                     tier_groups.push(TierGroup {
@@ -766,7 +771,10 @@ mod tests {
 
         // Exactly one unique block at tier S (Headhunter wins collision) with BaseType == "Heavy Belt"
         assert_eq!(priced.unique_blocks.len(), 1);
-        assert_eq!(priced.unique_blocks[0].tier, "S", "Headhunter (50c) must land S (>= 30c floor)");
+        assert_eq!(
+            priced.unique_blocks[0].tier, "S",
+            "Headhunter (50c) must land S (>= 30c floor)"
+        );
         assert_eq!(
             priced.unique_blocks[0].base_types,
             vec!["Heavy Belt".to_string()]
@@ -777,7 +785,10 @@ mod tests {
 
     #[test]
     fn seeded_prices_yields_zero_unique_blocks() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-prices.json"
+        ));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         let tiers = load_real_tiers();
         let rates = derive_rates(&prices.items).unwrap();
@@ -793,7 +804,10 @@ mod tests {
 
     #[test]
     fn seeded_currency_category_anchor_retiers() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/seed-prices.json"));
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-prices.json"
+        ));
         let prices: PricesFile = serde_json::from_str(src).expect("parse prices.json");
         let tiers = load_real_tiers();
         let rates = derive_rates(&prices.items).unwrap();

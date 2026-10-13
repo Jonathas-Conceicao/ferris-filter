@@ -71,8 +71,14 @@ fn read(path: &Path) -> String {
 /// Lines strictly between the marker lines.
 fn section_body(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
-    let b = lines.iter().position(|l| l.starts_with(BEGIN)).expect("begin marker");
-    let e = lines.iter().position(|l| l.starts_with(END)).expect("end marker");
+    let b = lines
+        .iter()
+        .position(|l| l.starts_with(BEGIN))
+        .expect("begin marker");
+    let e = lines
+        .iter()
+        .position(|l| l.starts_with(END))
+        .expect("end marker");
     lines[b + 1..e].join("\n")
 }
 
@@ -152,7 +158,10 @@ fn refresh_changes_nothing_outside_the_markers() {
     assert!(after.starts_with(&prefix), "prefix changed");
     assert!(after.ends_with(&suffix), "suffix changed");
     assert!(!after.contains("GARBAGE"));
-    assert!(!after.replace("\r\n", "").contains('\n'), "bare LF in a CRLF file");
+    assert!(
+        !after.replace("\r\n", "").contains('\n'),
+        "bare LF in a CRLF file"
+    );
 }
 
 #[test]
@@ -264,7 +273,17 @@ fn apply_styles_flag_reads_alternate_path() {
     let dir = workspace("stylesflag");
     fs::rename(dir.join("styles.json"), dir.join("alt-styles.json")).expect("rename styles");
     let f = gfs(&dir);
-    apply(&dir, &["--filter", &f, "--add-economy", "--styles", "alt-styles.json"]).success();
+    apply(
+        &dir,
+        &[
+            "--filter",
+            &f,
+            "--add-economy",
+            "--styles",
+            "alt-styles.json",
+        ],
+    )
+    .success();
     assert!(gf(&dir).exists());
 }
 
@@ -274,8 +293,11 @@ fn apply_styles_flag_reads_alternate_path() {
 fn apply_relative_overrides_resolve_against_the_app_root_not_the_cwd() {
     let dir = workspace("overrideroot");
     fs::rename(dir.join("styles.json"), dir.join("alt-styles.json")).expect("rename styles");
-    fs::copy(manifest().join("tiers-fallback.json"), dir.join("alt-tiers.json"))
-        .expect("copy tiers");
+    fs::copy(
+        manifest().join("tiers-fallback.json"),
+        dir.join("alt-tiers.json"),
+    )
+    .expect("copy tiers");
     let f = gfs(&dir);
     Command::cargo_bin("ferrisfilter")
         .expect("binary")

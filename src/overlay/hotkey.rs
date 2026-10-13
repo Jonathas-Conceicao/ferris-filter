@@ -6,8 +6,8 @@
 //! (RESEARCH "Architecture Patterns" -> Pattern 3). Call it alongside the
 //! tray build, before `eframe::run_native` starts the loop.
 
-use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::GlobalHotKeyManager;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
 /// `Ctrl+Shift+Z`, hardcoded this phase (D-09).
 ///

@@ -9,10 +9,10 @@ use std::borrow::Cow;
 use super::block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
 use super::diag::{FilterDiagnostic, Severity};
 use super::disabled;
-use super::keywords::{lookup, Keyword, Kind};
+use super::keywords::{Keyword, Kind, lookup};
 use super::lines::Line;
 use super::meta;
-use super::tokenize::{tokenize, validate_shape, TokenError, TokenizedLine};
+use super::tokenize::{TokenError, TokenizedLine, tokenize, validate_shape};
 
 pub(crate) enum Class {
     Blank,
@@ -379,7 +379,7 @@ pub(crate) fn assert_partition(items: &[Item], len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{parse, Document};
+    use crate::filter::{Document, parse};
 
     fn p(s: &str) -> Document {
         parse(s.as_bytes()).unwrap()
@@ -529,9 +529,11 @@ mod tests {
         assert_eq!(d.diagnostics().len(), 1);
         assert_eq!(d.diagnostics()[0].line, 2);
         assert_eq!(d.diagnostics()[0].severity, Severity::Warning);
-        assert!(d.diagnostics()[0]
-            .message
-            .contains("unknown keyword `FutureKeyword`"));
+        assert!(
+            d.diagnostics()[0]
+                .message
+                .contains("unknown keyword `FutureKeyword`")
+        );
         assert_eq!(blocks(&d)[0].body().len(), 2);
         assert!(blocks(&d)[0].is_enabled());
         assert_eq!(count(&d, Severity::Error), 0);

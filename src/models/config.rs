@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de;
 use indexmap::IndexMap;
 use miette::Diagnostic;
+use serde::de;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,10 @@ pub enum StyleError {
         "style \"{style}\" has a sound with {problem}; set exactly one of sound.id (built-in alert) or sound.custom (sound file)"
     )]
     #[diagnostic(code(ferrisfilter::styles::bad_sound))]
-    AmbiguousSound { style: String, problem: &'static str },
+    AmbiguousSound {
+        style: String,
+        problem: &'static str,
+    },
 
     #[error(
         "rule {rule_index} (\"{rule_label}\") uses style \"{style}\", which {path} does not define; defined styles: {available}"
@@ -200,7 +203,9 @@ impl<'de> Deserialize<'de> for StyleSet {
                 let mut out = IndexMap::new();
                 while let Some((name, style)) = map.next_entry::<String, Style>()? {
                     if out.contains_key(&name) {
-                        return Err(de::Error::custom(format!("duplicate style name \"{name}\"")));
+                        return Err(de::Error::custom(format!(
+                            "duplicate style name \"{name}\""
+                        )));
                     }
                     out.insert(name, style);
                 }
@@ -304,7 +309,10 @@ impl StyleSet {
                 _ => None,
             };
             if let Some(problem) = problem {
-                return Err(StyleError::AmbiguousSound { style: name.to_string(), problem });
+                return Err(StyleError::AmbiguousSound {
+                    style: name.to_string(),
+                    problem,
+                });
             }
             if let Some(id) = sound.id {
                 if !(1..=16).contains(&id) {
@@ -444,14 +452,16 @@ impl<'de> Deserialize<'de> for RarityComparator {
 
         let rarity = match rarity_str {
             "Normal" => Rarity::Normal,
-            "Magic"  => Rarity::Magic,
-            "Rare"   => Rarity::Rare,
+            "Magic" => Rarity::Magic,
+            "Rare" => Rarity::Rare,
             "Unique" => Rarity::Unique,
-            other => return Err(de::Error::custom(format!(
-                "unknown rarity {:?} in rarity comparator; expected Normal, Magic, Rare, or Unique \
+            other => {
+                return Err(de::Error::custom(format!(
+                    "unknown rarity {:?} in rarity comparator; expected Normal, Magic, Rare, or Unique \
                  (optionally prefixed with ==, >=, or <=)",
-                other
-            ))),
+                    other
+                )));
+            }
         };
 
         Ok(RarityComparator { op, rarity })
@@ -463,12 +473,12 @@ impl Serialize for RarityComparator {
         // Eq serializes as a bare rarity word (no == prefix) — round-trip produces "Rare" not "==Rare".
         let rarity_str = match self.rarity {
             Rarity::Normal => "Normal",
-            Rarity::Magic  => "Magic",
-            Rarity::Rare   => "Rare",
+            Rarity::Magic => "Magic",
+            Rarity::Rare => "Rare",
             Rarity::Unique => "Unique",
         };
         let s = match self.op {
-            RarityOp::Eq  => rarity_str.to_string(),
+            RarityOp::Eq => rarity_str.to_string(),
             RarityOp::Gte => format!(">={}", rarity_str),
             RarityOp::Lte => format!("<={}", rarity_str),
         };
@@ -708,7 +718,11 @@ mod tests {
     #[test]
     fn config_parses_real_file() {
         let result: Result<Config, _> = serde_json::from_str(CONFIG_JSON);
-        assert!(result.is_ok(), "config.json failed to parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "config.json failed to parse: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -716,7 +730,11 @@ mod tests {
         // Styles are a name -> Style map; tiers are looked up by name.
         let styles = StyleSet::committed_for_tests();
         for name in ["S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged"] {
-            assert_eq!(styles.get(name).unwrap().action, StyleAction::Show, "{name}");
+            assert_eq!(
+                styles.get(name).unwrap().action,
+                StyleAction::Show,
+                "{name}"
+            );
         }
         assert_eq!(styles.get("hidden").unwrap().action, StyleAction::Hide);
     }
@@ -728,7 +746,10 @@ mod tests {
         let second: Config = serde_json::from_str(&serialized).unwrap();
         // D-06: semantic round-trip — the deserialized values must be equal.
         // StyleSet is insertion-ordered, so PartialEq is deterministic.
-        assert_eq!(first, second, "config round-trip produced semantically different result");
+        assert_eq!(
+            first, second,
+            "config round-trip produced semantically different result"
+        );
     }
 
     #[test]
@@ -745,7 +766,10 @@ mod tests {
             "minimip": "typo key"
         }"#;
         let result: Result<Config, _> = serde_json::from_str(bad);
-        assert!(result.is_err(), "expected error for unknown key 'minimip', got Ok");
+        assert!(
+            result.is_err(),
+            "expected error for unknown key 'minimip', got Ok"
+        );
     }
 
     #[test]
@@ -754,22 +778,37 @@ mod tests {
         let styles_json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
         let bad = styles_json.replace("\"Pink\"", "\"Mauve\"");
         let result: Result<StyleSet, _> = serde_json::from_str(&bad);
-        assert!(result.is_err(), "expected error for unknown FilterColor 'Mauve', got Ok");
+        assert!(
+            result.is_err(),
+            "expected error for unknown FilterColor 'Mauve', got Ok"
+        );
     }
 
     #[test]
     fn config_with_rules_and_class_groups_parses() {
         // Prove that rules + classGroups parse correctly from the real config.json.
         // Phase 6 migrated config.json to include a rules array and classGroups map.
-        let config: Config = serde_json::from_str(CONFIG_JSON)
-            .expect("config with rules+classGroups should parse");
-        assert!(config.rules.is_some(), "config.json rules should be Some after Phase 6 migration");
+        let config: Config =
+            serde_json::from_str(CONFIG_JSON).expect("config with rules+classGroups should parse");
+        assert!(
+            config.rules.is_some(),
+            "config.json rules should be Some after Phase 6 migration"
+        );
         assert!(
             config.rules.as_ref().unwrap().len() >= 13,
             "config.json should have at least 13 rules (the 13 policy blocks)"
         );
-        assert!(config.class_groups.is_some(), "classGroups should be Some after Phase 6 migration");
-        assert!(config.class_groups.as_ref().unwrap().contains_key("buildWeapons"));
+        assert!(
+            config.class_groups.is_some(),
+            "classGroups should be Some after Phase 6 migration"
+        );
+        assert!(
+            config
+                .class_groups
+                .as_ref()
+                .unwrap()
+                .contains_key("buildWeapons")
+        );
         // Also confirm a minimal config (no rules/classGroups) parses with both as None.
         let minimal = r#"{
             "meta": {"name":"x","palette":"x","background":[0,0,0]},
@@ -781,8 +820,14 @@ mod tests {
             "fallthrough": "x"
         }"#;
         let baseline: Config = serde_json::from_str(minimal).unwrap();
-        assert!(baseline.rules.is_none(), "minimal config should have rules = None");
-        assert!(baseline.class_groups.is_none(), "minimal config should have class_groups = None");
+        assert!(
+            baseline.rules.is_none(),
+            "minimal config should have rules = None"
+        );
+        assert!(
+            baseline.class_groups.is_none(),
+            "minimal config should have class_groups = None"
+        );
     }
 
     #[test]
@@ -809,37 +854,67 @@ mod tests {
     #[test]
     fn rarity_comparator_bare_is_eq() {
         let r: RarityComparator = serde_json::from_str(r#""Rare""#).unwrap();
-        assert_eq!(r, RarityComparator { op: RarityOp::Eq, rarity: Rarity::Rare });
+        assert_eq!(
+            r,
+            RarityComparator {
+                op: RarityOp::Eq,
+                rarity: Rarity::Rare
+            }
+        );
     }
 
     #[test]
     fn rarity_comparator_gte_magic() {
         let r: RarityComparator = serde_json::from_str(r#"">=Magic""#).unwrap();
-        assert_eq!(r, RarityComparator { op: RarityOp::Gte, rarity: Rarity::Magic });
+        assert_eq!(
+            r,
+            RarityComparator {
+                op: RarityOp::Gte,
+                rarity: Rarity::Magic
+            }
+        );
     }
 
     #[test]
     fn rarity_comparator_lte_rare() {
         let r: RarityComparator = serde_json::from_str(r#""<=Rare""#).unwrap();
-        assert_eq!(r, RarityComparator { op: RarityOp::Lte, rarity: Rarity::Rare });
+        assert_eq!(
+            r,
+            RarityComparator {
+                op: RarityOp::Lte,
+                rarity: Rarity::Rare
+            }
+        );
     }
 
     #[test]
     fn rarity_comparator_eq_prefix_unique() {
         let r: RarityComparator = serde_json::from_str(r#""==Unique""#).unwrap();
-        assert_eq!(r, RarityComparator { op: RarityOp::Eq, rarity: Rarity::Unique });
+        assert_eq!(
+            r,
+            RarityComparator {
+                op: RarityOp::Eq,
+                rarity: Rarity::Unique
+            }
+        );
     }
 
     #[test]
     fn rarity_comparator_rejects_unknown_rarity() {
         let result: Result<RarityComparator, _> = serde_json::from_str(r#""Legendary""#);
-        assert!(result.is_err(), "expected error for unknown rarity 'Legendary', got Ok");
+        assert!(
+            result.is_err(),
+            "expected error for unknown rarity 'Legendary', got Ok"
+        );
     }
 
     #[test]
     fn rarity_comparator_rejects_bad_op() {
         let result: Result<RarityComparator, _> = serde_json::from_str(r#""><Rare""#);
-        assert!(result.is_err(), "expected error for unknown op '><' in '><Rare', got Ok");
+        assert!(
+            result.is_err(),
+            "expected error for unknown op '><' in '><Rare', got Ok"
+        );
     }
 
     #[test]
@@ -847,7 +922,10 @@ mod tests {
         // Regression: a multi-byte UTF-8 input must produce a clean Err, never a
         // byte-slice boundary panic (the old `&s[..2]` heuristic panicked here).
         let result: Result<RarityComparator, _> = serde_json::from_str(r#""日本語""#);
-        assert!(result.is_err(), "expected error for multi-byte input, got Ok");
+        assert!(
+            result.is_err(),
+            "expected error for multi-byte input, got Ok"
+        );
     }
 
     #[test]
@@ -862,7 +940,10 @@ mod tests {
     #[test]
     fn rarity_comparator_eq_serializes_bare() {
         // Eq serializes without == prefix — "==Rare" round-trips to "Rare"
-        let r = RarityComparator { op: RarityOp::Eq, rarity: Rarity::Rare };
+        let r = RarityComparator {
+            op: RarityOp::Eq,
+            rarity: Rarity::Rare,
+        };
         let s = serde_json::to_string(&r).unwrap();
         assert_eq!(s, r#""Rare""#);
     }
@@ -874,19 +955,36 @@ mod tests {
     #[test]
     fn numeric_condition_eq_zero() {
         let nc: NumericCondition = serde_json::from_str(r#"{"eq": 0}"#).unwrap();
-        assert_eq!(nc, NumericCondition { eq: Some(0), min: None, max: None });
+        assert_eq!(
+            nc,
+            NumericCondition {
+                eq: Some(0),
+                min: None,
+                max: None
+            }
+        );
     }
 
     #[test]
     fn numeric_condition_min_one() {
         let nc: NumericCondition = serde_json::from_str(r#"{"min": 1}"#).unwrap();
-        assert_eq!(nc, NumericCondition { eq: None, min: Some(1), max: None });
+        assert_eq!(
+            nc,
+            NumericCondition {
+                eq: None,
+                min: Some(1),
+                max: None
+            }
+        );
     }
 
     #[test]
     fn numeric_condition_rejects_unknown_key() {
         let result: Result<NumericCondition, _> = serde_json::from_str(r#"{"lt": 3}"#);
-        assert!(result.is_err(), "expected error for unknown key 'lt', got Ok");
+        assert!(
+            result.is_err(),
+            "expected error for unknown key 'lt', got Ok"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -896,19 +994,37 @@ mod tests {
     #[test]
     fn area_level_range_both_bounds() {
         let r: AreaLevelRange = serde_json::from_str(r#"{"min": 5, "max": 10}"#).unwrap();
-        assert_eq!(r, AreaLevelRange { min: Some(5), max: Some(10) });
+        assert_eq!(
+            r,
+            AreaLevelRange {
+                min: Some(5),
+                max: Some(10)
+            }
+        );
     }
 
     #[test]
     fn area_level_range_min_only() {
         let r: AreaLevelRange = serde_json::from_str(r#"{"min": 5}"#).unwrap();
-        assert_eq!(r, AreaLevelRange { min: Some(5), max: None });
+        assert_eq!(
+            r,
+            AreaLevelRange {
+                min: Some(5),
+                max: None
+            }
+        );
     }
 
     #[test]
     fn area_level_range_max_only() {
         let r: AreaLevelRange = serde_json::from_str(r#"{"max": 10}"#).unwrap();
-        assert_eq!(r, AreaLevelRange { min: None, max: Some(10) });
+        assert_eq!(
+            r,
+            AreaLevelRange {
+                min: None,
+                max: Some(10)
+            }
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -953,7 +1069,10 @@ mod tests {
         assert_eq!(rules.len(), 3);
         assert_eq!(rules[0].style, "F", "first rule should be style F");
         assert_eq!(rules[1].style, "S", "second rule should be style S");
-        assert_eq!(rules[2].style, "unchanged", "third rule should be style unchanged");
+        assert_eq!(
+            rules[2].style, "unchanged",
+            "third rule should be style unchanged"
+        );
     }
 
     #[test]
@@ -961,18 +1080,24 @@ mod tests {
         // Verify that config.json (which now includes rules + classGroups) round-trips
         // losslessly: deserialize → serialize → re-deserialize produces equal values.
         // Phase 6 migrated config.json to include the full 13-rule policy array.
-        let first: Config = serde_json::from_str(CONFIG_JSON)
-            .expect("config with rules should parse");
+        let first: Config =
+            serde_json::from_str(CONFIG_JSON).expect("config with rules should parse");
         let serialized = serde_json::to_string(&first).expect("serialize should succeed");
         let second: Config = serde_json::from_str(&serialized)
             .expect("re-deserialize after round-trip should succeed");
-        assert_eq!(first, second, "config with rules did not round-trip losslessly");
+        assert_eq!(
+            first, second,
+            "config with rules did not round-trip losslessly"
+        );
 
         // Spot-check: rules and classGroups are present
         let rules = first.rules.as_ref().unwrap();
         assert!(rules.len() >= 13, "should have at least 13 policy rules");
         // First rule should be the first exceptional rule (recycle is now rules[3])
-        assert_eq!(rules[0].style, "exceptional", "first rule should be exceptional style (Phase 10 placed 3 exceptional rules before recycle)");
+        assert_eq!(
+            rules[0].style, "exceptional",
+            "first rule should be exceptional style (Phase 10 placed 3 exceptional rules before recycle)"
+        );
 
         // classGroups round-tripped
         let groups = first.class_groups.as_ref().unwrap();
@@ -1043,14 +1168,20 @@ mod tests {
     fn rule_rejects_unknown_field() {
         let json = r#"{"style": "E", "unknown_key": true}"#;
         let result: Result<Rule, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "expected error for unknown field 'unknown_key' on Rule");
+        assert!(
+            result.is_err(),
+            "expected error for unknown field 'unknown_key' on Rule"
+        );
     }
 
     #[test]
     fn when_rejects_unknown_field() {
         let json = r#"{"style": "E", "when": {"notAField": 1}}"#;
         let result: Result<Rule, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "expected error for unknown field 'notAField' on When");
+        assert!(
+            result.is_err(),
+            "expected error for unknown field 'notAField' on When"
+        );
     }
 
     #[test]
@@ -1092,7 +1223,8 @@ mod tests {
     #[test]
     fn config_has_exceptional_style() {
         let styles = StyleSet::committed_for_tests();
-        let exceptional = styles.get("exceptional")
+        let exceptional = styles
+            .get("exceptional")
             .expect("styles.json must define the exceptional style");
         assert_eq!(
             exceptional.action,
@@ -1111,12 +1243,26 @@ mod tests {
             "exceptional border color must be pink [255, 121, 198]"
         );
         // No sound, no font
-        assert!(exceptional.sound.is_none(), "exceptional must have no sound");
+        assert!(
+            exceptional.sound.is_none(),
+            "exceptional must have no sound"
+        );
         assert!(exceptional.font.is_none(), "exceptional must have no font");
         // Pink Cross minimap
-        let mm = exceptional.minimap.as_ref().expect("exceptional must have minimap");
-        assert_eq!(mm.color, FilterColor::Pink, "exceptional minimap color must be Pink");
-        assert_eq!(mm.shape, MinimapShape::Cross, "exceptional minimap shape must be Cross");
+        let mm = exceptional
+            .minimap
+            .as_ref()
+            .expect("exceptional must have minimap");
+        assert_eq!(
+            mm.color,
+            FilterColor::Pink,
+            "exceptional minimap color must be Pink"
+        );
+        assert_eq!(
+            mm.shape,
+            MinimapShape::Cross,
+            "exceptional minimap shape must be Cross"
+        );
     }
 
     /// Verify that a styles object that omits `"exceptional"` still parses (WR-01 fix).
@@ -1212,19 +1358,22 @@ mod tests {
 
     #[test]
     fn when_corrupted_false_parses() {
-        let rule: Rule = serde_json::from_str(r#"{"style":"E","when":{"corrupted":false}}"#).unwrap();
+        let rule: Rule =
+            serde_json::from_str(r#"{"style":"E","when":{"corrupted":false}}"#).unwrap();
         assert_eq!(rule.when.as_ref().unwrap().corrupted, Some(false));
     }
 
     #[test]
     fn when_corrupted_true_parses() {
-        let rule: Rule = serde_json::from_str(r#"{"style":"E","when":{"corrupted":true}}"#).unwrap();
+        let rule: Rule =
+            serde_json::from_str(r#"{"style":"E","when":{"corrupted":true}}"#).unwrap();
         assert_eq!(rule.when.as_ref().unwrap().corrupted, Some(true));
     }
 
     #[test]
     fn when_corrupted_absent_is_none() {
-        let rule: Rule = serde_json::from_str(r#"{"style":"E","when":{"sockets":{"min":1}}}"#).unwrap();
+        let rule: Rule =
+            serde_json::from_str(r#"{"style":"E","when":{"sockets":{"min":1}}}"#).unwrap();
         assert!(rule.when.as_ref().unwrap().corrupted.is_none());
     }
 
@@ -1250,11 +1399,24 @@ mod tests {
     // -----------------------------------------------------------------------
 
     const STYLES_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
-    const DYNAMIC_BASE_JSON: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
+    const DYNAMIC_BASE_JSON: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v04-dynamic-base.json"
+    ));
 
     const COMMITTED_ORDER: [&str; 12] = [
-        "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite", "exceptional",
+        "S",
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "Recycle",
+        "unchanged",
+        "hidden",
+        "kite",
+        "exceptional",
     ];
 
     #[test]
@@ -1299,8 +1461,14 @@ mod tests {
         rules[2].style = "nope".to_string();
         rules[2].name = None;
         rules[2].enabled = None;
-        let err = styles.check_rules(rules, "styles.json").unwrap_err().to_string();
-        assert!(err.contains("nope") && err.contains("rule 2") && err.contains("exceptional"), "{err}");
+        let err = styles
+            .check_rules(rules, "styles.json")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("nope") && err.contains("rule 2") && err.contains("exceptional"),
+            "{err}"
+        );
         rules[2].enabled = Some(false);
         styles.check_rules(rules, "styles.json").unwrap();
     }
@@ -1327,7 +1495,12 @@ mod tests {
     fn set_json(names: &[&str]) -> String {
         let body: Vec<String> = names
             .iter()
-            .map(|n| format!("\"{n}\":{}", sparse(if *n == "hidden" { "Hide" } else { "Show" })))
+            .map(|n| {
+                format!(
+                    "\"{n}\":{}",
+                    sparse(if *n == "hidden" { "Hide" } else { "Show" })
+                )
+            })
             .collect();
         format!("{{{}}}", body.join(","))
     }
@@ -1342,8 +1515,11 @@ mod tests {
             Err(StyleError::MissingRequired(m)) => assert_eq!(m, vec!["E"]),
             other => panic!("unexpected {other:?}"),
         }
-        let names: Vec<&str> =
-            REQ.iter().copied().filter(|n| *n != "unchanged" && *n != "hidden").collect();
+        let names: Vec<&str> = REQ
+            .iter()
+            .copied()
+            .filter(|n| *n != "unchanged" && *n != "hidden")
+            .collect();
         let set: StyleSet = serde_json::from_str(&set_json(&names)).unwrap();
         match set.validate() {
             Err(StyleError::MissingRequired(m)) => assert_eq!(m, vec!["unchanged", "hidden"]),
@@ -1354,7 +1530,9 @@ mod tests {
     #[test]
     fn styleset_rejects_duplicate_style_name() {
         let dup = format!(r#"{{"S":{0},"S":{0}}}"#, sparse("Show"));
-        let err = serde_json::from_str::<StyleSet>(&dup).unwrap_err().to_string();
+        let err = serde_json::from_str::<StyleSet>(&dup)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("duplicate style name \"S\""), "{err}");
     }
 
@@ -1405,10 +1583,22 @@ mod tests {
         let range_cases: [(&str, Box<dyn Fn(&mut Style)>); 6] = [
             ("font", Box::new(|s| s.font = Some(0))),
             ("font", Box::new(|s| s.font = Some(46))),
-            ("minimap.size", Box::new(|s| s.minimap.as_mut().unwrap().size = 3)),
-            ("sound.id", Box::new(|s| s.sound.as_mut().unwrap().id = Some(0))),
-            ("sound.id", Box::new(|s| s.sound.as_mut().unwrap().id = Some(17))),
-            ("sound.vol", Box::new(|s| s.sound.as_mut().unwrap().vol = 301)),
+            (
+                "minimap.size",
+                Box::new(|s| s.minimap.as_mut().unwrap().size = 3),
+            ),
+            (
+                "sound.id",
+                Box::new(|s| s.sound.as_mut().unwrap().id = Some(0)),
+            ),
+            (
+                "sound.id",
+                Box::new(|s| s.sound.as_mut().unwrap().id = Some(17)),
+            ),
+            (
+                "sound.vol",
+                Box::new(|s| s.sound.as_mut().unwrap().vol = 301),
+            ),
         ];
         for (want, edit) in range_cases {
             match with(edit) {
@@ -1419,9 +1609,15 @@ mod tests {
             }
         }
         for (want, edit) in [
-            ("both", Box::new(|s: &mut Style| s.sound.as_mut().unwrap().custom = Some("x.mp3".into()))
-                as Box<dyn Fn(&mut Style)>),
-            ("neither", Box::new(|s: &mut Style| s.sound.as_mut().unwrap().id = None)),
+            (
+                "both",
+                Box::new(|s: &mut Style| s.sound.as_mut().unwrap().custom = Some("x.mp3".into()))
+                    as Box<dyn Fn(&mut Style)>,
+            ),
+            (
+                "neither",
+                Box::new(|s: &mut Style| s.sound.as_mut().unwrap().id = None),
+            ),
         ] {
             match with(edit) {
                 Err(e @ StyleError::AmbiguousSound { .. }) => {

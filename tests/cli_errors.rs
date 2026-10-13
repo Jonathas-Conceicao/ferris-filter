@@ -78,13 +78,19 @@ fn malformed_styles_json_reports_field_path_and_expected_type() {
     // string. Everything else stays valid, so deserialization fails specifically at S.font.
     let styles_src = valid_styles();
     let bad_styles = styles_src.replacen("\"font\": 37", "\"font\": \"BROKEN\"", 1);
-    assert_ne!(bad_styles, styles_src, "fixture setup: expected to break a font field");
+    assert_ne!(
+        bad_styles, styles_src,
+        "fixture setup: expected to break a font field"
+    );
 
-    let dir = make_temp_dir("bad_styles_type", &[
-        ("config.json", &valid_config()),
-        ("tiers.json", &tiers_src),
-        ("styles.json", &bad_styles),
-    ]);
+    let dir = make_temp_dir(
+        "bad_styles_type",
+        &[
+            ("config.json", &valid_config()),
+            ("tiers.json", &tiers_src),
+            ("styles.json", &bad_styles),
+        ],
+    );
 
     Command::cargo_bin("ferrisfilter")
         .unwrap()
@@ -118,11 +124,14 @@ fn missing_tier_in_tiers_json_exits_nonzero() {
     ]"#;
 
     let cfg = valid_config();
-    let dir = make_temp_dir("missing_tier", &[
-        ("config.json", &cfg),
-        ("tiers.json", bad_tiers),
-        ("styles.json", &valid_styles()),
-    ]);
+    let dir = make_temp_dir(
+        "missing_tier",
+        &[
+            ("config.json", &cfg),
+            ("tiers.json", bad_tiers),
+            ("styles.json", &valid_styles()),
+        ],
+    );
 
     Command::cargo_bin("ferrisfilter")
         .unwrap()
@@ -151,11 +160,14 @@ fn non_ascending_tiers_json_exits_nonzero() {
     ]"#;
 
     let cfg = valid_config();
-    let dir = make_temp_dir("bad_order", &[
-        ("config.json", &cfg),
-        ("tiers.json", bad_tiers),
-        ("styles.json", &valid_styles()),
-    ]);
+    let dir = make_temp_dir(
+        "bad_order",
+        &[
+            ("config.json", &cfg),
+            ("tiers.json", bad_tiers),
+            ("styles.json", &valid_styles()),
+        ],
+    );
 
     Command::cargo_bin("ferrisfilter")
         .unwrap()
@@ -245,7 +257,12 @@ fn duplicate_style_name_fails() {
         .trim_end_matches(',')
         .to_string();
     let end = styles.rfind('}').unwrap();
-    let bad = format!("{},\n{}\n{}", styles[..end].trim_end(), s_line, &styles[end..]);
+    let bad = format!(
+        "{},\n{}\n{}",
+        styles[..end].trim_end(),
+        s_line,
+        &styles[end..]
+    );
     assert_ne!(bad, styles);
     let dir = styles_case_dir("dup_style", &valid_config(), &bad);
     generate_in(&dir)
@@ -272,7 +289,11 @@ fn bad_colour_in_styles_json_names_the_field() {
 fn inline_styles_section_in_config_is_rejected() {
     let cfg = valid_config();
     let craftable = r#"{"text":[1,2,3],"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}"#;
-    let bad = cfg.replacen('{', &format!("{{\"styles\": {{\"craftable\": {craftable}}},"), 1);
+    let bad = cfg.replacen(
+        '{',
+        &format!("{{\"styles\": {{\"craftable\": {craftable}}},"),
+        1,
+    );
     assert_ne!(bad, cfg);
     let dir = styles_case_dir("inline_styles", &bad, &valid_styles());
     generate_in(&dir)

@@ -12,8 +12,8 @@ mod edit;
 pub mod keywords;
 pub mod lines;
 pub mod meta;
-pub mod section;
 mod parse;
+pub mod section;
 pub mod tokenize;
 
 pub use block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};

@@ -208,13 +208,21 @@ mod tests {
             EnchantmentPassiveNode HasEnchantment HasExplicitMod GemQualityType HasInfluence Rarity \
             Sockets SocketGroup";
         for n in conditions.split_whitespace() {
-            assert_eq!(lookup(n).unwrap_or_else(|| panic!("missing {n}")).kind, Kind::Condition, "{n}");
+            assert_eq!(
+                lookup(n).unwrap_or_else(|| panic!("missing {n}")).kind,
+                Kind::Condition,
+                "{n}"
+            );
         }
         let actions = "PlayAlertSound PlayAlertSoundPositional CustomAlertSound CustomAlertSoundOptional \
             DisableDropSound EnableDropSound DisableDropSoundIfAlertSound EnableDropSoundIfAlertSound \
             MinimapIcon PlayEffect SetBackgroundColor SetBorderColor SetTextColor SetFontSize";
         for n in actions.split_whitespace() {
-            assert_eq!(lookup(n).unwrap_or_else(|| panic!("missing {n}")).kind, Kind::Action, "{n}");
+            assert_eq!(
+                lookup(n).unwrap_or_else(|| panic!("missing {n}")).kind,
+                Kind::Action,
+                "{n}"
+            );
         }
         assert_eq!(KEYWORDS.len(), 80);
     }

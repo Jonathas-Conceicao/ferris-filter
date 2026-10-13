@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ferrisfilter", about = "Compile a PoE2 loot filter from your config")]
+#[command(
+    name = "ferrisfilter",
+    about = "Compile a PoE2 loot filter from your config"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

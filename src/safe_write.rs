@@ -31,7 +31,9 @@ pub enum WriteOutcome {
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum WriteError {
     /// The destination folder does not exist; never created.
-    #[error("Destination folder not found: `{path}` — make sure Path of Exile 2 has been run at least once, or pass an explicit destination.")]
+    #[error(
+        "Destination folder not found: `{path}` — make sure Path of Exile 2 has been run at least once, or pass an explicit destination."
+    )]
     DestinationMissing { path: String },
 
     /// The file differs from what was loaded.
@@ -66,7 +68,9 @@ pub enum WriteError {
     },
 
     /// The target is read-only, so it cannot be replaced; not retried.
-    #[error("Cannot write `{path}`: the file is read-only; clear its read-only attribute and apply again")]
+    #[error(
+        "Cannot write `{path}`: the file is read-only; clear its read-only attribute and apply again"
+    )]
     ReadOnly {
         path: String,
         #[source]
@@ -74,7 +78,9 @@ pub enum WriteError {
     },
 
     /// The target stayed locked through every retry.
-    #[error("`{path}` is in use (tried {attempts} times); close anything holding it, such as the game or OneDrive, and apply again")]
+    #[error(
+        "`{path}` is in use (tried {attempts} times); close anything holding it, such as the game or OneDrive, and apply again"
+    )]
     Busy {
         path: String,
         attempts: u32,
@@ -168,10 +174,7 @@ fn write_guarded_with(
     path: &Path,
     loaded: Option<&[u8]>,
     new_bytes: &[u8],
-    mut persist: impl FnMut(
-        tempfile::NamedTempFile,
-        &Path,
-    ) -> Result<fs::File, tempfile::PersistError>,
+    mut persist: impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>,
     mut sleep: impl FnMut(Duration),
 ) -> Result<WriteOutcome, WriteError> {
     let shown = || path.display().to_string();
@@ -195,7 +198,7 @@ fn write_guarded_with(
             return Err(WriteError::Unreadable {
                 path: shown(),
                 source: e,
-            })
+            });
         }
     };
     if current.as_deref() != loaded {
@@ -217,12 +220,11 @@ fn write_guarded_with(
     }
 
     // 5. Same-directory temp file, persisted with bounded retry.
-    let mut temp = tempfile::NamedTempFile::new_in(dest_dir).map_err(|e| {
-        WriteError::Unwritable {
+    let mut temp =
+        tempfile::NamedTempFile::new_in(dest_dir).map_err(|e| WriteError::Unwritable {
             path: shown(),
             source: e,
-        }
-    })?;
+        })?;
     // sync_all, not flush: the data must be durable before the rename publishes it, or a crash
     // in between can leave an empty or partial filter under the final name.
     temp.write_all(new_bytes)
@@ -321,7 +323,12 @@ mod tests {
         fs::write(&p, "A").unwrap();
         let r = write_guarded(&p, Some(b"A"), b"B").unwrap();
         let bp = t.path().join("x.filter.ffbak");
-        assert_eq!(r, WriteOutcome::Written { backup: Some(bp.clone()) });
+        assert_eq!(
+            r,
+            WriteOutcome::Written {
+                backup: Some(bp.clone())
+            }
+        );
         assert_eq!(backup_path(&p), bp);
         assert_eq!(fs::read(&bp).unwrap(), b"A");
         assert_eq!(fs::read(&p).unwrap(), b"B");
@@ -367,11 +374,20 @@ mod tests {
             Err(io::Error::other("disk full"))
         });
         assert!(matches!(r, Err(WriteError::Backup { .. })), "{r:?}");
-        assert_eq!(names(t.path()), vec!["x.filter"], "no .ffbak and no temp file left");
+        assert_eq!(
+            names(t.path()),
+            vec!["x.filter"],
+            "no .ffbak and no temp file left"
+        );
 
         // The next write still gets a complete backup.
         let r = write_guarded(&p, Some(b"ABCDEF"), b"B").unwrap();
-        assert_eq!(r, WriteOutcome::Written { backup: Some(bp.clone()) });
+        assert_eq!(
+            r,
+            WriteOutcome::Written {
+                backup: Some(bp.clone())
+            }
+        );
         assert_eq!(fs::read(&bp).unwrap(), b"ABCDEF");
     }
 
@@ -409,8 +425,8 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = t.path().join("x.filter");
         let mut sleeps = Vec::new();
-        let r = write_guarded_with(&p, None, b"B", failing_persist(32, 2), |d| sleeps.push(d))
-            .unwrap();
+        let r =
+            write_guarded_with(&p, None, b"B", failing_persist(32, 2), |d| sleeps.push(d)).unwrap();
         assert_eq!(r, WriteOutcome::Written { backup: None });
         assert_eq!(fs::read(&p).unwrap(), b"B");
         assert_eq!(sleeps.len(), 2);
@@ -424,10 +440,18 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = t.path().join("x.filter");
         let mut sleeps = 0;
-        let r = write_guarded_with(&p, None, b"B", failing_persist(5, u32::MAX), |_| sleeps += 1);
+        let r = write_guarded_with(&p, None, b"B", failing_persist(5, u32::MAX), |_| {
+            sleeps += 1
+        });
         match r {
             Err(e @ WriteError::Busy { .. }) => {
-                assert!(matches!(e, WriteError::Busy { attempts: MAX_ATTEMPTS, .. }));
+                assert!(matches!(
+                    e,
+                    WriteError::Busy {
+                        attempts: MAX_ATTEMPTS,
+                        ..
+                    }
+                ));
                 assert!(e.to_string().contains("x.filter"));
             }
             other => panic!("{other:?}"),
@@ -468,7 +492,9 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = t.path().join("x.filter");
         let mut sleeps = 0;
-        let r = write_guarded_with(&p, None, b"B", failing_persist(2, u32::MAX), |_| sleeps += 1);
+        let r = write_guarded_with(&p, None, b"B", failing_persist(2, u32::MAX), |_| {
+            sleeps += 1
+        });
         assert!(matches!(r, Err(WriteError::Unwritable { .. })), "{r:?}");
         assert_eq!(sleeps, 0);
         assert!(names(t.path()).is_empty());

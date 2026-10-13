@@ -138,12 +138,7 @@ fn restore_body_chrome(v: &mut egui::Visuals) {
     v.collapsing_header_frame = restored.collapsing_header_frame;
 }
 
-fn render_rule_body_inner(
-    ui: &mut egui::Ui,
-    rule: &mut Rule,
-    config: &Config,
-    id: RuleId,
-) -> bool {
+fn render_rule_body_inner(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId) -> bool {
     let mut changed = false;
 
     changed |= render_name(ui, rule, id);
@@ -279,7 +274,11 @@ fn render_style(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId)
 /// here in one step.
 fn render_classes(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("CLASSES").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("CLASSES")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
 
     let open_id = egui::Id::new((id, "classes-open"));
     let mut enabled = panel_open(
@@ -365,13 +364,19 @@ fn render_classes(ui: &mut egui::Ui, rule: &mut Rule, config: &Config, id: RuleI
 /// hygiene lives entirely in `edit::` (D-18).
 fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("BASE TYPES").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("BASE TYPES")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
 
     let open_id = egui::Id::new((id, "base-type-open"));
     let mut enabled = panel_open(
         ui,
         open_id,
-        rule.when.as_ref().is_some_and(|when| when.base_type.is_some()),
+        rule.when
+            .as_ref()
+            .is_some_and(|when| when.base_type.is_some()),
     );
 
     ui.horizontal(|ui| {
@@ -497,7 +502,11 @@ fn render_base_types(ui: &mut egui::Ui, rule: &mut Rule, id: RuleId) -> bool {
 /// [`edit::set_rarity`], never assembles a comparator string itself.
 fn render_rarity(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("RARITY").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("RARITY")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
 
     let mut enabled = rule.when.as_ref().and_then(|when| when.rarity).is_some();
     ui.horizontal(|ui| {
@@ -520,19 +529,29 @@ fn render_rarity(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
             let mut value_changed = false;
 
             ui.horizontal(|ui| {
-                value_changed |= ui.selectable_value(&mut op, RarityOp::Eq, "Exactly").changed();
-                value_changed |=
-                    ui.selectable_value(&mut op, RarityOp::Gte, "At Least").changed();
-                value_changed |= ui.selectable_value(&mut op, RarityOp::Lte, "At Most").changed();
+                value_changed |= ui
+                    .selectable_value(&mut op, RarityOp::Eq, "Exactly")
+                    .changed();
+                value_changed |= ui
+                    .selectable_value(&mut op, RarityOp::Gte, "At Least")
+                    .changed();
+                value_changed |= ui
+                    .selectable_value(&mut op, RarityOp::Lte, "At Most")
+                    .changed();
             });
             ui.horizontal(|ui| {
-                value_changed |=
-                    ui.selectable_value(&mut value, Rarity::Normal, "Normal").changed();
-                value_changed |=
-                    ui.selectable_value(&mut value, Rarity::Magic, "Magic").changed();
-                value_changed |= ui.selectable_value(&mut value, Rarity::Rare, "Rare").changed();
-                value_changed |=
-                    ui.selectable_value(&mut value, Rarity::Unique, "Unique").changed();
+                value_changed |= ui
+                    .selectable_value(&mut value, Rarity::Normal, "Normal")
+                    .changed();
+                value_changed |= ui
+                    .selectable_value(&mut value, Rarity::Magic, "Magic")
+                    .changed();
+                value_changed |= ui
+                    .selectable_value(&mut value, Rarity::Rare, "Rare")
+                    .changed();
+                value_changed |= ui
+                    .selectable_value(&mut value, Rarity::Unique, "Unique")
+                    .changed();
             });
 
             if value_changed {
@@ -554,7 +573,11 @@ fn render_rarity(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
 /// [`edit::set_defence`]'s job, not this file's.
 fn render_defence(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("DEFENCES").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("DEFENCES")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
     ui.label(
         egui::RichText::new("Ticked = has this defence. Unticked = has none of it.")
             .color(theme::DISABLED_TEXT)
@@ -645,17 +668,28 @@ fn themed_slider<T: egui::emath::Numeric>(
             state.fg_stroke = egui::Stroke::new(1.0, theme::SECTION_CREAM);
         }
 
-        ui.add(egui::Slider::new(value, range).integer().trailing_fill(true))
-            .changed()
+        ui.add(
+            egui::Slider::new(value, range)
+                .integer()
+                .trailing_fill(true),
+        )
+        .changed()
     })
     .inner
 }
 
 fn render_sockets(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("SOCKETS").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("SOCKETS")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
 
-    let mut enabled = rule.when.as_ref().is_some_and(|when| when.sockets.is_some());
+    let mut enabled = rule
+        .when
+        .as_ref()
+        .is_some_and(|when| when.sockets.is_some());
     ui.horizontal(|ui| {
         if widgets::circular_toggle(ui, &mut enabled).changed() {
             if enabled {
@@ -682,7 +716,12 @@ fn render_sockets(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
             .and_then(|nc| nc.min)
             .unwrap_or(edit::SOCKETS_DEFAULT)
             .clamp(edit::SOCKETS_MIN, edit::SOCKETS_MAX);
-        if themed_slider(ui, ui_width, &mut min, edit::SOCKETS_MIN..=edit::SOCKETS_MAX) {
+        if themed_slider(
+            ui,
+            ui_width,
+            &mut min,
+            edit::SOCKETS_MIN..=edit::SOCKETS_MAX,
+        ) {
             edit::set_sockets_min(edit::when_mut(rule), min);
             changed = true;
         }
@@ -695,9 +734,16 @@ fn render_sockets(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
 /// [`render_sockets`] exactly, over the `quality` field instead of `sockets`.
 fn render_quality(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("QUALITY").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("QUALITY")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
 
-    let mut enabled = rule.when.as_ref().is_some_and(|when| when.quality.is_some());
+    let mut enabled = rule
+        .when
+        .as_ref()
+        .is_some_and(|when| when.quality.is_some());
     ui.horizontal(|ui| {
         if widgets::circular_toggle(ui, &mut enabled).changed() {
             if enabled {
@@ -723,7 +769,12 @@ fn render_quality(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
             .and_then(|nc| nc.min)
             .unwrap_or(edit::QUALITY_DEFAULT)
             .clamp(edit::QUALITY_MIN, edit::QUALITY_MAX);
-        if themed_slider(ui, ui_width, &mut min, edit::QUALITY_MIN..=edit::QUALITY_MAX) {
+        if themed_slider(
+            ui,
+            ui_width,
+            &mut min,
+            edit::QUALITY_MIN..=edit::QUALITY_MAX,
+        ) {
             edit::set_quality_min(edit::when_mut(rule), min);
             changed = true;
         }
@@ -761,7 +812,10 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
     ui.horizontal(|ui| {
         if widgets::circular_toggle(ui, &mut enabled).changed() {
             if enabled {
-                edit::set_unidentified_tier_min(edit::when_mut(rule), edit::UNIDENTIFIED_TIER_DEFAULT);
+                edit::set_unidentified_tier_min(
+                    edit::when_mut(rule),
+                    edit::UNIDENTIFIED_TIER_DEFAULT,
+                );
             } else if let Some(when) = rule.when.as_mut() {
                 edit::clear_unidentified_tier(when);
             }
@@ -805,7 +859,11 @@ fn render_unidentified_tier(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> 
 /// condition in this editor with its own bespoke interaction pattern.
 fn render_corrupted(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("CORRUPTED").color(theme::LABEL_TAN).small());
+    ui.label(
+        egui::RichText::new("CORRUPTED")
+            .color(theme::LABEL_TAN)
+            .small(),
+    );
 
     let mut enabled = rule.when.as_ref().and_then(|when| when.corrupted).is_some();
     ui.horizontal(|ui| {
@@ -819,8 +877,11 @@ fn render_corrupted(ui: &mut egui::Ui, rule: &mut Rule, _id: RuleId) -> bool {
         }
 
         if enabled {
-            let mut value =
-                rule.when.as_ref().and_then(|when| when.corrupted).unwrap_or(false);
+            let mut value = rule
+                .when
+                .as_ref()
+                .and_then(|when| when.corrupted)
+                .unwrap_or(false);
             let mut value_changed = false;
             value_changed |= ui.selectable_value(&mut value, false, "False").changed();
             value_changed |= ui.selectable_value(&mut value, true, "True").changed();
@@ -958,9 +1019,10 @@ mod tests {
         });
 
         let wanted = theme::poe2_visuals().widgets.inactive.weak_bg_fill;
-        let painted_button = output.shapes.iter().any(|clipped| {
-            matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == wanted)
-        });
+        let painted_button = output
+            .shapes
+            .iter()
+            .any(|clipped| matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == wanted));
         output.drop_without_applying_deltas();
 
         assert!(
@@ -1029,15 +1091,24 @@ mod tests {
     }
 
     fn unnamed_rule() -> Rule {
-        Rule { enabled: None, name: None, style: "unchanged".to_string(), when: None }
+        Rule {
+            enabled: None,
+            name: None,
+            style: "unchanged".to_string(),
+            when: None,
+        }
     }
 
     /// The same fixture `edit.rs`'s own tests load a real `Config` from — a full, valid class
     /// list to drive `render_classes` against, rather than a hand-built stand-in that could drift
     /// from what the config-sourced picker actually offers (`PITFALLS.md` §10).
     fn base_config() -> Config {
-        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
-        let mut config: Config = serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
+        let json = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v04-dynamic-base.json"
+        ));
+        let mut config: Config =
+            serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
         config.styles = crate::models::config::StyleSet::committed_for_tests();
         config
     }
@@ -1098,7 +1169,10 @@ mod tests {
             ctx.run_ui(RawInput::default(), |ui| {
                 let rule = wr.rule_mut(id).unwrap();
                 let changed = render_name(ui, rule, id);
-                assert!(!changed, "render_name must not report a change with no input");
+                assert!(
+                    !changed,
+                    "render_name must not report a change with no input"
+                );
             })
             .drop_without_applying_deltas();
         }
@@ -1303,7 +1377,10 @@ mod tests {
             ctx.run_ui(RawInput::default(), |ui| {
                 let rule = wr.rule_mut(id).unwrap();
                 let changed = render_rule_body(ui, rule, &config, id);
-                assert!(!changed, "render_rule_body must not change the rule with no input");
+                assert!(
+                    !changed,
+                    "render_rule_body must not change the rule with no input"
+                );
             })
             .drop_without_applying_deltas();
         }

@@ -12,12 +12,12 @@
 
 use thiserror::Error;
 
+use super::Document;
 use super::block::{BlockId, BlockKeyword, DisabledState, Item};
 use super::diag::{FilterDiagnostic, Severity};
 use super::disabled;
 use super::lines::{Eol, Line};
 use super::parse;
-use super::Document;
 
 #[derive(Debug, Error)]
 pub enum EditError {
@@ -31,7 +31,9 @@ pub enum EditError {
     /// again unchanged (e.g. a compact header with trailing tokens such as `Show Continue`, or a
     /// valid block directly followed by a comment line and then a commented condition, which in
     /// disabled form reads as a rule with a cut-off condition).
-    #[error("the block cannot be disabled as-is: its commented-out form would not read back as the same block; fix the block first")]
+    #[error(
+        "the block cannot be disabled as-is: its commented-out form would not read back as the same block; fix the block first"
+    )]
     CannotDisable,
     #[error("the edit would not leave exactly one block in place")]
     NotOneBlock,
@@ -41,7 +43,9 @@ pub enum EditError {
     InvalidMeta(String),
     /// The edit would change which lines belong to some other block or comment run (e.g. a
     /// commented condition moving from one block to its neighbour), so it was not applied.
-    #[error("the edit would change which lines belong to the surrounding blocks; nothing was changed")]
+    #[error(
+        "the edit would change which lines belong to the surrounding blocks; nothing was changed"
+    )]
     WouldReattributeLines,
 }
 
@@ -294,8 +298,8 @@ impl Document {
         // Isolated classification: exactly one block covering every candidate line.
         let mut scratch = 0u64;
         let (items, diags) = parse::build(&cand, &mut scratch);
-        let one = items.len() == 1
-            && matches!(&items[0], Item::Block(c) if c.header == 0 && c.end == n);
+        let one =
+            items.len() == 1 && matches!(&items[0], Item::Block(c) if c.header == 0 && c.end == n);
         if !one {
             return Err(EditError::NotOneBlock);
         }
@@ -447,7 +451,10 @@ mod tests {
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_enabled(id, false).unwrap();
-        assert_eq!(s(&d), "#Show\n#\tRarity Rare\n#\n## mid\n#\tClass \"Bows\"\n");
+        assert_eq!(
+            s(&d),
+            "#Show\n#\tRarity Rare\n#\n## mid\n#\tClass \"Bows\"\n"
+        );
         d.set_enabled(id, true).unwrap();
         assert_eq!(s(&d), src);
     }
@@ -489,7 +496,10 @@ mod tests {
         let src = "Show\n\tRarity Rare\n# note\n#\tClass \"Bows\"\nHide\n";
         let mut d = p(src);
         let id = ids(&d)[0];
-        assert!(matches!(d.set_enabled(id, false), Err(EditError::CannotDisable)));
+        assert!(matches!(
+            d.set_enabled(id, false),
+            Err(EditError::CannotDisable)
+        ));
         assert_eq!(s(&d), src);
         // Enabling the disabled unknown-keyword block back is refused, bytes untouched.
         let mut d = p("Show\n\tRarity Rare\n\tFutureKw 3\n");
@@ -637,7 +647,11 @@ mod tests {
                     let shifted: Vec<_> = others
                         .iter()
                         .map(|&(o, a, z)| {
-                            if a >= old_end { (o, a + 1, z + 1) } else { (o, a, z) }
+                            if a >= old_end {
+                                (o, a + 1, z + 1)
+                            } else {
+                                (o, a, z)
+                            }
                         })
                         .collect();
                     assert_eq!(spans_except(&d, id), shifted, "{src:?}");
@@ -688,7 +702,10 @@ mod tests {
                         // Iteration-3 CR-01: enabling never writes a rule with fewer conditions
                         // than the commented run it came from.
                         let got = d.block(id).unwrap().body().len();
-                        assert!(got >= want, "{src:?}: enabled {got} body lines, text has {want}");
+                        assert!(
+                            got >= want,
+                            "{src:?}: enabled {got} body lines, text has {want}"
+                        );
                         d.set_enabled(id, false)
                             .unwrap_or_else(|e| panic!("{src:?}: re-disable: {e}"));
                         assert_eq!(s(&d), src, "re-disable changed bytes");
@@ -706,7 +723,10 @@ mod tests {
         let src = "Show Continue\n\tRarity Rare\n";
         let mut d = p(src);
         let id = ids(&d)[0];
-        assert!(matches!(d.set_enabled(id, false), Err(EditError::CannotDisable)));
+        assert!(matches!(
+            d.set_enabled(id, false),
+            Err(EditError::CannotDisable)
+        ));
         assert_eq!(s(&d), src);
     }
 
@@ -739,7 +759,10 @@ mod tests {
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_enabled(id, true).unwrap();
-        assert_eq!(s(&d), "Show\n\tRarity Rare\n# note here\n#\tSetFontSize 40 extra\n");
+        assert_eq!(
+            s(&d),
+            "Show\n\tRarity Rare\n# note here\n#\tSetFontSize 40 extra\n"
+        );
         assert!(d.diagnostics().is_empty());
         // Iteration-3 CR-01: a clean condition below the prose would be dropped, so refuse.
         let src = "#Show\n#\tRarity Rare\n# note here\n#\tClass \"Bows\"\n";
@@ -758,7 +781,11 @@ mod tests {
         assert!(matches!(
             d.replace_block_lines(
                 id,
-                vec!["#Show".into(), "# hello world".into(), "#\tRarity Rare".into()],
+                vec![
+                    "#Show".into(),
+                    "# hello world".into(),
+                    "#\tRarity Rare".into()
+                ],
             ),
             Err(EditError::NotOneBlock)
         ));
@@ -780,10 +807,18 @@ mod tests {
     #[test]
     fn disabling_error_block_clears_error() {
         let mut d = p("Show\n\tRarity =< Rare\n");
-        assert!(d.diagnostics().iter().any(|x| x.severity == Severity::Error));
+        assert!(
+            d.diagnostics()
+                .iter()
+                .any(|x| x.severity == Severity::Error)
+        );
         let id = ids(&d)[0];
         d.set_enabled(id, false).unwrap();
-        assert!(!d.diagnostics().iter().any(|x| x.severity == Severity::Error));
+        assert!(
+            !d.diagnostics()
+                .iter()
+                .any(|x| x.severity == Severity::Error)
+        );
         assert!(!d.block(id).unwrap().can_enable());
     }
 
@@ -793,13 +828,14 @@ mod tests {
         let all = ids(&d);
         d.replace_block_lines(all[1], vec!["Show".into(), "\tRarity Unique".into()])
             .unwrap();
-        assert_eq!(
-            s(&d),
-            "Hide\r\n\r\nShow\r\n\tRarity Unique\r\n\r\nHide\r\n"
-        );
+        assert_eq!(s(&d), "Hide\r\n\r\nShow\r\n\tRarity Unique\r\n\r\nHide\r\n");
         d.replace_block_lines(
             all[1],
-            vec!["Show".into(), "\tRarity Unique".into(), "\tClass \"Bows\"".into()],
+            vec![
+                "Show".into(),
+                "\tRarity Unique".into(),
+                "\tClass \"Bows\"".into(),
+            ],
         )
         .unwrap();
         assert_eq!(
@@ -845,7 +881,11 @@ mod tests {
         // A disabled candidate may still carry such lines.
         d.replace_block_lines(
             id,
-            vec!["#Show".into(), "#\tRarity Rare".into(), "#\tFooBar 1".into()],
+            vec![
+                "#Show".into(),
+                "#\tRarity Rare".into(),
+                "#\tFooBar 1".into(),
+            ],
         )
         .unwrap();
         assert!(!d.block(id).unwrap().can_enable());
@@ -891,8 +931,15 @@ mod tests {
     fn replace_last_block_no_final_newline() {
         let mut d = p("Hide\nShow\n\tRarity Rare");
         let id = ids(&d)[1];
-        d.replace_block_lines(id, vec!["Show".into(), "\tRarity Unique".into(), "\tSockets 3".into()])
-            .unwrap();
+        d.replace_block_lines(
+            id,
+            vec![
+                "Show".into(),
+                "\tRarity Unique".into(),
+                "\tSockets 3".into(),
+            ],
+        )
+        .unwrap();
         assert_eq!(s(&d), "Hide\nShow\n\tRarity Unique\n\tSockets 3");
     }
 
@@ -912,7 +959,11 @@ mod tests {
         d.replace_block_lines(id, vec!["#Show".into(), "#\tRarity =< Rare".into()])
             .unwrap();
         assert!(!d.block(id).unwrap().can_enable());
-        assert!(!d.diagnostics().iter().any(|x| x.severity == Severity::Error));
+        assert!(
+            !d.diagnostics()
+                .iter()
+                .any(|x| x.severity == Severity::Error)
+        );
     }
 
     #[test]
@@ -952,8 +1003,14 @@ mod tests {
         d.set_meta(id, "name", "  padded \t").unwrap();
         assert_eq!(s(&d), "# a\n#ff:name padded\nShow\n");
         assert_eq!(d.meta_get(id, "name"), Some("padded"));
-        assert!(matches!(d.set_meta(id, "name", ""), Err(EditError::InvalidMeta(_))));
-        assert!(matches!(d.set_meta(id, "name", " \t "), Err(EditError::InvalidMeta(_))));
+        assert!(matches!(
+            d.set_meta(id, "name", ""),
+            Err(EditError::InvalidMeta(_))
+        ));
+        assert!(matches!(
+            d.set_meta(id, "name", " \t "),
+            Err(EditError::InvalidMeta(_))
+        ));
         assert_eq!(s(&d), "# a\n#ff:name padded\nShow\n");
         d.set_meta(id, "style", "S").unwrap();
         d.remove_meta(id, "name").unwrap();
@@ -1007,20 +1064,32 @@ Hide
 ");
         let all = ids(&d);
         d.remove_meta(all[1], "name").unwrap();
-        assert_eq!(s(&d), "Show
+        assert_eq!(
+            s(&d),
+            "Show
 	Rarity Rare
 # about Hide
 Hide
-");
+"
+        );
     }
 
     #[test]
     fn meta_invalid() {
         let mut d = p("Show\n");
         let id = ids(&d)[0];
-        assert!(matches!(d.set_meta(id, "bad key", "x"), Err(EditError::InvalidMeta(_))));
-        assert!(matches!(d.set_meta(id, "", "x"), Err(EditError::InvalidMeta(_))));
-        assert!(matches!(d.set_meta(id, "k", "a\nb"), Err(EditError::InvalidMeta(_))));
+        assert!(matches!(
+            d.set_meta(id, "bad key", "x"),
+            Err(EditError::InvalidMeta(_))
+        ));
+        assert!(matches!(
+            d.set_meta(id, "", "x"),
+            Err(EditError::InvalidMeta(_))
+        ));
+        assert!(matches!(
+            d.set_meta(id, "k", "a\nb"),
+            Err(EditError::InvalidMeta(_))
+        ));
         assert_eq!(s(&d), "Show\n");
     }
 
@@ -1053,11 +1122,17 @@ Hide
             Err(EditError::UnknownBlock) | Ok(())
         ));
         let bogus = BlockId(9999);
-        assert!(matches!(other.set_enabled(bogus, true), Err(EditError::UnknownBlock)));
+        assert!(matches!(
+            other.set_enabled(bogus, true),
+            Err(EditError::UnknownBlock)
+        ));
         assert!(matches!(
             other.replace_block_lines(bogus, vec!["Show".into()]),
             Err(EditError::UnknownBlock)
         ));
-        assert!(matches!(other.set_meta(bogus, "a", "b"), Err(EditError::UnknownBlock)));
+        assert!(matches!(
+            other.set_meta(bogus, "a", "b"),
+            Err(EditError::UnknownBlock)
+        ));
     }
 }

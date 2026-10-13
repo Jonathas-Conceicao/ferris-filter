@@ -74,8 +74,7 @@ impl TryFrom<Vec<TierEntry>> for ValidatedTiers {
         // NOTE: Cross-unit comparison is intentionally skipped (Pitfall 6 — units are
         // incommensurable in Phase 1; normalization is Phase 3's job).
         for unit in [Unit::Chaos, Unit::Div, Unit::Exalt] {
-            let group: Vec<&TierEntry> =
-                entries.iter().filter(|e| e.unit == unit).collect();
+            let group: Vec<&TierEntry> = entries.iter().filter(|e| e.unit == unit).collect();
             for pair in group.windows(2) {
                 if pair[1].min <= pair[0].min {
                     return Err(TierValidationError::NotAscending {
@@ -93,7 +92,6 @@ impl TryFrom<Vec<TierEntry>> for ValidatedTiers {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,13 +102,41 @@ mod tests {
 
     fn all_seven() -> Vec<TierEntry> {
         vec![
-            TierEntry { tier: "A".into(), min: 1.0,  unit: Unit::Div   },
-            TierEntry { tier: "S".into(), min: 5.0,  unit: Unit::Div   },
-            TierEntry { tier: "F".into(), min: 0.1,  unit: Unit::Chaos },
-            TierEntry { tier: "E".into(), min: 0.5,  unit: Unit::Chaos },
-            TierEntry { tier: "D".into(), min: 2.0,  unit: Unit::Chaos },
-            TierEntry { tier: "C".into(), min: 10.0, unit: Unit::Chaos },
-            TierEntry { tier: "B".into(), min: 30.0, unit: Unit::Chaos },
+            TierEntry {
+                tier: "A".into(),
+                min: 1.0,
+                unit: Unit::Div,
+            },
+            TierEntry {
+                tier: "S".into(),
+                min: 5.0,
+                unit: Unit::Div,
+            },
+            TierEntry {
+                tier: "F".into(),
+                min: 0.1,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "E".into(),
+                min: 0.5,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "D".into(),
+                min: 2.0,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "C".into(),
+                min: 10.0,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "B".into(),
+                min: 30.0,
+                unit: Unit::Chaos,
+            },
         ]
     }
 
@@ -129,10 +155,8 @@ mod tests {
     #[test]
     fn load_real_tiers_fallback_json_parses_and_validates() {
         let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-fallback.json"));
-        let entries: Vec<TierEntry> =
-            serde_json::from_str(src).expect("parse tiers-fallback.json");
-        let validated =
-            ValidatedTiers::try_from(entries).expect("validate tiers-fallback.json");
+        let entries: Vec<TierEntry> = serde_json::from_str(src).expect("parse tiers-fallback.json");
+        let validated = ValidatedTiers::try_from(entries).expect("validate tiers-fallback.json");
         assert_eq!(validated.0.len(), 7);
         assert!(
             validated.0.iter().all(|e| e.unit == Unit::Exalt),
@@ -162,10 +186,7 @@ mod tests {
 
     #[test]
     fn missing_tier_b_returns_err() {
-        let entries: Vec<TierEntry> = all_seven()
-            .into_iter()
-            .filter(|e| e.tier != "B")
-            .collect();
+        let entries: Vec<TierEntry> = all_seven().into_iter().filter(|e| e.tier != "B").collect();
         match ValidatedTiers::try_from(entries) {
             Err(TierValidationError::MissingTiers(missing)) => {
                 assert!(missing.contains(&"B".to_string()));
@@ -180,8 +201,12 @@ mod tests {
         let mut entries = all_seven();
         // Replace E and D entries with non-ascending values
         for e in &mut entries {
-            if e.tier == "E" { e.min = 0.1; }
-            if e.tier == "D" { e.min = 0.05; }
+            if e.tier == "E" {
+                e.min = 0.1;
+            }
+            if e.tier == "D" {
+                e.min = 0.05;
+            }
         }
         let result = ValidatedTiers::try_from(entries);
         assert!(
@@ -195,13 +220,41 @@ mod tests {
         // A cross-unit transition (5.0 chaos → 1.0 div) must NOT trigger NotAscending
         // because units are incommensurable in Phase 1.
         let entries = vec![
-            TierEntry { tier: "F".into(), min: 0.1, unit: Unit::Chaos },
-            TierEntry { tier: "E".into(), min: 0.5, unit: Unit::Chaos },
-            TierEntry { tier: "D".into(), min: 2.0, unit: Unit::Chaos },
-            TierEntry { tier: "C".into(), min: 5.0, unit: Unit::Chaos },
-            TierEntry { tier: "B".into(), min: 1.0, unit: Unit::Div   },
-            TierEntry { tier: "A".into(), min: 2.0, unit: Unit::Div   },
-            TierEntry { tier: "S".into(), min: 5.0, unit: Unit::Div   },
+            TierEntry {
+                tier: "F".into(),
+                min: 0.1,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "E".into(),
+                min: 0.5,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "D".into(),
+                min: 2.0,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "C".into(),
+                min: 5.0,
+                unit: Unit::Chaos,
+            },
+            TierEntry {
+                tier: "B".into(),
+                min: 1.0,
+                unit: Unit::Div,
+            },
+            TierEntry {
+                tier: "A".into(),
+                min: 2.0,
+                unit: Unit::Div,
+            },
+            TierEntry {
+                tier: "S".into(),
+                min: 5.0,
+                unit: Unit::Div,
+            },
         ];
         assert!(ValidatedTiers::try_from(entries).is_ok());
     }

@@ -113,10 +113,9 @@ impl Mapping {
 
 /// Load mapping.json from the given path.
 pub fn load_mapping(path: &str) -> miette::Result<Mapping> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| miette::miette!("Cannot read {path}: {e}"))?;
-    serde_json::from_str(&content)
-        .map_err(|e| miette::miette!("Cannot parse {path}: {e}"))
+    let content =
+        std::fs::read_to_string(path).map_err(|e| miette::miette!("Cannot read {path}: {e}"))?;
+    serde_json::from_str(&content).map_err(|e| miette::miette!("Cannot parse {path}: {e}"))
 }
 
 /// Normalize a RePoE PascalCase `item_class` value to the filter's `Class==` spaced form.
@@ -194,7 +193,10 @@ mod tests {
 
     #[test]
     fn normalize_stackable_currency() {
-        assert_eq!(normalize_item_class("StackableCurrency"), "Stackable Currency");
+        assert_eq!(
+            normalize_item_class("StackableCurrency"),
+            "Stackable Currency"
+        );
     }
 
     #[test]
@@ -233,7 +235,10 @@ mod tests {
     fn mapping_json_parses() {
         let m: Mapping = serde_json::from_str(MAPPING_JSON)
             .expect("mapping.json should parse into Mapping struct");
-        assert!(!m.overview_types.is_empty(), "overviewTypes must be non-empty");
+        assert!(
+            !m.overview_types.is_empty(),
+            "overviewTypes must be non-empty"
+        );
         assert_eq!(m.version, 2);
     }
 
@@ -243,7 +248,10 @@ mod tests {
         let entry = m.lookup("Currency").expect("Currency type must be present");
         assert_eq!(entry.category, "Currency");
         assert_eq!(entry.class.as_deref(), Some("Stackable Currency"));
-        assert!(entry.base_type_is_name, "Currency should have baseTypeIsName=true");
+        assert!(
+            entry.base_type_is_name,
+            "Currency should have baseTypeIsName=true"
+        );
     }
 
     #[test]
@@ -253,8 +261,13 @@ mod tests {
         // NOTE: "UniqueMaps" is intentionally absent — it is a PoE1-only concept (PoE2 uses
         // Waystones, not maps) and the poe.ninja PoE2 endpoint returns HTTP 404 for it.
         let unique_types = [
-            "UniqueWeapons", "UniqueArmours", "UniqueAccessories", "UniqueFlasks",
-            "UniqueCharms", "UniqueJewels", "UniqueSanctumRelics",
+            "UniqueWeapons",
+            "UniqueArmours",
+            "UniqueAccessories",
+            "UniqueFlasks",
+            "UniqueCharms",
+            "UniqueJewels",
+            "UniqueSanctumRelics",
         ];
         for t in unique_types {
             assert!(
@@ -262,11 +275,20 @@ mod tests {
                 "mapping.json itemTypes must contain Unique type: {t}"
             );
             assert!(
-                m.item_types.iter().find(|it| it.r#type == t).unwrap().category == "Uniques",
+                m.item_types
+                    .iter()
+                    .find(|it| it.r#type == t)
+                    .unwrap()
+                    .category
+                    == "Uniques",
                 "{t} must map to category 'Uniques'"
             );
         }
-        assert_eq!(m.item_types.len(), 7, "expected exactly 7 unique item types");
+        assert_eq!(
+            m.item_types.len(),
+            7,
+            "expected exactly 7 unique item types"
+        );
         assert!(
             !m.item_types.iter().any(|it| it.r#type == "UniqueMaps"),
             "UniqueMaps is PoE1-only (PoE2 has no unique maps) — must not be queried"
@@ -294,8 +316,18 @@ mod tests {
         // regressing to the singular spellings that silently fetch nothing.
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
         let types: Vec<&str> = m.overview_types.iter().map(|t| t.r#type.as_str()).collect();
-        for t in ["Essences", "Runes", "SoulCores", "Fragments", "Idols", "Verisium"] {
-            assert!(types.contains(&t), "overviewTypes must use plural type '{t}'");
+        for t in [
+            "Essences",
+            "Runes",
+            "SoulCores",
+            "Fragments",
+            "Idols",
+            "Verisium",
+        ] {
+            assert!(
+                types.contains(&t),
+                "overviewTypes must use plural type '{t}'"
+            );
         }
         for bad in ["Essence", "Rune", "SoulCore", "Fragment"] {
             assert!(
@@ -306,7 +338,9 @@ mod tests {
         // Guard: gemFilters must contain both gem categories with correct plural spellings.
         // Silent-empty-fetch pitfall: wrong type= value returns empty from poe.ninja (D-CTX-5).
         assert!(
-            m.gem_filters.iter().any(|g| g.r#type == "LineageSupportGems"),
+            m.gem_filters
+                .iter()
+                .any(|g| g.r#type == "LineageSupportGems"),
             "gemFilters must contain LineageSupportGems (silent-empty-fetch guard)"
         );
         assert!(
@@ -337,7 +371,11 @@ mod tests {
         // `seed_prices` migration binary that was its only reader); it is kept as a literal
         // because it is an assertion about mapping.json, not about that file.
         let m: Mapping = serde_json::from_str(MAPPING_JSON).unwrap();
-        let categories: Vec<&str> = m.overview_types.iter().map(|t| t.category.as_str()).collect();
+        let categories: Vec<&str> = m
+            .overview_types
+            .iter()
+            .map(|t| t.category.as_str())
+            .collect();
 
         // Categories that must appear in mapping:
         let required_categories = [

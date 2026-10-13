@@ -265,8 +265,12 @@ mod tests {
     /// fully valid `styles`/`build`/`meta` section instead of hand-rolling a minimal one, and
     /// exercises the same deserialization path production code does.
     fn base_config() -> Config {
-        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
-        let mut config: Config = serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
+        let json = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v04-dynamic-base.json"
+        ));
+        let mut config: Config =
+            serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
         config.styles = crate::models::config::StyleSet::committed_for_tests();
         config
     }
@@ -300,7 +304,11 @@ mod tests {
         let config = with_rules(vec![rule("S", None), disabled_rule("A"), rule("B", None)]);
         let rows = rule_rows(&config);
 
-        assert_eq!(rows.len(), 3, "the disabled rule must still be listed, not omitted");
+        assert_eq!(
+            rows.len(),
+            3,
+            "the disabled rule must still be listed, not omitted"
+        );
         assert_eq!(rows[0].ordinal, 0);
         assert_eq!(rows[1].ordinal, 1);
         assert_eq!(rows[2].ordinal, 2);
@@ -312,8 +320,14 @@ mod tests {
         let rows = rule_rows(&config);
 
         assert!(rows[0].enabled, "enabled: None must display as enabled");
-        assert!(!rows[1].enabled, "enabled: Some(false) must display as disabled");
-        assert_eq!(rows[1].ordinal, 1, "a disabled rule keeps its ordinal position");
+        assert!(
+            !rows[1].enabled,
+            "enabled: Some(false) must display as disabled"
+        );
+        assert_eq!(
+            rows[1].ordinal, 1,
+            "a disabled rule keeps its ordinal position"
+        );
     }
 
     #[test]
@@ -424,13 +438,39 @@ mod tests {
         let when = When {
             class: Some(vec!["Bows".to_string()]),
             base_type: Some(vec!["Heavy Belt".to_string()]),
-            rarity: Some(RarityComparator { op: RarityOp::Eq, rarity: Rarity::Normal }),
-            area_level: Some(AreaLevelRange { min: Some(10), max: None }),
-            base_armour: Some(NumericCondition { eq: None, min: Some(1), max: None }),
-            base_evasion: Some(NumericCondition { eq: Some(0), min: None, max: None }),
-            base_energy_shield: Some(NumericCondition { eq: None, min: Some(1), max: None }),
-            sockets: Some(NumericCondition { eq: None, min: Some(2), max: None }),
-            quality: Some(NumericCondition { eq: None, min: Some(5), max: None }),
+            rarity: Some(RarityComparator {
+                op: RarityOp::Eq,
+                rarity: Rarity::Normal,
+            }),
+            area_level: Some(AreaLevelRange {
+                min: Some(10),
+                max: None,
+            }),
+            base_armour: Some(NumericCondition {
+                eq: None,
+                min: Some(1),
+                max: None,
+            }),
+            base_evasion: Some(NumericCondition {
+                eq: Some(0),
+                min: None,
+                max: None,
+            }),
+            base_energy_shield: Some(NumericCondition {
+                eq: None,
+                min: Some(1),
+                max: None,
+            }),
+            sockets: Some(NumericCondition {
+                eq: None,
+                min: Some(2),
+                max: None,
+            }),
+            quality: Some(NumericCondition {
+                eq: None,
+                min: Some(5),
+                max: None,
+            }),
             corrupted: Some(true),
             unidentified_tier: Some(UnidentifiedTier { min: 4 }),
         };
@@ -480,7 +520,10 @@ mod tests {
     fn a_rule_with_no_classes_leads_with_its_base_types() {
         let when = When {
             base_type: Some(vec!["Heavy Belt".to_string(), "Utility Belt".to_string()]),
-            rarity: Some(RarityComparator { op: RarityOp::Eq, rarity: Rarity::Normal }),
+            rarity: Some(RarityComparator {
+                op: RarityOp::Eq,
+                rarity: Rarity::Normal,
+            }),
             ..Default::default()
         };
         let summary = rule_rows(&with_rules(vec![rule("unchanged", Some(when))]))[0]
@@ -578,7 +621,10 @@ mod tests {
             summary.starts_with("Bows, Crossbows, Foci, One Hand Maces +2 more"),
             "got: {summary}"
         );
-        assert!(!summary.contains("Shields"), "a truncated list must not spell out the rest");
+        assert!(
+            !summary.contains("Shields"),
+            "a truncated list must not spell out the rest"
+        );
     }
 
     #[test]
@@ -635,7 +681,10 @@ mod tests {
         let summary = rule_rows(&config)[0].summary.clone();
 
         assert!(summary.contains("AreaLevel \u{2265} 10"), "got: {summary}");
-        assert!(summary.contains("Unidentified Tier \u{2265} 4"), "got: {summary}");
+        assert!(
+            summary.contains("Unidentified Tier \u{2265} 4"),
+            "got: {summary}"
+        );
     }
 
     #[test]
@@ -643,10 +692,16 @@ mod tests {
         let config = base_config();
         let rows = rule_rows(&config);
 
-        assert!(!rows.is_empty(), "dynamic_base.json must have at least one rule");
+        assert!(
+            !rows.is_empty(),
+            "dynamic_base.json must have at least one rule"
+        );
         for (i, row) in rows.iter().enumerate() {
             assert_eq!(row.ordinal, i, "ordinals must be exactly 0..len-1");
-            assert!(!row.style.is_empty(), "every row must have a non-empty style");
+            assert!(
+                !row.style.is_empty(),
+                "every row must have a non-empty style"
+            );
         }
     }
 }

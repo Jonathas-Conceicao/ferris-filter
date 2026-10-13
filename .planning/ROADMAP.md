@@ -66,7 +66,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged (completed 2026-10-13)
 - [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (executed 2026-10-13; awaiting human UAT)
 - [x] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks (completed 2026-10-13)
-- [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles
+- [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (executed 2026-10-13; awaiting human UAT)
 - [ ] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 
@@ -248,7 +248,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 20-09-PLAN.md — styled/unknown flags and flag budget, capped outcome area and status order, CLAUDE.md/CHANGELOG/REQUIREMENTS, manual verification script
+- [x] 20-09-PLAN.md — styled/unknown flags and flag budget, capped outcome area and status order, CLAUDE.md/CHANGELOG/REQUIREMENTS, manual verification script
 
 **UI hint**: yes
 
@@ -289,7 +289,7 @@ Plans:
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
-| 20. Full-Grammar Block Editing | 8/9 | In Progress|  |
+| 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 

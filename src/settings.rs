@@ -54,7 +54,22 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
     };
     let mut settings: Settings = match serde_json::from_str(&text) {
         Ok(s) => s,
-        Err(e) => return (Settings::default(), warn(e.to_string())),
+        Err(e) => {
+            // A wrongly typed `filter` must not discard the other keys: salvage them.
+            return match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
+                Ok(mut extra) => {
+                    extra.remove("filter");
+                    (
+                        Settings {
+                            filter: None,
+                            extra,
+                        },
+                        warn(e.to_string()),
+                    )
+                }
+                Err(_) => (Settings::default(), warn(e.to_string())),
+            };
+        }
     };
     if let Some(name) = settings.filter.clone()
         && let Err(problem) = valid_filter_name(&name)
@@ -191,6 +206,16 @@ mod tests {
         assert_eq!(w, None);
         assert_eq!(s.filter_name(), "dynamic.filter");
         assert!(!path(t.path()).exists());
+    }
+
+    #[test]
+    fn non_string_filter_keeps_other_keys() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"filter": 5, "future": {"a": 1}}"#).unwrap();
+        let (s, w) = load(t.path());
+        assert!(w.is_some());
+        assert_eq!(s.filter, None);
+        assert_eq!(s.extra["future"]["a"], 1);
     }
 
     #[test]

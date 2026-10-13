@@ -858,7 +858,11 @@ impl OverlayApp {
         let settings_warning = match &self.root {
             Ok(root) => {
                 let (settings, warning) = settings::load(root);
-                self.settings = settings;
+                // A momentarily unreadable file must not reset the session's chosen filter (nor
+                // drop unknown keys held in memory): keep what we have and only warn.
+                if warning.is_none() || old_root.as_ref() != Ok(root) {
+                    self.settings = settings;
+                }
                 warning
             }
             Err(_) => {

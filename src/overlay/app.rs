@@ -7,9 +7,10 @@
 //! filter-as-store footer (Phase 18).
 //!
 //! **Filter-as-store (Phase 18).** The game-folder `dynamic.filter` is the store. On launch the
-//! overlay resolves the app root once ([`crate::paths::app_root`], never the working directory, so
-//! a double-click launch works) and loads the filter once ([`dynamic::LoadedFilter::load`], which
-//! never writes). APPLY refreshes only the economy section through [`dynamic::economy_body`] and
+//! overlay resolves the app root ([`crate::paths::app_root`], never the working directory, so
+//! a double-click launch works) and loads the filter ([`dynamic::LoadedFilter::load`], which
+//! never writes); RELOAD repeats both, and is offered whenever the root, the load, or the
+//! economy markers are broken, so every such state can be recovered without a restart. APPLY refreshes only the economy section through [`dynamic::economy_body`] and
 //! [`dynamic::apply_file`] -- the same functions the CLI's `apply` uses. ADD ECONOMY SECTION is a
 //! separate, explicit button; APPLY never creates a section. When the guarded write refuses
 //! because the file changed on disk, the stripe offers RELOAD, which re-reads the file and
@@ -220,8 +221,11 @@ impl OverlayApp {
         }
     }
 
-    /// RELOAD: re-reads the filter and discards in-memory state (D-08).
+    /// RELOAD: re-resolves the app root, re-reads the filter and discards in-memory state (D-08).
+    /// Re-resolving the root here is what lets a stripe launched before the FerrisFilter folder
+    /// was in place recover without a restart.
     fn reload(&mut self) {
+        self.root = crate::paths::app_root().map_err(|e| e.to_string());
         self.filter = Self::load_filter();
         self.needs_reload = false;
         self.apply_message = None;

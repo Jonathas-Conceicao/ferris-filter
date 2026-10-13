@@ -113,10 +113,16 @@ pub struct FooterActions {
 /// The footer's button rules. A missing app root disables everything that touches files; after a
 /// changed-on-disk refusal only RELOAD (and SYNC) remain; ADD ECONOMY SECTION is the only way a
 /// section is ever created -- APPLY never does it implicitly.
+///
+/// RELOAD is also offered whenever the overlay is stuck in a state only a re-read can clear: no
+/// app root, damaged markers, or a filter that failed to load. Without it, the only recovery from
+/// any of those would be quitting the process from the tray and relaunching.
 pub fn footer_actions(root_ok: bool, state: FilterState, needs_reload: bool) -> FooterActions {
     FooterActions {
         sync: root_ok,
-        reload: needs_reload,
+        reload: needs_reload
+            || !root_ok
+            || matches!(state, FilterState::Damaged | FilterState::LoadFailed),
         apply: root_ok && state == FilterState::HasSection && !needs_reload,
         add_economy: root_ok
             && matches!(state, FilterState::Absent | FilterState::NoSection)
@@ -236,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn footer_without_a_root_disables_every_file_action() {
+    fn footer_without_a_root_disables_every_file_action_but_offers_reload() {
         for st in [
             FilterState::Absent,
             FilterState::NoSection,
@@ -244,7 +250,13 @@ mod tests {
             FilterState::Damaged,
             FilterState::LoadFailed,
         ] {
-            assert_eq!(footer_actions(false, st, false), FooterActions::default());
+            assert_eq!(
+                footer_actions(false, st, false),
+                FooterActions {
+                    reload: true,
+                    ..FooterActions::default()
+                }
+            );
         }
     }
 
@@ -263,10 +275,17 @@ mod tests {
     }
 
     #[test]
-    fn footer_damaged_and_load_failed_offer_neither() {
+    fn footer_damaged_and_load_failed_offer_reload_only() {
         for st in [FilterState::Damaged, FilterState::LoadFailed] {
             let a = footer_actions(true, st, false);
-            assert!(!a.apply && !a.add_economy && a.sync);
+            assert!(!a.apply && !a.add_economy && a.sync && a.reload);
+        }
+    }
+
+    #[test]
+    fn footer_clean_states_hide_reload() {
+        for st in [FilterState::Absent, FilterState::NoSection, FilterState::HasSection] {
+            assert!(!footer_actions(true, st, false).reload, "{st:?}");
         }
     }
 

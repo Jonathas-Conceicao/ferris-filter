@@ -106,7 +106,7 @@ pub fn row_height(ui: &egui::Ui) -> f32 {
 }
 
 struct Flag {
-    text: &'static str,
+    text: String,
     color: Color32,
     tip: String,
 }
@@ -119,48 +119,90 @@ fn diag_tip(diags: &[FilterDiagnostic]) -> String {
         .join("\n")
 }
 
+/// Characters of a style name shown in the collapsed-row flag.
+const STYLE_FLAG_CHARS: usize = 12;
+/// Width reserved for the `+N` overflow badge.
+const BADGE_W: f32 = 24.0;
+/// Total width flags may take in a collapsed row.
+const FLAG_BUDGET: f32 = 120.0;
+/// The label always keeps at least this much.
+const LABEL_MIN_W: f32 = 140.0;
+
+/// How many leading flags fit in `budget` (with a `+N` badge when some do not), and how many
+/// are hidden.
+pub fn fit_flags(widths: &[f32], budget: f32) -> (usize, usize) {
+    let total: f32 = widths.iter().sum();
+    if total <= budget {
+        return (widths.len(), 0);
+    }
+    let mut shown = 0;
+    let mut used = BADGE_W;
+    for w in widths {
+        if used + w > budget {
+            break;
+        }
+        used += w;
+        shown += 1;
+    }
+    (shown, widths.len() - shown)
+}
+
 fn flags_for(row: &RuleRow) -> Vec<Flag> {
     let mut out = Vec::new();
     if !row.enabled && row.cannot_enable {
         out.push(Flag {
-            text: "can't enable",
-            color: theme::WARM_ACCENT,
+            text: "can't enable".to_string(),
+            color: theme::WARM_ACCENT_TEXT,
             tip: CANNOT_ENABLE_LONG.to_string(),
         });
         return out;
     }
     if row.has_continue {
         out.push(Flag {
-            text: "Continue",
+            text: "Continue".to_string(),
             color: theme::LABEL_TAN,
             tip: "Matching goes on to the rules below".to_string(),
         });
     }
-    if let StyleState::Known(tag) = &row.style {
-        out.push(Flag {
-            text: "style wins",
-            color: theme::LABEL_TAN,
-            tip: format!("Style \"{tag}\" sets this rule's Show/Hide on Apply"),
-        });
+    match &row.style {
+        StyleState::Known(tag) => {
+            let short: String = if tag.chars().count() > STYLE_FLAG_CHARS {
+                let head: String = tag.chars().take(STYLE_FLAG_CHARS).collect();
+                format!("{head}…")
+            } else {
+                tag.clone()
+            };
+            out.push(Flag {
+                text: format!("styled: {short}"),
+                color: theme::LABEL_TAN,
+                tip: format!("Style \"{tag}\" sets this rule's actions on Apply"),
+            });
+        }
+        StyleState::Unknown(_) => out.push(Flag {
+            text: "unknown style".to_string(),
+            color: theme::WARM_ACCENT_TEXT,
+            tip: "No style with this name exists, so this rule keeps its current actions and nothing is rewritten on Apply.".to_string(),
+        }),
+        StyleState::None | StyleState::Unchecked(_) => {}
     }
     if !row.errors.is_empty() {
         out.push(Flag {
-            text: "grammar error",
-            color: theme::WARM_ACCENT,
+            text: "grammar error".to_string(),
+            color: theme::WARM_ACCENT_TEXT,
             tip: diag_tip(&row.errors),
         });
     }
     if !row.warnings.is_empty() {
         out.push(Flag {
-            text: "grammar warning",
+            text: "grammar warning".to_string(),
             color: theme::LABEL_TAN,
             tip: diag_tip(&row.warnings),
         });
     }
     if row.moved_across_continue {
         out.push(Flag {
-            text: "moved across Continue",
-            color: theme::WARM_ACCENT,
+            text: "moved across Continue".to_string(),
+            color: theme::WARM_ACCENT_TEXT,
             tip: "This move changes which rules still apply after a Continue. Check the order."
                 .to_string(),
         });
@@ -310,7 +352,39 @@ fn draw_row(
         }
     }
     right.spacing_mut().item_spacing.x = 4.0;
-    for flag in flags_for(row).into_iter().rev() {
+    let flags = flags_for(row);
+    let font = egui::FontId::proportional(theme::ROW_SUMMARY_SIZE);
+    let widths: Vec<f32> = flags
+        .iter()
+        .map(|f| {
+            ui.fonts_mut(|fo| {
+                fo.layout_no_wrap(f.text.clone(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            }) + 4.0
+        })
+        .collect();
+    let arrows_w = right.min_rect().width();
+    let budget = FLAG_BUDGET.min((inner.width() - arrows_w - 24.0 - 8.0 - LABEL_MIN_W).max(0.0));
+    let (shown, hidden) = fit_flags(&widths, budget);
+    if hidden > 0 {
+        let tip = flags
+            .iter()
+            .map(|f| format!("{}: {}", f.text, f.tip))
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        right
+            .add(egui::Label::new(
+                RichText::new(format!("+{hidden}"))
+                    .size(theme::ROW_SUMMARY_SIZE)
+                    .color(theme::LABEL_TAN),
+            ))
+            .on_hover_text(tip);
+    }
+    for flag in flags.into_iter().take(shown).rev() {
         right
             .add(egui::Label::new(
                 RichText::new(flag.text)
@@ -340,7 +414,7 @@ fn draw_row(
     } else {
         toggle.on_hover_text(if row.enabled { "Enabled" } else { "Disabled" });
     }
-    left.add_space(6.0);
+    left.add_space(8.0);
     let color = if is_expanded {
         theme::SECTION_CREAM
     } else if row.enabled {
@@ -458,13 +532,15 @@ fn expanded_body(
     body::conditions_group(ui, &bctx, list, actions);
     if row.cannot_enable {
         ui.add(
-            egui::Label::new(RichText::new(CANNOT_ENABLE_LONG).color(theme::WARM_ACCENT)).wrap(),
+            egui::Label::new(RichText::new(CANNOT_ENABLE_LONG).color(theme::WARM_ACCENT_TEXT))
+                .wrap(),
         );
     }
     for d in &row.errors {
         ui.add(
             egui::Label::new(
-                RichText::new(format!("Line {}: {}", d.line, d.message)).color(theme::WARM_ACCENT),
+                RichText::new(format!("Line {}: {}", d.line, d.message))
+                    .color(theme::WARM_ACCENT_TEXT),
             )
             .wrap(),
         );
@@ -480,7 +556,7 @@ fn expanded_body(
         if list.confirm_delete == Some(id) {
             ui.label(RichText::new("Delete this rule?").color(theme::LABEL_TAN));
             if ui
-                .small_button(RichText::new("Yes, delete").color(theme::WARM_ACCENT))
+                .small_button(RichText::new("Yes, delete").color(theme::WARM_ACCENT_TEXT))
                 .clicked()
             {
                 actions.push(RowAction::Delete(id));
@@ -561,7 +637,7 @@ pub fn economy_footer(
                                     .color(theme::LABEL_TAN),
                             );
                             if ui
-                                .small_button(RichText::new("Yes, remove").color(theme::WARM_ACCENT))
+                                .small_button(RichText::new("Yes, remove").color(theme::WARM_ACCENT_TEXT))
                                 .clicked()
                             {
                                 result = Some(EconomyFooterAction::Remove);
@@ -607,7 +683,7 @@ pub fn economy_footer(
                     });
                 }
                 EconomyView::Damaged(msg) => {
-                    ui.label(RichText::new(&text).color(theme::WARM_ACCENT))
+                    ui.label(RichText::new(&text).color(theme::WARM_ACCENT_TEXT))
                         .on_hover_text(msg);
                 }
             }
@@ -673,6 +749,70 @@ mod tests {
         })
         .drop_without_applying_deltas();
         out
+    }
+
+    fn styled_filter(tag: &str) -> WorkingFilter {
+        let src = format!(
+            "#ff:style {tag}
+Show # x
+    Class \"Rings\"
+    Continue
+
+Show
+    Class \"Belts\"
+
+"
+        );
+        let mut wf = WorkingFilter::from_text(&src);
+        wf.set_styles(Ok(crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles.json"
+        ))
+        .unwrap()));
+        wf
+    }
+
+    #[test]
+    fn style_flags_known_truncated_unknown_and_none() {
+        let wf = styled_filter("S");
+        let f = flags_for(&wf.rows()[0]);
+        assert!(f.iter().any(|f| f.text == "styled: S"));
+        let wf = styled_filter("Nope");
+        let f = flags_for(&wf.rows()[0]);
+        let u = f.iter().find(|f| f.text == "unknown style").unwrap();
+        assert_eq!(u.color, theme::WARM_ACCENT_TEXT);
+        assert!(u.tip.starts_with("No style with this name exists"));
+        assert!(
+            !flags_for(&wf.rows()[1])
+                .iter()
+                .any(|f| f.text.contains("style"))
+        );
+        let mut row = wf.rows()[0].clone();
+        row.style = StyleState::Known("Exalted Showcase".into());
+        let f = flags_for(&row);
+        let k = f.iter().find(|f| f.text.starts_with("styled:")).unwrap();
+        assert_eq!(k.text, "styled: Exalted Show…");
+        assert!(k.tip.contains("Exalted Showcase"));
+        row.style = StyleState::Unchecked("S".into());
+        assert!(!flags_for(&row).iter().any(|f| f.text.contains("style")));
+    }
+
+    #[test]
+    fn fit_flags_collapses_overflow_into_a_badge() {
+        assert_eq!(fit_flags(&[50.0, 50.0, 50.0], 120.0), (1, 2));
+        assert_eq!(fit_flags(&[40.0, 40.0], 120.0), (2, 0));
+    }
+
+    #[test]
+    fn crowded_row_renders_with_overflow_badge() {
+        let mut wf = styled_filter("Nope");
+        let _ = &mut wf;
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        for _ in 0..2 {
+            let (frame, _) = run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+            assert!(frame.drawn >= 1);
+        }
     }
 
     #[test]

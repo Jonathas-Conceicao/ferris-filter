@@ -1,12 +1,14 @@
 ---
 phase: 18-filter-as-store-economy-section
-reviewed: 2026-10-12T00:00:00Z
+reviewed: 2026-10-12T23:00:00Z
 depth: standard
-files_reviewed: 25
+iteration: 3
+files_reviewed: 19
 files_reviewed_list:
   - src/paths.rs
   - src/safe_write.rs
   - src/filter/section.rs
+  - src/filter/parse.rs
   - src/filter/mod.rs
   - src/dynamic.rs
   - src/compile.rs
@@ -14,343 +16,147 @@ files_reviewed_list:
   - src/cli.rs
   - src/run.rs
   - src/lib.rs
-  - src/loader.rs
-  - src/models/config.rs
   - src/overlay/app.rs
   - src/overlay/apply.rs
   - src/overlay/mod.rs
-  - src/overlay/edit.rs
-  - src/overlay/rule_editor.rs
-  - src/overlay/view_model.rs
   - tests/dynamic_filter.rs
   - tests/cli_errors.rs
-  - tests/filter_roundtrip.rs
   - .gitignore
-  - .gitattributes
   - CHANGELOG.md
   - CLAUDE.md
 findings:
-  critical: 1
-  warning: 8
+  critical: 0
+  warning: 0
   info: 8
-  total: 17
-status: issues_found
+  total: 8
+status: clean
 ---
 
-# Phase 18: Code Review Report
+# Phase 18: Code Review Report (iteration 3)
 
-**Reviewed:** 2026-10-12
-**Depth:** standard (diff `c9889a5..HEAD`)
-**Files Reviewed:** 25
-**Status:** issues_found
+**Reviewed:** 2026-10-12T23:00:00Z
+**Depth:** standard (phase diff `c9889a5..HEAD`; fix commits `7ca5008`, `84272de`, `798ece6` checked in detail)
+**Files Reviewed:** 19
+**Status:** clean (no Critical or Warning findings; Info items remain)
 
 ## Summary
 
-Phase 18 makes the game-folder `.filter` the store. It adds a marker-fenced economy section
-(`filter::section`), a guarded, backed-up, atomic writer (`safe_write`), an app-root resolver
-(`paths`), a new CLI `apply`, and an overlay footer built on them.
+This re-review follows the iteration-2 fixes: WR-01, plus IN-01 and IN-04, which the orchestrator
+added to the scope. I checked each fix against its finding and looked for regressions. The three
+commits touch only `CLAUDE.md` and the `app.rs` test module, so they leave little room for a
+regression.
 
-The core text operations hold up. `refresh` touches only the lines between the markers, keeps
-the BOM, follows the begin marker's EOL, and is idempotent. Damaged markers are a hard stop, and
-v0.4 migration happens in memory only. The full suite passes: 511 unit tests plus all integration
-binaries (run with `CARGO_TARGET_DIR` set to the temp target).
+`cargo test` passes: 515 lib unit tests plus every integration binary, run with
+`CARGO_TARGET_DIR` set to the temp target. `cargo clippy --all-targets` reports no new warnings in
+the phase files. The `unused import` warning in `app.rs` is gone. The other warnings are style lints
+(`result_large_err` in `compile.rs`/`dynamic.rs`, `collapsible_if` in `paths.rs`, and two lints in
+`emitter.rs`). None of them affects behaviour.
 
-No test can reach the real game folder. Every spawn of `apply` sets `USERPROFILE` and
-`FERRISFILTER_HOME` to a temp dir, `install::default_dest` reads `USERPROFILE` directly, and the
-overlay unit tests never build `OverlayApp`.
+**Fix verification. All three fixes are correct.**
 
-The defects are concentrated in four places:
+- **WR-01 (7ca5008):** The CLAUDE.md RELOAD clause now says RELOAD re-resolves the FerrisFilter
+  folder and re-reads the file. It lists every state that offers it: a changed-on-disk refusal, no
+  folder found, a failed load, and damaged markers. I traced this against the code:
+  - `apply::footer_actions` (`src/overlay/apply.rs:120-125`) sets `reload` when
+    `!root_ok || matches!(state, Damaged | LoadFailed) || needs_reload`.
+  - `OverlayApp::reload` (`src/overlay/app.rs:227-233`) calls `paths::app_root()` again before it
+    reloads the filter.
 
-- **The one-time `.ffbak` guarantee.** A backup that fails partway leaves a truncated `.ffbak`,
-  and that file then silently blocks every future backup.
-- **Durability of the "atomic" replace.** The temp file is never synced before the rename.
-- **Overlay dead end.** A damaged or unloadable filter offers no RELOAD.
-- **Doc accuracy.** The new `apply` row in CLAUDE.md lost its path separators, and several entries
-  still describe the JSON store.
+  The doc and the code agree. The one cosmetic leftover is that the edited paragraph line was not
+  rewrapped (about 170 columns). That does not affect the rendered output.
+- **IN-01 (84272de):** The `apply` row now reads `[--add-economy \| --remove-economy]`, so the GFM
+  table cell no longer splits.
+- **IN-04 (798ece6):** `use super::*` is removed from the `app.rs` test module. The remaining test
+  uses only `egui`, and the test binary compiles and passes without the import.
 
-## Critical Issues
-
-### CR-01: A failed backup write leaves a partial `.ffbak` that permanently blocks the real backup
-
-**File:** `src/safe_write.rs:151-171`
-
-**Issue:** The backup is opened with `create_new(true)`, then filled with `write_all` +
-`sync_all`. If either fails after the open (disk full, OneDrive I/O error, AV interference), the
-code returns `WriteError::Backup` but leaves the truncated or empty `<name>.ffbak` on disk.
-
-On the user's next Apply, `create_new` hits `AlreadyExists && bp.is_file()` and takes the
-silent `{}` arm. The original filter is then overwritten with no valid backup, and the outcome
-reports `backup: None`, so the user is not told. The `.ffbak` is "created once, never
-overwritten" by design, so the corrupt copy is the only backup there will ever be.
-
-This matters most for the one-time v0.4 migration. That `.ffbak` is the only copy of the
-pre-conversion file.
-
-**Fix:** Build the backup through a temp file and publish it without clobbering, so a partial
-backup can never take the final name:
-```rust
-if let Some(original) = loaded {
-    let bp = backup_path(path);
-    if !bp.exists() {
-        let mut t = tempfile::NamedTempFile::new_in(dest_dir)
-            .map_err(|e| WriteError::Backup { path: bp.display().to_string(), source: e })?;
-        t.write_all(original)
-            .and_then(|_| t.as_file().sync_all())
-            .map_err(|e| WriteError::Backup { path: bp.display().to_string(), source: e })?;
-        match t.persist_noclobber(&bp) {
-            Ok(_) => backup = Some(bp),
-            Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists && bp.is_file() => {}
-            Err(e) => return Err(WriteError::Backup { path: bp.display().to_string(), source: e.error }),
-        }
-    } else if !bp.is_file() {
-        return Err(WriteError::Backup { /* "exists and is not a file" */ .. });
-    }
-}
-```
-Add a test that injects a write failure after the open and asserts that no `.ffbak` remains.
-
-## Warnings
-
-### WR-01: The temp file is never fsynced before the rename, so the "atomic" replace is not crash-safe
-
-**File:** `src/safe_write.rs:180-191`
-
-**Issue:** `temp.write_all(..).and_then(|_| temp.flush())` only flushes the userspace buffer;
-`flush` on a `File` is a no-op. `persist` (`MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, without
-`MOVEFILE_WRITE_THROUGH`) can make the rename durable before the data is. A power loss or crash
-in that window can leave `dynamic.filter` empty or partial.
-
-The guarantee this module exists to provide is "either old bytes or new bytes". The backup path
-already calls `sync_all()`, so the target write is the inconsistent one.
-
-**Fix:**
-```rust
-temp.write_all(new_bytes)
-    .and_then(|_| temp.as_file().sync_all())
-    .map_err(|e| WriteError::Unwritable { path: shown(), source: e })?;
-```
-
-### WR-02: The overlay has no recovery path for a damaged or unloadable filter
-
-**File:** `src/overlay/apply.rs:116-125, 136-138`; `src/overlay/app.rs:377, 417`
-
-**Issue:** `footer_actions` enables RELOAD only when `needs_reload` is set, and only a
-`ChangedOnDisk` refusal sets it.
-
-- **Damaged markers.** The status line tells the user to fix the markers by hand.
-  `filter_state_message(Damaged)` even says "Fix them by hand, then RELOAD". But no RELOAD button
-  is shown, so the stripe keeps the stale parse forever.
-- **`LoadFailed`.** Covers a file locked at launch, not UTF-8, or `USERPROFILE` missing. The same
-  dead end applies.
-- **Unresolved app root.** Root resolution runs once in `new()` and is never retried.
-
-In every case the only recovery is tray → Quit and relaunch. The test
-`footer_damaged_and_load_failed_offer_neither` locks this behaviour in.
-
-**Fix:** Make RELOAD available whenever the state is not clean:
-```rust
-reload: needs_reload || matches!(state, FilterState::Damaged | FilterState::LoadFailed),
-```
-Also re-resolve `paths::app_root()` inside `reload()`.
-
-### WR-03: An economy marker that sits directly against a block becomes that block's `#ff:` metadata
-
-**File:** `src/filter/section.rs:101-108` (with `src/filter/parse.rs:70-76`)
-
-**Issue:** `find` rejects markers only inside a block's `owned()` range. `lead_start` attaches
-every comment line directly above a header to that block, `#ff:` lines included. So
-`#ff:economy-end\nShow # Z` is accepted (the `remove_keeps_text_after_section` test uses exactly
-this shape), and the end marker becomes metadata of block Z: `block_meta(Z)` returns
-`("economy-end", "")`.
-
-Any span-based edit of Z will carry the marker with it: delete, move, or the Phase 19 rule list
-reordering rules after the section. That silently damages the section, or moves the fence into
-the general rules.
-
-**Fix:** In `find`, also reject a marker that falls in any block's `leading()` range. Use a
-dedicated error such as "economy marker is attached to the block on line N; put a blank line
-between them". Alternatively, make `lead_start` stop at economy marker keys so they are always
-trivia.
-
-### WR-04: The root marker `config.json` is a generic file name, so exe walk-up can lock onto an unrelated folder
-
-**File:** `src/paths.rs:413-416, 434-438`
-
-**Issue:** The walk-up runs before the cwd fallback and stops at the first ancestor holding
-either `styles.json` or `config.json`. `config.json` is a very common name. If the exe sits
-anywhere under a folder that holds some unrelated `config.json`, the resolver returns that
-folder. It never falls back to a cwd that really is the FerrisFilter folder, and Apply then fails
-with "cannot read styles.json".
-
-`apply` and the overlay never read `config.json`. They need `styles.json` and `tiers.json`.
-
-**Fix:** Require `styles.json` as the marker. If `config.json` must stay as a hint, require it
-together with `styles.json`:
-```rust
-fn is_root(dir: &Path) -> bool {
-    crate::compile::InputPaths::relative_to(dir).styles.is_file()
-}
-```
-
-### WR-05: `apply --tiers` / `--styles` resolve against the cwd while every default input resolves against the app root
-
-**File:** `src/run.rs:163-172`
-
-**Issue:** `InputPaths::relative_to(&root).with_tiers(t)` stores `t` as given, so a relative
-path resolves against the process working directory. Phase 18 lets users run `ff-cli apply` from
-anywhere, with inputs found via the app root. The documented recipe
-`ff-cli apply --tiers tiers-fallback.json` (CLAUDE.md, CLI help) now fails with "cannot read
-tiers-fallback.json" outside the repo, even though prices and styles resolve fine.
-
-The `apply_styles_flag_reads_alternate_path` test hides this by setting `cwd == FERRISFILTER_HOME`.
-
-**Fix:** Join relative override paths onto the root:
-`inputs.with_tiers(if Path::new(t).is_relative() { root.join(t) } else { t.into() })`.
-Alternatively, document the asymmetry explicitly in the help and CLAUDE.md, and add a test whose
-cwd differs from the root.
-
-### WR-06: `dynamic.json` was removed from `.gitignore` while the user's per-user copy still sits in the repo
-
-**File:** `.gitignore:21-23`
-
-**Issue:** The `/dynamic.json` ignore rule was deleted. The author's working tree still holds a
-`dynamic.json` (git status shows `?? dynamic.json`), so a routine `git add -A` / `git add .`
-would commit personal state that the project says is never committed. The file is now orphaned
-(nothing reads it), but it is still personal data.
-
-**Fix:** Keep `/dynamic.json` in `.gitignore`, with a comment that it is v0.4 leftover state.
-Alternatively, tell the user in CHANGELOG/CLAUDE.md to delete it.
-
-### WR-07: Doc errors in CLAUDE.md and CHANGELOG.md (wrong default path, stale "store" wording)
-
-**File:** `CLAUDE.md:26, 35`; `CHANGELOG.md` (`[Unreleased]` → Changed, the Phase 17 `styles` entry)
-
-**Issue:**
-
-1. In the new `ferrisfilter apply` row, the default path is rendered as
-   `%USERPROFILE%OneDriveDocumentosMy GamesPath of Exile 2dynamic.filter`. Every backslash was
-   stripped, so the default destination is documented incorrectly.
-2. The `styles.json` row still says the file is read "beside the store", and that "the overlay's
-   next Apply saves the store without it". No JSON store exists any more, and Apply never writes a
-   config.
-3. The adjacent CHANGELOG entry still names `dynamic.json` as a store that "the overlay's next
-   Apply" rewrites.
-
-CLAUDE.md requires that this section be kept accurate.
-
-**Fix:** Restore the path as
-`%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2\dynamic.filter`. Reword the
-`styles.json` row to "read by `generate` (beside the inputs) and by `apply`/the overlay (from the
-app root)". Drop the "saves the store" clause, and note in the CHANGELOG entry that the store
-wording is superseded by the Phase 18 breaking change.
-
-### WR-08: A read-only or permission-denied target is retried and then reported as "in use"; the error codes are Windows-only
-
-**File:** `src/safe_write.rs:102-104, 68-75`
-
-**Issue:** `is_retriable` treats raw OS error 5 (`ERROR_ACCESS_DENIED`) as a sharing violation.
-`MoveFileExW` also returns 5 for a read-only target or a missing write ACL. In those cases the
-writer sleeps about 750 ms and then reports `Busy`: "is in use ... close anything holding it,
-such as the game or OneDrive". That message is wrong and sends the user in the wrong direction.
-
-On non-Windows targets, 5, 32 and 33 are `EIO`, `EPIPE` and `EDOM`, so an `EIO` would be retried
-and also mislabelled as "in use".
-
-**Fix:** Gate the codes behind `#[cfg(windows)]` (return `false` elsewhere). After the final
-attempt with code 5, check `fs::metadata(path)?.permissions().readonly()`. If the target is
-read-only, report `Unwritable` with a "file is read-only" hint instead of `Busy`.
+The fix commits introduced no regressions. The eight Info items below are iteration-2 Info items
+that were outside the fixer's scope. I checked that each one is still present in the code at the
+cited lines. None of them affects correctness, so none blocks shipping.
 
 ## Info
 
-### IN-01: `*.ffbak` and stray `.tmp*` files are not git-ignored
+### IN-01: A backup made by a call that then fails is never reported, and the v0.4 notice can promise a backup that is not made (carried over: iteration-2 IN-02)
 
-**File:** `.gitignore`
-
-**Issue:** `apply --filter ./x.filter` inside the repo leaves `x.filter.ffbak`, and an
-interrupted write can leave `.tmpXXXX` files. Both would show up as untracked files.
-
-**Fix:** Add `*.ffbak` (and optionally `/.tmp*`).
-
-### IN-02: The CLI prints "converting ..." before the write that can still fail, and prints the reload hint on a no-op
-
-**File:** `src/run.rs:198-203, 226`
-
-**Issue:** The v0.4 conversion notice is printed before `apply_file`. If the write is then
-refused (`ChangedOnDisk`, `Busy`), the output claims a conversion that never happened. Separately,
-"Reload it in-game" is printed even when the outcome is `Unchanged`; the overlay's
-`unchanged_message` deliberately omits it.
-
-**Fix:** Print the conversion line from `report.migrated` after success, and print the reload
-hint only for `Written`.
-
-### IN-03: The `FilterNotFound` help text is wrong for `--remove-economy`
-
-**File:** `src/dynamic.rs:57-60, 223-225`
-
-**Issue:** `apply --remove-economy` on a missing file says "Use --add-economy to create it with an
-economy section", which is the opposite of what the user asked for.
-
-**Fix:** Use a separate variant (or a variant field) for removal, or a neutral help text.
-
-### IN-04: Stale comments and a caller-less API left over from the JSON store
-
-**File:** `src/compile.rs:318-325`; `src/emitter.rs:53`; `CLAUDE.md` (Jewels paragraph)
-
+**File:** `src/safe_write.rs:210-266`; `src/overlay/apply.rs:148-153`; `src/overlay/app.rs:549-554`; `CLAUDE.md:59-60`
 **Issue:**
 
-- `compile_as` still says "The dynamic path passes `source_name: "dynamic.json"`", but
-  `compile_as` and the dynamic `FilterIdentity` have no non-test caller any more.
-- CLAUDE.md says Jewels "is offered in the overlay's class picker", but the picker is unreachable
-  until Phase 19.
+- **Unreported backup.** Step 4 creates `.ffbak` before the target write. If the persist then
+  fails (`ReadOnly`, `Busy`, `Unwritable`), the call returns `Err` and the new backup is never
+  reported. The next successful write finds the existing `.ffbak` and returns `backup: None`.
+- **v0.4 notice.** The overlay notices (and now the CLAUDE.md paragraph, "a `.ffbak` backup is kept
+  by that first write") promise a backup unconditionally. A stale `dynamic.filter.ffbak` means the
+  v0.4 original is not backed up, because an existing backup is never overwritten.
 
-**Fix:** Update or remove these comments. Consider removing `compile_as` until Phase 19 needs it.
+**Fix:** Do the `is_read_only(path)` pre-check before step 4. Make the migration notice conditional
+on `!backup_path(path).exists()`, or add "unless a .ffbak already exists".
 
-### IN-05: The resolver tests depend on the machine's temp-dir ancestors having no marker file
+### IN-02: The read-only classification can mislabel unrelated errors off Windows (carried over: iteration-2 IN-03)
 
-**File:** `src/paths.rs:546-565`
+**File:** `src/safe_write.rs:125-127, 241-246`
+**Issue:** On Unix a 0444 target never causes a `rename` failure. But any persist error with a
+read-only target is still reported as `ReadOnly`. Impact is low because the project targets
+Windows.
+**Fix:** Gate the branch with `#[cfg(windows)]`, or take it only when `raw_os_error() == Some(5)`.
 
+### IN-03: The CLI prints "converting ..." before a write that can still fail, and prints the reload hint on a no-op (carried over: iteration-2 IN-05)
+
+**File:** `src/run.rs:210-215, 240`
+**Issue:** The conversion line is printed before `apply_file`, so it appears even when the write is
+refused. "Reload it in-game" is printed even for `WriteOutcome::Unchanged`, although the overlay's
+`unchanged_message` deliberately leaves it out.
+**Fix:** Print the conversion line after success (from `report.migrated`), and print the reload hint
+only for `Written`.
+
+### IN-04: The `FilterNotFound` help text is wrong for `--remove-economy` (carried over: iteration-2 IN-06)
+
+**File:** `src/dynamic.rs:57-60, 223-225`
+**Issue:** `apply --remove-economy` on a missing file suggests "Use --add-economy to create it with
+an economy section."
+**Fix:** Use neutral help text, or add a separate variant for removal.
+
+### IN-05: Stale comments describe a JSON-store identity that has no non-test caller (carried over: iteration-2 IN-07)
+
+**File:** `src/compile.rs:320`; `src/emitter.rs:53`
+**Issue:** The comments still say the dynamic path passes `source_name: "dynamic.json"` and emits
+`# GENERATED FROM dynamic.json`. No production path does either.
+**Fix:** Update or remove the comments. Consider dropping `compile_as` until Phase 19 needs it.
+
+### IN-06: The resolver tests depend on no `styles.json` sitting above `%TEMP%` (carried over: iteration-2 IN-08)
+
+**File:** `src/paths.rs:181-201`
 **Issue:** `falls_back_to_cwd_with_marker` and `cwd_without_marker_is_not_found_and_lists_attempts`
-pass a `tempdir()` as `exe_dir`. They assume no ancestor of `%TEMP%` holds `config.json` or
-`styles.json`. Given WR-04, a stray `C:\Users\<u>\config.json` makes them fail.
+walk the real ancestor chain of a `tempdir()`. A stray `styles.json` in `C:\Users\<u>\` or above
+would break both tests.
+**Fix:** Assert that no ancestor holds `styles.json` first (skip with a message if one does), or
+give `resolve_from` an injectable stop point.
 
-**Fix:** Pass `exe_dir: None`, or build `exe_dir` inside a tempdir and check for markers in
-ancestors before asserting.
+### IN-07: `remove` is not the inverse of `add` for an unterminated last line, and the test has a no-op `format!` (carried over: iteration-2 IN-09)
 
-### IN-06: `remove` is not the inverse of `add` for an unterminated last line, and the tests skip that case
+**File:** `src/filter/section.rs:193-197, 446`
+**Issue:** `add` gives an unterminated last line an EOL, and `remove` keeps that EOL, so the round
+trip changes one byte. `refresh_idempotent_all_shapes` still builds `nofinal` with
+`format!("{}{}{}", &r1[..r1.len() - eol.len()], "", "")`.
+**Fix:** Document and assert the one-byte difference, or restore `Eol::None` on remove. Replace the
+`format!` with `r1[..r1.len() - eol.len()].to_string()`.
 
-**File:** `src/filter/section.rs:193-197, 528-537, 446`
+### IN-08: Redundant UTF-8 validation in `LoadedFilter::load`; links are broken by replace-by-rename; test workspaces leak (carried over: iteration-2 IN-10 + IN-11)
 
-**Issue:** `add` appends an EOL to an unterminated last line, and `remove` keeps it, so the
-round trip changes one byte. `remove_inverts_add` quietly skips those inputs. `refresh_idempotent_all_shapes`
-also builds `nofinal` with a meaningless `format!("{}{}{}", .., "", "")`.
+**File:** `src/dynamic.rs:130-132`; `src/safe_write.rs:219-266`; `tests/dynamic_filter.rs:26-46`
+**Issue:**
 
-**Fix:** Either restore `Eol::None` on the line before the removed separator when it was
-originally unterminated, or document the one-byte difference and assert it explicitly. Simplify
-the `nofinal` expression.
+- **Double validation.** `crate::filter::parse(&bytes)` runs only to validate UTF-8, its result is
+  discarded, and `String::from_utf8(bytes.clone())` repeats the same check.
+- **Linked filters.** The atomic rename replaces the directory entry, so a symlinked or hard-linked
+  `dynamic.filter` loses its link after the first Apply. This behaviour is undocumented.
+- **Test workspaces.** `workspace()` creates `%TEMP%\ferrisfilter_dyn_<tag>_<nanos>` and never
+  removes it.
 
-### IN-07: `LoadedFilter::load` parses and copies the file twice just to validate UTF-8
-
-**File:** `src/dynamic.rs:130-132`
-
-**Issue:** `crate::filter::parse(&bytes)` is called only for its UTF-8 check and its result is
-discarded. `String::from_utf8(bytes.clone())` then checks UTF-8 again on a copy.
-
-**Fix:** Keep the `from_utf8(bytes.clone())` check, and drop the `parse` call or reuse its
-`Document`.
-
-### IN-08: Replace-by-rename breaks a symlinked or hard-linked `dynamic.filter`
-
-**File:** `src/safe_write.rs:173-191`
-
-**Issue:** The replace swaps the directory entry. A user who symlinked or hard-linked the game
-file to a repo copy loses the link after the first Apply, and file attributes are not carried
-over.
-
-**Fix:** Document this, or resolve a symlink target with `fs::canonicalize` before choosing the
-temp directory.
+**Fix:** Drop the `parse` call and use `String::from_utf8(bytes)` directly. Document the link
+behaviour, or canonicalize a symlink target before choosing the temp directory. Use
+`tempfile::TempDir` for the test workspaces.
 
 ---
 
-_Reviewed: 2026-10-12_
+_Reviewed: 2026-10-12T23:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_

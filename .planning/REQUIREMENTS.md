@@ -130,6 +130,13 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **INST-01**: Launching `ff` while it is already running brings up the running stripe (even
   when hidden to the tray) and exits, instead of opening a second instance.
 
+### In-Game Reload (RELOAD)
+
+- [ ] **RELOAD-01**: After a RULES-tab Apply that writes the filter, the overlay sends
+  `/reloaditemfilter` to a running Path of Exile 2 once (one click, one command), controlled by a
+  CONFIG setting "Reload filter in game after Apply" (persisted, default on); when nothing is sent
+  (game not running, setting off, send failed) the Refresh reminder is shown with the reason.
+
 ## Future Requirements
 
 Deferred. Tracked but not in the v0.5 roadmap.
@@ -207,13 +214,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONF-03 | Phase 21 | Complete (UAT pending) |
 | CONF-04 | Phase 21 | Complete (UAT pending) |
 | INST-01 | Phase 22 | Complete (UAT pending) |
+| RELOAD-01 | Phase 23 | Pending |
 
 **Coverage:**
 
-- v0.5 requirements: 32 total
-- Mapped to phases: 32
+- v0.5 requirements: 33 total
+- Mapped to phases: 33
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-12 after roadmap creation (traceability filled)*
+*Last updated: 2026-10-13 after Phase 23 added (RELOAD-01)*

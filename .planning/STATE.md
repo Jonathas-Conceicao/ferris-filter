@@ -7,7 +7,7 @@ stopped_at: Completed 22-02-PLAN.md (Phase 22 human UAT pending)
 last_updated: "2026-10-13T06:18:07.191Z"
 last_activity: 2026-10-13 -- Phase 22 executed, code-reviewed (3 fix iterations), verification human_needed
 progress:
-  total_phases: 17
+  total_phases: 18
   completed_phases: 6
   total_plans: 39
   completed_plans: 39
@@ -78,6 +78,9 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 
 ### Roadmap Evolution
 
+- Phase 23 added (2026-10-13): **Auto-Reload Filter in Game on Apply** — after a RULES Apply that
+  writes the filter, send `/reloaditemfilter` to a running game (RELOAD-01). Added after the v0.5
+  milestone audit at the author's request.
 - Phase 15 added (2026-09-08): **BaseType Lists and Rule Names** — raw `BaseType` list input with
   `class` demoted to an optional condition, and optional per-rule names shown in the editor and
   emitted as the block comment. Requested by the author explicitly **before v0.4 closes**, so the

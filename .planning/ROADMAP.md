@@ -6,7 +6,7 @@
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
-- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-22 (in progress)
+- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-23 (in progress)
 
 ## Phases
 
@@ -57,7 +57,7 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
-## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-22)
+## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-23)
 
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
 output, with the style palette and economy tier cutoffs configurable from the overlay.
@@ -69,6 +69,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (executed 2026-10-13; awaiting human UAT)
 - [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
+- [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game
 
 ### Phase 16: Lossless Filter Parser
 
@@ -308,6 +309,21 @@ Plans:
 
 - [x] 22-02-PLAN.md — Wire the gate into `launch()` and `OverlayApp::update` (reveal, never toggle; bypasses the foreground gate), docs, changelog, manual verification script
 
+### Phase 23: Auto-Reload Filter in Game on Apply
+
+**Goal**: After a successful RULES-tab Apply, the game reloads the filter without the user opening Options → Game → Item Filter → Refresh
+**Depends on**: Phase 21, Phase 22
+**Requirements**: RELOAD-01
+**Success Criteria** (what must be TRUE):
+
+  1. A RULES-tab Apply that writes the filter, while a Path of Exile 2 window exists and the setting is on, sends `/reloaditemfilter` to the game exactly once (focus the game, open chat, clear any partial input, enter the command, send) and the status reads "Reloaded in game"
+  2. Nothing is sent on CONFIG Apply, on an "already up to date" Apply, on a refused Apply, when the game is not running, or when the setting is off; the existing Refresh reminder is shown instead, with the reason
+  3. CONFIG has a "Reload filter in game after Apply" setting, persisted in `ff-settings.json`, default on
+  4. The keystroke sequence is built behind a seam and unit-tested without sending real input
+  5. The overlay docs state that `/reloaditemfilter` reloads the filter selected in game, so editing a different filter than the selected one will not show in game
+
+**Plans**: TBD
+
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -319,6 +335,7 @@ Plans:
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
+| 23. Auto-Reload Filter in Game on Apply | 0/? | Not started | - |
 
 ## Backlog
 

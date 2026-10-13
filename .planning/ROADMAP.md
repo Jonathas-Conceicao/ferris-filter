@@ -322,7 +322,17 @@ Plans:
   4. The keystroke sequence is built behind a seam and unit-tested without sending real input
   5. The overlay docs state that `/reloaditemfilter` reloads the filter selected in game, so editing a different filter than the selected one will not show in game
 
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+
+- [ ] 23-01-PLAN.md — Pure core: chat.rs step list + InputSink seam + trigger decision + reload worker; apply.rs status strings; reload_after_apply setting
+- [ ] 23-02-PLAN.md — win.rs Win32 wrappers: game window by title + PathOfExile exe, focus/foreground, SendInput tap/chord, clipboard text; windows-sys features
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 23-03-PLAN.md — Wiring: CONFIG FILTER toggle (saved on change), WinSink, run_apply hook with worker and status replacement
+- [ ] 23-04-PLAN.md — Docs: CLAUDE.md overlay notes, CHANGELOG [Unreleased], 23-MANUAL-VERIFICATION.md
 
 ### Progress
 

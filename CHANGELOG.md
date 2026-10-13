@@ -68,7 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the differing styles: move those into styles.json, then delete the section (or `apply --reset`
   the store). An existing `dynamic.json` that used a custom style such as `craftable` needs that
   style added to styles.json first. `generate` output is
-  unchanged (the seed fixture is byte-identical).
+  unchanged (the seed fixture is byte-identical). (The `dynamic.json` store, the overlay saving
+  it, and `apply --reset` named here are superseded by the filter-as-store change above: no JSON
+  store exists any more and Apply never writes a config.)
 
 ## [0.4.0] - 2026-09-17
 

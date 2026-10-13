@@ -2095,7 +2095,7 @@ fn optional_bool_control(ui: &mut egui::Ui, card: &Card, actions: &mut Vec<RowAc
 
 const STYLE_NONE_HELP: &str = "Apply a style to set this rule's look from your Styles tab.";
 const STYLE_KNOWN_EXPLAIN: &str = "This rule's look comes from the style. Edits to the style reach it when you press Apply. Hand edits here are overwritten.";
-const STYLE_UNKNOWN_EXPLAIN: &str = "No style with this name exists, so this rule keeps its current actions and nothing is rewritten on Apply.";
+const STYLE_UNKNOWN_EXPLAIN: &str = "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.";
 const STYLE_UNCHECKED_EXPLAIN: &str =
     "styles.json could not be read; this style is not applied until it loads.";
 

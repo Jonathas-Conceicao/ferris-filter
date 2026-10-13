@@ -232,6 +232,19 @@ pub fn unknown_styles_message(count: usize, first_rule: usize) -> String {
     }
 }
 
+/// Apply-message tail for rules whose `#ff:style` tag was removed because the style is gone.
+pub fn dropped_styles_message(count: usize, first_rule: usize) -> String {
+    if count == 1 {
+        format!(
+            "Removed the style link from 1 rule whose style no longer exists (first: rule {first_rule})."
+        )
+    } else {
+        format!(
+            "Removed the style link from {count} rules whose styles no longer exist (first: rule {first_rule})."
+        )
+    }
+}
+
 /// Apply-message tail for styled rules whose rewrite was refused; they keep their current actions.
 pub fn failed_styles_message(count: usize, first_rule: usize, err: &str) -> String {
     if count == 1 {
@@ -441,6 +454,14 @@ mod tests {
         assert_eq!(
             unknown_styles_message(2, 5),
             "2 rules use unknown styles (first: rule 5)."
+        );
+        assert_eq!(
+            dropped_styles_message(1, 3),
+            "Removed the style link from 1 rule whose style no longer exists (first: rule 3)."
+        );
+        assert_eq!(
+            dropped_styles_message(2, 5),
+            "Removed the style link from 2 rules whose styles no longer exist (first: rule 5)."
         );
         assert!(styles_unavailable_message("x").ends_with(": x"));
         assert_eq!(

@@ -193,7 +193,7 @@ fn flags_for(row: &RuleRow) -> Vec<Flag> {
         StyleState::Unknown(_) => out.push(Flag {
             text: "unknown style".to_string(),
             color: theme::WARM_ACCENT_TEXT,
-            tip: "No style with this name exists, so this rule keeps its current actions and nothing is rewritten on Apply.".to_string(),
+            tip: "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.".to_string(),
         }),
         StyleState::None | StyleState::Unchecked(_) => {}
     }

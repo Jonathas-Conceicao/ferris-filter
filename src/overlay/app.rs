@@ -203,7 +203,13 @@ fn apply_working(
         Ok(report) => {
             working.on_applied(loaded.text());
             extras.push_str(&apply::styled_rules_message(style_report.rewritten));
-            if let Some((first_rule, _)) = style_report.unknown.first() {
+            if let Some((first_rule, _)) = style_report.dropped.first() {
+                extras.push(' ');
+                extras.push_str(&apply::dropped_styles_message(
+                    style_report.dropped.len(),
+                    *first_rule,
+                ));
+            } else if let Some((first_rule, _)) = style_report.unknown.first() {
                 extras.push(' ');
                 extras.push_str(&apply::unknown_styles_message(
                     style_report.unknown.len(),
@@ -1534,18 +1540,24 @@ mod tests {
     }
 
     #[test]
-    fn apply_working_style_unknown_is_reported_and_untouched() {
+    fn apply_working_style_unknown_tag_is_dropped_keeping_actions() {
         let root = styles_root();
-        let text = "Show\n  Class \"Bows\"\n\n#ff:style Nope\nHide\n  SetFontSize 20\n";
+        let text = "Show\n  Class \"Bows\"\n\n#ff:style Gone\nHide\n  SetFontSize 40\n";
         let (path, mut loaded) = loaded_in(&root, text);
         let mut working = working_with_styles(root.path(), loaded.text());
-        let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
-        assert_eq!(outcome, ApplyOutcome::Unchanged(path.clone()), "{extras}");
+        let (_, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
         assert!(
-            extras.contains("1 rule uses an unknown style (first: rule 2)."),
+            extras.contains(
+                "Removed the style link from 1 rule whose style no longer exists (first: rule 2)."
+            ),
             "{extras}"
         );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("#ff:style Gone"), "{written}");
+        assert!(written.contains("SetFontSize 40"), "{written}");
+        let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
+        assert_eq!(outcome, ApplyOutcome::Unchanged(path), "{extras}");
+        assert!(!extras.contains("Removed the style link"), "{extras}");
     }
 
     #[test]

@@ -556,7 +556,8 @@ impl WorkingFilter {
             return Ok((self.text(), StyleReport::default()));
         };
         let mut clone = self.doc.clone();
-        let report = styled::rewrite_styled(&mut clone, set);
+        let mut report = styled::rewrite_styled(&mut clone, set);
+        report.dropped = styled::drop_unknown_style_tags(&mut clone, set);
         Ok((clone.serialize(), report))
     }
 
@@ -1381,6 +1382,17 @@ mod tests {
         assert!(o.changed);
         assert_eq!(wf.text().matches("#ff:style S").count(), 2, "{}", wf.text());
         assert_eq!(wf.rows()[1].style, StyleState::Known("S".into()));
+    }
+
+    #[test]
+    fn text_with_styles_drops_unknown_tag_on_the_clone_only() {
+        let mut wf = styled_wf("#ff:style Gone\nShow\n  SetFontSize 40\n");
+        assert!(wf.style_rewrite_pending());
+        let (t, rep) = wf.text_with_styles().expect("ok");
+        assert_eq!(rep.dropped, vec![(1, "Gone".to_string())]);
+        assert!(!t.contains("#ff:style"));
+        assert!(t.contains("SetFontSize 40"));
+        assert!(wf.text().contains("#ff:style Gone"));
     }
 
     #[test]

@@ -293,3 +293,26 @@ fn inline_styles_section_matching_styles_json_is_accepted() {
     let dir = styles_case_dir("inline_styles_same", &legacy, &styles);
     generate_in(&dir).success();
 }
+
+/// The JSON-store flags were removed in Phase 18 (STORE-04); clap must reject each one.
+#[test]
+fn apply_obsolete_flags_are_rejected() {
+    let dir = make_temp_dir("apply_obsolete", &[]);
+    for args in [
+        vec!["--reset"],
+        vec!["--store", "x"],
+        vec!["--base", "x"],
+        vec!["--dest", "x"],
+    ] {
+        Command::cargo_bin("ferrisfilter")
+            .unwrap()
+            .current_dir(&dir)
+            .env("FERRISFILTER_HOME", &dir)
+            .env("USERPROFILE", &dir)
+            .arg("apply")
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(contains("unexpected argument"));
+    }
+}

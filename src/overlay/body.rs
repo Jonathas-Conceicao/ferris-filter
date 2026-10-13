@@ -11,9 +11,9 @@
 //! `(block id, keyword, ordinal)`, never by line index, because line indices shift as lines are
 //! added and removed (Pitfall 5).
 
-use egui::{Align, RichText, vec2};
+use egui::{Align, Layout, RichText, vec2};
 
-use crate::filter::keywords::{Keyword, RARITIES, ValueShape};
+use crate::filter::keywords::{Keyword, Kind, RARITIES, ValueShape};
 use crate::filter::tokenize::Operator;
 use crate::filter::{BlockId, LinePatch};
 
@@ -279,13 +279,34 @@ pub fn conditions_group(
     actions: &mut Vec<RowAction>,
 ) {
     let id = ctx.row.id;
-    caption(ui, "CONDITIONS");
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        caption(ui, "CONDITIONS");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let btn = ui.add_enabled(
+                ctx.editable,
+                egui::Button::new(RichText::new("+ condition").size(theme::ROW_SUMMARY_SIZE)),
+            );
+            picked = picker_popup(ui, &btn, &picker_entries(""), true, &|_| None);
+        });
+    });
+    if let Some(kw) = picked
+        && let Some(a) = pick_condition(id, kw, list)
+    {
+        actions.push(a);
+    }
     ui.spacing_mut().item_spacing.y = 4.0;
 
     let lines: Vec<&BodyEntry> = ctx
         .entries
         .iter()
         .filter(|e| is_condition_side(e))
+        .collect();
+    let pending: Vec<PendingRow> = list
+        .pending
+        .iter()
+        .filter(|p| p.block == id)
+        .cloned()
         .collect();
     if !ctx.editable {
         if lines.is_empty() {
@@ -298,13 +319,14 @@ pub fn conditions_group(
         }
         return;
     }
-    if lines.is_empty() {
+    if lines.is_empty() && pending.is_empty() {
         ui.label(
             RichText::new(NO_CONDITIONS)
                 .size(theme::ROW_SUMMARY_SIZE)
                 .color(theme::LABEL_TAN),
         );
     }
+    let real = lines.len();
     for (idx, e) in lines.into_iter().enumerate() {
         match (e.kind, e.keyword) {
             (EntryKind::Condition, Some(kw)) => condition_card(ui, ctx, e, kw, idx, list, actions),
@@ -315,6 +337,260 @@ pub fn conditions_group(
                 });
             }
         }
+    }
+    for (i, p) in pending.iter().enumerate() {
+        pending_card(ui, ctx, p, real + i, list, actions);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Picker and pending rows
+// ---------------------------------------------------------------------------------------------
+
+type Groups = Vec<(&'static str, Vec<&'static Keyword>)>;
+
+/// The label a picker row shows: the display name, suffixed when PoE 2 ignores the keyword.
+pub(crate) fn picker_label(kw: &Keyword) -> String {
+    let name = grammar::display_name(kw.name);
+    if grammar::POE1_ONLY.contains(&kw.name) {
+        format!("{name} (PoE 1)")
+    } else {
+        name
+    }
+}
+
+/// Keep the keywords whose name or display name contains `query` (case-insensitive); empty
+/// groups are dropped. An empty query keeps everything.
+pub(crate) fn filter_groups(
+    groups: &[(&'static str, Vec<&'static Keyword>)],
+    query: &str,
+) -> Groups {
+    let q = query.trim().to_lowercase();
+    groups
+        .iter()
+        .map(|(g, ks)| {
+            let kept: Vec<&'static Keyword> = ks
+                .iter()
+                .filter(|k| {
+                    q.is_empty()
+                        || k.name.to_lowercase().contains(&q)
+                        || grammar::display_name(k.name).to_lowercase().contains(&q)
+                })
+                .copied()
+                .collect();
+            (*g, kept)
+        })
+        .filter(|(_, ks)| !ks.is_empty())
+        .collect()
+}
+
+/// The `+ condition` picker content for a search query.
+pub(crate) fn picker_entries(query: &str) -> Groups {
+    filter_groups(&grammar::condition_groups(), query)
+}
+
+/// A searchable, grouped keyword picker anchored to `button` (shared with `+ action`). Returns
+/// the keyword the user picked this frame. Keywords for which `disabled` gives a reason are shown
+/// greyed with that reason as their tooltip.
+pub(crate) fn picker_popup(
+    ui: &mut egui::Ui,
+    button: &egui::Response,
+    groups: &[(&'static str, Vec<&'static Keyword>)],
+    searchable: bool,
+    disabled: &dyn Fn(&Keyword) -> Option<&'static str>,
+) -> Option<&'static Keyword> {
+    let popup_id = egui::Popup::default_response_id(button);
+    let query_id = popup_id.with("query");
+    let focus_id = popup_id.with("focused");
+    let width = (ui.clip_rect().width() - 16.0).clamp(240.0, 440.0);
+    let ctx = ui.ctx().clone();
+    let hint_text = match groups.first().and_then(|g| g.1.first()) {
+        Some(k) if k.kind == Kind::Action => "Find an action\u{2026}",
+        _ => "Find a condition\u{2026}",
+    };
+    let inner = egui::Popup::from_toggle_button_response(button)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(width)
+        .show(|ui| {
+            let mut query = ui
+                .data_mut(|d| d.get_temp::<String>(query_id))
+                .unwrap_or_default();
+            if searchable {
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut query)
+                        .hint_text(hint_text)
+                        .desired_width(f32::INFINITY),
+                );
+                if !ui.data(|d| d.get_temp::<bool>(focus_id)).unwrap_or(false) {
+                    r.request_focus();
+                    ui.data_mut(|d| d.insert_temp(focus_id, true));
+                }
+            }
+            ui.data_mut(|d| d.insert_temp(query_id, query.clone()));
+            let filtered = filter_groups(groups, &query);
+            let searching = !query.trim().is_empty();
+            let mut picked: Option<&'static Keyword> = None;
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if filtered.is_empty() {
+                        caption(ui, "Nothing matches");
+                    }
+                    for (gi, (label, kws)) in filtered.iter().enumerate() {
+                        let mut header = egui::CollapsingHeader::new(
+                            RichText::new(*label)
+                                .size(theme::ROW_SUMMARY_SIZE)
+                                .color(theme::LABEL_TAN),
+                        )
+                        .id_salt((popup_id, *label))
+                        .default_open(gi == 0);
+                        if searching {
+                            header = header.open(Some(true));
+                        }
+                        header.show(ui, |ui| {
+                            for kw in kws {
+                                let reason = disabled(kw);
+                                let text = RichText::new(picker_label(kw)).size(14.0).color(
+                                    if reason.is_some() {
+                                        theme::DISABLED_TEXT
+                                    } else {
+                                        theme::VALUE_TEXT
+                                    },
+                                );
+                                let r = ui
+                                    .add_enabled_ui(reason.is_none(), |ui| {
+                                        ui.selectable_label(false, text)
+                                    })
+                                    .inner;
+                                match reason {
+                                    Some(msg) => {
+                                        r.on_disabled_hover_text(msg);
+                                    }
+                                    None if r.clicked() => picked = Some(*kw),
+                                    None => {}
+                                }
+                            }
+                        });
+                    }
+                });
+            if picked.is_some() {
+                egui::Popup::close_id(ui.ctx(), popup_id);
+            }
+            picked
+        });
+    if !egui::Popup::is_id_open(&ctx, popup_id) {
+        ctx.data_mut(|d| {
+            d.remove::<String>(query_id);
+            d.remove::<bool>(focus_id);
+        });
+    }
+    inner.and_then(|r| r.inner)
+}
+
+/// What picking `kw` does: a keyword with a sensible default is added at once; list shapes and
+/// Rarity become a pending row and nothing is written until the first entry exists.
+pub(crate) fn pick_condition(
+    id: BlockId,
+    kw: &'static Keyword,
+    list: &mut ListUi,
+) -> Option<RowAction> {
+    if let Some(text) = grammar::default_line(kw) {
+        return Some(RowAction::AddLine {
+            id,
+            kind: LineKind::Condition,
+            text,
+        });
+    }
+    let p = PendingRow {
+        block: id,
+        keyword: kw,
+        op: (kw.name == "BaseType").then_some(Operator::EqEq),
+        kind: LineKind::Condition,
+    };
+    if !list.pending.contains(&p) {
+        list.pending.push(p);
+    }
+    None
+}
+
+/// The `AddLine` that turns a pending row plus its first entries into a real condition.
+pub(crate) fn pending_first_entry(p: &PendingRow, items: &[String]) -> Option<RowAction> {
+    let value = match p.keyword.value {
+        ValueShape::QuotedList => Value::List(items.to_vec()),
+        ValueShape::CountThenNames => Value::CountNames {
+            count: Some(1),
+            names: items.to_vec(),
+        },
+        ValueShape::Rarity => Value::Rarity(
+            items
+                .iter()
+                .filter_map(|i| RARITIES.iter().find(|r| **r == i.as_str()).copied())
+                .collect(),
+        ),
+        _ => return None,
+    };
+    let enc = grammar::encode(&value).ok()?;
+    let name = p.keyword.name;
+    let text = match p.op {
+        Some(op) => format!("{name} {} {enc}", op.as_str()),
+        None => format!("{name} {enc}"),
+    };
+    Some(RowAction::AddLine {
+        id: p.block,
+        kind: p.kind,
+        text,
+    })
+}
+
+/// A not-yet-written condition: keyword label, a discard X and the control for its first entry.
+fn pending_card(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    p: &PendingRow,
+    idx: usize,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let mut discard = false;
+    let mut items: Option<Vec<String>> = None;
+    ui.push_id((p.block, p.keyword.name, "pending"), |ui| {
+        card_frame(idx).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [LABEL_W, 24.0],
+                    egui::Label::new(
+                        RichText::new(grammar::display_name(p.keyword.name))
+                            .size(14.0)
+                            .color(theme::VALUE_TEXT),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(p.keyword.name);
+                discard = widgets::remove_x_button(ui, "Discard this condition").clicked();
+            });
+            caption(ui, "Add an entry to create this condition");
+            let salt: Salt = (p.block, p.keyword.name, usize::MAX, "pending");
+            items = match p.keyword.value {
+                ValueShape::Rarity => {
+                    rarity_chips(ui, &[]).map(|r| r.iter().map(|s| s.to_string()).collect())
+                }
+                _ => match ctx.classes {
+                    Some(cat) if p.keyword.name == "Class" => class_picker(ui, salt, cat, &[]),
+                    _ => list_chips(ui, salt, &[], chip_hint(p.keyword)),
+                },
+            };
+        });
+    });
+    if discard {
+        list.pending.retain(|q| q != p);
+    } else if let Some(items) = items
+        && let Some(a) = pending_first_entry(p, &items)
+    {
+        actions.push(a);
+        list.pending.retain(|q| q != p);
     }
 }
 
@@ -1427,6 +1703,183 @@ mod tests {
             values_of(ints_edit(id, &e[0], &[60, 65, 70])),
             Some("60 65 70".to_string())
         );
+    }
+
+    fn names_of(g: &Groups) -> Vec<&'static str> {
+        g.iter()
+            .flat_map(|(_, ks)| ks.iter().map(|k| k.name))
+            .collect()
+    }
+
+    #[test]
+    fn picker_entries_filter_case_insensitively_and_drop_empty_groups() {
+        let all = picker_entries("");
+        assert_eq!(all.len(), grammar::condition_groups().len());
+        let level = picker_entries("LEVEL");
+        let names = names_of(&level);
+        for n in ["ItemLevel", "DropLevel", "AreaLevel", "GemLevel"] {
+            assert!(names.contains(&n), "{n} missing from {names:?}");
+        }
+        assert!(level.iter().all(|(_, ks)| !ks.is_empty()));
+        assert!(!names.contains(&"Class"));
+        let spaced = picker_entries("item lev");
+        assert_eq!(names_of(&spaced), ["ItemLevel"]);
+        assert!(picker_entries("zzzz").is_empty());
+    }
+
+    #[test]
+    fn poe1_only_keywords_are_labelled() {
+        let linked = crate::filter::keywords::lookup("LinkedSockets").unwrap();
+        assert_eq!(picker_label(linked), "Linked Sockets (PoE 1)");
+        assert!(names_of(&picker_entries("linked")).contains(&"LinkedSockets"));
+        let item = crate::filter::keywords::lookup("ItemLevel").unwrap();
+        assert_eq!(picker_label(item), "Item Level");
+    }
+
+    #[test]
+    fn picking_a_default_keyword_adds_a_line_and_repeats_are_allowed() {
+        let (_, id, _) = entries_of("Show\n    ItemLevel >= 70\n");
+        let kw = crate::filter::keywords::lookup("ItemLevel").unwrap();
+        let mut list = ListUi::default();
+        for _ in 0..2 {
+            assert_eq!(
+                pick_condition(id, kw, &mut list),
+                Some(RowAction::AddLine {
+                    id,
+                    kind: LineKind::Condition,
+                    text: "ItemLevel >= 65".into(),
+                })
+            );
+        }
+        assert!(list.pending.is_empty());
+    }
+
+    #[test]
+    fn list_keywords_become_pending_rows_with_the_right_operator() {
+        let (_, id, _) = entries_of("Show\n");
+        let mut list = ListUi::default();
+        let base = crate::filter::keywords::lookup("BaseType").unwrap();
+        let class = crate::filter::keywords::lookup("Class").unwrap();
+        let rarity = crate::filter::keywords::lookup("Rarity").unwrap();
+        for kw in [base, class, rarity, base] {
+            assert_eq!(pick_condition(id, kw, &mut list), None);
+        }
+        assert_eq!(list.pending.len(), 3, "the repeat pick is not duplicated");
+        assert_eq!(list.pending[0].op, Some(Operator::EqEq));
+        assert_eq!(list.pending[1].op, None);
+        assert_eq!(list.pending[2].op, None);
+        assert!(list.pending.iter().all(|p| p.kind == LineKind::Condition));
+    }
+
+    #[test]
+    fn pending_first_entry_builds_the_full_line() {
+        let (_, id, _) = entries_of("Show\n");
+        let pend = |name: &str, op| PendingRow {
+            block: id,
+            keyword: crate::filter::keywords::lookup(name).unwrap(),
+            op,
+            kind: LineKind::Condition,
+        };
+        let text_of = |a: Option<RowAction>| match a {
+            Some(RowAction::AddLine { text, .. }) => Some(text),
+            _ => None,
+        };
+        let items = vec!["Heavy Belt".to_string()];
+        assert_eq!(
+            text_of(pending_first_entry(
+                &pend("BaseType", Some(Operator::EqEq)),
+                &items
+            )),
+            Some("BaseType == \"Heavy Belt\"".to_string())
+        );
+        assert_eq!(
+            text_of(pending_first_entry(
+                &pend("Class", None),
+                &["Rings".to_string()]
+            )),
+            Some("Class \"Rings\"".to_string())
+        );
+        assert_eq!(
+            text_of(pending_first_entry(
+                &pend("Rarity", None),
+                &["Magic".to_string(), "Rare".to_string()]
+            )),
+            Some("Rarity Magic Rare".to_string())
+        );
+        assert_eq!(pending_first_entry(&pend("Class", None), &[]), None);
+        assert_eq!(
+            pending_first_entry(&pend("BaseType", None), &["a\"b".to_string()]),
+            None
+        );
+    }
+
+    #[test]
+    fn pending_rows_render_idle_and_are_dropped_when_the_row_collapses() {
+        let wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n\nShow\n");
+        let id = wf.rows()[0].id;
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(id);
+        let class = crate::filter::keywords::lookup("Class").unwrap();
+        assert_eq!(pick_condition(id, class, &mut list), None);
+        let cat = committed_catalog();
+        for _ in 0..2 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, Some(&cat));
+            assert!(a.is_empty(), "{a:?}");
+        }
+        assert_eq!(list.pending.len(), 1, "pending survives while expanded");
+        list.expanded = Some(wf.rows()[1].id);
+        frame_of(&ctx, input(vec![]), &wf, &mut list, Some(&cat));
+        assert!(list.pending.is_empty(), "switching rows drops pending");
+        list.pending.push(PendingRow {
+            block: wf.rows()[1].id,
+            keyword: class,
+            op: None,
+            kind: LineKind::Condition,
+        });
+        list.expanded = None;
+        frame_of(&ctx, input(vec![]), &wf, &mut list, Some(&cat));
+        assert!(list.pending.is_empty(), "collapsing drops pending");
+    }
+
+    #[test]
+    fn plus_condition_opens_the_picker() {
+        let wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
+        let id = wf.rows()[0].id;
+        let mut opened = false;
+        'scan: for y in (20..120).step_by(8) {
+            for x in (300..456).step_by(8) {
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                let a = frame_of(
+                    &ctx,
+                    input(click_events(Pos2::new(x as f32, y as f32))),
+                    &wf,
+                    &mut list,
+                    None,
+                );
+                assert!(a.is_empty(), "opening the picker writes nothing: {a:?}");
+                frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                if egui::Popup::is_any_open(&ctx) {
+                    opened = true;
+                    // Esc closes it again.
+                    let esc = Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Modifiers::default(),
+                    };
+                    frame_of(&ctx, input(vec![esc]), &wf, &mut list, None);
+                    frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                    assert!(!egui::Popup::is_any_open(&ctx));
+                    break 'scan;
+                }
+            }
+        }
+        assert!(opened, "no click position opened the + condition picker");
     }
 
     #[test]

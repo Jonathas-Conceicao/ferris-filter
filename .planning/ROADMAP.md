@@ -156,7 +156,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 18-05-PLAN.md — CLI apply --filter/--add-economy/--remove-economy; obsolete flags removed; hermetic integration tests
+- [x] 18-05-PLAN.md — CLI apply --filter/--add-economy/--remove-economy; obsolete flags removed; hermetic integration tests
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -233,7 +233,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
-| 18. Filter as Store & Economy Section | 4/7 | In Progress|  |
+| 18. Filter as Store & Economy Section | 5/7 | In Progress|  |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
@@ -321,7 +321,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 4/7 plans executed
+**Plans:** 5/7 plans executed
 
 Plans:
 

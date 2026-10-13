@@ -65,10 +65,22 @@ mod imp {
     // module can never drift to a version eframe itself does not agree with (RESEARCH's stated
     // version-skew hazard).
     use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
+        IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+    };
     use windows_sys::Win32::System::Threading::{
         GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
+    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+        MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_MENU, VK_SHIFT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
@@ -298,6 +310,207 @@ mod imp {
         // SAFETY: `GetForegroundWindow` takes no arguments and returns a handle or null.
         unsafe { GetForegroundWindow() == game.0 }
     }
+
+    /// Whether the user is holding Ctrl, Shift or Alt right now. The reload refuses to inject
+    /// over a held modifier and never sends a key-up for a key the user holds.
+    pub fn modifiers_held() -> bool {
+        [VK_CONTROL, VK_SHIFT, VK_MENU].into_iter().any(|vk| {
+            // SAFETY: `GetAsyncKeyState` takes a virtual-key code by value and reads global state.
+            let state = unsafe { GetAsyncKeyState(vk as i32) };
+            (state as u16) & 0x8000 != 0
+        })
+    }
+
+    fn key_input(vk: u16, up: bool) -> INPUT {
+        // SAFETY: `MapVirtualKeyW` takes two plain values and returns a scan code (0 if none).
+        let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: scan,
+                    dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    /// Sends the whole slice in one `SendInput` call so no other input interleaves. A send
+    /// blocked by UIPI (ff and an elevated game at different integrity levels) is silent and
+    /// cannot be detected here; only a short count is reported.
+    fn send_batch(inputs: &[INPUT]) -> Result<(), String> {
+        // SAFETY: `inputs` is a live slice of `inputs.len()` fully initialised `INPUT`s and the
+        // size argument is the true size of one element.
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent as usize != inputs.len() {
+            return Err("Windows blocked the key press".into());
+        }
+        Ok(())
+    }
+
+    /// One key press and release. Carries both the virtual key and its scan code.
+    pub fn send_tap(vk: u16) -> Result<(), String> {
+        send_batch(&[key_input(vk, false), key_input(vk, true)])
+    }
+
+    /// `modifier` down, `vk` down and up, `modifier` up, as a single atomic batch.
+    pub fn send_chord(modifier: u16, vk: u16) -> Result<(), String> {
+        send_batch(&[
+            key_input(modifier, false),
+            key_input(vk, false),
+            key_input(vk, true),
+            key_input(modifier, true),
+        ])
+    }
+
+    // Clipboard group. Only CF_UNICODETEXT is saved and restored; non-text clipboard content (an
+    // image, copied files) is replaced by the command and cannot be restored. That is the
+    // accepted trade-off, documented by plan 23-04.
+
+    /// Stable ABI value of `CF_UNICODETEXT`; defining it here avoids the `Win32_System_Ole`
+    /// feature.
+    const CF_UNICODETEXT: u32 = 13;
+
+    /// The stripe's window, passed to `OpenClipboard`. Microsoft documents that `EmptyClipboard`
+    /// after `OpenClipboard(NULL)` leaves the clipboard ownerless and `SetClipboardData` then
+    /// fails; `None` (no window cached yet) falls back to null.
+    #[derive(Clone, Copy)]
+    pub struct ClipboardOwner(HWND);
+
+    // SAFETY: an opaque handle value passed back only to user32, never dereferenced; same
+    // argument as `OverlayWindow`.
+    unsafe impl Send for ClipboardOwner {}
+
+    /// The clipboard owner for the stripe's window.
+    pub fn clipboard_owner(w: &OverlayWindow) -> ClipboardOwner {
+        ClipboardOwner(w.0)
+    }
+
+    /// Closes the clipboard on drop, so every path after a successful open closes it.
+    struct ClipboardGuard;
+
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            // SAFETY: only constructed after a successful `OpenClipboard` on this thread.
+            unsafe {
+                CloseClipboard();
+            }
+        }
+    }
+
+    fn open_clipboard(owner: Option<ClipboardOwner>) -> Result<ClipboardGuard, String> {
+        let hwnd = owner.map_or(std::ptr::null_mut(), |o| o.0);
+        for attempt in 0..5 {
+            // SAFETY: `OpenClipboard` takes a window handle or null; failure is reported by 0.
+            if unsafe { OpenClipboard(hwnd) } != 0 {
+                return Ok(ClipboardGuard);
+            }
+            if attempt < 4 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        Err("the clipboard is busy".into())
+    }
+
+    /// The clipboard's Unicode text, or `Ok(None)` when it holds none. The text is returned to
+    /// the caller only, never logged.
+    pub fn read_clipboard_text(owner: Option<ClipboardOwner>) -> Result<Option<String>, String> {
+        let _guard = open_clipboard(owner)?;
+        // SAFETY: plain value argument; the clipboard is open.
+        if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
+            return Ok(None);
+        }
+        // SAFETY: the clipboard is open; the returned handle is owned by the clipboard and is
+        // never freed here.
+        let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
+        if handle.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: `handle` is a live clipboard-owned global block.
+        let ptr = unsafe { GlobalLock(handle) } as *const u16;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: `handle` is locked, so `GlobalSize` is its true byte size.
+        let max_units = unsafe { GlobalSize(handle) } / 2;
+        // SAFETY: the locked block holds `max_units` readable UTF-16 units; the slice is bounded
+        // by that and is copied out before the unlock.
+        let units = unsafe { std::slice::from_raw_parts(ptr, max_units) };
+        let end = units.iter().position(|&u| u == 0).unwrap_or(units.len());
+        let text = String::from_utf16_lossy(&units[..end]);
+        // SAFETY: balances the successful `GlobalLock` above.
+        unsafe {
+            GlobalUnlock(handle);
+        }
+        Ok(Some(text))
+    }
+
+    /// Replaces the clipboard with `text` and returns the sequence number read after closing it.
+    pub fn write_clipboard_text(owner: Option<ClipboardOwner>, text: &str) -> Result<u32, String> {
+        let units: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        {
+            let _guard = open_clipboard(owner)?;
+            // SAFETY: the clipboard is open.
+            if unsafe { EmptyClipboard() } == 0 {
+                return Err("could not clear the clipboard".into());
+            }
+            // SAFETY: plain values; null (failure) is handled below.
+            let h = unsafe { GlobalAlloc(GMEM_MOVEABLE, units.len() * 2) };
+            if h.is_null() {
+                return Err("could not allocate clipboard memory".into());
+            }
+            // SAFETY: `h` is a fresh moveable block of `units.len() * 2` bytes.
+            let dst = unsafe { GlobalLock(h) } as *mut u16;
+            if dst.is_null() {
+                // SAFETY: `h` was never handed to the system, so we still own and free it.
+                unsafe {
+                    GlobalFree(h);
+                }
+                return Err("could not lock clipboard memory".into());
+            }
+            // SAFETY: `dst` points at `units.len()` writable units; the source is a live Vec and
+            // the regions cannot overlap.
+            unsafe {
+                std::ptr::copy_nonoverlapping(units.as_ptr(), dst, units.len());
+                GlobalUnlock(h);
+            }
+            // SAFETY: the clipboard is open and `h` is a valid moveable block.
+            if unsafe { SetClipboardData(CF_UNICODETEXT, h) }.is_null() {
+                // SAFETY: the system did not take `h`, so we still own it.
+                unsafe {
+                    GlobalFree(h);
+                }
+                return Err("could not set the clipboard".into());
+            }
+            // On success the system owns `h`; it must not be freed.
+        }
+        Ok(clipboard_sequence())
+    }
+
+    /// Empties the clipboard.
+    pub fn clear_clipboard(owner: Option<ClipboardOwner>) -> Result<(), String> {
+        let _guard = open_clipboard(owner)?;
+        // SAFETY: the clipboard is open.
+        if unsafe { EmptyClipboard() } == 0 {
+            return Err("could not clear the clipboard".into());
+        }
+        Ok(())
+    }
+
+    /// The clipboard's change counter.
+    pub fn clipboard_sequence() -> u32 {
+        // SAFETY: `GetClipboardSequenceNumber` takes no arguments.
+        unsafe { GetClipboardSequenceNumber() }
+    }
 }
 
 #[cfg(not(windows))]
@@ -341,11 +554,60 @@ mod imp {
     pub fn game_is_foreground(_game: &GameWindow) -> bool {
         false
     }
+
+    /// Non-Windows stand-in for the clipboard owner window.
+    #[derive(Clone, Copy)]
+    pub struct ClipboardOwner;
+
+    /// No owner window off Windows.
+    pub fn clipboard_owner(_w: &OverlayWindow) -> ClipboardOwner {
+        ClipboardOwner
+    }
+
+    /// No modifier query off Windows.
+    pub fn modifiers_held() -> bool {
+        false
+    }
+
+    /// Key injection is not supported off Windows.
+    pub fn send_tap(_vk: u16) -> Result<(), String> {
+        Err("not supported on this platform".into())
+    }
+
+    /// Key injection is not supported off Windows.
+    pub fn send_chord(_modifier: u16, _vk: u16) -> Result<(), String> {
+        Err("not supported on this platform".into())
+    }
+
+    /// Clipboard access is not supported off Windows.
+    pub fn read_clipboard_text(_owner: Option<ClipboardOwner>) -> Result<Option<String>, String> {
+        Err("not supported on this platform".into())
+    }
+
+    /// Clipboard access is not supported off Windows.
+    pub fn write_clipboard_text(
+        _owner: Option<ClipboardOwner>,
+        _text: &str,
+    ) -> Result<u32, String> {
+        Err("not supported on this platform".into())
+    }
+
+    /// Clipboard access is not supported off Windows.
+    pub fn clear_clipboard(_owner: Option<ClipboardOwner>) -> Result<(), String> {
+        Err("not supported on this platform".into())
+    }
+
+    /// No clipboard sequence off Windows.
+    pub fn clipboard_sequence() -> u32 {
+        0
+    }
 }
 
 pub use imp::{
-    GameWindow, OverlayWindow, conceal, find_game_window, focus_game,
-    foreground_is_game_or_overlay, from_frame, game_is_foreground, reveal, work_area,
+    ClipboardOwner, GameWindow, OverlayWindow, clear_clipboard, clipboard_owner,
+    clipboard_sequence, conceal, find_game_window, focus_game, foreground_is_game_or_overlay,
+    from_frame, game_is_foreground, modifiers_held, read_clipboard_text, reveal, send_chord,
+    send_tap, work_area, write_clipboard_text,
 };
 
 #[cfg(test)]
@@ -399,6 +661,12 @@ mod tests {
     #[test]
     fn find_game_window_enumerates_without_panicking() {
         let _ = super::find_game_window();
+    }
+
+    /// Read-only: the sequence number is a counter, nothing is asserted about its value.
+    #[test]
+    fn clipboard_sequence_reads_without_panicking() {
+        let _ = super::clipboard_sequence();
     }
 
     /// A smoke test for the one new Win32 read: it must come back with a plausible desktop, not

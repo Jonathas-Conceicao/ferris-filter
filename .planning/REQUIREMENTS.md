@@ -48,10 +48,10 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **EDIT-02**: User can view and edit every action on any block: colours, font size, alert
   sounds (built-in and custom), minimap icon, beam effect, and drop-sound toggles.
 
-- [ ] **EDIT-03**: User can switch a block between `Show`, `Hide` and `Minimal`, and toggle
+- [x] **EDIT-03**: User can switch a block between `Show`, `Hide` and `Minimal`, and toggle
   `Continue`.
 
-- [ ] **EDIT-04**: Disabling a rule comments its block out. Commented-out blocks in a loaded filter,
+- [x] **EDIT-04**: Disabling a rule comments its block out. Commented-out blocks in a loaded filter,
   such as NeverSink's, appear as disabled rules and can be enabled.
 
 - [x] **EDIT-05**: User can add, delete, duplicate and reorder rules.
@@ -73,7 +73,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **ECON-01**: Economy-priced blocks are written after the general rules, inside a section
   delimited by comment markers.
 
-- [ ] **ECON-02**: The economy section is not shown in the rule editor. The rule list shows a
+- [x] **ECON-02**: The economy section is not shown in the rule editor. The rule list shows a
   summary instead, e.g. "+ 42 locked rule blocks".
 
 - [x] **ECON-03**: Apply regenerates the economy section from `prices.json`, `tiers.json` and the
@@ -181,8 +181,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PARSE-04 | Phase 16 | Pending |
 | EDIT-01 | Phase 20 | Pending |
 | EDIT-02 | Phase 20 | Pending |
-| EDIT-03 | Phase 19 | Pending |
-| EDIT-04 | Phase 19 | Pending |
+| EDIT-03 | Phase 19 | Complete |
+| EDIT-04 | Phase 19 | Complete |
 | EDIT-05 | Phase 19 | Complete |
 | EDIT-06 | Phase 20 | Pending |
 | EDIT-07 | Phase 19 | Pending |
@@ -190,7 +190,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-09 | Phase 18 | Complete |
 | EDIT-10 | Phase 18 | Complete |
 | ECON-01 | Phase 18 | Complete |
-| ECON-02 | Phase 19 | Pending |
+| ECON-02 | Phase 19 | Complete |
 | ECON-03 | Phase 18 | Complete |
 | ECON-04 | Phase 18 | Complete |
 | STORE-01 | Phase 18 | Complete |

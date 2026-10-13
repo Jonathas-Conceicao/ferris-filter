@@ -4,13 +4,13 @@ milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: verifying
 stopped_at: Completed-18-07-PLAN.md
-last_updated: "2026-10-13T02:08:59.470Z"
+last_updated: "2026-10-13T02:16:14.708Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 3
   total_plans: 22
-  completed_plans: 16
+  completed_plans: 17
   percent: 18
 ---
 
@@ -65,6 +65,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 18 P03 | 25min | 2 tasks | 4 files |
 | Phase 18 P04 | 15min | 2 tasks | 2 files |
 | Phase 18 P05 | 25min | 2 tasks | 4 files |
+| Phase 19 P02 | 25min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -128,6 +129,7 @@ work (carried forward past the v0.3 close):
 - Phase 16-02: keyword table is 80 entries, Ops None|Compare, lenient shape validation (no range/name checks)
 - 16-03: block metadata accessors live on Document (block_meta/meta_get); disabled-block reasons are Info diagnostics, never Error
 - 16-04: edits rebuild whole index and remap BlockIds by position; edit refused if block count/header/owned length/enabled state would change
+- [Phase 19]: 19-02: structural ops go through commit_structural (explicit ids per block); moves never cross economy markers
 
 ### Pending Todos
 
@@ -267,7 +269,7 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T02:08:59.462Z
+Last session: 2026-10-13T02:16:10.337Z
 Stopped at: Completed-18-07-PLAN.md
 Resume file: None
 

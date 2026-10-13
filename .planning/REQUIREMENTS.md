@@ -42,10 +42,10 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Rule Editor (EDIT)
 
-- [ ] **EDIT-01**: User can view and edit every condition on any block: all operators, and
+- [x] **EDIT-01**: User can view and edit every condition on any block: all operators, and
   multi-value lists. No condition is read-only.
 
-- [ ] **EDIT-02**: User can view and edit every action on any block: colours, font size, alert
+- [x] **EDIT-02**: User can view and edit every action on any block: colours, font size, alert
   sounds (built-in and custom), minimap icon, beam effect, and drop-sound toggles.
 
 - [x] **EDIT-03**: User can switch a block between `Show`, `Hide` and `Minimal`, and toggle
@@ -55,7 +55,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
   such as NeverSink's, appear as disabled rules and can be enabled.
 
 - [x] **EDIT-05**: User can add, delete, duplicate and reorder rules.
-- [ ] **EDIT-06**: User can apply a named style to a rule, which sets the rule's style actions.
+- [x] **EDIT-06**: User can apply a named style to a rule, which sets the rule's style actions.
 - [x] **EDIT-07**: User can search the rule list, and the editor stays responsive on a filter of
   about 460 blocks (the NeverSink sample).
 
@@ -107,7 +107,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **STYLE-02**: A rule naming an unknown style, or an invalid `styles.json`, produces a clear
   error at load time.
 
-- [ ] **STYLE-03**: A rule that uses a named style remembers it (via a comment tag in the filter).
+- [x] **STYLE-03**: A rule that uses a named style remembers it (via a comment tag in the filter).
   When the style changes, the rule's actions update on the next Apply.
 
 - [x] **STYLE-04**: `generate` output is unchanged: the `seed-universal.filter` fixture stays
@@ -179,12 +179,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PARSE-02 | Phase 16 | Pending |
 | PARSE-03 | Phase 16 | Pending |
 | PARSE-04 | Phase 16 | Pending |
-| EDIT-01 | Phase 20 | Pending |
-| EDIT-02 | Phase 20 | Pending |
+| EDIT-01 | Phase 20 | Complete (UAT pending) |
+| EDIT-02 | Phase 20 | Complete (UAT pending) |
 | EDIT-03 | Phase 19 | Complete |
 | EDIT-04 | Phase 19 | Complete |
 | EDIT-05 | Phase 19 | Complete |
-| EDIT-06 | Phase 20 | Pending |
+| EDIT-06 | Phase 20 | Complete (UAT pending) |
 | EDIT-07 | Phase 19 | Complete |
 | EDIT-08 | Phase 19 | Complete |
 | EDIT-09 | Phase 18 | Complete |
@@ -200,7 +200,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STORE-05 | Phase 18 | Complete |
 | STYLE-01 | Phase 17 | Complete |
 | STYLE-02 | Phase 17 | Complete |
-| STYLE-03 | Phase 20 | Pending |
+| STYLE-03 | Phase 20 | Complete (UAT pending) |
 | STYLE-04 | Phase 17 | Complete |
 | CONF-01 | Phase 21 | Pending |
 | CONF-02 | Phase 21 | Pending |

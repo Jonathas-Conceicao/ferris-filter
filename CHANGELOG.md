@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Full-grammar block editing in the overlay: every condition and action of any block is editable
+  with structured controls (grouped searchable **+ condition** / **+ action** pickers, operator
+  dropdown with plain-English labels, sliders with exact numbers, class groups from `config.json`,
+  chip lists, colour picker with alpha, minimap/beam/sound controls). Edits rewrite only the edited
+  value's lines; unknown-keyword lines are editable raw rows.
+- Style linking: a STYLE group applies a named style from `styles.json` to a rule (`#ff:style
+  <name>`). Apply rewrites styled rules from the current `styles.json` and reports `Updated N
+  styled rules.`; `Remove style` keeps the actions as the rule's own; unknown style names are
+  flagged (`unknown style`) and reported without blocking Apply or being rewritten. Collapsed rows
+  show `styled: <name>`.
+
 - `styles.json` (committed, repo root) is now the single source of named styles. Adding a style
   needs no code change: define it there and use it from a rule. Validated at load (required styles
   S, A, B, C, D, E, F, unchanged and hidden; duplicate names; names differing only by case from a
@@ -61,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Overlay layout: all footer messages share one outcome area capped at 96px, the stale indicator
+  is 14px body text, controls use 24px click targets, spacing follows a 4/8/16 scale, accent text
+  uses a higher-contrast token, and a rule row's label keeps at least 140px (extra flags fold into
+  a `+N` badge).
+- Parser line edits: a single-line patch keeps that line's own line ending, and edits to blocks
+  with pre-existing warnings are allowed unless they add new problems.
 - APPLY no longer requires an economy section; the ADD ECONOMY SECTION button moved into the
   economy footer row; the overlay's v0.4 JSON-rule modules (edit, rule editor, view model) were removed.
 - **BREAKING:** the game-folder filter is now the only store. `dynamic.json` and

@@ -48,15 +48,23 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > stripe's own `✕` only **hides** it, and the system tray icon's **Quit** is the only way to exit
 > the process.
 >
-> **The rule list (Phase 19):** the overlay treats the game-folder `dynamic.filter` as its store (see
+> **The rule list and editor (Phases 19-20):** the overlay treats the game-folder `dynamic.filter` as its store (see
 > the `dynamic.filter` row above); there is no `dynamic.json`. Every block of the loaded filter is a
 > row in a flat, virtualized list (responsive on the ~500-block NeverSink/FilterBlade sample), with a
 > search box matching the `#ff:name`, the derived label and Class/BaseType values. A rule's name comes
 > only from its `#ff:name` line; foreign header text such as NeverSink's `$type->` tags is kept on disk
 > but never shown. An unnamed rule reads `<index>  Show · <first class> · BaseType ×N`. Rows expand in
-> place (one at a time) with NAME, ACTION (Show / Hide / Minimal plus a Continue checkbox; locked, with
-> a note, when the rule carries a `#ff:style` tag, since the style decides Show or Hide), read-only
-> CONDITIONS (editing arrives in a later phase), and Duplicate / Delete (inline confirm). Arrows reorder
+> place (one at a time) with NAME, STYLE, CONDITIONS, ACTIONS (Show / Hide / Minimal and a Continue
+> toggle come first; the Show/Hide disposition is locked, with a note, when a style owns it) and
+> Duplicate / Delete (inline confirm). Every condition and action is editable with structured
+> controls: a grouped, searchable **+ condition** / **+ action** picker, an operator dropdown with
+> plain-English labels (an existing operator is never normalized), sliders paired with exact numbers,
+> a class picker whose groups come from `config.json`, chip lists for BaseType/Class, a colour
+> picker with alpha, and minimap / beam / sound controls. An edit rewrites only the edited value's
+> lines. A list condition added with **+ condition** is an unwritten row until its first entry.
+> Lines with an unknown keyword show as raw rows (Enter commits; an edit that would add a grammar
+> Error shows an inline hint and changes nothing), and an invalid commented-out block is shown
+> read-only. Arrows reorder
 > (disabled while searching; a move across a Continue rule is flagged `moved across Continue`). The
 > circular toggle comments a block out or back in; commented-out blocks load as disabled rules, and a
 > commented block that is not valid grammar is flagged `can't enable`. Enabled rules with grammar
@@ -68,8 +76,19 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > **RELOAD** re-reads the file and discards unapplied edits (also offered when the folder was not
 > found, the filter could not be loaded, or APPLY was refused because the file changed on disk), and
 > **SYNC ECONOMY** is described below. Opening the overlay never writes: a v0.4 filter is announced as
-> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. A rule's
-> `#ff:style` tag is displayed, but applying its action on Apply arrives in Phase 20. PoE2 never
+> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. Picking a style in the STYLE group writes
+> `#ff:style <name>` and sets the rule's actions from `styles.json`. On every Apply, styled rules are
+> rewritten from the current `styles.json` (re-read at Apply, and watched while the overlay runs: a
+> change on disk marks the filter as having unapplied changes), and the outcome says
+> `Updated N styled rules.`. A style's actions are locked in the UI (`from style` rows); a hand edit
+> of a styled rule's actions in the file is overwritten on the next Apply. **Remove style** keeps the
+> current actions as the rule's own, after which they can be customized. A tag naming a style that
+> does not exist is flagged `unknown style`, reported in the outcome area, and never rewritten or
+> blocking. A disabled styled rule is rewritten once it is enabled. Collapsed rows show `styled:
+> <name>` (truncated to 12 characters) and fold flags beyond a 120px budget into a `+N` badge, so the
+> rule label always keeps at least 140px. All footer messages (Apply outcome, list status, sync
+> status, the grammar-gate and unknown-style lines) share one outcome area capped at 96px that
+> scrolls, so APPLY, REVERT and RELOAD stay on screen. PoE2 never
 > re-reads a filter on its own, so after every successful Apply reload via **Options → Game → Item
 > Filter → Refresh**.
 

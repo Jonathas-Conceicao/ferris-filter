@@ -578,6 +578,7 @@ pub(crate) struct OutcomeLine {
 }
 
 /// Height cap of the outcome area; longer content scrolls inside it.
+#[cfg(test)]
 pub(crate) const OUTCOME_MAX_HEIGHT: f32 = 96.0;
 
 /// The present footer messages, in display order: list status, Apply outcome, sync status, then

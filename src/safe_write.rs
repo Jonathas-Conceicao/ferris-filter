@@ -234,11 +234,25 @@ fn write_guarded_with(
             source: e,
         })?;
 
+    persist_with_retry(temp, path, &mut persist, &mut sleep)?;
+    Ok(WriteOutcome::Written { backup })
+}
+
+/// Persist `temp` onto `path` with the bounded retry policy shared by every writer here: a
+/// read-only target is reported as such and never retried, a non-retriable error stops at once,
+/// and a sharing violation backs off 50, 100, 200, 400 ms before giving up as `Busy`.
+fn persist_with_retry(
+    mut temp: tempfile::NamedTempFile,
+    path: &Path,
+    persist: &mut impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>,
+    sleep: &mut impl FnMut(Duration),
+) -> Result<(), WriteError> {
+    let shown = || path.display().to_string();
     let mut delay = Duration::from_millis(BASE_DELAY_MS);
     let mut attempt = 1;
     loop {
         match persist(temp, path) {
-            Ok(_) => return Ok(WriteOutcome::Written { backup }),
+            Ok(_) => return Ok(()),
             Err(e) => {
                 if is_read_only(path) {
                     return Err(WriteError::ReadOnly {
@@ -266,6 +280,201 @@ fn write_guarded_with(
             }
         }
     }
+}
+
+/// One file of a multi-file write.
+#[derive(Debug, Clone, Copy)]
+pub struct Target<'a> {
+    pub path: &'a Path,
+    /// The exact bytes read at load (`None` = the file did not exist).
+    pub loaded: Option<&'a [u8]>,
+    pub new: &'a [u8],
+}
+
+/// Why a multi-file write did not complete.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+pub enum AllOrNoneError {
+    /// Refused before any file was replaced; every file is untouched.
+    #[error("{0}")]
+    NothingWritten(WriteError),
+
+    /// A later file failed; the earlier ones were restored from the loaded bytes.
+    #[error("{failed} The other file was restored, so nothing was changed.")]
+    RolledBack { failed: WriteError },
+
+    /// A later file failed and at least one earlier file could not be restored.
+    #[error("{failed} {}", unrestored_text(.unrestored))]
+    RollbackFailed {
+        failed: WriteError,
+        unrestored: Vec<PathBuf>,
+    },
+}
+
+fn unrestored_text(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| {
+            format!(
+                "{} could not be restored to its previous contents.",
+                p.display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+impl AllOrNoneError {
+    /// The path of a changed-on-disk refusal, so the caller can raise its outside-edit prompt.
+    pub fn changed_on_disk_path(&self) -> Option<&str> {
+        match self {
+            AllOrNoneError::NothingWritten(WriteError::ChangedOnDisk { path }) => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// Replace every target or none of them. Windows has no cross-file atomic rename, so: guard all,
+/// stage all, preflight all, persist in order, and on a failure restore the already replaced files
+/// from the in-memory loaded bytes. No `.ffbak` is made; the in-memory bytes are the safety net.
+pub fn write_all_or_none(targets: &[Target]) -> Result<Vec<WriteOutcome>, AllOrNoneError> {
+    write_all_or_none_with(
+        targets,
+        |temp, target| temp.persist(target),
+        std::thread::sleep,
+    )
+}
+
+fn parent_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    }
+}
+
+fn stage(path: &Path, bytes: &[u8]) -> Result<tempfile::NamedTempFile, WriteError> {
+    let err = |source: io::Error| WriteError::Unwritable {
+        path: path.display().to_string(),
+        source,
+    };
+    let mut t = tempfile::NamedTempFile::new_in(parent_of(path)).map_err(err)?;
+    t.write_all(bytes)
+        .and_then(|_| t.as_file().sync_all())
+        .map_err(err)?;
+    Ok(t)
+}
+
+fn write_all_or_none_with(
+    targets: &[Target],
+    mut persist: impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>,
+    mut sleep: impl FnMut(Duration),
+) -> Result<Vec<WriteOutcome>, AllOrNoneError> {
+    let nothing = AllOrNoneError::NothingWritten;
+
+    // a. Guard every target before touching anything.
+    for t in targets {
+        let dir = parent_of(t.path);
+        if !dir.is_dir() {
+            return Err(nothing(WriteError::DestinationMissing {
+                path: dir.display().to_string(),
+            }));
+        }
+        let current = match fs::read(t.path) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(nothing(WriteError::Unreadable {
+                    path: t.path.display().to_string(),
+                    source: e,
+                }));
+            }
+        };
+        if current.as_deref() != t.loaded {
+            return Err(nothing(WriteError::ChangedOnDisk {
+                path: t.path.display().to_string(),
+            }));
+        }
+    }
+
+    // b. Unchanged targets drop out.
+    let pending: Vec<usize> = (0..targets.len())
+        .filter(|&i| targets[i].loaded != Some(targets[i].new))
+        .collect();
+
+    // c. Stage every remaining target.
+    let mut staged = Vec::with_capacity(pending.len());
+    for &i in &pending {
+        staged.push(stage(targets[i].path, targets[i].new).map_err(nothing)?);
+    }
+
+    // d. Preflight: a read-only or locked target is found before any rename.
+    for &i in &pending {
+        let path = targets[i].path;
+        if !path.exists() {
+            continue;
+        }
+        let shown = path.display().to_string();
+        if is_read_only(path) {
+            return Err(nothing(WriteError::ReadOnly {
+                path: shown,
+                source: io::Error::from(io::ErrorKind::PermissionDenied),
+            }));
+        }
+        if let Err(e) = fs::OpenOptions::new().write(true).open(path) {
+            return Err(nothing(if is_retriable(&e) {
+                WriteError::Busy {
+                    path: shown,
+                    attempts: 1,
+                    source: e,
+                }
+            } else {
+                WriteError::Unwritable {
+                    path: shown,
+                    source: e,
+                }
+            }));
+        }
+    }
+
+    // e. Persist in input order; restore on failure.
+    let mut replaced: Vec<usize> = Vec::new();
+    for (&i, temp) in pending.iter().zip(staged) {
+        match persist_with_retry(temp, targets[i].path, &mut persist, &mut sleep) {
+            Ok(()) => replaced.push(i),
+            Err(failed) => {
+                let mut unrestored = Vec::new();
+                for &j in replaced.iter().rev() {
+                    let t = &targets[j];
+                    let ok = match t.loaded {
+                        Some(orig) => stage(t.path, orig)
+                            .and_then(|tmp| {
+                                persist_with_retry(tmp, t.path, &mut persist, &mut sleep)
+                            })
+                            .is_ok(),
+                        None => fs::remove_file(t.path).is_ok(),
+                    };
+                    if !ok {
+                        unrestored.push(t.path.to_path_buf());
+                    }
+                }
+                return Err(if unrestored.is_empty() {
+                    AllOrNoneError::RolledBack { failed }
+                } else {
+                    AllOrNoneError::RollbackFailed { failed, unrestored }
+                });
+            }
+        }
+    }
+
+    // f. Report per input target.
+    Ok((0..targets.len())
+        .map(|i| {
+            if pending.contains(&i) {
+                WriteOutcome::Written { backup: None }
+            } else {
+                WriteOutcome::Unchanged
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -485,6 +694,284 @@ mod tests {
         }
         assert_eq!(sleeps, 0, "a read-only target is not retried");
         assert_eq!(fs::read(&p).unwrap(), b"A");
+    }
+
+    // ---- write_all_or_none ----
+
+    fn two(t: &Path) -> (PathBuf, PathBuf) {
+        let a = t.join("a.json");
+        let b = t.join("b.json");
+        fs::write(&a, "A0").unwrap();
+        fs::write(&b, "B0").unwrap();
+        (a, b)
+    }
+
+    /// Persist that fails (non-retriably) on every call whose 1-based number is in `fail_on`.
+    fn failing_on(
+        fail_on: Vec<u32>,
+    ) -> impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>
+    {
+        let mut calls = 0;
+        move |file, target| {
+            calls += 1;
+            if fail_on.contains(&calls) {
+                Err(tempfile::PersistError {
+                    error: io::Error::from_raw_os_error(2),
+                    file,
+                })
+            } else {
+                file.persist(target)
+            }
+        }
+    }
+
+    #[test]
+    fn all_or_none_writes_both() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = two(t.path());
+        let r = write_all_or_none(&[
+            Target {
+                path: &a,
+                loaded: Some(b"A0"),
+                new: b"A1",
+            },
+            Target {
+                path: &b,
+                loaded: Some(b"B0"),
+                new: b"B1",
+            },
+        ])
+        .unwrap();
+        assert_eq!(r, vec![WriteOutcome::Written { backup: None }; 2]);
+        assert_eq!(fs::read(&a).unwrap(), b"A1");
+        assert_eq!(fs::read(&b).unwrap(), b"B1");
+        assert_eq!(names(t.path()), vec!["a.json", "b.json"]);
+    }
+
+    #[test]
+    fn guard_mismatch_writes_nothing() {
+        for bad_second in [true, false] {
+            let t = tempfile::tempdir().unwrap();
+            let (a, b) = two(t.path());
+            let (la, lb): (&[u8], &[u8]) = if bad_second {
+                (b"A0", b"stale")
+            } else {
+                (b"stale", b"B0")
+            };
+            let r = write_all_or_none(&[
+                Target {
+                    path: &a,
+                    loaded: Some(la),
+                    new: b"A1",
+                },
+                Target {
+                    path: &b,
+                    loaded: Some(lb),
+                    new: b"B1",
+                },
+            ]);
+            let e = r.unwrap_err();
+            assert!(matches!(
+                e,
+                AllOrNoneError::NothingWritten(WriteError::ChangedOnDisk { .. })
+            ));
+            let bad = if bad_second { &b } else { &a };
+            assert_eq!(
+                e.changed_on_disk_path(),
+                Some(bad.display().to_string().as_str())
+            );
+            assert_eq!(fs::read(&a).unwrap(), b"A0");
+            assert_eq!(fs::read(&b).unwrap(), b"B0");
+            assert_eq!(names(t.path()), vec!["a.json", "b.json"]);
+        }
+    }
+
+    #[test]
+    fn unchanged_target_is_skipped() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = two(t.path());
+        let before = fs::metadata(&a).unwrap().modified().unwrap();
+        let r = write_all_or_none(&[
+            Target {
+                path: &a,
+                loaded: Some(b"A0"),
+                new: b"A0",
+            },
+            Target {
+                path: &b,
+                loaded: Some(b"B0"),
+                new: b"B1",
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            r,
+            vec![
+                WriteOutcome::Unchanged,
+                WriteOutcome::Written { backup: None }
+            ]
+        );
+        assert_eq!(fs::metadata(&a).unwrap().modified().unwrap(), before);
+        assert_eq!(fs::read(&b).unwrap(), b"B1");
+
+        let r = write_all_or_none(&[
+            Target {
+                path: &a,
+                loaded: Some(b"A0"),
+                new: b"A0",
+            },
+            Target {
+                path: &b,
+                loaded: Some(b"B1"),
+                new: b"B1",
+            },
+        ])
+        .unwrap();
+        assert_eq!(r, vec![WriteOutcome::Unchanged; 2]);
+    }
+
+    #[test]
+    fn missing_directory_writes_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, _) = two(t.path());
+        let b = t.path().join("sub").join("b.json");
+        let r = write_all_or_none(&[
+            Target {
+                path: &a,
+                loaded: Some(b"A0"),
+                new: b"A1",
+            },
+            Target {
+                path: &b,
+                loaded: None,
+                new: b"B1",
+            },
+        ]);
+        assert!(matches!(
+            r,
+            Err(AllOrNoneError::NothingWritten(
+                WriteError::DestinationMissing { .. }
+            ))
+        ));
+        assert_eq!(fs::read(&a).unwrap(), b"A0");
+    }
+
+    #[test]
+    fn read_only_second_target_writes_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = two(t.path());
+        let mut perms = fs::metadata(&b).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&b, perms.clone()).unwrap();
+        let r = write_all_or_none(&[
+            Target {
+                path: &a,
+                loaded: Some(b"A0"),
+                new: b"A1",
+            },
+            Target {
+                path: &b,
+                loaded: Some(b"B0"),
+                new: b"B1",
+            },
+        ]);
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&b, perms).unwrap();
+        assert!(
+            matches!(
+                r,
+                Err(AllOrNoneError::NothingWritten(WriteError::ReadOnly { .. }))
+            ),
+            "{r:?}"
+        );
+        assert_eq!(fs::read(&a).unwrap(), b"A0");
+        assert_eq!(names(t.path()), vec!["a.json", "b.json"]);
+    }
+
+    #[test]
+    fn second_persist_fails_restores_first() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = two(t.path());
+        let r = write_all_or_none_with(
+            &[
+                Target {
+                    path: &a,
+                    loaded: Some(b"A0"),
+                    new: b"A1",
+                },
+                Target {
+                    path: &b,
+                    loaded: Some(b"B0"),
+                    new: b"B1",
+                },
+            ],
+            failing_on(vec![2]),
+            |_| {},
+        );
+        let e = r.unwrap_err();
+        assert!(matches!(e, AllOrNoneError::RolledBack { .. }));
+        assert!(e.to_string().contains("restored"));
+        assert_eq!(fs::read(&a).unwrap(), b"A0");
+        assert_eq!(fs::read(&b).unwrap(), b"B0");
+        assert_eq!(names(t.path()), vec!["a.json", "b.json"]);
+    }
+
+    #[test]
+    fn rollback_failure_names_the_unrestored_file() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = two(t.path());
+        let r = write_all_or_none_with(
+            &[
+                Target {
+                    path: &a,
+                    loaded: Some(b"A0"),
+                    new: b"A1",
+                },
+                Target {
+                    path: &b,
+                    loaded: Some(b"B0"),
+                    new: b"B1",
+                },
+            ],
+            failing_on(vec![2, 3]),
+            |_| {},
+        );
+        match r {
+            Err(e @ AllOrNoneError::RollbackFailed { .. }) => {
+                let text = e.to_string();
+                assert!(text.contains("a.json"), "{text}");
+                assert!(text.contains("could not be restored"), "{text}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn rollback_deletes_a_file_that_did_not_exist() {
+        let t = tempfile::tempdir().unwrap();
+        let a = t.path().join("a.json");
+        let b = t.path().join("b.json");
+        fs::write(&b, "B0").unwrap();
+        let r = write_all_or_none_with(
+            &[
+                Target {
+                    path: &a,
+                    loaded: None,
+                    new: b"A1",
+                },
+                Target {
+                    path: &b,
+                    loaded: Some(b"B0"),
+                    new: b"B1",
+                },
+            ],
+            failing_on(vec![2]),
+            |_| {},
+        );
+        assert!(matches!(r, Err(AllOrNoneError::RolledBack { .. })));
+        assert!(!a.exists());
+        assert_eq!(fs::read(&b).unwrap(), b"B0");
     }
 
     #[test]

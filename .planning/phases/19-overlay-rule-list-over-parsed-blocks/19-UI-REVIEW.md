@@ -128,3 +128,7 @@ Issues:
 - src/overlay/layout.rs (constants via grep)
 - .planning/phases/19-overlay-rule-list-over-parsed-blocks/19-UI-SPEC.md
 - .planning/phases/19-overlay-rule-list-over-parsed-blocks/19-HUMAN-UAT.md
+
+## Post-audit fixes
+
+Commit 96da66b fixed top issues #3 (whole-row click to expand), #5 (inline NAME toggle with tooltip) and #6 (stale delete confirm disarmed when the expanded row changes). Issues #1, #2, #4 and #7-#9 remain open for a later pass (scores above are pre-fix).

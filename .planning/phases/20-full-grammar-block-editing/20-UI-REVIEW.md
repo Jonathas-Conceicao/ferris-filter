@@ -93,3 +93,13 @@ overall: 18/24
 - src/overlay/theme.rs
 - .planning/phases/20-full-grammar-block-editing/20-UI-SPEC.md
 - .planning/phases/19-overlay-rule-list-over-parsed-blocks/19-UI-REVIEW.md
+
+## Post-audit fixes
+
+Applied after this audit (commit "fix(20): UI review quick wins"):
+
+- Fix 1 (status order): status block moved above the `FILTER` heading. Done.
+- Fix 2 (11px buttons): Duplicate, Delete, Keep, Clear, Remove and Add economy section now render at 13px (`ROW_SUMMARY_SIZE`). Done.
+- Fix 4 (off-scale margins): header plate 10/6 -> 8/4, chip left 6 -> 4, chip item spacing 2 -> 4. Badge `symmetric(4, 1)` left as is. Done (needs a visual glance in UAT).
+- Fix 3 (24px interact height in the body): deferred. `row_height` and the virtualized list's `expanded_h` cache derive from `interact_size.y`, so raising it is not a contained change; left for a later polish pass.
+- Fix 5 (focal point / accessible names): runtime-only, covered by 20-HUMAN-UAT.md.

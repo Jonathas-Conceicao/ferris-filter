@@ -9,7 +9,7 @@ human_verification:
     expected: "Stripe opens, resolves the app root from the exe folder, loads the game-folder dynamic.filter, shows status notice; APPLY / ADD ECONOMY / RELOAD / SYNC ECONOMY buttons work"
     why_human: "GUI cannot be launched in verification; overlay wiring was only checked by grep and unit tests"
   - test: "In the overlay, press APPLY, then edit dynamic.filter externally and press APPLY again"
-    expected: "First Apply writes (or says up to date); second is refused with a 'changed on disk' message and RELOAD is offered"
+    expected: "First Apply writes (an identical result also counts as applied); second is refused with 'Filter changed on disk since it was loaded.' and RELOAD and OVERWRITE are offered; OVERWRITE replaces the outside edit with the overlay's rules and clears the warning"
     why_human: "GUI path; the underlying apply_file guard is covered by library and CLI tests"
   - test: "Run the real v0.4 game-folder dynamic.filter through the first Apply and reload it in PoE2 (Options > Game > Item Filter > Refresh)"
     expected: "Filter loads without warnings; all user rules look identical in game"

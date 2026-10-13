@@ -13,10 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **In-game reload after Apply** (Phase 23, RELOAD-01). A RULES Apply that writes the filter now sends
+- **OVERWRITE after a changed-on-disk refusal** (RULES tab). The refusal now reads `Filter changed on
+  disk since it was loaded.` and offers OVERWRITE beside RELOAD (tooltips explain both): it replaces
+  the outside change with the in-memory rules through the same guarded write (current disk bytes
+  become the baseline; atomic write, retry and one-time `.ffbak` unchanged), then counts as an Apply,
+  in-game reload included. The CONFIG tab already offered Overwrite for outside edits.
+- **In-game reload after Apply** (Phase 23, RELOAD-01). A successful RULES Apply now sends
   `/reloaditemfilter` to a running Path of Exile 2 (focus, Enter, paste, Enter, with no Ctrl+A, as EE2 does for `/` commands; clipboard
   text restored), status `Reloaded in game` (the keys were sent; ff cannot confirm the game ran the
-  command, so Refresh by hand if the filter did not change). Nothing is sent on an unchanged, refused or CONFIG Apply,
+  command, so Refresh by hand if the game did not reload). Nothing is sent on a refused or CONFIG Apply,
   with the game closed, or with the new CONFIG setting **Reload filter in game after Apply** off
   (default on, `reload_after_apply` in `ff-settings.json`; an unusable value or settings file
   turns it off, with a warning); the Refresh reminder then names the
@@ -113,6 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A RULES Apply whose result equals the file on disk no longer reports "already up to date; nothing
+  was written": it counts as applied (same status as a write, in-game reload sent). The identical
+  file is still not rewritten. `ff-cli apply` keeps its message.
 - A rule whose `#ff:style` tag names a style that no longer exists now loses that tag on the next
   RULES Apply and keeps its actions (previously the tag was kept and only reported). Deleting a
   style in the CONFIG tab therefore detaches its rules instead of leaving dangling tags.

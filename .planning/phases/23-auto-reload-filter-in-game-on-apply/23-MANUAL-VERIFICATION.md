@@ -66,13 +66,18 @@ Record Result as PASS / FAIL with a note for every step.
    channel (the game may pre-fill a channel prefix when chat opens).
    **Expected:** the typed `/reloaditemfilter` overrides the pre-filled prefix and the command is sent as is (there is no Ctrl+A since the fix for another tool's Ctrl+A hotkey). **Result:**
 
-8. **Unchanged Apply.** Apply twice with no edit in between.
-   **Expected:** the second shows "already up to date; nothing was written" and nothing is sent.
+8. **Identical Apply.** Apply twice with no edit in between.
+   **Expected:** the second still counts as applied: the same success status as a write
+   (`Reloaded in game`), the command is sent once, and the file is not rewritten (its modified time
+   does not change).
    **Result:**
 
 9. **Refused Apply.** Create a grammar error in an enabled rule (or edit the file on disk so Apply is
    refused).
-   **Expected:** a refusal message, nothing sent, the game is not focused. **Result:**
+   **Expected:** a refusal message, nothing sent, the game is not focused. For the
+   changed-on-disk case the footer reads "Filter changed on disk since it was loaded." with RELOAD and
+   OVERWRITE; press OVERWRITE: the file now holds the overlay's rules, the warning clears and the
+   command is sent once, like any Apply. **Result:**
 
 10. **CONFIG Apply.** Change a tier cutoff and press CONFIG Apply (only with `FERRISFILTER_HOME` at a
     temp copy).

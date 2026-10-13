@@ -17,7 +17,7 @@ expected: Stripe opens, resolves the app root from the exe folder, loads the gam
 result: [pending]
 
 ### 2. In the overlay, press APPLY, then edit dynamic.filter externally and press APPLY again
-expected: First Apply writes (or says up to date); second is refused with a 'changed on disk' message and RELOAD is offered
+expected: First Apply writes (an identical result also counts as applied); second is refused with 'Filter changed on disk since it was loaded.' and RELOAD and OVERWRITE are offered; OVERWRITE replaces the outside edit with the overlay's rules and clears the warning
 result: [pending]
 
 ### 3. Run the real v0.4 game-folder dynamic.filter through the first Apply and reload it in PoE2 (Options > Game > Item Filter > Refresh)

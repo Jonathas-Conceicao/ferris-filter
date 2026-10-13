@@ -202,11 +202,11 @@ Pinned under the list, separate band using `HEADER_PLATE` fill, 8px padding, a s
 
 | Outcome | Copy | Recovery affordance |
 |---------|------|---------------------|
-| Changed on disk | `The filter changed on disk since it was loaded, so nothing was written. RELOAD to pick up the new file. Your unapplied edits are discarded by RELOAD.` | `RELOAD` button (existing). Apply disabled until reload. |
+| Changed on disk | `Filter changed on disk since it was loaded.` (shortened 2026-10-13) | `RELOAD` (tooltip: discard your edits and load the file) and `OVERWRITE` (tooltip: replace the file with your edits). Apply disabled until one of them succeeds. |
 | Damaged markers | `The economy section markers are damaged. Fix them by hand, then RELOAD.` | `RELOAD` (existing copy retained from `filter_state_message`) |
 | Invalid enabled block | `Apply refused: N enabled rules have grammar errors (first: rule 12, line 3). Fix them or turn them off.` | Clicking the message jumps to and expands the first offending rule |
 | Success | per above | none |
-| Unchanged | `<path> is already up to date; nothing was written` (existing) | none |
+| Unchanged | Removed 2026-10-13: identical bytes are not rewritten but show the normal success status and trigger the in-game reload. | none |
 
 Decided on user's behalf: the three refusals are non-modal status lines, never popups, matching the stripe's existing pattern.
 

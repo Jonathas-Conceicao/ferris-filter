@@ -16,11 +16,11 @@ updated: 2026-10-13T20:13:05Z
 expected: The game reloads the filter; no unknown-command message (gates the whole feature)
 result: [pending]
 
-### 2. Checks 1, 2, 3 - RULES Apply with the game running and the setting on
-expected: Game takes focus, command sent exactly once, edit visible in game, stripe later reads "Wrote <path>. Reloaded in game", clipboard restored afterwards
+### 2. Checks 1, 2, 3, 8 - RULES Apply with the game running and the setting on (8: identical Apply, also OVERWRITE in check 9)
+expected: Game takes focus, command sent exactly once, edit visible in game, stripe later reads "Wrote <path>. Reloaded in game", clipboard restored afterwards; an identical Apply reads and reloads the same without rewriting the file
 result: [pending]
 
-### 3. Checks 4, 5, 6, 8, 9, 10 - not-sent cases (game closed, browser tab titled "Path of Exile 2", setting off, unchanged Apply, refused Apply, CONFIG Apply)
+### 3. Checks 4, 5, 6, 9, 10 - not-sent cases (game closed, browser tab titled "Path of Exile 2", setting off, refused Apply, CONFIG Apply)
 expected: Nothing typed anywhere; Refresh reminder with the reason shown where applicable
 result: [pending]
 

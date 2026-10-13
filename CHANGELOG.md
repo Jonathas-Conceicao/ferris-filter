@@ -34,9 +34,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enable as a bare catch-all, is refused), and FerrisFilter's own
   `#ff:<key> <value>` metadata comments are exposed. Library and tests only; no CLI or overlay
   change.
+- Filter-as-store economy section: the game-folder `dynamic.filter` is edited in place and its
+  economy section is fenced by `#ff:economy-begin ...` / `#ff:economy-end ...` marker lines.
+  Apply regenerates only that section (from prices.json, tiers.json, styles.json) and leaves
+  every other line alone; damaged markers stop apply.
+- `apply --filter <path>` to target any filter file, `--add-economy` to create the section at the
+  end of the file and `--remove-economy` to delete it. Plain `apply` refreshes an existing section
+  and never adds one.
+- First write keeps a `<name>.filter.ffbak` backup (created once, never overwritten); writes are
+  atomic with retry; apply refuses a file that changed on disk since it was loaded (the overlay
+  offers RELOAD).
+- App-root resolver: apply and the overlay find styles.json, tiers.json and prices.json via
+  `FERRISFILTER_HOME`, else by walking up from the exe's folder, else the working directory, else
+  an error. The overlay's SYNC ECONOMY writes prices.json there.
+- One-time conversion of a v0.4 `dynamic.filter` on its first apply (markers added, `Show # <name>`
+  names kept as `#ff:name`).
 
 ### Changed
 
+- **BREAKING:** the game-folder filter is now the only store. `dynamic.json` and
+  `dynamic_base.json` are gone (the template survives only as the test fixture
+  `tests/fixtures/v04-dynamic-base.json`); `apply --reset`, `--base`, `--store` and `--dest` are
+  removed; plain `apply` refreshes only the economy section of an existing filter. The overlay's
+  rule editor is temporarily replaced by a status notice until the next phase.
 - **BREAKING:** `config.json` and `dynamic_base.json` no longer have a `styles` section. A config
   or store (`dynamic.json`, custom `*_config.json`) that still has one loads only if every inline
   entry equals the same-named styles.json entry; the section is then dropped (the overlay's next

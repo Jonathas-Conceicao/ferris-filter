@@ -18,9 +18,6 @@ desktop.ini
 /prices.json
 /universal.filter
 
-# Dynamic filter working state — `apply` seeds dynamic.json from the committed
-# dynamic_base.json template and writes dynamic.filter into the game folder.
-# dynamic_base.json IS committed (it is the template and the "reset to scratch"
-# source); these two are per-user state and are not.
-/dynamic.json
+# Dynamic filter: `apply` edits dynamic.filter in the game folder in place (the filter
+# is the store); a repo-root copy is per-user and never committed.
 /dynamic.filter

@@ -437,27 +437,27 @@ egui::Popup::from_toggle_button_response(&btn)
 | A6 | Typing a value past the slider range via the number field is accepted by the game (e.g. Quality 40) | UI-SPEC | PoE2 warns at load; no action needed |
 | A7 | Numeric ranges and defaults come from the UI-SPEC (author-approved) not from game data | Value codec | Only affects slider feel |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **List-shaped conditions have no sensible default value (UI-SPEC gap).**
+1. **List-shaped conditions have no sensible default value (UI-SPEC gap).** RESOLVED: pending rows (20-05 model, 20-07 UI).
    - What we know: UI-SPEC says picking a condition adds a row "with a sensible default value"; a `Class`/`BaseType` line with no value is an Error.
    - What's unclear: whether to pre-fill (e.g. first class) or add a visible unwritten row.
    - Recommendation: pending-row mechanism (Pattern 3); nothing is written until the first entry; documented to the user by the caption.
 
-2. **Invalid (cannot-enable) disabled blocks and opaque lines.**
+2. **Invalid (cannot-enable) disabled blocks and opaque lines.** RESOLVED: raw rows with inline raw-text edit + Remove; invalid disabled blocks read-only with the cannot-enable explanation (20-05, 20-07).
    - What we know: disabled-invalid blocks and unknown-keyword lines exist in real filters; the author bar is "no read-only condition".
    - Recommendation: unknown-keyword/`Bad` lines display as raw rows with Remove only; disabled-invalid blocks show their lines as raw read-only rows with the existing "cannot enable" explanation (editing commented prose is not meaningful). Valid-disabled blocks are fully editable via prefix-aware patches. Record this as the accepted exception.
 
-3. **Label for an absent operator on numeric/bool conditions.**
+3. **Label for an absent operator on numeric/bool conditions.** RESOLVED: bare/`=`/`!` offered only when the line already uses it (20-02).
    - Recommendation: `Exactly (no operator)` when the line has none, `Exactly (=)` for bare `=`; never auto-normalize. Both appear only if already present.
 
-4. **Number-field invalid hint vs `DragValue`.**
+4. **Number-field invalid hint vs `DragValue`.** RESOLVED: TextEdit-based `number_field` with invalid state (20-03).
    - Recommendation: build a small `number_field` (TextEdit + temp-memory draft, commit on parse) so the specified hint works; `DragValue` elsewhere.
 
-5. **When to re-read `styles.json`.**
+5. **When to re-read `styles.json`.** RESOLVED: at start, RELOAD, every Apply, and on mtime change (20-06).
    - Recommendation: at start, RELOAD, and every Apply; optional mtime poll on stripe show. Phase 21 will add in-process edits.
 
-6. **Style names with surrounding whitespace/control characters.**
+6. **Style names with surrounding whitespace/control characters.** RESOLVED: `style_name_ok` guard at the call site (20-06).
    - Recommendation: guard at ApplyStyle/rewrite; add to Phase 21 validation backlog.
 
 ## Environment Availability

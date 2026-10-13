@@ -221,7 +221,34 @@ Plans:
   4. A rule that uses a named style keeps a comment tag in the filter; after the style changes, the rule's actions update on the next Apply
   5. Editing one value rewrites only that value (a `Class "x"` is never turned into `Class == "x"` unless the user changes it)
 
-**Plans**: TBD
+**Plans**: 9 plans
+Plans:
+**Wave 1**
+
+- [ ] 20-01-PLAN.md — filter line-patch API: patch one line's operator/values, insert/remove/splice body lines, per-line EOLs, new-diagnostics-only validation, FilterBlade no-op sweep
+- [ ] 20-02-PLAN.md — egui-free overlay::grammar (picker groups, operator choices/labels, slider ranges, defaults, round-trip-or-raw value codec) and ClassCatalog from config.json
+- [ ] 20-03-PLAN.md — Body widgets: remove X, themed slider, number field, chip list, colour swatch, toggle chip, badge; 24px targets; WARM_ACCENT_TEXT
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 20-04-PLAN.md — emitter::style_action_lines (generate byte-identical) and styled::rewrite_styled (idempotent, unknown-style report)
+- [ ] 20-05-PLAN.md — WorkingFilter body_view and EditLine/AddLine/RemoveLine RowActions with stale guard and coalescing
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 20-06-PLAN.md — Style state on rows, ApplyStyle/RemoveStyle, model-level style lock, Apply rewrites styled rules from fresh styles.json, class catalogue loading
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 20-07-PLAN.md — body.rs CONDITIONS editor: condition cards, every value control, + condition picker, pending rows, focus after add
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 20-08-PLAN.md — ACTIONS editor and + action picker; STYLE group with known/unknown banners and locked style-owned actions
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 20-09-PLAN.md — styled/unknown flags and flag budget, capped outcome area and status order, CLAUDE.md/CHANGELOG/REQUIREMENTS, manual verification script
 **UI hint**: yes
 
 ### Phase 21: Overlay Configuration Tab

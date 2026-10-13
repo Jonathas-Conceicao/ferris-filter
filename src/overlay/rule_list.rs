@@ -11,7 +11,7 @@ use egui::{Align, Color32, Layout, RichText, Sense, UiBuilder, vec2};
 
 use crate::filter::keywords::Keyword;
 use crate::filter::tokenize::Operator;
-use crate::filter::{BlockId, BlockKeyword, FilterDiagnostic};
+use crate::filter::{BlockId, FilterDiagnostic};
 
 use super::body::{self, BodyCtx};
 use super::classes::ClassCatalog;
@@ -378,7 +378,7 @@ fn draw_row(
     if is_expanded {
         let body = egui::Frame::new()
             .fill(theme::PANEL_GROUND)
-            .inner_margin(egui::Margin::symmetric(10, 8))
+            .inner_margin(egui::Margin::same(8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 expanded_body(ui, working, classes, row, list, actions);
@@ -442,58 +442,7 @@ fn expanded_body(
     });
     ui.add_space(8.0);
 
-    // ACTION
-    caption(ui, "ACTION");
-    let locked = matches!(row.style, StyleState::Known(_));
-    ui.horizontal(|ui| {
-        for (kw, word) in [
-            (BlockKeyword::Show, "Show"),
-            (BlockKeyword::Hide, "Hide"),
-            (BlockKeyword::Minimal, "Minimal"),
-        ] {
-            let selected = row.keyword == kw;
-            let (text_color, fill) = if locked {
-                (theme::DISABLED_TEXT, theme::ROW_BASE)
-            } else if selected {
-                (theme::SECTION_CREAM, theme::HEADER_PLATE)
-            } else {
-                (theme::LABEL_TAN, theme::ROW_BASE)
-            };
-            let fill = if locked && selected {
-                theme::HEADER_PLATE
-            } else {
-                fill
-            };
-            let btn = egui::Button::new(RichText::new(word).color(text_color)).fill(fill);
-            if ui.add_enabled(!locked, btn).clicked() && !selected {
-                actions.push(RowAction::SetKeyword(id, kw));
-            }
-        }
-    });
-    let mut cont = row.has_continue;
-    let cb = egui::Checkbox::new(
-        &mut cont,
-        RichText::new("Continue to later rules").color(if locked {
-            theme::DISABLED_TEXT
-        } else {
-            theme::LABEL_TAN
-        }),
-    );
-    if ui.add_enabled(!locked, cb).changed() {
-        actions.push(RowAction::SetContinue(id, cont));
-    }
-    if let StyleState::Known(tag) = &row.style {
-        ui.label(
-            RichText::new(format!(
-                "Style \"{tag}\" decides Show or Hide when you press Apply. Remove the style tag to choose here."
-            ))
-            .size(theme::ROW_SUMMARY_SIZE)
-            .color(theme::TAB_ACTIVE),
-        );
-    }
-    ui.add_space(8.0);
-
-    // CONDITIONS
+    // STYLE
     let entries = working.body_view(row.id);
     let bctx = BodyCtx {
         row,
@@ -502,6 +451,10 @@ fn expanded_body(
         classes,
         working,
     };
+    body::style_group(ui, &bctx, actions);
+    ui.add_space(8.0);
+
+    // CONDITIONS
     body::conditions_group(ui, &bctx, list, actions);
     if row.cannot_enable {
         ui.add(
@@ -516,6 +469,10 @@ fn expanded_body(
             .wrap(),
         );
     }
+    ui.add_space(16.0);
+
+    // ACTIONS (disposition first)
+    body::actions_group(ui, &bctx, list, actions);
     ui.add_space(8.0);
 
     // Duplicate / Delete
@@ -823,20 +780,46 @@ mod tests {
 
     #[test]
     fn expanded_style_tagged_row_renders_without_actions() {
-        let wf = WorkingFilter::from_text(
-            "Show # x\n    #ff:style S\n    Class \"Rings\"\n\nShow\n    Class \"Belts\"\n\n",
-        );
-        let ctx = headless_ctx();
-        let mut list = ListUi::default();
-        list.expanded = Some(wf.rows()[0].id);
-        for _ in 0..2 {
-            let (frame, _) = run_frame(&ctx, input(vec![]), &wf, &mut list, true);
-            assert!(
-                !frame
-                    .actions
-                    .iter()
-                    .any(|a| matches!(a, RowAction::SetKeyword(..)))
-            );
+        for src in [
+            "Show # x
+    Class \"Rings\"
+
+Show
+    Class \"Belts\"
+
+",
+            "Show # x
+    #ff:style S
+    Class \"Rings\"
+    SetFontSize 37
+
+Show
+    Class \"Belts\"
+
+",
+            "Show # x
+    #ff:style Nope
+    Class \"Rings\"
+    SetFontSize 20
+
+Show
+    Class \"Belts\"
+
+",
+        ] {
+            let mut wf = WorkingFilter::from_text(src);
+            wf.set_styles(Ok(crate::loader::load_styles(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/styles.json"
+            ))
+            .unwrap()));
+            let ctx = headless_ctx();
+            let mut list = ListUi::default();
+            list.expanded = Some(wf.rows()[0].id);
+            for _ in 0..2 {
+                let (frame, _) = run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+                assert!(frame.actions.is_empty(), "{src}: {:?}", frame.actions);
+            }
         }
     }
 

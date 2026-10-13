@@ -71,8 +71,12 @@ pub enum Step {
     FocusGame,
     /// Fail unless the game is the foreground window.
     VerifyForeground,
-    /// Fail if the user is holding a modifier key.
+    /// Fail if the user is holding a modifier key, polling briefly so a key being released as the
+    /// click lands is not a failure. Runs once, before focus moves.
     VerifyModifiersUp,
+    /// Fail at once, without waiting, if the user is holding a modifier key. Runs right before
+    /// each key group, after the game has focus (review iteration 2, WR-01).
+    VerifyModifiersStillUp,
     /// Remember the current clipboard text.
     SaveClipboard,
     /// Put this text on the clipboard.
@@ -93,10 +97,17 @@ pub trait InputSink {
     fn run(&mut self, step: &Step) -> Result<(), String>;
 }
 
-/// The exact reload plan. A foreground check precedes the clipboard write and every key press, so
-/// no key can land in another application. The modifier check comes first, before any side
-/// effect: it reads global key state and does not need the game focused, so a held modifier
-/// aborts while the stripe still has focus and can show why (review WR-03).
+/// The exact reload plan. A foreground check precedes the clipboard write and every key group, so
+/// no key can land in another application. The modifier check runs at two points:
+///
+/// - once first, before any side effect (polling briefly): it reads global key state and does not
+///   need the game focused, so a modifier held at click time aborts while the stripe still has
+///   focus and can show why (review WR-03);
+/// - again, without waiting, right before each key group (the first Enter, the Ctrl+A / Ctrl+V
+///   pair, the final Enter). The game has just come to the front by then, and holding Alt to show
+///   ground labels is a reflex. A modifier pressed in between would turn Enter into Alt+Enter and
+///   the chords into Ctrl+Alt+A / Ctrl+Alt+V, and the chord's Ctrl key-up would release a Ctrl the
+///   user holds (review iteration 2, WR-01). A held modifier there aborts with the same reason.
 pub fn reload_steps() -> Vec<Step> {
     vec![
         Step::VerifyModifiersUp,
@@ -106,13 +117,16 @@ pub fn reload_steps() -> Vec<Step> {
         Step::SaveClipboard,
         Step::SetClipboard(RELOAD_COMMAND.to_string()),
         Step::VerifyForeground,
+        Step::VerifyModifiersStillUp,
         Step::Tap(Key::Enter),
         Step::Wait(CHAT_OPEN_MS),
         Step::VerifyForeground,
+        Step::VerifyModifiersStillUp,
         Step::Chord(Key::Ctrl, Key::A),
         Step::Chord(Key::Ctrl, Key::V),
         Step::Wait(PASTE_SETTLE_MS),
         Step::VerifyForeground,
+        Step::VerifyModifiersStillUp,
         Step::Tap(Key::Enter),
         Step::Wait(RESTORE_AFTER_MS),
         Step::RestoreClipboard,
@@ -218,6 +232,9 @@ pub fn with_owner<G, O>(
         Decision::Skip(reason) => Some(Decision::Skip(reason)),
     }
 }
+
+/// The failure reason for a held modifier, from either modifier check.
+pub const MODIFIER_HELD: &str = "a modifier key (Ctrl, Shift or Alt) was held down";
 
 /// Reported when the worker dies without sending a result.
 pub const WORKER_STOPPED: &str = "the reload worker stopped unexpectedly";
@@ -337,7 +354,14 @@ impl InputSink for WinSink {
                         std::thread::sleep(Duration::from_millis(MODIFIER_POLL_MS));
                     }
                 }
-                Err("a modifier key (Ctrl, Shift or Alt) was held down".to_string())
+                Err(MODIFIER_HELD.to_string())
+            }
+            Step::VerifyModifiersStillUp => {
+                if win::modifiers_held() {
+                    Err(MODIFIER_HELD.to_string())
+                } else {
+                    Ok(())
+                }
             }
             Step::SaveClipboard => {
                 self.saved = Some(win::read_clipboard_text(self.owner)?);
@@ -382,10 +406,6 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    fn is_wait(s: &Step) -> bool {
-        matches!(s, Step::Wait(_))
-    }
-
     #[test]
     fn plan_is_exact() {
         use Key::*;
@@ -399,13 +419,16 @@ mod tests {
                 Step::SaveClipboard,
                 Step::SetClipboard(RELOAD_COMMAND.to_string()),
                 Step::VerifyForeground,
+                Step::VerifyModifiersStillUp,
                 Step::Tap(Enter),
                 Step::Wait(60),
                 Step::VerifyForeground,
+                Step::VerifyModifiersStillUp,
                 Step::Chord(Ctrl, A),
                 Step::Chord(Ctrl, V),
                 Step::Wait(40),
                 Step::VerifyForeground,
+                Step::VerifyModifiersStillUp,
                 Step::Tap(Enter),
                 Step::Wait(120),
                 Step::RestoreClipboard,
@@ -437,7 +460,8 @@ mod tests {
             .position(|s| *s == Step::Chord(Key::Ctrl, Key::V))
             .unwrap();
         assert!(a < v);
-        // Review WR-03: the modifier check runs before any side effect, focus included.
+        // Review WR-03: the polling modifier check runs before any side effect, focus included,
+        // and only there (polling once the game has focus would only delay the failure).
         assert_eq!(steps[0], Step::VerifyModifiersUp);
         assert_eq!(
             steps
@@ -454,16 +478,33 @@ mod tests {
             if matches!(s, Step::Tap(_) | Step::Chord(..) | Step::SetClipboard(_)) {
                 assert!(i > first_verify);
             }
-            let guarded = matches!(s, Step::Tap(_)) || i == a || matches!(s, Step::SetClipboard(_));
-            if guarded {
-                let prev = steps[..i].iter().rev().find(|p| !is_wait(p)).unwrap();
-                // SetClipboard is guarded by the earlier verify and modifier check; taps and the
-                // first chord by an immediately preceding VerifyForeground.
-                if !matches!(s, Step::SetClipboard(_)) {
-                    assert_eq!(*prev, Step::VerifyForeground, "step {i}");
-                }
+            // Every key group (each tap, and the first chord of the Ctrl+A / Ctrl+V pair) is
+            // directly preceded, with no wait in between, by the immediate modifier check, and
+            // that by a foreground check (review iteration 2, WR-01). SetClipboard is guarded by
+            // the earlier foreground check and the first modifier check.
+            if matches!(s, Step::Tap(_)) || i == a {
+                assert_eq!(steps[i - 1], Step::VerifyModifiersStillUp, "step {i}");
+                assert_eq!(steps[i - 2], Step::VerifyForeground, "step {i}");
+            }
+            // The only chord without its own check is Ctrl+V, directly after Ctrl+A.
+            if matches!(s, Step::Chord(..)) && i != a {
+                assert_eq!(i, a + 1, "step {i}");
+            }
+            // The immediate check is used only right before a key group.
+            if *s == Step::VerifyModifiersStillUp {
+                assert!(
+                    matches!(steps[i + 1], Step::Tap(_) | Step::Chord(..)),
+                    "step {i}"
+                );
             }
         }
+        assert_eq!(
+            steps
+                .iter()
+                .filter(|s| **s == Step::VerifyModifiersStillUp)
+                .count(),
+            3
+        );
         let total: u64 = steps
             .iter()
             .filter_map(|s| {
@@ -577,14 +618,51 @@ mod tests {
 
     #[test]
     fn first_tap_failure_restores_once() {
+        let at = reload_steps()
+            .iter()
+            .position(|s| *s == Step::Tap(Key::Enter))
+            .unwrap();
         let mut sink = FailingSink {
-            fail_at: 7,
+            fail_at: at,
             calls: vec![],
         };
         assert_eq!(execute(&mut sink, &reload_steps()), Err("boom".into()));
         assert_eq!(restores(&sink.calls), 1);
         assert_eq!(sink.calls.last(), Some(&Step::RestoreClipboard));
         assert!(!sink.calls.iter().any(|s| matches!(s, Step::Chord(..))));
+    }
+
+    #[test]
+    fn a_modifier_pressed_mid_sequence_aborts_before_the_next_key_group() {
+        // Review iteration 2, WR-01: a modifier pressed after the game took focus fails the
+        // immediate check in front of the next key group. No further key goes out, and the
+        // clipboard is restored exactly once.
+        let steps = reload_steps();
+        let checks: Vec<usize> = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| **s == Step::VerifyModifiersStillUp)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(checks.len(), 3);
+        for at in checks {
+            let mut sink = FailingSink {
+                fail_at: at,
+                calls: vec![],
+            };
+            assert_eq!(execute(&mut sink, &steps), Err("boom".into()));
+            // Everything up to the check ran; the key group after it never did.
+            assert_eq!(sink.calls[..=at], steps[..=at]);
+            assert_eq!(sink.calls.len(), at + 2);
+            assert_eq!(sink.calls.last(), Some(&Step::RestoreClipboard));
+            assert_eq!(restores(&sink.calls), 1);
+            let keys = |s: &[Step]| {
+                s.iter()
+                    .filter(|s| matches!(s, Step::Tap(_) | Step::Chord(..)))
+                    .count()
+            };
+            assert_eq!(keys(&sink.calls), keys(&steps[..at]));
+        }
     }
 
     #[test]

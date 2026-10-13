@@ -88,6 +88,16 @@ Record Result as PASS / FAIL with a note for every step.
     Alt) was held down"; nothing typed; the game is not focused, so the stripe stays open and shows
     the reason at once (the modifier check runs before the focus change). **Result:**
 
+12b. **Modifier pressed after the game takes focus.** Click Apply with no key held, then press and
+    hold Alt (or Ctrl) the moment the game comes to the front, and keep holding for a second.
+    **Expected:** no Alt+Enter (the game does not toggle fullscreen), no Ctrl+Alt+A / Ctrl+Alt+V,
+    and a Ctrl you are holding is not released by the overlay. Depending on timing, either the
+    reload completes ("Reloaded in game") because the keys went out before the press, or it stops
+    before the next key group; the next Ctrl+Shift+Z then shows the Refresh reminder plus "could not
+    reload in game: a modifier key (Ctrl, Shift or Alt) was held down", and the clipboard is
+    restored. An immediate modifier check runs before the first Enter, before Ctrl+A / Ctrl+V and
+    before the final Enter (review iteration 2, WR-01). **Result:**
+
 13. **Game minimized.** Minimize PoE2 (windowed), Apply with an edit.
     **Expected:** the game is restored and reloaded, or the Refresh reminder with a "could not reload
     in game" cause; never keystrokes into another window. **Result:**

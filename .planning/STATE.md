@@ -4,13 +4,13 @@ milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: verifying
 stopped_at: Completed-18-07-PLAN.md
-last_updated: "2026-10-13T02:16:14.708Z"
+last_updated: "2026-10-13T02:18:53.688Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 3
   total_plans: 22
-  completed_plans: 17
+  completed_plans: 18
   percent: 18
 ---
 
@@ -130,6 +130,7 @@ work (carried forward past the v0.3 close):
 - 16-03: block metadata accessors live on Document (block_meta/meta_get); disabled-block reasons are Info diagnostics, never Error
 - 16-04: edits rebuild whole index and remap BlockIds by position; edit refused if block count/header/owned length/enabled state would change
 - [Phase 19]: 19-02: structural ops go through commit_structural (explicit ids per block); moves never cross economy markers
+- [Phase 19-03]: Only Error diagnostics in enabled non-economy blocks block Apply; rules-only Apply allowed via EconomyOp::Keep
 
 ### Pending Todos
 
@@ -269,7 +270,7 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T02:16:10.337Z
+Last session: 2026-10-13T02:18:49.620Z
 Stopped at: Completed-18-07-PLAN.md
 Resume file: None
 

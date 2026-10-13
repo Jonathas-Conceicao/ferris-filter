@@ -59,7 +59,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **EDIT-07**: User can search the rule list, and the editor stays responsive on a filter of
   about 460 blocks (the NeverSink sample).
 
-- [ ] **EDIT-08**: Apply writes the edited filter, and Revert discards unsaved edits. This is the
+- [x] **EDIT-08**: Apply writes the edited filter, and Revert discards unsaved edits. This is the
   v0.4 model: edits are held in memory and Apply is the single writer.
 
 - [x] **EDIT-09**: Apply refuses to overwrite a filter that changed on disk after it was loaded,
@@ -186,7 +186,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-05 | Phase 19 | Complete |
 | EDIT-06 | Phase 20 | Pending |
 | EDIT-07 | Phase 19 | Pending |
-| EDIT-08 | Phase 19 | Pending |
+| EDIT-08 | Phase 19 | Complete |
 | EDIT-09 | Phase 18 | Complete |
 | EDIT-10 | Phase 18 | Complete |
 | ECON-01 | Phase 18 | Complete |

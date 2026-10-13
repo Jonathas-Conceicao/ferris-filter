@@ -188,7 +188,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 19-02-PLAN.md — filter::Document structural ops: append before economy, remove, duplicate, move, Show/Hide/Minimal, Continue
-- [ ] 19-03-PLAN.md — dynamic::apply_edited (EconomyOp, rules-only Apply) and the Error-only blocking_errors gate
+- [x] 19-03-PLAN.md — dynamic::apply_edited (EconomyOp, rules-only Apply) and the Error-only blocking_errors gate
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -260,7 +260,7 @@ Plans:
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
-| 19. Overlay Rule List Over Parsed Blocks | 2/7 | In Progress|  |
+| 19. Overlay Rule List Over Parsed Blocks | 3/7 | In Progress|  |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
@@ -347,7 +347,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 2/7 plans executed
+**Plans:** 3/7 plans executed
 
 Plans:
 

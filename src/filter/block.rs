@@ -10,7 +10,7 @@ use super::diag::FilterDiagnostic;
 use super::keywords::Keyword;
 use super::tokenize::TokenizedLine;
 
-/// Stable block identity, assigned from a document counter (mirrors `overlay::edit::RuleId`).
+/// Stable block identity, assigned from a document counter; the overlay keys its rows by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockId(pub(crate) u64);
 

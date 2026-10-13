@@ -9,13 +9,11 @@
 pub mod app;
 pub mod apply;
 pub mod economy;
-pub mod edit;
 pub mod hotkey;
 pub mod layout;
-pub mod rule_editor;
+pub mod text_entry;
 pub mod theme;
 pub mod tray;
-pub mod view_model;
 pub mod visibility;
 pub mod widgets;
 pub mod win;

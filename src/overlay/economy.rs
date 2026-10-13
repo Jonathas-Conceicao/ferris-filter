@@ -1,7 +1,7 @@
 //! The overlay's economy-sync affordance: refresh `prices.json` without leaving the game.
 //!
 //! **Framework-free by contract** — no `egui` type appears in any signature here, the same
-//! discipline `overlay::edit` and `overlay::apply` hold (`PITFALLS.md` §8). What a sync *reports*
+//! discipline `overlay::apply` holds (`PITFALLS.md` §8). What a sync *reports*
 //! and what state it leaves behind is decided here and unit-tested without a window; `app.rs` owns
 //! the button and the status line.
 //!

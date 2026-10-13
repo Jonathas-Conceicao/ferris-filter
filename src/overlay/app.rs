@@ -15,8 +15,7 @@
 //! separate, explicit button; APPLY never creates a section. When the guarded write refuses
 //! because the file changed on disk, the stripe offers RELOAD, which re-reads the file and
 //! discards in-memory state. Rule editing is temporarily absent (it returns in Phase 19, which
-//! rebuilds the editor over parsed filter blocks); `edit`, `rule_editor` and `view_model` stay
-//! compiled and tested meanwhile.
+//! rebuilds the editor over parsed filter blocks).
 //!
 //! The decisions (which button is live, what the status says) are pure functions in
 //! [`super::apply`]; this file only draws them and performs the calls.

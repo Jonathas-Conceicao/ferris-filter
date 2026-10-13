@@ -14,6 +14,7 @@ pub mod lines;
 pub mod meta;
 mod parse;
 pub mod section;
+mod structure;
 pub mod tokenize;
 
 pub use block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
@@ -29,7 +30,6 @@ pub struct Document {
     lines: Vec<Line>,
     diagnostics: Vec<FilterDiagnostic>,
     items: Vec<Item>,
-    #[allow(dead_code)] // consumed by block insertion in later phases
     next_id: u64,
 }
 

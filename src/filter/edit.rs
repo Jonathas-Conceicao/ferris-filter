@@ -47,6 +47,14 @@ pub enum EditError {
         "the edit would change which lines belong to the surrounding blocks; nothing was changed"
     )]
     WouldReattributeLines,
+    #[error("there is no rule to swap with in that direction")]
+    NoNeighbour,
+    #[error("the economy section markers are damaged: {0}")]
+    EconomyDamaged(String),
+    #[error(
+        "the header has extra tokens on the same line (such as `Show Continue`); edit it by hand"
+    )]
+    CompactHeader,
 }
 
 enum Fail {
@@ -103,7 +111,7 @@ struct Expect {
 }
 
 impl Document {
-    fn block_pos(&self, id: BlockId) -> Result<usize, EditError> {
+    pub(super) fn block_pos(&self, id: BlockId) -> Result<usize, EditError> {
         self.blocks()
             .position(|b| b.id() == id)
             .ok_or(EditError::UnknownBlock)
@@ -111,7 +119,7 @@ impl Document {
 
     /// Terminator for lines we create: the header's, or the nearest real one above when the header
     /// is an unterminated final line.
-    fn fresh_eol(&self, header: usize) -> Eol {
+    pub(super) fn fresh_eol(&self, header: usize) -> Eol {
         self.lines[..=header]
             .iter()
             .rev()

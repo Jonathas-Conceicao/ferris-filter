@@ -1013,28 +1013,6 @@ impl eframe::App for OverlayApp {
                     });
 
                 ui.add_space(8.0);
-                let total_rules = self.working.as_ref().map_or(0, |w| w.rows().len());
-                let shown_rules = match &mut self.working {
-                    Some(w) => w.matches(&self.query).len(),
-                    None => 0,
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.label(theme::section_header("FILTER"));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(rule_count_text(
-                                total_rules,
-                                shown_rules,
-                                !self.query.trim().is_empty(),
-                            ))
-                            .color(theme::LABEL_TAN),
-                        );
-                    });
-                });
-                ui.add_space(8.0);
-
                 // Status block: root, filter path and state, v0.4 notice.
                 let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
                 let mut lines: Vec<(egui::Color32, String)> = Vec::new();
@@ -1069,6 +1047,28 @@ impl eframe::App for OverlayApp {
                     });
                     ui.add_space(4.0);
                 }
+                ui.add_space(4.0);
+                let total_rules = self.working.as_ref().map_or(0, |w| w.rows().len());
+                let shown_rules = match &mut self.working {
+                    Some(w) => w.matches(&self.query).len(),
+                    None => 0,
+                };
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.label(theme::section_header("FILTER"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(rule_count_text(
+                                total_rules,
+                                shown_rules,
+                                !self.query.trim().is_empty(),
+                            ))
+                            .color(theme::LABEL_TAN),
+                        );
+                    });
+                });
+                ui.add_space(8.0);
 
                 match (&mut self.working, &self.filter) {
                     (Some(working), _) => {

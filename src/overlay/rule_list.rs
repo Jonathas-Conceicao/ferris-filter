@@ -478,6 +478,11 @@ fn draw_row(
     }
 }
 
+/// A row-action button at the 13px body-small size (UI-SPEC: 11px is for captions only).
+fn small_button(ui: &mut egui::Ui, text: impl Into<RichText>) -> egui::Response {
+    ui.add(egui::Button::new(text.into().size(theme::ROW_SUMMARY_SIZE)))
+}
+
 fn caption(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
 }
@@ -568,21 +573,23 @@ fn expanded_body(
     ui.horizontal(|ui| {
         if list.confirm_delete == Some(id) {
             ui.label(RichText::new("Delete this rule?").color(theme::LABEL_TAN));
-            if ui
-                .small_button(RichText::new("Yes, delete").color(theme::WARM_ACCENT_TEXT))
-                .clicked()
+            if small_button(
+                ui,
+                RichText::new("Yes, delete").color(theme::WARM_ACCENT_TEXT),
+            )
+            .clicked()
             {
                 actions.push(RowAction::Delete(id));
                 list.confirm_delete = None;
             }
-            if ui.small_button("Keep").clicked() {
+            if small_button(ui, "Keep").clicked() {
                 list.confirm_delete = None;
             }
         } else {
-            if ui.small_button("Duplicate").clicked() {
+            if small_button(ui, "Duplicate").clicked() {
                 actions.push(RowAction::Duplicate(id));
             }
-            if ui.small_button("Delete").clicked() {
+            if small_button(ui, "Delete").clicked() {
                 list.confirm_delete = Some(id);
             }
         }
@@ -609,7 +616,7 @@ pub fn search_bar(ui: &mut egui::Ui, query: &mut String) -> bool {
             query.clear();
             changed = true;
         }
-        if !query.is_empty() && ui.small_button("Clear").clicked() {
+        if !query.is_empty() && small_button(ui, "Clear").clicked() {
             query.clear();
             changed = true;
         }
@@ -649,14 +656,13 @@ pub fn economy_footer(
                                 RichText::new("Remove the economy section?")
                                     .color(theme::LABEL_TAN),
                             );
-                            if ui
-                                .small_button(RichText::new("Yes, remove").color(theme::WARM_ACCENT_TEXT))
+                            if small_button(ui, RichText::new("Yes, remove").color(theme::WARM_ACCENT_TEXT))
                                 .clicked()
                             {
                                 result = Some(EconomyFooterAction::Remove);
                                 list.confirm_economy_remove = false;
                             }
-                            if ui.small_button("Keep").clicked() {
+                            if small_button(ui, "Keep").clicked() {
                                 list.confirm_economy_remove = false;
                             }
                         } else {
@@ -666,7 +672,7 @@ pub fn economy_footer(
                                 );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui
-                                    .add_enabled(enabled, egui::Button::new("Remove").small())
+                                    .add_enabled(enabled, egui::Button::new(RichText::new("Remove").size(theme::ROW_SUMMARY_SIZE)))
                                     .clicked()
                                 {
                                     list.confirm_economy_remove = true;
@@ -687,7 +693,7 @@ pub fn economy_footer(
                         ui.label(RichText::new(&text).color(theme::DISABLED_TEXT));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui
-                                .add_enabled(enabled, egui::Button::new("Add economy section").small())
+                                .add_enabled(enabled, egui::Button::new(RichText::new("Add economy section").size(theme::ROW_SUMMARY_SIZE)))
                                 .clicked()
                             {
                                 result = Some(EconomyFooterAction::Add);

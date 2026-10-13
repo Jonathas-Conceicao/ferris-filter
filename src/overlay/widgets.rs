@@ -94,7 +94,7 @@ pub fn zebra_row(ui: &mut egui::Ui, index: usize, add: impl FnOnce(&mut egui::Ui
 
     egui::Frame::new()
         .fill(color)
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui);
@@ -534,13 +534,13 @@ pub fn chip_list(
                         .fill(theme::INPUT_FILL)
                         .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
                         .inner_margin(egui::Margin {
-                            left: 6,
+                            left: 4,
                             right: 0,
                             top: 0,
                             bottom: 0,
                         })
                         .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.spacing_mut().item_spacing.x = 4.0;
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new(item)

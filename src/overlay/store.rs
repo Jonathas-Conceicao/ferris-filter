@@ -190,6 +190,74 @@ mod tests {
         assert!(store.ends_with(dynamic::STORE_FILE));
     }
 
+    // -- styles beside the store (D-03, OD-1) --------------------------------
+
+    #[test]
+    fn load_returns_the_styles_beside_the_store() {
+        let dir = must("tempdir", tempfile::tempdir());
+        let base = repo_file(dynamic::BASE_FILE);
+        let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
+
+        let view = must("load", load(&base, &store));
+        assert_eq!(
+            view.config.styles.names().collect::<Vec<_>>(),
+            [
+                "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite",
+                "exceptional"
+            ]
+        );
+    }
+
+    #[test]
+    fn load_without_styles_json_beside_the_store_fails_readably() {
+        let dir = must("tempdir", tempfile::tempdir());
+        let base = repo_file(dynamic::BASE_FILE);
+        let store = dir.path().join(dynamic::STORE_FILE);
+
+        let err = match load(&base, &store) {
+            Ok(_) => panic!("a store without styles.json beside it must fail to load"),
+            Err(e) => e,
+        };
+        assert!(err.contains("styles.json"), "got: {err}");
+        assert!(store.exists(), "the seeded store file must not be deleted");
+    }
+
+    #[test]
+    fn load_rejects_a_store_with_an_inline_styles_section() {
+        let dir = must("tempdir", tempfile::tempdir());
+        let base = repo_file(dynamic::BASE_FILE);
+        let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
+        let text = must("read template", fs::read_to_string(&base));
+        let legacy = text.replacen('{', "{\"styles\": {},", 1);
+        assert_ne!(text, legacy);
+        must("write legacy store", fs::write(&store, legacy));
+
+        let err = match load(&base, &store) {
+            Ok(_) => panic!("a store with an inline styles section must be rejected"),
+            Err(e) => e,
+        };
+        assert!(err.contains("styles.json"), "got: {err}");
+        assert!(err.contains(dynamic::STORE_FILE), "got: {err}");
+    }
+
+    #[test]
+    fn save_never_writes_styles_into_the_store() {
+        let dir = must("tempdir", tempfile::tempdir());
+        let store = dir.path().join(dynamic::STORE_FILE);
+        let mut config = sample_config();
+        config.styles = crate::models::config::StyleSet::committed_for_tests();
+
+        must("save", save(&config, &store));
+        let text = must("read back store", fs::read_to_string(&store));
+        let value: serde_json::Value = must("parse saved store", serde_json::from_str(&text));
+        assert!(value.get("styles").is_none(), "styles must never be written to the store");
+        let reloaded: Config = must("reload", serde_json::from_str(&text));
+        assert_eq!(reloaded.rules, config.rules);
+        assert_eq!(reloaded.meta, config.meta);
+    }
+
     // -- save (D-02, D-04, T-14-01) ------------------------------------------
 
     fn sample_config() -> Config {

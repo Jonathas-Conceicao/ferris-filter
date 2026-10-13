@@ -18,6 +18,7 @@ pub mod loader;
 pub mod overlay;
 pub mod paths;
 pub mod run;
+pub mod safe_write;
 pub use run::run;
 pub mod models;
 pub mod pricer;

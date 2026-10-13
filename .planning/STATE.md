@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: verifying
-stopped_at: Completed 23-04-PLAN.md
+status: executing
+stopped_at: Completed 23-04-PLAN.md (Phase 23 human UAT pending)
 last_updated: "2026-10-13T19:34:32.652Z"
-last_activity: 2026-10-13
+last_activity: 2026-10-13 -- Phase 23 executed, code-reviewed (3 fix iterations), verification human_needed
 progress:
   total_phases: 18
   completed_phases: 8
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 22 — single-instance-overlay
+**Current focus:** Phase 23 — auto-reload-filter-in-game-on-apply
 
 ## Current Position
 
-Phase: 22 (single-instance-overlay) — HUMAN UAT PENDING
-Plan: 2 of 2 complete
-Status: Phase complete — ready for verification
-Last activity: 2026-10-13
+Phase: 23 (auto-reload-filter-in-game-on-apply) — HUMAN UAT PENDING
+Plan: 4 of 4 complete
+Status: Phase 23 executed; awaiting human UAT (23-HUMAN-UAT.md)
+Last activity: 2026-10-13 -- Phase 23 executed, verification human_needed
 
 Progress: [█████████░] 93%
 

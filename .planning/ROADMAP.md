@@ -69,7 +69,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (executed 2026-10-13; awaiting human UAT)
 - [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
-- [x] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (completed 2026-10-13)
+- [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
 
 ### Phase 16: Lossless Filter Parser
 
@@ -345,7 +345,7 @@ Plans:
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
-| 23. Auto-Reload Filter in Game on Apply | 4/4 | Complete   | 2026-10-13 |
+| 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 
 ## Backlog
 

@@ -2,6 +2,7 @@
 phase: 22-single-instance-overlay
 reviewed: 2026-10-13T00:00:00Z
 depth: standard
+iteration: 3
 files_reviewed: 4
 files_reviewed_list:
   - src/overlay/instance.rs
@@ -10,171 +11,91 @@ files_reviewed_list:
   - Cargo.toml
 findings:
   critical: 0
-  warning: 3
-  info: 5
-  total: 8
+  warning: 1
+  info: 3
+  total: 4
 status: issues_found
 ---
 
-# Phase 22: Code Review Report
+# Phase 22: Code Review Report (iteration 3)
 
 **Reviewed:** 2026-10-13
-**Depth:** standard (phase-22 diff vs `5333605`; app.rs limited to the changed regions and the visibility/toggle path)
+**Depth:** standard
 **Files Reviewed:** 4
 **Status:** issues_found
 
 ## Summary
 
-The gate is mostly sound. Handles are owned and closed exactly once, and `Drop` skips nulls on
-the fail-open paths. `GetLastError` is read immediately after `CreateMutexW`, with every wide
-string built beforehand. The guard is acquired before the hotkey and tray are created. Test
-names are per-PID, carry a per-test label and never touch the production names. I ran
-`cargo test --lib overlay::instance` and all 13 tests pass. I also checked the comment's claim
-that eframe 0.36 keeps invisible windows ticking: `eframe-0.36.2/src/native/run.rs:27` sets
-`INVISIBLE_WINDOW_REPAINT_INTERVAL` to 100 ms, so a stripe hidden to the tray still polls the
-show event.
+This pass re-reviewed the phase-22 diff (`git diff 5333605`), with most of the attention on the iteration-2 changes:
+- `OverlayApp.instance: Option<Guard>`, which tray Quit drops early
+- the `launch_named` re-acquire after a failed signal
+- the `request_until_acked` pre-send deadline check
+- the relaxed `>= 1` test asserts
 
-The defects are in the show/ack protocol. It is one auto-reset `show` event answered by one
-auto-reset `ack`, under a fixed 2-second deadline. It cannot answer more than one waiting
-launcher, and it does not cover a first instance that is still starting up. In both cases a
-healthy overlay produces the "not responding" box. Separately, the fail-open paths can break
-the phase's "never two stripes" guarantee, and they report the problem only through
-`eprintln!`, which the release GUI binary cannot show. No critical issues were found.
+The mutex is still the only arbiter, and I found no path that lets two processes hold the name at once. Every handle in `acquire_named`, `signal_running` and `Guard::drop` is closed exactly once, with null checks. No handle leaks on any early return. `Guard` holds raw `HANDLE`s, so it is `!Send`, and it is only used on the main thread. Every `unsafe` block carries a correct `// SAFETY:` comment. The tests use per-PID `Local\FerrisFilter-test-*` names, and all 17 labels are distinct. They call `launch_named` and `signal_running`, never `acquire()` or `notify()`, so no MessageBox can appear. `cargo test --lib overlay::instance` passes 28/28.
+
+There is one new Warning. The early release on Quit gives up the instance name **before** the closing process gives up its global hotkey. A relaunch in that window becomes the new first instance, but it cannot register `Ctrl+Shift+Z`, and it keeps that failure for its whole lifetime. That breaks the CONTEXT requirement of "exactly one stripe and one working hotkey".
+
+I did not re-raise the accepted residuals in 22-REVIEW-FIX.md: events-failed concurrency, the outcome-2 startup delay, the IN-02 grace slice, and IN-03 `mark_ready` without a window. They still hold as described.
 
 ## Warnings
 
-### WR-01: Concurrent second launches coalesce into one show and one ack, so all but one of them report "not responding"
+### WR-01: Quit releases the instance name before the hotkey, so an immediate relaunch runs with a dead `Ctrl+Shift+Z`
 
-**File:** `src/overlay/instance.rs:197-212` (with `src/overlay/app.rs:1311-1317`)
-**Issue:** Take launches B and C close together. This happens with an impatient double
-double-click, or when Explorer opens two items. Both call `ResetEvent(ack)` and
-`SetEvent(show)`, then wait on `ack`. `show` is auto-reset, so the two signals merge into one
-pending request. The first instance consumes it once per frame and calls `SetEvent(ack)` once.
-An auto-reset event releases exactly one waiter. The other launcher waits the full 2 s, gets
-`Wait::TimedOut` and shows "FerrisFilter is already running but not responding", even though
-the stripe was revealed. There is a second problem in the same code: C's `ResetEvent(ack)` can
-run after the first instance set `ack` but before B's wait reaches the kernel, which wipes B's
-answer. No test covers more than one signaller.
-**Fix:** Have the waiter re-assert its request until it is answered, instead of relying on a
-single edge:
+**File:** `src/overlay/app.rs:1300-1305` (with `src/overlay/mod.rs:41-51` and `src/overlay/hotkey.rs:49-62`)
+
+**Issue:** The tray Quit arm sets `self.instance = None`, which releases the mutex at once. The process keeps running after that:
+- It finishes the frame (the body render) and only then sends `ViewportCommand::Close` (line 1741).
+- eframe handles the close on a later loop iteration, and the process exits after that.
+
+For that whole time the old process still owns:
+- `self.hotkey_manager`, which keeps `Ctrl+Shift+Z` registered through `RegisterHotKey` against its hidden hwnd
+- the tray icon
+- the visible stripe
+
+A relaunch in this window goes through `acquire_named` and gets `Acquired::First`. `launch()` then calls `hotkey::register_toggle()` straight away, before eframe starts. The combo is still registered by the old process, so `manager.register` fails, and the new instance gets `HotkeyStatus::Failed(...)` with `hotkey_manager: None`. Registration is never retried, so the new and only stripe has no working hotkey until the user quits and relaunches again.
+
+This is a regression from iteration 2. Before it, the name was held until the app (and its `GlobalHotKeyManager`) was dropped, so a relaunch could not win the name while the hotkey was still taken. It is the exact case manual check 11 ("relaunch right after Quit") is meant to exercise, and it also briefly shows two tray icons and two stripes.
+
+**Fix:** In the Quit arm, release the hotkey (and the tray icon) **before** the instance name. The order stays the same as before iteration 2, and the early release is kept. `GlobalHotKeyManager::drop` calls `DestroyWindow` on its hwnd, which frees the hotkeys bound to that window. It has to run on this thread, and it does.
+
 ```rust
-let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms as u64);
-unsafe { ResetEvent(ack) };
-loop {
-    unsafe { SetEvent(show) };
-    let code = unsafe { WaitForSingleObject(ack, 100) };
-    if classify_wait(code) == Wait::Signaled { break Wait::Signaled; }
-    if std::time::Instant::now() >= deadline { break Wait::TimedOut; }
+Some(OverlayCommand::Quit) => {
+    quit_requested = true;
+    // Give up everything a new instance must own before giving up the name it
+    // races for: the hotkey registration first, then the single-instance guard.
+    self.hotkey_manager = None;
+    self.instance = None;
 }
 ```
-Because each launcher keeps setting `show`, every one of them eventually receives its own ack.
-An alternative is a manual-reset `ack` that the first instance pulses only after a show
-request. Add a test with two concurrent `signal_running` callers against one responder, and
-assert that both return `Signaled`.
 
-### WR-02: A launch during the first instance's startup always times out and shows "not responding"
-
-**File:** `src/overlay/instance.rs:189-194`, `src/overlay/mod.rs:38-103`
-**Issue:** The events exist as soon as `acquire_named` returns. The first ack is only possible
-inside `OverlayApp::update`, though, and that runs after the tray is built, after `run_native`
-creates the window and GPU context, and after `OverlayApp::new`, which resolves paths and
-loads and compiles `dynamic.json`, `config.json`, styles and prices. On a cold start this can
-take more than `ACK_TIMEOUT_MS` (2000 ms). It is also exactly when users relaunch, because "the
-stripe hasn't appeared yet" is the usual reason for double-clicking again. The second launch
-then shows "already running but not responding" for an instance that is fine. The stale
-request is consumed on the first frame and the ack is set with no waiter (see IN-02).
-**Fix:** Combine the WR-01 retry loop with a deadline that covers startup, for example 5 s.
-Alternatively, tell the startup case apart: the first instance creates a manual-reset
-`-ready` event and sets it on its first `update`. The second instance waits longer, or shows a
-"FerrisFilter is starting" message instead of "not responding", while `-ready` is unset.
-
-### WR-03: Fail-open paths can produce two stripes or a permanent false "not responding", and give no visible diagnostic
-
-**File:** `src/overlay/instance.rs:174-181, 189-193`
-**Issue:** There are two fail-open paths:
-1. **`CreateMutexW` fails with anything other than `ERROR_ACCESS_DENIED`.** For example,
-   `ERROR_INVALID_HANDLE` is returned when any other object type already holds the name. The
-   process continues as `First`. The same failure repeats on every later launch, so each launch
-   opens another stripe, another tray icon and another hotkey attempt. This directly
-   contradicts CONTEXT's "It never opens a second stripe" and "exactly one stripe and one
-   working hotkey".
-2. **`CreateEventW` fails in the first instance.** The first instance runs with
-   `show`/`ack == null`. Every later launch takes the `AlreadyRunning` path and creates fresh
-   events nobody polls, so it always shows "not responding" while the overlay is healthy.
-
-Both paths report only through `eprintln!`. Release `ff` is a GUI-subsystem binary with no
-console (CLAUDE.md), so the user never sees why.
-
-**Fix:** Decide the policy explicitly and make it visible:
-- **Mutex failure:** fail closed by showing a MessageBox that names the error code and
-  exiting. Or, if failing open is kept, record the reason in `OverlayApp` and show it in the
-  tray tooltip, the way `HotkeyStatus::Failed` is (D-10).
-- **Event failure:** treat it like a mutex failure. Release the mutex so the instance is not a
-  "deaf" first instance that turns every later launch into a false timeout. Or surface it the
-  same way.
-
-If fail-open is the intended trade-off, document in 22-CONTEXT/CLAUDE.md that it breaks the
-"never two stripes" invariant.
+If the tray icon should also not be duplicated, make `TrayHandles::tray_icon` droppable (e.g. a `release()` that `take()`s it) and call it here too. Alternatively, make `register_toggle` retry a few times over ~500 ms when the error is "already registered". That also covers a crash-restart, where the old process's hotkey is freed only at process teardown. Add a manual-verification note that check 11 must confirm the relaunched stripe's tray tooltip does **not** say "Ctrl+Shift+Z unavailable".
 
 ## Info
 
-### IN-01: A show request in the same frame as focus loss or a toggle can leave the stripe hidden but acknowledged
+### IN-01: When two re-checks race, the loser reports "not responding" while a fresh stripe is starting
 
-**File:** `src/overlay/app.rs:1311-1323`
-**Issue:** The request sets `toggle_requested` only when `self.visibility == Hidden` at that
-moment. If the stripe is `ShownFocused` and loses focus in the same frame, nothing is set.
-`advance(ShownFocused, false, false)` then returns `Hidden`, but the ack is still sent. The
-same happens when a hotkey press or tray left-click in that frame already set
-`toggle_requested` while shown. The launcher exits believing the stripe was revealed, which
-breaks the "reveal, never a toggle" rule. Focus loss usually happens a human-scale interval
-before the second process starts, so this is unlikely.
-**Fix:** Track a local `show_requested` flag, and after `advance` force
-`if show_requested && next == Visibility::Hidden { next = Visibility::ShownUnfocused }`.
-`effect_for` then issues the `Reveal`.
+**File:** `src/overlay/instance.rs:458-465`
 
-### IN-02: A timed-out request is still delivered later
+**Issue:** Suppose two launchers were both waiting on an instance that quit. Both time out and both re-run `acquire_named`. One wins (`Run`). The other gets `AlreadyRunning` and returns `signal_message(outcome)` from its first attempt, so the user sees "FerrisFilter is already running but not responding" while the winner's stripe comes up. No second stripe opens; only the message is wrong.
 
-**File:** `src/overlay/instance.rs:206-219`
-**Issue:** When `signal_running` times out, it closes its handles but leaves `show` signalled.
-The first instance keeps the event object alive, so if it recovers (or finishes starting up,
-see WR-02), it reveals the stripe after the user was told it is "not responding". It also sets
-`ack` with no waiter, and `ack` stays signalled until the next launcher's `ResetEvent`. That
-reset makes the leftover ack harmless, but the late reveal contradicts the message just shown.
-**Fix:** On timeout, call `ResetEvent(show)` before closing the handles to withdraw the
-request. With the WR-01 retry loop this happens naturally.
+**Fix:** On a re-check that returns `AlreadyRunning`, signal once more (`signal_running(names, startup_ms, ack_ms)`) against the new holder and report that outcome. Or accept this as a residual alongside the others.
 
-### IN-03: `unsafe impl Send for Guard` is unnecessary
+### IN-02: A failed re-check silently discards its own error code
 
-**File:** `src/overlay/instance.rs:114-115`
-**Issue:** The `Guard` never crosses threads. eframe's `AppCreator` has no `Send` bound
-(`eframe-0.36.2/src/epi.rs:49`), and the threaded test creates its `Guard` inside the spawned
-thread. The impl is not unsound, since kernel handles are process-wide, but it is an
-`unsafe impl` that nothing needs, in a module whose header promises minimal, justified
-`unsafe`.
-**Fix:** Remove it, or add a comment naming the consumer that requires it.
+**File:** `src/overlay/instance.rs:460-465`
 
-### IN-04: An elevated first instance yields a misleading "not responding" message
+**Issue:** If the re-acquire returns `Acquired::Failed(code)`, the `let`-chain falls through to `signal_message(outcome)`, which reports the original signal outcome. The fail-closed reason (`check_failed_message(code)`) is lost. The behaviour is still safe, because the launch exits, but the message misattributes the cause.
 
-**File:** `src/overlay/instance.rs:167-173, 197-201`
-**Issue:** On `ERROR_ACCESS_DENIED`, `acquire` returns `AlreadyRunning`, and `signal_running`'s
-`CreateEventW` calls then fail for the same reason. The result is `TimedOut`, so the box says
-"already running but not responding" even though the instance is responding and is only
-running at a different integrity level. This is the correct outcome (no second stripe) with
-the wrong explanation.
-**Fix:** Pass the access-denied case through to a distinct message, such as "FerrisFilter is
-already running as administrator".
+**Fix:** Match all three arms of the re-acquire: `First(g) => Run(g)`, `Failed(code) => Exit(Some(check_failed_message(code)))`, `AlreadyRunning => Exit(signal_message(outcome))`.
 
-### IN-05: Protocol tests cover only one signaller and a ready first instance
+### IN-03: `a_launch_whose_instance_quits_mid_request_runs_instead` does not prove the re-check path ran
 
-**File:** `src/overlay/instance.rs:344-434`
-**Issue:** The Windows tests isolate their names properly (PID plus label, never production),
-but they only exercise one launcher against a responder that is already polling. The coalescing
-failure in WR-01 and the startup window in WR-02 are therefore untested, and the suite passes
-with both defects present.
-**Fix:** Add two tests:
-- Two threads calling `signal_running` concurrently against one polling responder; assert that
-  both return `Signaled`.
-- A responder that starts polling after a delay; assert the intended startup behaviour.
+**File:** `src/overlay/instance.rs:776-800`
+
+**Issue:** Suppose the quitting thread's 150 ms sleep finishes before the launcher's first `acquire_named`, for example because of scheduler delay on a loaded CI box. The launcher then gets `First` directly and the test still passes. A regression that removed the re-check would go undetected in that schedule.
+
+**Fix:** Have the quitting thread drop its guard only after it has seen a show request, i.e. poll `take_show_request()` until it returns true and then `drop(g)` without acking. That guarantees the launcher was already in `request_until_acked` when the name was released.
 
 ---
 

@@ -562,6 +562,10 @@ fn pending_card(
 ) {
     let mut discard = false;
     let mut items: Option<Vec<String>> = None;
+    // Set when the first entry could not be written, so the refusal is shown instead of the entry
+    // vanishing (WR-06).
+    let bad_id = ui.id().with((p.block, p.keyword.name, "pending-bad"));
+    let bad = ui.data(|d| d.get_temp::<bool>(bad_id).unwrap_or(false));
     ui.push_id((p.block, p.keyword.name, "pending"), |ui| {
         card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -590,15 +594,25 @@ fn pending_card(
                     _ => list_chips(ui, salt, &[], chip_hint(p.keyword)),
                 },
             };
+            if bad {
+                hint(ui, BAD_TEXT_HINT);
+            }
         });
     });
     if discard {
+        ui.data_mut(|d| d.remove::<bool>(bad_id));
         list.pending.retain(|q| q != p);
-    } else if let Some(items) = items
-        && let Some(a) = pending_first_entry(p, &items)
-    {
-        actions.push(a);
-        list.pending.retain(|q| q != p);
+    } else if let Some(items) = items.filter(|i| !i.is_empty()) {
+        match pending_first_entry(p, &items) {
+            Some(a) => {
+                ui.data_mut(|d| d.remove::<bool>(bad_id));
+                actions.push(a);
+                list.pending.retain(|q| q != p);
+            }
+            None => ui.data_mut(|d| {
+                d.insert_temp(bad_id, true);
+            }),
+        }
     }
 }
 

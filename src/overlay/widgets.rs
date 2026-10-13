@@ -481,6 +481,24 @@ pub struct ChipListOutcome {
 
 const CHIP_REJECT_MESSAGE: &str = "Values cannot contain quotes or control characters";
 
+/// True when every `"` in `draft` belongs to a closed quoted span and nothing but whitespace sits
+/// outside those spans, i.e. it is either quote-free or a clean quoted paste
+/// (`"Heavy Belt" "Utility Belt"`) that `parse_base_type_entry` splits without dropping text.
+fn quoted_paste_is_clean(draft: &str) -> bool {
+    if !draft.contains('"') {
+        return true;
+    }
+    let mut inside = false;
+    for c in draft.chars() {
+        match c {
+            '"' => inside = !inside,
+            c if !inside && !c.is_whitespace() => return false,
+            _ => {}
+        }
+    }
+    !inside
+}
+
 /// A wrapped list of removable chips with an `N items` counter, a scroll cap and an add field.
 ///
 /// Restores the v0.4 list-entry model: the caller owns the data; this reports one removal index
@@ -560,18 +578,23 @@ pub fn chip_list(
         }
     });
     if enter || commit {
-        let mut refused = false;
-        for entry in parse_base_type_entry(&draft) {
-            if entry.chars().any(char::is_control) {
-                refused = true;
-            } else {
-                outcome.added.push(entry);
+        // A quote that is not part of a clean quoted paste (`Foo"Bar`, an unclosed `"Foo`) would
+        // otherwise vanish: refuse it visibly and keep the draft so it can be fixed (WR-06).
+        let mut refused = !quoted_paste_is_clean(&draft);
+        if !refused {
+            for entry in parse_base_type_entry(&draft) {
+                if entry.chars().any(|c| c == '"' || c.is_control()) {
+                    refused = true;
+                } else {
+                    outcome.added.push(entry);
+                }
             }
         }
         if refused {
             outcome.rejected = Some(CHIP_REJECT_MESSAGE.to_owned());
+        } else {
+            draft.clear();
         }
-        draft.clear();
     }
     ui.data_mut(|d| d.insert_temp(id.with("draft"), draft));
     if enter {
@@ -1004,6 +1027,29 @@ mod tests {
         let (out, _) = commit_with_enter("Bad\u{7}Name");
         assert!(out.added.is_empty());
         assert_eq!(out.rejected.as_deref(), Some(CHIP_REJECT_MESSAGE));
+    }
+
+    /// WR-06: a stray quote is refused with the message and the draft is kept, instead of the
+    /// entry vanishing silently.
+    #[test]
+    fn chip_list_stray_quotes_are_refused_and_the_draft_kept() {
+        for draft in [
+            "Foo\"Bar",
+            "\"Heavy Belt",
+            "\"A\" B\"C\"",
+            "x \"Heavy Belt\"",
+        ] {
+            let (out, left) = commit_with_enter(draft);
+            assert!(out.added.is_empty(), "{draft}: {:?}", out.added);
+            assert_eq!(
+                out.rejected.as_deref(),
+                Some(CHIP_REJECT_MESSAGE),
+                "{draft}"
+            );
+            assert_eq!(left, draft);
+        }
+        assert!(quoted_paste_is_clean("Heavy Belt"));
+        assert!(quoted_paste_is_clean(" \"Heavy Belt\"  \"Utility Belt\" "));
     }
 
     #[test]

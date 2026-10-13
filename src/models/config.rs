@@ -72,8 +72,9 @@ pub struct Beam {
 }
 
 /// Sound specification.
-/// Either a built-in alert (`id`) or a custom file (`custom`); `vol` always present.
-/// Mutual-exclusivity of `id` and `custom` is enforced at generate-time (Phase 2).
+/// Either a built-in alert (`id`, emitted as `PlayAlertSound`) or a custom file (`custom`,
+/// emitted as `CustomAlertSound`); `vol` always present. [`StyleSet::validate`] requires exactly
+/// one of `id`/`custom` and checks `id` (1..=16) and `vol` (0..=300) against the filter ranges.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Sound {
@@ -125,6 +126,21 @@ pub enum StyleError {
     )]
     #[diagnostic(code(ferrisfilter::styles::bad_custom_sound))]
     InvalidCustomSound { style: String, value: String },
+
+    #[error("style \"{style}\" has {field} {value}, outside the filter's valid range {range}")]
+    #[diagnostic(code(ferrisfilter::styles::out_of_range))]
+    OutOfRange {
+        style: String,
+        field: &'static str,
+        value: u32,
+        range: &'static str,
+    },
+
+    #[error(
+        "style \"{style}\" has a sound with {problem}; set exactly one of sound.id (built-in alert) or sound.custom (sound file)"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::bad_sound))]
+    AmbiguousSound { style: String, problem: &'static str },
 
     #[error(
         "rule {rule_index} (\"{rule_label}\") uses style \"{style}\", which {path} does not define; defined styles: {available}"
@@ -232,6 +248,49 @@ impl StyleSet {
                         value: value.clone(),
                     });
                 }
+            }
+            Self::check_ranges(name, style)?;
+        }
+        Ok(())
+    }
+
+    /// Range and shape checks for the numeric style fields, against the well-established PoE
+    /// filter ranges (`SetFontSize` 1..=45, `MinimapIcon` size 0..=2, `PlayAlertSound` id
+    /// 1..=16, sound volume 0..=300). The values are emitted verbatim, so without this a typo
+    /// would only surface when the game loads the filter.
+    fn check_ranges(name: &str, style: &Style) -> Result<(), StyleError> {
+        let out_of_range = |field, value: u32, range| StyleError::OutOfRange {
+            style: name.to_string(),
+            field,
+            value,
+            range,
+        };
+        if let Some(font) = style.font {
+            if !(1..=45).contains(&font) {
+                return Err(out_of_range("font", font.into(), "1..=45"));
+            }
+        }
+        if let Some(mm) = &style.minimap {
+            if mm.size > 2 {
+                return Err(out_of_range("minimap.size", mm.size.into(), "0..=2"));
+            }
+        }
+        if let Some(sound) = &style.sound {
+            let problem = match (sound.id, &sound.custom) {
+                (Some(_), Some(_)) => Some("both id and custom set"),
+                (None, None) => Some("neither id nor custom set"),
+                _ => None,
+            };
+            if let Some(problem) = problem {
+                return Err(StyleError::AmbiguousSound { style: name.to_string(), problem });
+            }
+            if let Some(id) = sound.id {
+                if !(1..=16).contains(&id) {
+                    return Err(out_of_range("sound.id", id.into(), "1..=16"));
+                }
+            }
+            if sound.vol > 300 {
+                return Err(out_of_range("sound.vol", sound.vol.into(), "0..=300"));
             }
         }
         Ok(())
@@ -1284,6 +1343,57 @@ mod tests {
             }
         }
         StyleSet::committed_for_tests().validate().unwrap();
+    }
+
+    /// WR-02: numeric fields outside the filter's ranges, and a sound that is not exactly one
+    /// of id/custom, are rejected at validate time naming the style and field.
+    #[test]
+    fn styleset_rejects_out_of_range_values_and_ambiguous_sound() {
+        fn with(edit: impl Fn(&mut Style)) -> Result<(), StyleError> {
+            let mut set = StyleSet::committed_for_tests();
+            let mut st = set.get("B").unwrap().clone();
+            edit(&mut st);
+            set.insert("B", st);
+            set.validate()
+        }
+        let range_cases: [(&str, Box<dyn Fn(&mut Style)>); 6] = [
+            ("font", Box::new(|s| s.font = Some(0))),
+            ("font", Box::new(|s| s.font = Some(46))),
+            ("minimap.size", Box::new(|s| s.minimap.as_mut().unwrap().size = 3)),
+            ("sound.id", Box::new(|s| s.sound.as_mut().unwrap().id = Some(0))),
+            ("sound.id", Box::new(|s| s.sound.as_mut().unwrap().id = Some(17))),
+            ("sound.vol", Box::new(|s| s.sound.as_mut().unwrap().vol = 301)),
+        ];
+        for (want, edit) in range_cases {
+            match with(edit) {
+                Err(StyleError::OutOfRange { style, field, .. }) => {
+                    assert_eq!((style.as_str(), field), ("B", want));
+                }
+                other => panic!("{want}: unexpected {other:?}"),
+            }
+        }
+        for (want, edit) in [
+            ("both", Box::new(|s: &mut Style| s.sound.as_mut().unwrap().custom = Some("x.mp3".into()))
+                as Box<dyn Fn(&mut Style)>),
+            ("neither", Box::new(|s: &mut Style| s.sound.as_mut().unwrap().id = None)),
+        ] {
+            match with(edit) {
+                Err(e @ StyleError::AmbiguousSound { .. }) => {
+                    assert!(e.to_string().contains(want), "{e}");
+                }
+                other => panic!("{want}: unexpected {other:?}"),
+            }
+        }
+        // Boundaries are inclusive.
+        with(|s| {
+            s.font = Some(45);
+            s.minimap.as_mut().unwrap().size = 0;
+            let snd = s.sound.as_mut().unwrap();
+            snd.id = Some(16);
+            snd.vol = 300;
+        })
+        .unwrap();
+        with(|s| s.font = Some(1)).unwrap();
     }
 
     #[test]

@@ -351,7 +351,25 @@ Plans:
   7. The style section sits at the end of the rule body: Custom or a preset plus Show/Hide; Custom shows the action rows, a preset hides them; preset→Custom keeps the actions and drops the tag
   8. Collapsed rules show a condition summary line, hidden when expanded, with correct virtualization at ~460 blocks; untouched lines are never rewritten
 
-**Plans**: TBD
+**Plans**: 6 plans
+Plans:
+**Wave 1**
+
+- [ ] 24-01-PLAN.md — PoE1-only conditions out of the keyword table/picker (lossless, Apply-safe) + slider defaults inside ranges (UAT-09, UAT-10)
+- [ ] 24-02-PLAN.md — CONFIG Styles: built-in/custom groups, per-style Show/Hide slide switch (UAT-02, UAT-03, UAT-04)
+- [ ] 24-03-PLAN.md — No reload message when the game is closed + collapsed-row condition summary (UAT-01, UAT-13)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 24-04-PLAN.md — Condition editors: right-aligned X, vertical quoted lists, chip-free class picker, Yes/No booleans (UAT-05, UAT-06, UAT-07, UAT-12)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 24-05-PLAN.md — Style section at the end of the rule body: Custom or preset + Show/Hide, no Minimal, no captions (UAT-04, UAT-08, UAT-11)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 24-06-PLAN.md — CLAUDE.md overlay notes, CHANGELOG [Unreleased], 24-MANUAL-VERIFICATION.md (UAT-01..UAT-13)
 
 ### Progress
 
@@ -365,7 +383,7 @@ Plans:
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
-| 24. UAT Feedback Fixes | 0/? | Not started | - |
+| 24. UAT Feedback Fixes | 0/6 | Planned | - |
 
 ## Backlog
 

@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `styles.json` (committed, repo root) is now the single source of named styles. Adding a style
+  needs no code change: define it there and use it from a rule. Validated at load (required styles
+  S, A, B, C, D, E, F, unchanged and hidden; duplicate names; names differing only by case from a
+  required one; unsafe custom sound names; unknown styles in enabled rules). The overlay style
+  picker lists styles.json in file order.
+- `--styles <path>` on `generate` and `apply` to compile against another styles file instead of
+  styles.json.
 - Lossless filter parser library module `ferrisfilter::filter`: parses any PoE2 filter in GGG's
   grammar (full keyword table including Continue/Import/Minimal; unknown keywords are kept with a
   warning) and writes it back byte-identical when unedited (CRLF/LF/mixed endings, BOM, no final
@@ -25,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enable as a bare catch-all, is refused), and FerrisFilter's own
   `#ff:<key> <value>` metadata comments are exposed. Library and tests only; no CLI or overlay
   change.
+
+### Changed
+
+- **BREAKING:** `config.json` and `dynamic_base.json` no longer have a `styles` section. Any config
+  or store (`dynamic.json`, custom `*_config.json`) that still has one now fails to load with a
+  message naming the file. Move its entries into styles.json (or a file passed via `--styles`) and
+  delete the section, or `apply --reset` the store. An existing `dynamic.json` that used a custom
+  style such as `craftable` needs that style added to styles.json first. `generate` output is
+  unchanged (the seed fixture is byte-identical).
 
 ## [0.4.0] - 2026-09-17
 

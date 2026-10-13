@@ -11,9 +11,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
   `/gsd-complete-milestone`): move the `[Unreleased]` entries into a new dated version section
   with a one-line milestone summary.
 - **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
-  philosophy. `config.json` is the executable spec the `generate` command compiles. The
+  philosophy. `config.json` + `styles.json` are the executable spec the `generate` command compiles. The
   **byte-for-byte acceptance baseline** is now the committed fixture
-  `tests/fixtures/seed-universal.filter` (generated from `config.json` + the seed
+  `tests/fixtures/seed-universal.filter` (generated from `config.json` + `styles.json` + the seed
   `tests/fixtures/seed-prices.json`); the `artifact_guard` test enforces it. The repo-root
   `universal.filter` / `prices.json` are **generated, git-ignored, and not committed**.
   Everything from "Repository layout" down is that reference — keep it accurate.
@@ -22,17 +22,18 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 
 | Path | Purpose |
 |------|---------|
-| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `styles` (the Dracula tier palette + `unchanged`/`hidden`/`kite`), `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` and `styles`, then regenerate. |
+| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` (and `styles.json` for how a style looks), then regenerate. A `styles` section here is rejected at load. |
+| `styles.json` | **Committed single source of named styles** (repo root): a map of style name to style object (text/border/background colours, font, minimap, beam, sound, `action` Show/Hide, `disableDropSound`). File order is the overlay picker order. `S`, `A`, `B`, `C`, `D`, `E`, `F`, `unchanged` and `hidden` are required; every other style is optional, and adding one needs no code change. Read by `generate`, `apply` and the overlay (beside the inputs / beside the store); `--styles <path>` on `generate` and `apply` overrides it. A config or store that still has an inline `styles` section is rejected with a message to move it here. |
 | `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each policy block is headed `Show # <rule name>` (from the `name` field in `config.json`). |
 | `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. `sync --league <name\|slug>` targets a specific poe.ninja league (useful during a league transition, when the automatic pick resolves to the outgoing league). |
-| `dynamic_base.json` (repo root) | **Committed template** for the dynamic filter (v0.4). A full `Config` like `config.json`, but with no `areaLevel` conditions and no rule `name`s — dynamic rules are identified by their **index in the `rules` array**. `ferrisfilter apply` seeds `dynamic.json` from it, and `apply --reset` restores from it to start a filter over without losing the baseline. |
+| `dynamic_base.json` (repo root) | **Committed template** for the dynamic filter (v0.4). A full `Config` like `config.json`, but with no `areaLevel` conditions and no rule `name`s — dynamic rules are identified by their **index in the `rules` array**. `ferrisfilter apply` seeds `dynamic.json` from it, and `apply --reset` restores from it to start a filter over without losing the baseline. It has no `styles` section either (styles come from `styles.json`). |
 | `dynamic.json` (repo root) | **Generated + hand/overlay-edited working copy** of the dynamic rule set, seeded from `dynamic_base.json` on first `apply` (CLI) or on the overlay's first launch. **Git-ignored** — per-user state. Rules support `"enabled": false`, which keeps a rule in the file but emits nothing into the filter. The overlay editor (below) holds edits in memory; Apply is the single writer that persists this file and then compiles from it — nothing here changes until Apply is pressed, and a **Revert** button discards in-memory edits back to the last applied state. Two cosmetic round-trip quirks are expected and harmless, now surfacing on Apply rather than on every keystroke: an edited rule's `sockets`/`quality`/`areaLevel` objects can grow explicit `"eq": null`/`"min": null` keys (those types lack `skip_serializing_if`), and `classGroups`/`build.armourTypes` — both `HashMap`s — can reshuffle key order between saves. Both are value-equal round-trips on a git-ignored per-user file (asserted by `overlay::store`'s own round-trip test); neither is "fixed" because doing so would touch `config.json`'s own serde attributes and its fixtures. |
 | `dynamic.filter` | **Generated** by `ferrisfilter apply` and written into the game folder. **Git-ignored** at the repo root. A complete, playable filter: policy blocks from `dynamic.json` plus the economy sections priced from `prices.json`. PoE2 does not hot-reload — after `apply`, reload via Options → Game → Item Filter → Refresh. |
 | `tests/fixtures/seed-prices.json`, `tests/fixtures/seed-universal.filter` | **Committed test fixtures** — the frozen seed prices + its generated filter. These are the test oracle (`include_str!` unit tests + `generate_snapshot`/`artifact_guard`). Regenerate the `.filter` fixture only after a deliberate generator change. |
 | `prices-fallback.json` + `tiers-fallback.json` (repo root) | **Committed early-league fallback pair**, always used *together* (their values are calibrated to each other). `generate` loads them instead of `prices.json`/`tiers.json` when `prices.json` is absent/empty (with a warning) or when `--early-game` is passed. Tier membership comes from a poe2filter.com export; cutoffs are **exalt-denominated** (`unit: "exalt"`) so Divine isn't pinned to the A floor. Every base — orbs included — is priced in **exalt at its tier floor** (Divine 20→S, Chaos 2.5→A, Exalt 1→B). No stored rates: `pricer::derive_rates` reads the three anchor orbs (items[0..2]) and expresses them relative to the Chaos Orb (`exalt_in_chaos = value(Exalt)/value(Chaos)` etc.), so quoting the orbs in exalt is enough. The same code on live chaos-quoted data (Chaos = 1c) reproduces the old numbers. The three anchors must share one unit. |
 | other `*.filter` (repo root) | Active, version-controlled filters we author/maintain. |
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
-| `ferrisfilter apply` | Compiles `dynamic.json` → `dynamic.filter` and writes it straight into the game folder (seeding the store from `dynamic_base.json` when absent). `--store` / `--base` / `--dest` override the paths; `--reset` restores the store from the template first; `--tiers <path>` overrides tier cutoffs while keeping live prices (same flag `generate` accepts). The dynamic counterpart to `generate` + `install` in one step. |
+| `ferrisfilter apply` | Compiles `dynamic.json` → `dynamic.filter` and writes it straight into the game folder (seeding the store from `dynamic_base.json` when absent). `--store` / `--base` / `--dest` override the paths; `--reset` restores the store from the template first; `--tiers <path>` or `--styles <path>` overrides tier cutoffs while keeping live prices (same flag `generate` accepts). The dynamic counterpart to `generate` + `install` in one step. |
 | `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |
 | `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. As of Phase 14 it is a full editor for `dynamic.json`, plus an Apply button that writes `dynamic.filter` — see the overlay note below. |
 | `ff-cli` (binary, v0.4) | The short-name console CLI — identical behavior to `ferrisfilter`, just a shorter name to type. Holds the console shim body `ff` used to have before it became the GUI binary. |
@@ -340,8 +341,12 @@ future use).
 
 ### Named styles
 
-The `styles` object defines all named styles. An unknown style name in a rule is a hard error
-at generate-time. Current styles:
+`styles.json` defines all named styles; the overlay's style picker lists them in file order.
+`S`, `A`, `B`, `C`, `D`, `E`, `F`, `unchanged` and `hidden` are required; any other style is
+optional. An unknown style in an enabled rule, a missing required style, a duplicate name, a name
+differing only by case from a required one, or a bad field (unknown colour, unsafe custom sound
+name) is a load-time error naming the problem. A style's `action` decides Show/Hide for the rule
+using it, and Hide styles may set any visual (shown on Alt-reveal). Current styles:
 
 | Name | Action | What it does |
 |---|---|---|
@@ -356,6 +361,7 @@ at generate-time. Current styles:
 | `unchanged` | Show | No color/font/minimap/beam overrides — native rarity color and game defaults |
 | `hidden` | Hide | No color overrides, font 21, DisableDropSound — Alt-reveals as de-emphasized |
 | `kite` | Show | No color overrides (native rarity), Orange beam, Orange Kite minimap, alert sound. A **locator** style, not a value tier — it says "go look over there" without claiming worth, which is why its orange sits outside the Dracula ladder. Renamed from `unidentified` on 2026-09-07: the old name described the rules that happened to use it rather than what it does, so seeing it offered for an unrelated rule in the overlay picker read as nonsense. |
+| `exceptional` | Show | Pink text/border, Dracula bg, no font override, Pink beam, Pink Cross minimap, no sound — the exceptional-gear highlight, kept separate from `S` so it can be retuned independently |
 
 ### `classGroups`
 

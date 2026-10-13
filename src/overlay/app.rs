@@ -251,6 +251,17 @@ fn apply_working(
     }
 }
 
+/// A line's first word, lowercased, past its indent and a disabled block's `#`. Keyword lookup
+/// is case-insensitive, so `basetype` and `BaseType` compare equal.
+fn line_keyword(text: &str) -> String {
+    let t = text.trim_start();
+    let t = t.strip_prefix('#').unwrap_or(t).trim_start();
+    t.split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
 /// Applies the frame's collected row actions once, after the list rendered. Returns whether the
 /// document changed and the last status worth showing.
 fn apply_row_actions(
@@ -279,7 +290,17 @@ fn apply_row_actions(
             RowAction::AddLine { id, .. } => Some(*id),
             _ => None,
         };
-        let is_remove_line = matches!(action, RowAction::RemoveLine { .. });
+        // Edits that can shift the keyword ordinals of the cards after them: removing or adding
+        // a line, and a raw whole-line edit that changes the line's keyword (WR-07, IN-07).
+        let shifts_ordinals = match &action {
+            RowAction::RemoveLine { .. } | RowAction::AddLine { .. } => true,
+            RowAction::EditLine {
+                expect,
+                patch: LinePatch::Whole(text),
+                ..
+            } => line_keyword(expect) != line_keyword(text),
+            _ => false,
+        };
         let refused_edit = match &action {
             RowAction::EditLine {
                 id, line, patch, ..
@@ -302,9 +323,9 @@ fn apply_row_actions(
             if let (Some(b), Some(line)) = (added_in, outcome.line) {
                 list.focus_line = Some((b, line));
             }
-            // Removing a line shifts the keyword ordinals of the cards after it, which would move
-            // their egui temp state onto their neighbours (WR-07).
-            if is_remove_line {
+            // A shifted ordinal would move the later cards' egui temp state onto their
+            // neighbours (WR-07).
+            if shifts_ordinals {
                 list.forget_card_state();
             }
             if let Some(id) = deleted {
@@ -1615,5 +1636,35 @@ mod tests {
         };
         assert!(apply_row_actions(&mut working, &mut list, "", vec![rm]).0);
         assert_ne!(list.epoch, epoch);
+    }
+
+    /// IN-07: a raw whole-line edit that changes the keyword, and any added line, also re-key
+    /// the later cards; a whole-line edit that keeps the keyword does not.
+    #[test]
+    fn keyword_changing_edits_orphan_card_state() {
+        let mut working = WorkingFilter::from_text("Show\n  BaseTyp \"A\"\n  BaseType \"B\"\n");
+        let id = working.rows()[0].id;
+        let mut list = ListUi::default();
+        let whole = |line: usize, expect: &str, text: &str| RowAction::EditLine {
+            id,
+            line,
+            expect: expect.into(),
+            patch: crate::filter::LinePatch::Whole(text.into()),
+        };
+        let epoch = list.epoch;
+        let same = whole(2, "  BaseType \"B\"", "basetype \"C\"");
+        assert!(apply_row_actions(&mut working, &mut list, "", vec![same]).0);
+        assert_eq!(list.epoch, epoch, "same keyword, ordinals unchanged");
+        let fix = whole(1, "  BaseTyp \"A\"", "BaseType \"A\"");
+        assert!(apply_row_actions(&mut working, &mut list, "", vec![fix]).0);
+        assert_ne!(list.epoch, epoch, "a changed keyword shifts ordinals");
+        let epoch = list.epoch;
+        let add = RowAction::AddLine {
+            id,
+            kind: crate::overlay::rules::LineKind::Condition,
+            text: "ItemLevel >= 70".into(),
+        };
+        assert!(apply_row_actions(&mut working, &mut list, "", vec![add]).0);
+        assert_ne!(list.epoch, epoch, "an added line can shift ordinals");
     }
 }

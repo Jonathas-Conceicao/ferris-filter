@@ -165,3 +165,116 @@ fn non_ascending_tiers_json_exits_nonzero() {
         .failure()
         .stderr(contains("not strictly ascending"));
 }
+
+/// Temp dir with the early-game inputs plus the given config and styles text.
+fn styles_case_dir(tag: &str, config: &str, styles: &str) -> PathBuf {
+    let m = env!("CARGO_MANIFEST_DIR");
+    let pf = fs::read_to_string(format!("{m}/prices-fallback.json")).unwrap();
+    let tf = fs::read_to_string(format!("{m}/tiers-fallback.json")).unwrap();
+    make_temp_dir(
+        tag,
+        &[
+            ("config.json", config),
+            ("styles.json", styles),
+            ("prices-fallback.json", &pf),
+            ("tiers-fallback.json", &tf),
+        ],
+    )
+}
+
+fn generate_in(dir: &PathBuf) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(dir)
+        .args(["generate", "--early-game"])
+        .assert()
+}
+
+const RULE_STYLE: &str = "\"style\": \"Recycle\",";
+
+/// An enabled rule naming an undefined style fails at load.
+#[test]
+fn unknown_style_in_an_enabled_rule_fails_at_load() {
+    let cfg = valid_config();
+    let bad = cfg.replacen(RULE_STYLE, "\"style\": \"nope\",", 1);
+    assert_ne!(bad, cfg, "mutation must change the config");
+    let dir = styles_case_dir("unk_enabled", &bad, &valid_styles());
+    generate_in(&dir)
+        .failure()
+        .stderr(contains("nope"))
+        .stderr(contains("rule"))
+        .stderr(contains("styles.json"));
+}
+
+/// A disabled rule is inert, so an unknown style on it does not block generate.
+#[test]
+fn unknown_style_in_a_disabled_rule_does_not_fail() {
+    let cfg = valid_config();
+    let bad = cfg.replacen(RULE_STYLE, "\"enabled\": false, \"style\": \"nope\",", 1);
+    assert_ne!(bad, cfg, "mutation must change the config");
+    let dir = styles_case_dir("unk_disabled", &bad, &valid_styles());
+    generate_in(&dir).success();
+}
+
+/// styles.json without a required style is rejected.
+#[test]
+fn styles_json_missing_a_required_style_fails() {
+    let styles = valid_styles();
+    let kept: Vec<&str> = styles
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("\"E\":"))
+        .collect();
+    let bad = kept.join("\n");
+    assert_ne!(bad.len(), styles.len(), "removal must change the text");
+    serde_json::from_str::<serde_json::Value>(&bad).expect("still valid JSON");
+    let dir = styles_case_dir("miss_req", &valid_config(), &bad);
+    generate_in(&dir)
+        .failure()
+        .stderr(contains("missing required style"))
+        .stderr(contains("E"));
+}
+
+/// A repeated style name is rejected rather than silently last-wins.
+#[test]
+fn duplicate_style_name_fails() {
+    let styles = valid_styles();
+    let s_line = styles
+        .lines()
+        .find(|l| l.trim_start().starts_with("\"S\":"))
+        .expect("S line")
+        .trim_end_matches(',')
+        .to_string();
+    let end = styles.rfind('}').unwrap();
+    let bad = format!("{},\n{}\n{}", styles[..end].trim_end(), s_line, &styles[end..]);
+    assert_ne!(bad, styles);
+    let dir = styles_case_dir("dup_style", &valid_config(), &bad);
+    generate_in(&dir)
+        .failure()
+        .stderr(contains("duplicate style name"));
+}
+
+/// An unknown colour name in styles.json names the file and offending value.
+#[test]
+fn bad_colour_in_styles_json_names_the_field() {
+    let styles = valid_styles();
+    let bad = styles.replacen("\"Pink\"", "\"Mauve\"", 1);
+    assert_ne!(bad, styles);
+    let dir = styles_case_dir("bad_colour", &valid_config(), &bad);
+    generate_in(&dir)
+        .failure()
+        .stderr(contains("styles.json"))
+        .stderr(contains("Mauve"));
+}
+
+/// A config that still carries an inline `styles` section is rejected (OD-1).
+#[test]
+fn inline_styles_section_in_config_is_rejected() {
+    let cfg = valid_config();
+    let bad = cfg.replacen('{', "{\"styles\": {},", 1);
+    assert_ne!(bad, cfg);
+    let dir = styles_case_dir("inline_styles", &bad, &valid_styles());
+    generate_in(&dir)
+        .failure()
+        .stderr(contains("config.json"))
+        .stderr(contains("styles.json"));
+}

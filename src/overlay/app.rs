@@ -33,9 +33,12 @@ use global_hotkey::GlobalHotKeyManager;
 use crate::compile::{InputPaths, PriceSource, PriceSourcePolicy};
 use crate::dynamic::{self, EconomyOp, LoadedFilter};
 use crate::filter::BlockId;
+use crate::loader;
+use crate::models::config::StyleSet;
 use crate::safe_write::WriteOutcome;
 
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
+use super::classes::ClassCatalog;
 use super::economy;
 use super::hotkey::HotkeyStatus;
 use super::layout;
@@ -116,6 +119,40 @@ pub struct OverlayApp {
 
     /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
     applied_this_session: bool,
+
+    /// The class catalogue for the class picker, from `config.json`. `Err` degrades the picker
+    /// to the generic chip list; it never blocks editing.
+    classes: Result<ClassCatalog, String>,
+
+    /// Modification time of `styles.json` when it was last read; a change reloads the styles.
+    styles_mtime: Option<std::time::SystemTime>,
+
+    /// `ctx.input(|i| i.time)` of the last `styles.json` poll.
+    styles_checked: f64,
+}
+
+/// Seconds between `styles.json` modification-time polls while the stripe runs.
+const STYLES_POLL_SECS: f64 = 2.0;
+
+fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
+    let path = InputPaths::relative_to(root).styles;
+    loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
+}
+
+fn load_classes_at(root: &std::path::Path) -> Result<ClassCatalog, String> {
+    let paths = InputPaths::relative_to(root);
+    loader::load_config(
+        &paths.config.to_string_lossy(),
+        &paths.styles.to_string_lossy(),
+    )
+    .map(|config| ClassCatalog::from_config(&config))
+    .map_err(|e| e.to_string())
+}
+
+fn styles_mtime_at(root: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(InputPaths::relative_to(root).styles)
+        .and_then(|m| m.modified())
+        .ok()
 }
 
 /// Builds the working document from a loaded filter (the migrated text, never the raw bytes).
@@ -135,6 +172,12 @@ fn apply_working(
     working: &mut WorkingFilter,
 ) -> (ApplyOutcome, String, bool) {
     let mut extras = String::new();
+    // Styled rules are rewritten on a clone; a failure here happens before anything is written
+    // and leaves the user's edits exactly as they were.
+    let (text, style_report) = match working.text_with_styles() {
+        Ok(pair) => pair,
+        Err(message) => return (ApplyOutcome::Failed(message), extras, false),
+    };
     let plan = working.economy_plan();
     let body = match plan {
         EconomyPlan::Refresh | EconomyPlan::Add => {
@@ -156,9 +199,17 @@ fn apply_working(
         (EconomyPlan::Remove, _) => EconomyOp::Remove,
         _ => EconomyOp::Keep,
     };
-    match dynamic::apply_edited(loaded, &working.text(), op) {
+    match dynamic::apply_edited(loaded, &text, op) {
         Ok(report) => {
             working.on_applied(loaded.text());
+            extras.push_str(&apply::styled_rules_message(style_report.rewritten));
+            if let Some((first_rule, _)) = style_report.unknown.first() {
+                extras.push(' ');
+                extras.push_str(&apply::unknown_styles_message(
+                    style_report.unknown.len(),
+                    *first_rule,
+                ));
+            }
             if report.migrated {
                 extras.push_str(" Converted from v0.4.");
             }
@@ -202,7 +253,7 @@ fn apply_row_actions(
 ) -> (bool, Option<String>) {
     let mut changed = false;
     let mut status = None;
-    for action in actions {
+    for action in rules::coalesce_edits(actions) {
         let is_add = matches!(action, RowAction::AddRule);
         let is_duplicate = matches!(action, RowAction::Duplicate(_));
         let is_move = matches!(action, RowAction::Move(..));
@@ -279,7 +330,7 @@ impl OverlayApp {
         let filter = Self::load_filter();
         let working = working_from(&filter);
 
-        Self {
+        let mut app = Self {
             docked: false,
             tray,
             hotkey_manager,
@@ -305,6 +356,59 @@ impl OverlayApp {
             query: String::new(),
             list_status: None,
             applied_this_session: false,
+            classes: Err("not loaded".to_string()),
+            styles_mtime: None,
+            styles_checked: 0.0,
+        };
+        app.refresh_inputs();
+        app
+    }
+
+    /// The class catalogue, when `config.json` loaded (consumed by the class picker).
+    #[allow(dead_code)]
+    pub(crate) fn classes(&self) -> Option<&ClassCatalog> {
+        self.classes.as_ref().ok()
+    }
+
+    /// (Re)reads `styles.json` into the working filter and `config.json` into the class
+    /// catalogue. A config failure is shown once in the list status and never blocks editing.
+    fn refresh_inputs(&mut self) {
+        match &self.root {
+            Ok(root) => {
+                let root = root.clone();
+                self.styles_mtime = styles_mtime_at(&root);
+                if let Some(working) = &mut self.working {
+                    working.set_styles(load_styles_at(&root));
+                }
+                self.classes = load_classes_at(&root);
+                if let Err(err) = &self.classes {
+                    self.list_status =
+                        Some(format!("Class groups unavailable (config.json): {err}"));
+                }
+            }
+            Err(message) => {
+                self.styles_mtime = None;
+                if let Some(working) = &mut self.working {
+                    working.set_styles(Err(message.clone()));
+                }
+                self.classes = Err(message.clone());
+            }
+        }
+    }
+
+    /// Reloads the styles when `styles.json` changed on disk (polled, not watched).
+    fn poll_styles(&mut self, now: f64) {
+        if now - self.styles_checked < STYLES_POLL_SECS {
+            return;
+        }
+        self.styles_checked = now;
+        let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
+            return;
+        };
+        let mtime = styles_mtime_at(root);
+        if mtime != self.styles_mtime {
+            self.styles_mtime = mtime;
+            working.set_styles(load_styles_at(root));
         }
     }
 
@@ -352,6 +456,9 @@ impl OverlayApp {
             .expanded
             .and_then(|id| working.row(id))
             .map(|r| r.index);
+        // The styles are re-read at every Apply, so a styles.json edited a moment ago counts.
+        self.styles_mtime = styles_mtime_at(root);
+        working.set_styles(load_styles_at(root));
         let (outcome, extras, needs_reload) = apply_working(root, loaded, working);
         match outcome {
             ApplyOutcome::Written(path) => {
@@ -429,6 +536,7 @@ impl OverlayApp {
         self.apply_message = None;
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
+        self.refresh_inputs();
     }
 }
 
@@ -576,8 +684,22 @@ impl eframe::App for OverlayApp {
             .inner_margin(egui::Margin::ZERO);
 
         // Computed once per frame; every button below is shown/enabled strictly from it.
+        self.poll_styles(ui.ctx().input(|i| i.time));
         let state = self.filter_state();
-        let dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        // A changed styles.json makes the written filter stale even with no rule edited.
+        let style_pending = self
+            .working
+            .as_mut()
+            .is_some_and(|w| w.style_rewrite_pending());
+        if style_pending && self.apply_state == ApplyState::Applied {
+            self.apply_state = ApplyState::Unapplied;
+        }
+        let dirty = style_pending || self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let unknown_styles = self
+            .working
+            .as_ref()
+            .map(|w| w.unknown_styles())
+            .unwrap_or_default();
         let first_blocking = self
             .working
             .as_ref()
@@ -773,6 +895,25 @@ impl eframe::App for OverlayApp {
                                     .clicked()
                                 {
                                     jump_to = Some(first.block);
+                                }
+                            });
+                        }
+                        // Unknown styles never block Apply; the line only points at the first one.
+                        if let Some((first_rule, first_id)) = unknown_styles.first() {
+                            let text =
+                                apply::unknown_styles_message(unknown_styles.len(), *first_rule);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add_space(10.0);
+                                let label = egui::Label::new(
+                                    egui::RichText::new(text).color(theme::WARM_ACCENT_TEXT),
+                                )
+                                .sense(egui::Sense::click());
+                                if ui
+                                    .add(label)
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    jump_to = Some(*first_id);
                                 }
                             });
                         }
@@ -1173,5 +1314,147 @@ mod tests {
             apply_row_actions(&mut working, &mut list, "", vec![RowAction::Delete(id)]);
         assert!(changed);
         assert!(list.expanded.is_none());
+    }
+
+    // ---- styles on Apply (Phase 20-06) ----
+
+    const S_RULE: &str = "#ff:style S\nHide\n  Class \"Rings\"\n  SetFontSize 20\n";
+
+    fn styles_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("styles.json"),
+            dir.path().join("styles.json"),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn working_with_styles(root: &std::path::Path, text: &str) -> WorkingFilter {
+        let mut w = WorkingFilter::from_text(text);
+        w.set_styles(super::load_styles_at(root));
+        w
+    }
+
+    #[test]
+    fn apply_working_style_rewrites_then_reports_nothing_more() {
+        let root = styles_root();
+        let (path, mut loaded) = loaded_in(&root, S_RULE);
+        let mut working = working_with_styles(root.path(), loaded.text());
+        let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+        assert!(extras.contains("Updated 1 styled rule."), "{extras}");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("SetFontSize 37") && !written.contains("SetFontSize 20"));
+        assert!(written.contains("\nShow\n"), "{written}");
+        let (again, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
+        assert!(matches!(again, ApplyOutcome::Unchanged(_)), "{again:?}");
+        assert!(!extras.contains("Updated"), "{extras}");
+    }
+
+    #[test]
+    fn apply_working_style_change_reaches_the_next_apply() {
+        let root = styles_root();
+        let (path, mut loaded) = loaded_in(&root, S_RULE);
+        let mut working = working_with_styles(root.path(), loaded.text());
+        apply_working(root.path(), &mut loaded, &mut working);
+        let styles_path = root.path().join("styles.json");
+        let edited = std::fs::read_to_string(&styles_path).unwrap().replacen(
+            "\"font\": 37",
+            "\"font\": 40",
+            1,
+        );
+        assert!(edited.contains("\"font\": 40"), "fixture shape changed");
+        std::fs::write(&styles_path, edited).unwrap();
+        working.set_styles(super::load_styles_at(root.path()));
+        assert!(working.style_rewrite_pending());
+        let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+        assert!(extras.contains("Updated 1 styled rule."), "{extras}");
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("SetFontSize 40")
+        );
+    }
+
+    #[test]
+    fn apply_working_style_unknown_is_reported_and_untouched() {
+        let root = styles_root();
+        let text = "Show\n  Class \"Bows\"\n\n#ff:style Nope\nHide\n  SetFontSize 20\n";
+        let (path, mut loaded) = loaded_in(&root, text);
+        let mut working = working_with_styles(root.path(), loaded.text());
+        let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
+        assert_eq!(outcome, ApplyOutcome::Unchanged(path.clone()), "{extras}");
+        assert!(
+            extras.contains("1 rule uses an unknown style (first: rule 2)."),
+            "{extras}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn apply_working_style_unreadable_styles_refuses_and_keeps_edits() {
+        let root = styles_root();
+        let (path, mut loaded) = loaded_in(&root, S_RULE);
+        std::fs::write(root.path().join("styles.json"), "{ not json").unwrap();
+        let mut working = working_with_styles(root.path(), loaded.text());
+        working.apply_action(RowAction::AddRule);
+        let before = working.text();
+        let (outcome, _, reload) = apply_working(root.path(), &mut loaded, &mut working);
+        match outcome {
+            ApplyOutcome::Failed(m) => assert!(
+                m.starts_with("styles.json could not be read, so styled rules"),
+                "{m}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(!reload);
+        assert_eq!(working.text(), before);
+        assert!(working.is_dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), S_RULE);
+    }
+
+    #[test]
+    fn apply_working_style_unreadable_styles_does_not_block_unstyled_filters() {
+        let root = styles_root();
+        let (_, mut loaded) = loaded_in(&root, RULES);
+        std::fs::write(root.path().join("styles.json"), "{ not json").unwrap();
+        let mut working = working_with_styles(root.path(), loaded.text());
+        working.apply_action(RowAction::AddRule);
+        let (outcome, _, _) = apply_working(root.path(), &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+    }
+
+    #[test]
+    fn apply_working_style_failed_changed_on_disk_leaves_edits_alone() {
+        let root = styles_root();
+        let (path, mut loaded) = loaded_in(&root, S_RULE);
+        let mut working = working_with_styles(root.path(), loaded.text());
+        std::fs::write(&path, "Show\n").unwrap();
+        let before = working.text();
+        let (outcome, _, reload) = apply_working(root.path(), &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Failed(_)));
+        assert!(reload);
+        assert_eq!(working.text(), before, "rewrite must not leak into edits");
+        assert!(working.text().contains("SetFontSize 20"));
+    }
+
+    #[test]
+    fn apply_row_actions_coalesces_repeated_line_edits() {
+        let mut working = WorkingFilter::from_text("Show\n  ItemLevel >= 70\n");
+        let id = working.rows()[0].id;
+        let ed = |v: &str| RowAction::EditLine {
+            id,
+            line: 1,
+            expect: "  ItemLevel >= 70".into(),
+            patch: crate::filter::LinePatch::Values(v.into()),
+        };
+        let mut list = ListUi::default();
+        let (changed, status) =
+            apply_row_actions(&mut working, &mut list, "", vec![ed("71"), ed("72")]);
+        assert!(changed);
+        assert_eq!(status, None, "the stale first edit must not run");
+        assert_eq!(working.text(), "Show\n  ItemLevel >= 72\n");
     }
 }

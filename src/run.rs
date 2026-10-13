@@ -27,14 +27,16 @@ pub fn run() -> miette::Result<()> {
             output,
             early_game,
             tiers,
-        } => cmd_generate(&config, &output, early_game, tiers.as_deref())?,
+            styles,
+        } => cmd_generate(&config, &output, early_game, tiers.as_deref(), styles.as_deref())?,
         Commands::Apply {
             store,
             base,
             dest,
             reset,
             tiers,
-        } => cmd_apply(&store, &base, dest, reset, tiers.as_deref())?,
+            styles,
+        } => cmd_apply(&store, &base, dest, reset, tiers.as_deref(), styles.as_deref())?,
         Commands::Sync {
             standard,
             hc,
@@ -51,6 +53,7 @@ fn cmd_generate(
     output: &str,
     early_game: bool,
     tiers: Option<&str>,
+    styles: Option<&str>,
 ) -> miette::Result<()> {
     // Bare relative names, resolved against the process working directory — exactly the paths
     // this function passed before the compile API existed. `conventional()` rather than
@@ -60,6 +63,10 @@ fn cmd_generate(
     if let Some(t) = tiers {
         eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
         paths = paths.with_tiers(t);
+    }
+    if let Some(s) = styles {
+        eprintln!("note: --styles {s} — using it instead of styles.json");
+        paths = paths.with_styles(s);
     }
 
     let policy = if early_game {
@@ -121,6 +128,7 @@ fn cmd_apply(
     dest: Option<String>,
     reset: bool,
     tiers: Option<&str>,
+    styles: Option<&str>,
 ) -> miette::Result<()> {
     let store_path = Path::new(store);
     let base_path = Path::new(base);
@@ -139,6 +147,10 @@ fn cmd_apply(
     if let Some(t) = tiers {
         eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
         paths = paths.with_tiers(t);
+    }
+    if let Some(s) = styles {
+        eprintln!("note: --styles {s} — using it instead of styles.json");
+        paths = paths.with_styles(s);
     }
     let compiled = dynamic::compile_store(&paths, store_path).map_err(miette::Error::from)?;
 

@@ -29,7 +29,13 @@ pub enum Commands {
         /// Unlike --early-game this keeps your live prices.json.
         #[arg(long)]
         tiers: Option<String>,
-
+        /// Styles file to use instead of styles.json.
+        ///
+        /// Named styles live in styles.json beside the inputs; point this at another file to
+        /// compile against a different style set (for example one carrying the styles of an
+        /// experimental config) without editing the committed one.
+        #[arg(long)]
+        styles: Option<String>,
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
     Sync {
@@ -76,7 +82,13 @@ pub enum Commands {
         /// Unlike --early-game this keeps your live prices.json.
         #[arg(long)]
         tiers: Option<String>,
-
+        /// Styles file to use instead of styles.json.
+        ///
+        /// Named styles live in styles.json beside the inputs; point this at another file to
+        /// compile against a different style set (for example one carrying the styles of an
+        /// experimental config) without editing the committed one.
+        #[arg(long)]
+        styles: Option<String>,
     },
     /// Copy a generated .filter into the PoE2 config folder so it takes effect in-game
     Install {

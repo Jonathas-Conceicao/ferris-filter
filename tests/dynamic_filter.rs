@@ -322,3 +322,19 @@ fn a_disabled_rule_emits_nothing_and_leaves_later_labels_alone() {
             .expect("parse");
     assert_eq!(store["rules"].as_array().expect("rules").len(), 10);
 }
+
+/// OD-2: `apply --styles <path>` reads that file with the default styles.json absent.
+#[test]
+fn apply_styles_flag_reads_alternate_path() {
+    let dir = workspace("stylesflag");
+    fs::rename(dir.join("styles.json"), dir.join("alt-styles.json")).expect("rename styles");
+
+    Command::cargo_bin("ferrisfilter")
+        .expect("binary")
+        .current_dir(&dir)
+        .args(["apply", "--dest", "game", "--styles", "alt-styles.json"])
+        .assert()
+        .success();
+
+    assert!(dir.join("game").join("dynamic.filter").exists());
+}

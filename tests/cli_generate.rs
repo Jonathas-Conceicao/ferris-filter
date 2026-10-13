@@ -559,3 +559,101 @@ fn pricer_section_present_and_unchanged() {
         "policy section must not contain 'Class == ' (bare Class is correct for policy blocks)"
     );
 }
+
+/// `generate --help` and `apply --help` both advertise `--styles` (OD-2).
+#[test]
+fn help_shows_styles_flag_on_generate_and_apply() {
+    for sub in ["generate", "apply"] {
+        Command::cargo_bin("ferrisfilter")
+            .unwrap()
+            .args([sub, "--help"])
+            .assert()
+            .success()
+            .stdout(contains("--styles"));
+    }
+}
+
+/// Fresh temp dir holding the early-game input set (config, fallback pair; no styles.json).
+fn early_game_dir(tag: &str) -> std::path::PathBuf {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_{tag}_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    for f in ["config.json", "prices-fallback.json", "tiers-fallback.json"] {
+        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+    dir
+}
+
+/// STYLE-01 end to end: a style added only to styles.json and referenced from config.json
+/// is emitted by `generate` with no code change.
+#[test]
+fn new_style_in_styles_json_is_emitted_with_no_code_change() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = early_game_dir("new_style");
+
+    let styles = fs::read_to_string(manifest.join("styles.json")).expect("read styles.json");
+    let end = styles.rfind('}').expect("closing brace");
+    let entry = r#",
+  "craftable": { "text": [1,2,3], "border": [1,2,3], "background": [40,42,54], "font": 31, "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false }
+"#;
+    let new_styles = format!("{}{}{}", styles[..end].trim_end(), entry, &styles[end..]);
+    assert_ne!(new_styles, styles, "styles.json edit must change the text");
+    fs::write(dir.join("styles.json"), new_styles).unwrap();
+
+    let config = fs::read_to_string(dir.join("config.json")).unwrap();
+    let new_config = config.replacen("\"style\": \"Recycle\",", "\"style\": \"craftable\",", 1);
+    assert_ne!(new_config, config, "config.json edit must change the text");
+    fs::write(dir.join("config.json"), new_config).unwrap();
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let out = normalize(&fs::read_to_string(&out_path).unwrap());
+    assert!(out.contains("SetTextColor 1 2 3 255"), "custom style colour missing");
+    assert!(out.contains("SetFontSize 31"), "custom style font missing");
+}
+
+/// OD-2: `generate --styles <path>` reads that file with the default styles.json absent.
+#[test]
+fn generate_styles_flag_reads_alternate_path() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = early_game_dir("styles_flag");
+    fs::copy(manifest.join("styles.json"), dir.join("alt-styles.json")).unwrap();
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--early-game",
+            "--styles",
+            "alt-styles.json",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let with_flag = normalize(&fs::read_to_string(&out_path).unwrap());
+    assert_eq!(with_flag, generate_early_game(), "alt styles file must match the default run");
+
+    // Same directory without the flag: styles.json is absent, so it must fail naming it.
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("styles.json"));
+}

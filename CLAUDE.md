@@ -52,7 +52,10 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > the tray, and the new process exits; if the running one does not answer within about 2 seconds a
 > message box says "FerrisFilter is already running but not responding". A launch made while the
 > running one is still starting up first waits up to 10 seconds for its first frame before that
-> 2-second window starts, and several launches at once are each answered. If the single-instance
+> 2-second window starts, and several launches at once are each answered. Tray **Quit** releases
+> the single-instance name at once, so relaunching right after Quit starts a fresh stripe instead of
+> asking the closing one (and a launch whose running instance quits or crashes while it is asking
+> runs as the new instance rather than showing a message). If the single-instance
 > check itself fails, `ff` does not start (a message box names the Windows error) rather than risk
 > a second stripe. Debug builds use a
 > separate instance name (`-overlay-debug`), so a `cargo run` build can run beside a release `ff`

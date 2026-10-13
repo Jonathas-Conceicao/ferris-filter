@@ -37,7 +37,7 @@ pub fn launch() -> eframe::Result<()> {
     // registers a hotkey or builds a tray icon, so repeated launches never leave a second
     // stripe, icon or hotkey registration. If the single-instance check itself fails, it also
     // exits here (fail closed, with a message box naming the error). The guard lives in
-    // `OverlayApp` until exit.
+    // `OverlayApp` until tray Quit, which drops it at once so an immediate relaunch can start.
     let Some(instance_guard) = instance::acquire() else {
         return Ok(());
     };

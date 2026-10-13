@@ -76,10 +76,12 @@ pub struct OverlayApp {
     /// `GlobalHotKeyEvent`s to the one combo this app registered.
     hotkey_status: HotkeyStatus,
 
-    /// The single-instance guard (INST-01), held for the process lifetime; dropping it releases
-    /// the instance name so the next `ff` launch becomes the running one. Polled once per frame
-    /// for a show request from a second launch.
-    instance: instance::Guard,
+    /// The single-instance guard (INST-01); dropping it releases the instance name so the next
+    /// `ff` launch becomes the running one. Polled once per frame for a show request from a
+    /// second launch. Held until tray Quit, which drops it at once (`None`), not when eframe
+    /// finally drops the app: a relaunch right after Quit then starts a new stripe instead of
+    /// signalling a process that is going away (review iteration 2, WR-01).
+    instance: Option<instance::Guard>,
 
     /// Set by the tray's left click, a `Ctrl+Shift+Z` press, or a tray "Show"
     /// while currently hidden. Consumed once per frame by [`visibility::advance`].
@@ -601,7 +603,7 @@ impl OverlayApp {
             tray,
             hotkey_manager,
             hotkey_status,
-            instance,
+            instance: Some(instance),
             toggle_requested: false,
             // The window created in `overlay::launch` starts visible
             // (`with_active(false)` only suppresses activation, not
@@ -1297,6 +1299,10 @@ impl eframe::App for OverlayApp {
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
                 Some(OverlayCommand::Quit) => {
                     quit_requested = true;
+                    // Release the instance name now, before this frame's show-request poll:
+                    // from here on a relaunch becomes the new first instance rather than
+                    // waiting on (or being acked by) a process that is about to close.
+                    self.instance = None;
                 }
                 None => {}
             }
@@ -1312,14 +1318,16 @@ impl eframe::App for OverlayApp {
         // The first frame is where polling starts, so it is also where the instance tells a
         // waiting launcher it is ready (WR-02). Until then a launch during startup waits up to
         // `instance::STARTUP_TIMEOUT_MS` instead of reporting "not responding". Later calls
-        // are no-ops.
-        self.instance.mark_ready();
-        if self.instance.take_show_request() {
-            if self.visibility == Visibility::Hidden {
-                self.toggle_requested = true;
+        // are no-ops. After tray Quit the guard is gone (`None`) and nothing is polled.
+        if let Some(guard) = self.instance.as_mut() {
+            guard.mark_ready();
+            if guard.take_show_request() {
+                if self.visibility == Visibility::Hidden {
+                    self.toggle_requested = true;
+                }
+                // An already-shown stripe is still an answer.
+                guard.ack();
             }
-            // An already-shown stripe is still an answer.
-            self.instance.ack();
         }
 
         // The frame decision: one call to the tested state machine, one

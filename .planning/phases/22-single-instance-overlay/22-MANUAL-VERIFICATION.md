@@ -62,4 +62,9 @@ Record Result as PASS / FAIL with a note for every step.
     **Expected:** message box, OK closes it, no second stripe, and the stripe does not appear
     afterwards on its own (the request is withdrawn). **Result:**
 
+11. **Relaunch right after Quit.** With `ff` running, choose **Quit** from its tray menu and
+    launch `ff` again immediately (have the shortcut ready, launch within a second).
+    **Expected:** a fresh stripe and tray icon appear; no "not responding" or "already running"
+    message box; exactly one `ff.exe` once the old one has exited. **Result:**
+
 Tray **Quit** remains the only way to exit the process.

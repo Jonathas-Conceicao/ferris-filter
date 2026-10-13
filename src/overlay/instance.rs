@@ -11,7 +11,9 @@
 //! auto-reset `-ack` event is waited on by the second for [`ACK_TIMEOUT_MS`],
 //! which re-asserts its request every [`RETRY_INTERVAL_MS`] so several launchers
 //! waiting at once are each answered. If the first does not answer, the request is
-//! withdrawn and a MessageBox is shown (the release `ff` has no console).
+//! withdrawn and the name is checked once more: if the first instance has meanwhile
+//! quit (tray Quit releases the name at once) or crashed, this launch runs as the new
+//! first instance; otherwise a MessageBox is shown (the release `ff` has no console).
 //!
 //! Failure policy (WR-03): if the mutex itself cannot be created, the launch fails
 //! closed with a MessageBox naming the Win32 error, because the same failure would
@@ -433,22 +435,46 @@ mod imp {
         }
     }
 
+    /// The decision of one launch, before any message box is shown.
+    pub enum Launch {
+        /// This process is the single instance: run the stripe.
+        Run(Guard),
+        /// Exit; show this message first, if any.
+        Exit(Option<String>),
+    }
+
+    /// The launch decision over explicit names and budgets (testable without a MessageBox).
+    ///
+    /// When asking the running instance fails, the name is checked once more before any
+    /// message (review iteration 2, WR-01): the instance may have quit, or crashed, while this
+    /// launch was asking, and then this launch is the one that should run. The mutex is still
+    /// the arbiter, so this can never open a second stripe.
+    pub fn launch_named(names: &InstanceNames, startup_ms: u32, ack_ms: u32) -> Launch {
+        match acquire_named(names) {
+            Acquired::First(g) => Launch::Run(g),
+            Acquired::AlreadyRunning => {
+                let outcome = signal_running(names, startup_ms, ack_ms);
+                if outcome != Wait::Signaled
+                    && let Acquired::First(g) = acquire_named(names)
+                {
+                    return Launch::Run(g);
+                }
+                Launch::Exit(signal_message(outcome))
+            }
+            Acquired::Failed(code) => Launch::Exit(Some(check_failed_message(code))),
+        }
+    }
+
     /// Composed entry for `launch()`: `Some(guard)` = run the stripe, `None` =
     /// exit 0. Call before creating the hotkey or the tray, and keep the Guard
-    /// alive until exit.
+    /// alive until exit (or until tray Quit, which drops it early).
     pub fn acquire() -> Option<Guard> {
-        let names = instance_names();
-        match acquire_named(&names) {
-            Acquired::First(g) => Some(g),
-            Acquired::AlreadyRunning => {
-                let outcome = signal_running(&names, STARTUP_TIMEOUT_MS, ACK_TIMEOUT_MS);
-                if let Some(message) = signal_message(outcome) {
+        match launch_named(&instance_names(), STARTUP_TIMEOUT_MS, ACK_TIMEOUT_MS) {
+            Launch::Run(g) => Some(g),
+            Launch::Exit(message) => {
+                if let Some(message) = message {
                     notify(&message);
                 }
-                None
-            }
-            Acquired::Failed(code) => {
-                notify(&check_failed_message(code));
                 None
             }
         }
@@ -488,6 +514,8 @@ mod imp {
 }
 
 pub use imp::{Guard, acquire, acquire_named, notify, signal_running};
+#[cfg(windows)]
+pub use imp::{Launch, launch_named};
 
 #[cfg(test)]
 mod tests {
@@ -737,6 +765,58 @@ mod windows_tests {
         assert!(started.elapsed() >= Duration::from_millis(300));
         stop.store(true, Ordering::SeqCst);
         assert_eq!(responder.join().unwrap(), 1);
+    }
+
+    #[test]
+    fn a_launch_whose_instance_quits_mid_request_runs_instead() {
+        // Review iteration 2, WR-01: the running instance is ready but stops answering (it
+        // was told to Quit) and releases the name while the launcher is asking. The launcher
+        // must become the new first instance, not report "not responding" and leave nothing.
+        let n = test_names("quitmid");
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let quitting = {
+            let n = n.clone();
+            std::thread::spawn(move || {
+                let mut g = first(&n);
+                g.mark_ready();
+                acquired_tx.send(()).unwrap();
+                std::thread::sleep(Duration::from_millis(150));
+                drop(g);
+            })
+        };
+        acquired_rx.recv().unwrap();
+        let launch = launch_named(&n, 1000, 500);
+        quitting.join().unwrap();
+        assert!(matches!(launch, Launch::Run(_)));
+        // And it really holds the name now.
+        assert!(matches!(acquire_named(&n), Acquired::AlreadyRunning));
+        drop(launch);
+    }
+
+    #[test]
+    fn a_launch_to_a_responding_instance_exits_without_a_message() {
+        let n = test_names("launchok");
+        let stop = Arc::new(AtomicBool::new(false));
+        let responder = spawn_responder(&n, Duration::ZERO, Arc::clone(&stop));
+        let launch = launch_named(&n, 1000, ACK_TIMEOUT_MS);
+        stop.store(true, Ordering::SeqCst);
+        responder.join().unwrap();
+        assert!(matches!(launch, Launch::Exit(None)));
+    }
+
+    #[test]
+    fn a_launch_to_a_still_running_unresponsive_instance_reports_it() {
+        // The re-check only runs a launch whose instance is really gone; one that still
+        // holds the name keeps the "not responding" message and never a second stripe.
+        let n = test_names("launchstuck");
+        let mut g = first(&n);
+        g.mark_ready();
+        let launch = launch_named(&n, 100, 100);
+        assert!(
+            matches!(&launch, Launch::Exit(Some(m)) if m == NOT_RESPONDING_MESSAGE),
+            "expected the not-responding message"
+        );
+        drop(g);
     }
 
     #[test]

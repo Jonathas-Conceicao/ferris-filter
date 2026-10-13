@@ -439,15 +439,15 @@ Note the fixture is the FilterBlade/NeverSink export (the "NeverSink sample"); t
 | A5 | With APPLY relaxed to "no economy section required", a rules-only filter may be written | Apply path | Medium: UI-SPEC/Phase 18 gate APPLY on `HasSection`; confirm this relaxation is wanted (planner may keep the Phase 18 gating and only enable APPLY when a section exists) |
 | A6 | `egui_kittest` should not be added | Alternatives | Low |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Style-wins flag has no behaviour behind it yet.**
+1. **Style-wins flag has no behaviour behind it yet.** RESOLVED by OD-4 (display-only this phase).
    - Known: STYLE-03 / EDIT-06 (style tags and applying a style's actions on Apply) are Phase 20; no Apply code reads `#ff:style`. CONTEXT says "style's action wins on Apply (Phase 17 decision)".
    - Unclear: whether Phase 19 should actually rewrite the header keyword on Apply for tagged blocks.
    - Recommendation: Phase 19 renders the flag and the read-only selector for any block that has a `#ff:style` line (it can only exist from a hand edit or v0.4 data today) and does **not** implement the Apply-time rewrite; record it as a Phase 20 dependency in the plan and CHANGELOG. This avoids implementing half of STYLE-03.
-2. **Which diagnostics block Apply?** Recommend `Error` + `Warning` inside enabled blocks (consistent with Phase 16 D-11), but show Warnings with the same `grammar error` flag and tooltip text so the user knows why. If the corpus run on FilterBlade shows zero Warnings/Errors (Phase 16 verification says zero Errors on all fixtures; Warnings were not asserted), no fixture is blocked. Planner: add a test asserting the fixture yields zero blocking diagnostics.
-3. **ADD RULE when the filter does not exist yet** (Absent state): allowed in memory; first Apply creates the file (the Phase 18 add-economy-creates-file path). Confirm APPLY without a section is allowed (A5).
-4. **Name for duplicated unnamed rule:** no name is added (only append ` (copy)` when a name exists), per UI-SPEC.
+2. **Which diagnostics block Apply?** RESOLVED by OD-1 (Error-only; Warnings flagged, non-blocking). Recommend `Error` + `Warning` inside enabled blocks (consistent with Phase 16 D-11), but show Warnings with the same `grammar error` flag and tooltip text so the user knows why. If the corpus run on FilterBlade shows zero Warnings/Errors (Phase 16 verification says zero Errors on all fixtures; Warnings were not asserted), no fixture is blocked. Planner: add a test asserting the fixture yields zero blocking diagnostics.
+3. **ADD RULE when the filter does not exist yet** RESOLVED by OD-2 (rules-only Apply allowed). (Absent state): allowed in memory; first Apply creates the file (the Phase 18 add-economy-creates-file path). Confirm APPLY without a section is allowed (A5).
+4. **Name for duplicated unnamed rule:** RESOLVED (UI-SPEC: " (copy)" only when named). no name is added (only append ` (copy)` when a name exists), per UI-SPEC.
 
 ## Environment Availability
 

@@ -179,7 +179,33 @@ Plans:
   4. The economy section does not appear as rules; the list shows a summary such as "+ 42 locked rule blocks"
   5. Edits stay in memory until Apply writes the filter; Revert discards unsaved edits
 
-**Plans**: TBD
+**Plans**: 7 plans
+Plans:
+**Wave 1**
+
+- [ ] 19-01-PLAN.md — Standalone cargo fmt commit; delete the v0.4 JSON-rule overlay modules (keep parse_base_type_entry)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 19-02-PLAN.md — filter::Document structural ops: append before economy, remove, duplicate, move, Show/Hide/Minimal, Continue
+- [ ] 19-03-PLAN.md — dynamic::apply_edited (EconomyOp, rules-only Apply) and the Error-only blocking_errors gate
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 19-04-PLAN.md — Pure overlay::rules WorkingFilter (row cache, labels, search, actions, Revert, staged economy), virtual_list math, 511-block perf test
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 19-05-PLAN.md — overlay::rule_list egui view: virtualized rows, flags, expanded body, search bar, economy footer row
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 19-06-PLAN.md — Wire the rule list into the stripe; Apply/Revert over the edited document; refusal lines; Phase 18 notice and ADD ECONOMY SECTION button removed
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 19-07-PLAN.md — CLAUDE.md and CHANGELOG for the rule list; phase-end gates
+
 **UI hint**: yes
 
 ### Phase 20: Full-Grammar Block Editing

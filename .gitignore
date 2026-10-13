@@ -28,3 +28,6 @@ desktop.ini
 
 # One-time backups `apply` keeps beside a filter it rewrites (`<name>.filter.ffbak`).
 *.ffbak
+
+# Per-user overlay settings (selected game-folder filter). Never committed.
+/ff-settings.json

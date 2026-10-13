@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod paths;
 pub mod run;
 pub mod safe_write;
+pub mod settings;
 pub mod styled;
 pub use run::run;
 pub mod models;

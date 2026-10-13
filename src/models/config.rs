@@ -653,7 +653,14 @@ pub struct Config {
     /// Raw pre-Phase-17 inline `styles` section (OD-1). Present only so an old file still
     /// parses far enough for `loader::load_config` to drop it (when it merely repeats the styles
     /// file) or reject it with a clear message (when it differs). Never serialized.
-    #[serde(default, rename = "styles", skip_serializing)]
+    /// `None` means the key is absent; a present key is always `Some`, even `"styles": null`
+    /// (`Some(Value::Null)`), so nulling the section out cannot slip past the check.
+    #[serde(
+        default,
+        rename = "styles",
+        skip_serializing,
+        deserialize_with = "deserialize_present_value"
+    )]
     pub legacy_styles: Option<serde_json::Value>,
     pub build: Build,
     pub weapon_classes: Vec<String>,
@@ -678,6 +685,14 @@ pub struct Config {
     /// `when.class` names to avoid repetition (e.g. "buildWeapons": ["Staves","Wands","Foci"]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class_groups: Option<HashMap<String, Vec<String>>>,
+}
+
+/// Deserialize a field whose *presence* matters: called only when the key exists, so any value —
+/// including JSON `null` — becomes `Some`. Absence falls back to `#[serde(default)]` (`None`).
+fn deserialize_present_value<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 // ---------------------------------------------------------------------------
@@ -1265,6 +1280,15 @@ mod tests {
         v["styles"] = serde_json::json!({});
         let cfg: Config = serde_json::from_value(v).unwrap();
         assert!(cfg.legacy_styles.is_some());
+    }
+
+    /// WR-04: `"styles": null` is a present key, not an absent one.
+    #[test]
+    fn null_inline_styles_section_still_counts_as_present() {
+        let mut v: serde_json::Value = serde_json::from_str(CONFIG_JSON).unwrap();
+        v["styles"] = serde_json::Value::Null;
+        let cfg: Config = serde_json::from_str(&v.to_string()).unwrap();
+        assert_eq!(cfg.legacy_styles, Some(serde_json::Value::Null));
     }
 
     #[test]

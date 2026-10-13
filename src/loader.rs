@@ -201,6 +201,28 @@ mod tests {
         assert_eq!(load_text(STYLES).unwrap().len(), 12);
     }
 
+    /// WR-04: `"styles": null` is rejected like any other inline section that is not a
+    /// repeat of styles.json.
+    #[test]
+    fn load_config_rejects_a_null_inline_styles_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let styles_p = dir.path().join("styles.json");
+        std::fs::write(&styles_p, STYLES).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/config.json"
+        )))
+        .unwrap();
+        v["styles"] = serde_json::Value::Null;
+        let cfg_p = dir.path().join("config.json");
+        std::fs::write(&cfg_p, v.to_string()).unwrap();
+        let err = load_config(cfg_p.to_str().unwrap(), styles_p.to_str().unwrap()).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Styles(StyleError::InlineStylesSection { .. })),
+            "{err}"
+        );
+    }
+
     #[test]
     fn load_styles_missing_path_is_read_error() {
         let err = load_styles("definitely/not/here/styles.json").unwrap_err();

@@ -556,8 +556,7 @@ impl WorkingFilter {
             return Ok((self.text(), StyleReport::default()));
         };
         let mut clone = self.doc.clone();
-        let report = styled::rewrite_styled(&mut clone, set)
-            .map_err(|e| format!("Could not update styled rules: {e}"))?;
+        let report = styled::rewrite_styled(&mut clone, set);
         Ok((clone.serialize(), report))
     }
 

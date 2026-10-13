@@ -63,7 +63,7 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 output, with the style palette and economy tier cutoffs configurable from the overlay.
 
 - [ ] **Phase 16: Lossless Filter Parser** - Parse any PoE2 filter and write it back byte-identical
-- [ ] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged
+- [x] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged (completed 2026-10-13)
 - [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section
 - [ ] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles
@@ -127,7 +127,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 17-04-PLAN.md — --styles on generate/apply, end-to-end success-criteria tests, CLAUDE.md + CHANGELOG
+- [x] 17-04-PLAN.md — --styles on generate/apply, end-to-end success-criteria tests, CLAUDE.md + CHANGELOG
 
 ### Phase 18: Filter as Store & Economy Section
 
@@ -210,7 +210,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
-| 17. Config-Driven Styles | 3/4 | In Progress|  |
+| 17. Config-Driven Styles | 4/4 | Complete   | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 0/? | Not started | - |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
@@ -299,7 +299,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 

@@ -56,25 +56,25 @@ pub enum Commands {
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
     },
-    /// Compile dynamic.json into dynamic.filter and write it to the PoE2 config folder
+    /// Refresh the economy section of a filter in place
     ///
-    /// Seeds dynamic.json from dynamic_base.json on first run. Unlike `generate`, this both
-    /// compiles and installs — PoE2 still needs the filter reloaded in-game afterwards.
+    /// The filter itself is the store: only the lines between `#ff:economy-begin` and
+    /// `#ff:economy-end` are regenerated from prices.json, tiers.json and styles.json found in
+    /// the FerrisFilter folder (FERRISFILTER_HOME, else the folder holding ff-cli.exe, else the
+    /// working directory). The first write keeps `<name>.filter.ffbak`; a v0.4 dynamic.filter is
+    /// converted on its first apply. PoE2 still needs the filter reloaded in-game afterwards.
     Apply {
-        /// Dynamic rule store to compile [default: dynamic.json]
-        #[arg(long, default_value = "dynamic.json")]
-        store: String,
-        /// Template used to seed the store, and to restore it with --reset
-        /// [default: dynamic_base.json]
-        #[arg(long, default_value = "dynamic_base.json")]
-        base: String,
-        /// Destination PoE2 config folder
-        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        /// Filter file to update
+        /// [default: dynamic.filter in %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
         #[arg(long)]
-        dest: Option<String>,
-        /// Discard the current store and restore it from the base before compiling
+        filter: Option<String>,
+        /// Add an economy section at the end of the filter (creates the file if it does not
+        /// exist; its folder must exist)
+        #[arg(long, conflicts_with = "remove_economy")]
+        add_economy: bool,
+        /// Remove the economy section from the filter
         #[arg(long)]
-        reset: bool,
+        remove_economy: bool,
         /// Tier-cutoff file to use instead of tiers.json.
         ///
         /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are

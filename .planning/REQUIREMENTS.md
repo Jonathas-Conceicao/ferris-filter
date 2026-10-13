@@ -132,7 +132,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### In-Game Reload (RELOAD)
 
-- [ ] **RELOAD-01**: After a RULES-tab Apply that writes the filter, the overlay sends
+- [x] **RELOAD-01**: After a RULES-tab Apply that writes the filter, the overlay sends
   `/reloaditemfilter` to a running Path of Exile 2 once (one click, one command), controlled by a
   CONFIG setting "Reload filter in game after Apply" (persisted, default on); when nothing is sent
   (game not running, setting off, send failed) the Refresh reminder is shown with the reason.
@@ -214,7 +214,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONF-03 | Phase 21 | Complete (UAT pending) |
 | CONF-04 | Phase 21 | Complete (UAT pending) |
 | INST-01 | Phase 22 | Complete (UAT pending) |
-| RELOAD-01 | Phase 23 | Pending |
+| RELOAD-01 | Phase 23 | Complete (UAT pending) |
 
 **Coverage:**
 

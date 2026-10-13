@@ -69,7 +69,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (executed 2026-10-13; awaiting human UAT)
 - [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
-- [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game
+- [x] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (completed 2026-10-13)
 
 ### Phase 16: Lossless Filter Parser
 
@@ -332,7 +332,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 23-03-PLAN.md — Wiring: CONFIG FILTER toggle (saved on change), WinSink, run_apply hook with worker and status replacement
-- [ ] 23-04-PLAN.md — Docs: CLAUDE.md overlay notes, CHANGELOG [Unreleased], 23-MANUAL-VERIFICATION.md
+- [x] 23-04-PLAN.md — Docs: CLAUDE.md overlay notes, CHANGELOG [Unreleased], 23-MANUAL-VERIFICATION.md
 
 ### Progress
 
@@ -345,7 +345,7 @@ Plans:
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
-| 23. Auto-Reload Filter in Game on Apply | 3/4 | In Progress|  |
+| 23. Auto-Reload Filter in Game on Apply | 4/4 | Complete   | 2026-10-13 |
 
 ## Backlog
 
@@ -429,7 +429,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 7/7 plans complete
+**Plans:** 4/4 plans complete
 
 Plans:
 

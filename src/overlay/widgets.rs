@@ -113,7 +113,14 @@ pub fn zebra_row(ui: &mut egui::Ui, index: usize, add: impl FnOnce(&mut egui::Ui
 /// internally — callers branch on `.changed()` exactly as they would for `ui.checkbox(...)`.
 pub fn circular_toggle(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     let size = 16.0;
-    let (rect, mut response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
+    // Layout stays 16x16; the click target is padded to 24x24 (UI-SPEC carry-over).
+    let auto_id = ui.next_auto_id();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let mut response = ui.interact(rect.expand(4.0), auto_id.with("hit"), egui::Sense::click());
+    let state = *checked;
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, state, "Enabled")
+    });
 
     if response.clicked() {
         *checked = !*checked;
@@ -157,12 +164,19 @@ pub enum ArrowDirection {
 /// the control, keeping the row's control layout stable across rows.
 pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool) -> egui::Response {
     let size = 16.0;
-    let sense = if enabled {
-        egui::Sense::click()
+    let auto_id = ui.next_auto_id();
+    let (rect, hover) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    // Padded 24x24 click target; disabled arrows keep hover-only sensing.
+    let response = if enabled {
+        ui.interact(rect.expand(4.0), auto_id.with("hit"), egui::Sense::click())
     } else {
-        egui::Sense::hover()
+        hover
     };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), sense);
+    let label = match direction {
+        ArrowDirection::Up => "Move up",
+        ArrowDirection::Down => "Move down",
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
 
     let color = if !enabled {
         theme::DISABLED_TEXT
@@ -199,6 +213,109 @@ pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool)
     ));
 
     response
+}
+
+/// A 16px painted X inside a 24x24 click target, with a tooltip and accessible name `label`
+/// (for example "Remove this condition"). Painted, not a glyph: Cinzel has no coverage.
+pub fn remove_x_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let id = ui.next_auto_id().with("hit");
+    remove_x_button_with_id(ui, id, label)
+}
+
+/// Like [`remove_x_button`] but with an explicit widget id (used by lists that need to look a
+/// specific control up again).
+fn remove_x_button_with_id(ui: &mut egui::Ui, id: egui::Id, label: &str) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+    let response = ui.interact(rect, id, egui::Sense::click());
+    paint_x(ui, rect, response.hovered());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.on_hover_text(label)
+}
+
+fn paint_x(ui: &egui::Ui, rect: egui::Rect, hovered: bool) {
+    let color = if hovered {
+        theme::SECTION_CREAM
+    } else {
+        theme::LABEL_TAN
+    };
+    let stroke = egui::Stroke::new(1.5, color);
+    let half = 4.0; // 8px cross inside the 16px paint box
+    let c = rect.center();
+    let painter = ui.painter();
+    painter.line_segment(
+        [c + egui::vec2(-half, -half), c + egui::vec2(half, half)],
+        stroke,
+    );
+    painter.line_segment(
+        [c + egui::vec2(half, -half), c + egui::vec2(-half, half)],
+        stroke,
+    );
+}
+
+/// A 24px-high selectable chip (rarity-style toggle). Flips `*selected` and marks the response
+/// changed on click; callers write only on `.changed()`.
+pub fn toggle_chip(ui: &mut egui::Ui, label: &str, selected: &mut bool) -> egui::Response {
+    let text_color = if *selected {
+        theme::SECTION_CREAM
+    } else {
+        theme::LABEL_TAN
+    };
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(theme::ROW_SUMMARY_SIZE),
+        text_color,
+    );
+    let size = egui::vec2(galley.size().x + 16.0, 24.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *selected = !*selected;
+        response.mark_changed();
+    }
+    let fill = if *selected {
+        theme::HEADER_PLATE
+    } else {
+        theme::INPUT_FILL
+    };
+    let stroke_color = if response.hovered() {
+        theme::SECTION_CREAM
+    } else {
+        theme::CONTROL_GLYPH
+    };
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        2.0,
+        fill,
+        egui::Stroke::new(1.0, stroke_color),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        text_color,
+    );
+    let state = *selected;
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, state, label));
+    response
+}
+
+/// A small outlined text badge (for example `from style`) with a hover tooltip. Not clickable.
+pub fn badge(ui: &mut egui::Ui, text: &str, tip: &str) -> egui::Response {
+    let inner = egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, theme::LABEL_TAN))
+        .inner_margin(egui::Margin::symmetric(4, 1))
+        .show(ui, |ui| {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(text)
+                        .size(theme::ROW_SUMMARY_SIZE)
+                        .color(theme::LABEL_TAN),
+                )
+                .selectable(false),
+            )
+        });
+    inner.response.on_hover_text(tip)
 }
 
 #[cfg(test)]
@@ -316,5 +433,90 @@ mod tests {
             !clicked,
             "a disabled arrow button must never report clicked()"
         );
+    }
+
+    #[test]
+    fn circular_toggle_target_is_padded_but_layout_stays_16px() {
+        let ctx = headless_ctx();
+        let mut checked = false;
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let before = ui.cursor().min;
+            let r = circular_toggle(ui, &mut checked);
+            let after = ui.min_rect();
+            assert!(after.width() <= 16.0 + 0.01, "layout width must stay 16");
+            rect = egui::Rect::from_min_size(before, egui::vec2(16.0, 16.0));
+            drop(r);
+        })
+        .drop_without_applying_deltas();
+        // 3px outside the painted circle edge flips it.
+        let pos = rect.right_center() + egui::vec2(3.0, 0.0);
+        ctx.run_ui(click_at(pos), |ui| {
+            circular_toggle(ui, &mut checked);
+        })
+        .drop_without_applying_deltas();
+        assert!(checked, "click inside the padded target must flip");
+        // Well outside (past the padded target and egui interact radius) does not.
+        let pos = rect.right_center() + egui::vec2(14.0, 0.0);
+        ctx.run_ui(click_at(pos), |ui| {
+            circular_toggle(ui, &mut checked);
+        })
+        .drop_without_applying_deltas();
+        assert!(checked, "click outside the padded target must not flip");
+    }
+
+    #[test]
+    fn remove_x_button_is_24px_and_clicks_only_on_click() {
+        let ctx = headless_ctx();
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let r = remove_x_button(ui, "Remove this condition");
+            assert!(!r.clicked());
+            rect = r.rect;
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(rect.size(), egui::vec2(24.0, 24.0));
+        let mut clicked = false;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            clicked = remove_x_button(ui, "Remove this condition").clicked();
+        })
+        .drop_without_applying_deltas();
+        assert!(clicked);
+    }
+
+    #[test]
+    fn toggle_chip_flips_on_click_and_is_idle_otherwise() {
+        let ctx = headless_ctx();
+        let mut selected = false;
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let r = toggle_chip(ui, "Normal", &mut selected);
+            assert!(!r.changed());
+            rect = r.rect;
+        })
+        .drop_without_applying_deltas();
+        assert!(!selected);
+        let mut changed = false;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            changed = toggle_chip(ui, "Normal", &mut selected).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(selected && changed);
+    }
+
+    #[test]
+    fn badge_never_reports_clicked() {
+        let ctx = headless_ctx();
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            rect = badge(ui, "from style", "tip").rect;
+        })
+        .drop_without_applying_deltas();
+        let mut clicked = true;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            clicked = badge(ui, "from style", "tip").clicked();
+        })
+        .drop_without_applying_deltas();
+        assert!(!clicked);
     }
 }

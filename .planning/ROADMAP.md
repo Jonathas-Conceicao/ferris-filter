@@ -210,7 +210,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
-| 17. Config-Driven Styles | 4/4 | Complete   | 2026-10-13 |
+| 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 0/? | Not started | - |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |

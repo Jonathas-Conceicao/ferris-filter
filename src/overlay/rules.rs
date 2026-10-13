@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::apply::{STYLE_REMOVED_STATUS, styles_unavailable_message};
 use crate::dynamic::{BlockingError, blocking_errors};
 use crate::filter::keywords::{Keyword, Kind};
 use crate::filter::section::{self, SectionSpan};
@@ -19,8 +20,9 @@ use crate::filter::{
     Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, Severity,
     parse as parse_filter,
 };
+use crate::models::config::{Style, StyleSet};
+use crate::styled::{self, StyleReport};
 
-/// Refusal copy for enabling a commented-out block that is not valid grammar (UI-SPEC).
 /// Refusal copy for a line edit whose target line changed since the frame started.
 pub const STALE_LINE_STATUS: &str =
     "That line changed before the edit landed; nothing was changed.";
@@ -60,6 +62,26 @@ pub struct BodyEntry {
     pub ordinal: usize,
 }
 
+/// Start of the refusal shown when a style-owned action is edited.
+pub const STYLE_LOCKED_STATUS_PREFIX: &str = "Set by style";
+
+fn style_locked_status(name: &str) -> String {
+    format!("{STYLE_LOCKED_STATUS_PREFIX} \"{name}\". Remove the style to edit it.")
+}
+
+/// What a rule's `#ff:style` tag means against the loaded styles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StyleState {
+    /// No tag.
+    None,
+    /// Tag names a style in styles.json.
+    Known(String),
+    /// Tag names a style that does not exist.
+    Unknown(String),
+    /// Tag present but styles.json could not be read, so it cannot be judged.
+    Unchecked(String),
+}
+
 const CANNOT_ENABLE_STATUS: &str =
     "Can't enable: the commented lines are not valid filter grammar.";
 
@@ -80,6 +102,8 @@ pub enum RowAction {
     SetContinue(BlockId, bool),
     SetName(BlockId, String),
     ClearName(BlockId),
+    ApplyStyle(BlockId, String),
+    RemoveStyle(BlockId),
     AddRule,
     EditLine {
         id: BlockId,
@@ -158,8 +182,8 @@ pub struct RuleRow {
     pub keyword: BlockKeyword,
     pub has_continue: bool,
     pub name: Option<String>,
-    /// The `#ff:style` tag (display only this phase).
-    pub style_tag: Option<String>,
+    /// The `#ff:style` tag judged against the loaded styles.
+    pub style: StyleState,
     pub label: String,
     /// Lowercase search text: name, label, Class and BaseType values.
     pub haystack: String,
@@ -192,6 +216,10 @@ pub struct WorkingFilter {
     generation: u64,
     dirty: bool,
     search_cache: Option<(String, u64, Vec<usize>)>,
+    styles: Option<StyleSet>,
+    styles_error: Option<String>,
+    styles_rev: u64,
+    pending_cache: Option<(u64, u64, bool)>,
 }
 
 fn refused(msg: String) -> ActionOutcome {
@@ -340,6 +368,10 @@ impl WorkingFilter {
             generation: 0,
             dirty: false,
             search_cache: None,
+            styles: None,
+            styles_error: None,
+            styles_rev: 0,
+            pending_cache: None,
         };
         wf.rebuild();
         wf
@@ -373,7 +405,14 @@ impl WorkingFilter {
             let id = b.id();
             let x = extract(&self.doc, b);
             let name = self.doc.meta_get(id, "name").map(str::to_string);
-            let style_tag = self.doc.meta_get(id, "style").map(str::to_string);
+            let style = match self.doc.meta_get(id, "style") {
+                None => StyleState::None,
+                Some(n) => match &self.styles {
+                    Some(set) if set.get(n).is_some() => StyleState::Known(n.to_string()),
+                    Some(_) => StyleState::Unknown(n.to_string()),
+                    None => StyleState::Unchecked(n.to_string()),
+                },
+            };
             let kw = keyword_word(b.keyword());
             let label = match &name {
                 Some(n) => format!("{index}  {kw} - {n}"),
@@ -417,7 +456,7 @@ impl WorkingFilter {
                 keyword: b.keyword(),
                 has_continue: b.has_continue(),
                 name,
-                style_tag,
+                style,
                 label,
                 haystack: hay.to_lowercase(),
                 errors,
@@ -452,6 +491,95 @@ impl WorkingFilter {
             None => self.base_economy.clone(),
         };
         self.dirty = self.pending.is_some() || self.doc.serialize() != self.applied_text;
+    }
+
+    /// Store the freshly loaded styles (or the load error) and re-judge every tag.
+    pub fn set_styles(&mut self, styles: Result<StyleSet, String>) {
+        match styles {
+            Ok(s) => {
+                self.styles = Some(s);
+                self.styles_error = None;
+            }
+            Err(e) => {
+                self.styles = None;
+                self.styles_error = Some(e);
+            }
+        }
+        self.styles_rev += 1;
+        self.rebuild();
+    }
+
+    /// Style names in styles.json order; empty when unavailable.
+    pub fn style_names(&self) -> Vec<String> {
+        self.styles
+            .as_ref()
+            .map(|s| s.names().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn style(&self, name: &str) -> Option<&Style> {
+        self.styles.as_ref().and_then(|s| s.get(name))
+    }
+
+    pub fn styles_error(&self) -> Option<&str> {
+        self.styles_error.as_deref()
+    }
+
+    /// The text Apply should write: the document with every enabled styled rule rewritten from
+    /// the current styles, produced on a clone so the user's edits are never touched.
+    pub fn text_with_styles(&self) -> Result<(String, StyleReport), String> {
+        let Some(set) = &self.styles else {
+            if self
+                .rows
+                .iter()
+                .any(|r| r.enabled && r.style != StyleState::None)
+            {
+                let err = self
+                    .styles_error
+                    .as_deref()
+                    .unwrap_or("styles were not loaded");
+                return Err(styles_unavailable_message(err));
+            }
+            return Ok((self.text(), StyleReport::default()));
+        };
+        let mut clone = self.doc.clone();
+        let report = styled::rewrite_styled(&mut clone, set)
+            .map_err(|e| format!("Could not update styled rules: {e}"))?;
+        Ok((clone.serialize(), report))
+    }
+
+    /// Whether Apply would change the text because of styles alone. Cached per
+    /// (generation, styles revision).
+    pub fn style_rewrite_pending(&mut self) -> bool {
+        if let Some((g, r, v)) = self.pending_cache
+            && g == self.generation
+            && r == self.styles_rev
+        {
+            return v;
+        }
+        let v = match self.text_with_styles() {
+            Ok((t, _)) => t != self.text(),
+            Err(_) => false,
+        };
+        self.pending_cache = Some((self.generation, self.styles_rev, v));
+        v
+    }
+
+    /// Enabled rules naming an unknown style, in file order, as (rule index, block id).
+    pub fn unknown_styles(&self) -> Vec<(usize, BlockId)> {
+        self.rows
+            .iter()
+            .filter(|r| r.enabled && matches!(r.style, StyleState::Unknown(_)))
+            .map(|r| (r.index, r.id))
+            .collect()
+    }
+
+    /// Refusal text when the rule's actions belong to a known style.
+    fn style_lock(&self, id: BlockId) -> Option<String> {
+        match self.row(id).map(|r| &r.style) {
+            Some(StyleState::Known(n)) => Some(style_locked_status(n)),
+            _ => None,
+        }
     }
 
     pub fn rows(&self) -> &[RuleRow] {
@@ -582,6 +710,15 @@ impl WorkingFilter {
         }
     }
 
+    /// Style lock for an edit or removal aimed at an action line of a known-styled rule.
+    fn action_line_lock(&self, id: BlockId, line: usize) -> Option<String> {
+        let msg = self.style_lock(id)?;
+        self.body_view(id)
+            .iter()
+            .any(|e| e.line == line && e.kind == EntryKind::Action)
+            .then_some(msg)
+    }
+
     /// Current text of a doc line when it equals `expect` (bounds-checked).
     fn line_matches(&self, line: usize, expect: &str) -> bool {
         self.doc
@@ -656,10 +793,53 @@ impl WorkingFilter {
                     }
                 }
             }
-            RowAction::SetKeyword(id, kw) => self
-                .doc
-                .set_block_keyword(id, kw)
-                .map_err(|e| e.to_string()),
+            RowAction::SetKeyword(id, kw) => {
+                if let Some(msg) = self.style_lock(id) {
+                    return refused(msg);
+                }
+                self.doc
+                    .set_block_keyword(id, kw)
+                    .map_err(|e| e.to_string())
+            }
+            RowAction::ApplyStyle(id, name) => {
+                if self.row(id).is_none() {
+                    return refused(NOT_EDITABLE_STATUS.to_string());
+                }
+                let Some(set) = &self.styles else {
+                    let err = self
+                        .styles_error
+                        .as_deref()
+                        .unwrap_or("styles were not loaded");
+                    return refused(styles_unavailable_message(err));
+                };
+                let style = match set.get(&name) {
+                    Some(st) if styled::style_name_ok(&name) => st,
+                    _ => return refused(format!("There is no style named \"{name}\".")),
+                };
+                let mut clone = self.doc.clone();
+                let enabled = clone.block(id).is_some_and(Block::is_enabled);
+                let r = clone
+                    .set_meta(id, "style", &name)
+                    .and_then(|()| {
+                        if enabled {
+                            styled::rewrite_block(&mut clone, id, style).map(|_| ())
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .map_err(|e| e.to_string());
+                if r.is_ok() {
+                    self.doc = clone;
+                }
+                r
+            }
+            RowAction::RemoveStyle(id) => {
+                let r = self.doc.remove_meta(id, "style").map_err(|e| e.to_string());
+                if r.is_ok() {
+                    status = Some(STYLE_REMOVED_STATUS.to_string());
+                }
+                r
+            }
             RowAction::SetContinue(id, on) => {
                 // The "moved across Continue" warning may no longer be true once a Continue
                 // line is added or removed, so drop all of them rather than leave a stale one.
@@ -684,6 +864,9 @@ impl WorkingFilter {
                 if let Some(msg) = self.line_refusal(id, Some((at, &expect))) {
                     return refused(msg);
                 }
+                if let Some(msg) = self.action_line_lock(id, at) {
+                    return refused(msg);
+                }
                 self.doc
                     .patch_line(id, at, patch)
                     .map_err(|e| e.to_string())
@@ -696,10 +879,18 @@ impl WorkingFilter {
                 if let Some(msg) = self.line_refusal(id, Some((at, &expect))) {
                     return refused(msg);
                 }
+                if let Some(msg) = self.action_line_lock(id, at) {
+                    return refused(msg);
+                }
                 self.doc.remove_body_line(id, at).map_err(|e| e.to_string())
             }
             RowAction::AddLine { id, kind, text } => {
                 if let Some(msg) = self.line_refusal(id, None) {
+                    return refused(msg);
+                }
+                if kind == LineKind::Action
+                    && let Some(msg) = self.style_lock(id)
+                {
                     return refused(msg);
                 }
                 let want = match kind {
@@ -902,9 +1093,30 @@ mod tests {
     }
 
     #[test]
-    fn style_tag_is_exposed() {
-        let wf = WorkingFilter::from_text("#ff:style S\nShow\n  Rarity Rare\n");
-        assert_eq!(wf.rows()[0].style_tag.as_deref(), Some("S"));
+    fn style_state_is_exposed() {
+        let mut wf = WorkingFilter::from_text(
+            "#ff:style S\nShow\n  Rarity Rare\n\n#ff:style Nope\nShow\n\nShow\n",
+        );
+        let st = |wf: &WorkingFilter| {
+            wf.rows()
+                .iter()
+                .map(|r| r.style.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(st(&wf)[0], StyleState::Unchecked("S".into()));
+        wf.set_styles(Ok(test_styles()));
+        assert_eq!(
+            st(&wf),
+            vec![
+                StyleState::Known("S".into()),
+                StyleState::Unknown("Nope".into()),
+                StyleState::None
+            ]
+        );
+        wf.set_styles(Err("bad".into()));
+        assert_eq!(st(&wf)[0], StyleState::Unchecked("S".into()));
+        assert_eq!(wf.styles_error(), Some("bad"));
+        assert!(wf.style_names().is_empty());
     }
 
     #[test]
@@ -962,6 +1174,202 @@ mod tests {
                 assert_eq!((r.can_move_up, r.can_move_down), (up, down), "{}", r.label);
             }
         }
+    }
+
+    fn test_styles() -> StyleSet {
+        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"))
+            .expect("styles.json")
+    }
+
+    fn styled_wf(text: &str) -> WorkingFilter {
+        let mut wf = WorkingFilter::from_text(text);
+        wf.set_styles(Ok(test_styles()));
+        wf
+    }
+
+    const S_FONT: &str = "  SetFontSize 37\n";
+
+    #[test]
+    fn apply_style_sets_tag_keyword_and_actions() {
+        let mut wf = styled_wf("Hide\n  Class \"Rings\"\n  SetFontSize 20\n");
+        let id = wf.rows()[0].id;
+        let o = wf.apply_action(RowAction::ApplyStyle(id, "S".into()));
+        assert!(o.changed, "{o:?}");
+        let t = wf.text();
+        assert!(t.starts_with("#ff:style S\nShow\n"), "{t}");
+        assert!(t.contains(S_FONT) && !t.contains("SetFontSize 20"), "{t}");
+        assert_eq!(wf.rows()[0].style, StyleState::Known("S".into()));
+        // switching style rewrites the single tag
+        let o = wf.apply_action(RowAction::ApplyStyle(id, "hidden".into()));
+        assert!(o.changed);
+        let t = wf.text();
+        assert_eq!(t.matches("#ff:style").count(), 1, "{t}");
+        assert!(t.starts_with("#ff:style hidden\nHide\n"), "{t}");
+    }
+
+    #[test]
+    fn apply_style_refusals_change_nothing() {
+        let mut wf = styled_wf("Hide\n  SetFontSize 20\n");
+        let id = wf.rows()[0].id;
+        let before = wf.text();
+        for bad in ["Nope", " S", ""] {
+            let o = wf.apply_action(RowAction::ApplyStyle(id, bad.into()));
+            assert!(!o.changed && o.status.is_some(), "{bad:?}");
+            assert_eq!(wf.text(), before);
+        }
+        let mut none = WorkingFilter::from_text("Hide\n");
+        let id = none.rows()[0].id;
+        let o = none.apply_action(RowAction::ApplyStyle(id, "S".into()));
+        assert!(!o.changed && o.status.is_some());
+    }
+
+    #[test]
+    fn apply_style_on_disabled_rule_writes_tag_only() {
+        let mut wf = styled_wf("#Hide\n#  Class \"Rings\"\n#  SetFontSize 20\n");
+        let id = wf.rows()[0].id;
+        let o = wf.apply_action(RowAction::ApplyStyle(id, "S".into()));
+        assert!(o.changed, "{o:?}");
+        let t = wf.text();
+        assert!(
+            t.contains("#ff:style S") && t.contains("#  SetFontSize 20"),
+            "{t}"
+        );
+        assert!(!t.contains("SetFontSize 37"), "{t}");
+    }
+
+    #[test]
+    fn remove_style_keeps_actions_and_unlocks() {
+        let mut wf = styled_wf("#ff:style S\nShow\n  Class \"Rings\"\n  SetFontSize 37\n");
+        let id = wf.rows()[0].id;
+        let o = wf.apply_action(RowAction::RemoveStyle(id));
+        assert!(o.changed);
+        assert_eq!(o.status.as_deref(), Some(STYLE_REMOVED_STATUS));
+        assert_eq!(wf.text(), "Show\n  Class \"Rings\"\n  SetFontSize 37\n");
+        assert_eq!(wf.rows()[0].style, StyleState::None);
+    }
+
+    #[test]
+    fn known_style_locks_actions_but_not_conditions() {
+        let t = "#ff:style S\nShow\n  Class \"Rings\"\n  SetFontSize 37\n";
+        let mut wf = styled_wf(t);
+        let id = wf.rows()[0].id;
+        let want = "Set by style \"S\". Remove the style to edit it.";
+        let a = wf.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Action,
+            text: "PlayEffect Red".into(),
+        });
+        assert_eq!(a.status.as_deref(), Some(want));
+        let act = edit(&wf, id, 3, LinePatch::Values("40".into()));
+        assert_eq!(wf.apply_action(act).status.as_deref(), Some(want));
+        let o = wf.apply_action(RowAction::RemoveLine {
+            id,
+            line: 3,
+            expect: "  SetFontSize 37".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(want));
+        let o = wf.apply_action(RowAction::SetKeyword(id, BlockKeyword::Hide));
+        assert_eq!(o.status.as_deref(), Some(want));
+        assert_eq!(wf.text(), t);
+        let cond = edit(&wf, id, 2, LinePatch::Values("\"Belts\"".into()));
+        assert!(wf.apply_action(cond).changed);
+    }
+
+    #[test]
+    fn unknown_style_leaves_actions_editable() {
+        let mut wf = styled_wf("#ff:style Nope\nShow\n  SetFontSize 20\n");
+        let id = wf.rows()[0].id;
+        let act = edit(&wf, id, 2, LinePatch::Values("21".into()));
+        assert!(wf.apply_action(act).changed);
+        assert!(
+            wf.apply_action(RowAction::SetKeyword(id, BlockKeyword::Hide))
+                .changed
+        );
+        assert!(
+            wf.apply_action(RowAction::AddLine {
+                id,
+                kind: LineKind::Action,
+                text: "PlayEffect Red".into()
+            })
+            .changed
+        );
+    }
+
+    #[test]
+    fn duplicate_of_styled_rule_keeps_style_tag() {
+        let mut wf = styled_wf("#ff:style S\nShow\n  SetFontSize 37\n");
+        let id = wf.rows()[0].id;
+        let o = wf.apply_action(RowAction::Duplicate(id));
+        assert!(o.changed);
+        assert_eq!(wf.text().matches("#ff:style S").count(), 2, "{}", wf.text());
+        assert_eq!(wf.rows()[1].style, StyleState::Known("S".into()));
+    }
+
+    #[test]
+    fn text_with_styles_rewrites_on_a_clone() {
+        let mut wf = styled_wf("#ff:style S\nShow\n  Class \"Rings\"\n");
+        assert!(wf.style_rewrite_pending(), "actions missing");
+        let (t, rep) = wf.text_with_styles().expect("ok");
+        assert_eq!(rep.rewritten, 1);
+        assert!(t.contains(S_FONT));
+        assert!(!wf.text().contains("SetFontSize"), "working doc untouched");
+        // an already-matching filter is not pending
+        let mut done = styled_wf(&t);
+        assert!(!done.style_rewrite_pending());
+        let (same, rep) = done.text_with_styles().expect("ok");
+        assert_eq!((same, rep.rewritten), (t.clone(), 0));
+        // a changed style makes it pending
+        let base = test_styles();
+        let mut s40 = base.get("S").expect("S").clone();
+        s40.font = Some(40);
+        let set = StyleSet::from_pairs(
+            base.names()
+                .map(|n| {
+                    let st = if n == "S" {
+                        s40.clone()
+                    } else {
+                        base.get(n).expect("n").clone()
+                    };
+                    (n.to_string(), st)
+                })
+                .collect::<Vec<_>>(),
+        );
+        done.set_styles(Ok(set));
+        assert!(done.style_rewrite_pending());
+        assert!(
+            done.text_with_styles()
+                .expect("ok")
+                .0
+                .contains("SetFontSize 40")
+        );
+        assert!(done.text().contains(S_FONT));
+        // cache: no generation change from querying
+        let g = done.generation();
+        let _ = done.style_rewrite_pending();
+        assert_eq!(done.generation(), g);
+    }
+
+    #[test]
+    fn unknown_styles_listed_enabled_only() {
+        let wf =
+            styled_wf("Show\n\n#ff:style Nope\nShow\n\n#ff:style Gone\n#Show\n#  Rarity Rare\n");
+        let list = wf.unknown_styles();
+        assert_eq!(list, vec![(2, wf.rows()[1].id)]);
+    }
+
+    #[test]
+    fn styles_unavailable_only_blocks_when_styled_rules_exist() {
+        let mut wf = WorkingFilter::from_text("#ff:style S\nShow\n");
+        wf.set_styles(Err("bad json".into()));
+        assert_eq!(
+            wf.text_with_styles().unwrap_err(),
+            styles_unavailable_message("bad json")
+        );
+        assert!(!wf.style_rewrite_pending());
+        let mut plain = WorkingFilter::from_text("Show\n");
+        plain.set_styles(Err("bad json".into()));
+        let (t, rep) = plain.text_with_styles().expect("ok");
+        assert_eq!((t, rep), ("Show\n".to_string(), StyleReport::default()));
     }
 
     // ---- actions ----

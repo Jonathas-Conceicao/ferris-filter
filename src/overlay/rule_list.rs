@@ -11,7 +11,7 @@ use egui::{Align, Color32, Layout, RichText, Sense, UiBuilder, vec2};
 
 use crate::filter::{BlockId, BlockKeyword, FilterDiagnostic};
 
-use super::rules::{Dir, EconomyView, RowAction, RuleRow, WorkingFilter};
+use super::rules::{Dir, EconomyView, RowAction, RuleRow, StyleState, WorkingFilter};
 use super::theme;
 use super::virtual_list::{build_offsets, scroll_offset_for, visible_range};
 use super::widgets::{self, ArrowDirection};
@@ -106,7 +106,7 @@ fn flags_for(row: &RuleRow) -> Vec<Flag> {
             tip: "Matching goes on to the rules below".to_string(),
         });
     }
-    if let Some(tag) = &row.style_tag {
+    if let StyleState::Known(tag) = &row.style {
         out.push(Flag {
             text: "style wins",
             color: theme::LABEL_TAN,
@@ -398,7 +398,7 @@ fn expanded_body(
 
     // ACTION
     caption(ui, "ACTION");
-    let locked = row.style_tag.is_some();
+    let locked = matches!(row.style, StyleState::Known(_));
     ui.horizontal(|ui| {
         for (kw, word) in [
             (BlockKeyword::Show, "Show"),
@@ -436,7 +436,7 @@ fn expanded_body(
     if ui.add_enabled(!locked, cb).changed() {
         actions.push(RowAction::SetContinue(id, cont));
     }
-    if let Some(tag) = &row.style_tag {
+    if let StyleState::Known(tag) = &row.style {
         ui.label(
             RichText::new(format!(
                 "Style \"{tag}\" decides Show or Hide when you press Apply. Remove the style tag to choose here."

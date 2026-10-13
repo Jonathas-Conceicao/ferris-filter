@@ -211,6 +211,32 @@ pub fn indicator(state: ApplyState) -> &'static str {
     }
 }
 
+/// Status after REMOVE STYLE: the rule keeps its actions.
+pub const STYLE_REMOVED_STATUS: &str = "Style removed. The actions are now yours to edit.";
+
+/// Appended to the Apply outcome when styled rules were rewritten (leading space; empty for 0).
+pub fn styled_rules_message(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => " Updated 1 styled rule.".to_string(),
+        n => format!(" Updated {n} styled rules."),
+    }
+}
+
+/// Footer line for rules whose `#ff:style` names a style that does not exist.
+pub fn unknown_styles_message(count: usize, first_rule: usize) -> String {
+    if count == 1 {
+        format!("1 rule uses an unknown style (first: rule {first_rule}).")
+    } else {
+        format!("{count} rules use unknown styles (first: rule {first_rule}).")
+    }
+}
+
+/// Apply refusal when styled rules depend on a `styles.json` that cannot be read.
+pub fn styles_unavailable_message(err: &str) -> String {
+    format!("styles.json could not be read, so styled rules cannot be updated: {err}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +416,21 @@ mod tests {
             added_hidden_message(7),
             "Rule added at position 7 (hidden by the current search)"
         );
+    }
+
+    #[test]
+    fn style_messages() {
+        assert_eq!(styled_rules_message(0), "");
+        assert_eq!(styled_rules_message(1), " Updated 1 styled rule.");
+        assert_eq!(styled_rules_message(3), " Updated 3 styled rules.");
+        assert_eq!(
+            unknown_styles_message(1, 12),
+            "1 rule uses an unknown style (first: rule 12)."
+        );
+        assert_eq!(
+            unknown_styles_message(2, 5),
+            "2 rules use unknown styles (first: rule 5)."
+        );
+        assert!(styles_unavailable_message("x").ends_with(": x"));
     }
 }

@@ -157,6 +157,11 @@ pub fn show_list(
     if list.expanded.is_some() && expanded_vis.is_none() {
         list.expanded = None;
     }
+    // A delete confirm only lives while its row is the expanded one; re-opening a row later must
+    // not show it already armed.
+    if list.confirm_delete.is_some() && list.confirm_delete != list.expanded {
+        list.confirm_delete = None;
+    }
     let offsets = build_offsets(
         visible.len(),
         row_h,
@@ -308,10 +313,23 @@ fn draw_row(
         .truncate()
         .sense(Sense::click()),
     );
-    if label.clicked() {
+    // The whole space from the label to the flags expands the row, not just the text extent.
+    let click_rect = egui::Rect::from_min_max(
+        egui::pos2(label.rect.min.x, inner.min.y),
+        egui::pos2(left_rect.max.x.max(label.rect.max.x), inner.max.y),
+    );
+    let row_click = ui.interact(
+        click_rect,
+        ui.id().with(("ff-row-click", row.id)),
+        Sense::click(),
+    );
+    if label.clicked() || row_click.clicked() {
         list.expanded = if is_expanded { None } else { Some(row.id) };
+        list.confirm_delete = None;
     }
     label.on_hover_text(&row.label);
+    // The click area sits on top of the label, so it carries the full-label tooltip too.
+    row_click.on_hover_text(&row.label);
 
     if is_expanded {
         let body = egui::Frame::new()
@@ -344,16 +362,26 @@ fn expanded_body(
     // NAME
     caption(ui, "NAME");
     let mut name_on = row.name.is_some() || list.name_open.contains(&id);
-    if widgets::circular_toggle(ui, &mut name_on).changed() {
-        if name_on {
-            list.name_open.insert(id);
+    ui.horizontal(|ui| {
+        let toggle = widgets::circular_toggle(ui, &mut name_on);
+        let changed = toggle.changed();
+        toggle.on_hover_text(if name_on {
+            "Remove this rule's name"
         } else {
-            actions.push(RowAction::ClearName(id));
-            list.name_open.remove(&id);
-            list.name_drafts.remove(&id);
+            "Name this rule"
+        });
+        if changed {
+            if name_on {
+                list.name_open.insert(id);
+            } else {
+                actions.push(RowAction::ClearName(id));
+                list.name_open.remove(&id);
+                list.name_drafts.remove(&id);
+            }
         }
-    }
-    if name_on {
+        if !name_on {
+            return;
+        }
         // Keep the field open while typing: emptying a loaded name clears `row.name`, which
         // would otherwise collapse the editor under the cursor.
         list.name_open.insert(id);
@@ -365,7 +393,7 @@ fn expanded_body(
         if resp.changed() {
             actions.push(RowAction::SetName(id, draft.clone()));
         }
-    }
+    });
     ui.add_space(8.0);
 
     // ACTION

@@ -4,17 +4,20 @@
 //! Layer rule (same as `overlay/apply.rs`): no GUI-framework types live here, so every CONF-02/03/04
 //! rule is provable with temp dirs -- `OverlayApp::new` needs a real tray and cannot be unit-tested.
 //! File paths come only from `InputPaths::relative_to(root)`. This module writes only `styles.json`
-//! and `tiers.json`; the committed `prices-fallback.json` / `tiers-fallback.json` pair is never
+//! and `tiers.json`; the committed early-league fallback pair is never
 //! touched.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::compile::InputPaths;
-use crate::models::config::{Beam, Minimap, Sound, Style, StyleAction, StyleNameError, StyleSet};
+use crate::models::config::{
+    Beam, Config, Minimap, Sound, Style, StyleAction, StyleNameError, StyleSet,
+};
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
+use crate::safe_write::{AllOrNoneError, Target, WriteOutcome, write_all_or_none};
 
 /// Display order of the tier rows. Presentation only: rows map to entries by tier name.
 const DISPLAY_ORDER: [&str; 7] = ["S", "A", "B", "C", "D", "E", "F"];
@@ -357,9 +360,229 @@ impl ConfigState {
         self.resync_buffers();
     }
 
-    #[allow(dead_code)]
-    fn paths(&self) -> InputPaths {
-        InputPaths::relative_to(&self.root)
+    // -- apply / outside edits ------------------------------------------------------------------
+
+    /// Cheap check for tab activation: compare current mtimes to the remembered ones.
+    pub fn outside_by_mtime(&self) -> OutsideEdit {
+        let paths = InputPaths::relative_to(&self.root);
+        outside_from(
+            mtime_of(&paths.styles) != self.styles_mtime,
+            mtime_of(&paths.tiers) != self.tiers_mtime,
+        )
+    }
+
+    /// Authoritative check: current bytes against the loaded baselines (mtime can be coarse or
+    /// touched without a content change).
+    pub fn outside_by_bytes(&self) -> OutsideEdit {
+        let paths = InputPaths::relative_to(&self.root);
+        let differs = |p: &Path, base: &[u8]| fs::read(p).map(|b| b != base).unwrap_or(true);
+        outside_from(
+            differs(&paths.styles, &self.styles_bytes),
+            differs(&paths.tiers, &self.tiers_bytes),
+        )
+    }
+
+    /// Validate both files, then write `styles.json` and `tiers.json` all-or-none. A file whose
+    /// working value equals its applied snapshot keeps its loaded bytes (no reformatting).
+    pub fn apply(&mut self) -> Result<ConfigApplyReport, ConfigApplyError> {
+        self.apply_inner(false)
+    }
+
+    fn apply_inner(&mut self, force: bool) -> Result<ConfigApplyReport, ConfigApplyError> {
+        if !self.can_apply() {
+            let reason = self
+                .styles_error()
+                .or_else(|| self.tiers_error())
+                .unwrap_or_else(|| "Fix the tier errors first".to_string());
+            return Err(ConfigApplyError::Invalid(reason));
+        }
+        // Defensive re-check: never render something the loaders would reject.
+        self.styles
+            .validate()
+            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        ValidatedTiers::try_from(self.tiers.clone())
+            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+
+        let styles_new = if force || self.styles != self.styles_applied {
+            crate::loader::render_styles(&self.styles).into_bytes()
+        } else {
+            self.styles_bytes.clone()
+        };
+        let tiers_new = if force || !tiers_equal(&self.tiers, &self.tiers_applied) {
+            crate::loader::render_tiers(&self.tiers).into_bytes()
+        } else {
+            self.tiers_bytes.clone()
+        };
+
+        let paths = InputPaths::relative_to(&self.root);
+        let targets = [
+            Target {
+                path: &paths.styles,
+                loaded: Some(&self.styles_bytes),
+                new: &styles_new,
+            },
+            Target {
+                path: &paths.tiers,
+                loaded: Some(&self.tiers_bytes),
+                new: &tiers_new,
+            },
+        ];
+        let outcomes = match write_all_or_none(&targets) {
+            Ok(o) => o,
+            Err(e) => {
+                if e.changed_on_disk_path().is_some() {
+                    let which = self.outside_by_bytes();
+                    if which != OutsideEdit::None {
+                        return Err(ConfigApplyError::OutsideEdit(which));
+                    }
+                }
+                return Err(ConfigApplyError::Write(write_message(&e)));
+            }
+        };
+        let written = |i: usize| matches!(outcomes.get(i), Some(WriteOutcome::Written { .. }));
+        let (styles_written, tiers_written) = (written(0), written(1));
+
+        self.styles_applied = self.styles.clone();
+        self.tiers_applied = self.tiers.clone();
+        self.styles_bytes = styles_new;
+        self.tiers_bytes = tiers_new;
+        self.styles_mtime = mtime_of(&paths.styles);
+        self.tiers_mtime = mtime_of(&paths.tiers);
+        self.resync_buffers();
+        Ok(ConfigApplyReport {
+            styles: self.styles.len(),
+            tiers: self.tiers.len(),
+            styles_written,
+            tiers_written,
+        })
+    }
+
+    /// Discard edits and return to the on-disk content (including any outside change).
+    pub fn reload(&mut self) -> Result<(), String> {
+        *self = ConfigState::load(&self.root)?;
+        Ok(())
+    }
+
+    /// Apply the in-memory edits over an outside change. Only call after the user's explicit
+    /// Overwrite confirm; both files are rewritten from the in-memory state.
+    pub fn overwrite(&mut self) -> Result<ConfigApplyReport, ConfigApplyError> {
+        let paths = InputPaths::relative_to(&self.root);
+        let read = |p: &Path| {
+            fs::read(p).map_err(|e| {
+                ConfigApplyError::Write(not_applied_message(&format!("{}: {}", file_label(p), e)))
+            })
+        };
+        self.styles_bytes = read(&paths.styles)?;
+        self.tiers_bytes = read(&paths.tiers)?;
+        self.styles_mtime = mtime_of(&paths.styles);
+        self.tiers_mtime = mtime_of(&paths.tiers);
+        self.apply_inner(true)
+    }
+}
+
+fn outside_from(styles: bool, tiers: bool) -> OutsideEdit {
+    match (styles, tiers) {
+        (false, false) => OutsideEdit::None,
+        (true, false) => OutsideEdit::Styles,
+        (false, true) => OutsideEdit::Tiers,
+        (true, true) => OutsideEdit::Both,
+    }
+}
+
+/// The user-facing sentence for a failed write. A failed rollback must not claim that nothing
+/// changed, so it uses the error's own text.
+fn write_message(e: &AllOrNoneError) -> String {
+    match e {
+        AllOrNoneError::NothingWritten(w) => not_applied_message(&w.to_string()),
+        AllOrNoneError::RolledBack { failed } => not_applied_message(&failed.to_string()),
+        AllOrNoneError::RollbackFailed { .. } => e.to_string(),
+    }
+}
+
+/// Which config file(s) changed outside the overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutsideEdit {
+    None,
+    Styles,
+    Tiers,
+    Both,
+}
+
+/// Why a config Apply did not happen. `Write` carries the finished sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigApplyError {
+    Invalid(String),
+    OutsideEdit(OutsideEdit),
+    Write(String),
+}
+
+impl ConfigApplyError {
+    pub fn message(&self) -> String {
+        match self {
+            ConfigApplyError::Invalid(reason) => not_applied_message(reason),
+            ConfigApplyError::OutsideEdit(which) => outside_edit_message(*which).to_string(),
+            ConfigApplyError::Write(text) => text.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigApplyReport {
+    pub styles: usize,
+    pub tiers: usize,
+    pub styles_written: bool,
+    pub tiers_written: bool,
+}
+
+/// Styles used by enabled rules and the two `alwaysShow` entries.
+pub fn config_style_refs(config: &Config) -> BTreeSet<String> {
+    let mut refs: BTreeSet<String> = config
+        .rules
+        .iter()
+        .flatten()
+        .filter(|r| r.enabled != Some(false))
+        .map(|r| r.style.clone())
+        .collect();
+    refs.insert(config.always_show.currency.style.clone());
+    refs.insert(config.always_show.recycle.style.clone());
+    refs
+}
+
+/// Body of the delete confirm, prefixed with a rule count when rules use the style.
+pub fn delete_confirm_text(name: &str, users: usize) -> String {
+    let prefix = match users {
+        0 => String::new(),
+        1 => "1 rule uses this style. ".to_string(),
+        n => format!("{n} rules use this style. "),
+    };
+    format!(
+        "{prefix}Rules using \"{name}\" keep their current actions but lose their style link on the next Apply."
+    )
+}
+
+/// Extra warning when `config.json` itself references the style being deleted.
+pub fn config_warning(name: &str) -> String {
+    format!(
+        "config.json uses \"{name}\", so ferrisfilter generate will fail until you add the style back or change those rules."
+    )
+}
+
+pub fn applied_message(styles: usize) -> String {
+    format!("Applied config: {styles} styles, 7 tiers.")
+}
+
+pub fn not_applied_message(reason: &str) -> String {
+    format!(
+        "Config not applied: {}. Nothing was changed on disk.",
+        reason.trim_end_matches('.')
+    )
+}
+
+pub fn outside_edit_message(which: OutsideEdit) -> &'static str {
+    match which {
+        OutsideEdit::Styles => "styles.json changed outside the overlay.",
+        OutsideEdit::Tiers => "tiers.json changed outside the overlay.",
+        OutsideEdit::Both | OutsideEdit::None => "Both config files changed outside the overlay.",
     }
 }
 
@@ -544,5 +767,219 @@ mod tests {
         assert_eq!(dirty_status(0), "Config: no unapplied changes");
         assert_eq!(dirty_status(1), "Config: 1 unapplied change");
         assert_eq!(dirty_status(3), "Config: 3 unapplied changes");
+    }
+
+    const EXTRA: [&str; 3] = ["config.json", "prices-fallback.json", "tiers-fallback.json"];
+
+    fn full_root() -> tempfile::TempDir {
+        let dir = temp_root();
+        for f in EXTRA {
+            fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(f),
+                dir.path().join(f),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    fn listing(dir: &Path) -> Vec<String> {
+        let mut v: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn apply_writes_only_the_two_files() {
+        let dir = full_root();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        let styles_before = fs::read(dir.path().join("styles.json")).unwrap();
+        let others: Vec<_> = EXTRA
+            .iter()
+            .map(|f| (f, fs::read(dir.path().join(f)).unwrap()))
+            .collect();
+        let names_before = listing(dir.path());
+
+        s.set_tier_text("S", "35");
+        let report = s.apply().unwrap();
+        assert_eq!(report.styles, 12);
+        assert_eq!(report.tiers, 7);
+        assert!(report.tiers_written);
+        assert!(!report.styles_written);
+        assert_eq!(s.dirty_count(), 0);
+
+        let tiers: Vec<TierEntry> =
+            serde_json::from_slice(&fs::read(dir.path().join("tiers.json")).unwrap()).unwrap();
+        assert_eq!(tiers.iter().find(|e| e.tier == "S").unwrap().min, 35.0);
+        assert_eq!(
+            fs::read(dir.path().join("styles.json")).unwrap(),
+            styles_before
+        );
+        for (f, bytes) in others {
+            assert_eq!(fs::read(dir.path().join(f)).unwrap(), bytes, "{f}");
+        }
+        assert_eq!(listing(dir.path()), names_before);
+
+        let again = ConfigState::load(dir.path()).unwrap();
+        let s_row = &again.tier_rows()[0];
+        assert_eq!(s_row.buffer, "35");
+    }
+
+    #[test]
+    fn apply_new_style_writes_it_last() {
+        let (dir, mut s) = loaded();
+        s.add_style("Gold").unwrap();
+        let report = s.apply().unwrap();
+        assert!(report.styles_written);
+        assert_eq!(report.styles, 13);
+        let text = fs::read_to_string(dir.path().join("styles.json")).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert!(lines[lines.len() - 2].trim_start().starts_with("\"Gold\""));
+        assert_eq!(
+            ConfigState::load(dir.path()).unwrap().style_names().len(),
+            13
+        );
+    }
+
+    #[test]
+    fn apply_refuses_when_not_applicable() {
+        let (dir, mut s) = loaded();
+        let before = fs::read(dir.path().join("tiers.json")).unwrap();
+        assert!(matches!(s.apply(), Err(ConfigApplyError::Invalid(_))));
+        s.set_tier_text("S", "5");
+        let e = s.apply().unwrap_err();
+        assert!(matches!(e, ConfigApplyError::Invalid(_)));
+        assert!(e.message().starts_with("Config not applied: "));
+        assert_eq!(fs::read(dir.path().join("tiers.json")).unwrap(), before);
+    }
+
+    #[test]
+    fn outside_edit_refuses() {
+        let (dir, mut s) = loaded();
+        s.set_tier_text("S", "35");
+        let tiers_path = dir.path().join("tiers.json");
+        let mut text = fs::read_to_string(&tiers_path).unwrap();
+        text.push('\n');
+        fs::write(&tiers_path, &text).unwrap();
+        assert_eq!(s.outside_by_bytes(), OutsideEdit::Tiers);
+        let e = s.apply().unwrap_err();
+        assert_eq!(e, ConfigApplyError::OutsideEdit(OutsideEdit::Tiers));
+        assert_eq!(fs::read_to_string(&tiers_path).unwrap(), text);
+        assert_eq!(s.dirty_count(), 1);
+    }
+
+    #[test]
+    fn overwrite_applies_edits_over_an_outside_change() {
+        let (dir, mut s) = loaded();
+        s.set_tier_text("S", "35");
+        let tiers_path = dir.path().join("tiers.json");
+        let mut text = fs::read_to_string(&tiers_path).unwrap();
+        text.push('\n');
+        fs::write(&tiers_path, text).unwrap();
+        assert!(s.apply().is_err());
+        let report = s.overwrite().unwrap();
+        assert!(report.tiers_written);
+        let tiers: Vec<TierEntry> =
+            serde_json::from_slice(&fs::read(&tiers_path).unwrap()).unwrap();
+        assert_eq!(tiers.iter().find(|e| e.tier == "S").unwrap().min, 35.0);
+        assert_eq!(s.outside_by_bytes(), OutsideEdit::None);
+    }
+
+    #[test]
+    fn reload_discards_edits_and_takes_outside_change() {
+        let (dir, mut s) = loaded();
+        s.set_tier_text("S", "35");
+        s.add_style("Gold").unwrap();
+        let tiers_path = dir.path().join("tiers.json");
+        let text = fs::read_to_string(&tiers_path)
+            .unwrap()
+            .replace("30.0", "31.0");
+        fs::write(&tiers_path, text).unwrap();
+        s.reload().unwrap();
+        assert_eq!(s.dirty_count(), 0);
+        assert_eq!(s.tier_rows()[0].buffer, "31");
+        assert_eq!(s.style_names().len(), 12);
+    }
+
+    #[test]
+    fn revert_after_apply_returns_to_applied_values() {
+        let (_d, mut s) = loaded();
+        s.set_tier_text("S", "35");
+        s.apply().unwrap();
+        s.set_tier_text("S", "40");
+        assert_eq!(s.dirty_count(), 1);
+        s.revert();
+        assert_eq!(s.tier_rows()[0].buffer, "35");
+        assert_eq!(s.dirty_count(), 0);
+    }
+
+    #[test]
+    fn mtime_guard_detects_outside_write_and_clears_after_own_apply() {
+        let (dir, mut s) = loaded();
+        assert_eq!(s.outside_by_mtime(), OutsideEdit::None);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let styles_path = dir.path().join("styles.json");
+        let bytes = fs::read(&styles_path).unwrap();
+        fs::write(&styles_path, bytes).unwrap();
+        assert_eq!(s.outside_by_mtime(), OutsideEdit::Styles);
+        let tiers_path = dir.path().join("tiers.json");
+        let bytes = fs::read(&tiers_path).unwrap();
+        fs::write(&tiers_path, bytes).unwrap();
+        assert_eq!(s.outside_by_mtime(), OutsideEdit::Both);
+        s.reload().unwrap();
+        s.set_tier_text("S", "35");
+        s.apply().unwrap();
+        assert_eq!(s.outside_by_mtime(), OutsideEdit::None);
+    }
+
+    #[test]
+    fn config_style_refs_covers_rules_and_always_show() {
+        let text =
+            fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("config.json")).unwrap();
+        let mut config: Config = serde_json::from_str(&text).unwrap();
+        let refs = config_style_refs(&config);
+        for n in ["exceptional", "kite", "Recycle"] {
+            assert!(refs.contains(n), "{n}");
+        }
+        assert!(refs.contains(&config.always_show.currency.style));
+        let rules = config.rules.as_mut().unwrap();
+        for r in rules.iter_mut().filter(|r| r.style == "kite") {
+            r.enabled = Some(false);
+        }
+        assert!(!config_style_refs(&config).contains("kite"));
+    }
+
+    #[test]
+    fn message_copy() {
+        assert_eq!(
+            delete_confirm_text("kite", 0),
+            "Rules using \"kite\" keep their current actions but lose their style link on the next Apply."
+        );
+        assert!(delete_confirm_text("kite", 3).starts_with("3 rules use this style. Rules using"));
+        assert!(delete_confirm_text("kite", 1).starts_with("1 rule uses this style. Rules using"));
+        assert_eq!(
+            config_warning("kite"),
+            "config.json uses \"kite\", so ferrisfilter generate will fail until you add the style back or change those rules."
+        );
+        assert_eq!(applied_message(12), "Applied config: 12 styles, 7 tiers.");
+        assert_eq!(
+            not_applied_message("x"),
+            "Config not applied: x. Nothing was changed on disk."
+        );
+        assert_eq!(
+            outside_edit_message(OutsideEdit::Styles),
+            "styles.json changed outside the overlay."
+        );
+        assert_eq!(
+            outside_edit_message(OutsideEdit::Tiers),
+            "tiers.json changed outside the overlay."
+        );
+        assert_eq!(
+            outside_edit_message(OutsideEdit::Both),
+            "Both config files changed outside the overlay."
+        );
     }
 }

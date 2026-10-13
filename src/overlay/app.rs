@@ -303,9 +303,9 @@ impl eframe::App for OverlayApp {
             ui.ctx().request_repaint();
         }
 
+        // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here; the
         // actual close-the-viewport send is deferred to after the body renders. Quit is still the
         // only path that ends the process.
-        // lost — see the comment at the deferred send site near the end of this function.
         let mut quit_requested = false;
         if let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
             match tray::command_for_menu(&event.id, &self.tray) {

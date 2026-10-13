@@ -318,6 +318,141 @@ pub fn badge(ui: &mut egui::Ui, text: &str, tip: &str) -> egui::Response {
     inner.response.on_hover_text(tip)
 }
 
+/// The v0.4 slider look: a visible warm rail, circle handle, `CONTROL_GLYPH` trailing fill. The
+/// value is never clamped to `min..=max` (a hand-written out-of-range value must survive), and the
+/// numeric readout is left to [`number_field`]. Callers write only when `.changed()`.
+pub fn themed_slider(
+    ui: &mut egui::Ui,
+    value: &mut i64,
+    min: i64,
+    max: i64,
+    log: bool,
+) -> egui::Response {
+    ui.scope(|ui| {
+        let width = (ui.available_width() - 96.0).clamp(120.0, 200.0);
+        let spacing = ui.spacing_mut();
+        spacing.slider_width = width;
+        spacing.slider_rail_height = 16.0;
+
+        let visuals = ui.visuals_mut();
+        visuals.handle_shape = egui::style::HandleShape::Circle;
+        visuals.widgets.inactive.bg_fill = theme::HEADER_PLATE;
+        visuals.widgets.hovered.bg_fill = theme::HEADER_PLATE;
+        visuals.widgets.active.bg_fill = theme::HEADER_PLATE;
+        visuals.selection.bg_fill = theme::CONTROL_GLYPH;
+        for state in [
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            state.fg_stroke = egui::Stroke::new(1.0, theme::SECTION_CREAM);
+        }
+
+        ui.add(
+            egui::Slider::new(value, min..=max)
+                .integer()
+                .show_value(false)
+                .clamping(egui::SliderClamping::Never)
+                .logarithmic(log)
+                .trailing_fill(true),
+        )
+    })
+    .inner
+}
+
+/// A persistent widget id from any `Hash` salt (egui's own salt bound also demands `Debug`).
+fn salted_id(ui: &egui::Ui, salt: impl std::hash::Hash) -> egui::Id {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    salt.hash(&mut hasher);
+    ui.make_persistent_id(hasher.finish())
+}
+
+/// What [`number_field`] reports: the TextEdit response (its `changed()` is set only when a new
+/// value was committed) and whether the current draft fails to parse.
+pub struct NumberField {
+    pub response: egui::Response,
+    pub invalid: bool,
+}
+
+/// An exact whole-number entry. The text lives in a draft kept in egui temp memory; it commits to
+/// `*value` only when it parses as `i64` and differs, and resyncs from `*value` whenever the field
+/// is not focused. The caller shows the `Enter a whole number` hint when `invalid`.
+pub fn number_field(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    value: &mut i64,
+    width: f32,
+) -> NumberField {
+    let id = salted_id(ui, id_salt);
+    let focused = ui.memory(|m| m.has_focus(id));
+    let mut draft: String = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_default();
+    if !focused || ui.data(|d| d.get_temp::<String>(id)).is_none() {
+        draft = value.to_string();
+    }
+
+    let mut response = ui.add(
+        egui::TextEdit::singleline(&mut draft)
+            .id(id)
+            .desired_width(width),
+    );
+    let mut invalid = false;
+    if response.changed() {
+        match draft.trim().parse::<i64>() {
+            Ok(n) if n != *value => {
+                *value = n;
+            }
+            Ok(_) => {
+                response.flags.remove(egui::response::Flags::CHANGED);
+            }
+            Err(_) => {
+                invalid = true;
+                response.flags.remove(egui::response::Flags::CHANGED);
+            }
+        }
+    } else if focused && draft.trim().parse::<i64>().is_err() {
+        invalid = true;
+    }
+    ui.data_mut(|d| d.insert_temp(id, draft));
+    NumberField { response, invalid }
+}
+
+/// `R {r} G {g} B {b} A {a}` — the swatch caption and tooltip.
+pub fn rgba_caption(rgba: [u8; 4]) -> String {
+    format!("R {} G {} B {} A {}", rgba[0], rgba[1], rgba[2], rgba[3])
+}
+
+/// An RGBA colour swatch that opens egui's picker (blend alpha only). Returns `Some(new)` only when
+/// the user changed it and the unmultiplied result differs from `rgba`, so merely showing a
+/// translucent colour never rewrites its line (premultiplied-alpha drift guard).
+pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4]) -> Option<[u8; 4]> {
+    let mut colour = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+    let caption = rgba_caption(rgba);
+    let mut result = None;
+    ui.horizontal(|ui| {
+        let response = egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut colour,
+            egui::color_picker::Alpha::OnlyBlend,
+        );
+        if response.changed() {
+            let now = colour.to_srgba_unmultiplied();
+            if now != rgba {
+                result = Some(now);
+            }
+        }
+        response.on_hover_text(&caption);
+        ui.label(
+            egui::RichText::new(&caption)
+                .size(theme::ROW_SUMMARY_SIZE)
+                .color(theme::LABEL_TAN),
+        );
+    });
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +653,121 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!(!clicked);
+    }
+
+    /// Frame input carrying typed text (and nothing else).
+    fn text_input(text: &str) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
+            events: vec![Event::Text(text.to_owned())],
+            ..Default::default()
+        }
+    }
+
+    #[allow(dead_code)]
+    fn key_input(key: egui::Key) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
+            events: vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::default(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn themed_slider_idle_frame_changes_nothing_and_never_clamps() {
+        let ctx = headless_ctx();
+        let mut a = 70_i64;
+        let mut b = 400_i64;
+        for _ in 0..2 {
+            ctx.run_ui(RawInput::default(), |ui| {
+                assert!(!themed_slider(ui, &mut a, 1, 100, false).changed());
+                assert!(!themed_slider(ui, &mut b, 0, 30, false).changed());
+            })
+            .drop_without_applying_deltas();
+        }
+        assert_eq!((a, b), (70, 400));
+    }
+
+    /// Focus the number field (click), then type `text`; returns (value, invalid, changed-on-type).
+    fn type_into_number_field(start: i64, text: &str) -> (i64, bool, bool) {
+        let ctx = headless_ctx();
+        let mut value = start;
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let f = number_field(ui, "n", &mut value, 80.0);
+            assert!(!f.response.changed() && !f.invalid, "idle frame is quiet");
+            rect = f.response.rect;
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            number_field(ui, "n", &mut value, 80.0);
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(RawInput::default(), |ui| {
+            number_field(ui, "n", &mut value, 80.0);
+        })
+        .drop_without_applying_deltas();
+        let (mut invalid, mut changed) = (false, false);
+        ctx.run_ui(text_input(text), |ui| {
+            let f = number_field(ui, "n", &mut value, 80.0);
+            invalid = f.invalid;
+            changed = f.response.changed();
+        })
+        .drop_without_applying_deltas();
+        (value, invalid, changed)
+    }
+
+    #[test]
+    fn number_field_rejects_garbage_without_writing() {
+        let (value, invalid, changed) = type_into_number_field(5, "abc");
+        assert_eq!(value, 5);
+        assert!(invalid);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn number_field_commits_a_new_number() {
+        let (value, invalid, changed) = type_into_number_field(5, "7");
+        assert!(
+            value == 57 || value == 75,
+            "typed digit joins the draft, got {value}"
+        );
+        assert!(!invalid);
+        assert!(changed);
+    }
+
+    #[test]
+    fn number_field_same_number_is_not_a_change() {
+        let (value, invalid, changed) = type_into_number_field(0, "0");
+        assert_eq!(value, 0);
+        assert!(!invalid);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn colour_swatch_idle_frames_return_none_even_when_translucent() {
+        let ctx = headless_ctx();
+        for rgba in [[40, 42, 54, 255], [255, 121, 198, 128]] {
+            for _ in 0..2 {
+                ctx.run_ui(RawInput::default(), |ui| {
+                    assert_eq!(colour_swatch(ui, rgba), None);
+                })
+                .drop_without_applying_deltas();
+            }
+        }
+    }
+
+    #[test]
+    fn rgba_caption_formats_all_four_channels() {
+        assert_eq!(
+            rgba_caption([255, 121, 198, 128]),
+            "R 255 G 121 B 198 A 128"
+        );
     }
 }

@@ -10,6 +10,7 @@ pub mod app;
 pub mod apply;
 pub mod body;
 pub mod classes;
+pub mod config_state;
 pub mod economy;
 pub mod grammar;
 pub mod hotkey;

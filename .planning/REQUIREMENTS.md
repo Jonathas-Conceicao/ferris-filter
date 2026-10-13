@@ -54,7 +54,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **EDIT-04**: Disabling a rule comments its block out. Commented-out blocks in a loaded filter,
   such as NeverSink's, appear as disabled rules and can be enabled.
 
-- [ ] **EDIT-05**: User can add, delete, duplicate and reorder rules.
+- [x] **EDIT-05**: User can add, delete, duplicate and reorder rules.
 - [ ] **EDIT-06**: User can apply a named style to a rule, which sets the rule's style actions.
 - [ ] **EDIT-07**: User can search the rule list, and the editor stays responsive on a filter of
   about 460 blocks (the NeverSink sample).
@@ -183,7 +183,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-02 | Phase 20 | Pending |
 | EDIT-03 | Phase 19 | Pending |
 | EDIT-04 | Phase 19 | Pending |
-| EDIT-05 | Phase 19 | Pending |
+| EDIT-05 | Phase 19 | Complete |
 | EDIT-06 | Phase 20 | Pending |
 | EDIT-07 | Phase 19 | Pending |
 | EDIT-08 | Phase 19 | Pending |

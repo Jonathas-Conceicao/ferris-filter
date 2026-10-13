@@ -183,7 +183,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 19-01-PLAN.md — Standalone cargo fmt commit; delete the v0.4 JSON-rule overlay modules (keep parse_base_type_entry)
+- [x] 19-01-PLAN.md — Standalone cargo fmt commit; delete the v0.4 JSON-rule overlay modules (keep parse_base_type_entry)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -260,7 +260,7 @@ Plans:
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
-| 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
+| 19. Overlay Rule List Over Parsed Blocks | 1/7 | In Progress|  |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
@@ -347,7 +347,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 7/7 plans complete
+**Plans:** 1/7 plans executed
 
 Plans:
 

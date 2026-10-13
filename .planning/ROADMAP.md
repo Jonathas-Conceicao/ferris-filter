@@ -520,3 +520,19 @@ odd cases.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.11: Full overlay UI review — less "texty" (BACKLOG)
+
+**Goal:** A full visual and UX review of the overlay (RULES and CONFIG tabs, row headers, flags,
+status/outcome area, captions, confirmations). The author's main complaint after using v0.5
+(2026-10-13): parts of the UI read as a wall of text. Replace prose with visual affordances where
+possible: icons/chips instead of sentences, tooltips or on-demand help instead of standing captions,
+terser status lines, clearer visual hierarchy. Starting points: the per-phase UI reviews
+(19/20/21-UI-REVIEW.md, each 18/24, with Typography and Spacing the weakest pillars). Deferred by the
+author: v0.5 focuses on usability and minor fixes, not a visual redesign.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

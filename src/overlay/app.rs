@@ -583,6 +583,28 @@ fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     }
 }
 
+/// The settings RELOAD keeps after re-reading `ff-settings.json`.
+///
+/// A clean load, or a load from a different root, replaces the session's settings. A load that
+/// warned keeps the in-memory filter and unknown keys (a momentarily unreadable file must not
+/// reset them), but an "off" from the file is still honoured: `settings::load` reports a broken
+/// or wrongly typed file as reload-off, and the warning says so, so keeping the old "on" would
+/// send keystrokes the stripe has just said it won't send.
+fn settings_after_reload(
+    current: &Settings,
+    loaded: Settings,
+    warned: bool,
+    same_root: bool,
+) -> Settings {
+    if !warned || !same_root {
+        return loaded;
+    }
+    if loaded.reload_after_apply == Some(false) {
+        return settings_with_reload(current, false);
+    }
+    current.clone()
+}
+
 /// `current` with the reload-after-Apply preference replaced; the filter and unknown keys stay.
 fn settings_with_reload(current: &Settings, on: bool) -> Settings {
     Settings {
@@ -997,10 +1019,13 @@ impl OverlayApp {
             Ok(root) => {
                 let (settings, warning) = settings::load(root);
                 // A momentarily unreadable file must not reset the session's chosen filter (nor
-                // drop unknown keys held in memory): keep what we have and only warn.
-                if warning.is_none() || old_root.as_ref() != Ok(root) {
-                    self.settings = settings;
-                }
+                // drop unknown keys held in memory), but a reload-off from the file always wins.
+                self.settings = settings_after_reload(
+                    &self.settings,
+                    settings,
+                    warning.is_some(),
+                    old_root.as_ref() == Ok(root),
+                );
                 warning
             }
             Err(_) => {
@@ -2267,6 +2292,38 @@ mod tests {
         let next = settings_with_filter(&current, "ssf.filter");
         assert_eq!(next.reload_after_apply, Some(false));
         assert_eq!(next.extra.get("future"), current.extra.get("future"));
+    }
+
+    #[test]
+    fn reload_after_a_warned_load_honours_reload_off_but_keeps_the_filter() {
+        use super::settings_after_reload;
+        let mut current = crate::settings::Settings {
+            filter: Some("a.filter".into()),
+            reload_after_apply: Some(true),
+            ..Default::default()
+        };
+        current.extra.insert("future".into(), serde_json::json!(1));
+        let off = crate::settings::Settings {
+            reload_after_apply: Some(false),
+            ..Default::default()
+        };
+        // Warned, same root: filter and unknown keys kept, the file's "off" honoured.
+        let next = settings_after_reload(&current, off.clone(), true, true);
+        assert_eq!(next.filter.as_deref(), Some("a.filter"));
+        assert_eq!(next.extra.get("future"), current.extra.get("future"));
+        assert!(!next.reload_after_apply());
+        // Warned, same root, no "off" in the load: the session's settings stay as they were.
+        let next = settings_after_reload(&current, Default::default(), true, true);
+        assert_eq!(next, current);
+        // A clean load, or a different root, replaces everything.
+        assert_eq!(
+            settings_after_reload(&current, off.clone(), false, true),
+            off
+        );
+        assert_eq!(
+            settings_after_reload(&current, off.clone(), true, false),
+            off
+        );
     }
 
     #[test]

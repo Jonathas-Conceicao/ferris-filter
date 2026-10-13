@@ -1308,6 +1308,12 @@ impl eframe::App for OverlayApp {
         // through `visibility::advance` and `win::reveal` (`SW_SHOWNOACTIVATE`, no focus steal).
         // The existing `request_repaint_after(50ms)` plus eframe's hidden-window heartbeat is
         // what wakes a stripe hidden to the tray, so no extra waker thread is needed.
+        //
+        // The first frame is where polling starts, so it is also where the instance tells a
+        // waiting launcher it is ready (WR-02). Until then a launch during startup waits up to
+        // `instance::STARTUP_TIMEOUT_MS` instead of reporting "not responding". Later calls
+        // are no-ops.
+        self.instance.mark_ready();
         if self.instance.take_show_request() {
             if self.visibility == Visibility::Hidden {
                 self.toggle_requested = true;

@@ -47,9 +47,19 @@ Record Result as PASS / FAIL with a note for every step.
    **Expected:** a second, debug stripe opens (separate name, by design) and its tray tooltip
    reports Ctrl+Shift+Z unavailable; quit it from its tray. **Result:**
 
-8. **Not responding (optional, hard to provoke).** If a launch ever shows "FerrisFilter is already
-   running but not responding", note what the first instance was doing (for example still starting
-   up, RESEARCH Pitfall 3).
-   **Expected:** message box, OK closes it, no second stripe. **Result:**
+8. **Launch during startup.** With no `ff` running, launch it and immediately launch it again
+   (before the first stripe appears).
+   **Expected:** no "not responding" box; the second process waits (up to 10 s) for the first to
+   finish starting, the stripe appears, and the second exits. One stripe, one tray icon. **Result:**
+
+9. **Several launches at once.** While `ff` is running, select the exe shortcut twice and press
+   Enter, or double-click it twice quickly.
+   **Expected:** no "not responding" box from any of them; all extra processes exit within about
+   2 s; one stripe. **Result:**
+
+10. **Not responding (optional, hard to provoke).** If a launch ever shows "FerrisFilter is already
+    running but not responding", note what the first instance was doing.
+    **Expected:** message box, OK closes it, no second stripe, and the stripe does not appear
+    afterwards on its own (the request is withdrawn). **Result:**
 
 Tray **Quit** remains the only way to exit the process.

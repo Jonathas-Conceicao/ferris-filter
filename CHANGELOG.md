@@ -16,8 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Single-instance overlay** (Phase 22, INST-01). Launching `ff` while it is running reveals the
   existing stripe (also when hidden to the tray, without stealing focus) and exits instead of opening
   a second one; a not-responding instance produces a "FerrisFilter is already running but not
-  responding" message box after about 2 seconds. Debug and release builds use separate instance
-  names. Mechanism: a `Local` named mutex plus show/ack events, no new dependency.
+  responding" message box after about 2 seconds. A launch made while the running instance is still
+  starting up waits up to 10 seconds for it to become ready before that window starts, and several
+  launches at once are each answered. Debug and release builds use separate instance names.
+  Mechanism: a `Local` named mutex plus show/ack/ready events, no new dependency.
 - Overlay **CONFIG tab** (Phase 21). The stripe now has RULES | CONFIG tabs; switching never applies
   or discards anything, and a tab shows ` *` when the other one holds unapplied edits.
   - **FILTER:** pick any `*.filter` in the game folder, or create a new empty one (it is written by

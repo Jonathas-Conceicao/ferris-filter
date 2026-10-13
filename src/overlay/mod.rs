@@ -32,7 +32,8 @@ use hotkey::HotkeyStatus;
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
     // INST-01 / Phase 22 -- a second `ff` signals the running one to show its stripe (or shows
-    // the not-responding message after `instance::ACK_TIMEOUT_MS`) and exits here, before it
+    // the not-responding message after `instance::STARTUP_TIMEOUT_MS` for a still-starting
+    // instance plus `instance::ACK_TIMEOUT_MS` for the answer) and exits here, before it
     // registers a hotkey or builds a tray icon, so repeated launches never leave a second
     // stripe, icon or hotkey registration. The guard lives in `OverlayApp` until exit.
     let Some(instance_guard) = instance::acquire() else {

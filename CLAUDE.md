@@ -50,7 +50,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > the process. Only one `ff` runs at a time (`src/overlay/instance.rs`): launching it again
 > (including by double-clicking the exe) brings up the running stripe, even when it is hidden to
 > the tray, and the new process exits; if the running one does not answer within about 2 seconds a
-> message box says "FerrisFilter is already running but not responding". Debug builds use a
+> message box says "FerrisFilter is already running but not responding". A launch made while the
+> running one is still starting up first waits up to 10 seconds for its first frame before that
+> 2-second window starts, and several launches at once are each answered. Debug builds use a
 > separate instance name (`-overlay-debug`), so a `cargo run` build can run beside a release `ff`
 > (their hotkeys then conflict, which the tray tooltip already reports).
 >

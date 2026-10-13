@@ -9,7 +9,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::models::config::{
-    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, StyleSet,
+    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, StyleError, StyleSet,
 };
 use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
@@ -29,6 +29,19 @@ pub enum GenerateError {
         /// The names defined in the loaded StyleSet, comma-separated, in file order.
         available: String,
     },
+
+    /// The config's `StyleSet` failed validation — typically an empty set because the
+    /// `Config` was deserialized directly and never had `styles.json` attached. Checked at the
+    /// top of [`generate_as`] so a library caller gets a typed error rather than a panic.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Styles(#[from] StyleError),
+
+    /// Priced data carried a tier letter the `StyleSet` does not define. Unreachable once the
+    /// set has passed validation (S..F are required), but typed rather than a panic.
+    #[error("priced data uses tier \"{tier}\", which the loaded styles do not define")]
+    #[diagnostic(code(ferrisfilter::generate::unknown_tier))]
+    UnknownTier { tier: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -74,16 +87,19 @@ pub fn generate(config: &Config, priced: &PricedData) -> Result<String, Generate
 /// Pure function — no I/O, no side effects.
 /// Returns `Err(GenerateError::UnknownStyle)` if any *enabled* rule references an unknown style
 /// name; disabled rules are skipped before their style is resolved.
+/// Returns `Err(GenerateError::Styles)` if `config.styles` fails [`StyleSet::validate`] — e.g.
+/// a `Config` deserialized directly whose styles were never loaded from `styles.json`.
 pub fn generate_as(
     config: &Config,
     priced: &PricedData,
     identity: &FilterIdentity,
 ) -> Result<String, GenerateError> {
+    config.styles.validate()?;
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
-    emit_currency_sections(&mut out, config, &priced.category_blocks);
-    emit_unique_sections(&mut out, config, &priced.unique_blocks);
+    emit_currency_sections(&mut out, config, &priced.category_blocks)?;
+    emit_unique_sections(&mut out, config, &priced.unique_blocks)?;
     debug_assert!(out.ends_with('\n'), "generate() output must end with exactly one newline");
     Ok(out)
 }
@@ -218,12 +234,13 @@ fn emit_style_actions(out: &mut String, style: &Style) {
 
 /// Resolve the `Style` for a tier letter from the config's `StyleSet`.
 ///
-/// Panics with a descriptive message on unknown tier letters (invariant: pricer only produces
-/// S/A/B/C/D/E/F, and `StyleSet::validate` guarantees those are defined).
-fn style_for_tier<'a>(styles: &'a StyleSet, tier: &str) -> &'a Style {
+/// Returns `Err(GenerateError::UnknownTier)` for a tier letter the set lacks. The pricer only
+/// produces S/A/B/C/D/E/F and `generate_as` validates the set (which requires those) first, so
+/// this is a defensive typed error rather than an expected path.
+fn style_for_tier<'a>(styles: &'a StyleSet, tier: &str) -> Result<&'a Style, GenerateError> {
     styles
         .get(tier)
-        .unwrap_or_else(|| panic!("Unknown tier '{}' in priced data", tier))
+        .ok_or_else(|| GenerateError::UnknownTier { tier: tier.to_string() })
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +426,11 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
 // Section 3: Currency / category tier blocks (from PricedData.category_blocks)
 // ---------------------------------------------------------------------------
 
-fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryBlock]) {
+fn emit_currency_sections(
+    out: &mut String,
+    config: &Config,
+    blocks: &[CategoryBlock],
+) -> Result<(), GenerateError> {
     writeln!(out, "#============================================================").unwrap();
     writeln!(out, "# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]").unwrap();
     writeln!(out, "# Each block's tier letter = the styles.<tier> applied. Base lists are").unwrap();
@@ -423,7 +444,7 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
 
         for tier_group in &category.tiers {
             let label = derive_block_label(&category.name, &tier_group.tier, &tier_group.class);
-            let style = style_for_tier(&config.styles, &tier_group.tier);
+            let style = style_for_tier(&config.styles, &tier_group.tier)?;
 
             // Build BaseType list: space-separated quoted base names
             let base_type_str = tier_group
@@ -467,6 +488,7 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
     if out.ends_with("\n\n") {
         out.pop();
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -476,10 +498,14 @@ fn emit_currency_sections(out: &mut String, config: &Config, blocks: &[CategoryB
 // With the committed seed (zero uniques), this function emits nothing.
 // ---------------------------------------------------------------------------
 
-fn emit_unique_sections(out: &mut String, config: &Config, blocks: &[UniqueBlock]) {
+fn emit_unique_sections(
+    out: &mut String,
+    config: &Config,
+    blocks: &[UniqueBlock],
+) -> Result<(), GenerateError> {
     // Per Open Questions resolution: omit the header entirely when unique_blocks is empty.
     if blocks.is_empty() {
-        return;
+        return Ok(());
     }
 
     // If currency sections already trimmed the trailing blank, we need a blank separator.
@@ -489,7 +515,7 @@ fn emit_unique_sections(out: &mut String, config: &Config, blocks: &[UniqueBlock
     writeln!(out, "# --- Uniques (price-tiered) ---").unwrap();
 
     for block in blocks {
-        let style = style_for_tier(&config.styles, &block.tier);
+        let style = style_for_tier(&config.styles, &block.tier)?;
 
         let base_type_str = block
             .base_types
@@ -515,6 +541,7 @@ fn emit_unique_sections(out: &mut String, config: &Config, blocks: &[UniqueBlock
     if out.ends_with("\n\n") {
         out.pop();
     }
+    Ok(())
 }
 
 /// Derive the block comment label from category, tier, and class.
@@ -750,13 +777,28 @@ mod tests {
             });
         match generate(&config, &priced) {
             Err(e @ GenerateError::UnknownStyle { .. }) => {
-                let GenerateError::UnknownStyle { style, .. } = &e;
+                let GenerateError::UnknownStyle { style, .. } = &e else { unreachable!() };
                 assert_eq!(style, "NotATier", "error must name the offending style");
                 let msg = e.to_string();
                 assert!(msg.contains("NotATier"), "{msg}");
                 assert!(msg.contains("exceptional"), "list comes from the set: {msg}");
             }
-            Ok(_) => panic!("expected generate to reject the unknown style 'NotATier'"),
+            other => panic!("expected generate to reject the unknown style 'NotATier', got {other:?}"),
+        }
+    }
+
+    /// WR-01: a `Config` deserialized straight from JSON has an empty `StyleSet`. `generate`
+    /// must return a typed error naming the missing styles instead of panicking in
+    /// `style_for_tier`.
+    #[test]
+    fn generate_with_unloaded_styles_is_a_typed_error_not_a_panic() {
+        let (mut config, priced) = load_inputs();
+        config.styles = StyleSet::default();
+        match generate(&config, &priced) {
+            Err(GenerateError::Styles(StyleError::MissingRequired(missing))) => {
+                assert!(missing.iter().any(|m| m == "S"), "{missing:?}");
+            }
+            other => panic!("expected a MissingRequired styles error, got {other:?}"),
         }
     }
 

@@ -128,8 +128,8 @@ pub fn load_config(path: &str) -> Result<Config, LoadError> {
 /// Load and validate `styles.json`.
 ///
 /// The file's top level is the name -> style map, so a parse error's dotted path starts at the
-/// style name (e.g. `S.font`). `validate()` always runs here because
-/// `emitter::style_for_tier` panics if S..F are absent.
+/// style name (e.g. `S.font`). `validate()` always runs here so a bad file is reported at load,
+/// naming the file; `emitter::generate_as` re-checks it as a backstop for library callers.
 ///
 /// # Errors
 ///

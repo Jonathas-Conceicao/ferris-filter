@@ -524,8 +524,10 @@ pub(crate) fn pick_condition(
 pub(crate) fn pending_first_entry(p: &PendingRow, items: &[String]) -> Option<RowAction> {
     let value = match p.keyword.value {
         ValueShape::QuotedList => Value::List(items.to_vec()),
+        // No count: the line reads "any of these". A bare `1` would be an equality test, so the
+        // line would stop matching an item carrying two of the listed mods (WR-05).
         ValueShape::CountThenNames => Value::CountNames {
-            count: Some(1),
+            count: None,
             names: items.to_vec(),
         },
         ValueShape::Rarity => Value::Rarity(
@@ -2649,6 +2651,23 @@ mod tests {
             )),
             Some("Rarity Magic Rare".to_string())
         );
+        assert_eq!(
+            text_of(pending_first_entry(
+                &pend("HasExplicitMod", None),
+                &["Tyrannical".to_string()]
+            )),
+            Some("HasExplicitMod \"Tyrannical\"".to_string())
+        );
+        let mut wf = WorkingFilter::from_text("Show\n");
+        let a = pending_first_entry(
+            &PendingRow {
+                block: wf.rows()[0].id,
+                ..pend("HasExplicitMod", None)
+            },
+            &["Tyrannical".to_string()],
+        )
+        .unwrap();
+        assert!(wf.apply_action(a).changed, "the count-less line is valid");
         assert_eq!(pending_first_entry(&pend("Class", None), &[]), None);
         assert_eq!(
             pending_first_entry(&pend("BaseType", None), &["a\"b".to_string()]),

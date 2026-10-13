@@ -514,10 +514,27 @@ pub(crate) fn pick_condition(
         op: (kw.name == "BaseType").then_some(Operator::EqEq),
         kind: LineKind::Condition,
     };
-    if !list.pending.contains(&p) {
+    // At most one pending row per (block, keyword), whatever its operator: a second one would
+    // share the card's egui id, so one chip click would write two lines (WR-01, iteration 3).
+    if !has_pending(list, id, kw) {
         list.pending.push(p);
     }
     None
+}
+
+/// Whether `block` already has a pending row for `kw`, regardless of the row's operator.
+fn has_pending(list: &ListUi, block: BlockId, kw: &'static Keyword) -> bool {
+    list.pending
+        .iter()
+        .any(|q| q.block == block && q.keyword.name == kw.name)
+}
+
+/// Queue the refill row from `rarity_refill`. Its operator takes over from any row already
+/// pending for the same keyword on the same block, so at most one exists (WR-01, iteration 3).
+pub(crate) fn queue_refill(list: &mut ListUi, p: PendingRow) {
+    list.pending
+        .retain(|q| !(q.block == p.block && q.keyword.name == p.keyword.name));
+    list.pending.push(p);
 }
 
 /// The pending row queued when the last rarity chip is unchecked. It carries the removed
@@ -939,10 +956,7 @@ fn rarity_control(
             RarityEdit::Edit(a) => actions.push(a),
             RarityEdit::Remove(a) => {
                 actions.push(a);
-                let p = rarity_refill(card.id, card.kw, card.entry);
-                if !list.pending.contains(&p) {
-                    list.pending.push(p);
-                }
+                queue_refill(list, rarity_refill(card.id, card.kw, card.entry));
             }
         }
     }
@@ -2699,6 +2713,48 @@ mod tests {
                 "{src}: the line is accepted"
             );
         }
+    }
+
+    /// WR-01 (iteration 3): a block never holds two pending rows for one keyword, so no two
+    /// pending cards share an egui id. A refill replaces any pending row; a pick keeps it.
+    #[test]
+    fn one_pending_row_per_keyword_and_block() {
+        let rarity = crate::filter::keywords::lookup("Rarity").unwrap();
+        let class = crate::filter::keywords::lookup("Class").unwrap();
+
+        // `Rarity != Normal`, uncheck Normal, then pick Rarity again from `+ condition`.
+        let (_, id, e) = entries_of("Show\n    Rarity != Normal\n");
+        let mut list = ListUi::default();
+        queue_refill(&mut list, rarity_refill(id, rarity, &e[0]));
+        assert_eq!(pick_condition(id, rarity, &mut list), None);
+        assert_eq!(list.pending.len(), 1, "{:?}", list.pending);
+        assert_eq!(
+            list.pending[0].op,
+            Some(Operator::Ne),
+            "the negation is kept"
+        );
+
+        // A range rule: unchecking the last chip on both lines leaves one row, the latest.
+        let (_, id, e) = entries_of("Show\n    Rarity >= Magic\n    Rarity <= Rare\n");
+        let mut list = ListUi::default();
+        assert_eq!(pick_condition(id, class, &mut list), None);
+        queue_refill(&mut list, rarity_refill(id, rarity, &e[0]));
+        queue_refill(&mut list, rarity_refill(id, rarity, &e[1]));
+        let rows: Vec<_> = list
+            .pending
+            .iter()
+            .filter(|p| p.keyword.name == "Rarity")
+            .collect();
+        assert_eq!(rows.len(), 1, "{:?}", list.pending);
+        assert_eq!(rows[0].op, Some(Operator::Le));
+        assert_eq!(list.pending.len(), 2, "the Class row is untouched");
+
+        // Picking Rarity first and then refilling leaves one row, with the refill's operator.
+        let mut list = ListUi::default();
+        assert_eq!(pick_condition(id, rarity, &mut list), None);
+        queue_refill(&mut list, rarity_refill(id, rarity, &e[0]));
+        assert_eq!(list.pending.len(), 1);
+        assert_eq!(list.pending[0].op, Some(Operator::Ge));
     }
 
     #[test]

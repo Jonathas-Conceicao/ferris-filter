@@ -9,6 +9,7 @@
 pub mod app;
 pub mod apply;
 pub mod economy;
+pub mod grammar;
 pub mod hotkey;
 pub mod layout;
 pub mod rule_list;

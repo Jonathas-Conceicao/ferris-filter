@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text restored), status `Reloaded in game` (the keys were sent; ff cannot confirm the game ran the
   command, so Refresh by hand if the filter did not change). Nothing is sent on an unchanged, refused or CONFIG Apply,
   with the game closed, or with the new CONFIG setting **Reload filter in game after Apply** off
-  (default on, `reload_after_apply` in `ff-settings.json`); the Refresh reminder then names the
+  (default on, `reload_after_apply` in `ff-settings.json`; an unusable value or settings file
+  turns it off, with a warning); the Refresh reminder then names the
   reason. The game window is matched by title and `PathOfExile*` process name. Caveats: it reloads the
   filter selected in game; close chat first (if the chat box is already open with text, that text is
   sent as a message and the command is not, because nothing outside the game can see whether chat

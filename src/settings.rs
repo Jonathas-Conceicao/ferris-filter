@@ -48,18 +48,33 @@ pub fn path(root: &Path) -> PathBuf {
     root.join(SETTINGS_FILE)
 }
 
-/// Load the settings. A missing file is the default with no warning; an unusable file (unreadable,
-/// invalid JSON, or an invalid stored name) is the default plus a warning. Never writes.
+/// Load the settings. A missing file is the default (reload on) with no warning. A file that exists
+/// but cannot be used at all (unreadable, or not a JSON object) gives `dynamic.filter` with reload
+/// after Apply **off**, plus a warning that says both: the file may hold an opt-out of the
+/// synthetic keystrokes that can no longer be read, so it fails closed (review iteration 2, WR-02).
+/// A wrongly typed key or an invalid stored name falls back per key, with a warning. Never writes.
 pub fn load(root: &Path) -> (Settings, Option<String>) {
     let warn = |reason: String| {
         Some(format!(
             "{SETTINGS_FILE} could not be used ({reason}); using {DEFAULT_FILTER}."
         ))
     };
+    let unusable = |reason: String| {
+        (
+            Settings {
+                reload_after_apply: Some(false),
+                ..Settings::default()
+            },
+            Some(format!(
+                "{SETTINGS_FILE} could not be used ({reason}); using {DEFAULT_FILTER}, \
+                 and reload after Apply is off."
+            )),
+        )
+    };
     let text = match fs::read_to_string(path(root)) {
         Ok(t) => t,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
-        Err(e) => return (Settings::default(), warn(e.to_string())),
+        Err(e) => return unusable(e.to_string()),
     };
     let mut settings: Settings = match serde_json::from_str(&text) {
         Ok(s) => s,
@@ -107,7 +122,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                         )),
                     )
                 }
-                Err(_) => (Settings::default(), warn(e.to_string())),
+                Err(_) => unusable(e.to_string()),
             };
         }
     };
@@ -279,8 +294,60 @@ mod tests {
         fs::write(path(t.path()), "{not json").unwrap();
         let (s, w) = load(t.path());
         assert_eq!(s.filter_name(), "dynamic.filter");
-        assert!(w.unwrap().contains("ff-settings.json"));
+        let w = w.unwrap();
+        assert!(w.contains("ff-settings.json"));
+        // Review iteration 2, WR-02: an unusable file fails closed and says so.
+        assert!(!s.reload_after_apply());
+        assert!(w.contains("reload after Apply is off"), "{w}");
         assert_eq!(fs::read(path(t.path())).unwrap(), b"{not json");
+    }
+
+    #[test]
+    fn trailing_comma_opt_out_stays_off() {
+        // Review iteration 2, WR-02: the most common hand-edit mistake must not opt a user who
+        // turned the reload off back into synthetic keystrokes.
+        let t = tempfile::tempdir().unwrap();
+        let body = r#"{ "filter": "ssf.filter", "reload_after_apply": false, }"#;
+        fs::write(path(t.path()), body).unwrap();
+        let (s, w) = load(t.path());
+        let w = w.expect("an invalid file must warn");
+        assert!(!s.reload_after_apply());
+        assert_eq!(s.filter_name(), "dynamic.filter");
+        assert!(w.contains("using dynamic.filter"), "{w}");
+        assert!(w.contains("reload after Apply is off"), "{w}");
+        assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
+    }
+
+    #[test]
+    fn json_that_is_not_an_object_fails_closed() {
+        for body in ["[]", r#""x""#, "null", "5"] {
+            let t = tempfile::tempdir().unwrap();
+            fs::write(path(t.path()), body).unwrap();
+            let (s, w) = load(t.path());
+            assert!(!s.reload_after_apply(), "{body}");
+            assert!(w.unwrap().contains("reload after Apply is off"), "{body}");
+        }
+    }
+
+    #[test]
+    fn unreadable_settings_file_fails_closed() {
+        // A directory where the file should be: it exists, but reading it fails with an error
+        // other than NotFound (the same branch a sharing violation takes).
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(path(t.path())).unwrap();
+        let (s, w) = load(t.path());
+        let w = w.expect("an unreadable file must warn");
+        assert!(!s.reload_after_apply());
+        assert_eq!(s.filter_name(), "dynamic.filter");
+        assert!(w.contains("reload after Apply is off"), "{w}");
+    }
+
+    #[test]
+    fn missing_file_keeps_reload_on() {
+        let t = tempfile::tempdir().unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert!(s.reload_after_apply());
     }
 
     #[test]

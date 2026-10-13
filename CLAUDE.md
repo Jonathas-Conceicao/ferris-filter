@@ -153,6 +153,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > content (an image, copied files) is replaced. The setting is the `reload_after_apply` key in
 > `ff-settings.json`, saved as soon as it is toggled; absent means on, and a value that is not
 > `true`/`false` means **off** with a warning naming the key (an unreadable opt-out fails closed).
+> The same holds for the whole file: an `ff-settings.json` that exists but cannot be used (invalid
+> JSON such as a trailing comma, or unreadable) means `dynamic.filter` **and** reload off, with a
+> warning that says both; only a missing file means the default (on).
 > `ff-cli apply` does not send
 > the command.
 

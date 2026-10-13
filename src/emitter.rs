@@ -98,9 +98,24 @@ pub fn generate_as(
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
-    emit_currency_sections(&mut out, config, &priced.category_blocks)?;
-    emit_unique_sections(&mut out, config, &priced.unique_blocks)?;
+    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks)?;
+    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks)?;
     debug_assert!(out.ends_with('\n'), "generate() output must end with exactly one newline");
+    Ok(out)
+}
+
+/// Render only the economy body (currency/category sections, then price-tiered uniques) from a
+/// [`StyleSet`] and priced data - no `Config` needed.
+///
+/// This is the text Apply splices between the `#ff:economy-*` markers. It equals the tail of
+/// [`generate`] from the first `#====` banner line. With empty priced data it yields the banner
+/// block only; callers must refuse `PriceSource::Absent` before writing it.
+pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String, GenerateError> {
+    styles.validate()?;
+    let mut out = String::with_capacity(32_000);
+    emit_currency_sections(&mut out, styles, &priced.category_blocks)?;
+    emit_unique_sections(&mut out, styles, &priced.unique_blocks)?;
+    debug_assert!(out.ends_with('\n'), "generate_economy() output must end with a newline");
     Ok(out)
 }
 
@@ -428,7 +443,7 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
 
 fn emit_currency_sections(
     out: &mut String,
-    config: &Config,
+    styles: &StyleSet,
     blocks: &[CategoryBlock],
 ) -> Result<(), GenerateError> {
     writeln!(out, "#============================================================").unwrap();
@@ -444,7 +459,7 @@ fn emit_currency_sections(
 
         for tier_group in &category.tiers {
             let label = derive_block_label(&category.name, &tier_group.tier, &tier_group.class);
-            let style = style_for_tier(&config.styles, &tier_group.tier)?;
+            let style = style_for_tier(styles, &tier_group.tier)?;
 
             // Build BaseType list: space-separated quoted base names
             let base_type_str = tier_group
@@ -500,7 +515,7 @@ fn emit_currency_sections(
 
 fn emit_unique_sections(
     out: &mut String,
-    config: &Config,
+    styles: &StyleSet,
     blocks: &[UniqueBlock],
 ) -> Result<(), GenerateError> {
     // Per Open Questions resolution: omit the header entirely when unique_blocks is empty.
@@ -515,7 +530,7 @@ fn emit_unique_sections(
     writeln!(out, "# --- Uniques (price-tiered) ---").unwrap();
 
     for block in blocks {
-        let style = style_for_tier(&config.styles, &block.tier)?;
+        let style = style_for_tier(styles, &block.tier)?;
 
         let base_type_str = block
             .base_types
@@ -970,6 +985,54 @@ mod tests {
         let d = FilterIdentity::default();
         assert_eq!(d.output_name, "universal.filter");
         assert_eq!(d.source_name, "config.json");
+    }
+
+    const BANNER: &str = "#============================================================";
+
+    fn economy_tail(full: &str) -> String {
+        let idx = full.lines().position(|l| l == BANNER).expect("banner present");
+        let mut s = full.lines().skip(idx).collect::<Vec<_>>().join("\n");
+        s.push('\n');
+        s
+    }
+
+    #[test]
+    fn generate_economy_equals_generate_tail() {
+        let (config, priced) = load_inputs();
+        let full = generate(&config, &priced).expect("generate failed");
+        let econ = generate_economy(&config.styles, &priced).expect("generate_economy failed");
+        assert!(econ.starts_with(BANNER));
+        assert!(econ.ends_with('\n') && !econ.ends_with("\n\n"));
+        assert_eq!(econ, economy_tail(&full));
+    }
+
+    #[test]
+    fn generate_economy_parity_with_uniques_present() {
+        let (config, mut priced) = load_inputs();
+        priced.unique_blocks.push(crate::pricer::UniqueBlock {
+            tier: "A".to_string(),
+            base_types: vec!["Infernal Sword".to_string()],
+        });
+        let full = generate(&config, &priced).expect("generate failed");
+        let econ = generate_economy(&config.styles, &priced).expect("generate_economy failed");
+        assert!(econ.contains("Show # Unique A"));
+        assert_eq!(econ, economy_tail(&full));
+    }
+
+    #[test]
+    fn generate_economy_empty_priced_is_banner_block_only() {
+        let styles = StyleSet::committed_for_tests();
+        let econ = generate_economy(&styles, &PricedData::empty()).expect("ok");
+        assert!(econ.starts_with(BANNER));
+        assert!(!econ.contains("Show #"));
+        assert!(econ.ends_with('\n') && !econ.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn generate_economy_rejects_invalid_styles() {
+        let (_, priced) = load_inputs();
+        let err = generate_economy(&StyleSet::default(), &priced).unwrap_err();
+        assert!(matches!(err, GenerateError::Styles(_)), "got {err:?}");
     }
 
     #[test]

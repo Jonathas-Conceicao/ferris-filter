@@ -42,6 +42,11 @@ pub struct ListUi {
     pub last_expanded: Option<BlockId>,
     /// Refusal of a raw edit, shown under the line it targeted: (block, doc line, message).
     pub line_error: Option<(BlockId, usize, String)>,
+    /// Salt of every row's egui id scope. Card state that lives in egui temp memory (bad-text and
+    /// bad-int flags, the `Named` toggle, raw drafts) is keyed by `BlockId` and keyword ordinal,
+    /// both of which can be reused by a different line after a re-parse or a removal; bumping the
+    /// epoch orphans that state so it never shows up on another card (WR-07).
+    pub epoch: u64,
 }
 
 /// A condition picked from `+ condition` that waits for its first entry (list shapes, Rarity).
@@ -67,6 +72,7 @@ impl Default for ListUi {
             focus_line: None,
             last_expanded: None,
             line_error: None,
+            epoch: 0,
         }
     }
 }
@@ -84,6 +90,12 @@ impl ListUi {
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
+        self.forget_card_state();
+    }
+
+    /// Orphan every card's egui temp state (see [`ListUi::epoch`]).
+    pub fn forget_card_state(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
     }
 }
 
@@ -243,6 +255,7 @@ pub fn show_list(
         list.line_error = None;
         egui::Popup::close_all(ui.ctx());
         list.last_expanded = list.expanded;
+        list.forget_card_state();
     }
     let offsets = build_offsets(
         visible.len(),
@@ -280,7 +293,7 @@ pub fn show_list(
                 let Some(row) = visible.get(vi).and_then(|&i| rows.get(i)) else {
                     continue;
                 };
-                ui.push_id(("rule", row.id), |ui| {
+                ui.push_id(("rule", row.id, list.epoch), |ui| {
                     draw_row(
                         ui,
                         working,
@@ -863,6 +876,33 @@ Show
         );
     }
 
+    /// WR-07: collapsing or switching the expanded row orphans the old row's card state, so a
+    /// stale hint or `Named` mode does not come back when it is reopened.
+    #[test]
+    fn collapsing_a_row_orphans_card_state() {
+        let wf = filter_of(2);
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let mut frame = |list: &mut ListUi| {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                show_list(ui, &wf, &visible, list, true, None);
+            })
+            .drop_without_applying_deltas();
+        };
+        frame(&mut list);
+        let open = list.epoch;
+        frame(&mut list);
+        assert_eq!(list.epoch, open, "an idle frame keeps card state");
+        list.expanded = None;
+        frame(&mut list);
+        assert_ne!(list.epoch, open);
+    }
+
     #[test]
     fn clear_ids_resets_every_id_keyed_field() {
         let wf = filter_of(1);
@@ -885,7 +925,12 @@ Show
         list.line_error = Some((id, 1, "x".into()));
         list.name_open.insert(id);
         list.name_drafts.insert(id, "x".into());
+        let epoch = list.epoch;
         list.clear_ids();
+        assert_ne!(
+            list.epoch, epoch,
+            "card state keyed by reused ids is orphaned"
+        );
         assert!(list.expanded.is_none());
         assert!(list.confirm_delete.is_none());
         assert!(list.name_open.is_empty());

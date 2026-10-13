@@ -279,6 +279,7 @@ fn apply_row_actions(
             RowAction::AddLine { id, .. } => Some(*id),
             _ => None,
         };
+        let is_remove_line = matches!(action, RowAction::RemoveLine { .. });
         let refused_edit = match &action {
             RowAction::EditLine {
                 id, line, patch, ..
@@ -300,6 +301,11 @@ fn apply_row_actions(
             }
             if let (Some(b), Some(line)) = (added_in, outcome.line) {
                 list.focus_line = Some((b, line));
+            }
+            // Removing a line shifts the keyword ordinals of the cards after it, which would move
+            // their egui temp state onto their neighbours (WR-07).
+            if is_remove_line {
+                list.forget_card_state();
             }
             if let Some(id) = deleted {
                 if list.expanded == Some(id) {
@@ -1591,5 +1597,30 @@ mod tests {
         assert!(changed);
         assert_eq!(status, None, "the stale first edit must not run");
         assert_eq!(working.text(), "Show\n  ItemLevel >= 72\n");
+    }
+
+    /// WR-07: a removed line re-keys the cards after it, so their egui temp state is orphaned;
+    /// a value edit keeps it.
+    #[test]
+    fn remove_line_orphans_card_state() {
+        let mut working = WorkingFilter::from_text("Show\n  BaseType \"A\"\n  BaseType \"B\"\n");
+        let id = working.rows()[0].id;
+        let mut list = ListUi::default();
+        let epoch = list.epoch;
+        let ed = RowAction::EditLine {
+            id,
+            line: 2,
+            expect: "  BaseType \"B\"".into(),
+            patch: crate::filter::LinePatch::Values("\"C\"".into()),
+        };
+        assert!(apply_row_actions(&mut working, &mut list, "", vec![ed]).0);
+        assert_eq!(list.epoch, epoch);
+        let rm = RowAction::RemoveLine {
+            id,
+            line: 1,
+            expect: "  BaseType \"A\"".into(),
+        };
+        assert!(apply_row_actions(&mut working, &mut list, "", vec![rm]).0);
+        assert_ne!(list.epoch, epoch);
     }
 }

@@ -302,7 +302,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 22-01-PLAN.md — `src/overlay/instance.rs` single-instance gate (Local named mutex, show/ack events, MessageBox, debug/release names) + windows-sys features, with in-process tests
+- [x] 22-01-PLAN.md — `src/overlay/instance.rs` single-instance gate (Local named mutex, show/ack events, MessageBox, debug/release names) + windows-sys features, with in-process tests
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -318,7 +318,7 @@ Plans:
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
-| 22. Single-Instance Overlay | 0/? | Not started | - |
+| 22. Single-Instance Overlay | 1/2 | In Progress|  |
 
 ## Backlog
 

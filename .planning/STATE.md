@@ -4,8 +4,8 @@ milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
 stopped_at: Completed 21-06-PLAN.md
-last_updated: "2026-10-13T06:17:43.966Z"
-last_activity: 2026-10-13 -- Phase 22 planning complete
+last_updated: "2026-10-13T06:18:07.191Z"
+last_activity: 2026-10-13 -- Phase 22 execution started
 progress:
   total_phases: 17
   completed_phases: 6
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 21 -- Overlay Configuration Tab
+**Current focus:** Phase 22 — single-instance-overlay
 
 ## Current Position
 
-Phase: 21 (Overlay Configuration Tab) -- executing
-Plan: 6 of 6 complete (21-06 app wiring next)
-Status: Ready to execute
-Last activity: 2026-10-13 -- Phase 22 planning complete
+Phase: 22 (single-instance-overlay) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 22
+Last activity: 2026-10-13 -- Phase 22 execution started
 
 Progress: [█████████░] 93%
 

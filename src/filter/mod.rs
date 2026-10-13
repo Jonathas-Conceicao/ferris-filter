@@ -24,7 +24,7 @@ pub use lines::{Eol, Line};
 
 const BOM_BYTES: &[u8] = &[0xEF, 0xBB, 0xBF];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Document {
     bom: bool,
     lines: Vec<Line>,

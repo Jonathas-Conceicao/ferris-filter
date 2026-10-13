@@ -398,7 +398,8 @@ fn filter_draft_row(
         actions.push(ConfigAction::CreateFilter(settings::new_filter_name(
             &draft,
         )));
-        cfg.filter_draft = None;
+        // The draft stays until the handler accepts the name, so a rejected name is not lost.
+        cfg.filter_draft = Some(draft);
     } else if discard {
         cfg.filter_draft = None;
     } else {

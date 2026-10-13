@@ -64,26 +64,47 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
     let mut settings: Settings = match serde_json::from_str(&text) {
         Ok(s) => s,
         Err(e) => {
-            // A wrongly typed value must not discard the other keys: salvage each separately.
+            // A wrongly typed value must not discard the other keys: salvage each separately, and
+            // say which fallback each unusable key got.
             return match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
                 Ok(mut extra) => {
+                    let mut fallbacks = Vec::new();
                     let filter = match extra.remove("filter") {
                         Some(serde_json::Value::String(n)) if valid_filter_name(&n).is_ok() => {
                             Some(n)
                         }
-                        _ => None,
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(format!("using {DEFAULT_FILTER}"));
+                            None
+                        }
                     };
+                    // The reload sends synthetic keystrokes, so an opt-out that cannot be read
+                    // fails closed: off, not the default on (review WR-04).
                     let reload_after_apply = match extra.remove("reload_after_apply") {
                         Some(serde_json::Value::Bool(b)) => Some(b),
-                        _ => None,
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`reload_after_apply` is not true or false, so reload after Apply is off"
+                                    .to_string(),
+                            );
+                            Some(false)
+                        }
                     };
+                    if fallbacks.is_empty() {
+                        fallbacks.push("using the defaults".to_string());
+                    }
                     (
                         Settings {
                             filter,
                             reload_after_apply,
                             extra,
                         },
-                        warn(e.to_string()),
+                        Some(format!(
+                            "{SETTINGS_FILE} could not be fully used ({e}); {}.",
+                            fallbacks.join("; ")
+                        )),
                     )
                 }
                 Err(_) => (Settings::default(), warn(e.to_string())),
@@ -356,19 +377,37 @@ mod tests {
     }
 
     #[test]
-    fn wrongly_typed_reload_flag_keeps_the_filter_and_other_keys() {
+    fn wrongly_typed_reload_flag_keeps_the_filter_and_other_keys_and_fails_closed() {
+        for bad in [r#""yes""#, r#""false""#, "0", "1", "[]"] {
+            let t = tempfile::tempdir().unwrap();
+            let body =
+                format!(r#"{{"filter":"ssf.filter","reload_after_apply":{bad},"future":1}}"#);
+            fs::write(path(t.path()), &body).unwrap();
+            let (s, w) = load(t.path());
+            let w = w.unwrap_or_else(|| panic!("{bad}: no warning"));
+            // Review WR-04: an unreadable opt-out is off, and the warning names the key and
+            // does not claim the filter fell back.
+            assert!(!s.reload_after_apply(), "{bad}");
+            assert!(w.contains("reload_after_apply"), "{bad}: {w}");
+            assert!(w.contains("off"), "{bad}: {w}");
+            assert!(!w.contains("using dynamic.filter"), "{bad}: {w}");
+            assert_eq!(s.filter_name(), "ssf.filter", "{bad}");
+            assert!(s.extra.contains_key("future"));
+            assert!(!s.extra.contains_key("filter"));
+            assert!(!s.extra.contains_key("reload_after_apply"));
+            assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
+        }
+    }
+
+    #[test]
+    fn wrongly_typed_filter_warning_names_the_filter_fallback_only() {
         let t = tempfile::tempdir().unwrap();
-        fs::write(
-            path(t.path()),
-            r#"{"filter":"ssf.filter","reload_after_apply":"yes","future":1}"#,
-        )
-        .unwrap();
+        fs::write(path(t.path()), r#"{"filter":5,"reload_after_apply":false}"#).unwrap();
         let (s, w) = load(t.path());
-        assert!(w.is_some());
-        assert_eq!(s.filter_name(), "ssf.filter");
-        assert!(s.reload_after_apply());
-        assert!(s.extra.contains_key("future"));
-        assert!(!s.extra.contains_key("filter"));
-        assert!(!s.extra.contains_key("reload_after_apply"));
+        let w = w.unwrap();
+        assert_eq!(s.filter_name(), "dynamic.filter");
+        assert!(!s.reload_after_apply());
+        assert!(w.contains("using dynamic.filter"), "{w}");
+        assert!(!w.contains("reload_after_apply"), "{w}");
     }
 }

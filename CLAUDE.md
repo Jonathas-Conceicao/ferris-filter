@@ -151,7 +151,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > so the status still reads `Reloaded in game`). The clipboard's
 > text is restored about 120 ms later unless something else was copied meanwhile; non-text clipboard
 > content (an image, copied files) is replaced. The setting is the `reload_after_apply` key in
-> `ff-settings.json`, saved as soon as it is toggled; absent means on. `ff-cli apply` does not send
+> `ff-settings.json`, saved as soon as it is toggled; absent means on, and a value that is not
+> `true`/`false` means **off** with a warning naming the key (an unreadable opt-out fails closed).
+> `ff-cli apply` does not send
 > the command.
 
 > **Economy sync from the overlay (v0.4):** a **SYNC ECONOMY** button beside Apply refreshes

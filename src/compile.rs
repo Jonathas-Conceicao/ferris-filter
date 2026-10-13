@@ -27,7 +27,7 @@ use thiserror::Error;
 
 use crate::emitter::{self, FilterIdentity, GenerateError};
 use crate::loader::{self, LoadError};
-use crate::models::config::Config;
+use crate::models::config::{Config, StyleSet};
 use crate::pricer::{self, PriceRateError, PricedData};
 
 /// Conventional file name for the policy config.
@@ -205,6 +205,55 @@ pub fn load_inputs(
         .check_rules(config.rules.as_deref().unwrap_or(&[]), &path_str(&paths.styles))
         .map_err(LoadError::from)?;
 
+    let (priced, price_source) = load_priced(paths, policy)?;
+
+    Ok(CompileInputs {
+        config,
+        priced,
+        price_source,
+    })
+}
+
+/// Everything the economy section needs, and nothing it does not: no `Config`, no rules.
+///
+/// Stage one's counterpart for the filter-as-store Apply, which regenerates only the fenced
+/// economy section from `styles.json` plus priced data.
+#[derive(Debug)]
+pub struct EconomyInputs {
+    pub styles: StyleSet,
+    pub priced: PricedData,
+    pub price_source: PriceSource,
+}
+
+/// Load only what the economy section needs: `styles.json` and the price/tier pair.
+///
+/// Never reads `config.json`. Returns [`PriceSource::Absent`] as a value (with empty priced
+/// data); callers that would write a section must refuse it rather than replace real blocks
+/// with nothing (D-17).
+pub fn load_economy(
+    paths: &InputPaths,
+    policy: PriceSourcePolicy,
+) -> Result<EconomyInputs, CompileError> {
+    let styles = loader::load_styles(&path_str(&paths.styles))?;
+    let (priced, price_source) = load_priced(paths, policy)?;
+    Ok(EconomyInputs {
+        styles,
+        priced,
+        price_source,
+    })
+}
+
+/// Pure counterpart of [`load_economy`]: render the economy body text.
+pub fn compile_economy(inputs: &EconomyInputs) -> Result<String, CompileError> {
+    Ok(emitter::generate_economy(&inputs.styles, &inputs.priced)?)
+}
+
+/// Pick the (prices, tiers) source for `policy` and price the tiers. Shared by [`load_inputs`]
+/// and [`load_economy`] so the source-selection arms exist exactly once.
+fn load_priced(
+    paths: &InputPaths,
+    policy: PriceSourcePolicy,
+) -> Result<(PricedData, PriceSource), CompileError> {
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
     // prices-fallback.json with tiers-fallback.json — their values are calibrated to each other
     // (exalt-denominated cutoffs), so they must travel together.
@@ -253,11 +302,7 @@ pub fn load_inputs(
         }
     };
 
-    Ok(CompileInputs {
-        config,
-        priced,
-        price_source,
-    })
+    Ok((priced, price_source))
 }
 
 /// Stage two: turn loaded inputs into filter text. Pure — no I/O, no side effects.
@@ -392,6 +437,82 @@ mod tests {
         assert_eq!(overridden.tiers, base.tiers);
         assert_eq!(overridden.prices_fallback, base.prices_fallback);
         assert_eq!(overridden.tiers_fallback, base.tiers_fallback);
+    }
+
+    #[test]
+    fn load_economy_needs_no_config_json() {
+        let dir = temp_inputs(&[
+            ("styles.json", &repo_file("styles.json")),
+            ("tiers.json", &repo_file("tiers.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect("load_economy");
+        assert_eq!(inputs.price_source, PriceSource::Live);
+        assert!(!inputs.priced.category_blocks.is_empty());
+    }
+
+    #[test]
+    fn load_economy_falls_back_to_the_committed_pair() {
+        let dir = temp_inputs(&[
+            ("styles.json", &repo_file("styles.json")),
+            ("prices-fallback.json", &repo_file("prices-fallback.json")),
+            ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
+        ]);
+        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect("load_economy");
+        assert_eq!(
+            inputs.price_source,
+            PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty)
+        );
+    }
+
+    #[test]
+    fn load_economy_reports_absent_as_a_value() {
+        let dir = temp_inputs(&[
+            ("styles.json", &repo_file("styles.json")),
+            ("tiers.json", &repo_file("tiers.json")),
+        ]);
+        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect("load_economy");
+        assert_eq!(inputs.price_source, PriceSource::Absent);
+        assert!(inputs.priced.category_blocks.is_empty());
+        assert!(inputs.priced.unique_blocks.is_empty());
+    }
+
+    #[test]
+    fn load_economy_force_fallback_errors_when_fallback_missing() {
+        let dir = temp_inputs(&[("styles.json", &repo_file("styles.json"))]);
+        let err = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::ForceFallback,
+        )
+        .unwrap_err();
+        assert!(matches!(err, CompileError::ForcedFallbackMissing { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn load_economy_malformed_styles_is_a_load_error_naming_the_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("styles.json"), "{ not json").unwrap();
+        let err = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .unwrap_err();
+        assert!(matches!(err, CompileError::Load(_)), "got {err:?}");
+        assert!(err.to_string().contains("styles.json"), "got {err}");
+    }
+
+    #[test]
+    fn compile_economy_matches_generate_economy() {
+        let dir = temp_inputs(&[
+            ("styles.json", &repo_file("styles.json")),
+            ("tiers.json", &repo_file("tiers.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        let inputs = load_economy(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect("load_economy");
+        let via_compile = compile_economy(&inputs).expect("compile_economy");
+        let direct = emitter::generate_economy(&inputs.styles, &inputs.priced).unwrap();
+        assert_eq!(via_compile, direct);
     }
 
     #[test]

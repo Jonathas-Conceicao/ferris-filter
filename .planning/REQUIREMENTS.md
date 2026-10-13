@@ -87,7 +87,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **STORE-01**: By default the overlay edits the game-folder `dynamic.filter` directly. There
   is no intermediate JSON store.
 
-- [ ] **STORE-02**: User can select a different filter in the game folder from the configuration
+- [x] **STORE-02**: User can select a different filter in the game folder from the configuration
   tab, and the choice is remembered across launches.
 
 - [x] **STORE-03**: A new filter starts empty, with an optional economy section.
@@ -122,7 +122,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **CONF-03**: User can edit the economy tier cutoffs in `tiers.json` (not prices). Invalid
   cutoffs are shown inline and cannot be applied.
 
-- [ ] **CONF-04**: The configuration tab has its own Apply and Revert, and Apply writes all of its
+- [x] **CONF-04**: The configuration tab has its own Apply and Revert, and Apply writes all of its
   files or none of them.
 
 ### Single Instance (INST)
@@ -194,7 +194,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ECON-03 | Phase 18 | Complete |
 | ECON-04 | Phase 18 | Complete |
 | STORE-01 | Phase 18 | Complete |
-| STORE-02 | Phase 21 | Pending |
+| STORE-02 | Phase 21 | Complete |
 | STORE-03 | Phase 18 | Complete |
 | STORE-04 | Phase 18 | Complete |
 | STORE-05 | Phase 18 | Complete |
@@ -205,7 +205,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONF-01 | Phase 21 | Pending |
 | CONF-02 | Phase 21 | Complete |
 | CONF-03 | Phase 21 | Complete |
-| CONF-04 | Phase 21 | Pending |
+| CONF-04 | Phase 21 | Complete |
 | INST-01 | Phase 22 | Pending |
 
 **Coverage:**

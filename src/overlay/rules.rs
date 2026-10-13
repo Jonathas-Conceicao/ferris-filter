@@ -69,6 +69,19 @@ fn style_locked_status(name: &str) -> String {
     format!("{STYLE_LOCKED_STATUS_PREFIX} \"{name}\". Remove the style to edit it.")
 }
 
+/// Refusal when a line added to the conditions is really an action.
+pub const ACTION_IN_CONDITIONS_STATUS: &str = "That line is an action; add it under ACTIONS.";
+/// Refusal when a line added to the actions is really a condition.
+pub const CONDITION_IN_ACTIONS_STATUS: &str = "That line is a condition; add it under CONDITIONS.";
+
+/// Kind of the known keyword `text` starts with; `None` for unknown keywords or untokenizable
+/// text (those are left to the document's own validation).
+fn text_kind(text: &str) -> Option<Kind> {
+    let t = crate::filter::tokenize::tokenize(text).ok()?;
+    let kw = t.keyword?;
+    crate::filter::keywords::lookup(&text[kw]).map(|k| k.kind)
+}
+
 /// What a rule's `#ff:style` tag means against the loaded styles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StyleState {
@@ -719,6 +732,17 @@ impl WorkingFilter {
             .then_some(msg)
     }
 
+    /// Style lock for an edit whose new text would turn the line into an action line of a
+    /// known-styled rule (a raw `Whole` edit of an opaque or unknown-keyword line). Such a line
+    /// would be silently dropped by the style rewrite on Apply (WR-03).
+    fn becomes_action_lock(&self, id: BlockId, patch: &LinePatch) -> Option<String> {
+        let LinePatch::Whole(text) = patch else {
+            return None;
+        };
+        let msg = self.style_lock(id)?;
+        (text_kind(text) == Some(Kind::Action)).then_some(msg)
+    }
+
     /// Current text of a doc line when it equals `expect` (bounds-checked).
     fn line_matches(&self, line: usize, expect: &str) -> bool {
         self.doc
@@ -867,6 +891,9 @@ impl WorkingFilter {
                 if let Some(msg) = self.action_line_lock(id, at) {
                     return refused(msg);
                 }
+                if let Some(msg) = self.becomes_action_lock(id, &patch) {
+                    return refused(msg);
+                }
                 self.doc
                     .patch_line(id, at, patch)
                     .map_err(|e| e.to_string())
@@ -887,6 +914,20 @@ impl WorkingFilter {
             RowAction::AddLine { id, kind, text } => {
                 if let Some(msg) = self.line_refusal(id, None) {
                     return refused(msg);
+                }
+                // The declared section must agree with what the text actually is, so a
+                // condition-section add cannot smuggle an action past the style lock (WR-03).
+                match (kind, text_kind(&text)) {
+                    (LineKind::Condition, Some(Kind::Action)) => {
+                        return refused(
+                            self.style_lock(id)
+                                .unwrap_or_else(|| ACTION_IN_CONDITIONS_STATUS.to_string()),
+                        );
+                    }
+                    (LineKind::Action, Some(Kind::Condition)) => {
+                        return refused(CONDITION_IN_ACTIONS_STATUS.to_string());
+                    }
+                    _ => {}
                 }
                 if kind == LineKind::Action
                     && let Some(msg) = self.style_lock(id)
@@ -1273,6 +1314,44 @@ mod tests {
         assert_eq!(wf.text(), t);
         let cond = edit(&wf, id, 2, LinePatch::Values("\"Belts\"".into()));
         assert!(wf.apply_action(cond).changed);
+    }
+
+    /// WR-03: the style lock cannot be bypassed by declaring an action a condition, or by a raw
+    /// whole-line edit that turns an opaque line into an action.
+    #[test]
+    fn known_style_lock_cannot_be_bypassed() {
+        let t = "#ff:style S\nShow\n  Class \"Rings\"\n  SetFontSiz 40\n  SetFontSize 37\n";
+        let mut wf = styled_wf(t);
+        let id = wf.rows()[0].id;
+        let want = "Set by style \"S\". Remove the style to edit it.";
+        let o = wf.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Condition,
+            text: "SetFontSize 40".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(want));
+        let typo = edit(&wf, id, 3, LinePatch::Whole("SetFontSize 40".into()));
+        assert_eq!(wf.apply_action(typo).status.as_deref(), Some(want));
+        assert_eq!(wf.text(), t);
+        // Still fine: a raw edit that stays a non-action line.
+        let ok = edit(&wf, id, 3, LinePatch::Whole("Quality >= 1".into()));
+        assert!(wf.apply_action(ok).changed);
+
+        let mut plain = WorkingFilter::from_text("Show\n  Class \"Rings\"\n");
+        let id = plain.rows()[0].id;
+        let o = plain.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Condition,
+            text: "SetFontSize 40".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(ACTION_IN_CONDITIONS_STATUS));
+        let o = plain.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Action,
+            text: "Quality >= 1".into(),
+        });
+        assert_eq!(o.status.as_deref(), Some(CONDITION_IN_ACTIONS_STATUS));
+        assert_eq!(plain.text(), "Show\n  Class \"Rings\"\n");
     }
 
     #[test]

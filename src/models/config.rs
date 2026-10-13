@@ -1251,7 +1251,7 @@ mod tests {
 
     const STYLES_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
     const DYNAMIC_BASE_JSON: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
 
     const COMMITTED_ORDER: [&str; 12] = [
         "S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged", "hidden", "kite", "exceptional",

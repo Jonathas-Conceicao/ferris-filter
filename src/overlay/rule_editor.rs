@@ -1036,7 +1036,7 @@ mod tests {
     /// list to drive `render_classes` against, rather than a hand-built stand-in that could drift
     /// from what the config-sourced picker actually offers (`PITFALLS.md` §10).
     fn base_config() -> Config {
-        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
+        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
         let mut config: Config = serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
         config.styles = crate::models::config::StyleSet::committed_for_tests();
         config

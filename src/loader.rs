@@ -112,14 +112,14 @@ pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
     Ok(ValidatedTiers::try_from(entries)?)
 }
 
-/// Load a policy config (`config.json` / `dynamic.json`) and attach the styles from
+/// Load a policy config (`config.json`) and attach the styles from
 /// `styles_path` (loaded and validated via [`load_styles`]).
 ///
 /// A leftover pre-Phase-17 inline `styles` section (OD-1) is handled by content:
 /// - every inline entry equals the same-named entry in the styles file (the common case: a
 ///   store seeded from the old template and never restyled) — the section is dropped, since
-///   nothing in it would be lost. `overlay::store::save` never writes `styles`, so the next
-///   Apply rewrites the store without it.
+///   nothing in it would be lost. The dropped section is simply not carried forward on the next
+///   save of that config.
 /// - any entry is missing from, differs from, or does not parse as a style for the styles file —
 ///   a load error naming those styles, because silently ignoring them would hide an edit that no
 ///   longer does anything. The one exception is a `null` entry for a name the styles file does

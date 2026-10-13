@@ -265,7 +265,7 @@ mod tests {
     /// fully valid `styles`/`build`/`meta` section instead of hand-rolling a minimal one, and
     /// exercises the same deserialization path production code does.
     fn base_config() -> Config {
-        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dynamic_base.json"));
+        let json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v04-dynamic-base.json"));
         let mut config: Config = serde_json::from_str(json).expect("dynamic_base.json must parse as a Config");
         config.styles = crate::models::config::StyleSet::committed_for_tests();
         config

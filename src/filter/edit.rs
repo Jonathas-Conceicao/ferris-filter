@@ -55,6 +55,14 @@ pub enum EditError {
         "the header has extra tokens on the same line (such as `Show Continue`); edit it by hand"
     )]
     CompactHeader,
+    #[error("that line is not part of this rule's body")]
+    NotABodyLine,
+    #[error("a condition needs at least one value")]
+    EmptyValue,
+    #[error(
+        "this commented-out rule is not valid grammar, so its lines cannot be edited; fix it by hand"
+    )]
+    CannotEditInvalidDisabled,
 }
 
 enum Fail {
@@ -281,13 +289,11 @@ impl Document {
         if new_lines.iter().any(|s| s.contains(['\n', '\r'])) {
             return Err(EditError::EmbeddedNewline);
         }
-        let pos = self.block_pos(id)?;
         let b = self.block(id).ok_or(EditError::UnknownBlock)?;
         let owned = b.owned();
-        let header = b.header_line();
         let n = new_lines.len();
 
-        let eol = self.fresh_eol(header);
+        let eol = self.fresh_eol(b.header_line());
         let last_unterminated =
             owned.end == self.lines.len() && self.lines[owned.end - 1].eol() == Eol::None;
         let cand: Vec<Line> = new_lines
@@ -303,7 +309,27 @@ impl Document {
             })
             .collect();
 
-        // Isolated classification: exactly one block covering every candidate line.
+        self.commit_owned(id, cand, true, false)
+    }
+
+    /// Shared tail of every body edit: `cand` replaces the block's owned lines (header through
+    /// last body line) and keeps each line's own terminator. The candidate is classified in
+    /// isolation (exactly one block covering every line); an enabled candidate may carry only the
+    /// Error/Warning diagnostics the current block already carries (a block with a pre-existing
+    /// unknown keyword stays editable). `strict_warnings = false` counts new Errors only.
+    pub(super) fn commit_owned(
+        &mut self,
+        id: BlockId,
+        cand: Vec<Line>,
+        strict_warnings: bool,
+        enableable: bool,
+    ) -> Result<(), EditError> {
+        let pos = self.block_pos(id)?;
+        let b = self.block(id).ok_or(EditError::UnknownBlock)?;
+        let owned = b.owned();
+        let header = b.header_line();
+        let n = cand.len();
+
         let mut scratch = 0u64;
         let (items, diags) = parse::build(&cand, &mut scratch);
         let one =
@@ -313,15 +339,30 @@ impl Document {
         }
         if let Item::Block(c) = &items[0] {
             if c.is_enabled() {
-                // Unknown keywords and trailing header tokens are Warnings when loaded from a
-                // file, but an enabled block the tool writes must be fully valid (D-11).
-                let errs: Vec<FilterDiagnostic> = diags
+                let counts = |d: &FilterDiagnostic| {
+                    d.severity == Severity::Error
+                        || (strict_warnings && d.severity == Severity::Warning)
+                };
+                let mut existing: Vec<(Severity, &str)> = self
+                    .diagnostics
                     .iter()
-                    .filter(|d| matches!(d.severity, Severity::Error | Severity::Warning))
-                    .cloned()
+                    .filter(|d| counts(d) && d.line > owned.start && d.line <= owned.end)
+                    .map(|d| (d.severity, d.message.as_str()))
                     .collect();
-                if !errs.is_empty() {
-                    return Err(EditError::InvalidBlock { diagnostics: errs });
+                let mut fresh: Vec<FilterDiagnostic> = Vec::new();
+                for d in diags.iter().filter(|d| counts(d)) {
+                    match existing
+                        .iter()
+                        .position(|(sv, m)| *sv == d.severity && *m == d.message)
+                    {
+                        Some(i) => {
+                            existing.swap_remove(i);
+                        }
+                        None => fresh.push(d.clone()),
+                    }
+                }
+                if !fresh.is_empty() {
+                    return Err(EditError::InvalidBlock { diagnostics: fresh });
                 }
             }
         }
@@ -334,7 +375,7 @@ impl Document {
             owned_len: n,
             enabled: None,
             reject_errors: false,
-            enableable: false,
+            enableable,
         };
         self.commit(lines, pos, ex).map_err(|f| match f {
             Fail::Structure => EditError::NotOneBlock,
@@ -1141,6 +1182,76 @@ Hide
         assert!(matches!(
             other.set_meta(bogus, "a", "b"),
             Err(EditError::UnknownBlock)
+        ));
+    }
+
+    #[test]
+    fn pre_existing_warning_does_not_block_edits() {
+        let src = "Show
+	FutureKw 3
+	Rarity Rare
+";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        d.replace_block_lines(
+            id,
+            vec!["Show".into(), "	FutureKw 3".into(), "	Rarity Magic".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+	FutureKw 3
+	Rarity Magic
+"
+        );
+        // A second unknown keyword is a NEW warning and is refused.
+        let before = s(&d);
+        assert!(matches!(
+            d.replace_block_lines(
+                id,
+                vec![
+                    "Show".into(),
+                    "	FutureKw 3".into(),
+                    "	OtherKw 1".into(),
+                    "	Rarity Magic".into()
+                ],
+            ),
+            Err(EditError::InvalidBlock { .. })
+        ));
+        assert_eq!(s(&d), before);
+    }
+
+    #[test]
+    fn commit_owned_keeps_per_line_eols() {
+        let mut d = p("Show
+	Rarity Rare
+	Class \"Bows\"
+");
+        let id = ids(&d)[0];
+        let mut cand: Vec<Line> = d.lines()[0..3].to_vec();
+        cand[1] = Line::new("	Rarity Magic".into(), cand[1].eol());
+        d.commit_owned(id, cand, true, false).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+	Rarity Magic
+	Class \"Bows\"
+"
+        );
+    }
+
+    #[test]
+    fn enabling_stays_strict_about_warnings() {
+        let mut d = p("#Show
+#	Rarity Rare
+#	FutureKw 3
+");
+        let id = ids(&d)[0];
+        // The disabled form with an unknown keyword is not enableable.
+        assert!(matches!(
+            d.set_enabled(id, true),
+            Err(EditError::CannotEnable { .. })
         ));
     }
 }

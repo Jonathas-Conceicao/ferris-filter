@@ -326,7 +326,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 23-01-PLAN.md — Pure core: chat.rs step list + InputSink seam + trigger decision + reload worker; apply.rs status strings; reload_after_apply setting
+- [x] 23-01-PLAN.md — Pure core: chat.rs step list + InputSink seam + trigger decision + reload worker; apply.rs status strings; reload_after_apply setting
 - [ ] 23-02-PLAN.md — win.rs Win32 wrappers: game window by title + PathOfExile exe, focus/foreground, SendInput tap/chord, clipboard text; windows-sys features
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -345,7 +345,7 @@ Plans:
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
-| 23. Auto-Reload Filter in Game on Apply | 0/? | Not started | - |
+| 23. Auto-Reload Filter in Game on Apply | 1/4 | In Progress|  |
 
 ## Backlog
 

@@ -1019,7 +1019,11 @@ impl OverlayApp {
                     }
                 }
             }
-            Err(ConfigApplyError::OutsideEdit(which)) => self.config_outside = which,
+            Err(ConfigApplyError::OutsideEdit(which)) => {
+                self.config_outside = which;
+                // Re-raise the guard: a dismissed guard would leave Apply a silent no-op.
+                self.config_ui.outside_dismissed = false;
+            }
             Err(err) => self.config_message = Some((err.message(), true)),
         }
     }

@@ -222,16 +222,19 @@ fn apply_row_actions(
                 }
             }
             if let Some(focus) = outcome.focus {
-                if is_add || is_duplicate {
+                // A rule the search hides cannot be expanded or scrolled to: the list resets
+                // both on the next frame because the row is not in the filtered slice.
+                let hidden =
+                    is_add && !query.trim().is_empty() && !working.row_matches(focus, query);
+                if hidden {
+                    if let Some(row) = working.row(focus) {
+                        status = Some(apply::added_hidden_message(row.index));
+                    }
+                } else if is_add || is_duplicate {
                     list.expanded = Some(focus);
                     list.pending_scroll = Some(focus);
                 } else if is_move {
                     list.pending_scroll = Some(focus);
-                }
-                if is_add && !query.trim().is_empty() && !working.row_matches(focus, query) {
-                    if let Some(row) = working.row(focus) {
-                        status = Some(apply::added_hidden_message(row.index));
-                    }
                 }
             }
         }
@@ -893,7 +896,12 @@ impl eframe::App for OverlayApp {
                 let (changed, status) =
                     apply_row_actions(working, &mut self.list, &self.query, row_actions);
                 if changed {
-                    self.apply_state = ApplyState::Unapplied;
+                    // An action can report `changed` without altering the bytes (clearing an
+                    // absent name, moving a rule and back); only a real difference from the
+                    // applied text makes the indicator stale.
+                    if working.is_dirty() {
+                        self.apply_state = ApplyState::Unapplied;
+                    }
                     self.apply_message = None;
                     self.list_status = None;
                 }
@@ -1141,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn adding_a_rule_the_search_hides_says_so_and_expands_it() {
+    fn adding_a_rule_the_search_hides_says_so_and_does_not_expand_it() {
         let mut working = WorkingFilter::from_text(RULES);
         let mut list = ListUi::default();
         let (changed, status) =
@@ -1151,9 +1159,8 @@ mod tests {
             status.as_deref(),
             Some("Rule added at position 3 (hidden by the current search)")
         );
-        let new_id = working.rows().last().unwrap().id;
-        assert_eq!(list.expanded, Some(new_id));
-        assert_eq!(list.pending_scroll, Some(new_id));
+        assert_eq!(list.expanded, None);
+        assert_eq!(list.pending_scroll, None);
     }
 
     #[test]

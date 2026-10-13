@@ -588,6 +588,24 @@ mod tests {
     }
 
     #[test]
+    fn unreadable_clipboard_aborts_before_anything_is_written() {
+        // Review WR-05: a clipboard whose text cannot be read fails SaveClipboard, and the send
+        // stops there: no write, no key, and no restore that could empty the clipboard.
+        let at = reload_steps()
+            .iter()
+            .position(|s| *s == Step::SaveClipboard)
+            .unwrap();
+        let mut sink = FailingSink {
+            fail_at: at,
+            calls: vec![],
+        };
+        assert_eq!(execute(&mut sink, &reload_steps()), Err("boom".into()));
+        assert_eq!(sink.calls.last(), Some(&Step::SaveClipboard));
+        assert!(!sent_input(&sink.calls));
+        assert_eq!(restores(&sink.calls), 0);
+    }
+
+    #[test]
     fn clipboard_write_failure_restores_once_and_sends_no_key() {
         let at = reload_steps()
             .iter()

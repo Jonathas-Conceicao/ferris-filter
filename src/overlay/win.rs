@@ -456,7 +456,9 @@ mod imp {
     }
 
     /// The clipboard's Unicode text, or `Ok(None)` when it holds none. The text is returned to
-    /// the caller only, never logged.
+    /// the caller only, never logged. Text that is advertised but cannot be read is an error, not
+    /// "no text": `Ok(None)` makes the restore empty the clipboard, which would delete text the
+    /// user had copied (review WR-05). The error aborts the send before anything is written.
     pub fn read_clipboard_text(owner: ClipboardOwner) -> Result<Option<String>, String> {
         let _guard = open_clipboard(owner)?;
         // SAFETY: plain value argument; the clipboard is open.
@@ -467,12 +469,12 @@ mod imp {
         // never freed here.
         let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
         if handle.is_null() {
-            return Ok(None);
+            return Err("could not read the clipboard".into());
         }
         // SAFETY: `handle` is a live clipboard-owned global block.
         let ptr = unsafe { GlobalLock(handle) } as *const u16;
         if ptr.is_null() {
-            return Ok(None);
+            return Err("could not read the clipboard".into());
         }
         // SAFETY: `handle` is locked, so `GlobalSize` is its true byte size.
         let max_units = unsafe { GlobalSize(handle) } / 2;

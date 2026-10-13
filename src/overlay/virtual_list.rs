@@ -2,7 +2,7 @@
 //!
 //! The list has one variable-height row (the expanded accordion row); everything else has a fixed
 //! height. [`build_offsets`] turns that into cumulative row tops, [`visible_range`] picks the rows
-//! intersecting the viewport with a binary search, and [`scroll_offset_for`] centres a row. No GUI
+//! intersecting the viewport with a binary search, and [`scroll_offset_for`] centres a row. No
 //! GUI-toolkit types.
 
 use std::ops::Range;

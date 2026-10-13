@@ -56,7 +56,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 - [x] **EDIT-05**: User can add, delete, duplicate and reorder rules.
 - [ ] **EDIT-06**: User can apply a named style to a rule, which sets the rule's style actions.
-- [ ] **EDIT-07**: User can search the rule list, and the editor stays responsive on a filter of
+- [x] **EDIT-07**: User can search the rule list, and the editor stays responsive on a filter of
   about 460 blocks (the NeverSink sample).
 
 - [x] **EDIT-08**: Apply writes the edited filter, and Revert discards unsaved edits. This is the
@@ -185,7 +185,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-04 | Phase 19 | Complete |
 | EDIT-05 | Phase 19 | Complete |
 | EDIT-06 | Phase 20 | Pending |
-| EDIT-07 | Phase 19 | Pending |
+| EDIT-07 | Phase 19 | Complete |
 | EDIT-08 | Phase 19 | Complete |
 | EDIT-09 | Phase 18 | Complete |
 | EDIT-10 | Phase 18 | Complete |

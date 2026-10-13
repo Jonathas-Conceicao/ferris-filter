@@ -192,7 +192,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 19-04-PLAN.md — Pure overlay::rules WorkingFilter (row cache, labels, search, actions, Revert, staged economy), virtual_list math, 511-block perf test
+- [x] 19-04-PLAN.md — Pure overlay::rules WorkingFilter (row cache, labels, search, actions, Revert, staged economy), virtual_list math, 511-block perf test
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -260,7 +260,7 @@ Plans:
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
-| 19. Overlay Rule List Over Parsed Blocks | 3/7 | In Progress|  |
+| 19. Overlay Rule List Over Parsed Blocks | 4/7 | In Progress|  |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
@@ -347,7 +347,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 3/7 plans executed
+**Plans:** 4/7 plans executed
 
 Plans:
 

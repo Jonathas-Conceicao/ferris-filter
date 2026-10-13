@@ -127,7 +127,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Single Instance (INST)
 
-- [ ] **INST-01**: Launching `ff` while it is already running brings up the running stripe (even
+- [x] **INST-01**: Launching `ff` while it is already running brings up the running stripe (even
   when hidden to the tray) and exits, instead of opening a second instance.
 
 ## Future Requirements
@@ -206,7 +206,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONF-02 | Phase 21 | Complete (UAT pending) |
 | CONF-03 | Phase 21 | Complete (UAT pending) |
 | CONF-04 | Phase 21 | Complete (UAT pending) |
-| INST-01 | Phase 22 | Pending |
+| INST-01 | Phase 22 | Complete (UAT pending) |
 
 **Coverage:**
 

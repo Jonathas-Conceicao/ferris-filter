@@ -47,7 +47,12 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > **only while Path of Exile 2 or the stripe itself is the foreground window**, so the binding stays
 > free for other applications; the
 > stripe's own `✕` only **hides** it, and the system tray icon's **Quit** is the only way to exit
-> the process.
+> the process. Only one `ff` runs at a time (`src/overlay/instance.rs`): launching it again
+> (including by double-clicking the exe) brings up the running stripe, even when it is hidden to
+> the tray, and the new process exits; if the running one does not answer within about 2 seconds a
+> message box says "FerrisFilter is already running but not responding". Debug builds use a
+> separate instance name (`-overlay-debug`), so a `cargo run` build can run beside a release `ff`
+> (their hotkeys then conflict, which the tray tooltip already reports).
 >
 > **The rule list and editor (Phases 19-20):** the overlay treats the game-folder `dynamic.filter` as its store (see
 > the `dynamic.filter` row above); there is no `dynamic.json`. Every block of the loaded filter is a

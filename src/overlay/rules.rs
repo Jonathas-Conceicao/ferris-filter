@@ -599,6 +599,19 @@ impl WorkingFilter {
         &self.rows
     }
 
+    /// How many rules carry each `#ff:style` name (known, unknown or unchecked alike).
+    pub fn style_users(&self) -> HashMap<String, usize> {
+        let mut users = HashMap::new();
+        for row in &self.rows {
+            if let StyleState::Known(n) | StyleState::Unknown(n) | StyleState::Unchecked(n) =
+                &row.style
+            {
+                *users.entry(n.clone()).or_insert(0) += 1;
+            }
+        }
+        users
+    }
+
     pub fn row(&self, id: BlockId) -> Option<&RuleRow> {
         self.rows.iter().find(|r| r.id == id)
     }
@@ -1054,6 +1067,25 @@ mod tests {
         format!(
             "Show\n  Class \"Rings\"\n\n{BEGIN_LINE}\nShow\n  Class \"Gems\"\n\nShow\n  Class \"Currency\"\n\n{END_LINE}\n\nHide\n  Rarity Normal\n\nShow\n  ItemLevel >= 82\n"
         )
+    }
+
+    #[test]
+    fn style_users_counts_every_tagged_rule() {
+        let wf = WorkingFilter::from_text(
+            "#ff:style kite
+Show
+
+#ff:style kite
+Hide
+
+#ff:style S
+Show
+",
+        );
+        let users = wf.style_users();
+        assert_eq!(users.get("kite"), Some(&2));
+        assert_eq!(users.get("S"), Some(&1));
+        assert_eq!(users.len(), 2);
     }
 
     #[test]

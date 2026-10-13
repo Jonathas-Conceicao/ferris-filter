@@ -261,9 +261,52 @@ pub fn styles_unavailable_message(err: &str) -> String {
     format!("styles.json could not be read, so styled rules cannot be updated: {err}")
 }
 
+/// Whether a config file was changed after the filter was last written, so the written filter no
+/// longer reflects the styles and tiers. An absent filter is never stale (nothing was generated).
+pub fn config_newer_than_filter(
+    filter: Option<std::time::SystemTime>,
+    styles: Option<std::time::SystemTime>,
+    tiers: Option<std::time::SystemTime>,
+) -> bool {
+    let Some(filter) = filter else {
+        return false;
+    };
+    [styles, tiers].into_iter().flatten().any(|t| t > filter)
+}
+
+/// A tab's label, with ` *` when the OTHER tab holds unapplied edits.
+pub fn tab_label(name: &str, other_dirty: bool) -> String {
+    if other_dirty {
+        format!("{name} *")
+    } else {
+        name.to_string()
+    }
+}
+
+/// Tooltip of the ` *` marker on a tab label.
+pub const OTHER_TAB_DIRTY_TIP: &str = "Unapplied changes on this tab";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_staleness_needs_an_existing_filter_and_a_newer_config() {
+        use std::time::{Duration, SystemTime};
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let t1 = t0 + Duration::from_secs(5);
+        assert!(!config_newer_than_filter(None, Some(t1), Some(t1)));
+        assert!(config_newer_than_filter(Some(t0), Some(t1), Some(t0)));
+        assert!(config_newer_than_filter(Some(t0), Some(t0), Some(t1)));
+        assert!(!config_newer_than_filter(Some(t1), Some(t0), Some(t0)));
+        assert!(!config_newer_than_filter(Some(t0), None, None));
+    }
+
+    #[test]
+    fn tab_labels_mark_the_other_tab_only_when_dirty() {
+        assert_eq!(tab_label("RULES", true), "RULES *");
+        assert_eq!(tab_label("CONFIG", false), "CONFIG");
+    }
 
     #[test]
     fn a_failed_apply_never_advances_the_state_to_applied() {

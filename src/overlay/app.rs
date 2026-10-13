@@ -26,6 +26,7 @@
 //! [`super::apply`]; this file only draws them and performs the calls.
 //! `PITFALLS.md` §8: if a bug can only be found by clicking, it belongs in a library module.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
@@ -36,9 +37,14 @@ use crate::filter::{BlockId, LinePatch};
 use crate::loader;
 use crate::models::config::StyleSet;
 use crate::safe_write::WriteOutcome;
+use crate::settings::{self, Settings};
 
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::classes::ClassCatalog;
+use super::config_state::{
+    self, ConfigApplyError, ConfigState, OUT_OF_DATE_MESSAGE, OutsideEdit, applied_message,
+};
+use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::HotkeyStatus;
 use super::layout;
@@ -129,6 +135,47 @@ pub struct OverlayApp {
 
     /// `ctx.input(|i| i.time)` of the last `styles.json` poll.
     styles_checked: f64,
+
+    /// Which top-level tab is showing. Switching never applies or discards anything.
+    tab: Tab,
+
+    /// The CONFIG tab's model (styles + tiers edits). `Err` holds the rendered load failure.
+    config: Result<ConfigState, String>,
+
+    /// View state of the CONFIG tab.
+    config_ui: ConfigUi,
+
+    /// The CONFIG footer's latest message and whether it is an accent (problem) line.
+    config_message: Option<(String, bool)>,
+
+    /// A config file changed outside the overlay (checked on activation and at Apply only).
+    config_outside: OutsideEdit,
+
+    /// A CONFIG Apply landed that no RULES Apply has regenerated the filter for yet.
+    config_changed_pending: bool,
+
+    /// Styles `config.json` itself references, for the delete warning.
+    config_refs: BTreeSet<String>,
+
+    /// The per-user settings (the chosen game-folder filter), from `ff-settings.json`.
+    settings: Settings,
+
+    /// The in-game config folder, resolved once.
+    game_dir: Option<std::path::PathBuf>,
+
+    /// `*.filter` names in the game folder (`None` = missing or unreadable). Refreshed on CONFIG
+    /// activation, create, switch and reload -- never per frame (OneDrive reads are slow).
+    filters_cache: Option<Vec<String>>,
+
+    /// A filter picked while the rules have unapplied edits, awaiting confirmation.
+    pending_switch: Option<String>,
+}
+
+/// The two top-level tabs of the stripe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Rules,
+    Config,
 }
 
 /// Seconds between `styles.json` modification-time polls while the stripe runs.
@@ -139,14 +186,102 @@ fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
     loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
 }
 
-fn load_classes_at(root: &std::path::Path) -> Result<ClassCatalog, String> {
+/// The class catalogue and the styles `config.json` references, from one load of `config.json`.
+fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<String>), String> {
     let paths = InputPaths::relative_to(root);
     loader::load_config(
         &paths.config.to_string_lossy(),
         &paths.styles.to_string_lossy(),
     )
-    .map(|config| ClassCatalog::from_config(&config))
+    .map(|config| {
+        (
+            ClassCatalog::from_config(&config),
+            config_state::config_style_refs(&config),
+        )
+    })
     .map_err(|e| e.to_string())
+}
+
+fn tiers_mtime_at(root: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(InputPaths::relative_to(root).tiers)
+        .and_then(|m| m.modified())
+        .ok()
+}
+
+/// Draws the RULES | CONFIG strip and returns the tab the user picked this frame.
+/// `*` on a label means the OTHER tab holds unapplied edits.
+fn tab_strip(
+    ui: &mut egui::Ui,
+    active: Tab,
+    rules_marker: bool,
+    config_marker: bool,
+) -> Option<Tab> {
+    let mut picked = None;
+    let seg_w = ((ui.available_width() - 4.0) / 2.0).max(0.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (tab, name, marker) in [
+            (Tab::Rules, "RULES", rules_marker),
+            (Tab::Config, "CONFIG", config_marker),
+        ] {
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(seg_w, 28.0), egui::Sense::click());
+            let is_active = tab == active;
+            let colour = if is_active || resp.hovered() {
+                theme::SECTION_CREAM
+            } else {
+                theme::TAB_ACTIVE
+            };
+            let fill = if is_active {
+                theme::HEADER_PLATE
+            } else {
+                theme::ROW_BASE
+            };
+            let mut job = theme::row_label(&apply::tab_label(name, marker));
+            for section in &mut job.sections {
+                section.format.color = colour;
+            }
+            let painter = ui.painter();
+            painter.rect_filled(rect, 0.0, fill);
+            let galley = painter.layout_job(job);
+            painter.galley(rect.center() - galley.size() / 2.0, galley, colour);
+            if is_active {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(rect.left(), rect.bottom() - 2.0),
+                        rect.right_bottom(),
+                    ),
+                    0.0,
+                    theme::SECTION_CREAM,
+                );
+            }
+            let resp = if marker {
+                resp.on_hover_text(apply::OTHER_TAB_DIRTY_TIP)
+            } else {
+                resp
+            };
+            resp.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, true, is_active, name)
+            });
+            if resp.clicked() && !is_active {
+                picked = Some(tab);
+            }
+            if resp.has_focus() {
+                let (left, right) = ui.input(|i| {
+                    (
+                        i.key_pressed(egui::Key::ArrowLeft),
+                        i.key_pressed(egui::Key::ArrowRight),
+                    )
+                });
+                if tab == Tab::Rules && right {
+                    picked = Some(Tab::Config);
+                } else if tab == Tab::Config && left {
+                    picked = Some(Tab::Rules);
+                }
+            }
+        }
+    });
+    picked
 }
 
 fn styles_mtime_at(root: &std::path::Path) -> Option<std::time::SystemTime> {
@@ -399,6 +534,10 @@ impl OverlayApp {
         // Loading never writes (D-10).
         let filter = Self::load_filter();
         let working = working_from(&filter);
+        let config = match &root {
+            Ok(root) => ConfigState::load(root),
+            Err(message) => Err(message.clone()),
+        };
 
         let mut app = Self {
             docked: false,
@@ -429,9 +568,41 @@ impl OverlayApp {
             classes: Err("not loaded".to_string()),
             styles_mtime: None,
             styles_checked: 0.0,
+            tab: Tab::Rules,
+            config,
+            config_ui: ConfigUi::default(),
+            config_message: None,
+            config_outside: OutsideEdit::None,
+            config_changed_pending: false,
+            config_refs: BTreeSet::new(),
+            settings: Settings::default(),
+            game_dir: dynamic::default_destination(),
+            filters_cache: None,
+            pending_switch: None,
         };
         app.refresh_inputs();
+        app.config_changed_pending = app.compute_config_pending();
         app
+    }
+
+    /// Re-reads the game folder's filter list into the cache.
+    fn refresh_filters(&mut self) {
+        self.filters_cache = self
+            .game_dir
+            .as_deref()
+            .and_then(|dir| settings::list_filters(dir).ok());
+    }
+
+    /// Whether styles.json / tiers.json are newer than the loaded filter file. Read once per
+    /// load, never per frame.
+    fn compute_config_pending(&self) -> bool {
+        let (Ok(root), Ok(loaded)) = (&self.root, &self.filter) else {
+            return false;
+        };
+        let filter_mtime = std::fs::metadata(loaded.path())
+            .and_then(|m| m.modified())
+            .ok();
+        apply::config_newer_than_filter(filter_mtime, styles_mtime_at(root), tiers_mtime_at(root))
     }
 
     /// (Re)reads `styles.json` into the working filter and `config.json` into the class
@@ -444,10 +615,17 @@ impl OverlayApp {
                 if let Some(working) = &mut self.working {
                     working.set_styles(load_styles_at(&root));
                 }
-                self.classes = load_classes_at(&root);
-                if let Err(err) = &self.classes {
-                    self.list_status =
-                        Some(format!("Class groups unavailable (config.json): {err}"));
+                match load_classes_at(&root) {
+                    Ok((catalog, refs)) => {
+                        self.classes = Ok(catalog);
+                        self.config_refs = refs;
+                    }
+                    Err(err) => {
+                        self.list_status =
+                            Some(format!("Class groups unavailable (config.json): {err}"));
+                        self.classes = Err(err);
+                        self.config_refs.clear();
+                    }
                 }
             }
             Err(message) => {
@@ -528,10 +706,13 @@ impl OverlayApp {
             ApplyOutcome::Written(path) => {
                 self.apply_message = Some(format!("{}{extras}", apply::success_message(&path)));
                 self.apply_state = self.apply_state.on_apply_success();
+                self.config_changed_pending = false;
             }
             ApplyOutcome::Unchanged(path) => {
                 self.apply_message = Some(format!("{}{extras}", apply::unchanged_message(&path)));
                 self.apply_state = self.apply_state.on_apply_success();
+                // An unchanged write does not touch the mtime, so the flag is cleared here.
+                self.config_changed_pending = false;
             }
             ApplyOutcome::Failed(message) => {
                 self.apply_message = Some(message);
@@ -590,6 +771,7 @@ impl OverlayApp {
     /// Re-resolving the root here is what lets a stripe launched before the FerrisFilter folder
     /// was in place recover without a restart.
     fn reload(&mut self) {
+        let old_root = self.root.clone();
         self.root = crate::paths::app_root().map_err(|e| e.to_string());
         self.filter = Self::load_filter();
         self.working = working_from(&self.filter);
@@ -601,6 +783,195 @@ impl OverlayApp {
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
         self.refresh_inputs();
+        // Config edits survive a RULES reload unless the root moved or the load had failed.
+        if self.root != old_root || self.config.is_err() {
+            self.config = match &self.root {
+                Ok(root) => ConfigState::load(root),
+                Err(message) => Err(message.clone()),
+            };
+            self.config_outside = OutsideEdit::None;
+        }
+        self.config_changed_pending = self.compute_config_pending();
+    }
+
+    /// Applies the CONFIG tab's collected actions. Filter actions are handled by the filter
+    /// selection code; everything else edits the `ConfigState`.
+    fn handle_config_actions(&mut self, actions: Vec<ConfigAction>) {
+        for action in actions {
+            match action {
+                ConfigAction::AddStyle(input) => {
+                    if let Ok(state) = &mut self.config {
+                        match state.add_style(&input) {
+                            Ok(name) => {
+                                self.config_ui.set_expanded(&name);
+                                self.config_ui.scroll_to = Some(name);
+                                self.config_ui.style_draft = None;
+                                self.config_message = None;
+                            }
+                            Err(err) => self.config_message = Some((err.to_string(), true)),
+                        }
+                    }
+                }
+                ConfigAction::EditStyle { name, edit } => {
+                    if let Ok(state) = &mut self.config
+                        && state.edit_style(&name, edit)
+                    {
+                        self.config_message = None;
+                    }
+                }
+                ConfigAction::DeleteStyle(name) => {
+                    if let Ok(state) = &mut self.config
+                        && state.delete_style(&name)
+                    {
+                        if self.config_ui.expanded.as_deref() == Some(name.as_str()) {
+                            self.config_ui.expanded = None;
+                        }
+                        self.config_ui.delete_armed = None;
+                        self.config_message = None;
+                    }
+                }
+                ConfigAction::TierText { tier, text } => {
+                    if let Ok(state) = &mut self.config {
+                        state.set_tier_text(&tier, &text);
+                        self.config_message = None;
+                    }
+                }
+                ConfigAction::Revert => {
+                    if let Ok(state) = &mut self.config {
+                        state.revert();
+                        self.config_ui.disarm_all();
+                        self.config_message = Some(("Reverted config changes.".to_string(), false));
+                    }
+                }
+                ConfigAction::Apply => self.config_apply(false),
+                ConfigAction::Overwrite => self.config_apply(true),
+                ConfigAction::Reload => {
+                    self.config = match &self.root {
+                        Ok(root) => ConfigState::load(root),
+                        Err(message) => Err(message.clone()),
+                    };
+                    self.config_outside = OutsideEdit::None;
+                    self.config_message = None;
+                    self.config_ui.disarm_all();
+                }
+                ConfigAction::SelectFilter(_)
+                | ConfigAction::CreateFilter(_)
+                | ConfigAction::ConfirmSwitch
+                | ConfigAction::CancelSwitch => {}
+            }
+        }
+    }
+
+    /// CONFIG Apply (or Overwrite after the user confirmed over an outside edit). On success the
+    /// RULES tab sees the new styles at once; the written filter is stale until a RULES Apply.
+    fn config_apply(&mut self, overwrite: bool) {
+        let Ok(state) = &mut self.config else {
+            return;
+        };
+        let result = if overwrite {
+            state.overwrite()
+        } else {
+            state.apply()
+        };
+        match result {
+            Ok(report) => {
+                let wrote = report.styles_written || report.tiers_written;
+                self.config_message = Some((
+                    if wrote {
+                        format!("{} {OUT_OF_DATE_MESSAGE}", applied_message(report.styles))
+                    } else {
+                        applied_message(report.styles)
+                    },
+                    false,
+                ));
+                if wrote {
+                    self.config_changed_pending = true;
+                }
+                self.config_outside = OutsideEdit::None;
+                self.config_ui.disarm_all();
+                if let Ok(root) = &self.root {
+                    self.styles_mtime = styles_mtime_at(root);
+                    if let Some(working) = &mut self.working {
+                        working.set_styles(load_styles_at(root));
+                    }
+                }
+            }
+            Err(ConfigApplyError::OutsideEdit(which)) => self.config_outside = which,
+            Err(err) => self.config_message = Some((err.message(), true)),
+        }
+    }
+
+    /// Draws the CONFIG tab below the tab strip and returns what the user asked for.
+    fn config_body(&mut self, ui: &mut egui::Ui) -> Vec<ConfigAction> {
+        let mut actions = Vec::new();
+        // Fresh every frame: it must be right after a switch or a reload.
+        let users = self
+            .working
+            .as_ref()
+            .map(|w| w.style_users())
+            .unwrap_or_default();
+        let filters = self.filters_cache.clone();
+        let ctx = ConfigViewCtx {
+            filters: filters.as_deref(),
+            active_filter: self.settings.filter_name(),
+            game_dir: self.game_dir.as_deref(),
+            pending_switch: self.pending_switch.as_deref(),
+            rule_users: &users,
+            config_refs: &self.config_refs,
+            outside: self.config_outside,
+            out_of_date: self.config_changed_pending,
+        };
+        // The footer is claimed first so it keeps its height whatever the sections hold; the
+        // view's own scroll area then takes the rest (no ScrollArea nested around it).
+        egui::Panel::bottom(egui::Id::new("ff-config-footer"))
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::PANEL_GROUND)
+                    .inner_margin(egui::Margin {
+                        left: 8,
+                        right: 8,
+                        top: 0,
+                        bottom: 8,
+                    }),
+            )
+            .show(ui, |ui| {
+                let lines: Vec<OutcomeLine> = self
+                    .config_message
+                    .iter()
+                    .map(|(text, accent)| OutcomeLine {
+                        text: text.clone(),
+                        accent: *accent,
+                        jump: None,
+                    })
+                    .collect();
+                outcome_area(ui, "config-outcome", &lines);
+                if let Ok(state) = &self.config {
+                    actions.extend(config_view::show_footer(
+                        ui,
+                        state,
+                        &mut self.config_ui,
+                        &ctx,
+                    ));
+                }
+            });
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(8, 0))
+            .show(ui, |ui| match &self.config {
+                Ok(state) => {
+                    config_view::show_status(ui, state, &ctx);
+                    ui.add_space(4.0);
+                    actions.extend(config_view::show_sections(
+                        ui,
+                        state,
+                        &mut self.config_ui,
+                        &ctx,
+                    ));
+                }
+                Err(message) => {
+                    actions.extend(config_view::show_load_error(ui, message));
+                }
+            });
+        actions
     }
 }
 
@@ -650,13 +1021,17 @@ pub(crate) fn outcome_lines(
 }
 
 /// Draws the outcome lines inside one capped scroll area. Returns the rule a clicked line jumps to.
-pub(crate) fn outcome_area(ui: &mut egui::Ui, lines: &[OutcomeLine]) -> Option<BlockId> {
+pub(crate) fn outcome_area(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    lines: &[OutcomeLine],
+) -> Option<BlockId> {
     if lines.is_empty() {
         return None;
     }
     let mut jump = None;
     egui::ScrollArea::vertical()
-        .id_salt("outcome")
+        .id_salt(id_salt)
         .max_height(OUTCOME_MAX_HEIGHT)
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -861,6 +1236,10 @@ impl eframe::App for OverlayApp {
         let mut row_actions: Vec<RowAction> = Vec::new();
         let mut economy_action: Option<rule_list::EconomyFooterAction> = None;
         let mut jump_to: Option<BlockId> = None;
+        let mut config_actions: Vec<ConfigAction> = Vec::new();
+        let mut picked_tab: Option<Tab> = None;
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.dirty_count() > 0);
 
         egui::CentralPanel::default()
             .frame(panel_frame)
@@ -874,6 +1253,18 @@ impl eframe::App for OverlayApp {
                         win::conceal(window);
                     }
                     self.visibility = Visibility::Hidden;
+                }
+
+                picked_tab = tab_strip(
+                    ui,
+                    self.tab,
+                    self.tab == Tab::Config && rules_dirty,
+                    self.tab == Tab::Rules && config_dirty,
+                );
+                ui.add_space(4.0);
+                if self.tab == Tab::Config {
+                    config_actions = self.config_body(ui);
+                    return;
                 }
 
                 // The footer is a bottom panel, claimed BEFORE the central content is laid out, so it
@@ -1013,7 +1404,7 @@ impl eframe::App for OverlayApp {
                             gate,
                             unknown,
                         );
-                        if let Some(target) = outcome_area(ui, &lines) {
+                        if let Some(target) = outcome_area(ui, "outcome", &lines) {
                             jump_to = Some(target);
                         }
                     });
@@ -1037,6 +1428,9 @@ impl eframe::App for OverlayApp {
                         theme::LABEL_TAN
                     };
                     lines.push((colour, text));
+                }
+                if self.config_changed_pending {
+                    lines.push((theme::VALUE_TEXT, OUT_OF_DATE_MESSAGE.to_string()));
                 }
                 if migrated {
                     lines.push((
@@ -1122,6 +1516,23 @@ impl eframe::App for OverlayApp {
                     (None, Ok(_)) => {}
                 }
             });
+
+        // Tab switch and CONFIG actions come first. Switching never applies or discards anything;
+        // arriving on CONFIG re-checks the files for outside edits (never per frame).
+        if let Some(tab) = picked_tab {
+            self.tab = tab;
+            if tab == Tab::Config {
+                self.config_ui.disarm_all();
+                self.config_outside = self
+                    .config
+                    .as_ref()
+                    .map_or(OutsideEdit::None, |c| c.outside_by_mtime());
+                self.refresh_filters();
+            }
+        }
+        if !config_actions.is_empty() {
+            self.handle_config_actions(config_actions);
+        }
 
         // Deferred mutations: jump from the grammar line, then row operations, then the economy
         // footer. Quit stays last.
@@ -1289,7 +1700,7 @@ mod tests {
                 egui::CentralPanel::default().show(ui, |ui| {
                     egui::Panel::bottom(egui::Id::new("f")).show(ui, |ui| {
                         let top = ui.cursor().min.y;
-                        outcome_area(ui, &lines);
+                        outcome_area(ui, "outcome", &lines);
                         area_h = ui.cursor().min.y - top;
                         apply_bottom = ui.button("APPLY").rect.max.y;
                     });
@@ -1302,6 +1713,67 @@ mod tests {
         assert!(
             apply_bottom <= screen_bottom,
             "{apply_bottom} {screen_bottom} {area_h}"
+        );
+    }
+
+    /// The CONFIG footer is pinned in its own bottom panel: Apply stays on screen however long the
+    /// styles list above it grows.
+    #[test]
+    fn the_config_footer_keeps_apply_on_screen_with_a_long_styles_list() {
+        use crate::overlay::app::{OutcomeLine, outcome_area};
+        use crate::overlay::config_state::{ConfigState, OutsideEdit};
+        use crate::overlay::config_view::{self, ConfigUi, ConfigViewCtx};
+        use std::collections::{BTreeSet, HashMap};
+
+        let state = ConfigState::load(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let ctx = ConfigViewCtx {
+            filters: None,
+            active_filter: "dynamic.filter",
+            game_dir: None,
+            pending_switch: None,
+            rule_users: &users,
+            config_refs: &refs,
+            outside: OutsideEdit::None,
+            out_of_date: false,
+        };
+        let mut cfg = ConfigUi::default();
+        let long = "x ".repeat(95);
+        let lines: Vec<OutcomeLine> = (0..6)
+            .map(|_| OutcomeLine {
+                text: long.clone(),
+                accent: true,
+                jump: None,
+            })
+            .collect();
+        let rctx = egui::Context::default();
+        let mut footer_bottom = 0.0_f32;
+        let mut screen_bottom = 0.0_f32;
+        for _ in 0..4 {
+            rctx.run_ui(stripe_input(), |ui| {
+                screen_bottom = ui.max_rect().max.y;
+                egui::CentralPanel::default().show(ui, |ui| {
+                    egui::Panel::bottom(egui::Id::new("ff-config-footer")).show(ui, |ui| {
+                        outcome_area(ui, "config-outcome", &lines);
+                        config_view::show_footer(ui, &state, &mut cfg, &ctx);
+                        footer_bottom = ui.min_rect().max.y;
+                    });
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for _ in 0..80 {
+                                ui.allocate_space(egui::vec2(400.0, 30.0));
+                            }
+                        });
+                });
+            })
+            .drop_without_applying_deltas();
+        }
+        assert!(footer_bottom > 0.0, "footer drew nothing");
+        assert!(
+            footer_bottom <= screen_bottom,
+            "{footer_bottom} > {screen_bottom}"
         );
     }
 

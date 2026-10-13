@@ -46,7 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers RELOAD).
 - App-root resolver: apply and the overlay find styles.json, tiers.json and prices.json via
   `FERRISFILTER_HOME`, else by walking up from the exe's folder, else the working directory, else
-  an error. The overlay's SYNC ECONOMY writes prices.json there.
+  an error. The overlay's SYNC ECONOMY writes prices.json there. A relative `apply --tiers` /
+  `--styles` resolves against that same folder, so `apply --tiers tiers-fallback.json` works from
+  any working directory.
 - One-time conversion of a v0.4 `dynamic.filter` on its first apply (markers added, `Show # <name>`
   names kept as `#ff:name`).
 

@@ -268,6 +268,35 @@ fn apply_styles_flag_reads_alternate_path() {
     assert!(gf(&dir).exists());
 }
 
+/// A relative `--styles`/`--tiers` resolves against the app root, not the working directory: run
+/// from the `game` subfolder, where neither file exists, the overrides are still found.
+#[test]
+fn apply_relative_overrides_resolve_against_the_app_root_not_the_cwd() {
+    let dir = workspace("overrideroot");
+    fs::rename(dir.join("styles.json"), dir.join("alt-styles.json")).expect("rename styles");
+    fs::copy(manifest().join("tiers-fallback.json"), dir.join("alt-tiers.json"))
+        .expect("copy tiers");
+    let f = gfs(&dir);
+    Command::cargo_bin("ferrisfilter")
+        .expect("binary")
+        .current_dir(dir.join("game"))
+        .env("FERRISFILTER_HOME", &dir)
+        .env("USERPROFILE", &dir)
+        .args([
+            "apply",
+            "--filter",
+            &f,
+            "--add-economy",
+            "--styles",
+            "alt-styles.json",
+            "--tiers",
+            "alt-tiers.json",
+        ])
+        .assert()
+        .success();
+    assert!(gf(&dir).exists());
+}
+
 #[test]
 fn default_filter_path_uses_userprofile() {
     let dir = workspace("default");

@@ -17,7 +17,19 @@ use crate::compile::{self, FallbackReason, InputPaths, PriceSource, PriceSourceP
 use crate::dynamic;
 use crate::safe_write::WriteOutcome;
 use crate::{install, paths, sync};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// `p` as given when absolute, else joined onto `root`. `apply` reads its inputs from the app
+/// root, so a relative `--tiers`/`--styles` override is relative to that same folder rather than
+/// the process working directory.
+fn under_root(root: &Path, p: &str) -> PathBuf {
+    let p = Path::new(p);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    }
+}
 
 /// Parse CLI args and dispatch to the matching subcommand.
 pub fn run() -> miette::Result<()> {
@@ -162,13 +174,15 @@ fn cmd_apply(
     } else {
         let root = paths::app_root().map_err(miette::Error::from)?;
         let mut inputs = InputPaths::relative_to(&root);
+        // A relative override resolves against the app root, like the default input it replaces,
+        // so `apply --tiers tiers-fallback.json` works from any working directory.
         if let Some(t) = tiers {
             eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
-            inputs = inputs.with_tiers(t);
+            inputs = inputs.with_tiers(under_root(&root, t));
         }
         if let Some(s) = styles {
             eprintln!("note: --styles {s} — using it instead of styles.json");
-            inputs = inputs.with_styles(s);
+            inputs = inputs.with_styles(under_root(&root, s));
         }
         let (body, source) = dynamic::economy_body(&inputs, PriceSourcePolicy::Auto)
             .map_err(miette::Error::from)?;

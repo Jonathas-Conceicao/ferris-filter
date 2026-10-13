@@ -79,14 +79,16 @@ pub enum Commands {
         ///
         /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
         /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
-        /// Unlike --early-game this keeps your live prices.json.
+        /// Unlike --early-game this keeps your live prices.json. A relative path is resolved
+        /// against the FerrisFilter folder, like tiers.json itself.
         #[arg(long)]
         tiers: Option<String>,
         /// Styles file to use instead of styles.json.
         ///
         /// Named styles live in styles.json beside the inputs; point this at another file to
         /// compile against a different style set (for example one carrying the styles of an
-        /// experimental config) without editing the committed one.
+        /// experimental config) without editing the committed one. A relative path is resolved
+        /// against the FerrisFilter folder, like styles.json itself.
         #[arg(long)]
         styles: Option<String>,
     },

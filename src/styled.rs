@@ -23,6 +23,10 @@ pub struct StyleReport {
     pub rewritten: usize,
     /// `(1-based rule index among non-economy blocks, style name)` for unknown style tags.
     pub unknown: Vec<(usize, String)>,
+    /// `(1-based rule index, error text)` for known-style rules that could not be rewritten
+    /// (e.g. a compact header such as `Hide Continue`). Such a rule keeps its current actions,
+    /// like an unknown style, instead of blocking the whole pass.
+    pub failed: Vec<(usize, String)>,
 }
 
 /// False when `name` is empty, padded with whitespace or holds a control character: such a name
@@ -67,6 +71,17 @@ fn normalize(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// The block's owned lines, verbatim, or `None` when the id is gone.
+fn block_text(doc: &Document, id: BlockId) -> Option<Vec<String>> {
+    let owned = doc.block(id)?.owned();
+    Some(
+        doc.lines()[owned]
+            .iter()
+            .map(|l| l.text().to_string())
+            .collect(),
+    )
+}
+
 /// Rewrite one block to `style`. `Ok(false)` when it already matches semantically.
 pub fn rewrite_block(doc: &mut Document, id: BlockId, style: &Style) -> Result<bool, EditError> {
     let targets = style_action_lines(style);
@@ -99,15 +114,27 @@ pub fn rewrite_block(doc: &mut Document, id: BlockId, style: &Style) -> Result<b
         Some(&first) => first - 1,
         None => last_body.unwrap_or(header),
     };
-    let kw_differs = block.keyword() != want_kw;
+    let old_kw = block.keyword();
+    let kw_differs = old_kw != want_kw;
     if kw_differs {
         doc.set_block_keyword(id, want_kw)?;
     }
-    doc.splice_body(id, &action_lines, after, &targets)?;
+    if let Err(e) = doc.splice_body(id, &action_lines, after, &targets) {
+        // Keep the block all-or-nothing: undo the keyword switch that just succeeded. Should the
+        // undo itself be refused, `rewrite_styled` sees the changed bytes and stops the pass.
+        if kw_differs {
+            let _ = doc.set_block_keyword(id, old_kw);
+        }
+        return Err(e);
+    }
     Ok(true)
 }
 
 /// Rewrite every enabled, non-economy rule whose `#ff:style` names a known style.
+///
+/// A rule whose rewrite is refused is left byte-identical and listed in
+/// [`StyleReport::failed`]; the pass goes on with the other rules. `Err` only when a refused
+/// rewrite could not be undone, which leaves the document unusable for this pass.
 pub fn rewrite_styled(doc: &mut Document, styles: &StyleSet) -> Result<StyleReport, EditError> {
     let span = economy_span(doc);
     let ids: Vec<(BlockId, bool, usize)> = doc
@@ -124,8 +151,16 @@ pub fn rewrite_styled(doc: &mut Document, styles: &StyleSet) -> Result<StyleRepo
         };
         match styles.get(&name) {
             Some(style) => {
-                if rewrite_block(doc, id, style)? {
-                    report.rewritten += 1;
+                let before = block_text(doc, id);
+                match rewrite_block(doc, id, style) {
+                    Ok(true) => report.rewritten += 1,
+                    Ok(false) => {}
+                    Err(e) if block_text(doc, id) != before => return Err(e),
+                    Err(e) => {
+                        if let Some(i) = rule_index_of(doc, id) {
+                            report.failed.push((i, e.to_string()));
+                        }
+                    }
                 }
             }
             None => {
@@ -200,6 +235,21 @@ mod tests {
         assert_eq!(out, src);
         assert_eq!(rep.rewritten, 0);
         assert_eq!(rep.unknown, vec![(2, "Nope".to_string())]);
+    }
+
+    /// WR-02: one rule that cannot be rewritten is reported by index and left untouched, and the
+    /// other styled rules are still rewritten.
+    #[test]
+    fn refused_rewrite_is_reported_and_does_not_block_others() {
+        let src = "#ff:style S\nHide Continue\n  SetFontSize 20\n\n#ff:style hidden\nShow\n  Class \"Rings\"\n";
+        let (out, rep) = run(src);
+        assert_eq!(rep.rewritten, 1);
+        assert_eq!(rep.failed.len(), 1, "{rep:?}");
+        assert_eq!(rep.failed[0].0, 1);
+        assert!(out.starts_with("#ff:style S\nHide Continue\n  SetFontSize 20\n\n"));
+        assert!(out.ends_with(
+            "#ff:style hidden\nHide\n  Class \"Rings\"\n  SetFontSize 21\n  DisableDropSound\n"
+        ));
     }
 
     #[test]

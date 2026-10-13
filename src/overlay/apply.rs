@@ -232,6 +232,17 @@ pub fn unknown_styles_message(count: usize, first_rule: usize) -> String {
     }
 }
 
+/// Apply-message tail for styled rules whose rewrite was refused; they keep their current actions.
+pub fn failed_styles_message(count: usize, first_rule: usize, err: &str) -> String {
+    if count == 1 {
+        format!("Could not update the style of rule {first_rule} ({err}); it keeps its actions.")
+    } else {
+        format!(
+            "Could not update the style of {count} rules (first: rule {first_rule}: {err}); they keep their actions."
+        )
+    }
+}
+
 /// Apply refusal when styled rules depend on a `styles.json` that cannot be read.
 pub fn styles_unavailable_message(err: &str) -> String {
     format!("styles.json could not be read, so styled rules cannot be updated: {err}")
@@ -432,5 +443,10 @@ mod tests {
             "2 rules use unknown styles (first: rule 5)."
         );
         assert!(styles_unavailable_message("x").ends_with(": x"));
+        assert_eq!(
+            failed_styles_message(1, 4, "bad header"),
+            "Could not update the style of rule 4 (bad header); it keeps its actions."
+        );
+        assert!(failed_styles_message(2, 3, "e").contains("2 rules (first: rule 3: e)"));
     }
 }

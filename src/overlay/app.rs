@@ -210,6 +210,14 @@ fn apply_working(
                     *first_rule,
                 ));
             }
+            if let Some((first_rule, err)) = style_report.failed.first() {
+                extras.push(' ');
+                extras.push_str(&apply::failed_styles_message(
+                    style_report.failed.len(),
+                    *first_rule,
+                    err,
+                ));
+            }
             if report.migrated {
                 extras.push_str(" Converted from v0.4.");
             }

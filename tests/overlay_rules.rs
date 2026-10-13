@@ -92,3 +92,65 @@ fn fixture_edits_stay_fast_and_revert_restores_bytes() {
     assert_eq!(wf.text(), text);
     assert!(!wf.is_dirty());
 }
+
+#[test]
+fn fixture_line_edits_stay_fast_and_revert_restores_bytes() {
+    use ferrisfilter::filter::LinePatch;
+    use ferrisfilter::filter::keywords::ValueShape;
+
+    let text = fixture();
+    let mut wf = WorkingFilter::from_text(&text);
+    let ids: Vec<_> = wf
+        .rows()
+        .iter()
+        .filter(|r| r.enabled)
+        .map(|r| r.id)
+        .collect();
+    let started = Instant::now();
+    let mut edited = 0;
+    for id in ids {
+        if edited == 100 {
+            break;
+        }
+        let Some(e) = wf.body_view(id).into_iter().find(|e| {
+            e.kind == ferrisfilter::overlay::rules::EntryKind::Condition
+                && e.keyword.map(|k| k.value) == Some(ValueShape::Int)
+                && e.values.len() == 1
+        }) else {
+            continue;
+        };
+        let new = e.values[0].parse::<i64>().unwrap_or(0) + 1;
+        let out = wf.apply_action(RowAction::EditLine {
+            id,
+            line: e.line,
+            expect: e.text,
+            patch: LinePatch::Values(new.to_string()),
+        });
+        assert!(out.changed, "{:?}", out.status);
+        edited += 1;
+    }
+    assert!(edited > 0, "fixture has int conditions");
+    assert!(
+        started.elapsed() < Duration::from_secs(15),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(wf.is_dirty());
+    wf.revert();
+    assert_eq!(wf.text(), text);
+}
+
+#[test]
+fn fixture_body_view_shows_every_line() {
+    let wf = WorkingFilter::from_text(&fixture());
+    let doc = ferrisfilter::filter::parse(wf.text().as_bytes()).expect("parse");
+    for row in wf.rows() {
+        let block = doc.block(row.id).expect("block");
+        assert_eq!(
+            wf.body_view(row.id).len(),
+            block.body().len(),
+            "{}",
+            row.label
+        );
+    }
+}

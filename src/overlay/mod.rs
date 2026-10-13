@@ -15,6 +15,7 @@ pub mod config_view;
 pub mod economy;
 pub mod grammar;
 pub mod hotkey;
+pub mod instance;
 pub mod layout;
 pub mod rule_list;
 pub mod rules;

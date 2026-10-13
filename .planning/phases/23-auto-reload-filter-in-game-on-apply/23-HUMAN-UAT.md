@@ -25,7 +25,7 @@ expected: Nothing typed anywhere; Refresh reminder with the reason shown where a
 result: [pending]
 
 ### 4. Checks 7, 7b, 12, 12b, 16 - chat already open, pre-filled prefix, held modifiers, elevated game
-expected: Documented limitation (CR-02): text in an open chat box is sent first; a pre-filled channel prefix is replaced by Ctrl+A; a held modifier aborts with its reason; an elevated game reports the failure and the Refresh reminder
+expected: Documented limitation (CR-02): text in an open chat box is sent first; the typed command overrides a pre-filled channel prefix; a held modifier aborts with its reason; an elevated game reports the failure and the Refresh reminder
 result: [pending]
 
 ## Summary

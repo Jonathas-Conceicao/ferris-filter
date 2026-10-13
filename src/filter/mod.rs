@@ -12,6 +12,7 @@ mod edit;
 pub mod keywords;
 pub mod lines;
 pub mod meta;
+pub mod section;
 mod parse;
 pub mod tokenize;
 

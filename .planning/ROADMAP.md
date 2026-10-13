@@ -306,7 +306,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 22-02-PLAN.md — Wire the gate into `launch()` and `OverlayApp::update` (reveal, never toggle; bypasses the foreground gate), docs, changelog, manual verification script
+- [x] 22-02-PLAN.md — Wire the gate into `launch()` and `OverlayApp::update` (reveal, never toggle; bypasses the foreground gate), docs, changelog, manual verification script
 
 ### Progress
 
@@ -318,7 +318,7 @@ Plans:
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
-| 22. Single-Instance Overlay | 1/2 | In Progress|  |
+| 22. Single-Instance Overlay | 2/2 | Verifying | - |
 
 ## Backlog
 

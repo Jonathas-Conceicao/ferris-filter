@@ -1495,7 +1495,8 @@ fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
     ui.painter().circle_filled(rect.center(), 6.0, colour);
 }
 
-/// Segmented Show/Hide/Minimal selector plus `Continue to later rules`, locked on a known style.
+/// Segmented Show/Hide/Minimal selector (locked on a known style) plus `Continue to later rules`
+/// (always editable: no style owns `Continue`).
 fn disposition_line(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
     let row = ctx.row;
     let id = row.id;
@@ -1525,16 +1526,14 @@ fn disposition_line(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowActio
             }
         }
     });
+    // A style never owns `Continue` (style_action_lines never emits it and the rewrite keeps it),
+    // so the checkbox stays editable on a styled rule (WR-01).
     let mut cont = row.has_continue;
     let cb = egui::Checkbox::new(
         &mut cont,
-        RichText::new("Continue to later rules").color(if locked {
-            theme::DISABLED_TEXT
-        } else {
-            theme::LABEL_TAN
-        }),
+        RichText::new("Continue to later rules").color(theme::LABEL_TAN),
     );
-    if ui.add_enabled(!locked, cb).changed() {
+    if ui.add(cb).changed() {
         actions.push(RowAction::SetContinue(id, cont));
     }
     if locked {
@@ -2949,5 +2948,40 @@ mod tests {
             }
         }
         assert!(found, "no click position emitted RemoveStyle");
+    }
+
+    /// WR-01: `Continue` is not style-owned, so a known-styled rule still lets it be toggled.
+    #[test]
+    fn known_style_row_keeps_continue_editable() {
+        let wf = styled("#ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n");
+        assert!(matches!(
+            wf.rows()[0].style,
+            super::super::rules::StyleState::Known(_)
+        ));
+        let id = wf.rows()[0].id;
+        let mut found = false;
+        'scan: for y in (20..600).step_by(6) {
+            for x in (8..200).step_by(8) {
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                let a = frame_of(
+                    &ctx,
+                    input(click_events(Pos2::new(x as f32, y as f32))),
+                    &wf,
+                    &mut list,
+                    None,
+                );
+                if a.contains(&RowAction::SetContinue(id, true)) {
+                    found = true;
+                    break 'scan;
+                }
+            }
+        }
+        assert!(
+            found,
+            "no click position emitted SetContinue on a styled rule"
+        );
     }
 }

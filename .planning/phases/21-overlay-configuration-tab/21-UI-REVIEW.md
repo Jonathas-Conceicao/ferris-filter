@@ -90,3 +90,15 @@
 - .planning/phases/20-full-grammar-block-editing/20-UI-REVIEW.md (consistency)
 
 Not read in full: body.rs, theme.rs, the 21-0* SUMMARY/PLAN files, 21-CONTEXT.md. Findings that depend on them (the minimap row width, the `colour_combo` width) are marked as needing a render check.
+
+## Post-audit fixes (f2fc5d4)
+
+- **Fix 1 (done):** the tier caption row now has the same 8px inset as the zebra rows.
+- **Fix 2 (done):** the `+ ADD STYLE` and `New empty filter…` name fields take focus once when they open (`ConfigUi::focus_draft`).
+- **Fix 3 (done):** a disabled Apply now explains why on hover: tier errors, a load error, or "No unapplied config changes."
+- **Fix 6 (done):** style rows show a pointing-hand cursor and report their expanded state through `widget_info`.
+- **Fix 4 (deferred):** an open name draft is never part of what Apply writes, because a style or filter exists only after `Add style`/`Create filter`. Leaving Apply enabled therefore can't write an invalid name, so this is a spec mismatch rather than a hazard.
+- **Fix 5 (accepted deviation, recorded):** the colour pickers are opaque RGB because `Style` stores `[u8;3]` and the emitter writes alpha 255. This was decided on the user's behalf at planning time and is noted in the CHANGELOG.
+- **Minor notes (unchanged):**
+  - `Enter a whole number` is correct for font size, which is an integer.
+  - The 14px literals and the default footer button size are left as is.

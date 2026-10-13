@@ -522,6 +522,50 @@ fn centered_notice(ui: &mut egui::Ui, heading: &str, body: &str) {
     });
 }
 
+/// What picking a filter in the dropdown should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwitchDecision {
+    /// The picked filter is already the active one.
+    Noop,
+    /// Unapplied rule edits exist: ask first.
+    Confirm,
+    /// Switch now.
+    Switch,
+}
+
+fn switch_decision(rules_dirty: bool, current: &str, target: &str) -> SwitchDecision {
+    if current.eq_ignore_ascii_case(target) {
+        SwitchDecision::Noop
+    } else if rules_dirty {
+        SwitchDecision::Confirm
+    } else {
+        SwitchDecision::Switch
+    }
+}
+
+/// The path of a game-folder filter by name. The name is re-validated here, before any join, so a
+/// hand-edited settings file can never point outside the game folder.
+fn filter_target(
+    game_dir: Option<&std::path::Path>,
+    name: &str,
+) -> Result<std::path::PathBuf, String> {
+    settings::valid_filter_name(name).map_err(|problem| problem.to_string())?;
+    match game_dir {
+        Some(dir) => Ok(dir.join(name)),
+        None => Err(
+            "Cannot resolve the default PoE2 config folder (USERPROFILE is not set).".to_string(),
+        ),
+    }
+}
+
+/// The settings to save when `name` becomes the active filter; unknown keys are preserved.
+fn settings_with_filter(current: &Settings, name: &str) -> Settings {
+    Settings {
+        filter: Some(name.to_string()),
+        extra: current.extra.clone(),
+    }
+}
+
 impl OverlayApp {
     /// Builds the app state around a tray and hotkey already constructed on
     /// the main thread (thread affinity -- see `overlay::launch`).
@@ -531,8 +575,14 @@ impl OverlayApp {
         hotkey_status: HotkeyStatus,
     ) -> Self {
         let root = crate::paths::app_root().map_err(|e| e.to_string());
+        let game_dir = dynamic::default_destination();
+        // Settings: the remembered filter. Without a root nothing is read and nothing is saved.
+        let (settings, settings_warning) = match &root {
+            Ok(root) => settings::load(root),
+            Err(_) => (Settings::default(), None),
+        };
         // Loading never writes (D-10).
-        let filter = Self::load_filter();
+        let filter = Self::load_filter(game_dir.as_deref(), settings.filter_name());
         let working = working_from(&filter);
         let config = match &root {
             Ok(root) => ConfigState::load(root),
@@ -575,12 +625,15 @@ impl OverlayApp {
             config_outside: OutsideEdit::None,
             config_changed_pending: false,
             config_refs: BTreeSet::new(),
-            settings: Settings::default(),
-            game_dir: dynamic::default_destination(),
+            settings,
+            game_dir,
             filters_cache: None,
             pending_switch: None,
         };
         app.refresh_inputs();
+        if settings_warning.is_some() {
+            app.list_status = settings_warning;
+        }
         app.config_changed_pending = app.compute_config_pending();
         app
     }
@@ -654,14 +707,42 @@ impl OverlayApp {
         }
     }
 
-    /// Reads the default game-folder filter. Never writes.
-    fn load_filter() -> Result<LoadedFilter, String> {
-        match dynamic::default_filter_path() {
-            Some(path) => LoadedFilter::load(&path).map_err(|e| e.to_string()),
-            None => Err(
-                "Cannot resolve the default PoE2 config folder (USERPROFILE is not set)."
-                    .to_string(),
-            ),
+    /// Reads the named game-folder filter. Never writes; an absent file loads as an empty filter.
+    fn load_filter(game_dir: Option<&std::path::Path>, name: &str) -> Result<LoadedFilter, String> {
+        let path = filter_target(game_dir, name)?;
+        LoadedFilter::load(&path).map_err(|e| e.to_string())
+    }
+
+    /// Re-reads the active filter and resets every piece of per-filter session state. RELOAD and
+    /// switching filters both go through here.
+    fn reset_filter_state(&mut self) {
+        self.filter = Self::load_filter(self.game_dir.as_deref(), self.settings.filter_name());
+        self.working = working_from(&self.filter);
+        self.list.clear_ids();
+        self.query.clear();
+        self.list_status = None;
+        self.needs_reload = false;
+        self.apply_message = None;
+        self.applied_this_session = false;
+        self.apply_state = ApplyState::NeverApplied;
+        self.pending_switch = None;
+    }
+
+    /// Makes `name` the active filter now and remembers it. A failed save still switches for
+    /// this session and says so.
+    fn switch_to(&mut self, name: String) {
+        let next = settings_with_filter(&self.settings, &name);
+        let save_error = match &self.root {
+            Ok(root) => settings::save(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
+        self.reset_filter_state();
+        self.refresh_inputs();
+        self.config_changed_pending = self.compute_config_pending();
+        self.refresh_filters();
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
     }
 
@@ -773,16 +854,24 @@ impl OverlayApp {
     fn reload(&mut self) {
         let old_root = self.root.clone();
         self.root = crate::paths::app_root().map_err(|e| e.to_string());
-        self.filter = Self::load_filter();
-        self.working = working_from(&self.filter);
-        self.list.clear_ids();
-        self.query.clear();
-        self.list_status = None;
-        self.needs_reload = false;
-        self.apply_message = None;
-        self.applied_this_session = false;
-        self.apply_state = ApplyState::NeverApplied;
+        self.game_dir = dynamic::default_destination();
+        let settings_warning = match &self.root {
+            Ok(root) => {
+                let (settings, warning) = settings::load(root);
+                self.settings = settings;
+                warning
+            }
+            Err(_) => {
+                self.settings = Settings::default();
+                None
+            }
+        };
+        self.reset_filter_state();
         self.refresh_inputs();
+        if settings_warning.is_some() {
+            self.list_status = settings_warning;
+        }
+        self.refresh_filters();
         // Config edits survive a RULES reload unless the root moved or the load had failed.
         if self.root != old_root || self.config.is_err() {
             self.config = match &self.root {
@@ -854,11 +943,45 @@ impl OverlayApp {
                     self.config_message = None;
                     self.config_ui.disarm_all();
                 }
-                ConfigAction::SelectFilter(_)
-                | ConfigAction::CreateFilter(_)
-                | ConfigAction::ConfirmSwitch
-                | ConfigAction::CancelSwitch => {}
+                ConfigAction::SelectFilter(name) => self.select_filter(name),
+                ConfigAction::CreateFilter(input) => {
+                    let name = settings::new_filter_name(&input);
+                    if let Err(problem) = settings::valid_filter_name(&name) {
+                        self.config_message = Some((problem.to_string(), true));
+                    } else if self
+                        .filters_cache
+                        .as_deref()
+                        .is_some_and(|list| settings::contains_name(list, &name))
+                    {
+                        self.config_message =
+                            Some((format!("{name} already exists in the game folder."), true));
+                    } else {
+                        // The file is not created here; the first RULES Apply writes it.
+                        self.select_filter(name);
+                        if self.pending_switch.is_none() {
+                            self.config_ui.filter_draft = None;
+                        }
+                    }
+                }
+                ConfigAction::ConfirmSwitch => {
+                    if let Some(name) = self.pending_switch.take() {
+                        self.switch_to(name);
+                    }
+                }
+                ConfigAction::CancelSwitch => self.pending_switch = None,
             }
+        }
+    }
+
+    /// A filter picked in the CONFIG dropdown (or just named). Unapplied rule edits make it wait
+    /// for confirmation; the dropdown keeps showing the current name until then. Only real edits
+    /// count: a pending style rewrite is derived, not an edit.
+    fn select_filter(&mut self, name: String) {
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        match switch_decision(rules_dirty, self.settings.filter_name(), &name) {
+            SwitchDecision::Noop => self.pending_switch = None,
+            SwitchDecision::Switch => self.switch_to(name),
+            SwitchDecision::Confirm => self.pending_switch = Some(name),
         }
     }
 
@@ -1775,6 +1898,52 @@ mod tests {
             footer_bottom <= screen_bottom,
             "{footer_bottom} > {screen_bottom}"
         );
+    }
+
+    #[test]
+    fn filter_target_refuses_traversal_and_a_missing_folder() {
+        use super::filter_target;
+        let dir = std::path::Path::new("game");
+        assert!(filter_target(Some(dir), "..\\x.filter").is_err());
+        assert!(filter_target(Some(dir), "../x.filter").is_err());
+        assert!(filter_target(Some(dir), "notafilter.txt").is_err());
+        assert_eq!(
+            filter_target(None, "ssf.filter").unwrap_err(),
+            "Cannot resolve the default PoE2 config folder (USERPROFILE is not set)."
+        );
+        assert_eq!(
+            filter_target(Some(dir), "ssf.filter").unwrap(),
+            dir.join("ssf.filter")
+        );
+    }
+
+    #[test]
+    fn switch_decision_guards_unapplied_edits() {
+        use super::{SwitchDecision, switch_decision};
+        assert_eq!(
+            switch_decision(true, "dynamic.filter", "Dynamic.Filter"),
+            SwitchDecision::Noop
+        );
+        assert_eq!(
+            switch_decision(true, "dynamic.filter", "ssf.filter"),
+            SwitchDecision::Confirm
+        );
+        assert_eq!(
+            switch_decision(false, "dynamic.filter", "ssf.filter"),
+            SwitchDecision::Switch
+        );
+    }
+
+    #[test]
+    fn saved_settings_keep_unknown_keys() {
+        use super::settings_with_filter;
+        let mut current = crate::settings::Settings::default();
+        current
+            .extra
+            .insert("future".into(), serde_json::json!({"a": 1}));
+        let next = settings_with_filter(&current, "ssf.filter");
+        assert_eq!(next.filter_name(), "ssf.filter");
+        assert_eq!(next.extra.get("future"), current.extra.get("future"));
     }
 
     #[test]

@@ -162,7 +162,7 @@ fn corpus_generated_dynamic() {
     use ferrisfilter::{compile, dynamic};
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    for f in ["dynamic_base.json", "tiers.json", "config.json", "styles.json"] {
+    for f in ["tiers.json", "styles.json"] {
         fs::copy(manifest().join(f), dir.join(f)).unwrap();
     }
     fs::copy(
@@ -170,10 +170,13 @@ fn corpus_generated_dynamic() {
         dir.join("prices.json"),
     )
     .unwrap();
-    let store = dir.join(dynamic::STORE_FILE);
-    dynamic::ensure_store(&dir.join(dynamic::BASE_FILE), &store).unwrap();
-    let compiled = dynamic::compile_store(&compile::InputPaths::relative_to(dir), &store).unwrap();
-    let doc = check_clean("generated dynamic", compiled.text.as_bytes());
+    let (body, _) = dynamic::economy_body(
+        &compile::InputPaths::relative_to(dir),
+        compile::PriceSourcePolicy::Auto,
+    )
+    .unwrap();
+    let text = dynamic::apply_text("", dynamic::ApplyOp::AddEconomy(&body)).unwrap();
+    let doc = check_clean("generated dynamic", text.as_bytes());
     assert!(doc.blocks().count() > 0);
 }
 

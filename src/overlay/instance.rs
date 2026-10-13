@@ -6,9 +6,10 @@
 //! Mechanism: a named mutex in the `Local\` namespace is held for the process
 //! lifetime and released by the OS on exit or crash, so there is no stale-lock
 //! state. An auto-reset `-show` event is polled by the first instance each frame;
-//! an auto-reset `-ack` event is waited on by the second for [`ACK_TIMEOUT_MS`].
-//! If the first does not answer, a MessageBox is shown (the release `ff` has no
-//! console).
+//! an auto-reset `-ack` event is waited on by the second for [`ACK_TIMEOUT_MS`],
+//! which re-asserts its request every [`RETRY_INTERVAL_MS`] so several launchers
+//! waiting at once are each answered. If the first does not answer, the request is
+//! withdrawn and a MessageBox is shown (the release `ff` has no console).
 //!
 //! This module is the second home of overlay `unsafe` alongside `win.rs`,
 //! extending the T-13-09 "raw Win32 isolated" convention; every `unsafe` block
@@ -22,6 +23,9 @@ const RELEASE_BASE: &str = "Local\\FerrisFilter-7c1d4e0a-3b52-4f6e-9a8d-2f0c5b9e
 
 /// How long a second instance waits for the first to acknowledge, in ms.
 pub const ACK_TIMEOUT_MS: u32 = 2000;
+
+/// How often a waiting second instance re-asserts its show request, in ms (WR-01).
+pub const RETRY_INTERVAL_MS: u32 = 100;
 
 /// Shown when the first instance does not answer the show signal.
 pub const NOT_RESPONDING_MESSAGE: &str = "FerrisFilter is already running but not responding";
@@ -87,9 +91,10 @@ pub enum Acquired {
 #[cfg(windows)]
 mod imp {
     use super::{
-        ACK_TIMEOUT_MS, Acquired, InstanceNames, NOT_RESPONDING_MESSAGE, Wait, classify_wait,
-        instance_names,
+        ACK_TIMEOUT_MS, Acquired, InstanceNames, NOT_RESPONDING_MESSAGE, RETRY_INTERVAL_MS, Wait,
+        classify_wait, instance_names,
     };
+    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, GetLastError, HANDLE,
     };
@@ -194,21 +199,51 @@ mod imp {
         Acquired::First(Guard { mutex, show, ack })
     }
 
+    /// Re-assert the show request every [`RETRY_INTERVAL_MS`] until an ack arrives or
+    /// `timeout_ms` passes (WR-01). Both events are auto-reset, so concurrent launchers'
+    /// requests coalesce into one and each ack releases one waiter; re-asserting means every
+    /// waiting launcher keeps a request pending until it receives an ack of its own.
+    fn request_until_acked(show: HANDLE, ack: HANDLE, timeout_ms: u32) -> Wait {
+        let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
+        let interval = Duration::from_millis(u64::from(RETRY_INTERVAL_MS));
+        loop {
+            // SAFETY: `show` is a live event handle owned by the caller.
+            unsafe { SetEvent(show) };
+            let slice = deadline
+                .saturating_duration_since(Instant::now())
+                .min(interval);
+            // `slice` <= RETRY_INTERVAL_MS, so the cast cannot truncate.
+            // SAFETY: `ack` is a live event handle owned by the caller.
+            let code = unsafe { WaitForSingleObject(ack, slice.as_millis() as u32) };
+            if classify_wait(code) == Wait::Signaled {
+                return Wait::Signaled;
+            }
+            if Instant::now() >= deadline {
+                return Wait::TimedOut;
+            }
+        }
+    }
+
     pub fn signal_running(names: &InstanceNames, timeout_ms: u32) -> Wait {
         let show = create_event(&wide(&names.show));
         let ack = create_event(&wide(&names.ack));
         let result = if show.is_null() || ack.is_null() {
             Wait::TimedOut
         } else {
-            // SAFETY: both handles are live events created above. Reset the ack
-            // BEFORE signalling show so a stale ack from an earlier timed-out
-            // launch is dropped.
-            let code = unsafe {
-                ResetEvent(ack);
-                SetEvent(show);
-                WaitForSingleObject(ack, timeout_ms)
-            };
-            classify_wait(code)
+            // SAFETY: `ack` is a live event created above. Reset it once, BEFORE the
+            // first request, so a stale ack left by an earlier launch is dropped. A
+            // concurrent launcher's reset can also wipe an ack meant for this one; the
+            // retry loop makes that harmless, because the request is re-asserted and
+            // answered again on the first instance's next frame.
+            unsafe { ResetEvent(ack) };
+            let result = request_until_acked(show, ack, timeout_ms);
+            if result == Wait::TimedOut {
+                // SAFETY: `show` is a live event created above. Withdraw the request
+                // so an instance that recovers later does not reveal the stripe after
+                // the user was told it is not responding (IN-02).
+                unsafe { ResetEvent(show) };
+            }
+            result
         };
         for h in [show, ack] {
             if !h.is_null() {
@@ -325,6 +360,12 @@ mod tests {
     }
 
     #[test]
+    fn requests_are_re_asserted_every_100ms() {
+        assert_eq!(RETRY_INTERVAL_MS, 100);
+        assert_eq!(ACK_TIMEOUT_MS / RETRY_INTERVAL_MS, 20);
+    }
+
+    #[test]
     fn only_wait_object_0_counts_as_an_answer() {
         assert_eq!(classify_wait(0), Wait::Signaled);
         assert_eq!(classify_wait(258), Wait::TimedOut);
@@ -344,7 +385,8 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Barrier, mpsc};
     use std::time::{Duration, Instant};
 
     /// Unique per-process names; never the production ones, so a running ff is
@@ -427,8 +469,60 @@ mod windows_tests {
             panic!("expected First");
         };
         assert!(!g.take_show_request());
-        assert_eq!(signal_running(&n, 50), Wait::TimedOut);
-        assert!(g.take_show_request());
+    }
+
+    #[test]
+    fn a_timed_out_request_is_withdrawn() {
+        // IN-02: after the launcher gives up, a late-recovering instance must not
+        // reveal the stripe the user was just told is not responding.
+        let n = test_names("withdrawn");
+        let Acquired::First(g) = acquire_named(&n) else {
+            panic!("expected First");
+        };
+        assert_eq!(signal_running(&n, 250), Wait::TimedOut);
         assert!(!g.take_show_request());
+    }
+
+    #[test]
+    fn concurrent_launchers_are_each_answered() {
+        // WR-01: two launchers signalling at once coalesce into one auto-reset
+        // request; the retry loop must still get an ack to each of them.
+        let n = test_names("concurrent");
+        let n_responder = n.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_responder = Arc::clone(&stop);
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let responder = std::thread::spawn(move || {
+            let Acquired::First(g) = acquire_named(&n_responder) else {
+                panic!("expected First");
+            };
+            ready_tx.send(()).unwrap();
+            let start = Instant::now();
+            while !stop_responder.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(5)
+            {
+                if g.take_show_request() {
+                    g.ack();
+                }
+                // About one frame of a hidden stripe (eframe's invisible heartbeat).
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        ready_rx.recv().unwrap();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let launchers: Vec<_> = (0..2)
+            .map(|_| {
+                let n = n.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    signal_running(&n, ACK_TIMEOUT_MS)
+                })
+            })
+            .collect();
+        let results: Vec<Wait> = launchers.into_iter().map(|t| t.join().unwrap()).collect();
+        stop.store(true, Ordering::SeqCst);
+        responder.join().unwrap();
+        assert_eq!(results, vec![Wait::Signaled, Wait::Signaled]);
     }
 }

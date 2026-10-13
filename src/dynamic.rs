@@ -6,7 +6,8 @@
 //! empty filter; a v0.4 file is migrated in memory only), [`economy_body`] prices the economy
 //! section, [`apply_text`] computes the next text for an explicit [`ApplyOp`], and [`apply_file`]
 //! is the single writer: guarded against external edits, backed up once, written atomically.
-//! Loading never writes.
+//! Loading never writes. [`apply_edited`] is the overlay's entry to the same single writer: it
+//! writes caller-edited text after the [`blocking_errors`] grammar gate.
 //!
 //! Two rules inherited from [`crate::compile`]:
 //!
@@ -80,6 +81,18 @@ pub enum DynamicError {
     )]
     #[diagnostic(help("Run `ff-cli sync` (or SYNC ECONOMY in the overlay) and apply again."))]
     EconomyUnavailable,
+
+    /// An enabled rule block has a grammar error; Apply was refused before anything was written.
+    #[error(
+        "Apply refused: {count} enabled rule(s) have grammar errors (first: rule {first_rule}, line {first_line}); nothing was written"
+    )]
+    #[diagnostic(help("Fix those rules or turn them off, then apply again."))]
+    InvalidBlocks {
+        path: String,
+        count: usize,
+        first_rule: usize,
+        first_line: usize,
+    },
 
     /// The guarded write failed.
     #[error(transparent)]
@@ -216,7 +229,7 @@ pub struct ApplyReport {
     pub bytes: usize,
 }
 
-/// The only writer. Never writes on open; the residual TOCTOU window is accepted (see
+/// The CLI writer (no grammar gate; see [`apply_edited`] for the overlay). Never writes on open; the residual TOCTOU window is accepted (see
 /// [`crate::safe_write`]). On success the loaded baseline becomes the written bytes; on error
 /// `loaded` is unchanged.
 pub fn apply_file(loaded: &mut LoadedFilter, op: ApplyOp<'_>) -> Result<ApplyReport, DynamicError> {
@@ -233,6 +246,15 @@ pub fn apply_file(loaded: &mut LoadedFilter, op: ApplyOp<'_>) -> Result<ApplyRep
             source: other,
         },
     })?;
+    write_new_text(loaded, new_text)
+}
+
+/// The one guarded write, shared by [`apply_file`] and [`apply_edited`]. On success the loaded
+/// baseline becomes the written bytes; on error `loaded` is unchanged.
+fn write_new_text(
+    loaded: &mut LoadedFilter,
+    new_text: String,
+) -> Result<ApplyReport, DynamicError> {
     let outcome = crate::safe_write::write_guarded(
         &loaded.path,
         loaded.disk.as_deref(),
@@ -249,6 +271,99 @@ pub fn apply_file(loaded: &mut LoadedFilter, op: ApplyOp<'_>) -> Result<ApplyRep
         migrated,
         bytes,
     })
+}
+
+/// An enabled rule block that blocks Apply because of an Error-severity diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockingError {
+    pub block: crate::filter::BlockId,
+    /// 1-based position among non-economy blocks, in file order.
+    pub rule_index: usize,
+    pub diagnostic: crate::filter::FilterDiagnostic,
+}
+
+/// The Apply grammar gate: Error diagnostics inside enabled, non-economy blocks. Warnings never
+/// block (real foreign filters carry them as opaque lines). With damaged section markers every
+/// block counts as a rule.
+pub fn blocking_errors(doc: &crate::filter::Document) -> Vec<BlockingError> {
+    use crate::filter::Severity;
+    let span = crate::filter::section::find(doc).ok().flatten();
+    let mut out = Vec::new();
+    let mut rule_index = 0usize;
+    for b in doc.blocks() {
+        if let Some(s) = span
+            && s.begin < b.header_line()
+            && b.header_line() < s.end
+        {
+            continue;
+        }
+        rule_index += 1;
+        if !b.is_enabled() {
+            continue;
+        }
+        let owned = b.owned();
+        for d in doc.diagnostics() {
+            if d.severity == Severity::Error && d.line > owned.start && d.line <= owned.end {
+                out.push(BlockingError {
+                    block: b.id(),
+                    rule_index,
+                    diagnostic: d.clone(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// What to do with the economy section when applying edited text.
+#[derive(Debug, Clone, Copy)]
+pub enum EconomyOp<'a> {
+    Keep,
+    Refresh(&'a str),
+    Add(&'a str),
+    Remove,
+}
+
+/// The overlay's Apply: write `edited_text` (with `op` on the economy section) through the shared
+/// guarded writer, after refusing enabled-block grammar errors. Nothing is written on any error.
+pub fn apply_edited(
+    loaded: &mut LoadedFilter,
+    edited_text: &str,
+    op: EconomyOp<'_>,
+) -> Result<ApplyReport, DynamicError> {
+    use crate::filter::section::{self, SectionError};
+    let shown = loaded.path.display().to_string();
+    if !loaded.existed() && edited_text.trim().is_empty() && !matches!(op, EconomyOp::Add(_)) {
+        return Err(DynamicError::FilterNotFound { path: shown });
+    }
+    let doc = crate::filter::parse(edited_text.as_bytes()).map_err(|_| DynamicError::NotUtf8 {
+        path: shown.clone(),
+    })?;
+    let blocking = blocking_errors(&doc);
+    if let Some(first) = blocking.first() {
+        return Err(DynamicError::InvalidBlocks {
+            path: shown,
+            count: blocking.len(),
+            first_rule: first.rule_index,
+            first_line: first.diagnostic.line,
+        });
+    }
+    let new_text = match op {
+        EconomyOp::Keep => Ok(edited_text.to_string()),
+        EconomyOp::Refresh(body) => section::refresh(edited_text, body),
+        EconomyOp::Add(body) => section::add(edited_text, body),
+        EconomyOp::Remove => section::remove(edited_text),
+    }
+    .map_err(|e| match e {
+        SectionError::NoSection => DynamicError::NoEconomySection {
+            path: shown.clone(),
+        },
+        other => DynamicError::Section {
+            path: shown.clone(),
+            source: other,
+        },
+    })?;
+    write_new_text(loaded, new_text)
 }
 
 #[cfg(test)]
@@ -492,5 +607,169 @@ mod tests {
         assert!(!after.contains("ff:economy"));
         assert!(crate::safe_write::backup_path(&p).exists());
         assert_ne!(after.as_bytes(), &with[..]);
+    }
+
+    fn bad_rule() -> &'static str {
+        "Show # ok\n\tRarity Rare\n\nShow # bad\n\tRarity =< Rare\n"
+    }
+
+    #[test]
+    fn gate_flags_enabled_error_with_rule_index_and_line() {
+        let doc = crate::filter::parse(bad_rule().as_bytes()).unwrap();
+        assert!(
+            doc.diagnostics()
+                .iter()
+                .any(|d| d.severity == crate::filter::Severity::Error)
+        );
+        let e = blocking_errors(&doc);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].rule_index, 2);
+        assert_eq!(e[0].diagnostic.line, 5);
+    }
+
+    #[test]
+    fn gate_ignores_disabled_block() {
+        let doc =
+            crate::filter::parse(b"Show # ok\n\tRarity Rare\n\n#Show # bad\n#\tRarity =< Rare\n")
+                .unwrap();
+        assert!(blocking_errors(&doc).is_empty());
+    }
+
+    #[test]
+    fn gate_ignores_warnings() {
+        let doc = crate::filter::parse(b"Show\n\tFrobnicate 3\n").unwrap();
+        assert!(
+            doc.diagnostics()
+                .iter()
+                .all(|d| d.severity != crate::filter::Severity::Error)
+        );
+        assert!(blocking_errors(&doc).is_empty());
+    }
+
+    #[test]
+    fn gate_numbering_skips_economy_and_counts_after_end() {
+        let base = "Show # first\n\tRarity Rare\n\n";
+        let with = crate::filter::section::add(base, "Show # eco\n\tRarity Rare\n").unwrap();
+        let text = format!("{with}\nShow # after\n\tRarity =< Rare\n");
+        let doc = crate::filter::parse(text.as_bytes()).unwrap();
+        let e = blocking_errors(&doc);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].rule_index, 2);
+    }
+
+    #[test]
+    fn gate_passes_filterblade_fixture() {
+        let doc = crate::filter::parse(include_bytes!(
+            "../tests/fixtures/parser/filterblade.filter"
+        ))
+        .unwrap();
+        assert!(blocking_errors(&doc).is_empty());
+    }
+
+    #[test]
+    fn gate_works_with_damaged_markers() {
+        let text = format!("{}\n#ff:economy-begin only begin\n", bad_rule());
+        let doc = crate::filter::parse(text.as_bytes()).unwrap();
+        assert_eq!(blocking_errors(&doc).len(), 1);
+    }
+
+    #[test]
+    fn edited_keep_writes_verbatim_then_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        let mut l = LoadedFilter::load(&p).unwrap();
+        let text = "Show # a\n\tRarity Rare\n";
+        let r = apply_edited(&mut l, text, EconomyOp::Keep).unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), text);
+        assert_eq!(r.bytes, text.len());
+        let r2 = apply_edited(&mut l, text, EconomyOp::Keep).unwrap();
+        assert_eq!(r2.outcome, crate::safe_write::WriteOutcome::Unchanged);
+    }
+
+    #[test]
+    fn edited_economy_ops() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        let body = seed_body();
+        let mut l = LoadedFilter::load(&p).unwrap();
+        let text = "Show # a\n\tRarity Rare\n";
+        apply_edited(&mut l, text, EconomyOp::Add(&body)).unwrap();
+        let with = fs::read_to_string(&p).unwrap();
+        assert!(crate::filter::section::has_section(&with).unwrap());
+        apply_edited(&mut l, &with, EconomyOp::Refresh(&body)).unwrap();
+        apply_edited(&mut l, &with, EconomyOp::Remove).unwrap();
+        assert!(!fs::read_to_string(&p).unwrap().contains("ff:economy"));
+        assert!(matches!(
+            apply_edited(&mut l, text, EconomyOp::Refresh(&body)),
+            Err(DynamicError::NoEconomySection { .. })
+        ));
+    }
+
+    #[test]
+    fn edited_invalid_blocks_write_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        fs::write(&p, "Show\n").unwrap();
+        let mut l = LoadedFilter::load(&p).unwrap();
+        let err = apply_edited(&mut l, bad_rule(), EconomyOp::Keep).expect_err("gate");
+        assert!(matches!(
+            err,
+            DynamicError::InvalidBlocks {
+                count: 1,
+                first_rule: 2,
+                first_line: 5,
+                ..
+            }
+        ));
+        assert_eq!(fs::read_to_string(&p).unwrap(), "Show\n");
+        assert_eq!(l.text(), "Show\n");
+        assert!(!crate::safe_write::backup_path(&p).exists());
+    }
+
+    #[test]
+    fn edited_absent_file_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        let mut l = LoadedFilter::load(&p).unwrap();
+        for op in [EconomyOp::Keep, EconomyOp::Refresh("x"), EconomyOp::Remove] {
+            assert!(matches!(
+                apply_edited(&mut l, "  \n", op),
+                Err(DynamicError::FilterNotFound { .. })
+            ));
+        }
+        assert!(!p.exists());
+        apply_edited(&mut l, "Show\n", EconomyOp::Keep).unwrap();
+        assert!(p.exists());
+    }
+
+    #[test]
+    fn edited_refuses_file_changed_since_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = copy_fixture(dir.path(), "seed-universal.filter");
+        let mut l = LoadedFilter::load(&p).unwrap();
+        fs::write(&p, b"Show # elsewhere\n").unwrap();
+        let err = apply_edited(&mut l, "Show # mine\n", EconomyOp::Keep).expect_err("refuse");
+        assert!(matches!(
+            err,
+            DynamicError::Write(crate::safe_write::WriteError::ChangedOnDisk { .. })
+        ));
+        assert_eq!(fs::read(&p).unwrap(), b"Show # elsewhere\n");
+        assert!(!l.text().contains("mine"));
+    }
+
+    #[test]
+    fn edited_backs_up_once_and_reports_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = copy_fixture(dir.path(), "v04-dynamic.filter");
+        let orig = fs::read(&p).unwrap();
+        let mut l = LoadedFilter::load(&p).unwrap();
+        assert!(l.migrated());
+        let text = l.text().to_string();
+        let r = apply_edited(&mut l, &text, EconomyOp::Keep).unwrap();
+        assert!(r.migrated);
+        assert_eq!(fs::read(crate::safe_write::backup_path(&p)).unwrap(), orig);
+        let r2 = apply_edited(&mut l, &format!("{text}\n#x\n"), EconomyOp::Keep).unwrap();
+        assert!(!r2.migrated);
+        assert_eq!(fs::read(crate::safe_write::backup_path(&p)).unwrap(), orig);
     }
 }

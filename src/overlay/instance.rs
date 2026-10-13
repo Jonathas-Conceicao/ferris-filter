@@ -342,19 +342,22 @@ mod imp {
         let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
         let interval = Duration::from_millis(u64::from(RETRY_INTERVAL_MS));
         loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            // Never send a request there is no time left to wait for (review iteration 2,
+            // IN-02): one sent with a zero slice could still be consumed by a recovering
+            // instance after this launch has decided to report "not responding".
+            // (Under 1 ms counts as none: the wait below takes whole milliseconds.)
+            if remaining < Duration::from_millis(1) {
+                return Wait::TimedOut;
+            }
             // SAFETY: `show` is a live event handle owned by the caller.
             unsafe { SetEvent(show) };
-            let slice = deadline
-                .saturating_duration_since(Instant::now())
-                .min(interval);
+            let slice = remaining.min(interval);
             // `slice` <= RETRY_INTERVAL_MS, so the cast cannot truncate.
             // SAFETY: `ack` is a live event handle owned by the caller.
             let code = unsafe { WaitForSingleObject(ack, slice.as_millis() as u32) };
             if classify_wait(code) == Wait::Signaled {
                 return Wait::Signaled;
-            }
-            if Instant::now() >= deadline {
-                return Wait::TimedOut;
             }
         }
     }

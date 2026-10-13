@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
-stopped_at: Phase 20 UI-SPEC approved
-last_updated: "2026-10-13T03:22:23.458Z"
-last_activity: 2026-10-13 -- Phase 20 planning complete
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-10-13T03:28:19.887Z"
+last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 4
   total_plans: 31
-  completed_plans: 22
+  completed_plans: 23
   percent: 24
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 
 ## Current Position
 
-Phase: 18 (Filter as Store & Economy Section) — EXECUTING
-Plan: 7 of 7
-Status: Ready to execute
-Last activity: 2026-10-13 -- Phase 20 planning complete
+Phase: 20 (Full Grammar Block Editing) — EXECUTING
+Plan: 2 of 9
+Status: Ready to execute plan 20-02 (20-01 complete)
+Last activity: 2026-10-13
 
 Progress: [█████████░] 93%
 
@@ -66,6 +66,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 18 P04 | 15min | 2 tasks | 2 files |
 | Phase 18 P05 | 25min | 2 tasks | 4 files |
 | Phase 19 P02 | 25min | 2 tasks | 4 files |
+| Phase 20 P01 | 25min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -131,6 +132,7 @@ work (carried forward past the v0.3 close):
 - 16-04: edits rebuild whole index and remap BlockIds by position; edit refused if block count/header/owned length/enabled state would change
 - [Phase 19]: 19-02: structural ops go through commit_structural (explicit ids per block); moves never cross economy markers
 - [Phase 19-03]: Only Error diagnostics in enabled non-economy blocks block Apply; rules-only Apply allowed via EconomyOp::Keep
+- [Phase 20]: 20-01: Whole patch refuses only new Errors; other line ops refuse new Errors and Warnings; set_continue/set_block_keyword stay lenient on invalid disabled blocks
 
 ### Pending Todos
 
@@ -270,9 +272,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T02:51:22.049Z
-Stopped at: Phase 20 UI-SPEC approved
-Resume file: .planning/phases/20-full-grammar-block-editing/20-UI-SPEC.md
+Last session: 2026-10-13T03:28:19.879Z
+Stopped at: Completed 20-01-PLAN.md
+Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is
 independent and can run in parallel.

@@ -225,7 +225,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 20-01-PLAN.md — filter line-patch API: patch one line's operator/values, insert/remove/splice body lines, per-line EOLs, new-diagnostics-only validation, FilterBlade no-op sweep
+- [x] 20-01-PLAN.md — filter line-patch API: patch one line's operator/values, insert/remove/splice body lines, per-line EOLs, new-diagnostics-only validation, FilterBlade no-op sweep
 - [ ] 20-02-PLAN.md — egui-free overlay::grammar (picker groups, operator choices/labels, slider ranges, defaults, round-trip-or-raw value codec) and ClassCatalog from config.json
 - [ ] 20-03-PLAN.md — Body widgets: remove X, themed slider, number field, chip list, colour swatch, toggle chip, badge; 24px targets; WARM_ACCENT_TEXT
 
@@ -249,6 +249,7 @@ Plans:
 **Wave 6** *(blocked on Wave 5 completion)*
 
 - [ ] 20-09-PLAN.md — styled/unknown flags and flag budget, capped outcome area and status order, CLAUDE.md/CHANGELOG/REQUIREMENTS, manual verification script
+
 **UI hint**: yes
 
 ### Phase 21: Overlay Configuration Tab
@@ -288,7 +289,7 @@ Plans:
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
-| 20. Full-Grammar Block Editing | 0/? | Not started | - |
+| 20. Full-Grammar Block Editing | 1/9 | In Progress|  |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 

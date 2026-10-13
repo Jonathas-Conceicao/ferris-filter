@@ -476,6 +476,9 @@ impl WorkingFilter {
                 .set_block_keyword(id, kw)
                 .map_err(|e| e.to_string()),
             RowAction::SetContinue(id, on) => {
+                // The "moved across Continue" warning may no longer be true once a Continue
+                // line is added or removed, so drop all of them rather than leave a stale one.
+                self.moved.clear();
                 self.doc.set_continue(id, on).map_err(|e| e.to_string())
             }
             RowAction::SetName(id, s) => {

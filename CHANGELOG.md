@@ -58,7 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dynamic_base.json` are gone (the template survives only as the test fixture
   `tests/fixtures/v04-dynamic-base.json`); `apply --reset`, `--base`, `--store` and `--dest` are
   removed; plain `apply` refreshes only the economy section of an existing filter. The overlay's
-  rule editor is temporarily replaced by a status notice until the next phase.
+  rule editor is temporarily replaced by a status notice until the next phase. A leftover
+  repo-root `dynamic.json` is no longer read and can be deleted; it stays git-ignored so it is
+  never committed. `*.ffbak` backups are git-ignored too.
 - **BREAKING:** `config.json` and `dynamic_base.json` no longer have a `styles` section. A config
   or store (`dynamic.json`, custom `*_config.json`) that still has one loads only if every inline
   entry equals the same-named styles.json entry; the section is then dropped (the overlay's next

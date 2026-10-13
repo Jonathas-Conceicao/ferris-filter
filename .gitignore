@@ -21,3 +21,10 @@ desktop.ini
 # Dynamic filter: `apply` edits dynamic.filter in the game folder in place (the filter
 # is the store); a repo-root copy is per-user and never committed.
 /dynamic.filter
+
+# Obsolete v0.4 per-user store. Nothing reads dynamic.json since Phase 18 (the filter is the
+# store), but a leftover copy is personal state; ignored only so it is never committed.
+/dynamic.json
+
+# One-time backups `apply` keeps beside a filter it rewrites (`<name>.filter.ffbak`).
+*.ffbak

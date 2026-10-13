@@ -200,8 +200,10 @@ fn write_guarded_with(
             source: e,
         }
     })?;
+    // sync_all, not flush: the data must be durable before the rename publishes it, or a crash
+    // in between can leave an empty or partial filter under the final name.
     temp.write_all(new_bytes)
-        .and_then(|_| temp.flush())
+        .and_then(|_| temp.as_file().sync_all())
         .map_err(|e| WriteError::Unwritable {
             path: shown(),
             source: e,

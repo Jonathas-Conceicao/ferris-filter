@@ -31,6 +31,14 @@ use hotkey::HotkeyStatus;
 
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
+    // INST-01 / Phase 22 -- a second `ff` signals the running one to show its stripe (or shows
+    // the not-responding message after `instance::ACK_TIMEOUT_MS`) and exits here, before it
+    // registers a hotkey or builds a tray icon, so repeated launches never leave a second
+    // stripe, icon or hotkey registration. The guard lives in `OverlayApp` until exit.
+    let Some(instance_guard) = instance::acquire() else {
+        return Ok(());
+    };
+
     // Thread affinity (RESEARCH Pattern 3, the one hard constraint): both the
     // hotkey manager and the tray must be built on the thread that runs the
     // Win32 message loop. `launch()` runs on the main thread (called directly
@@ -89,6 +97,7 @@ pub fn launch() -> eframe::Result<()> {
                 tray,
                 hotkey_manager,
                 hotkey_status,
+                instance_guard,
             )))
         }),
     )

@@ -47,6 +47,7 @@ use super::config_state::{
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::HotkeyStatus;
+use super::instance;
 use super::layout;
 use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyPlan, EconomyView, RowAction, WorkingFilter};
@@ -74,6 +75,11 @@ pub struct OverlayApp {
     /// Registration outcome for `Ctrl+Shift+Z`. Read every frame to filter incoming
     /// `GlobalHotKeyEvent`s to the one combo this app registered.
     hotkey_status: HotkeyStatus,
+
+    /// The single-instance guard (INST-01), held for the process lifetime; dropping it releases
+    /// the instance name so the next `ff` launch becomes the running one. Polled once per frame
+    /// for a show request from a second launch.
+    instance: instance::Guard,
 
     /// Set by the tray's left click, a `Ctrl+Shift+Z` press, or a tray "Show"
     /// while currently hidden. Consumed once per frame by [`visibility::advance`].
@@ -573,6 +579,7 @@ impl OverlayApp {
         tray: TrayHandles,
         hotkey_manager: Option<GlobalHotKeyManager>,
         hotkey_status: HotkeyStatus,
+        instance: instance::Guard,
     ) -> Self {
         let root = crate::paths::app_root().map_err(|e| e.to_string());
         let game_dir = dynamic::default_destination();
@@ -594,6 +601,7 @@ impl OverlayApp {
             tray,
             hotkey_manager,
             hotkey_status,
+            instance,
             toggle_requested: false,
             // The window created in `overlay::launch` starts visible
             // (`with_active(false)` only suppresses activation, not
@@ -1292,6 +1300,20 @@ impl eframe::App for OverlayApp {
                 }
                 None => {}
             }
+        }
+
+        // INST-01 (CONTEXT "Behaviour"): a second launch is a reveal, never a toggle (same rule
+        // as the tray's Show, D-17). It deliberately bypasses the hotkey's foreground gate
+        // because the signal comes from outside the game and the stripe. The reveal itself goes
+        // through `visibility::advance` and `win::reveal` (`SW_SHOWNOACTIVATE`, no focus steal).
+        // The existing `request_repaint_after(50ms)` plus eframe's hidden-window heartbeat is
+        // what wakes a stripe hidden to the tray, so no extra waker thread is needed.
+        if self.instance.take_show_request() {
+            if self.visibility == Visibility::Hidden {
+                self.toggle_requested = true;
+            }
+            // An already-shown stripe is still an answer.
+            self.instance.ack();
         }
 
         // The frame decision: one call to the tested state machine, one

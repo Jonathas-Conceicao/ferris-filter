@@ -6,16 +6,21 @@
 //! by delegating the decision to [`super::visibility`] and the OS call to [`super::win`]; and the
 //! filter-as-store footer (Phase 18).
 //!
-//! **Filter-as-store (Phase 18).** The game-folder `dynamic.filter` is the store. On launch the
-//! overlay resolves the app root ([`crate::paths::app_root`], never the working directory, so
-//! a double-click launch works) and loads the filter ([`dynamic::LoadedFilter::load`], which
-//! never writes); RELOAD repeats both, and is offered whenever the root, the load, or the
-//! economy markers are broken, so every such state can be recovered without a restart. APPLY refreshes only the economy section through [`dynamic::economy_body`] and
-//! [`dynamic::apply_file`] -- the same functions the CLI's `apply` uses. ADD ECONOMY SECTION is a
-//! separate, explicit button; APPLY never creates a section. When the guarded write refuses
-//! because the file changed on disk, the stripe offers RELOAD, which re-reads the file and
-//! discards in-memory state. Rule editing is temporarily absent (it returns in Phase 19, which
-//! rebuilds the editor over parsed filter blocks).
+//! **Filter-as-store (Phase 18) and the rule list (Phase 19).** The game-folder `dynamic.filter`
+//! is the store. On launch the overlay resolves the app root ([`crate::paths::app_root`], never
+//! the working directory, so a double-click launch works) and loads the filter
+//! ([`dynamic::LoadedFilter::load`], which never writes); RELOAD repeats both, and is offered
+//! whenever the root, the load, or the economy markers are broken, so every such state can be
+//! recovered without a restart.
+//!
+//! The rule list is back, now over parsed filter blocks: a searchable, virtualized list
+//! ([`super::rule_list`]) over a [`WorkingFilter`] ([`super::rules`]). Every row operation edits
+//! that in-memory document only. APPLY is the single writer: it writes the edited document through
+//! [`dynamic::apply_edited`] (grammar gate, guarded atomic write) and is refused while an enabled
+//! rule has a grammar error. REVERT re-parses the last applied text. The economy section is a
+//! pinned footer row whose Add/Remove are staged and written by the next APPLY. When the guarded
+//! write refuses because the file changed on disk, the stripe offers RELOAD, which re-reads the
+//! file and discards unapplied edits.
 //!
 //! The decisions (which button is live, what the status says) are pure functions in
 //! [`super::apply`]; this file only draws them and performs the calls.
@@ -27,6 +32,7 @@ use global_hotkey::GlobalHotKeyManager;
 
 use crate::compile::{InputPaths, PriceSource, PriceSourcePolicy};
 use crate::dynamic::{self, EconomyOp, LoadedFilter};
+use crate::filter::BlockId;
 use crate::safe_write::WriteOutcome;
 
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
@@ -234,6 +240,27 @@ fn apply_row_actions(
         }
     }
     (changed, status)
+}
+
+/// The rule count beside the FILTER header: `142 rules`, `1 rule`, or `7 of 142 rules` while a
+/// search is active.
+fn rule_count_text(total: usize, shown: usize, filtering: bool) -> String {
+    let noun = if total == 1 { "rule" } else { "rules" };
+    if filtering {
+        format!("{shown} of {total} {noun}")
+    } else {
+        format!("{total} {noun}")
+    }
+}
+
+/// A heading plus a wrapped explanation, used for the empty and error states of the list.
+fn centered_notice(ui: &mut egui::Ui, heading: &str, body: &str) {
+    ui.add_space(16.0);
+    ui.vertical_centered(|ui| {
+        ui.label(theme::section_header(heading));
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(egui::RichText::new(body).color(theme::TAB_ACTIVE)).wrap());
+    });
 }
 
 impl OverlayApp {
@@ -548,9 +575,19 @@ impl eframe::App for OverlayApp {
         // Computed once per frame; every button below is shown/enabled strictly from it.
         let state = self.filter_state();
         let dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let first_blocking = self
+            .working
+            .as_ref()
+            .and_then(|w| w.blocking().first().cloned());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
         let actions =
             apply::footer_actions(self.root.is_ok(), state, self.needs_reload, dirty, blocking);
+
+        // Everything the panels want to change is collected here and applied once, after both have
+        // rendered (deferred-action rule): row operations, the economy footer and the jump.
+        let mut row_actions: Vec<RowAction> = Vec::new();
+        let mut economy_action: Option<rule_list::EconomyFooterAction> = None;
+        let mut jump_to: Option<BlockId> = None;
 
         egui::CentralPanel::default()
             .frame(panel_frame)
@@ -584,14 +621,31 @@ impl eframe::App for OverlayApp {
                             }),
                     )
                     .show(ui, |ui| {
+                        // The pinned economy summary row: a locked block count, with Add/Remove
+                        // staged in memory and written by the next APPLY.
+                        if let Some(working) = &self.working {
+                            let can_edit_economy = self.root.is_ok() && !self.needs_reload;
+                            economy_action = rule_list::economy_footer(
+                                ui,
+                                working.economy(),
+                                &mut self.list,
+                                can_edit_economy,
+                            );
+                        }
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             ui.add_space(10.0);
                             ui.label(theme::row_label(apply::indicator(self.apply_state)));
                         });
                         ui.add_space(4.0);
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.add_space(10.0);
+                            if ui
+                                .add_enabled(actions.add_rule, egui::Button::new("+ ADD RULE"))
+                                .clicked()
+                            {
+                                row_actions.push(RowAction::AddRule);
+                            }
                             if actions.reload && ui.button("RELOAD").clicked() {
                                 self.reload();
                             }
@@ -691,61 +745,86 @@ impl eframe::App for OverlayApp {
                                 ui.colored_label(text_color, message);
                             });
                         }
-                        if self.needs_reload {
+                        if let Some(message) = &self.list_status {
                             ui.horizontal_wrapped(|ui| {
                                 ui.add_space(10.0);
-                                ui.colored_label(
-                                    theme::WARM_ACCENT,
-                                    "The filter changed on disk. RELOAD re-reads it and discards \
-                                 in-memory state.",
-                                );
+                                ui.colored_label(theme::TAB_ACTIVE, message);
+                            });
+                        }
+                        // The grammar gate, as a clickable line: jumps to the first offending rule.
+                        if let Some(first) = &first_blocking {
+                            let text = apply::invalid_blocks_message(
+                                blocking,
+                                first.rule_index,
+                                first.diagnostic.line,
+                            );
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add_space(10.0);
+                                let label = egui::Label::new(
+                                    egui::RichText::new(text).color(theme::WARM_ACCENT),
+                                )
+                                .sense(egui::Sense::click());
+                                if ui
+                                    .add(label)
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    jump_to = Some(first.block);
+                                }
                             });
                         }
                     });
 
                 ui.add_space(10.0);
+                let total_rules = self.working.as_ref().map_or(0, |w| w.rows().len());
+                let shown_rules = match &mut self.working {
+                    Some(w) => w.matches(&self.query).len(),
+                    None => 0,
+                };
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
                     ui.label(theme::section_header("FILTER"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new(rule_count_text(
+                                total_rules,
+                                shown_rules,
+                                !self.query.trim().is_empty(),
+                            ))
+                            .color(theme::LABEL_TAN),
+                        );
+                    });
                 });
                 ui.add_space(6.0);
 
-                // Status block: root, filter path and state, v0.4 notice, rule-editing notice.
+                // Status block: root, filter path and state, v0.4 notice.
                 let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
                 let mut lines: Vec<(egui::Color32, String)> = Vec::new();
                 if let Err(message) = &self.root {
                     lines.push((theme::WARM_ACCENT, message.clone()));
                 }
-                match &self.filter {
-                    Ok(loaded) => {
-                        lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
-                        let text = match (state, loaded.has_section()) {
-                            (FilterState::Damaged, Err(err)) => err.to_string(),
-                            _ => apply::filter_state_message(state, false),
-                        };
-                        let colour = if state == FilterState::Damaged {
-                            theme::WARM_ACCENT
-                        } else {
-                            theme::LABEL_TAN
-                        };
-                        lines.push((colour, text));
-                    }
-                    Err(message) => lines.push((theme::WARM_ACCENT, message.clone())),
+                if let Ok(loaded) = &self.filter {
+                    lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
+                    let text = match (state, loaded.has_section()) {
+                        (FilterState::Damaged, Err(err)) => err.to_string(),
+                        _ => apply::filter_state_message(state, false),
+                    };
+                    let colour = if state == FilterState::Damaged {
+                        theme::WARM_ACCENT
+                    } else {
+                        theme::LABEL_TAN
+                    };
+                    lines.push((colour, text));
                 }
                 if migrated {
                     lines.push((
                         theme::LABEL_TAN,
                         "This is a v0.4 dynamic.filter. It will be converted on the next APPLY (a \
-                     .ffbak backup of the original is kept)."
+                         .ffbak backup of the original is kept)."
                             .to_string(),
                     ));
                 }
-                lines.push((
-                    theme::TAB_ACTIVE,
-                    "Rule editing returns in the next update. APPLY refreshes only the economy \
-                 section."
-                        .to_string(),
-                ));
                 for (colour, text) in lines {
                     ui.horizontal(|ui| {
                         ui.add_space(10.0);
@@ -753,7 +832,81 @@ impl eframe::App for OverlayApp {
                     });
                     ui.add_space(4.0);
                 }
+
+                match (&mut self.working, &self.filter) {
+                    (Some(working), _) => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            rule_list::search_bar(ui, &mut self.query);
+                        });
+                        ui.add_space(6.0);
+                        let visible = working.matches(&self.query);
+                        if working.rows().is_empty() {
+                            centered_notice(
+                                ui,
+                                "No rules in this filter yet",
+                                "Press + ADD RULE to write your first one. Blocks you add are \
+                                 saved with the filter when you press APPLY.",
+                            );
+                        } else if visible.is_empty() {
+                            centered_notice(
+                                ui,
+                                &format!("No rules match \"{}\"", self.query.trim()),
+                                "Check the spelling, or press Clear to see every rule.",
+                            );
+                        } else {
+                            let frame = rule_list::show_list(
+                                ui,
+                                working,
+                                &visible,
+                                &mut self.list,
+                                self.query.trim().is_empty(),
+                            );
+                            row_actions.extend(frame.actions);
+                        }
+                    }
+                    (None, Err(message)) => {
+                        centered_notice(ui, "The filter could not be loaded.", message);
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            ui.label(
+                                egui::RichText::new("Fix the file and press RELOAD.")
+                                    .color(theme::LABEL_TAN),
+                            );
+                        });
+                    }
+                    (None, Ok(_)) => {}
+                }
             });
+
+        // Deferred mutations: jump from the grammar line, then row operations, then the economy
+        // footer. Quit stays last.
+        if let (Some(target), Some(working)) = (jump_to, &self.working) {
+            if !working.row_matches(target, &self.query) {
+                self.query.clear();
+            }
+            self.list.expanded = Some(target);
+            self.list.pending_scroll = Some(target);
+        }
+        if !row_actions.is_empty() {
+            if let Some(working) = &mut self.working {
+                let (changed, status) =
+                    apply_row_actions(working, &mut self.list, &self.query, row_actions);
+                if changed {
+                    self.apply_state = ApplyState::Unapplied;
+                    self.apply_message = None;
+                    self.list_status = None;
+                }
+                if status.is_some() {
+                    self.list_status = status;
+                }
+            }
+        }
+        match economy_action {
+            Some(rule_list::EconomyFooterAction::Add) => self.stage_add_economy(),
+            Some(rule_list::EconomyFooterAction::Remove) => self.stage_remove_economy(),
+            None => {}
+        }
 
         if quit_requested {
             // Quit is the only path that ends the process.
@@ -839,6 +992,63 @@ mod tests {
             old_bottom > screen_bottom,
             "the pre-fix arrangement was expected to push APPLY off-screen, but it did not \
              ({old_bottom} <= {screen_bottom}) -- this test is no longer exercising the defect"
+        );
+    }
+
+    #[test]
+    fn rule_count_copy() {
+        assert_eq!(super::rule_count_text(142, 142, false), "142 rules");
+        assert_eq!(super::rule_count_text(1, 1, false), "1 rule");
+        assert_eq!(super::rule_count_text(0, 0, false), "0 rules");
+        assert_eq!(super::rule_count_text(142, 7, true), "7 of 142 rules");
+    }
+
+    /// EDIT-07 at stripe scale: a 511-block filter in the real list keeps the footer on screen
+    /// and draws only a bounded window of rows.
+    #[test]
+    fn a_511_block_filter_keeps_the_footer_on_screen_and_draws_a_bounded_window() {
+        use crate::overlay::rule_list::{self, ListUi};
+        use crate::overlay::rules::WorkingFilter;
+
+        let bytes = include_bytes!("../../tests/fixtures/parser/filterblade.filter");
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        let mut working = WorkingFilter::from_text(&text);
+        assert!(
+            working.rows().len() > 400,
+            "fixture has a few hundred rules"
+        );
+        let visible = working.matches("");
+        let mut list = ListUi::default();
+
+        let ctx = stripe_ctx();
+        let mut input = stripe_input();
+        input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(460.0, 1000.0),
+        ));
+        let mut footer_bottom = 0.0_f32;
+        let mut screen_bottom = 0.0_f32;
+        let mut drawn = 0usize;
+        ctx.run_ui(input, |ui| {
+            screen_bottom = ui.max_rect().max.y;
+            egui::CentralPanel::default().show(ui, |ui| {
+                egui::Panel::bottom(egui::Id::new("test-footer")).show(ui, |ui| {
+                    footer_bottom = ui.button("APPLY").rect.max.y;
+                });
+                drawn = rule_list::show_list(ui, &working, &visible, &mut list, true).drawn;
+            });
+        })
+        .drop_without_applying_deltas();
+
+        assert!(
+            footer_bottom <= screen_bottom,
+            "{footer_bottom} > {screen_bottom}"
+        );
+        assert!(drawn > 0, "something must be drawn");
+        assert!(
+            drawn < 80,
+            "virtualization drew {drawn} of {} rows",
+            working.rows().len()
         );
     }
 

@@ -468,6 +468,122 @@ pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4]) -> Option<[u8; 4]> {
     result
 }
 
+/// `R {r} G {g} B {b}` -- the opaque swatch caption and tooltip.
+pub fn rgb_caption(rgb: [u8; 3]) -> String {
+    format!("R {} G {} B {}", rgb[0], rgb[1], rgb[2])
+}
+
+/// An opaque RGB swatch that opens egui's picker without an alpha channel. `Style` stores RGB
+/// and the emitter always writes alpha 255, so a picker with alpha would show a translucency the
+/// filter never emits. Returns `Some(new)` only when the picked RGB differs from `rgb`.
+pub fn colour_swatch_rgb(ui: &mut egui::Ui, rgb: [u8; 3]) -> Option<[u8; 3]> {
+    let mut colour = hsva_of([rgb[0], rgb[1], rgb[2], 255]);
+    let caption = rgb_caption(rgb);
+    let mut result = None;
+    ui.horizontal(|ui| {
+        let response = egui::color_picker::color_edit_button_hsva(
+            ui,
+            &mut colour,
+            egui::color_picker::Alpha::Opaque,
+        );
+        if response.changed() {
+            let now = colour.to_srgba_unmultiplied();
+            let now = [now[0], now[1], now[2]];
+            if now != rgb {
+                result = Some(now);
+            }
+        }
+        response.on_hover_text(&caption);
+        ui.label(
+            egui::RichText::new(&caption)
+                .size(theme::ROW_SUMMARY_SIZE)
+                .color(theme::LABEL_TAN),
+        );
+    });
+    result
+}
+
+fn rgb_or_unset(rgb: Option<[u8; 3]>) -> String {
+    rgb.map_or_else(|| "Not set (game default)".to_string(), rgb_caption)
+}
+
+/// The sample-text size of a preview chip for a style font size: clamped to what fits the chip.
+fn chip_font_size(font: Option<u8>) -> f32 {
+    font.map_or(14.0, |f| f32::from(f).clamp(12.0, 18.0))
+}
+
+/// A 120x24 preview of how a style draws an item label: background over a checkerboard, a 2px
+/// border and the sample text `Item Name`. Hide styles are drawn at half strength with a strike
+/// line and say so in the tooltip.
+pub fn style_preview_chip(
+    ui: &mut egui::Ui,
+    name: &str,
+    style: &crate::models::config::Style,
+) -> egui::Response {
+    use crate::models::config::StyleAction;
+
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(120.0, 24.0), egui::Sense::hover());
+    let hidden = style.action == StyleAction::Hide;
+    let fade = |c: egui::Color32| if hidden { c.gamma_multiply(0.5) } else { c };
+    let rgb = |c: [u8; 3]| egui::Color32::from_rgb(c[0], c[1], c[2]);
+
+    let painter = ui.painter_at(rect);
+    // 6px checkerboard so any translucency would be visible.
+    for cy in 0..4 {
+        for cx in 0..20 {
+            let shade = if (cx + cy) % 2 == 0 {
+                egui::Color32::from_gray(0x2A)
+            } else {
+                egui::Color32::from_gray(0x1A)
+            };
+            let cell = egui::Rect::from_min_size(
+                rect.min + egui::vec2(cx as f32 * 6.0, cy as f32 * 6.0),
+                egui::vec2(6.0, 6.0),
+            );
+            painter.rect_filled(cell, 0.0, shade);
+        }
+    }
+    if let Some(bg) = style.background {
+        painter.rect_filled(rect, 4.0, rgb(bg));
+    }
+    if let Some(border) = style.border {
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            4.0,
+            egui::Stroke::new(2.0, fade(rgb(border))),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let text_colour = style.text.map_or(theme::VALUE_TEXT, rgb);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Item Name",
+        egui::FontId::proportional(chip_font_size(style.font)),
+        fade(text_colour),
+    );
+    if hidden {
+        painter.line_segment(
+            [rect.left_bottom(), rect.right_top()],
+            egui::Stroke::new(1.0, theme::DISABLED_TEXT),
+        );
+    }
+
+    let label = format!("Preview of style {name}");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
+    let mut tip = String::new();
+    if hidden {
+        tip.push_str("Hidden in game; Alt reveals it.\n");
+    }
+    tip.push_str(&format!(
+        "Text: {}\nBorder: {}\nBackground: {}",
+        rgb_or_unset(style.text),
+        rgb_or_unset(style.border),
+        rgb_or_unset(style.background)
+    ));
+    response.on_hover_text(tip)
+}
+
 /// What one frame of [`chip_list`] asks the caller to do.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ChipListOutcome {
@@ -1096,5 +1212,44 @@ mod tests {
             out.drop_without_applying_deltas();
             assert!(found, "caption {expected:?} not painted");
         }
+    }
+
+    #[test]
+    fn rgb_caption_formats_three_channels() {
+        assert_eq!(rgb_caption([255, 121, 198]), "R 255 G 121 B 198");
+    }
+
+    #[test]
+    fn chip_font_is_clamped_to_what_fits() {
+        assert_eq!(chip_font_size(None), 14.0);
+        assert_eq!(chip_font_size(Some(5)), 12.0);
+        assert_eq!(chip_font_size(Some(37)), 18.0);
+        assert_eq!(chip_font_size(Some(15)), 15.0);
+    }
+
+    #[test]
+    fn the_preview_chip_is_120_by_24_for_show_and_hide() {
+        use crate::models::config::{Style, StyleAction};
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        let mut sizes = Vec::new();
+        let out = ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let mut show = Style::blank_show();
+                show.text = Some([255, 121, 198]);
+                show.background = Some([40, 42, 54]);
+                let mut hide = Style::blank_show();
+                hide.action = StyleAction::Hide;
+                for s in [&show, &hide] {
+                    sizes.push(style_preview_chip(ui, "x", s).rect.size());
+                }
+            },
+        );
+        out.drop_without_applying_deltas();
+        assert!(sizes.iter().all(|s| *s == egui::vec2(120.0, 24.0)));
     }
 }

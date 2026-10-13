@@ -153,11 +153,11 @@ pub(crate) fn raw_line_edit(id: BlockId, entry: &BodyEntry, draft: &str) -> Opti
 // Small UI helpers
 // ---------------------------------------------------------------------------------------------
 
-fn caption(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn caption(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
 }
 
-fn hint(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn hint(ui: &mut egui::Ui, text: &str) {
     ui.add(
         egui::Label::new(
             RichText::new(text)
@@ -1523,10 +1523,10 @@ pub(crate) fn pick_action(id: BlockId, kw: &'static Keyword) -> Option<RowAction
 // ---------------------------------------------------------------------------------------------
 
 const NO_ACTIONS: &str = "No actions: matching items keep the game's look.";
-const SIZE_CHOICES: [(&str, i64); 4] =
+pub(crate) const SIZE_CHOICES: [(&str, i64); 4] =
     [("Large", 0), ("Medium", 1), ("Small", 2), ("Hide icon", -1)];
 
-fn filter_colour(name: &str) -> egui::Color32 {
+pub(crate) fn filter_colour(name: &str) -> egui::Color32 {
     let (r, g, b) = match name {
         "Red" => (255, 85, 85),
         "Green" => (80, 250, 123),
@@ -1544,7 +1544,7 @@ fn filter_colour(name: &str) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, b)
 }
 
-fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
+pub(crate) fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 6.0, colour);
 }
@@ -1806,7 +1806,7 @@ fn action_controls(
 }
 
 /// Slider plus exact number field. Returns the new value when the user changed it.
-fn slider_pair(
+pub(crate) fn slider_pair(
     ui: &mut egui::Ui,
     salt: impl std::hash::Hash,
     current: i64,
@@ -1945,7 +1945,7 @@ fn custom_sound_control(
     resp
 }
 
-fn colour_combo(
+pub(crate) fn colour_combo(
     ui: &mut egui::Ui,
     salt: impl std::hash::Hash + std::fmt::Debug,
     current: &str,

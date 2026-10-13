@@ -29,6 +29,9 @@ const NOT_SET: &str = "Not set (game default)";
 const BUILTIN_TIP: &str = "Built-in styles can't be deleted.";
 const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete this one.";
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
+const APPLY_NOTHING_TIP: &str = "No unapplied config changes.";
+const APPLY_LOAD_ERROR_TIP: &str =
+    "styles.json or tiers.json failed to load. Revert to reload them.";
 
 /// Everything the CONFIG view asks the app to do. Applied after the frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +69,8 @@ pub struct ConfigUi {
     pub scroll_to: Option<String>,
     /// `Keep editing` was pressed on the outside-edit guard.
     pub outside_dismissed: bool,
+    /// A name draft was just opened; its text field takes focus once.
+    pub focus_draft: bool,
 }
 
 impl ConfigUi {
@@ -315,6 +320,7 @@ fn show_filter(
             }
             if open_draft && cfg.filter_draft.is_none() {
                 cfg.filter_draft = Some(String::new());
+                cfg.focus_draft = true;
             }
 
             if let Some(draft) = cfg.filter_draft.clone() {
@@ -369,6 +375,9 @@ fn filter_draft_row(
             .hint_text("my-filter.filter")
             .desired_width(ui.available_width() - 8.0),
     );
+    if std::mem::take(&mut cfg.focus_draft) {
+        edit.request_focus();
+    }
     if edit.lost_focus() {
         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             commit = hint.is_none();
@@ -413,6 +422,8 @@ fn show_tiers(ui: &mut egui::Ui, state: &ConfigState, actions: &mut Vec<ConfigAc
         "Minimum price for each tier. Items worth at least this much get the tier.",
     );
     ui.horizontal(|ui| {
+        // Same 8px inset as the zebra rows below, so captions sit over their columns.
+        ui.add_space(8.0);
         ui.add_sized(vec2(24.0, 14.0), egui::Label::new(caption_text("TIER")));
         ui.add_sized(
             vec2(112.0, 14.0),
@@ -498,6 +509,7 @@ fn show_styles(
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.add(small_button("+ ADD STYLE")).clicked() && cfg.style_draft.is_none() {
                 cfg.style_draft = Some(String::new());
+                cfg.focus_draft = true;
             }
         });
     });
@@ -548,11 +560,21 @@ fn show_styles(
                         widgets::badge(ui, "edited", "Changed since the last Apply.");
                     }
                 });
-                let row = ui.interact(
-                    header.response.rect,
-                    ui.id().with(("style-row", name.as_str())),
-                    egui::Sense::click(),
-                );
+                let row = ui
+                    .interact(
+                        header.response.rect,
+                        ui.id().with(("style-row", name.as_str())),
+                        egui::Sense::click(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                row.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::CollapsingHeader,
+                        true,
+                        is_expanded,
+                        name.as_str(),
+                    )
+                });
                 if cfg.scroll_to.as_deref() == Some(name.as_str()) {
                     row.scroll_to_me(Some(Align::Center));
                     cfg.scroll_to = None;
@@ -598,6 +620,9 @@ fn style_draft_row(
                     .hint_text("Style name")
                     .desired_width(ui.available_width() - 8.0),
             );
+            if std::mem::take(&mut cfg.focus_draft) {
+                edit.request_focus();
+            }
             if edit.lost_focus() {
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     commit = hint.is_none();
@@ -1082,8 +1107,15 @@ pub fn show_footer(
                 button = button.fill(theme::WARM_ACCENT);
             }
             let mut response = ui.add_enabled(enabled, button);
-            if label == "Apply" && !enabled && state.has_tier_errors() {
-                response = response.on_disabled_hover_text(APPLY_BLOCKED_TOOLTIP);
+            if label == "Apply" && !enabled {
+                let tip = if state.has_tier_errors() {
+                    APPLY_BLOCKED_TOOLTIP
+                } else if state.styles_error().is_some() || state.tiers_error().is_some() {
+                    APPLY_LOAD_ERROR_TIP
+                } else {
+                    APPLY_NOTHING_TIP
+                };
+                response = response.on_disabled_hover_text(tip);
             }
             if !response.clicked() {
                 continue;

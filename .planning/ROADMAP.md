@@ -123,7 +123,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 17-03-PLAN.md — styles.json becomes the single source: config.json/dynamic_base.json lose styles; load-time rule-reference check; inline styles section rejected
+- [x] 17-03-PLAN.md — styles.json becomes the single source: config.json/dynamic_base.json lose styles; load-time rule-reference check; inline styles section rejected
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -210,7 +210,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
-| 17. Config-Driven Styles | 1/4 | In Progress|  |
+| 17. Config-Driven Styles | 3/4 | In Progress|  |
 | 18. Filter as Store & Economy Section | 0/? | Not started | - |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
@@ -299,7 +299,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 1/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 

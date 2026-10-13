@@ -9,6 +9,7 @@
 pub mod app;
 pub mod apply;
 pub mod body;
+pub mod chat;
 pub mod classes;
 pub mod config_state;
 pub mod config_view;

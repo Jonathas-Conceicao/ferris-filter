@@ -318,7 +318,7 @@ Plans:
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
-| 22. Single-Instance Overlay | 2/2 | Verifying | - |
+| 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 
 ## Backlog
 

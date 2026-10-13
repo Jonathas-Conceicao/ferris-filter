@@ -4,10 +4,10 @@
 //! One Apply click runs one send sequence: it is never repeated, scheduled, retried or queued
 //! (CONTEXT "ToS posture"). The mechanism is copied from Exiled Exchange 2 / Awakened PoE Trade
 //! (`main/src/shortcuts/text-box.ts` and `HostClipboard.ts`): put the command on the clipboard,
-//! Enter, select all, paste, Enter, then restore the clipboard about 120 ms later. Two deliberate
-//! differences: Ctrl+A is kept before the paste so it replaces any prefix the game pre-fills when
-//! the first Enter opens the chat box (EE2 skips it for `/` commands; the fallback if it misbehaves
-//! is EE2's exact Enter, Ctrl+V, Enter), and the trailing "restore last chat" keys are not copied.
+//! Enter, paste, Enter, then restore the clipboard about 120 ms later. As in EE2 for text starting
+//! with `/` (its `AUTO_CLEAR` list), there is no select-all before the paste: a typed `/` command
+//! needs no cleared prefix, and a synthetic Ctrl+A was caught as a global hotkey by another tool
+//! the author runs. The trailing "restore last chat" keys are not copied.
 //! Escape is never sent (it can open the game menu).
 //!
 //! **Known limitation (review CR-02):** nothing outside the game can tell whether its chat box is
@@ -15,8 +15,7 @@
 //! box was already open with text in it when Apply was pressed, the first Enter sends that text as
 //! a chat message, the chat box closes, the select-all and paste go to the game world, the final
 //! Enter opens an empty chat box, and `/reloaditemfilter` is not sent (the status still says
-//! "Reloaded in game", because the keys were delivered). Ctrl+A cannot prevent this: it runs after
-//! that first Enter. No key is pressed before the first Enter on purpose: with chat closed, an
+//! "Reloaded in game", because the keys were delivered). No key is pressed before the first Enter on purpose: with chat closed, an
 //! Escape, Backspace or Ctrl+A would reach the game's own key bindings. The user is told to close
 //! the chat box before pressing Apply (CONFIG caption, CLAUDE.md, manual check 7).
 //!
@@ -48,7 +47,6 @@ const RESTORE_AFTER_MS: u64 = 120;
 pub enum Key {
     Enter,
     Ctrl,
-    A,
     V,
 }
 
@@ -58,7 +56,6 @@ impl Key {
         match self {
             Key::Enter => 0x0D,
             Key::Ctrl => 0x11,
-            Key::A => 0x41,
             Key::V => 0x56,
         }
     }
@@ -103,10 +100,10 @@ pub trait InputSink {
 /// - once first, before any side effect (polling briefly): it reads global key state and does not
 ///   need the game focused, so a modifier held at click time aborts while the stripe still has
 ///   focus and can show why (review WR-03);
-/// - again, without waiting, right before each key group (the first Enter, the Ctrl+A / Ctrl+V
-///   pair, the final Enter). The game has just come to the front by then, and holding Alt to show
+/// - again, without waiting, right before each key group (the first Enter, the Ctrl+V paste,
+///   the final Enter). The game has just come to the front by then, and holding Alt to show
 ///   ground labels is a reflex. A modifier pressed in between would turn Enter into Alt+Enter and
-///   the chords into Ctrl+Alt+A / Ctrl+Alt+V, and the chord's Ctrl key-up would release a Ctrl the
+///   the paste into Ctrl+Alt+V, and the chord's Ctrl key-up would release a Ctrl the
 ///   user holds (review iteration 2, WR-01). A held modifier there aborts with the same reason.
 pub fn reload_steps() -> Vec<Step> {
     vec![
@@ -122,7 +119,6 @@ pub fn reload_steps() -> Vec<Step> {
         Step::Wait(CHAT_OPEN_MS),
         Step::VerifyForeground,
         Step::VerifyModifiersStillUp,
-        Step::Chord(Key::Ctrl, Key::A),
         Step::Chord(Key::Ctrl, Key::V),
         Step::Wait(PASTE_SETTLE_MS),
         Step::VerifyForeground,
@@ -424,7 +420,6 @@ mod tests {
                 Step::Wait(60),
                 Step::VerifyForeground,
                 Step::VerifyModifiersStillUp,
-                Step::Chord(Ctrl, A),
                 Step::Chord(Ctrl, V),
                 Step::Wait(40),
                 Step::VerifyForeground,
@@ -451,15 +446,17 @@ mod tests {
             steps.iter().filter(|s| matches!(s, Step::Tap(_))).count(),
             2
         );
-        let a = steps
+        // The paste is the only chord: no select-all, which another tool may own as a global
+        // hotkey (EE2 also skips it for `/` commands).
+        let chords: Vec<usize> = steps
             .iter()
-            .position(|s| *s == Step::Chord(Key::Ctrl, Key::A))
-            .unwrap();
-        let v = steps
-            .iter()
-            .position(|s| *s == Step::Chord(Key::Ctrl, Key::V))
-            .unwrap();
-        assert!(a < v);
+            .enumerate()
+            .filter(|(_, s)| matches!(s, Step::Chord(..)))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(chords.len(), 1);
+        let v = chords[0];
+        assert_eq!(steps[v], Step::Chord(Key::Ctrl, Key::V));
         // Review WR-03: the polling modifier check runs before any side effect, focus included,
         // and only there (polling once the game has focus would only delay the failure).
         assert_eq!(steps[0], Step::VerifyModifiersUp);
@@ -478,17 +475,13 @@ mod tests {
             if matches!(s, Step::Tap(_) | Step::Chord(..) | Step::SetClipboard(_)) {
                 assert!(i > first_verify);
             }
-            // Every key group (each tap, and the first chord of the Ctrl+A / Ctrl+V pair) is
+            // Every key group (each tap, and the Ctrl+V paste) is
             // directly preceded, with no wait in between, by the immediate modifier check, and
             // that by a foreground check (review iteration 2, WR-01). SetClipboard is guarded by
             // the earlier foreground check and the first modifier check.
-            if matches!(s, Step::Tap(_)) || i == a {
+            if matches!(s, Step::Tap(_) | Step::Chord(..)) {
                 assert_eq!(steps[i - 1], Step::VerifyModifiersStillUp, "step {i}");
                 assert_eq!(steps[i - 2], Step::VerifyForeground, "step {i}");
-            }
-            // The only chord without its own check is Ctrl+V, directly after Ctrl+A.
-            if matches!(s, Step::Chord(..)) && i != a {
-                assert_eq!(i, a + 1, "step {i}");
             }
             // The immediate check is used only right before a key group.
             if *s == Step::VerifyModifiersStillUp {
@@ -518,7 +511,6 @@ mod tests {
         assert!(total <= 500);
         assert_eq!(Key::Enter.vk(), 0x0D);
         assert_eq!(Key::Ctrl.vk(), 0x11);
-        assert_eq!(Key::A.vk(), 0x41);
         assert_eq!(Key::V.vk(), 0x56);
     }
 

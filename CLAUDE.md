@@ -134,9 +134,10 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > testing set `FERRISFILTER_HOME` (and `USERPROFILE`) to a temp copy first.
 >
 > **In-game reload after Apply (Phase 23, RELOAD-01):** the mechanism is: focus the game, Enter,
-> Ctrl+A, paste `/reloaditemfilter` from the clipboard, Enter -- the same clipboard-paste method
-> Exiled Exchange 2 and Awakened PoE Trade use. Ctrl+A only replaces a prefix the game pre-fills
-> when that first Enter opens the chat box. One Apply click runs one send sequence, never repeated
+> paste `/reloaditemfilter` from the clipboard (Ctrl+V), Enter -- the same clipboard-paste method
+> Exiled Exchange 2 and Awakened PoE Trade use for `/` commands. There is deliberately **no Ctrl+A**
+> (EE2 skips select-all for `/` commands too): a synthetic Ctrl+A fired another tool's global
+> hotkey. Ctrl+V and Enter are the only chords/keys sent. One Apply click runs one send sequence, never repeated
 > or retried. The game window is found by title ("path of exile", so "Exiled Exchange 2" does not count)
 > AND by a process image name starting with `PathOfExile`, so a browser tab titled "Path of Exile 2"
 > is not the game. Keys are sent only after checking the game is the foreground window; otherwise

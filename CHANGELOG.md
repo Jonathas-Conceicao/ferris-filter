@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **In-game reload after Apply** (Phase 23, RELOAD-01). A RULES Apply that writes the filter now sends
-  `/reloaditemfilter` to a running Path of Exile 2 (focus, Enter, select-all, paste, Enter; clipboard
+  `/reloaditemfilter` to a running Path of Exile 2 (focus, Enter, paste, Enter, with no Ctrl+A, as EE2 does for `/` commands; clipboard
   text restored), status `Reloaded in game` (the keys were sent; ff cannot confirm the game ran the
   command, so Refresh by hand if the filter did not change). Nothing is sent on an unchanged, refused or CONFIG Apply,
   with the game closed, or with the new CONFIG setting **Reload filter in game after Apply** off

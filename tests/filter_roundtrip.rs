@@ -430,3 +430,115 @@ fn parse_never_panics_on_prefixes() {
         probe(g.as_bytes());
     }
 }
+
+// ---- EDIT-01/EDIT-02: single-line body edits (plan 20-01) ----
+
+use ferrisfilter::filter::LinePatch;
+use ferrisfilter::filter::keywords::Kind;
+
+/// `(block, doc line, value span text, operator)` for every condition/action line with a value in
+/// an enabled or valid-disabled block.
+fn patchable_lines(
+    doc: &Document,
+) -> Vec<(
+    BlockId,
+    usize,
+    String,
+    Option<ferrisfilter::filter::tokenize::Operator>,
+    Kind,
+)> {
+    let mut out = Vec::new();
+    for b in doc.blocks() {
+        if !b.is_enabled() && !b.can_enable() {
+            continue;
+        }
+        for bl in b.body() {
+            let (Some(kw), Some(t)) = (bl.keyword, bl.tokens.as_ref()) else {
+                continue;
+            };
+            if !matches!(kw.kind, Kind::Condition | Kind::Action) || t.values.is_empty() {
+                continue;
+            }
+            let text = doc.lines()[bl.line].text();
+            let off = if b.is_enabled() {
+                0
+            } else {
+                text.find('#').map_or(0, |i| i + 1)
+            };
+            let first = t.values.first().unwrap().start;
+            let last = t.values.last().unwrap().end;
+            out.push((
+                b.id(),
+                bl.line,
+                text[off + first..off + last].to_string(),
+                t.operator.as_ref().map(|(_, op)| *op),
+                kw.kind,
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn noop_value_patch_sweep_filterblade() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let lines = patchable_lines(&doc);
+    assert!(lines.len() > 1000, "only {} lines swept", lines.len());
+    for (id, line, vals, _, _) in &lines {
+        doc.patch_line(*id, *line, LinePatch::Values(vals.clone()))
+            .unwrap_or_else(|e| panic!("line {}: {e}", line + 1));
+    }
+    assert_bytes_eq("value sweep", &doc.to_bytes(), &orig);
+}
+
+#[test]
+fn noop_operator_patch_sweep_filterblade() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let lines = patchable_lines(&doc);
+    let mut n = 0usize;
+    for (id, line, _, op, kind) in &lines {
+        if *kind != Kind::Condition || op.is_none() {
+            continue;
+        }
+        doc.patch_line(*id, *line, LinePatch::Operator(*op))
+            .unwrap_or_else(|e| panic!("line {}: {e}", line + 1));
+        n += 1;
+    }
+    assert!(n > 100, "only {n} operator lines swept");
+    assert_bytes_eq("operator sweep", &doc.to_bytes(), &orig);
+}
+
+#[test]
+fn values_patch_keeps_bare_class_operator() {
+    let src = "Show\n\tClass \"Rings\"\n\tBaseType == \"Ruby Ring\"\n";
+    let mut doc = parse(src.as_bytes()).unwrap();
+    let id = doc.blocks().next().unwrap().id();
+    doc.patch_line(id, 1, LinePatch::Values("\"Rings\" \"Amulets\"".into()))
+        .unwrap();
+    let out = doc.serialize();
+    let changed: Vec<_> = out
+        .lines()
+        .zip(src.lines())
+        .filter(|(a, b)| a != b)
+        .collect();
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].0, "\tClass \"Rings\" \"Amulets\"");
+    assert!(!changed[0].0.contains("=="));
+}
+
+#[test]
+fn insert_remove_roundtrip_crlf() {
+    let orig = fixture();
+    let mut doc = parse(&orig).unwrap();
+    let ids: Vec<BlockId> = enabled_ids(&doc).into_iter().take(50).collect();
+    for id in ids {
+        let b = doc.block(id).unwrap();
+        let after = b.owned().end - 1;
+        let new = doc.insert_body_line(id, after, "Quality >= 1").unwrap();
+        assert_eq!(new, after + 1);
+        doc.remove_body_line(id, new).unwrap();
+    }
+    assert_bytes_eq("insert/remove", &doc.to_bytes(), &orig);
+}

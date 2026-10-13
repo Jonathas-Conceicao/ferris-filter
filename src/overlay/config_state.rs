@@ -391,9 +391,7 @@ impl ConfigState {
     fn apply_inner(&mut self, force: bool) -> Result<ConfigApplyReport, ConfigApplyError> {
         // A forced (Overwrite) apply rewrites from memory even with nothing dirty.
         let applicable = if force {
-            !self.has_tier_errors()
-                && self.tiers_error().is_none()
-                && self.styles_error().is_none()
+            !self.has_tier_errors() && self.tiers_error().is_none() && self.styles_error().is_none()
         } else {
             self.can_apply()
         };
@@ -1014,7 +1012,10 @@ mod tests {
             config_warning("kite"),
             "config.json uses \"kite\", so ferrisfilter generate will fail until you add the style back or change those rules."
         );
-        assert_eq!(applied_message(12, 7), "Applied config: 12 styles, 7 tiers.");
+        assert_eq!(
+            applied_message(12, 7),
+            "Applied config: 12 styles, 7 tiers."
+        );
         assert_eq!(
             not_applied_message("x"),
             "Config not applied: x. Nothing was changed on disk."

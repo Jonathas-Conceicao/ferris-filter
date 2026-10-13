@@ -64,7 +64,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 - [ ] **Phase 16: Lossless Filter Parser** - Parse any PoE2 filter and write it back byte-identical
 - [x] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged (completed 2026-10-13)
-- [x] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (completed 2026-10-13)
+- [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (executed 2026-10-13; awaiting human UAT)
 - [ ] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles
 - [ ] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay
@@ -233,7 +233,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
-| 18. Filter as Store & Economy Section | 7/7 | Complete   | 2026-10-13 |
+| 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |

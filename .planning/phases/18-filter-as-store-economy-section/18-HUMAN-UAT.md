@@ -1,0 +1,36 @@
+---
+status: partial
+phase: 18-filter-as-store-economy-section
+source: [18-VERIFICATION.md]
+started: 2026-10-13T00:00:00Z
+updated: 2026-10-13T00:00:00Z
+---
+
+## Current Test
+
+[awaiting human testing]
+
+## Tests
+
+### 1. Launch ff.exe by double-click from Explorer (cwd not the repo) with PoE2 windowed
+expected: Stripe opens, resolves the app root from the exe folder, loads the game-folder dynamic.filter, shows status notice; APPLY / ADD ECONOMY / RELOAD / SYNC ECONOMY buttons work
+result: [pending]
+
+### 2. In the overlay, press APPLY, then edit dynamic.filter externally and press APPLY again
+expected: First Apply writes (or says up to date); second is refused with a 'changed on disk' message and RELOAD is offered
+result: [pending]
+
+### 3. Run the real v0.4 game-folder dynamic.filter through the first Apply and reload it in PoE2 (Options > Game > Item Filter > Refresh)
+expected: Filter loads without warnings; all user rules look identical in game; dynamic.filter.ffbak holds the original v0.4 bytes
+result: [pending]
+
+## Summary
+
+total: 3
+passed: 0
+issues: 0
+pending: 3
+skipped: 0
+blocked: 0
+
+## Gaps

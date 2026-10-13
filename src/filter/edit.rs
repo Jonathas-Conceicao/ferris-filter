@@ -338,6 +338,13 @@ impl Document {
             return Err(EditError::NotOneBlock);
         }
         if let Item::Block(c) = &items[0] {
+            if enableable && !c.is_enabled() && !c.can_enable() {
+                let diagnostics = match c.disabled_state() {
+                    Some(DisabledState::Invalid(r)) => r.clone(),
+                    _ => Vec::new(),
+                };
+                return Err(EditError::InvalidBlock { diagnostics });
+            }
             if c.is_enabled() {
                 let counts = |d: &FilterDiagnostic| {
                     d.severity == Severity::Error

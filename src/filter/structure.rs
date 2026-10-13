@@ -158,50 +158,36 @@ impl Document {
 
     /// Switch the block header between `Show`, `Hide` and `Minimal`, touching only the keyword.
     pub fn set_block_keyword(&mut self, id: BlockId, kw: BlockKeyword) -> Result<(), EditError> {
-        let (mut texts, off, range) = self.header_parts(id)?;
-        let current = self.block(id).ok_or(EditError::UnknownBlock)?.keyword();
-        if current == kw {
+        let (texts, off, range) = self.header_parts(id)?;
+        let b = self.block(id).ok_or(EditError::UnknownBlock)?;
+        if b.keyword() == kw {
             return Ok(());
         }
+        let owned = b.owned();
         let word = match kw {
             BlockKeyword::Show => "Show",
             BlockKeyword::Hide => "Hide",
             BlockKeyword::Minimal => "Minimal",
         };
-        texts[0].replace_range(off + range.start..off + range.end, word);
-        self.replace_block_lines(id, texts)
+        let mut head = texts[0].clone();
+        head.replace_range(off + range.start..off + range.end, word);
+        let mut cand: Vec<Line> = self.lines[owned.clone()].to_vec();
+        cand[0] = Line::new(head, self.lines[owned.start].eol());
+        self.commit_owned(id, cand, true, false)
     }
 
     /// Add or remove the standalone `Continue` line of a block.
     pub fn set_continue(&mut self, id: BlockId, on: bool) -> Result<(), EditError> {
-        let (mut texts, _, _) = self.header_parts(id)?;
+        self.header_parts(id)?;
         let b = self.block(id).ok_or(EditError::UnknownBlock)?;
         if b.has_continue() == on {
             return Ok(());
         }
-        let header = b.header_line();
         if on {
-            let enabled = b.is_enabled();
-            let first = b.body().iter().find_map(|bl| {
-                let t = bl.tokens.as_ref()?;
-                let text = self.lines[bl.line].text();
-                let off = if enabled {
-                    0
-                } else {
-                    text.len() - disabled::uncomment_once(text)?.len()
-                };
-                Some((
-                    text[..off].to_string(),
-                    text[off + t.indent.start..off + t.indent.end].to_string(),
-                ))
-            });
-            let line = match first {
-                Some((prefix, indent)) => format!("{prefix}{indent}Continue"),
-                None if enabled => "  Continue".to_string(),
-                None => "#  Continue".to_string(),
-            };
-            texts.push(line);
+            let last = b.owned().end - 1;
+            self.splice_impl(id, &[], last, &["Continue".to_string()], true)
         } else {
+            let header = b.header_line();
             let doomed: Vec<usize> = b
                 .body()
                 .iter()
@@ -210,16 +196,10 @@ impl Document {
                         k.kind == Kind::Modifier && k.name.eq_ignore_ascii_case("continue")
                     })
                 })
-                .map(|bl| bl.line - header)
+                .map(|bl| bl.line)
                 .collect();
-            let mut i = 0usize;
-            texts.retain(|_| {
-                let keep = !doomed.contains(&i);
-                i += 1;
-                keep
-            });
+            self.splice_impl(id, &doomed, header, &[], true)
         }
-        self.replace_block_lines(id, texts)
     }
 
     /// Append a new rule block before the economy section (or at the end of the file).

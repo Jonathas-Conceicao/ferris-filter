@@ -10,6 +10,7 @@ pub mod diag;
 mod disabled;
 mod edit;
 pub mod keywords;
+mod lineedit;
 pub mod lines;
 pub mod meta;
 mod parse;
@@ -20,6 +21,7 @@ pub mod tokenize;
 pub use block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
 pub use diag::{FilterDiagnostic, LoadError, Severity};
 pub use edit::EditError;
+pub use lineedit::LinePatch;
 pub use lines::{Eol, Line};
 
 const BOM_BYTES: &[u8] = &[0xEF, 0xBB, 0xBF];

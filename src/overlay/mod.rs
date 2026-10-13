@@ -38,6 +38,8 @@ pub fn launch() -> eframe::Result<()> {
     // stripe, icon or hotkey registration. If the single-instance check itself fails, it also
     // exits here (fail closed, with a message box naming the error). The guard lives in
     // `OverlayApp` until tray Quit, which drops it at once so an immediate relaunch can start.
+    // Quit unregisters the hotkey and removes the tray icon first, so that relaunch can
+    // register `Ctrl+Shift+Z` itself.
     let Some(instance_guard) = instance::acquire() else {
         return Ok(());
     };

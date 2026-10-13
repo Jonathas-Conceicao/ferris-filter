@@ -62,6 +62,21 @@ pub fn register_toggle() -> (Option<GlobalHotKeyManager>, HotkeyStatus) {
     }
 }
 
+/// Gives up the toggle hotkey now, rather than when the process exits.
+///
+/// Tray Quit calls this before it releases the single-instance name, so a relaunch that wins
+/// the name can register `Ctrl+Shift+Z` itself (review iteration 3, WR-01).
+///
+/// The hotkey is unregistered explicitly before the manager is dropped. `global-hotkey` 0.8's
+/// `Drop` only calls `DestroyWindow` on its hidden window. Windows does release hotkeys bound
+/// to a destroyed window, but the `RegisterHotKey` docs do not say so, so this does not rely
+/// on it. Must run on the thread that registered the hotkey, the same as `register_toggle`.
+pub fn release_toggle(manager: GlobalHotKeyManager) {
+    // A failure here means the hotkey is already gone. Dropping the manager is still correct.
+    let _ = manager.unregister(HotKey::new(Some(TOGGLE_MODIFIERS), TOGGLE_CODE));
+    drop(manager);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

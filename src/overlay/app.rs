@@ -46,7 +46,7 @@ use super::config_state::{
 };
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
-use super::hotkey::HotkeyStatus;
+use super::hotkey::{self, HotkeyStatus};
 use super::instance;
 use super::layout;
 use super::rule_list::{self, ListUi};
@@ -63,13 +63,13 @@ pub struct OverlayApp {
     /// again (position/width are not persisted or re-derived per frame).
     docked: bool,
 
-    /// The tray icon, menu, and id->command mapping. Kept alive here for the
-    /// process lifetime -- dropping it would remove the icon from the tray.
+    /// The tray icon, menu, and id->command mapping. Kept alive here until tray Quit, which
+    /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
     tray: TrayHandles,
 
-    /// The global hotkey manager. Never read after construction -- held
-    /// purely so its `Drop` impl unregisters the hotkey when the app ends.
-    #[allow(dead_code)]
+    /// The global hotkey manager, held so the hotkey stays registered. Tray Quit takes it and
+    /// unregisters the hotkey (`hotkey::release_toggle`) before it releases the instance name,
+    /// so a relaunch can register `Ctrl+Shift+Z` itself.
     hotkey_manager: Option<GlobalHotKeyManager>,
 
     /// Registration outcome for `Ctrl+Shift+Z`. Read every frame to filter incoming
@@ -1299,6 +1299,14 @@ impl eframe::App for OverlayApp {
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
                 Some(OverlayCommand::Quit) => {
                     quit_requested = true;
+                    // Give up what a new instance must own (the hotkey, then the tray icon)
+                    // before the name it races for. If the name went first, a relaunch could win
+                    // it while `Ctrl+Shift+Z` was still registered here, fail to register it, and
+                    // run with no hotkey (review iteration 3, WR-01).
+                    if let Some(manager) = self.hotkey_manager.take() {
+                        hotkey::release_toggle(manager);
+                    }
+                    self.tray.release();
                     // Release the instance name now, before this frame's show-request poll:
                     // from here on a relaunch becomes the new first instance rather than
                     // waiting on (or being acked by) a process that is about to close.

@@ -65,6 +65,9 @@ Record Result as PASS / FAIL with a note for every step.
 11. **Relaunch right after Quit.** With `ff` running, choose **Quit** from its tray menu and
     launch `ff` again immediately (have the shortcut ready, launch within a second).
     **Expected:** a fresh stripe and tray icon appear; no "not responding" or "already running"
-    message box; exactly one `ff.exe` once the old one has exited. **Result:**
+    message box; exactly one `ff.exe` once the old one has exited. The old tray icon disappears
+    as soon as Quit is chosen, so there are never two icons. Hover the new tray icon: its
+    tooltip names `Ctrl+Shift+Z` and does **not** say it is unavailable, there is no disabled
+    hotkey-failure line in its menu, and `Ctrl+Shift+Z` toggles the new stripe. **Result:**
 
 Tray **Quit** remains the only way to exit the process.

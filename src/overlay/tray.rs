@@ -101,6 +101,18 @@ pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tr
     })
 }
 
+impl TrayHandles {
+    /// Removes the icon from the notification area now, rather than when the app is dropped.
+    ///
+    /// Tray Quit calls this before it releases the single-instance name, so a relaunch never
+    /// shows next to the closing process's icon (review iteration 3, WR-01). The menu ids stay,
+    /// so `command_for_menu` keeps working, and nothing is left to match against. Must run on the
+    /// thread that built the tray, the same as `build`.
+    pub fn release(&mut self) {
+        self.tray_icon = None;
+    }
+}
+
 /// A pure id -> command mapping, unit-testable without a live tray.
 pub fn command_for_menu(id: &MenuId, handles: &TrayHandles) -> Option<OverlayCommand> {
     if *id == handles.show_id {

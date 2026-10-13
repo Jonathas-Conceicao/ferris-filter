@@ -146,7 +146,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 18-01-PLAN.md — App-root resolver (FERRISFILTER_HOME / exe walk-up / cwd) and guarded, backed-up, atomic filter write
+- [x] 18-01-PLAN.md — App-root resolver (FERRISFILTER_HOME / exe walk-up / cwd) and guarded, backed-up, atomic filter write
 - [ ] 18-02-PLAN.md — Economy split: emitter::generate_economy over StyleSet and compile::load_economy (generate byte-identical)
 - [ ] 18-03-PLAN.md — Economy section markers (find/refresh/add/remove, damaged-marker errors) and v0.4 dynamic.filter migration
 
@@ -233,7 +233,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
-| 18. Filter as Store & Economy Section | 0/? | Not started | - |
+| 18. Filter as Store & Economy Section | 1/7 | In Progress|  |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
@@ -321,7 +321,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 4/4 plans complete
+**Plans:** 1/7 plans executed
 
 Plans:
 

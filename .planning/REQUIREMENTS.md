@@ -62,10 +62,10 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **EDIT-08**: Apply writes the edited filter, and Revert discards unsaved edits. This is the
   v0.4 model: edits are held in memory and Apply is the single writer.
 
-- [ ] **EDIT-09**: Apply refuses to overwrite a filter that changed on disk after it was loaded,
+- [x] **EDIT-09**: Apply refuses to overwrite a filter that changed on disk after it was loaded,
   and tells the user why.
 
-- [ ] **EDIT-10**: The first time FerrisFilter writes to a filter, it keeps a backup copy of the
+- [x] **EDIT-10**: The first time FerrisFilter writes to a filter, it keeps a backup copy of the
   original.
 
 ### Economy Section (ECON)
@@ -95,7 +95,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
   `apply --reset/--base/--store` are removed. CLI `apply` operates on the filter file. The breaking
   change is noted in `CHANGELOG.md`.
 
-- [ ] **STORE-05**: `ff` can be launched from anywhere, including by double-clicking the exe. It
+- [x] **STORE-05**: `ff` can be launched from anywhere, including by double-clicking the exe. It
   finds the repo files (`styles.json`, `tiers.json`, `prices.json`, …) without relying on the
   process working directory.
 
@@ -187,8 +187,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-06 | Phase 20 | Pending |
 | EDIT-07 | Phase 19 | Pending |
 | EDIT-08 | Phase 19 | Pending |
-| EDIT-09 | Phase 18 | Pending |
-| EDIT-10 | Phase 18 | Pending |
+| EDIT-09 | Phase 18 | Complete |
+| EDIT-10 | Phase 18 | Complete |
 | ECON-01 | Phase 18 | Pending |
 | ECON-02 | Phase 19 | Pending |
 | ECON-03 | Phase 18 | Pending |
@@ -197,7 +197,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STORE-02 | Phase 21 | Pending |
 | STORE-03 | Phase 18 | Pending |
 | STORE-04 | Phase 18 | Pending |
-| STORE-05 | Phase 18 | Pending |
+| STORE-05 | Phase 18 | Complete |
 | STYLE-01 | Phase 17 | Complete |
 | STYLE-02 | Phase 17 | Complete |
 | STYLE-03 | Phase 20 | Pending |

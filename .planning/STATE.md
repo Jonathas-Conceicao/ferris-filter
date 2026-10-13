@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: executing
-stopped_at: Completed 20-06-PLAN.md
-last_updated: "2026-10-13T03:52:04.482Z"
+status: completed
+stopped_at: Completed 20-07-PLAN.md
+last_updated: "2026-10-13T04:04:50.186Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 4
   total_plans: 31
-  completed_plans: 28
+  completed_plans: 29
   percent: 24
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 ## Current Position
 
 Phase: 20 (Full Grammar Block Editing) — EXECUTING
-Plan: 7 of 9
-Status: Ready to execute plan 20-07 (20-06 complete)
+Plan: 8 of 9
+Status: Ready to execute plan 20-08 (20-07 complete)
 Last activity: 2026-10-13
 
 Progress: [█████████░] 93%
@@ -133,6 +133,7 @@ work (carried forward past the v0.3 close):
 - [Phase 19]: 19-02: structural ops go through commit_structural (explicit ids per block); moves never cross economy markers
 - [Phase 19-03]: Only Error diagnostics in enabled non-economy blocks block Apply; rules-only Apply allowed via EconomyOp::Keep
 - [Phase 20]: 20-01: Whole patch refuses only new Errors; other line ops refuse new Errors and Warnings; set_continue/set_block_keyword stay lenient on invalid disabled blocks
+- [Phase 20-07]: Condition cards: value controls on line 2; list shapes and Rarity start as pending rows; opaque lines are raw Whole-edit rows; refused raw edits surface via ListUi.line_error
 
 ### Pending Todos
 
@@ -272,8 +273,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T03:52:04.474Z
-Stopped at: Completed 20-06-PLAN.md
+Last session: 2026-10-13T04:04:39.317Z
+Stopped at: Completed 20-07-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

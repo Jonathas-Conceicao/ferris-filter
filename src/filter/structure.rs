@@ -17,11 +17,13 @@ use std::ops::Range;
 use super::Document;
 use super::block::{Block, BlockId, BlockKeyword, Item};
 use super::diag::Severity;
+use super::disabled;
 use super::edit::EditError;
 use super::keywords::Kind;
 use super::lines::{Eol, Line};
 use super::parse;
 use super::section;
+use super::tokenize::tokenize;
 
 struct Info {
     id: BlockId,
@@ -128,6 +130,96 @@ impl Document {
 
     fn blank_line(&self, near: usize) -> Line {
         Line::new(String::new(), self.fresh_eol(near))
+    }
+
+    /// Owned line texts of a block, plus the header's byte offset of the grammar text (past the
+    /// first `#` for a disabled block) and its tokens. Compact headers are refused.
+    fn header_parts(
+        &self,
+        id: BlockId,
+    ) -> Result<(Vec<String>, usize, std::ops::Range<usize>), EditError> {
+        let b = self.block(id).ok_or(EditError::UnknownBlock)?;
+        let owned = b.owned();
+        let texts: Vec<String> = self.span_texts(owned);
+        let text = &texts[0];
+        let off = if b.is_enabled() {
+            0
+        } else {
+            let inner = disabled::uncomment_once(text).ok_or(EditError::CompactHeader)?;
+            text.len() - inner.len()
+        };
+        let t = tokenize(&text[off..]).map_err(|_| EditError::CompactHeader)?;
+        if t.operator.is_some() || !t.values.is_empty() {
+            return Err(EditError::CompactHeader);
+        }
+        let kw = t.keyword.ok_or(EditError::CompactHeader)?;
+        Ok((texts, off, kw))
+    }
+
+    /// Switch the block header between `Show`, `Hide` and `Minimal`, touching only the keyword.
+    pub fn set_block_keyword(&mut self, id: BlockId, kw: BlockKeyword) -> Result<(), EditError> {
+        let (mut texts, off, range) = self.header_parts(id)?;
+        let current = self.block(id).ok_or(EditError::UnknownBlock)?.keyword();
+        if current == kw {
+            return Ok(());
+        }
+        let word = match kw {
+            BlockKeyword::Show => "Show",
+            BlockKeyword::Hide => "Hide",
+            BlockKeyword::Minimal => "Minimal",
+        };
+        texts[0].replace_range(off + range.start..off + range.end, word);
+        self.replace_block_lines(id, texts)
+    }
+
+    /// Add or remove the standalone `Continue` line of a block.
+    pub fn set_continue(&mut self, id: BlockId, on: bool) -> Result<(), EditError> {
+        let (mut texts, _, _) = self.header_parts(id)?;
+        let b = self.block(id).ok_or(EditError::UnknownBlock)?;
+        if b.has_continue() == on {
+            return Ok(());
+        }
+        let header = b.header_line();
+        if on {
+            let enabled = b.is_enabled();
+            let first = b.body().iter().find_map(|bl| {
+                let t = bl.tokens.as_ref()?;
+                let text = self.lines[bl.line].text();
+                let off = if enabled {
+                    0
+                } else {
+                    text.len() - disabled::uncomment_once(text)?.len()
+                };
+                Some((
+                    text[..off].to_string(),
+                    text[off + t.indent.start..off + t.indent.end].to_string(),
+                ))
+            });
+            let line = match first {
+                Some((prefix, indent)) => format!("{prefix}{indent}Continue"),
+                None if enabled => "  Continue".to_string(),
+                None => "#  Continue".to_string(),
+            };
+            texts.push(line);
+        } else {
+            let doomed: Vec<usize> = b
+                .body()
+                .iter()
+                .filter(|bl| {
+                    bl.keyword.is_some_and(|k| {
+                        k.kind == Kind::Modifier && k.name.eq_ignore_ascii_case("continue")
+                    })
+                })
+                .map(|bl| bl.line - header)
+                .collect();
+            let mut i = 0usize;
+            texts.retain(|_| {
+                let keep = !doomed.contains(&i);
+                i += 1;
+                keep
+            });
+        }
+        self.replace_block_lines(id, texts)
     }
 
     /// Append a new rule block before the economy section (or at the end of the file).
@@ -632,5 +724,134 @@ mod tests {
         ));
         assert_eq!(s(&d), src);
         assert_eq!(ids(&d), all);
+    }
+
+    #[test]
+    fn keyword_rewrites_only_the_token() {
+        let src = "  Show # %D4 $type->currency !slug
+  Class \"Bows\"
+";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        d.set_block_keyword(id, BlockKeyword::Hide).unwrap();
+        assert_eq!(s(&d), src.replace("Show", "Hide"));
+        assert_eq!(d.block(id).unwrap().keyword(), BlockKeyword::Hide);
+        d.set_block_keyword(id, BlockKeyword::Hide).unwrap();
+        d.set_block_keyword(id, BlockKeyword::Show).unwrap();
+        assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn keyword_on_disabled_block_keeps_it_disabled() {
+        let src = "#Show # c
+#  Rarity Rare
+";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        d.set_block_keyword(id, BlockKeyword::Minimal).unwrap();
+        assert_eq!(
+            s(&d),
+            "#Minimal # c
+#  Rarity Rare
+"
+        );
+        let b = d.block(id).unwrap();
+        assert!(!b.is_enabled() && b.can_enable());
+    }
+
+    #[test]
+    fn compact_header_is_refused() {
+        let src = "Show Continue
+  Rarity Rare
+";
+        let mut d = p(src);
+        let id = ids(&d)[0];
+        assert!(matches!(
+            d.set_block_keyword(id, BlockKeyword::Hide),
+            Err(EditError::CompactHeader)
+        ));
+        assert!(matches!(
+            d.set_continue(id, true),
+            Err(EditError::CompactHeader)
+        ));
+        assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn continue_uses_body_indent_and_removes_all() {
+        let mut d = p("Show
+	Rarity Rare
+
+Hide
+");
+        let id = ids(&d)[0];
+        d.set_continue(id, true).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+	Rarity Rare
+	Continue
+
+Hide
+"
+        );
+        d.set_continue(id, true).unwrap();
+        d.set_continue(id, false).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+	Rarity Rare
+
+Hide
+"
+        );
+        let hide = ids(&d)[1];
+        d.set_continue(hide, true).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+	Rarity Rare
+
+Hide
+  Continue
+"
+        );
+        let mut d = p("Show
+  Continue
+  Rarity Rare
+  Continue
+");
+        let id = ids(&d)[0];
+        d.set_continue(id, false).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+  Rarity Rare
+"
+        );
+    }
+
+    #[test]
+    fn continue_on_disabled_block() {
+        let mut d = p("#Show
+#	Rarity Rare
+");
+        let id = ids(&d)[0];
+        d.set_continue(id, true).unwrap();
+        assert_eq!(
+            s(&d),
+            "#Show
+#	Rarity Rare
+#	Continue
+"
+        );
+        assert!(d.block(id).unwrap().has_continue());
+        d.set_continue(id, false).unwrap();
+        assert_eq!(
+            s(&d),
+            "#Show
+#	Rarity Rare
+"
+        );
     }
 }

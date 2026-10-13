@@ -292,14 +292,11 @@ fn extract(doc: &Document, b: &Block) -> Extracted {
         let Some(text) = doc.lines().get(bl.line).map(|l| l.text()) else {
             continue;
         };
-        // Disabled-block token ranges are relative to the text after the first `#`.
+        // Disabled-block token ranges are relative to the text past the `#` (and one space).
         let base = if b.is_enabled() {
             text
         } else {
-            match text.find('#') {
-                Some(i) => &text[i + 1..],
-                None => text,
-            }
+            crate::filter::commented_inner(text)
         };
         let values: Vec<String> = tok
             .values
@@ -685,14 +682,11 @@ impl WorkingFilter {
             } else {
                 bl.keyword
             };
-            // Disabled-block token ranges are relative to the text after the first `#`.
+            // Disabled-block token ranges are relative to the text past the `#` (and one space).
             let base = if b.is_enabled() {
                 text
             } else {
-                match text.find('#') {
-                    Some(i) => &text[i + 1..],
-                    None => text,
-                }
+                crate::filter::commented_inner(text)
             };
             let (op, values) = match (&keyword, bl.tokens.as_ref()) {
                 (Some(_), Some(t)) => (

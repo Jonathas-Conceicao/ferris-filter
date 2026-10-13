@@ -230,7 +230,9 @@ impl Document {
         Ok(())
     }
 
-    /// Enable or disable a block by adding/removing exactly one `#` per owned line (D-08).
+    /// Enable or disable a block (D-08): disabling writes `# ` in front of every owned line (a
+    /// bare `#` for an empty one); enabling removes each line's first `#` and one space after it,
+    /// if there is one.
     pub fn set_enabled(&mut self, id: BlockId, enabled: bool) -> Result<(), EditError> {
         let pos = self.block_pos(id)?;
         let b = self.block(id).ok_or(EditError::UnknownBlock)?;
@@ -268,7 +270,7 @@ impl Document {
             let text = if enabled {
                 disabled::enabled_text(l.text()).into_owned()
             } else {
-                format!("#{}", l.text())
+                disabled::disabled_text(l.text())
             };
             new_lines[i] = Line::new(text, l.eol());
         }
@@ -494,7 +496,7 @@ mod tests {
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_enabled(id, false).unwrap();
-        assert_eq!(s(&d), "#Show\r\n#\tRarity Rare\r\n");
+        assert_eq!(s(&d), "# Show\r\n# \tRarity Rare\r\n");
         let b = d.block(id).unwrap();
         assert!(!b.is_enabled() && b.can_enable());
         d.set_enabled(id, true).unwrap();
@@ -509,7 +511,7 @@ mod tests {
         d.set_enabled(id, false).unwrap();
         assert_eq!(
             s(&d),
-            "#Show\n#\tRarity Rare\n#\n## mid\n#\tClass \"Bows\"\n"
+            "# Show\n# \tRarity Rare\n#\n# # mid\n# \tClass \"Bows\"\n"
         );
         d.set_enabled(id, true).unwrap();
         assert_eq!(s(&d), src);
@@ -522,7 +524,10 @@ mod tests {
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_enabled(id, false).unwrap();
-        assert_eq!(s(&d), "#Show\n#\tRarity Rare\n##\tSetFontSize 40\nHide\n");
+        assert_eq!(
+            s(&d),
+            "# Show\n# \tRarity Rare\n# #\tSetFontSize 40\nHide\n"
+        );
         assert_eq!(d.block(id).unwrap().owned(), 0..3);
         d.set_enabled(id, true).unwrap();
         assert_eq!(s(&d), src);
@@ -594,10 +599,32 @@ mod tests {
         }
     }
 
-    /// Every short document over a pool of tricky lines: for each block, `can_enable()` agrees
-    /// with `set_enabled(true)`, a successful disable re-enables byte-identically when the disabled
-    /// form is enableable, metadata edits never move another block's lines, and a refused edit
-    /// leaves the bytes untouched.
+    /// Builds every short document of `head` + four pool lines + `Hide` and checks each with
+    /// [`check_agreement`]. Returns the number of documents.
+    fn sweep_pool(heads: [&str; 2], pool: &[&str; 16], strict: bool) -> usize {
+        let mut docs = 0usize;
+        for head in heads {
+            for code in 0..pool.len().pow(4) {
+                let mut lines = vec![head];
+                let mut c = code;
+                for _ in 0..4 {
+                    lines.push(pool[c % pool.len()]);
+                    c /= pool.len();
+                }
+                lines.push("Hide");
+                let src = lines.join("\n") + "\n";
+                check_agreement(&src, strict);
+                docs += 1;
+            }
+        }
+        docs
+    }
+
+    /// Every short document over a pool of tricky lines in the pre-v0.5 `#Show` / `#\t...`
+    /// disabled form: for each block, `can_enable()` agrees with `set_enabled(true)`, a successful
+    /// disable re-enables byte-identically when the disabled form is enableable, enabling an
+    /// old-form block and disabling it again writes exactly the `# ` form of each line, metadata
+    /// edits never move another block's lines, and a refused edit leaves the bytes untouched.
     #[test]
     fn exhaustive_small_documents_agree() {
         // Tab-, space-, mixed- and un-indented lines (iteration-3 CR-01 / WR-01), prose that can
@@ -621,22 +648,40 @@ mod tests {
             "#Rarity Rare",
             "Rarity Rare",
         ];
-        let mut docs = 0usize;
-        for head in ["Show", "#Show"] {
-            for code in 0..POOL.len().pow(4) {
-                let mut lines = vec![head];
-                let mut c = code;
-                for _ in 0..4 {
-                    lines.push(POOL[c % POOL.len()]);
-                    c /= POOL.len();
-                }
-                lines.push("Hide");
-                let src = lines.join("\n") + "\n";
-                check_agreement(&src);
-                docs += 1;
-            }
-        }
-        assert_eq!(docs, 2 * 16usize.pow(4));
+        assert_eq!(
+            sweep_pool(["Show", "#Show"], &POOL, false),
+            2 * 16usize.pow(4)
+        );
+    }
+
+    /// The same sweep in the current `# Show` / `# \t...` form, with live lines that start with a
+    /// space, two spaces, a tab or nothing: disabling writes `# ` + the line, and every
+    /// disable/enable round trip in either direction is byte-identical (`strict`), including the
+    /// `# ` + ` Rarity Rare` = `#  Rarity Rare` lines that only the one-space rule tells apart.
+    #[test]
+    fn exhaustive_small_documents_agree_spaced_form() {
+        const POOL: [&str; 16] = [
+            "\tRarity Rare",
+            " Rarity Rare",
+            "  Class \"Bows\"",
+            "Rarity Rare",
+            "# \tRarity Rare",
+            "#  Rarity Rare",
+            "# Rarity Rare",
+            "# \tSetFontSize 40",
+            "# #\tSetFontSize 40",
+            "# # note",
+            "# Corrupted items",
+            "#",
+            "",
+            "# \tFutureKw 3",
+            "# ff:name x",
+            "#   Note: x",
+        ];
+        assert_eq!(
+            sweep_pool(["Show", "# Show"], &POOL, true),
+            2 * 16usize.pow(4)
+        );
     }
 
     /// Clean commented grammar lines (any indentation) in the run of commented lines below the
@@ -689,7 +734,7 @@ mod tests {
             .collect()
     }
 
-    fn check_agreement(src: &str) {
+    fn check_agreement(src: &str, strict: bool) {
         let d0 = p(src);
         for id in ids(&d0) {
             // Metadata edits either keep every other block's lines in place or are refused
@@ -751,6 +796,25 @@ mod tests {
             } else {
                 let can = b.can_enable();
                 let want = commented_conditions(&d, b.header_line());
+                // Re-disabling writes each owned line in the current `# ` form: the original
+                // bytes when the block was already in that form.
+                let owned = b.owned();
+                let redisabled: String = d
+                    .lines()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| {
+                        let t = if owned.contains(&i) {
+                            disabled::disabled_text(&disabled::enabled_text(l.text()))
+                        } else {
+                            l.text().to_string()
+                        };
+                        t + l.eol().as_str()
+                    })
+                    .collect();
+                if strict {
+                    assert_eq!(redisabled, src, "{src:?}: not in the current disabled form");
+                }
                 let r = d.set_enabled(id, true);
                 assert_eq!(can, r.is_ok(), "{src:?}: can_enable={can} but {r:?}");
                 match r {
@@ -764,7 +828,14 @@ mod tests {
                         );
                         d.set_enabled(id, false)
                             .unwrap_or_else(|e| panic!("{src:?}: re-disable: {e}"));
-                        assert_eq!(s(&d), src, "re-disable changed bytes");
+                        assert_eq!(s(&d), redisabled, "re-disable changed bytes");
+                        // ... and that form enables back to the same live bytes.
+                        let mut e = d.clone();
+                        e.set_enabled(id, true)
+                            .unwrap_or_else(|e| panic!("{src:?}: re-enable: {e}"));
+                        let mut once = d0.clone();
+                        once.set_enabled(id, true).unwrap();
+                        assert_eq!(s(&e), s(&once), "{src:?}: re-enable differs");
                     }
                     Err(_) => assert_eq!(s(&d), src, "refused enable changed bytes"),
                 }
@@ -792,7 +863,7 @@ mod tests {
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_enabled(id, false).unwrap();
-        assert_eq!(s(&d), "# note\n#ff:name x\n#Show\n#\tRarity Rare\n");
+        assert_eq!(s(&d), "# note\n#ff:name x\n# Show\n# \tRarity Rare\n");
         assert_eq!(d.meta_get(id, "name"), Some("x"));
     }
 
@@ -857,7 +928,7 @@ mod tests {
         assert_eq!(s(&d), src);
         d.set_enabled(id, false).unwrap();
         d.set_enabled(id, false).unwrap();
-        assert_eq!(s(&d), "#Show\n#\tRarity Rare\n");
+        assert_eq!(s(&d), "# Show\n# \tRarity Rare\n");
     }
 
     #[test]

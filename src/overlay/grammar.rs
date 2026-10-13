@@ -1168,12 +1168,11 @@ mod tests {
                     continue;
                 }
                 let text = doc.lines()[bl.line].text();
-                let off = if b.is_enabled() {
-                    0
+                let g = if b.is_enabled() {
+                    text
                 } else {
-                    text.find('#').map_or(0, |i| i + 1)
+                    crate::filter::commented_inner(text)
                 };
-                let g = &text[off..];
                 let toks: Vec<&str> = t.values.iter().map(|r| &g[r.clone()]).collect();
                 let v = decode(k, &toks);
                 let enc = encode_tokens(&v);

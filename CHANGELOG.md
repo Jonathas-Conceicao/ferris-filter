@@ -124,8 +124,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#ff:economy-begin` pairs with a `# ff:economy-end`, and one of each counts as a duplicate), and
   every Apply (`ff-cli apply` and the overlay) rewrites any remaining `#ff:` line to `# ff:` while
   leaving all other bytes alone. The `generate` economy banner is now `# ====...` (the only change
-  to `generate` output; the seed fixture and snapshot were regenerated). Disabled blocks are still
-  written `#Show` / `#\tRarity ...` so disable/enable stays exactly reversible.
+  to `generate` output; the seed fixture and snapshot were regenerated).
+- **Disabled blocks are written with `# ` too.** Disabling a block now writes `# ` in front of each
+  line (`# Show`, `# \tRarity Rare`, `# \tSetFontSize 40`; an empty line becomes a bare `#`), and
+  each line keeps its own line ending. Enabling removes the `#` and one space after it when there
+  is one, otherwise just the `#`, so the older `#Show` form (blocks FerrisFilter disabled earlier,
+  and foreign filters) still enables correctly; disable then enable is byte-identical for any line,
+  including lines that start with a space or a tab. Detecting disabled blocks reads both forms the
+  same way: `# Show only rares` stays prose, `# Show` / `# Hide # name` are block headers, and a
+  `# ff:` line is metadata that ends a block. Existing `#Show` blocks are **not** rewritten on
+  Apply (FerrisFilter cannot tell its own old disabled blocks from a foreign filter's, and Apply
+  only normalizes lines that are unambiguously its own); a block takes the `# ` form the next time
+  it is disabled.
 - A RULES Apply whose result equals the file on disk no longer reports "already up to date; nothing
   was written": it counts as applied (same status as a write, in-game reload sent). The identical
   file is still not rewritten. `ff-cli apply` keeps its message.

@@ -200,7 +200,12 @@ fn corpus_reference_old_filters() {
             continue;
         }
         let bytes = fs::read(&path).unwrap();
-        check_clean(&path.display().to_string(), &bytes);
+        let label = path.display().to_string();
+        check_clean(&label, &bytes);
+        let (live, refused, dis, bad) = toggle_sweep(&label, &bytes);
+        eprintln!(
+            "{label}: {live} live toggled ({refused} refused), {dis} disabled toggled ({bad} not enableable)"
+        );
         checked += 1;
     }
     eprintln!("checked {checked} reference-old-filters/*.filter files");
@@ -299,24 +304,115 @@ fn edit_disable_enable_roundtrip_seed_universal() {
     assert_bytes_eq("seed disable/enable", &doc.to_bytes(), &orig);
 }
 
+/// A disabled block's line as re-disabling writes it: `# ` + the line past its first `#` and one
+/// optional space (a bare `#` when that is empty). The identity on the current `# ` form.
+fn respaced(text: &str) -> String {
+    let p = text.find('#').expect("disabled line without #");
+    let rest = &text[p + 1..];
+    let live = format!("{}{}", &text[..p], rest.strip_prefix(' ').unwrap_or(rest));
+    if live.is_empty() {
+        "#".to_string()
+    } else {
+        format!("# {live}")
+    }
+}
+
+fn doc_bytes_with(doc: &Document, map: impl Fn(usize, &str) -> String) -> Vec<u8> {
+    let mut out = Vec::new();
+    if doc.has_bom() {
+        out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    }
+    for (i, l) in doc.lines().iter().enumerate() {
+        out.extend_from_slice(map(i, l.text()).as_bytes());
+        out.extend_from_slice(l.eol().as_str().as_bytes());
+    }
+    out
+}
+
+fn enableable_disabled(doc: &Document) -> Vec<(BlockId, std::ops::Range<usize>)> {
+    doc.blocks()
+        .filter(|b| !b.is_enabled() && b.can_enable())
+        .map(|b| (b.id(), b.owned()))
+        .collect()
+}
+
+/// Toggle every block of `bytes` and back: each live block disables (as `# ` + line) and enables
+/// to the original bytes; each enableable disabled block enables and disables to its `# ` form
+/// ([`respaced`], the original bytes when already in that form), which round-trips exactly and
+/// enables to the same live text as the original. Returns `(live toggled, live refused, disabled
+/// toggled, disabled not enableable)`.
+fn toggle_sweep(label: &str, bytes: &[u8]) -> (usize, usize, usize, usize) {
+    let orig = parse(bytes).unwrap_or_else(|e| panic!("{label}: {e}"));
+    let mut doc = orig.clone();
+    let (mut live, mut refused) = (0, 0);
+    for id in enabled_ids(&orig) {
+        match doc.set_enabled(id, false) {
+            Ok(()) => {
+                let b = doc.block(id).unwrap();
+                for l in b.owned() {
+                    let t = doc.lines()[l].text();
+                    assert!(t == "#" || t.starts_with("# "), "{label}: wrote {t:?}");
+                }
+                doc.set_enabled(id, true)
+                    .unwrap_or_else(|e| panic!("{label}: re-enable {id:?}: {e}"));
+                live += 1;
+            }
+            Err(_) => refused += 1,
+        }
+    }
+    assert_bytes_eq(&format!("{label}: disable/enable"), &doc.to_bytes(), bytes);
+
+    let dis = enableable_disabled(&orig);
+    let not_enableable = orig.blocks().filter(|b| !b.is_enabled()).count() - dis.len();
+    let want = doc_bytes_with(&orig, |i, t| {
+        if dis.iter().any(|(_, r)| r.contains(&i)) {
+            respaced(t)
+        } else {
+            t.to_string()
+        }
+    });
+    let mut doc = orig.clone();
+    let mut enabled_all = orig.clone();
+    for (id, _) in &dis {
+        doc.set_enabled(*id, true)
+            .unwrap_or_else(|e| panic!("{label}: enable {id:?}: {e}"));
+        doc.set_enabled(*id, false)
+            .unwrap_or_else(|e| panic!("{label}: re-disable {id:?}: {e}"));
+        enabled_all.set_enabled(*id, true).unwrap();
+    }
+    assert_bytes_eq(&format!("{label}: enable/disable"), &doc.to_bytes(), &want);
+
+    // The `# ` form is a fixed point and enables to the same live text.
+    let spaced = parse(&want).unwrap();
+    let dis2 = enableable_disabled(&spaced);
+    assert_eq!(dis2.len(), dis.len(), "{label}: enableable count changed");
+    let mut again = spaced.clone();
+    let mut spaced_enabled = spaced.clone();
+    for (id, _) in &dis2 {
+        again.set_enabled(*id, true).unwrap();
+        again.set_enabled(*id, false).unwrap();
+        spaced_enabled.set_enabled(*id, true).unwrap();
+    }
+    assert_bytes_eq(
+        &format!("{label}: spaced round trip"),
+        &again.to_bytes(),
+        &want,
+    );
+    assert_bytes_eq(
+        &format!("{label}: spaced enables the same"),
+        &spaced_enabled.to_bytes(),
+        &enabled_all.to_bytes(),
+    );
+    (live, refused, dis.len(), not_enableable)
+}
+
 #[test]
 fn edit_enable_disable_roundtrip_filterblade() {
     let orig = fixture();
-    let mut doc = parse(&orig).unwrap();
-    let ids: Vec<BlockId> = doc
-        .blocks()
-        .filter(|b| !b.is_enabled())
-        .map(|b| b.id())
-        .collect();
-    assert!(!ids.is_empty());
-    for id in ids {
-        assert!(doc.block(id).unwrap().can_enable(), "{id:?}");
-        doc.set_enabled(id, true)
-            .unwrap_or_else(|e| panic!("enable {id:?}: {e}"));
-        doc.set_enabled(id, false)
-            .unwrap_or_else(|e| panic!("re-disable {id:?}: {e}"));
-    }
-    assert_bytes_eq("enable/disable", &doc.to_bytes(), &orig);
+    let (live, refused, dis, bad) = toggle_sweep("filterblade", &orig);
+    assert_eq!((live, refused), (460, 0));
+    assert!(dis > 0);
+    assert_eq!(bad, 0);
 }
 
 #[test]

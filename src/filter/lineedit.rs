@@ -102,7 +102,8 @@ fn check_text(text: &str) -> Result<(), EditError> {
 }
 
 impl Document {
-    /// Byte offset of a line's grammar text: past the first `#` of a disabled block's line.
+    /// Byte offset of a line's grammar text: past the `#` (and one optional space) of a disabled
+    /// block's line.
     fn grammar_offset(&self, enabled: bool, line: usize) -> usize {
         if enabled {
             return 0;
@@ -215,7 +216,15 @@ impl Document {
                 let ws = text[off..].bytes().take_while(|c| is_ws(*c)).count();
                 (text[..off].to_string(), text[off..off + ws].to_string())
             }
-            None => (if enabled { "" } else { "#" }.to_string(), "  ".to_string()),
+            None => (
+                if enabled {
+                    ""
+                } else {
+                    disabled::DISABLE_PREFIX
+                }
+                .to_string(),
+                "  ".to_string(),
+            ),
         };
 
         let fresh = self.fresh_eol(header);
@@ -500,6 +509,17 @@ mod tests {
         d.insert_body_line(id, 1, "Quality >= 1").unwrap();
         assert_eq!(s(&d), "#Show\n#\tRarity Rare\n#\tQuality >= 1\n");
         assert!(d.block(id).unwrap().can_enable());
+        // The current `# ` form: the prefix is copied from the body, or `# ` under a bare header.
+        let mut d = p("# Show\n# \tRarity Rare\n");
+        let id = ids(&d)[0];
+        d.insert_body_line(id, 1, "Quality >= 1").unwrap();
+        assert_eq!(s(&d), "# Show\n# \tRarity Rare\n# \tQuality >= 1\n");
+        let mut d = p("# Show\n");
+        let id = ids(&d)[0];
+        d.insert_body_line(id, 0, "Quality >= 1").unwrap();
+        assert_eq!(s(&d), "# Show\n#   Quality >= 1\n");
+        d.set_enabled(id, true).unwrap();
+        assert_eq!(s(&d), "Show\n  Quality >= 1\n");
     }
 
     #[test]

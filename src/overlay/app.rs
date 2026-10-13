@@ -407,12 +407,6 @@ impl OverlayApp {
         app
     }
 
-    /// The class catalogue, when `config.json` loaded.
-    #[allow(dead_code)]
-    pub(crate) fn classes(&self) -> Option<&ClassCatalog> {
-        self.classes.as_ref().ok()
-    }
-
     /// (Re)reads `styles.json` into the working filter and `config.json` into the class
     /// catalogue. A config failure is shown once in the list status and never blocks editing.
     fn refresh_inputs(&mut self) {

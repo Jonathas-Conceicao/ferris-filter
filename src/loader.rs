@@ -1,5 +1,5 @@
 use crate::error::JsonLoadError;
-use crate::models::config::{Config, StyleError, StyleSet};
+use crate::models::config::{Config, Style, StyleError, StyleSet};
 use crate::models::prices::PricesFile;
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 use miette::{Diagnostic, SourceOffset};
@@ -112,17 +112,59 @@ pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
     Ok(ValidatedTiers::try_from(entries)?)
 }
 
-/// Load a policy config (`config.json` / `dynamic.json`).
+/// Load a policy config (`config.json` / `dynamic.json`) and attach the styles from
+/// `styles_path` (loaded and validated via [`load_styles`]).
 ///
-/// Rejects a leftover inline `styles` section (OD-1): styles live in styles.json now, and
-/// silently ignoring the stale copy would hide an edit that no longer does anything. Does not
-/// attach styles; callers set `config.styles` from [`load_styles`].
-pub fn load_config(path: &str) -> Result<Config, LoadError> {
-    let config: Config = load_json(path)?;
-    if config.legacy_styles.is_some() {
-        return Err(StyleError::InlineStylesSection { path: path.to_string() }.into());
+/// A leftover pre-Phase-17 inline `styles` section (OD-1) is handled by content:
+/// - every inline entry equals the same-named entry in the styles file (the common case: a
+///   store seeded from the old template and never restyled) — the section is dropped, since
+///   nothing in it would be lost. `overlay::store::save` never writes `styles`, so the next
+///   Apply rewrites the store without it.
+/// - any entry is missing from, or differs from, the styles file — a load error naming those
+///   styles, because silently ignoring them would hide an edit that no longer does anything.
+///
+/// # Errors
+///
+/// `LoadError::Read`/`Parse` for either file, `LoadError::Styles` for an invalid styles file or a
+/// differing inline section.
+pub fn load_config(path: &str, styles_path: &str) -> Result<Config, LoadError> {
+    let mut config: Config = load_json(path)?;
+    let styles = load_styles(styles_path)?;
+    if let Some(legacy) = config.legacy_styles.take() {
+        check_legacy_styles(&legacy, &styles, path, styles_path)?;
     }
+    config.styles = styles;
     Ok(config)
+}
+
+/// Accept an inline `styles` section only if every entry equals the loaded styles file's.
+fn check_legacy_styles(
+    legacy: &serde_json::Value,
+    styles: &StyleSet,
+    path: &str,
+    styles_path: &str,
+) -> Result<(), StyleError> {
+    let reject = |differing| StyleError::InlineStylesSection {
+        path: path.to_string(),
+        styles_path: styles_path.to_string(),
+        differing,
+    };
+    let Some(entries) = legacy.as_object() else {
+        return Err(reject(Vec::new()));
+    };
+    let differing: Vec<String> = entries
+        .iter()
+        .filter(|(name, value)| {
+            let inline = serde_json::from_value::<Style>((*value).clone()).ok();
+            inline.as_ref() != styles.get(name)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    if differing.is_empty() {
+        Ok(())
+    } else {
+        Err(reject(differing))
+    }
 }
 
 /// Load and validate `styles.json`.

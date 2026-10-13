@@ -266,15 +266,30 @@ fn bad_colour_in_styles_json_names_the_field() {
         .stderr(contains("Mauve"));
 }
 
-/// A config that still carries an inline `styles` section is rejected (OD-1).
+/// A config that still carries an inline `styles` section with an entry styles.json lacks is
+/// rejected, naming that entry (OD-1).
 #[test]
 fn inline_styles_section_in_config_is_rejected() {
     let cfg = valid_config();
-    let bad = cfg.replacen('{', "{\"styles\": {},", 1);
+    let craftable = r#"{"text":[1,2,3],"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}"#;
+    let bad = cfg.replacen('{', &format!("{{\"styles\": {{\"craftable\": {craftable}}},"), 1);
     assert_ne!(bad, cfg);
     let dir = styles_case_dir("inline_styles", &bad, &valid_styles());
     generate_in(&dir)
         .failure()
         .stderr(contains("config.json"))
-        .stderr(contains("styles.json"));
+        .stderr(contains("styles.json"))
+        .stderr(contains("craftable"));
+}
+
+/// WR-03: an inline `styles` section that only repeats styles.json loses nothing, so it is
+/// dropped rather than rejected.
+#[test]
+fn inline_styles_section_matching_styles_json_is_accepted() {
+    let cfg = valid_config();
+    let styles = valid_styles();
+    let legacy = cfg.replacen('{', &format!("{{\"styles\": {styles},"), 1);
+    assert_ne!(legacy, cfg);
+    let dir = styles_case_dir("inline_styles_same", &legacy, &styles);
+    generate_in(&dir).success();
 }

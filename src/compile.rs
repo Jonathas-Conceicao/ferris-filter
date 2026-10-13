@@ -199,8 +199,7 @@ pub fn load_inputs(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<CompileInputs, CompileError> {
-    let mut config: Config = loader::load_config(&path_str(&paths.config))?;
-    config.styles = loader::load_styles(&path_str(&paths.styles))?;
+    let config: Config = loader::load_config(&path_str(&paths.config), &path_str(&paths.styles))?;
     config
         .styles
         .check_rules(config.rules.as_deref().unwrap_or(&[]), &path_str(&paths.styles))
@@ -547,12 +546,35 @@ mod tests {
     fn load_inputs_rejects_a_config_with_an_inline_styles_section() {
         let mut v: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
-        v["styles"] = serde_json::json!({});
+        // `E` differs from styles.json (font 30, not 29), so dropping the section would lose it.
+        let styles: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(repo_file("styles.json")).unwrap()).unwrap();
+        let mut e = styles["E"].clone();
+        e["font"] = serde_json::json!(30);
+        v["styles"] = serde_json::json!({ "S": styles["S"].clone(), "E": e });
         let dir = inputs_with_config(&serde_json::to_string(&v).unwrap());
         let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
-            .expect_err("inline styles must be rejected");
+            .expect_err("a differing inline styles section must be rejected");
         let msg = err.to_string();
         assert!(msg.contains("config.json") && msg.contains("styles.json"), "{msg}");
+        assert!(msg.contains(": E."), "names only the differing style: {msg}");
+        assert!(!msg.contains("--styles"), "{msg}");
+    }
+
+    /// WR-03: an inline section repeating styles.json entries (including an empty one) is dropped.
+    #[test]
+    fn load_inputs_accepts_an_inline_styles_section_matching_styles_json() {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
+        let styles: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(repo_file("styles.json")).unwrap()).unwrap();
+        for inline in [serde_json::json!({}), serde_json::json!({ "hidden": styles["hidden"].clone() })] {
+            v["styles"] = inline;
+            let dir = inputs_with_config(&serde_json::to_string(&v).unwrap());
+            let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+                .expect("a matching inline section loses nothing and is dropped");
+            assert!(inputs.config.legacy_styles.is_none());
+        }
     }
 
     #[test]

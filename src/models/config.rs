@@ -154,11 +154,33 @@ pub enum StyleError {
         available: String,
     },
 
-    #[error(
-        "{path} still has a `styles` section, but named styles now live in styles.json; move its entries into styles.json (or pass --styles <file>) and delete the `styles` section from {path}"
-    )]
+    /// A config/store still carries a pre-Phase-17 inline `styles` section that does not merely
+    /// repeat the styles file (OD-1). `differing` lists the inline entries that are absent from,
+    /// or differ from, the styles file; it is empty when the section could not be read as a
+    /// style map at all.
+    #[error("{}", inline_styles_message(.path, .styles_path, .differing))]
     #[diagnostic(code(ferrisfilter::styles::inline_section))]
-    InlineStylesSection { path: String },
+    InlineStylesSection {
+        path: String,
+        styles_path: String,
+        differing: Vec<String>,
+    },
+}
+
+fn inline_styles_message(path: &str, styles_path: &str, differing: &[String]) -> String {
+    let detail = if differing.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " These inline styles are missing from, or differ from, {styles_path}: {}.",
+            differing.join(", ")
+        )
+    };
+    format!(
+        "{path} still has a `styles` section, but named styles now live in {styles_path}.{detail} \
+         Move any styles you changed or added into {styles_path}, then delete the `styles` \
+         section from {path}."
+    )
 }
 
 /// Named styles in file order. The top level of `styles.json` *is* this map.
@@ -629,8 +651,8 @@ pub struct Config {
     #[serde(skip)]
     pub styles: StyleSet,
     /// Raw pre-Phase-17 inline `styles` section (OD-1). Present only so an old file still
-    /// parses far enough to be rejected with a clear message by `loader::load_config`.
-    /// Never serialized.
+    /// parses far enough for `loader::load_config` to drop it (when it merely repeats the styles
+    /// file) or reject it with a clear message (when it differs). Never serialized.
     #[serde(default, rename = "styles", skip_serializing)]
     pub legacy_styles: Option<serde_json::Value>,
     pub build: Build,

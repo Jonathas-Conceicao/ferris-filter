@@ -35,11 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** `config.json` and `dynamic_base.json` no longer have a `styles` section. Any config
-  or store (`dynamic.json`, custom `*_config.json`) that still has one now fails to load with a
-  message naming the file. Move its entries into styles.json (or a file passed via `--styles`) and
-  delete the section, or `apply --reset` the store. An existing `dynamic.json` that used a custom
-  style such as `craftable` needs that style added to styles.json first. `generate` output is
+- **BREAKING:** `config.json` and `dynamic_base.json` no longer have a `styles` section. A config
+  or store (`dynamic.json`, custom `*_config.json`) that still has one loads only if every inline
+  entry equals the same-named styles.json entry; the section is then dropped (the overlay's next
+  Apply saves the store without it). Otherwise it fails to load with a message naming the file and
+  the differing styles: move those into styles.json, then delete the section (or `apply --reset`
+  the store). An existing `dynamic.json` that used a custom style such as `craftable` needs that
+  style added to styles.json first. `generate` output is
   unchanged (the seed fixture is byte-identical).
 
 ## [0.4.0] - 2026-09-17

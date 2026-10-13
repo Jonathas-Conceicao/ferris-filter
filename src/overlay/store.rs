@@ -64,17 +64,18 @@ pub fn load(base: &Path, store: &Path) -> Result<StoreView, String> {
     let store_str = store
         .to_str()
         .ok_or_else(|| format!("store path `{}` is not valid UTF-8", store.display()))?;
-    let mut config: Config = loader::load_config(store_str).map_err(|e| e.to_string())?;
-
     // Styles live in styles.json beside the store (D-03) - the same directory the Apply path
     // resolves via `InputPaths::relative_to(store_dir)`. Rule/style cross-checking is left to
     // Apply (`compile_store`): failing startup on a bad rule would leave no way to fix it here.
+    // An inline `styles` section left over from a pre-Phase-17 seed is dropped if it only
+    // repeats styles.json (see `loader::load_config`); the next Apply saves the store without it.
     let store_dir = store.parent().unwrap_or(Path::new(""));
     let styles_path = InputPaths::relative_to(store_dir).styles;
     let styles_str = styles_path
         .to_str()
         .ok_or_else(|| format!("styles path `{}` is not valid UTF-8", styles_path.display()))?;
-    config.styles = loader::load_styles(styles_str).map_err(|e| e.to_string())?;
+    let config: Config =
+        loader::load_config(store_str, styles_str).map_err(|e| e.to_string())?;
 
     Ok(StoreView {
         config,
@@ -230,16 +231,42 @@ mod tests {
         let store = dir.path().join(dynamic::STORE_FILE);
         must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
         let text = must("read template", fs::read_to_string(&base));
-        let legacy = text.replacen('{', "{\"styles\": {},", 1);
+        let craftable = r#"{"text":[1,2,3],"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}"#;
+        let legacy = text.replacen('{', &format!("{{\"styles\": {{\"craftable\": {craftable}}},"), 1);
         assert_ne!(text, legacy);
         must("write legacy store", fs::write(&store, legacy));
 
         let err = match load(&base, &store) {
-            Ok(_) => panic!("a store with an inline styles section must be rejected"),
+            Ok(_) => panic!("a store with a differing inline styles section must be rejected"),
             Err(e) => e,
         };
         assert!(err.contains("styles.json"), "got: {err}");
         assert!(err.contains(dynamic::STORE_FILE), "got: {err}");
+        assert!(err.contains("craftable"), "must name the differing style, got: {err}");
+        assert!(!err.contains("--styles"), "the overlay has no --styles flag, got: {err}");
+    }
+
+    /// WR-03: a pre-Phase-17 store whose inline section only repeats styles.json (an untouched
+    /// seed) loads, with the section dropped, so the overlay still starts.
+    #[test]
+    fn load_accepts_an_inline_styles_section_that_matches_styles_json() {
+        let dir = must("tempdir", tempfile::tempdir());
+        let base = repo_file(dynamic::BASE_FILE);
+        let store = dir.path().join(dynamic::STORE_FILE);
+        must("copy styles.json", fs::copy(repo_file("styles.json"), dir.path().join("styles.json")));
+        let styles_text = must("read styles", fs::read_to_string(repo_file("styles.json")));
+        let text = must("read template", fs::read_to_string(&base));
+        let legacy = text.replacen('{', &format!("{{\"styles\": {styles_text},"), 1);
+        must("write legacy store", fs::write(&store, legacy));
+
+        let view = must("load", load(&base, &store));
+        assert!(view.config.legacy_styles.is_none());
+        assert_eq!(view.config.styles.len(), 12);
+
+        must("save", save(&view.config, &store));
+        let saved = must("read back", fs::read_to_string(&store));
+        let value: serde_json::Value = must("parse", serde_json::from_str(&saved));
+        assert!(value.get("styles").is_none(), "the next save drops the legacy section");
     }
 
     #[test]

@@ -35,7 +35,9 @@ pub fn launch() -> eframe::Result<()> {
     // the not-responding message after `instance::STARTUP_TIMEOUT_MS` for a still-starting
     // instance plus `instance::ACK_TIMEOUT_MS` for the answer) and exits here, before it
     // registers a hotkey or builds a tray icon, so repeated launches never leave a second
-    // stripe, icon or hotkey registration. The guard lives in `OverlayApp` until exit.
+    // stripe, icon or hotkey registration. If the single-instance check itself fails, it also
+    // exits here (fail closed, with a message box naming the error). The guard lives in
+    // `OverlayApp` until exit.
     let Some(instance_guard) = instance::acquire() else {
         return Ok(());
     };

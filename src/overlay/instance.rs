@@ -13,6 +13,13 @@
 //! waiting at once are each answered. If the first does not answer, the request is
 //! withdrawn and a MessageBox is shown (the release `ff` has no console).
 //!
+//! Failure policy (WR-03): if the mutex itself cannot be created, the launch fails
+//! closed with a MessageBox naming the Win32 error, because the same failure would
+//! repeat on every launch and each would open another stripe. If the first instance
+//! cannot create its events it keeps running (it holds the mutex) with no events at
+//! all, and a later launch sees the missing `-ready` event and says it cannot reach
+//! the running instance instead of reporting it "not responding".
+//!
 //! This module is the second home of overlay `unsafe` alongside `win.rs`,
 //! extending the T-13-09 "raw Win32 isolated" convention; every `unsafe` block
 //! carries a `// SAFETY:` comment.
@@ -74,11 +81,44 @@ pub fn instance_names() -> InstanceNames {
     names(cfg!(debug_assertions))
 }
 
-/// Outcome of waiting for the first instance's ack.
+/// Outcome of waiting on an event, and of asking the first instance to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wait {
     Signaled,
     TimedOut,
+    /// The running instance has no show channel this launch can reach (WR-03): opening
+    /// an event failed with the given Win32 error (for example access denied by an
+    /// elevated instance), or `None` when the running instance never created its events.
+    /// Only `signal_running` produces this; `classify_wait` never does.
+    Unreachable(Option<u32>),
+}
+
+/// The message box a second launch shows for a `signal_running` outcome, if any.
+pub fn signal_message(outcome: Wait) -> Option<String> {
+    match outcome {
+        Wait::Signaled => None,
+        Wait::TimedOut => Some(NOT_RESPONDING_MESSAGE.to_string()),
+        Wait::Unreachable(code) => {
+            let reason = match code {
+                Some(code) => format!("Windows error {code}"),
+                None => "its show signal is unavailable".to_string(),
+            };
+            Some(format!(
+                "FerrisFilter is already running, but this launch could not ask it to show its \
+                 stripe ({reason}). Use its tray icon or Ctrl+Shift+Z instead."
+            ))
+        }
+    }
+}
+
+/// The message box shown when the single-instance check itself fails (WR-03): the launch
+/// fails closed rather than risk a second stripe.
+pub fn check_failed_message(code: u32) -> String {
+    format!(
+        "FerrisFilter could not check whether it is already running (Windows error {code}), so \
+         it did not start, to avoid opening a second stripe. Try again; if this keeps \
+         happening, sign out and back in."
+    )
 }
 
 /// Map a `WaitForSingleObject` code. Anything but WAIT_OBJECT_0 (timeout,
@@ -96,13 +136,16 @@ pub fn classify_wait(code: u32) -> Wait {
 pub enum Acquired {
     First(Guard),
     AlreadyRunning,
+    /// `CreateMutexW` failed with this Win32 error (other than access denied, which
+    /// means an elevated instance is running). The launch fails closed.
+    Failed(u32),
 }
 
 #[cfg(windows)]
 mod imp {
     use super::{
-        ACK_TIMEOUT_MS, Acquired, InstanceNames, NOT_RESPONDING_MESSAGE, RETRY_INTERVAL_MS,
-        STARTUP_TIMEOUT_MS, Wait, classify_wait, instance_names,
+        ACK_TIMEOUT_MS, Acquired, InstanceNames, RETRY_INTERVAL_MS, STARTUP_TIMEOUT_MS, Wait,
+        check_failed_message, classify_wait, instance_names, signal_message,
     };
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
@@ -139,7 +182,10 @@ mod imp {
                 // instance stops polling, so it withdraws its readiness first.
                 unsafe { ResetEvent(self.ready) };
             }
-            for h in [self.show, self.ack, self.ready, self.mutex] {
+            // The mutex goes first: while it is held, this instance's `-ready` event
+            // exists, which is how a launcher tells a starting instance from one that has
+            // no show channel (WR-03).
+            for h in [self.mutex, self.show, self.ack, self.ready] {
                 if !h.is_null() {
                     // SAFETY: the handle came from Create* in this module and is
                     // closed exactly once, here.
@@ -183,17 +229,38 @@ mod imp {
         }
     }
 
-    fn create_event(name: &[u16]) -> HANDLE {
+    /// Create or open an event; returns the handle (null on failure) and the
+    /// `GetLastError` read immediately after the call (`ERROR_ALREADY_EXISTS` when it
+    /// opened an existing one).
+    fn open_event(name: &[u16], manual_reset: bool) -> (HANDLE, u32) {
         // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call;
         // null security attributes give the default same-user DACL.
-        unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) }
+        let h =
+            unsafe { CreateEventW(std::ptr::null(), i32::from(manual_reset), 0, name.as_ptr()) };
+        // SAFETY: plain thread-local error read, immediately after the call.
+        let err = unsafe { GetLastError() };
+        (h, err)
+    }
+
+    /// `-show` and `-ack` are auto-reset.
+    fn create_event(name: &[u16]) -> HANDLE {
+        open_event(name, false).0
     }
 
     /// The `-ready` event is manual-reset (it stays set while the instance runs), and
     /// every party creates it with the same parameters, whoever comes first.
     fn create_ready_event(name: &[u16]) -> HANDLE {
-        // SAFETY: as `create_event`; manual reset, initially unset.
-        unsafe { CreateEventW(std::ptr::null(), 1, 0, name.as_ptr()) }
+        open_event(name, true).0
+    }
+
+    fn close_all(handles: &[HANDLE]) {
+        for &h in handles {
+            if !h.is_null() {
+                // SAFETY: each handle came from Create* in this module and its owner
+                // closes it exactly once, here.
+                unsafe { CloseHandle(h) };
+            }
+        }
     }
 
     pub fn acquire_named(names: &InstanceNames) -> Acquired {
@@ -204,41 +271,53 @@ mod imp {
         let ack_name = wide(&names.ack);
         let ready_name = wide(&names.ready);
 
+        // Events BEFORE the mutex (WR-03): a running instance's `-ready` event then
+        // exists for as long as it holds the mutex, so a launcher that finds the mutex
+        // held but has to create `-ready` itself knows the instance has no show channel,
+        // instead of waiting out the startup budget for a signal that can never come.
+        let show = create_event(&show_name);
+        let ack = create_event(&ack_name);
+        let ready = create_ready_event(&ready_name);
+
         // SAFETY: `mutex_name` is NUL-terminated and alive across the call.
         let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
         // SAFETY: plain thread-local error read, immediately after the call.
         let err = unsafe { GetLastError() };
 
         if mutex.is_null() {
+            close_all(&[show, ack, ready]);
             // An elevated first instance denies access to the object: treat as
-            // running (the signal path then ends in the not-responding message,
-            // never a second stripe).
+            // running (the signal path then reports it as unreachable, never a
+            // second stripe).
             if err == ERROR_ACCESS_DENIED {
                 return Acquired::AlreadyRunning;
             }
-            // Fail open: refusing to start over an exotic kernel-object error is
-            // worse than a rare duplicate.
-            eprintln!("single-instance: CreateMutexW failed (error {err}); continuing");
-            return Acquired::First(Guard {
-                mutex,
-                show: std::ptr::null_mut(),
-                ack: std::ptr::null_mut(),
-                ready: std::ptr::null_mut(),
-                ready_marked: false,
-            });
+            // Fail closed (WR-03): any other failure (e.g. ERROR_INVALID_HANDLE when
+            // another object type holds the name) would repeat on every launch, so
+            // starting anyway would open a new stripe each time.
+            return Acquired::Failed(err);
         }
         if err == ERROR_ALREADY_EXISTS {
-            // SAFETY: handle just returned by CreateMutexW, closed once.
-            unsafe { CloseHandle(mutex) };
+            // A launcher: the events belong to the running instance; leave their
+            // state alone and let `signal_running` reopen them.
+            close_all(&[mutex, show, ack, ready]);
             return Acquired::AlreadyRunning;
         }
 
-        let show = create_event(&show_name);
-        let ack = create_event(&ack_name);
-        let ready = create_ready_event(&ready_name);
-        if show.is_null() || ack.is_null() || ready.is_null() {
+        let (show, ack, ready) = if show.is_null() || ack.is_null() || ready.is_null() {
+            // Keep running (this process holds the mutex, so it is the one stripe),
+            // but with no events at all, so the next launch reports that it cannot
+            // reach this instance instead of a false "not responding".
             eprintln!("single-instance: CreateEventW failed; show requests disabled");
-        }
+            close_all(&[show, ack, ready]);
+            (
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        } else {
+            (show, ack, ready)
+        };
         // The events may outlive a previous instance while a launcher still holds them
         // (e.g. mid-retry when it quit): start from a clean, not-ready state.
         for h in [show, ack, ready] {
@@ -314,26 +393,36 @@ mod imp {
     /// be ready (WR-02: a launch during its startup is not "not responding"); no request is
     /// sent before then, so a never-ready instance is not left holding one. Then request and
     /// wait up to `ack_ms` for the ack.
+    ///
+    /// Returns [`Wait::Unreachable`] without waiting when an event cannot be opened, or when
+    /// `-ready` did not already exist: the running instance creates it before taking the
+    /// mutex and keeps it until after releasing it, so its absence means that instance has
+    /// no show channel (its own event creation failed, WR-03).
     pub fn signal_running(names: &InstanceNames, startup_ms: u32, ack_ms: u32) -> Wait {
-        let show = create_event(&wide(&names.show));
-        let ack = create_event(&wide(&names.ack));
-        let ready = create_ready_event(&wide(&names.ready));
-        let result = if show.is_null() || ack.is_null() || ready.is_null() {
-            Wait::TimedOut
+        let ready_name = wide(&names.ready);
+        let show_name = wide(&names.show);
+        let ack_name = wide(&names.ack);
+        let (ready, ready_err) = open_event(&ready_name, true);
+        let (show, show_err) = open_event(&show_name, false);
+        let (ack, ack_err) = open_event(&ack_name, false);
+        let result = if ready.is_null() {
+            Wait::Unreachable(Some(ready_err))
+        } else if show.is_null() {
+            Wait::Unreachable(Some(show_err))
+        } else if ack.is_null() {
+            Wait::Unreachable(Some(ack_err))
+        } else if ready_err != ERROR_ALREADY_EXISTS {
+            Wait::Unreachable(None)
         } else {
             request_show(show, ack, ready, startup_ms, ack_ms)
         };
-        for h in [show, ack, ready] {
-            if !h.is_null() {
-                // SAFETY: created above, closed once.
-                unsafe { CloseHandle(h) };
-            }
-        }
+        close_all(&[show, ack, ready]);
         result
     }
 
-    pub fn notify_unresponsive() {
-        let text = wide(NOT_RESPONDING_MESSAGE);
+    /// An informational message box (the release `ff` has no console).
+    pub fn notify(message: &str) {
+        let text = wide(message);
         let title = wide("FerrisFilter");
         // SAFETY: both buffers are NUL-terminated and alive across the call; a
         // null owner window is allowed.
@@ -351,13 +440,18 @@ mod imp {
     /// exit 0. Call before creating the hotkey or the tray, and keep the Guard
     /// alive until exit.
     pub fn acquire() -> Option<Guard> {
-        match acquire_named(&instance_names()) {
+        let names = instance_names();
+        match acquire_named(&names) {
             Acquired::First(g) => Some(g),
             Acquired::AlreadyRunning => {
-                let names = instance_names();
-                if signal_running(&names, STARTUP_TIMEOUT_MS, ACK_TIMEOUT_MS) == Wait::TimedOut {
-                    notify_unresponsive();
+                let outcome = signal_running(&names, STARTUP_TIMEOUT_MS, ACK_TIMEOUT_MS);
+                if let Some(message) = signal_message(outcome) {
+                    notify(&message);
                 }
+                None
+            }
+            Acquired::Failed(code) => {
+                notify(&check_failed_message(code));
                 None
             }
         }
@@ -387,7 +481,7 @@ mod imp {
         Wait::TimedOut
     }
 
-    pub fn notify_unresponsive() {}
+    pub fn notify(_message: &str) {}
 
     /// No single-instance enforcement off Windows, where the overlay is not
     /// supported anyway.
@@ -396,7 +490,7 @@ mod imp {
     }
 }
 
-pub use imp::{Guard, acquire, acquire_named, notify_unresponsive, signal_running};
+pub use imp::{Guard, acquire, acquire_named, notify, signal_running};
 
 #[cfg(test)]
 mod tests {
@@ -466,6 +560,29 @@ mod tests {
             NOT_RESPONDING_MESSAGE,
             "FerrisFilter is already running but not responding"
         );
+    }
+
+    #[test]
+    fn each_signal_outcome_maps_to_its_message() {
+        assert_eq!(signal_message(Wait::Signaled), None);
+        assert_eq!(
+            signal_message(Wait::TimedOut).as_deref(),
+            Some(NOT_RESPONDING_MESSAGE)
+        );
+        let denied = signal_message(Wait::Unreachable(Some(5))).unwrap();
+        assert!(denied.contains("already running"), "{denied}");
+        assert!(denied.contains("Windows error 5"), "{denied}");
+        assert!(!denied.contains("not responding"), "{denied}");
+        let deaf = signal_message(Wait::Unreachable(None)).unwrap();
+        assert!(deaf.contains("show signal is unavailable"), "{deaf}");
+        assert!(deaf.contains("tray icon"), "{deaf}");
+    }
+
+    #[test]
+    fn a_failed_check_names_the_error_and_says_it_did_not_start() {
+        let msg = check_failed_message(6);
+        assert!(msg.contains("Windows error 6"), "{msg}");
+        assert!(msg.contains("did not start"), "{msg}");
     }
 }
 
@@ -643,21 +760,67 @@ mod windows_tests {
         let n = test_names("restart");
         let mut old = first(&n);
         old.mark_ready();
-        let lingering = ReadyHold::open(&n);
+        let lingering = Hold::ready_event(&n.ready);
         drop(old);
         let _new = first(&n);
         assert_eq!(signal_running(&n, 100, 100), Wait::TimedOut);
         drop(lingering);
     }
 
-    /// Holds the `-ready` event open the way a launcher mid-wait does.
-    struct ReadyHold(windows_sys::Win32::Foundation::HANDLE);
+    #[test]
+    fn a_name_held_by_another_object_type_fails_closed() {
+        // WR-03: CreateMutexW fails with ERROR_INVALID_HANDLE (6) when an event
+        // already owns the name. That must not become a second "first" instance.
+        let n = test_names("failclosed");
+        let squatter = Hold::ready_event(&n.mutex);
+        assert!(matches!(acquire_named(&n), Acquired::Failed(6)));
+        assert!(matches!(acquire_named(&n), Acquired::Failed(6)));
+        drop(squatter);
+        assert!(matches!(acquire_named(&n), Acquired::First(_)));
+    }
 
-    impl ReadyHold {
-        fn open(n: &InstanceNames) -> Self {
-            let name: Vec<u16> = n.ready.encode_utf16().chain(std::iter::once(0)).collect();
-            // SAFETY: `name` is NUL-terminated and alive across the call; same
-            // parameters as the module's own manual-reset ready event.
+    #[test]
+    fn an_instance_without_events_is_reported_unreachable_at_once() {
+        // WR-03: a running instance (it holds the mutex) whose events were never
+        // created must not cost the launcher the startup budget plus a false
+        // "not responding".
+        let n = test_names("deaf");
+        let _mutex = Hold::mutex(&n.mutex);
+        let started = Instant::now();
+        assert_eq!(signal_running(&n, 5000, 5000), Wait::Unreachable(None));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn an_instance_whose_event_creation_failed_keeps_running_and_is_unreachable() {
+        // WR-03: the first instance keeps the mutex (it is still the one stripe),
+        // and a later launch reports the failure instead of opening a second one.
+        let n = test_names("eventfail");
+        let squatter = Hold::mutex(&n.ready);
+        let mut g = first(&n);
+        g.mark_ready();
+        assert!(!g.take_show_request());
+        assert!(matches!(acquire_named(&n), Acquired::AlreadyRunning));
+        assert_eq!(signal_running(&n, 100, 100), Wait::Unreachable(Some(6)));
+        drop(squatter);
+        // The squatter is gone, but the instance still has no events, so a launch
+        // must still see it as unreachable rather than wait for a ready that never comes.
+        assert_eq!(signal_running(&n, 5000, 5000), Wait::Unreachable(None));
+    }
+
+    /// A raw named kernel object held open by a test (a launcher mid-wait, a deaf
+    /// instance's mutex, or a squatter of another type on one of the names).
+    struct Hold(windows_sys::Win32::Foundation::HANDLE);
+
+    impl Hold {
+        fn wide(name: &str) -> Vec<u16> {
+            name.encode_utf16().chain(std::iter::once(0)).collect()
+        }
+
+        /// A manual-reset, unset event, as the module creates `-ready`.
+        fn ready_event(name: &str) -> Self {
+            let name = Self::wide(name);
+            // SAFETY: `name` is NUL-terminated and alive across the call.
             let h = unsafe {
                 windows_sys::Win32::System::Threading::CreateEventW(
                     std::ptr::null(),
@@ -667,13 +830,27 @@ mod windows_tests {
                 )
             };
             assert!(!h.is_null());
-            ReadyHold(h)
+            Hold(h)
+        }
+
+        fn mutex(name: &str) -> Self {
+            let name = Self::wide(name);
+            // SAFETY: `name` is NUL-terminated and alive across the call.
+            let h = unsafe {
+                windows_sys::Win32::System::Threading::CreateMutexW(
+                    std::ptr::null(),
+                    0,
+                    name.as_ptr(),
+                )
+            };
+            assert!(!h.is_null());
+            Hold(h)
         }
     }
 
-    impl Drop for ReadyHold {
+    impl Drop for Hold {
         fn drop(&mut self) {
-            // SAFETY: created in `open`, closed once.
+            // SAFETY: created by a `Hold` constructor, closed once.
             unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
         }
     }

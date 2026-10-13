@@ -16,6 +16,7 @@ pub mod filter;
 pub mod install;
 pub mod loader;
 pub mod overlay;
+pub mod paths;
 pub mod run;
 pub use run::run;
 pub mod models;

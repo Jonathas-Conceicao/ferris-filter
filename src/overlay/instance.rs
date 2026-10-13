@@ -172,9 +172,6 @@ mod imp {
         ready_marked: bool,
     }
 
-    // SAFETY: kernel handles are process-wide and usable from any thread.
-    unsafe impl Send for Guard {}
-
     impl Drop for Guard {
         fn drop(&mut self) {
             if !self.ready.is_null() {

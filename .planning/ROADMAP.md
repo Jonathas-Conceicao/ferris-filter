@@ -152,7 +152,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 18-04-PLAN.md — dynamic.rs filter-as-store API: LoadedFilter, ApplyOp, economy_body, apply_file
+- [x] 18-04-PLAN.md — dynamic.rs filter-as-store API: LoadedFilter, ApplyOp, economy_body, apply_file
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -233,7 +233,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
-| 18. Filter as Store & Economy Section | 3/7 | In Progress|  |
+| 18. Filter as Store & Economy Section | 4/7 | In Progress|  |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
@@ -321,7 +321,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 3/7 plans executed
+**Plans:** 4/7 plans executed
 
 Plans:
 

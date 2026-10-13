@@ -32,7 +32,7 @@ use global_hotkey::GlobalHotKeyManager;
 
 use crate::compile::{InputPaths, PriceSource, PriceSourcePolicy};
 use crate::dynamic::{self, EconomyOp, LoadedFilter};
-use crate::filter::BlockId;
+use crate::filter::{BlockId, LinePatch};
 use crate::loader;
 use crate::models::config::StyleSet;
 use crate::safe_write::WriteOutcome;
@@ -261,9 +261,38 @@ fn apply_row_actions(
             RowAction::Delete(id) => Some(*id),
             _ => None,
         };
+        let edited_block = match &action {
+            RowAction::EditLine { id, .. }
+            | RowAction::AddLine { id, .. }
+            | RowAction::RemoveLine { id, .. } => Some(*id),
+            _ => None,
+        };
+        let added_in = match &action {
+            RowAction::AddLine { id, .. } => Some(*id),
+            _ => None,
+        };
+        let refused_edit = match &action {
+            RowAction::EditLine {
+                id, line, patch, ..
+            } if matches!(patch, LinePatch::Whole(_) | LinePatch::Values(_)) => Some((*id, *line)),
+            _ => None,
+        };
         let outcome = working.apply_action(action);
+        if !outcome.changed
+            && let (Some((id, line)), Some(msg)) = (refused_edit, outcome.status.clone())
+        {
+            list.line_error = Some((id, line, msg));
+        }
         if outcome.changed {
             changed = true;
+            if let Some(b) = edited_block {
+                if list.line_error.as_ref().is_some_and(|(e, _, _)| *e == b) {
+                    list.line_error = None;
+                }
+            }
+            if let (Some(b), Some(line)) = (added_in, outcome.line) {
+                list.focus_line = Some((b, line));
+            }
             if let Some(id) = deleted {
                 if list.expanded == Some(id) {
                     list.expanded = None;
@@ -364,7 +393,7 @@ impl OverlayApp {
         app
     }
 
-    /// The class catalogue, when `config.json` loaded (consumed by the class picker).
+    /// The class catalogue, when `config.json` loaded.
     #[allow(dead_code)]
     pub(crate) fn classes(&self) -> Option<&ClassCatalog> {
         self.classes.as_ref().ok()
@@ -1005,6 +1034,7 @@ impl eframe::App for OverlayApp {
                                 &visible,
                                 &mut self.list,
                                 self.query.trim().is_empty(),
+                                self.classes.as_ref().ok(),
                             );
                             row_actions.extend(frame.actions);
                         }
@@ -1184,7 +1214,7 @@ mod tests {
                 egui::Panel::bottom(egui::Id::new("test-footer")).show(ui, |ui| {
                     footer_bottom = ui.button("APPLY").rect.max.y;
                 });
-                drawn = rule_list::show_list(ui, &working, &visible, &mut list, true).drawn;
+                drawn = rule_list::show_list(ui, &working, &visible, &mut list, true, None).drawn;
             });
         })
         .drop_without_applying_deltas();

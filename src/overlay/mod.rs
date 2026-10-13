@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod apply;
+pub mod body;
 pub mod classes;
 pub mod economy;
 pub mod grammar;

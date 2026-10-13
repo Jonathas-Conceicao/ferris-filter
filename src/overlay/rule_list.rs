@@ -9,9 +9,14 @@ use std::collections::{HashMap, HashSet};
 
 use egui::{Align, Color32, Layout, RichText, Sense, UiBuilder, vec2};
 
+use crate::filter::keywords::Keyword;
+use crate::filter::tokenize::Operator;
 use crate::filter::{BlockId, BlockKeyword, FilterDiagnostic};
 
-use super::rules::{Dir, EconomyView, RowAction, RuleRow, StyleState, WorkingFilter};
+use super::body::{self, BodyCtx};
+use super::classes::ClassCatalog;
+
+use super::rules::{Dir, EconomyView, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
 use super::theme;
 use super::virtual_list::{build_offsets, scroll_offset_for, visible_range};
 use super::widgets::{self, ArrowDirection};
@@ -29,6 +34,23 @@ pub struct ListUi {
     pub expanded_h: f32,
     pub pending_scroll: Option<BlockId>,
     pub confirm_economy_remove: bool,
+    /// Conditions added from the picker that have no first entry yet (nothing is written).
+    pub pending: Vec<PendingRow>,
+    /// A just-added line to scroll to and focus.
+    pub focus_line: Option<(BlockId, usize)>,
+    /// The expanded row of the previous frame, to notice a collapse or switch.
+    pub last_expanded: Option<BlockId>,
+    /// Refusal of a raw edit, shown under the line it targeted: (block, doc line, message).
+    pub line_error: Option<(BlockId, usize, String)>,
+}
+
+/// A condition picked from `+ condition` that waits for its first entry (list shapes, Rarity).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingRow {
+    pub block: BlockId,
+    pub keyword: &'static Keyword,
+    pub op: Option<Operator>,
+    pub kind: LineKind,
 }
 
 impl Default for ListUi {
@@ -41,6 +63,10 @@ impl Default for ListUi {
             expanded_h: 180.0,
             pending_scroll: None,
             confirm_economy_remove: false,
+            pending: Vec::new(),
+            focus_line: None,
+            last_expanded: None,
+            line_error: None,
         }
     }
 }
@@ -54,6 +80,10 @@ impl ListUi {
         self.name_drafts.clear();
         self.pending_scroll = None;
         self.confirm_economy_remove = false;
+        self.pending.clear();
+        self.focus_line = None;
+        self.last_expanded = None;
+        self.line_error = None;
     }
 }
 
@@ -145,6 +175,7 @@ pub fn show_list(
     visible: &[usize],
     list: &mut ListUi,
     reorder_enabled: bool,
+    classes: Option<&ClassCatalog>,
 ) -> ListFrame {
     let row_h = row_height(ui);
     let rows = working.rows();
@@ -161,6 +192,15 @@ pub fn show_list(
     // not show it already armed.
     if list.confirm_delete.is_some() && list.confirm_delete != list.expanded {
         list.confirm_delete = None;
+    }
+    // Collapsing or switching rows drops the old row's unwritten conditions, any open picker
+    // and its stale refusal message.
+    if list.last_expanded != list.expanded {
+        let keep = list.expanded;
+        list.pending.retain(|p| Some(p.block) == keep);
+        list.line_error = None;
+        egui::Popup::close_all(ui.ctx());
+        list.last_expanded = list.expanded;
     }
     let offsets = build_offsets(
         visible.len(),
@@ -201,6 +241,8 @@ pub fn show_list(
                 ui.push_id(("rule", row.id), |ui| {
                     draw_row(
                         ui,
+                        working,
+                        classes,
                         row,
                         vi,
                         row_h,
@@ -218,6 +260,8 @@ pub fn show_list(
 
 fn draw_row(
     ui: &mut egui::Ui,
+    working: &WorkingFilter,
+    classes: Option<&ClassCatalog>,
     row: &RuleRow,
     vi: usize,
     row_h: f32,
@@ -337,7 +381,7 @@ fn draw_row(
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                expanded_body(ui, row, list, actions);
+                expanded_body(ui, working, classes, row, list, actions);
             });
         let h = row_h + body.response.rect.height();
         if (h - list.expanded_h).abs() > 0.5 {
@@ -353,6 +397,8 @@ fn caption(ui: &mut egui::Ui, text: &str) {
 
 fn expanded_body(
     ui: &mut egui::Ui,
+    working: &WorkingFilter,
+    classes: Option<&ClassCatalog>,
     row: &RuleRow,
     list: &mut ListUi,
     actions: &mut Vec<RowAction>,
@@ -448,15 +494,15 @@ fn expanded_body(
     ui.add_space(8.0);
 
     // CONDITIONS
-    caption(ui, "CONDITIONS");
-    for line in &row.conditions {
-        ui.add(egui::Label::new(RichText::new(line).color(theme::LABEL_TAN)).wrap());
-    }
-    ui.label(
-        RichText::new("Editing conditions arrives in a later update.")
-            .size(theme::ROW_SUMMARY_SIZE)
-            .color(theme::TAB_ACTIVE),
-    );
+    let entries = working.body_view(row.id);
+    let bctx = BodyCtx {
+        row,
+        entries: &entries,
+        editable: working.body_editable(row.id),
+        classes,
+        working,
+    };
+    body::conditions_group(ui, &bctx, list, actions);
     if row.cannot_enable {
         ui.add(
             egui::Label::new(RichText::new(CANNOT_ENABLE_LONG).color(theme::WARM_ACCENT)).wrap(),
@@ -666,7 +712,7 @@ mod tests {
             let h = row_height(ui);
             let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 600.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-            out = (show_list(&mut child, wf, &visible, list, reorder), h);
+            out = (show_list(&mut child, wf, &visible, list, reorder, None), h);
         })
         .drop_without_applying_deltas();
         out
@@ -731,6 +777,15 @@ mod tests {
             confirm_economy_remove: true,
             ..Default::default()
         };
+        list.pending.push(PendingRow {
+            block: id,
+            keyword: crate::filter::keywords::lookup("Class").unwrap(),
+            op: None,
+            kind: LineKind::Condition,
+        });
+        list.focus_line = Some((id, 1));
+        list.last_expanded = Some(id);
+        list.line_error = Some((id, 1, "x".into()));
         list.name_open.insert(id);
         list.name_drafts.insert(id, "x".into());
         list.clear_ids();
@@ -740,6 +795,10 @@ mod tests {
         assert!(list.name_drafts.is_empty());
         assert!(list.pending_scroll.is_none());
         assert!(!list.confirm_economy_remove);
+        assert!(list.pending.is_empty());
+        assert!(list.focus_line.is_none());
+        assert!(list.last_expanded.is_none());
+        assert!(list.line_error.is_none());
     }
 
     #[test]

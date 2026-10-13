@@ -520,6 +520,18 @@ pub(crate) fn pick_condition(
     None
 }
 
+/// The pending row queued when the last rarity chip is unchecked. It carries the removed
+/// line's operator, so `Rarity != Normal`, uncheck Normal, pick Magic writes
+/// `Rarity != Magic` rather than the opposite `Rarity Magic` (WR-01, iteration 2).
+pub(crate) fn rarity_refill(id: BlockId, kw: &'static Keyword, entry: &BodyEntry) -> PendingRow {
+    PendingRow {
+        block: id,
+        keyword: kw,
+        op: entry.op,
+        kind: LineKind::Condition,
+    }
+}
+
 /// The `AddLine` that turns a pending row plus its first entries into a real condition.
 pub(crate) fn pending_first_entry(p: &PendingRow, items: &[String]) -> Option<RowAction> {
     let value = match p.keyword.value {
@@ -540,7 +552,15 @@ pub(crate) fn pending_first_entry(p: &PendingRow, items: &[String]) -> Option<Ro
     };
     let enc = grammar::encode(&value).ok()?;
     let name = p.keyword.name;
-    let text = match p.op {
+    // Same rule as `rarity_edit`: an ordering operator means nothing on a multi-rarity line, so
+    // only it is dropped; a negation or equality is kept.
+    let op = match p.op {
+        Some(Operator::Lt | Operator::Le | Operator::Gt | Operator::Ge) if matches!(&value, Value::Rarity(r) if r.len() >= 2) => {
+            None
+        }
+        o => o,
+    };
+    let text = match op {
         Some(op) => format!("{name} {} {enc}", op.as_str()),
         None => format!("{name} {enc}"),
     };
@@ -581,6 +601,15 @@ fn pending_card(
                     .truncate(),
                 )
                 .on_hover_text(p.keyword.name);
+                // Show the operator the first entry will be written with, so a carried-over
+                // negation is never silent (WR-01, iteration 2).
+                if p.op.is_some() {
+                    ui.label(
+                        RichText::new(grammar::operator_label(p.keyword, p.op, false))
+                            .size(theme::ROW_SUMMARY_SIZE)
+                            .color(theme::LABEL_TAN),
+                    );
+                }
                 discard = widgets::remove_x_button(ui, "Discard this condition").clicked();
             });
             caption(ui, "Add an entry to create this condition");
@@ -910,12 +939,7 @@ fn rarity_control(
             RarityEdit::Edit(a) => actions.push(a),
             RarityEdit::Remove(a) => {
                 actions.push(a);
-                let p = PendingRow {
-                    block: card.id,
-                    keyword: card.kw,
-                    op: None,
-                    kind: LineKind::Condition,
-                };
+                let p = rarity_refill(card.id, card.kw, card.entry);
                 if !list.pending.contains(&p) {
                     list.pending.push(p);
                 }
@@ -2628,6 +2652,53 @@ mod tests {
         assert_eq!(list.pending[1].op, None);
         assert_eq!(list.pending[2].op, None);
         assert!(list.pending.iter().all(|p| p.kind == LineKind::Condition));
+    }
+
+    /// WR-01 (iteration 2): unchecking the last rarity chip and then picking another keeps a
+    /// negation or equality; an ordering operator survives a single pick and is dropped only
+    /// when two or more rarities are picked.
+    #[test]
+    fn rarity_refill_keeps_the_removed_operator() {
+        let text_of = |a: &Option<RowAction>| match a {
+            Some(RowAction::AddLine { text, .. }) => Some(text.clone()),
+            _ => None,
+        };
+        let rarity = crate::filter::keywords::lookup("Rarity").unwrap();
+        let cases: [(&str, &[&str], &str); 6] = [
+            (
+                "Show\n    Rarity != Normal\n",
+                &["Magic"],
+                "Rarity != Magic",
+            ),
+            (
+                "Show\n    Rarity ! Normal\n",
+                &["Magic", "Rare"],
+                "Rarity ! Magic Rare",
+            ),
+            ("Show\n    Rarity == Rare\n", &["Magic"], "Rarity == Magic"),
+            ("Show\n    Rarity >= Rare\n", &["Magic"], "Rarity >= Magic"),
+            (
+                "Show\n    Rarity >= Rare\n",
+                &["Magic", "Rare"],
+                "Rarity Magic Rare",
+            ),
+            ("Show\n    Rarity Rare\n", &["Magic"], "Rarity Magic"),
+        ];
+        for (src, pick, want) in cases {
+            let (mut wf, id, e) = entries_of(src);
+            let RarityEdit::Remove(rm) = rarity_edit(id, &e[0], &[]) else {
+                panic!("{src}: unchecking the last chip removes the line");
+            };
+            let p = rarity_refill(id, rarity, &e[0]);
+            assert!(wf.apply_action(rm).changed, "{src}");
+            let picked: Vec<String> = pick.iter().map(|s| s.to_string()).collect();
+            let a = pending_first_entry(&p, &picked);
+            assert_eq!(text_of(&a).as_deref(), Some(want), "{src}");
+            assert!(
+                wf.apply_action(a.unwrap()).changed,
+                "{src}: the line is accepted"
+            );
+        }
     }
 
     #[test]

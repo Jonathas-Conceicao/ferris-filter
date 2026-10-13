@@ -62,27 +62,28 @@ fn missing_config_json_exits_nonzero_with_message() {
         .stderr(contains("Cannot read"));
 }
 
-/// A `config.json` that is valid JSON but has a TYPE-MALFORMED field must exit non-zero
+/// A `styles.json` that is valid JSON but has a TYPE-MALFORMED field must exit non-zero
 /// and print BOTH the dotted field path AND the expected type. This is the core of
-/// ROADMAP success criterion 3: the typed `Config` model + serde_path_to_error surface
-/// `styles.S.font: invalid type: string ..., expected u8`.
+/// ROADMAP success criterion 3: the typed model + serde_path_to_error surface
+/// `S.font: invalid type: string ..., expected u8`.
+///
+/// Phase 17 changed this one test (and only this one): the named styles moved out of
+/// `config.json` into `styles.json`, so the malformed field now lives in the styles file and
+/// the dotted path starts at the style name (`S.font`, no `styles.` prefix).
 #[test]
-fn malformed_config_json_reports_field_path_and_expected_type() {
+fn malformed_styles_json_reports_field_path_and_expected_type() {
     let tiers_src = valid_tiers();
 
-    // Take the real config and break exactly one numeric field's type: the first
-    // `"font": 37` (style "S") becomes a string. Everything else stays valid, so
-    // deserialization fails specifically at styles.S.font with an expected-type message.
-    let bad_config = valid_config().replacen("\"font\": 37", "\"font\": \"BROKEN\"", 1);
-    assert!(
-        bad_config.contains("\"font\": \"BROKEN\""),
-        "fixture setup: expected to break a font field"
-    );
+    // Break exactly one numeric field's type: the first `"font": 37` (style "S") becomes a
+    // string. Everything else stays valid, so deserialization fails specifically at S.font.
+    let styles_src = valid_styles();
+    let bad_styles = styles_src.replacen("\"font\": 37", "\"font\": \"BROKEN\"", 1);
+    assert_ne!(bad_styles, styles_src, "fixture setup: expected to break a font field");
 
-    let dir = make_temp_dir("bad_cfg_type", &[
-        ("config.json", &bad_config),
+    let dir = make_temp_dir("bad_styles_type", &[
+        ("config.json", &valid_config()),
         ("tiers.json", &tiers_src),
-        ("styles.json", &valid_styles()),
+        ("styles.json", &bad_styles),
     ]);
 
     Command::cargo_bin("ferrisfilter")
@@ -92,9 +93,9 @@ fn malformed_config_json_reports_field_path_and_expected_type() {
         .assert()
         .failure()
         // file reference
-        .stderr(contains("config.json"))
+        .stderr(contains("styles.json"))
         // bad field path
-        .stderr(contains("styles.S.font"))
+        .stderr(contains("S.font"))
         // expected type
         .stderr(contains("expected u8"));
 }

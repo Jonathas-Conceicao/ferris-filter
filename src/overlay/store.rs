@@ -2,7 +2,7 @@
 //!
 //! Phase 13 built the read-only half: [`load`] calls [`crate::dynamic::ensure_store`] (seed-only
 //! — it never overwrites an existing store) and then [`crate::loader::load_json`] to deserialize
-//! the result into a [`Config`]. Phase 14 lifts the "overlay never mutates the store" boundary
+//! the result into a [`Config`], with named styles read from `styles.json` beside the store. Phase 14 lifts the "overlay never mutates the store" boundary
 //! that Phase 13's header used to describe here: [`save`] is the write half of the same
 //! lifecycle, called once per frame from the editor's autosave (D-02) whenever a mutation from
 //! `overlay::edit` marks the working model dirty. `dynamic::compile_store`/`write_filter` remain
@@ -14,6 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::compile::InputPaths;
 use crate::dynamic::{self, StoreState};
 use crate::loader;
 use crate::models::config::Config;
@@ -63,7 +64,17 @@ pub fn load(base: &Path, store: &Path) -> Result<StoreView, String> {
     let store_str = store
         .to_str()
         .ok_or_else(|| format!("store path `{}` is not valid UTF-8", store.display()))?;
-    let config: Config = loader::load_json(store_str).map_err(|e| e.to_string())?;
+    let mut config: Config = loader::load_config(store_str).map_err(|e| e.to_string())?;
+
+    // Styles live in styles.json beside the store (D-03) - the same directory the Apply path
+    // resolves via `InputPaths::relative_to(store_dir)`. Rule/style cross-checking is left to
+    // Apply (`compile_store`): failing startup on a bad rule would leave no way to fix it here.
+    let store_dir = store.parent().unwrap_or(Path::new(""));
+    let styles_path = InputPaths::relative_to(store_dir).styles;
+    let styles_str = styles_path
+        .to_str()
+        .ok_or_else(|| format!("styles path `{}` is not valid UTF-8", styles_path.display()))?;
+    config.styles = loader::load_styles(styles_str).map_err(|e| e.to_string())?;
 
     Ok(StoreView {
         config,

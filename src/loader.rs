@@ -1,5 +1,5 @@
 use crate::error::JsonLoadError;
-use crate::models::config::{StyleError, StyleSet};
+use crate::models::config::{Config, StyleError, StyleSet};
 use crate::models::prices::PricesFile;
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 use miette::{Diagnostic, SourceOffset};
@@ -110,6 +110,19 @@ pub fn load_prices_optional(path: &str) -> Result<Option<PricesFile>, LoadError>
 pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
     let entries: Vec<TierEntry> = load_json(path)?;
     Ok(ValidatedTiers::try_from(entries)?)
+}
+
+/// Load a policy config (`config.json` / `dynamic.json`).
+///
+/// Rejects a leftover inline `styles` section (OD-1): styles live in styles.json now, and
+/// silently ignoring the stale copy would hide an edit that no longer does anything. Does not
+/// attach styles; callers set `config.styles` from [`load_styles`].
+pub fn load_config(path: &str) -> Result<Config, LoadError> {
+    let config: Config = load_json(path)?;
+    if config.legacy_styles.is_some() {
+        return Err(StyleError::InlineStylesSection { path: path.to_string() }.into());
+    }
+    Ok(config)
 }
 
 /// Load and validate `styles.json`.

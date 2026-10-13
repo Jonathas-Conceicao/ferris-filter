@@ -125,6 +125,24 @@ pub enum StyleError {
     )]
     #[diagnostic(code(ferrisfilter::styles::bad_custom_sound))]
     InvalidCustomSound { style: String, value: String },
+
+    #[error(
+        "rule {rule_index} (\"{rule_label}\") uses style \"{style}\", which {path} does not define; defined styles: {available}"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::unknown_in_rule))]
+    UnknownInRule {
+        rule_index: usize,
+        rule_label: String,
+        style: String,
+        path: String,
+        available: String,
+    },
+
+    #[error(
+        "{path} still has a `styles` section, but named styles now live in styles.json; move its entries into styles.json (or pass --styles <file>) and delete the `styles` section from {path}"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::inline_section))]
+    InlineStylesSection { path: String },
 }
 
 /// Named styles in file order. The top level of `styles.json` *is* this map.
@@ -214,6 +232,26 @@ impl StyleSet {
                         value: value.clone(),
                     });
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Check that every ENABLED rule names a defined style (D-07). A disabled rule is inert
+    /// and mirrors the emitter, which skips it entirely.
+    pub fn check_rules(&self, rules: &[Rule], styles_path: &str) -> Result<(), StyleError> {
+        for (idx, rule) in rules.iter().enumerate() {
+            if rule.enabled == Some(false) {
+                continue;
+            }
+            if !self.0.contains_key(&rule.style) {
+                return Err(StyleError::UnknownInRule {
+                    rule_index: idx,
+                    rule_label: rule.name.clone().unwrap_or_else(|| format!("rule {idx}")),
+                    style: rule.style.clone(),
+                    path: styles_path.to_string(),
+                    available: self.names().collect::<Vec<_>>().join(", "),
+                });
             }
         }
         Ok(())
@@ -527,7 +565,15 @@ pub struct Meta {
 pub struct Config {
     pub meta: Meta,
     /// Named styles, in file order. Look up by name with `StyleSet::get`.
+    /// Populated by the loaders from styles.json; never read from or written to
+    /// config/store JSON (D-03).
+    #[serde(skip)]
     pub styles: StyleSet,
+    /// Raw pre-Phase-17 inline `styles` section (OD-1). Present only so an old file still
+    /// parses far enough to be rejected with a clear message by `loader::load_config`.
+    /// Never serialized.
+    #[serde(default, rename = "styles", skip_serializing)]
+    pub legacy_styles: Option<serde_json::Value>,
     pub build: Build,
     pub weapon_classes: Vec<String>,
     pub armour_classes: Vec<String>,
@@ -572,11 +618,11 @@ mod tests {
     #[test]
     fn config_styles_lookup_by_name() {
         // Styles are a name -> Style map; tiers are looked up by name.
-        let config: Config = serde_json::from_str(CONFIG_JSON).unwrap();
+        let styles = StyleSet::committed_for_tests();
         for name in ["S", "A", "B", "C", "D", "E", "F", "Recycle", "unchanged"] {
-            assert_eq!(config.styles.get(name).unwrap().action, StyleAction::Show, "{name}");
+            assert_eq!(styles.get(name).unwrap().action, StyleAction::Show, "{name}");
         }
-        assert_eq!(config.styles.get("hidden").unwrap().action, StyleAction::Hide);
+        assert_eq!(styles.get("hidden").unwrap().action, StyleAction::Hide);
     }
 
     #[test]
@@ -591,11 +637,9 @@ mod tests {
 
     #[test]
     fn config_rejects_unknown_key() {
-        // An empty "styles": {} parses (required-style checks happen in StyleSet::validate),
-        // so the error here comes from the unknown "minimip" key.
+        // The error here comes from the unknown "minimip" key.
         let bad = r#"{
             "meta": {"name":"test","palette":"x","background":[0,0,0]},
-            "styles": {},
             "build": {"weapons":[],"armour":[],"armourTypes":{}},
             "weaponClasses": [],
             "armourClasses": [],
@@ -633,20 +677,6 @@ mod tests {
         // Also confirm a minimal config (no rules/classGroups) parses with both as None.
         let minimal = r#"{
             "meta": {"name":"x","palette":"x","background":[0,0,0]},
-            "styles": {
-                "S":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "A":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "B":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "C":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "D":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "E":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "F":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "Recycle":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "unchanged":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "hidden":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Hide","disableDropSound":false},
-                "kite":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false},
-                "exceptional":{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}
-            },
             "build": {"weapons":[],"armour":[],"armourTypes":{}},
             "weaponClasses": [],
             "armourClasses": [],
@@ -965,10 +995,9 @@ mod tests {
 
     #[test]
     fn config_has_exceptional_style() {
-        let config: Config = serde_json::from_str(CONFIG_JSON)
-            .expect("config.json should parse with exceptional style defined");
-        let exceptional = config.styles.get("exceptional")
-            .expect("config.json must define the exceptional style");
+        let styles = StyleSet::committed_for_tests();
+        let exceptional = styles.get("exceptional")
+            .expect("styles.json must define the exceptional style");
         assert_eq!(
             exceptional.action,
             StyleAction::Show,
@@ -1133,20 +1162,48 @@ mod tests {
     ];
 
     #[test]
-    fn styles_json_matches_both_config_files() {
-        let set = StyleSet::committed_for_tests();
-        assert_eq!(set.names().collect::<Vec<_>>(), COMMITTED_ORDER);
+    fn committed_configs_carry_no_inline_styles() {
         for src in [CONFIG_JSON, DYNAMIC_BASE_JSON] {
             let cfg: Config = serde_json::from_str(src).unwrap();
-            assert_eq!(
-                cfg.styles.names().collect::<Vec<_>>(),
-                set.names().collect::<Vec<_>>(),
-                "name order differs"
-            );
-            for name in COMMITTED_ORDER {
-                assert_eq!(set.get(name), cfg.styles.get(name), "style {name} differs");
-            }
+            assert!(cfg.legacy_styles.is_none());
+            assert!(cfg.styles.is_empty());
         }
+    }
+
+    #[test]
+    fn serialized_config_has_no_styles_key() {
+        let mut cfg: Config = serde_json::from_str(CONFIG_JSON).unwrap();
+        cfg.styles = StyleSet::committed_for_tests();
+        let v: serde_json::Value = serde_json::to_value(&cfg).unwrap();
+        assert!(v.get("styles").is_none());
+    }
+
+    #[test]
+    fn inline_styles_section_parses_into_legacy_field() {
+        let mut v: serde_json::Value = serde_json::from_str(CONFIG_JSON).unwrap();
+        v["styles"] = serde_json::json!({});
+        let cfg: Config = serde_json::from_value(v).unwrap();
+        assert!(cfg.legacy_styles.is_some());
+    }
+
+    #[test]
+    fn check_rules_flags_unknown_enabled_rule_and_skips_disabled() {
+        let styles = StyleSet::committed_for_tests();
+        let mut cfg: Config = serde_json::from_str(CONFIG_JSON).unwrap();
+        let rules = cfg.rules.as_mut().unwrap();
+        rules[2].style = "nope".to_string();
+        rules[2].name = None;
+        rules[2].enabled = None;
+        let err = styles.check_rules(rules, "styles.json").unwrap_err().to_string();
+        assert!(err.contains("nope") && err.contains("rule 2") && err.contains("exceptional"), "{err}");
+        rules[2].enabled = Some(false);
+        styles.check_rules(rules, "styles.json").unwrap();
+    }
+
+    #[test]
+    fn styles_json_has_the_twelve_committed_styles() {
+        let set = StyleSet::committed_for_tests();
+        assert_eq!(set.names().collect::<Vec<_>>(), COMMITTED_ORDER);
         let s = set.get("S").unwrap();
         assert_eq!(s.font, Some(37));
         assert_eq!(s.sound.as_ref().unwrap().custom.as_deref(), Some("uwu.mp3"));

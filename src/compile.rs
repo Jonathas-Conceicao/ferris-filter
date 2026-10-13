@@ -32,6 +32,8 @@ use crate::pricer::{self, PriceRateError, PricedData};
 
 /// Conventional file name for the policy config.
 const CONFIG_FILE: &str = "config.json";
+/// Conventional file name for the named styles.
+const STYLES_FILE: &str = "styles.json";
 /// Conventional file name for live synced prices.
 const PRICES_FILE: &str = "prices.json";
 /// Conventional file name for the tier cutoffs that pair with live prices.
@@ -52,6 +54,7 @@ const TIERS_FALLBACK_FILE: &str = "tiers-fallback.json";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputPaths {
     pub config: PathBuf,
+    pub styles: PathBuf,
     pub prices: PathBuf,
     pub tiers: PathBuf,
     pub prices_fallback: PathBuf,
@@ -77,6 +80,7 @@ impl InputPaths {
         let root = root.as_ref();
         InputPaths {
             config: root.join(CONFIG_FILE),
+            styles: root.join(STYLES_FILE),
             prices: root.join(PRICES_FILE),
             tiers: root.join(TIERS_FILE),
             prices_fallback: root.join(PRICES_FALLBACK_FILE),
@@ -88,6 +92,13 @@ impl InputPaths {
     /// `generate --config <path>` needs.
     pub fn with_config(mut self, path: impl Into<PathBuf>) -> Self {
         self.config = path.into();
+        self
+    }
+
+    /// Override just the styles path, leaving the rest untouched. Lets generate/apply point
+    /// at a non-default styles file, e.g. for an experimental config (OD-2).
+    pub fn with_styles(mut self, path: impl Into<PathBuf>) -> Self {
+        self.styles = path.into();
         self
     }
 
@@ -188,7 +199,12 @@ pub fn load_inputs(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<CompileInputs, CompileError> {
-    let config: Config = loader::load_json(&path_str(&paths.config))?;
+    let mut config: Config = loader::load_config(&path_str(&paths.config))?;
+    config.styles = loader::load_styles(&path_str(&paths.styles))?;
+    config
+        .styles
+        .check_rules(config.rules.as_deref().unwrap_or(&[]), &path_str(&paths.styles))
+        .map_err(LoadError::from)?;
 
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
     // prices-fallback.json with tiers-fallback.json — their values are calibrated to each other
@@ -302,9 +318,10 @@ mod tests {
     }
 
     #[test]
-    fn relative_to_joins_the_five_conventional_names() {
+    fn relative_to_joins_the_six_conventional_names() {
         let p = InputPaths::relative_to("/tmp/root");
         assert_eq!(p.config, Path::new("/tmp/root").join("config.json"));
+        assert_eq!(p.styles, Path::new("/tmp/root").join("styles.json"));
         assert_eq!(p.prices, Path::new("/tmp/root").join("prices.json"));
         assert_eq!(p.tiers, Path::new("/tmp/root").join("tiers.json"));
         assert_eq!(
@@ -323,6 +340,7 @@ mod tests {
     fn conventional_yields_bare_relative_names() {
         let p = InputPaths::conventional();
         assert_eq!(p.config, Path::new("config.json"));
+        assert_eq!(p.styles, Path::new("styles.json"));
         assert_eq!(p.prices, Path::new("prices.json"));
         assert_eq!(p.tiers, Path::new("tiers.json"));
         assert_eq!(p.prices_fallback, Path::new("prices-fallback.json"));
@@ -352,6 +370,18 @@ mod tests {
         assert_eq!(paths.config, Path::new("dynamic.json"));
         assert_eq!(paths.tiers, Path::new("tiers-fallback.json"));
         assert_eq!(paths.prices, Path::new("prices.json"));
+    }
+
+    #[test]
+    fn with_styles_overrides_only_the_styles_path() {
+        let base = InputPaths::relative_to("/tmp/root");
+        let overridden = base.clone().with_styles("/elsewhere/my-styles.json");
+        assert_eq!(overridden.styles, Path::new("/elsewhere/my-styles.json"));
+        assert_eq!(overridden.config, base.config);
+        assert_eq!(overridden.prices, base.prices);
+        assert_eq!(overridden.tiers, base.tiers);
+        assert_eq!(overridden.prices_fallback, base.prices_fallback);
+        assert_eq!(overridden.tiers_fallback, base.tiers_fallback);
     }
 
     #[test]
@@ -448,6 +478,81 @@ mod tests {
             "expected ForcedFallbackMissing, got {err:?}"
         );
         assert!(err.to_string().contains("--early-game requires"));
+    }
+
+    /// Temp dir with the committed styles/tiers/prices and a caller-supplied config text.
+    fn inputs_with_config(config_text: &str) -> tempfile::TempDir {
+        let dir = temp_inputs(&[
+            ("styles.json", &repo_file("styles.json")),
+            ("tiers.json", &repo_file("tiers.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        fs::write(dir.path().join("config.json"), config_text).unwrap();
+        dir
+    }
+
+    fn config_with_rule_style(style: &str, enabled: Option<bool>) -> String {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
+        let rule = &mut v["rules"][1];
+        rule["style"] = serde_json::json!(style);
+        if let Some(e) = enabled {
+            rule["enabled"] = serde_json::json!(e);
+        }
+        serde_json::to_string(&v).unwrap()
+    }
+
+    #[test]
+    fn load_inputs_attaches_the_twelve_committed_styles() {
+        let dir = inputs_with_config(&fs::read_to_string(repo_file("config.json")).unwrap());
+        let inputs = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect("load");
+        assert_eq!(inputs.config.styles.len(), 12);
+    }
+
+    #[test]
+    fn load_inputs_rejects_an_enabled_rule_with_an_unknown_style() {
+        let dir = inputs_with_config(&config_with_rule_style("nope", None));
+        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect_err("unknown style must fail at load");
+        let msg = err.to_string();
+        assert!(msg.contains("nope"), "{msg}");
+        assert!(msg.contains("rule 1") || msg.contains("(\""), "{msg}");
+        assert!(msg.contains("exceptional"), "{msg}");
+        assert!(msg.contains("styles.json"), "{msg}");
+    }
+
+    #[test]
+    fn load_inputs_ignores_a_disabled_rule_with_an_unknown_style() {
+        let dir = inputs_with_config(&config_with_rule_style("nope", Some(false)));
+        load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect("a disabled rule is inert");
+    }
+
+    #[test]
+    fn load_inputs_without_styles_json_is_a_read_error_naming_it() {
+        let dir = temp_inputs(&[
+            ("config.json", &repo_file("config.json")),
+            ("tiers.json", &repo_file("tiers.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect_err("must fail without styles.json");
+        let msg = err.to_string();
+        assert!(msg.starts_with("Cannot read `"), "{msg}");
+        assert!(msg.contains("styles.json"), "{msg}");
+    }
+
+    #[test]
+    fn load_inputs_rejects_a_config_with_an_inline_styles_section() {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
+        v["styles"] = serde_json::json!({});
+        let dir = inputs_with_config(&serde_json::to_string(&v).unwrap());
+        let err = load_inputs(&InputPaths::relative_to(dir.path()), PriceSourcePolicy::Auto)
+            .expect_err("inline styles must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("config.json") && msg.contains("styles.json"), "{msg}");
     }
 
     #[test]

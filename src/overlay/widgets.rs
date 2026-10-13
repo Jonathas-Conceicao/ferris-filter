@@ -16,6 +16,7 @@
 //! `header_plate`'s `✕` already established, rather than a custom `egui::Widget` impl or a text
 //! glyph that might render as tofu.
 
+use super::text_entry::parse_base_type_entry;
 use super::theme;
 
 /// What [`header_plate`] reports back to the caller.
@@ -453,6 +454,118 @@ pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4]) -> Option<[u8; 4]> {
     result
 }
 
+/// What one frame of [`chip_list`] asks the caller to do.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ChipListOutcome {
+    /// Index of the chip whose x was clicked.
+    pub removed: Option<usize>,
+    /// New entries committed from the add field (quoted pastes already split).
+    pub added: Vec<String>,
+    /// A visible refusal message, when an entry was not added.
+    pub rejected: Option<String>,
+}
+
+const CHIP_REJECT_MESSAGE: &str = "Values cannot contain quotes or control characters";
+
+/// A wrapped list of removable chips with an `N items` counter, a scroll cap and an add field.
+///
+/// Restores the v0.4 list-entry model: the caller owns the data; this reports one removal index
+/// and any added entries, never mutating during iteration. The add draft lives in egui temp
+/// memory under the widget id and is cleared after a commit.
+pub fn chip_list(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    items: &[String],
+    hint: &str,
+    max_height: f32,
+) -> ChipListOutcome {
+    let id = salted_id(ui, id_salt);
+    let field_id = id.with("field");
+    let mut outcome = ChipListOutcome::default();
+
+    let count = items.len();
+    ui.label(
+        egui::RichText::new(format!("{count} item{}", if count == 1 { "" } else { "s" }))
+            .size(theme::ROW_SUMMARY_SIZE)
+            .color(theme::LABEL_TAN),
+    );
+
+    egui::ScrollArea::vertical()
+        .id_salt(id.with("scroll"))
+        .max_height(max_height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                for (index, item) in items.iter().enumerate() {
+                    egui::Frame::new()
+                        .fill(theme::INPUT_FILL)
+                        .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
+                        .inner_margin(egui::Margin {
+                            left: 6,
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                        })
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(item)
+                                        .size(theme::ROW_SUMMARY_SIZE)
+                                        .color(theme::VALUE_TEXT),
+                                );
+                                let label = format!("Remove {item}");
+                                if remove_x_button_with_id(ui, id.with(("x", index)), &label)
+                                    .clicked()
+                                {
+                                    outcome.removed = Some(index);
+                                }
+                            });
+                        });
+                }
+            });
+        });
+
+    let mut draft: String = ui
+        .data_mut(|d| d.get_temp::<String>(id.with("draft")))
+        .unwrap_or_default();
+    let mut commit = false;
+    let mut enter = false;
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - 64.0).max(60.0);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut draft)
+                .id(field_id)
+                .hint_text(hint)
+                .desired_width(width),
+        );
+        enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if ui.button("+ ADD").clicked() {
+            commit = true;
+        }
+    });
+    if enter || commit {
+        let mut refused = false;
+        for entry in parse_base_type_entry(&draft) {
+            if entry.chars().any(char::is_control) {
+                refused = true;
+            } else {
+                outcome.added.push(entry);
+            }
+        }
+        if refused {
+            outcome.rejected = Some(CHIP_REJECT_MESSAGE.to_owned());
+        }
+        draft.clear();
+    }
+    ui.data_mut(|d| d.insert_temp(id.with("draft"), draft));
+    if enter {
+        ui.memory_mut(|m| m.request_focus(field_id));
+    }
+    outcome
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,7 +777,6 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
     fn key_input(key: egui::Key) -> RawInput {
         RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
@@ -769,5 +881,139 @@ mod tests {
             rgba_caption([255, 121, 198, 128]),
             "R 255 G 121 B 198 A 128"
         );
+    }
+
+    fn chip_items() -> Vec<String> {
+        ["Heavy Belt", "Utility Belt", "Sapphire Ring"]
+            .map(String::from)
+            .to_vec()
+    }
+
+    #[test]
+    fn chip_list_idle_frame_reports_nothing() {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        ctx.run_ui(RawInput::default(), |ui| {
+            let out = chip_list(ui, "chips", &items, "Add a base type", 160.0);
+            assert_eq!(out, ChipListOutcome::default());
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn chip_list_x_click_reports_that_index() {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        let mut x_id = egui::Id::NULL;
+        ctx.run_ui(RawInput::default(), |ui| {
+            x_id = salted_id(ui, "chips").with(("x", 1usize));
+            chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        let rect = ctx
+            .read_response(x_id)
+            .map(|r| r.rect)
+            .unwrap_or(Rect::NOTHING);
+        assert_eq!(rect.size(), egui::vec2(24.0, 24.0));
+        let mut out = ChipListOutcome::default();
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            out = chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(out.removed, Some(1));
+    }
+
+    /// Preload a draft, focus the field, press Enter; returns the outcome of the Enter frame.
+    fn commit_with_enter(draft: &str) -> (ChipListOutcome, String) {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        let mut ids = (egui::Id::NULL, egui::Id::NULL);
+        ctx.run_ui(RawInput::default(), |ui| {
+            let id = salted_id(ui, "chips");
+            ids = (id.with("draft"), id.with("field"));
+            ui.data_mut(|d| d.insert_temp(ids.0, draft.to_owned()));
+            ui.memory_mut(|m| m.request_focus(ids.1));
+            chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(RawInput::default(), |ui| {
+            chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        let mut out = ChipListOutcome::default();
+        ctx.run_ui(key_input(egui::Key::Enter), |ui| {
+            out = chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        let left = ctx
+            .data_mut(|d| d.get_temp::<String>(ids.0))
+            .unwrap_or_default();
+        (out, left)
+    }
+
+    #[test]
+    fn chip_list_enter_splits_a_quoted_paste_and_clears_the_draft() {
+        let (out, left) = commit_with_enter("\"Heavy Belt\" \"Utility Belt\"");
+        assert_eq!(out.added, ["Heavy Belt", "Utility Belt"]);
+        assert!(left.is_empty());
+    }
+
+    #[test]
+    fn chip_list_blank_draft_adds_nothing() {
+        let (out, _) = commit_with_enter("   ");
+        assert!(out.added.is_empty());
+    }
+
+    #[test]
+    fn chip_list_control_characters_are_refused() {
+        let (out, _) = commit_with_enter("Bad\u{7}Name");
+        assert!(out.added.is_empty());
+        assert_eq!(out.rejected.as_deref(), Some(CHIP_REJECT_MESSAGE));
+    }
+
+    #[test]
+    fn chip_list_add_button_commits_a_plain_entry() {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        let mut ids = (egui::Id::NULL, egui::Id::NULL);
+        ctx.run_ui(RawInput::default(), |ui| {
+            let id = salted_id(ui, "chips");
+            ids = (id.with("draft"), id.with("field"));
+            ui.data_mut(|d| d.insert_temp(ids.0, "Sapphire Ring".to_owned()));
+            chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        let field = ctx
+            .read_response(ids.1)
+            .map(|r| r.rect)
+            .unwrap_or(Rect::NOTHING);
+        let pos = field.right_center() + egui::vec2(20.0, 0.0);
+        let mut out = ChipListOutcome::default();
+        ctx.run_ui(click_at(pos), |ui| {
+            out = chip_list(ui, "chips", &items, "hint", 160.0);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(out.added, ["Sapphire Ring"]);
+    }
+
+    #[test]
+    fn chip_list_counter_pluralises() {
+        for (n, expected) in [(14usize, "14 items"), (1, "1 item")] {
+            let ctx = headless_ctx();
+            let items: Vec<String> = (0..n).map(|i| format!("Base {i}")).collect();
+            let mut found = false;
+            let out = ctx.run_ui(RawInput::default(), |ui| {
+                chip_list(ui, "chips", &items, "hint", 160.0);
+            });
+            for clipped in &out.shapes {
+                if let egui::epaint::Shape::Text(t) = &clipped.shape {
+                    if t.galley.text() == expected {
+                        found = true;
+                    }
+                }
+            }
+            out.drop_without_applying_deltas();
+            assert!(found, "caption {expected:?} not painted");
+        }
     }
 }

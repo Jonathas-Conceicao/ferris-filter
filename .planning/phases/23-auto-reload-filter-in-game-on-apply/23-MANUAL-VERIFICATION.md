@@ -49,13 +49,20 @@ Record Result as PASS / FAIL with a note for every step.
    `"reload_after_apply": false`; after relaunching ff the toggle is still off. Switch it back on.
    **Result:**
 
-7. **Chat already open with partial text.** In game press Enter, type `hello` (do not send), click
-   the stripe, Apply.
-   **Expected:** observe and record what happens (assumption A2: Ctrl+A should replace `hello` with
-   the command). If `hello` is sent to chat or the command arrives garbled, record it. Fallback: use
-   Exiled Exchange 2's exact sequence, Enter, Ctrl+V, Enter (remove `Chord(Ctrl, A)` from
-   `reload_steps()`); the CLAUDE.md "close the chat first" note covers the residual case.
-   **Result:**
+7. **Chat already open with partial text (known limitation).** Use a private channel or a party of
+   one, since the text is really sent. In game press Enter, type `hello` (do not send), click the
+   stripe, Apply.
+   **Expected (documented, not a pass/fail on the code):** the first Enter sends `hello` as a chat
+   message, the chat box closes, the final Enter leaves an empty chat box open, and
+   `/reloaditemfilter` is not sent; the status still says "Reloaded in game" (the keys were
+   delivered). Nothing outside the game can see whether chat is open, so this is the reason for the
+   "Close the chat box before pressing Apply" caption; Ctrl+A cannot help because it runs after the
+   first Enter. Record anything else (for example the command arriving garbled). Also record
+   whether Ctrl+A or Ctrl+V does anything in the game world with chat closed. **Result:**
+
+7b. **Chat pre-fill.** With chat closed, Apply after having last chatted in a party or guild
+   channel (the game may pre-fill a channel prefix when chat opens).
+   **Expected:** Ctrl+A replaces the pre-filled prefix and the command is sent as is. **Result:**
 
 8. **Unchanged Apply.** Apply twice with no edit in between.
    **Expected:** the second shows "already up to date; nothing was written" and nothing is sent.

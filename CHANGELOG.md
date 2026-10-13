@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the game closed, or with the new CONFIG setting **Reload filter in game after Apply** off
   (default on, `reload_after_apply` in `ff-settings.json`); the Refresh reminder then names the
   reason. The game window is matched by title and `PathOfExile*` process name. Caveats: it reloads the
-  filter selected in game, close chat first, same privilege level, non-text clipboard content is
-  replaced. `ff-cli apply` is unchanged. No new dependency (three `windows-sys` features).
+  filter selected in game; close chat first (if the chat box is already open with text, that text is
+  sent as a message and the command is not, because nothing outside the game can see whether chat
+  is open); same privilege level; non-text clipboard content is replaced. `ff-cli apply` is unchanged. No new dependency (three `windows-sys` features).
 - **Single-instance overlay** (Phase 22, INST-01). Launching `ff` while it is running reveals the
   existing stripe (also when hidden to the tray, without stealing focus) and exits instead of opening
   a second one; a not-responding instance produces a "FerrisFilter is already running but not

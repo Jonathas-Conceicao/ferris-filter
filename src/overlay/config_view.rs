@@ -31,8 +31,9 @@ const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete thi
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
 /// Label of the FILTER section toggle that sends `/reloaditemfilter` after a RULES Apply.
 pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
-/// Caveat shown under the toggle: the game reloads whichever filter is selected in game.
-pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply.";
+/// Caveats shown under the toggle: the game reloads whichever filter is selected in game, and text
+/// left in an open chat box is sent first (nothing outside the game can see whether chat is open).
+pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
 const APPLY_NOTHING_TIP: &str = "No unapplied config changes.";
 const APPLY_LOAD_ERROR_TIP: &str =
     "styles.json or tiers.json failed to load. Revert to reload them.";
@@ -1237,6 +1238,7 @@ mod tests {
         assert_eq!(RELOAD_TOGGLE_LABEL, "Reload filter in game after Apply");
         assert!(RELOAD_TOGGLE_CAPTION.contains("/reloaditemfilter"));
         assert!(RELOAD_TOGGLE_CAPTION.contains("selected in game"));
+        assert!(RELOAD_TOGGLE_CAPTION.contains("Close the chat box"));
         assert!(RELOAD_TOGGLE_CAPTION.is_ascii() && RELOAD_TOGGLE_LABEL.is_ascii());
         let (_d, state) = loaded();
         let users = HashMap::new();

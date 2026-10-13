@@ -1,13 +1,24 @@
 //! RELOAD-01 / Phase 23: after a RULES Apply that wrote the filter, send `/reloaditemfilter` to a
 //! running PoE2.
 //!
-//! One Apply click is one chat command: it is never repeated, scheduled, retried or queued
+//! One Apply click runs one send sequence: it is never repeated, scheduled, retried or queued
 //! (CONTEXT "ToS posture"). The mechanism is copied from Exiled Exchange 2 / Awakened PoE Trade
 //! (`main/src/shortcuts/text-box.ts` and `HostClipboard.ts`): put the command on the clipboard,
 //! Enter, select all, paste, Enter, then restore the clipboard about 120 ms later. Two deliberate
-//! differences: Ctrl+A is kept before the paste to clear partial text (EE2 skips it for `/`
-//! commands; the fallback if it misbehaves is EE2's exact Enter, Ctrl+V, Enter), and the trailing
-//! "restore last chat" keys are not copied. Escape is never sent (it can open the game menu).
+//! differences: Ctrl+A is kept before the paste so it replaces any prefix the game pre-fills when
+//! the first Enter opens the chat box (EE2 skips it for `/` commands; the fallback if it misbehaves
+//! is EE2's exact Enter, Ctrl+V, Enter), and the trailing "restore last chat" keys are not copied.
+//! Escape is never sent (it can open the game menu).
+//!
+//! **Known limitation (review CR-02):** nothing outside the game can tell whether its chat box is
+//! already open, and EE2 / Awakened PoE Trade share this: they also press Enter first. If the chat
+//! box was already open with text in it when Apply was pressed, the first Enter sends that text as
+//! a chat message, the chat box closes, the select-all and paste go to the game world, the final
+//! Enter opens an empty chat box, and `/reloaditemfilter` is not sent (the status still says
+//! "Reloaded in game", because the keys were delivered). Ctrl+A cannot prevent this: it runs after
+//! that first Enter. No key is pressed before the first Enter on purpose: with chat closed, an
+//! Escape, Backspace or Ctrl+A would reach the game's own key bindings. The user is told to close
+//! the chat box before pressing Apply (CONFIG caption, CLAUDE.md, manual check 7).
 //!
 //! This file is pure (no egui, no Win32): the production sink lives in plan 23-03 and calls only
 //! the safe wrappers in `win.rs`. Tests drive everything through fake sinks.

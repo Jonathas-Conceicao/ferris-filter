@@ -132,14 +132,18 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 >
 > **In-game reload after Apply (Phase 23, RELOAD-01):** the mechanism is: focus the game, Enter,
 > Ctrl+A, paste `/reloaditemfilter` from the clipboard, Enter -- the same clipboard-paste method
-> Exiled Exchange 2 and Awakened PoE Trade use. One Apply click sends one command, never repeated or
-> retried. The game window is found by title ("path of exile", so "Exiled Exchange 2" does not count)
+> Exiled Exchange 2 and Awakened PoE Trade use. Ctrl+A only replaces a prefix the game pre-fills
+> when that first Enter opens the chat box. One Apply click runs one send sequence, never repeated
+> or retried. The game window is found by title ("path of exile", so "Exiled Exchange 2" does not count)
 > AND by a process image name starting with `PathOfExile`, so a browser tab titled "Path of Exile 2"
 > is not the game. Keys are sent only after checking the game is the foreground window; otherwise
 > nothing is sent and the reason is shown. Caveats: `/reloaditemfilter` reloads the filter **selected
 > in game**, so if the overlay edits a different filter than the one picked in Options → Game → Item
 > Filter, the reload will not show the edit (the overlay does not switch the game's filter). Close the
-> chat box before pressing Apply (text already typed in an open chat could be sent). Run `ff` and the
+> chat box before pressing Apply: nothing outside the game can tell whether chat is open (EE2 and
+> Awakened PoE Trade share this), so if it was already open with text, the first Enter sends that
+> text as a chat message and `/reloaditemfilter` is not sent. No key is pressed before that Enter
+> on purpose (with chat closed it would reach the game's own bindings). Run `ff` and the
 > game at the same privilege level (Windows silently drops input into an elevated game). The clipboard's
 > text is restored about 120 ms later unless something else was copied meanwhile; non-text clipboard
 > content (an image, copied files) is replaced. The setting is the `reload_after_apply` key in

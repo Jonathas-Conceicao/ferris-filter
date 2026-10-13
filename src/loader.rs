@@ -193,9 +193,120 @@ pub fn load_styles(path: &str) -> Result<StyleSet, LoadError> {
     Ok(set)
 }
 
+/// Render a `StyleSet` as `styles.json`: one compact line per style, in file order, so a save of
+/// the tracked file diffs per style instead of exploding into pretty-printed noise. Pure; the
+/// caller writes the bytes.
+pub fn render_styles(set: &StyleSet) -> String {
+    let last = set.len().saturating_sub(1);
+    let mut out = String::from(
+        "{
+",
+    );
+    for (i, (name, style)) in set.iter().enumerate() {
+        out.push_str("  ");
+        out.push_str(&serde_json::to_string(name).expect("string serialization is infallible"));
+        out.push_str(": ");
+        out.push_str(
+            &serde_json::to_string(style)
+                .expect("Style serialization is infallible (no non-string map keys)"),
+        );
+        if i != last {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str(
+        "}
+",
+    );
+    out
+}
+
+/// Render `tiers.json` entries in the given order. Never sorts: `ValidatedTiers` checks ascending
+/// order within a unit group in file order, so display order (S..F) would fail validation.
+pub fn render_tiers(entries: &[TierEntry]) -> String {
+    let last = entries.len().saturating_sub(1);
+    let mut out = String::from(
+        "[
+",
+    );
+    for (i, e) in entries.iter().enumerate() {
+        out.push_str("  ");
+        out.push_str(&serde_json::to_string(e).expect("TierEntry serialization is infallible"));
+        if i != last {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str(
+        "]
+",
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TIERS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
+
+    #[test]
+    fn render_styles_shape_and_round_trip() {
+        let set = StyleSet::committed_for_tests();
+        let text = render_styles(&set);
+        assert!(
+            text.starts_with(
+                "{
+"
+            ) && text.ends_with(
+                "}
+"
+            )
+        );
+        assert_eq!(text.lines().count(), set.len() + 2);
+        let inner: Vec<&str> = text.lines().skip(1).take(set.len()).collect();
+        for (i, line) in inner.iter().enumerate() {
+            assert!(line.starts_with("  \""), "{line}");
+            assert_eq!(line.ends_with(','), i + 1 != inner.len(), "{line}");
+        }
+        let back: StyleSet = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, set);
+        back.validate().unwrap();
+        assert_eq!(render_styles(&back), text);
+        let s_line = text.lines().find(|l| l.starts_with("  \"S\":")).unwrap();
+        assert!(
+            s_line.contains(r#""sound":{"custom":"uwu.mp3","vol":300}"#),
+            "{s_line}"
+        );
+        let u_line = text
+            .lines()
+            .find(|l| l.starts_with("  \"unchanged\":"))
+            .unwrap();
+        assert!(u_line.contains(r#""text":null"#), "{u_line}");
+    }
+
+    #[test]
+    fn render_styles_escapes_names() {
+        let mut set = StyleSet::committed_for_tests();
+        let name = "we\"ird\\name";
+        set.insert_new(name, Style::blank_show()).unwrap();
+        let back: StyleSet = serde_json::from_str(&render_styles(&set)).unwrap();
+        assert!(back.contains(name));
+    }
+
+    #[test]
+    fn render_tiers_preserves_file_order_and_validates() {
+        let entries: Vec<TierEntry> = serde_json::from_str(TIERS).unwrap();
+        let text = render_tiers(&entries);
+        let back: Vec<TierEntry> = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.len(), entries.len());
+        for (a, b) in entries.iter().zip(&back) {
+            assert_eq!((&a.tier, a.min, &a.unit), (&b.tier, b.min, &b.unit));
+        }
+        assert_eq!(back[0].tier, "F");
+        ValidatedTiers::try_from(back).unwrap();
+    }
 
     const STYLES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
 

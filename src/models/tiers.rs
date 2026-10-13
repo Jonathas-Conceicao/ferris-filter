@@ -16,6 +16,17 @@ pub enum Unit {
     Exalt,
 }
 
+impl Unit {
+    /// The lowercase serde spelling, as shown read-only in the CONFIG tab.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Unit::Chaos => "chaos",
+            Unit::Div => "div",
+            Unit::Exalt => "exalt",
+        }
+    }
+}
+
 /// A single lower-bound entry in `tiers.json`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TierEntry {
@@ -94,6 +105,17 @@ impl TryFrom<Vec<TierEntry>> for ValidatedTiers {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unit_as_str_matches_serde() {
+        use super::Unit;
+        for u in [Unit::Chaos, Unit::Div, Unit::Exalt] {
+            assert_eq!(
+                serde_json::to_string(&u).unwrap(),
+                format!("\"{}\"", u.as_str())
+            );
+        }
+    }
+
     use super::*;
 
     // ──────────────────────────────────────────────────────────────

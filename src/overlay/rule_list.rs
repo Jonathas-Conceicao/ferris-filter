@@ -888,7 +888,7 @@ Show
             ..Default::default()
         };
         let visible: Vec<usize> = (0..wf.rows().len()).collect();
-        let mut frame = |list: &mut ListUi| {
+        let frame = |list: &mut ListUi| {
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 show_list(ui, &wf, &visible, list, true, None);
             })

@@ -273,7 +273,13 @@ pub fn operator_choices(kw: &Keyword, current: Option<Operator>, list_form: bool
             }
             v
         }
-        ValueShape::Rarity if list_form => vec![oc(current, "Matches")],
+        // A multi-rarity line cannot take an ordering operator, but a negation is valid and means
+        // "none of these", so it must not be labelled "Matches" (CR-01).
+        ValueShape::Rarity if list_form => match current {
+            Some(Operator::Ne) => vec![oc(current, "Not any of")],
+            Some(Operator::Bang) => vec![oc(current, "Not any of (!)")],
+            _ => vec![oc(current, "Matches")],
+        },
         ValueShape::QuotedList | ValueShape::Enum(_) => {
             let bare = match current {
                 Some(Operator::Eq) => Some(Operator::Eq),
@@ -900,6 +906,14 @@ mod tests {
         assert_eq!(
             ops(&operator_choices(k, Some(Operator::EqEq), true)),
             [(Some(Operator::EqEq), "Matches")]
+        );
+        assert_eq!(
+            ops(&operator_choices(k, Some(Operator::Ne), true)),
+            [(Some(Operator::Ne), "Not any of")]
+        );
+        assert_eq!(
+            operator_label(k, Some(Operator::Bang), true),
+            "Not any of (!)"
         );
     }
 

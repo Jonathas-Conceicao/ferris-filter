@@ -102,7 +102,9 @@ pub(crate) enum RarityEdit {
 }
 
 /// Edit for the chosen rarities (in table order). Several rarities cannot keep an ordering
-/// operator, so that case drops it in the same commit (`Rarity Normal Magic Rare`).
+/// operator (`<` `<=` `>` `>=`), so that case drops it in the same commit
+/// (`Rarity Normal Magic Rare`). Every other operator is kept as written: a negation
+/// (`!=`/`!`) with several rarities means "none of these" (PARSE-04).
 pub(crate) fn rarity_edit(id: BlockId, entry: &BodyEntry, selected: &[&str]) -> RarityEdit {
     if selected.is_empty() {
         return RarityEdit::Remove(remove(id, entry));
@@ -111,7 +113,10 @@ pub(crate) fn rarity_edit(id: BlockId, entry: &BodyEntry, selected: &[&str]) -> 
     if text == current_values(entry) {
         return RarityEdit::None;
     }
-    let ordering = !matches!(entry.op, None | Some(Operator::Eq) | Some(Operator::EqEq));
+    let ordering = matches!(
+        entry.op,
+        Some(Operator::Lt | Operator::Le | Operator::Gt | Operator::Ge)
+    );
     let patch = if selected.len() >= 2 && ordering {
         LinePatch::Both(None, text)
     } else {
@@ -902,8 +907,13 @@ fn rarity_control(
         }
     }
     if current.len() > 1 {
+        let note = if matches!(card.entry.op, Some(Operator::Ne | Operator::Bang)) {
+            "Several rarities exclude all of them"
+        } else {
+            "Several rarities match any of them"
+        };
         ui.label(
-            RichText::new("Several rarities match any of them")
+            RichText::new(note)
                 .size(theme::ROW_SUMMARY_SIZE)
                 .color(theme::LABEL_TAN),
         );
@@ -2319,6 +2329,37 @@ mod tests {
             rarity_edit(id, &e[0], &[]),
             RarityEdit::Remove(RowAction::RemoveLine { .. })
         ));
+    }
+
+    /// CR-01: a negated rarity line keeps its negation when a chip is added; only ordering
+    /// operators are dropped for a multi-rarity line.
+    #[test]
+    fn rarity_edit_keeps_a_negation() {
+        let patch_of = |r: RarityEdit| match r {
+            RarityEdit::Edit(RowAction::EditLine { patch, .. }) => Some(patch),
+            _ => None,
+        };
+        for src in [
+            "Show\n    Rarity != Normal\n",
+            "Show\n    Rarity ! Normal\n",
+        ] {
+            let (_, id, e) = entries_of(src);
+            assert_eq!(
+                patch_of(rarity_edit(id, &e[0], &["Normal", "Magic"])),
+                Some(LinePatch::Values("Normal Magic".into())),
+                "{src}"
+            );
+        }
+        let (_, id, e) = entries_of("Show\n    Rarity == Rare\n");
+        assert_eq!(
+            patch_of(rarity_edit(id, &e[0], &["Magic", "Rare"])),
+            Some(LinePatch::Values("Magic Rare".into()))
+        );
+        let (_, id, e) = entries_of("Show\n    Rarity < Rare\n");
+        assert_eq!(
+            patch_of(rarity_edit(id, &e[0], &["Normal", "Rare"])),
+            Some(LinePatch::Both(None, "Normal Rare".into()))
+        );
     }
 
     #[test]

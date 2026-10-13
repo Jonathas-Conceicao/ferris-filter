@@ -425,15 +425,29 @@ pub fn rgba_caption(rgba: [u8; 4]) -> String {
     format!("R {} G {} B {} A {}", rgba[0], rgba[1], rgba[2], rgba[3])
 }
 
+/// Unmultiplied HSVA of a filter colour. Going through `Hsva::from_rgba_unmultiplied` (not a
+/// premultiplied `Color32`) keeps the RGB of a fully transparent colour such as
+/// `SetBackgroundColor 40 42 54 0` (WR-04).
+fn hsva_of(rgba: [u8; 4]) -> egui::ecolor::Hsva {
+    use egui::ecolor::linear_f32_from_gamma_u8 as lin;
+    egui::ecolor::Hsva::from_rgba_unmultiplied(
+        lin(rgba[0]),
+        lin(rgba[1]),
+        lin(rgba[2]),
+        f32::from(rgba[3]) / 255.0,
+    )
+}
+
 /// An RGBA colour swatch that opens egui's picker (blend alpha only). Returns `Some(new)` only when
 /// the user changed it and the unmultiplied result differs from `rgba`, so merely showing a
-/// translucent colour never rewrites its line (premultiplied-alpha drift guard).
+/// translucent colour never rewrites its line. The picker edits unmultiplied HSVA, so raising the
+/// alpha of a transparent colour keeps its RGB.
 pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4]) -> Option<[u8; 4]> {
-    let mut colour = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+    let mut colour = hsva_of(rgba);
     let caption = rgba_caption(rgba);
     let mut result = None;
     ui.horizontal(|ui| {
-        let response = egui::color_picker::color_edit_button_srgba(
+        let response = egui::color_picker::color_edit_button_hsva(
             ui,
             &mut colour,
             egui::color_picker::Alpha::OnlyBlend,
@@ -865,7 +879,7 @@ mod tests {
     #[test]
     fn colour_swatch_idle_frames_return_none_even_when_translucent() {
         let ctx = headless_ctx();
-        for rgba in [[40, 42, 54, 255], [255, 121, 198, 128]] {
+        for rgba in [[40, 42, 54, 255], [255, 121, 198, 128], [40, 42, 54, 0]] {
             for _ in 0..2 {
                 ctx.run_ui(RawInput::default(), |ui| {
                     assert_eq!(colour_swatch(ui, rgba), None);
@@ -873,6 +887,27 @@ mod tests {
                 .drop_without_applying_deltas();
             }
         }
+    }
+
+    /// WR-04: the picker's colour model keeps RGB at any alpha, including 0, so a transparent
+    /// colour round-trips exactly and raising its alpha keeps its RGB.
+    #[test]
+    fn colour_model_keeps_rgb_at_zero_and_low_alpha() {
+        for rgb in [
+            [40u8, 42, 54],
+            [255, 121, 198],
+            [0, 0, 0],
+            [255, 255, 255],
+            [1, 2, 3],
+        ] {
+            for a in [0u8, 1, 2, 7, 128, 254, 255] {
+                let rgba = [rgb[0], rgb[1], rgb[2], a];
+                assert_eq!(hsva_of(rgba).to_srgba_unmultiplied(), rgba, "{rgba:?}");
+            }
+        }
+        let mut h = hsva_of([40, 42, 54, 0]);
+        h.a = 1.0;
+        assert_eq!(h.to_srgba_unmultiplied(), [40, 42, 54, 255]);
     }
 
     #[test]

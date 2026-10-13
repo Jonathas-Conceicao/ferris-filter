@@ -20,7 +20,7 @@
 //! rule has a grammar error. REVERT re-parses the last applied text. The economy section is a
 //! pinned footer row whose Add/Remove are staged and written by the next APPLY. When the guarded
 //! write refuses because the file changed on disk, the stripe offers RELOAD, which re-reads the
-//! file and discards unapplied edits.
+//! file and discards unapplied edits, and OVERWRITE, which writes the edits over the outside change.
 //!
 //! The decisions (which button is live, what the status says) are pure functions in
 //! [`super::apply`]; this file only draws them and performs the calls.
@@ -104,7 +104,8 @@ pub struct OverlayApp {
     /// The loaded game-folder filter. `Err` holds the rendered load failure.
     filter: Result<LoadedFilter, String>,
 
-    /// Set when Apply was refused because the file changed on disk; only RELOAD clears it.
+    /// Set when Apply was refused because the file changed on disk; RELOAD or a successful
+    /// OVERWRITE clears it.
     needs_reload: bool,
 
     /// Whether the filter on disk matches what the last Apply wrote, as far as this session
@@ -316,7 +317,12 @@ fn working_from(filter: &Result<LoadedFilter, String>) -> Option<WorkingFilter> 
 
 /// The one Apply path over the edited document: price the economy section when the plan needs it,
 /// then write through [`dynamic::apply_edited`] (grammar gate, guarded atomic write). Returns the
-/// outcome, sentences to append to the success message, and whether only RELOAD can recover.
+/// outcome, sentences to append to the success message, and whether the file changed on disk
+/// (recovered only by RELOAD or OVERWRITE).
+///
+/// Bytes identical to the file on disk are not rewritten, but still report
+/// [`ApplyOutcome::Written`]: pressing Apply always counts as applied, so the in-game reload
+/// still runs.
 fn apply_working(
     root: &std::path::Path,
     loaded: &mut LoadedFilter,
@@ -378,16 +384,13 @@ fn apply_working(
             if report.migrated {
                 extras.push_str(" Converted from v0.4.");
             }
-            let outcome = match report.outcome {
-                WriteOutcome::Unchanged => ApplyOutcome::Unchanged(report.path),
-                WriteOutcome::Written { backup } => {
-                    if let Some(backup) = backup {
-                        extras.push_str(&format!(" Kept the original as {}.", backup.display()));
-                    }
-                    ApplyOutcome::Written(report.path)
-                }
-            };
-            (outcome, extras, false)
+            if let WriteOutcome::Written {
+                backup: Some(backup),
+            } = &report.outcome
+            {
+                extras.push_str(&format!(" Kept the original as {}.", backup.display()));
+            }
+            (ApplyOutcome::Written(report.path), extras, false)
         }
         Err(dynamic::DynamicError::InvalidBlocks {
             count,
@@ -406,6 +409,26 @@ fn apply_working(
         ),
         Err(err) => (ApplyOutcome::Failed(err.to_string()), extras, false),
     }
+}
+
+/// OVERWRITE after a changed-on-disk refusal: re-read the file's current bytes as the guard
+/// baseline, then the normal [`apply_working`] (same atomic write, retry and one-time `.ffbak`).
+/// The rebase happens on a copy that is adopted only on success, so a failed overwrite leaves the
+/// old baseline -- and with it the changed-on-disk refusal -- in place.
+fn overwrite_working(
+    root: &std::path::Path,
+    loaded: &mut LoadedFilter,
+    working: &mut WorkingFilter,
+) -> (ApplyOutcome, String, bool) {
+    let mut rebased = loaded.clone();
+    if let Err(err) = rebased.rebase_to_disk() {
+        return (ApplyOutcome::Failed(err.to_string()), String::new(), true);
+    }
+    let result = apply_working(root, &mut rebased, working);
+    if matches!(result.0, ApplyOutcome::Written(_)) {
+        *loaded = rebased;
+    }
+    result
 }
 
 /// A line's first word, lowercased, past its indent and a disabled block's `#`. Keyword lookup
@@ -884,7 +907,9 @@ impl OverlayApp {
 
     /// The one Apply path: write the edited document (and any staged economy op) through
     /// [`apply_working`], then re-key the list's view state to the re-parsed document.
-    fn run_apply(&mut self, ctx: &egui::Context) {
+    /// `overwrite` is OVERWRITE after a changed-on-disk refusal ([`overwrite_working`]); it
+    /// otherwise behaves exactly like APPLY, in-game reload included.
+    fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) {
         let (Ok(root), Ok(loaded), Some(working)) =
             (&self.root, &mut self.filter, &mut self.working)
         else {
@@ -899,8 +924,13 @@ impl OverlayApp {
         // The styles are re-read at every Apply, so a styles.json edited a moment ago counts.
         self.styles_mtime = styles_mtime_at(root);
         working.set_styles(load_styles_at(root));
-        let (outcome, extras, needs_reload) = apply_working(root, loaded, working);
-        // Only a Written outcome ever decides; the setting is checked before any window search.
+        let (outcome, extras, needs_reload) = if overwrite {
+            overwrite_working(root, loaded, working)
+        } else {
+            apply_working(root, loaded, working)
+        };
+        // Every successful Apply decides, identical bytes included; the setting is checked before
+        // any window search.
         let decision = chat::decide(
             &outcome,
             self.settings.reload_after_apply(),
@@ -947,12 +977,7 @@ impl OverlayApp {
                     }
                 }
                 self.apply_state = self.apply_state.on_apply_success();
-                self.config_changed_pending = false;
-            }
-            ApplyOutcome::Unchanged(path) => {
-                self.apply_message = Some(format!("{}{extras}", apply::unchanged_message(&path)));
-                self.apply_state = self.apply_state.on_apply_success();
-                // An unchanged write does not touch the mtime, so the flag is cleared here.
+                // Cleared here, not from the mtime: identical bytes are not rewritten.
                 self.config_changed_pending = false;
             }
             ApplyOutcome::Failed(message) => {
@@ -1667,8 +1692,24 @@ impl eframe::App for OverlayApp {
                             {
                                 row_actions.push(RowAction::AddRule);
                             }
-                            if actions.reload && ui.button("RELOAD").clicked() {
+                            if actions.reload
+                                && ui
+                                    .button("RELOAD")
+                                    .on_hover_text(apply::RELOAD_TOOLTIP)
+                                    .clicked()
+                            {
                                 self.reload();
+                            }
+                            // Beside RELOAD after a changed-on-disk refusal: the other way out,
+                            // keeping the edits. Accent fill like CONFIG's Overwrite.
+                            if actions.overwrite
+                                && ui
+                                    .add(egui::Button::new("OVERWRITE").fill(theme::WARM_ACCENT))
+                                    .on_hover_text(apply::OVERWRITE_TOOLTIP)
+                                    .clicked()
+                            {
+                                let egui_ctx = ui.ctx().clone();
+                                self.run_apply(&egui_ctx, true);
                             }
                             // Economy sync sits beside Apply because that is the order it is used in:
                             // refresh prices, then apply them. It is deliberately NOT part of Apply --
@@ -1717,7 +1758,7 @@ impl eframe::App for OverlayApp {
                             };
                             if apply_button.clicked() {
                                 let egui_ctx = ui.ctx().clone();
-                                self.run_apply(&egui_ctx);
+                                self.run_apply(&egui_ctx, false);
                             }
                         });
                         // Every message lives in one capped area so a long one can never push
@@ -2417,7 +2458,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_working_writes_edits_then_reports_unchanged() {
+    fn apply_working_writes_edits_then_identical_bytes_still_count_as_applied() {
         let dir = tempfile::tempdir().unwrap();
         let (path, mut loaded) = loaded_in(&dir, RULES);
         let mut working = WorkingFilter::from_text(loaded.text());
@@ -2428,8 +2469,56 @@ mod tests {
         assert!(!reload);
         assert!(!working.is_dirty());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), working.text());
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        // Identical bytes: reported as applied (so the in-game reload runs), but not rewritten.
         let (again, _, _) = apply_working(dir.path(), &mut loaded, &mut working);
-        assert!(matches!(again, ApplyOutcome::Unchanged(_)), "{again:?}");
+        assert_eq!(again, ApplyOutcome::Written(path.clone()));
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+    }
+
+    #[test]
+    fn overwrite_working_replaces_an_external_edit_and_adopts_the_new_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, mut loaded) = loaded_in(&dir, RULES);
+        let mut working = WorkingFilter::from_text(loaded.text());
+        working.apply_action(RowAction::AddRule);
+        let outside = "Show\n  Class \"Belts\"\n";
+        std::fs::write(&path, outside).unwrap();
+        let (refused, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
+        assert!(matches!(refused, ApplyOutcome::Failed(_)) && reload);
+
+        let (outcome, _, reload) = super::overwrite_working(dir.path(), &mut loaded, &mut working);
+        assert_eq!(outcome, ApplyOutcome::Written(path.clone()));
+        assert!(!reload);
+        assert!(!working.is_dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), working.text());
+        // The one-time backup holds the bytes the overwrite replaced.
+        assert_eq!(
+            std::fs::read_to_string(crate::safe_write::backup_path(&path)).unwrap(),
+            outside
+        );
+        // The written file is the new baseline: a plain Apply now goes through.
+        let (again, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
+        assert!(
+            matches!(again, ApplyOutcome::Written(_)) && !reload,
+            "{again:?}"
+        );
+    }
+
+    #[test]
+    fn failed_overwrite_keeps_the_old_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = "Show\n  Rarity Bogus\n";
+        let (path, mut loaded) = loaded_in(&dir, RULES);
+        let mut working = WorkingFilter::from_text(bad);
+        std::fs::write(&path, "Show\n  Class \"Belts\"\n").unwrap();
+        let (outcome, _, _) = super::overwrite_working(dir.path(), &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Failed(_)), "{outcome:?}");
+        assert_eq!(loaded.disk(), Some(RULES.as_bytes()));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "Show\n  Class \"Belts\"\n"
+        );
     }
 
     #[test]
@@ -2546,7 +2635,8 @@ mod tests {
         assert!(written.contains("SetFontSize 37") && !written.contains("SetFontSize 20"));
         assert!(written.contains("\nShow\n"), "{written}");
         let (again, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
-        assert!(matches!(again, ApplyOutcome::Unchanged(_)), "{again:?}");
+        assert!(matches!(again, ApplyOutcome::Written(_)), "{again:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
         assert!(!extras.contains("Updated"), "{extras}");
     }
 
@@ -2593,7 +2683,8 @@ mod tests {
         assert!(!written.contains("#ff:style Gone"), "{written}");
         assert!(written.contains("SetFontSize 40"), "{written}");
         let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
-        assert_eq!(outcome, ApplyOutcome::Unchanged(path), "{extras}");
+        assert_eq!(outcome, ApplyOutcome::Written(path.clone()), "{extras}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
         assert!(!extras.contains("Removed the style link"), "{extras}");
     }
 

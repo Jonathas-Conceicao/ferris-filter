@@ -35,7 +35,7 @@ pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
 /// left in an open chat box is sent first (nothing outside the game can see whether chat is open).
 pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
 /// The toggle's hover text: what "Reloaded in game" does and does not certify (review WR-01).
-pub const RELOAD_TOGGLE_TIP: &str = "\"Reloaded in game\" means the command was sent to the game window; ff cannot see whether the game ran it. A game running as administrator ignores the keys unless ff runs as administrator too. If the filter did not change, use Options > Game > Item Filter > Refresh.";
+pub const RELOAD_TOGGLE_TIP: &str = "\"Reloaded in game\" means the command was sent to the game window; ff cannot see whether the game ran it. A game running as administrator ignores the keys unless ff runs as administrator too. If the game did not reload, use Options > Game > Item Filter > Refresh.";
 const APPLY_NOTHING_TIP: &str = "No unapplied config changes.";
 const APPLY_LOAD_ERROR_TIP: &str =
     "styles.json or tiers.json failed to load. Revert to reload them.";

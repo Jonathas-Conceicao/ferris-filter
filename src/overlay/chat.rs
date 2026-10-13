@@ -1,5 +1,6 @@
-//! RELOAD-01 / Phase 23: after a RULES Apply that wrote the filter, send `/reloaditemfilter` to a
-//! running PoE2.
+//! RELOAD-01 / Phase 23: after a successful RULES Apply, send `/reloaditemfilter` to a running
+//! PoE2. That includes an Apply whose bytes equal the file on disk (not rewritten, but still
+//! applied) and an OVERWRITE after a changed-on-disk refusal.
 //!
 //! One Apply click runs one send sequence: it is never repeated, scheduled, retried or queued
 //! (CONTEXT "ToS posture"). The mechanism is copied from Exiled Exchange 2 / Awakened PoE Trade
@@ -189,8 +190,9 @@ pub enum Decision<G> {
     Skip(SkipReason),
 }
 
-/// Decide whether an Apply outcome triggers a reload. Only `Written` can; `Unchanged` and
-/// `Failed` produce no decision at all. `find_game` runs only when everything else says send.
+/// Decide whether an Apply outcome triggers a reload. Every `Written` can, identical bytes
+/// included; `Failed` produces no decision at all. `find_game` runs only when everything else
+/// says send.
 pub fn decide<G>(
     outcome: &ApplyOutcome,
     setting_on: bool,
@@ -730,10 +732,10 @@ mod tests {
 
     #[test]
     fn decide_truth_table() {
-        let p = PathBuf::from("x.filter");
+        // `Written` also covers an Apply whose bytes matched the file (not rewritten): it
+        // decides exactly like a real write.
         let outcomes = [
-            ApplyOutcome::Written(p.clone()),
-            ApplyOutcome::Unchanged(p),
+            ApplyOutcome::Written(PathBuf::from("x.filter")),
             ApplyOutcome::Failed("x".into()),
         ];
         for outcome in &outcomes {

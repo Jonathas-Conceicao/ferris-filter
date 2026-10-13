@@ -184,6 +184,23 @@ impl LoadedFilter {
     pub fn migrated(&self) -> bool {
         self.migrated
     }
+    /// Adopt the file's current bytes as the guard baseline, so the next guarded write replaces an
+    /// outside change instead of refusing it (the overlay's OVERWRITE). Only the baseline moves:
+    /// the text, which the caller is about to replace, is left as loaded. Nothing is written.
+    pub fn rebase_to_disk(&mut self) -> Result<(), DynamicError> {
+        self.disk = match std::fs::read(&self.path) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(DynamicError::FilterUnreadable {
+                    path: self.path.display().to_string(),
+                    source: e,
+                });
+            }
+        };
+        Ok(())
+    }
+
     pub fn has_section(&self) -> Result<bool, DynamicError> {
         crate::filter::section::has_section(&self.text).map_err(|e| DynamicError::Section {
             path: self.path.display().to_string(),
@@ -755,6 +772,35 @@ mod tests {
         ));
         assert_eq!(fs::read(&p).unwrap(), b"Show # elsewhere\n");
         assert!(!l.text().contains("mine"));
+    }
+
+    #[test]
+    fn rebased_baseline_overwrites_an_outside_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = copy_fixture(dir.path(), "seed-universal.filter");
+        let mut l = LoadedFilter::load(&p).unwrap();
+        fs::write(&p, b"Show # elsewhere\n").unwrap();
+        l.rebase_to_disk().unwrap();
+        assert_eq!(l.disk(), Some(&b"Show # elsewhere\n"[..]));
+        let r = apply_edited(&mut l, "Show # mine\n", EconomyOp::Keep).unwrap();
+        // The one-time backup holds the bytes that were overwritten.
+        assert!(matches!(
+            r.outcome,
+            crate::safe_write::WriteOutcome::Written { backup: Some(_) }
+        ));
+        assert_eq!(fs::read(&p).unwrap(), b"Show # mine\n");
+        assert_eq!(
+            fs::read(crate::safe_write::backup_path(&p)).unwrap(),
+            b"Show # elsewhere\n"
+        );
+        assert_eq!(l.disk(), Some(&b"Show # mine\n"[..]));
+
+        // A file deleted outside rebases to "absent" and is recreated.
+        fs::remove_file(&p).unwrap();
+        l.rebase_to_disk().unwrap();
+        assert!(!l.existed());
+        apply_edited(&mut l, "Show # again\n", EconomyOp::Keep).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"Show # again\n");
     }
 
     #[test]

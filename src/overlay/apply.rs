@@ -57,10 +57,9 @@ impl ApplyState {
 /// `Result` of [`crate::dynamic::apply_edited`]; this type itself performs no call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyOutcome {
-    /// The file was rewritten; carries its path.
+    /// Apply succeeded; carries the filter's path. Bytes identical to the file on disk are not
+    /// rewritten, but still count as applied: the reload is sent and the status reads the same.
     Written(PathBuf),
-    /// The new text equals what is on disk; nothing was touched.
-    Unchanged(PathBuf),
     /// Apply failed; a single displayable string (a `DynamicError`'s `Display`), never a raw
     /// `Debug` dump and never a panic.
     Failed(String),
@@ -121,16 +120,8 @@ pub fn reload_result_message(written: &Path, result: &Result<(), String>) -> Str
     }
 }
 
-/// The message rendered after an Apply that found nothing to change.
-pub fn unchanged_message(path: &Path) -> String {
-    format!(
-        "{} is already up to date; nothing was written",
-        path.display()
-    )
-}
-
 /// True only for the guarded-write refusal "the filter changed on disk since it was loaded" --
-/// the one failure whose recovery is RELOAD.
+/// the one failure recovered by RELOAD or OVERWRITE.
 pub fn is_changed_on_disk(err: &crate::dynamic::DynamicError) -> bool {
     matches!(
         err,
@@ -161,10 +152,19 @@ pub struct FooterActions {
     pub revert: bool,
     pub add_rule: bool,
     pub reload: bool,
+    /// After a changed-on-disk refusal: write the in-memory rules over the outside change.
+    pub overwrite: bool,
 }
 
-/// Refusal copy shown after a changed-on-disk refusal; only RELOAD recovers.
-pub const CHANGED_ON_DISK_MESSAGE: &str = "The filter changed on disk since it was loaded, so nothing was written. RELOAD to pick up the new file. Your unapplied edits are discarded by RELOAD.";
+/// Refusal copy shown after a changed-on-disk refusal; RELOAD and OVERWRITE recover, and their
+/// tooltips carry the explanation.
+pub const CHANGED_ON_DISK_MESSAGE: &str = "Filter changed on disk since it was loaded.";
+
+/// Tooltip on RELOAD.
+pub const RELOAD_TOOLTIP: &str = "Discard your edits and load the file from disk.";
+
+/// Tooltip on OVERWRITE.
+pub const OVERWRITE_TOOLTIP: &str = "Replace the file with your edits.";
 
 /// Status after REVERT.
 pub const REVERTED_MESSAGE: &str = "Reverted to the last applied filter.";
@@ -190,7 +190,7 @@ pub fn added_hidden_message(position: usize) -> String {
 }
 
 /// The footer's button rules. A missing app root disables everything that touches files; after a
-/// changed-on-disk refusal only RELOAD (and SYNC) remain.
+/// changed-on-disk refusal only RELOAD, OVERWRITE (gated like APPLY) and SYNC remain.
 ///
 /// APPLY no longer needs an economy section (OD-2): a rules-only filter is written as-is. A
 /// filter that does not exist yet can be created once there is something to write (`dirty`).
@@ -217,6 +217,7 @@ pub fn footer_actions(
             || !root_ok
             || matches!(state, FilterState::Damaged | FilterState::LoadFailed),
         apply: root_ok && writable && !needs_reload && blocking == 0,
+        overwrite: root_ok && writable && needs_reload && blocking == 0,
         revert: dirty && !needs_reload && state != FilterState::LoadFailed,
         add_rule: !needs_reload && editable,
     }
@@ -429,13 +430,6 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_message_says_nothing_was_written_and_omits_reload() {
-        let m = unchanged_message(Path::new("x.filter"));
-        assert!(m.contains("x.filter") && m.contains("nothing was written"));
-        assert!(!m.contains("Refresh"));
-    }
-
-    #[test]
     fn changed_on_disk_is_recognised_only_for_that_refusal() {
         use crate::dynamic::DynamicError;
         let yes =
@@ -494,9 +488,15 @@ mod tests {
     }
 
     #[test]
-    fn footer_reload_first_after_a_changed_on_disk_refusal() {
+    fn footer_reload_or_overwrite_after_a_changed_on_disk_refusal() {
         let a = footer_actions(true, FilterState::HasSection, true, true, 0);
-        assert!(a.sync && a.reload && !a.apply && !a.revert && !a.add_rule);
+        assert!(a.sync && a.reload && a.overwrite && !a.apply && !a.revert && !a.add_rule);
+        // OVERWRITE is gated like APPLY.
+        assert!(!footer_actions(true, FilterState::HasSection, true, true, 1).overwrite);
+        assert!(!footer_actions(false, FilterState::HasSection, true, true, 0).overwrite);
+        assert!(!footer_actions(true, FilterState::Damaged, true, true, 0).overwrite);
+        // Never offered outside a changed-on-disk refusal.
+        assert!(!footer_actions(true, FilterState::HasSection, false, true, 0).overwrite);
     }
 
     #[test]
@@ -523,7 +523,11 @@ mod tests {
         );
         assert!(invalid_blocks_message(1, 1, 1).contains("1 enabled rule has a grammar error"));
         assert_eq!(REVERTED_MESSAGE, "Reverted to the last applied filter.");
-        assert!(CHANGED_ON_DISK_MESSAGE.contains("RELOAD"));
+        assert_eq!(
+            CHANGED_ON_DISK_MESSAGE,
+            "Filter changed on disk since it was loaded."
+        );
+        assert!(RELOAD_TOOLTIP.contains("Discard") && OVERWRITE_TOOLTIP.contains("Replace"));
         assert!(APPLY_BLOCKED_TOOLTIP.contains("grammar error"));
         assert_eq!(
             added_hidden_message(7),

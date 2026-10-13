@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `styles.json` (committed, repo root) is now the single source of named styles. Adding a style
   needs no code change: define it there and use it from a rule. Validated at load (required styles
   S, A, B, C, D, E, F, unchanged and hidden; duplicate names; names differing only by case from a
-  required one; unsafe custom sound names; unknown styles in enabled rules). The overlay style
+  required one; unsafe custom sound names; font size 1-45, minimap size 0-2, sound id 1-16 and
+  volume 0-300; a sound must set exactly one of `id` or `custom`; unknown styles in enabled
+  rules). The overlay style
   picker lists styles.json in file order.
 - `--styles <path>` on `generate` and `apply` to compile against another styles file instead of
   styles.json.

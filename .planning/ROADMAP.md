@@ -142,7 +142,29 @@ Plans:
   4. User can add an economy section to a new empty filter or to a foreign filter that has none, and can remove it again; a new filter starts empty
   5. Apply refuses to overwrite a filter that changed on disk after it was loaded and says why; the first write to a filter keeps a backup copy of the original
 
-**Plans**: TBD
+**Plans**: 7 plans
+Plans:
+**Wave 1**
+
+- [ ] 18-01-PLAN.md — App-root resolver (FERRISFILTER_HOME / exe walk-up / cwd) and guarded, backed-up, atomic filter write
+- [ ] 18-02-PLAN.md — Economy split: emitter::generate_economy over StyleSet and compile::load_economy (generate byte-identical)
+- [ ] 18-03-PLAN.md — Economy section markers (find/refresh/add/remove, damaged-marker errors) and v0.4 dynamic.filter migration
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 18-04-PLAN.md — dynamic.rs filter-as-store API: LoadedFilter, ApplyOp, economy_body, apply_file
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 18-05-PLAN.md — CLI apply --filter/--add-economy/--remove-economy; obsolete flags removed; hermetic integration tests
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 18-06-PLAN.md — Overlay re-pointed at the app root and loaded filter; JSON store deleted
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 18-07-PLAN.md — Delete legacy JSON-store API, move dynamic_base.json to a fixture, .gitignore/CLAUDE.md/CHANGELOG
 
 ### Phase 19: Overlay Rule List Over Parsed Blocks
 

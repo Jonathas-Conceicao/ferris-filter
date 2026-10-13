@@ -577,8 +577,6 @@ impl eframe::App for OverlayApp {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// A stripe-sized headless context.
     fn stripe_ctx() -> egui::Context {
         let ctx = egui::Context::default();

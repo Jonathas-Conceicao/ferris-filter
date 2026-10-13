@@ -70,28 +70,28 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Economy Section (ECON)
 
-- [ ] **ECON-01**: Economy-priced blocks are written after the general rules, inside a section
+- [x] **ECON-01**: Economy-priced blocks are written after the general rules, inside a section
   delimited by comment markers.
 
 - [ ] **ECON-02**: The economy section is not shown in the rule editor. The rule list shows a
   summary instead, e.g. "+ 42 locked rule blocks".
 
-- [ ] **ECON-03**: Apply regenerates the economy section from `prices.json`, `tiers.json` and the
+- [x] **ECON-03**: Apply regenerates the economy section from `prices.json`, `tiers.json` and the
   styles, changing no byte outside the markers.
 
-- [ ] **ECON-04**: User can add an economy section to a filter that has none (a new empty filter or
+- [x] **ECON-04**: User can add an economy section to a filter that has none (a new empty filter or
   a foreign filter), and can remove it.
 
 ### Filter Location (STORE)
 
-- [ ] **STORE-01**: By default the overlay edits the game-folder `dynamic.filter` directly. There
+- [x] **STORE-01**: By default the overlay edits the game-folder `dynamic.filter` directly. There
   is no intermediate JSON store.
 
 - [ ] **STORE-02**: User can select a different filter in the game folder from the configuration
   tab, and the choice is remembered across launches.
 
-- [ ] **STORE-03**: A new filter starts empty, with an optional economy section.
-- [ ] **STORE-04**: `dynamic.json`, `dynamic_base.json`, the overlay's JSON store, and CLI
+- [x] **STORE-03**: A new filter starts empty, with an optional economy section.
+- [x] **STORE-04**: `dynamic.json`, `dynamic_base.json`, the overlay's JSON store, and CLI
   `apply --reset/--base/--store` are removed. CLI `apply` operates on the filter file. The breaking
   change is noted in `CHANGELOG.md`.
 
@@ -189,14 +189,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-08 | Phase 19 | Pending |
 | EDIT-09 | Phase 18 | Complete |
 | EDIT-10 | Phase 18 | Complete |
-| ECON-01 | Phase 18 | Pending |
+| ECON-01 | Phase 18 | Complete |
 | ECON-02 | Phase 19 | Pending |
-| ECON-03 | Phase 18 | Pending |
-| ECON-04 | Phase 18 | Pending |
-| STORE-01 | Phase 18 | Pending |
+| ECON-03 | Phase 18 | Complete |
+| ECON-04 | Phase 18 | Complete |
+| STORE-01 | Phase 18 | Complete |
 | STORE-02 | Phase 21 | Pending |
-| STORE-03 | Phase 18 | Pending |
-| STORE-04 | Phase 18 | Pending |
+| STORE-03 | Phase 18 | Complete |
+| STORE-04 | Phase 18 | Complete |
 | STORE-05 | Phase 18 | Complete |
 | STYLE-01 | Phase 17 | Complete |
 | STYLE-02 | Phase 17 | Complete |

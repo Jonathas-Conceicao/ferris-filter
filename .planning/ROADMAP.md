@@ -64,7 +64,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 - [ ] **Phase 16: Lossless Filter Parser** - Parse any PoE2 filter and write it back byte-identical
 - [x] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged (completed 2026-10-13)
-- [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section
+- [x] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (completed 2026-10-13)
 - [ ] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks
 - [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles
 - [ ] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay
@@ -164,7 +164,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 18-07-PLAN.md — Delete legacy JSON-store API, move dynamic_base.json to a fixture, .gitignore/CLAUDE.md/CHANGELOG
+- [x] 18-07-PLAN.md — Delete legacy JSON-store API, move dynamic_base.json to a fixture, .gitignore/CLAUDE.md/CHANGELOG
 
 ### Phase 19: Overlay Rule List Over Parsed Blocks
 
@@ -233,7 +233,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
-| 18. Filter as Store & Economy Section | 5/7 | In Progress|  |
+| 18. Filter as Store & Economy Section | 7/7 | Complete   | 2026-10-13 |
 | 19. Overlay Rule List Over Parsed Blocks | 0/? | Not started | - |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
@@ -321,7 +321,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 5/7 plans executed
+**Plans:** 7/7 plans complete
 
 Plans:
 

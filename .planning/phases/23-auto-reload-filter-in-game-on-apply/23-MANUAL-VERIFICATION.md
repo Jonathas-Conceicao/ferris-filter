@@ -85,7 +85,8 @@ Record Result as PASS / FAIL with a note for every step.
 
 12. **Modifier held.** Hold Shift while clicking Apply and keep holding for a second.
     **Expected:** the Refresh reminder plus "could not reload in game: a modifier key (Ctrl, Shift or
-    Alt) was held down"; nothing typed. **Result:**
+    Alt) was held down"; nothing typed; the game is not focused, so the stripe stays open and shows
+    the reason at once (the modifier check runs before the focus change). **Result:**
 
 13. **Game minimized.** Minimize PoE2 (windowed), Apply with an edit.
     **Expected:** the game is restored and reloaded, or the Refresh reminder with a "could not reload

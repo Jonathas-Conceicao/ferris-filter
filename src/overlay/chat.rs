@@ -94,13 +94,15 @@ pub trait InputSink {
 }
 
 /// The exact reload plan. A foreground check precedes the clipboard write and every key press, so
-/// no key can land in another application.
+/// no key can land in another application. The modifier check comes first, before any side
+/// effect: it reads global key state and does not need the game focused, so a held modifier
+/// aborts while the stripe still has focus and can show why (review WR-03).
 pub fn reload_steps() -> Vec<Step> {
     vec![
+        Step::VerifyModifiersUp,
         Step::FocusGame,
         Step::Wait(FOCUS_SETTLE_MS),
         Step::VerifyForeground,
-        Step::VerifyModifiersUp,
         Step::SaveClipboard,
         Step::SetClipboard(RELOAD_COMMAND.to_string()),
         Step::VerifyForeground,
@@ -390,10 +392,10 @@ mod tests {
         assert_eq!(
             reload_steps(),
             vec![
+                Step::VerifyModifiersUp,
                 Step::FocusGame,
                 Step::Wait(60),
                 Step::VerifyForeground,
-                Step::VerifyModifiersUp,
                 Step::SaveClipboard,
                 Step::SetClipboard(RELOAD_COMMAND.to_string()),
                 Step::VerifyForeground,
@@ -435,6 +437,15 @@ mod tests {
             .position(|s| *s == Step::Chord(Key::Ctrl, Key::V))
             .unwrap();
         assert!(a < v);
+        // Review WR-03: the modifier check runs before any side effect, focus included.
+        assert_eq!(steps[0], Step::VerifyModifiersUp);
+        assert_eq!(
+            steps
+                .iter()
+                .filter(|s| **s == Step::VerifyModifiersUp)
+                .count(),
+            1
+        );
         let first_verify = steps
             .iter()
             .position(|s| *s == Step::VerifyForeground)
@@ -519,12 +530,30 @@ mod tests {
     }
 
     #[test]
-    fn first_verify_failure_sends_nothing_and_never_saved() {
+    fn modifier_failure_happens_before_focus_moves() {
+        // A held modifier is the first step's failure: the game is never focused, so the stripe
+        // keeps focus and shows the reason (review WR-03).
         let mut sink = FailingSink {
-            fail_at: 2,
+            fail_at: 0,
             calls: vec![],
         };
         assert_eq!(execute(&mut sink, &reload_steps()), Err("boom".into()));
+        assert_eq!(sink.calls, vec![Step::VerifyModifiersUp]);
+        assert!(!sink.calls.contains(&Step::FocusGame));
+    }
+
+    #[test]
+    fn first_verify_failure_sends_nothing_and_never_saved() {
+        let at = reload_steps()
+            .iter()
+            .position(|s| *s == Step::VerifyForeground)
+            .unwrap();
+        let mut sink = FailingSink {
+            fail_at: at,
+            calls: vec![],
+        };
+        assert_eq!(execute(&mut sink, &reload_steps()), Err("boom".into()));
+        assert_eq!(sink.calls.last(), Some(&Step::VerifyForeground));
         assert!(!sent_input(&sink.calls));
         assert_eq!(restores(&sink.calls), 0);
     }

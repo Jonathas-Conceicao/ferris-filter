@@ -6,7 +6,9 @@
 //! the `Result` into an [`ApplyOutcome`], then updates the [`ApplyState`] held across frames.
 //!
 //! **Why this state exists at all:** the filter file is the store, but PoE2 never re-reads it on its
-//! own, so "did my change reach the game" has no feedback of its own (`PITFALLS.md` §1). This
+//! own, so "did my change reach the game" has no feedback of its own (`PITFALLS.md` §1). The
+//! overlay can now ask the running game to reload (RELOAD-01), but the file itself is never
+//! re-read automatically. This
 //! state is deliberately transient and in-memory only -- it describes the current overlay
 //! session's belief about the file, which is why [`ApplyState::NeverApplied`] reads identically to
 //! [`ApplyState::Unapplied`] below.
@@ -73,6 +75,42 @@ pub fn success_message(written: &Path) -> String {
         "Wrote {}. Reload it in-game: {RELOAD_INSTRUCTION}",
         written.display()
     )
+}
+
+/// Reason shown when no reload was sent because no game window was found.
+pub const REASON_GAME_NOT_RUNNING: &str = "game not running";
+/// Reason shown when no reload was sent because the user turned the setting off.
+pub const REASON_SETTING_OFF: &str = "reload setting is off";
+/// Reason shown when no reload was sent because another one is still in flight.
+pub const REASON_BUSY: &str = "a reload is already in progress";
+
+/// Reason shown when sending the reload to the game failed.
+pub fn reason_send_failed(cause: &str) -> String {
+    format!("could not reload in game: {cause}")
+}
+
+/// The message after a reload was sent. `/reloaditemfilter` reloads the filter selected in game,
+/// which is not necessarily the file just written, so this says only that a reload was sent.
+pub fn reloaded_message(written: &Path) -> String {
+    format!("Wrote {}. Reloaded in game", written.display())
+}
+
+/// The interim message while the reload worker is still typing into the game.
+pub fn reloading_message(written: &Path) -> String {
+    format!("Wrote {}. Reloading in game...", written.display())
+}
+
+/// The success message plus the reason no reload was sent; keeps the manual Refresh reminder.
+pub fn not_reloaded_message(written: &Path, reason: &str) -> String {
+    format!("{} ({reason})", success_message(written))
+}
+
+/// The final message once the reload worker has reported.
+pub fn reload_result_message(written: &Path, result: &Result<(), String>) -> String {
+    match result {
+        Ok(()) => reloaded_message(written),
+        Err(cause) => not_reloaded_message(written, &reason_send_failed(cause)),
+    }
 }
 
 /// The message rendered after an Apply that found nothing to change.

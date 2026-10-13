@@ -1,4 +1,5 @@
-//! Per-user overlay settings: the selected game-folder filter (STORE-02).
+//! Per-user overlay settings: the selected game-folder filter (STORE-02) and whether Apply
+//! reloads the filter in game (RELOAD-01).
 //!
 //! `ff-settings.json` lives at the app root and is git-ignored. The library is pure: every path is
 //! a parameter and nothing here prints. A filter name is only ever a bare `*.filter` file name, so
@@ -22,6 +23,9 @@ const MAX_NAME_LEN: usize = 200;
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    /// Send /reloaditemfilter to the game after a RULES Apply that wrote the filter; absent means on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reload_after_apply: Option<bool>,
     /// Unknown top-level keys survive a load/save round trip.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -31,6 +35,11 @@ impl Settings {
     /// The stored filter name, or `dynamic.filter`.
     pub fn filter_name(&self) -> &str {
         self.filter.as_deref().unwrap_or(DEFAULT_FILTER)
+    }
+
+    /// Whether Apply should reload the filter in game; on unless explicitly turned off.
+    pub fn reload_after_apply(&self) -> bool {
+        self.reload_after_apply.unwrap_or(true)
     }
 }
 
@@ -55,13 +64,23 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
     let mut settings: Settings = match serde_json::from_str(&text) {
         Ok(s) => s,
         Err(e) => {
-            // A wrongly typed `filter` must not discard the other keys: salvage them.
+            // A wrongly typed value must not discard the other keys: salvage each separately.
             return match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
                 Ok(mut extra) => {
-                    extra.remove("filter");
+                    let filter = match extra.remove("filter") {
+                        Some(serde_json::Value::String(n)) if valid_filter_name(&n).is_ok() => {
+                            Some(n)
+                        }
+                        _ => None,
+                    };
+                    let reload_after_apply = match extra.remove("reload_after_apply") {
+                        Some(serde_json::Value::Bool(b)) => Some(b),
+                        _ => None,
+                    };
                     (
                         Settings {
-                            filter: None,
+                            filter,
+                            reload_after_apply,
                             extra,
                         },
                         warn(e.to_string()),
@@ -304,5 +323,52 @@ mod tests {
             &["dynamic.filter".to_string()],
             "DYNAMIC.filter"
         ));
+    }
+
+    #[test]
+    fn reload_after_apply_defaults_on_and_is_not_serialized() {
+        let s = Settings::default();
+        assert!(s.reload_after_apply());
+        assert!(
+            !serde_json::to_string(&s)
+                .unwrap()
+                .contains("reload_after_apply")
+        );
+    }
+
+    #[test]
+    fn reload_after_apply_false_round_trips() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"a.filter","reload_after_apply":false,"future":{"x":1}}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert!(!s.reload_after_apply());
+        assert_eq!(s.filter_name(), "a.filter");
+        assert_eq!(s.extra["future"]["x"], 1);
+        save(t.path(), &s).unwrap();
+        let (s2, w2) = load(t.path());
+        assert_eq!(w2, None);
+        assert_eq!(s2, s);
+    }
+
+    #[test]
+    fn wrongly_typed_reload_flag_keeps_the_filter_and_other_keys() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","reload_after_apply":"yes","future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        assert!(w.is_some());
+        assert_eq!(s.filter_name(), "ssf.filter");
+        assert!(s.reload_after_apply());
+        assert!(s.extra.contains_key("future"));
+        assert!(!s.extra.contains_key("filter"));
+        assert!(!s.extra.contains_key("reload_after_apply"));
     }
 }

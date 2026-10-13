@@ -570,6 +570,7 @@ fn filter_target(
 fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     Settings {
         filter: Some(name.to_string()),
+        reload_after_apply: current.reload_after_apply,
         extra: current.extra.clone(),
     }
 }

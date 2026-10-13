@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a second one; a not-responding instance produces a "FerrisFilter is already running but not
   responding" message box after about 2 seconds. A launch made while the running instance is still
   starting up waits up to 10 seconds for it to become ready before that window starts, and several
-  launches at once are each answered. Tray Quit releases the instance name immediately, so a
+  launches at once are each answered. Tray Quit releases the hotkey, the tray icon and then the instance name immediately, so a
   relaunch right after Quit starts a fresh stripe, and a launch whose running instance quits or
   crashes while it is asking starts instead of showing a message. If the single-instance check
   itself fails, `ff` does not start and names the Windows error in a message box, so it never opens

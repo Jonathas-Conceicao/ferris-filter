@@ -586,7 +586,6 @@ pub(crate) struct OutcomeLine {
 }
 
 /// Height cap of the outcome area; longer content scrolls inside it.
-#[cfg(test)]
 pub(crate) const OUTCOME_MAX_HEIGHT: f32 = 96.0;
 
 /// The present footer messages, in display order: list status, Apply outcome, sync status, then
@@ -631,7 +630,7 @@ pub(crate) fn outcome_area(ui: &mut egui::Ui, lines: &[OutcomeLine]) -> Option<B
     let mut jump = None;
     egui::ScrollArea::vertical()
         .id_salt("outcome")
-        .max_height(96.0)
+        .max_height(OUTCOME_MAX_HEIGHT)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             for line in lines {

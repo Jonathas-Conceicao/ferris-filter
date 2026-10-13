@@ -313,13 +313,20 @@ mod tests {
         assert!(err.to_string().contains('E'));
     }
 
+    /// `include_str!` returns the file's on-disk bytes, which are CRLF on a `core.autocrlf=true`
+    /// checkout, so the splice keys on the first `{` only and the test runs against both endings.
     #[test]
     fn load_styles_rejects_duplicate_name() {
-        let dup = STYLES.replacen("{
-", "{
-  \"S\": { \"text\": null, \"border\": null, \"background\": null, \"font\": null, \"minimap\": null, \"beam\": null, \"sound\": null, \"action\": \"Show\", \"disableDropSound\": false },
-", 1);
-        let err = load_text(&dup).unwrap_err();
-        assert!(err.to_string().contains("duplicate style name"), "{err}");
+        let lf = STYLES.replace("\r\n", "\n");
+        for text in [lf.clone(), lf.replace('\n', "\r\n")] {
+            let dup = text.replacen(
+                '{',
+                "{ \"S\": { \"text\": null, \"border\": null, \"background\": null, \"font\": null, \"minimap\": null, \"beam\": null, \"sound\": null, \"action\": \"Show\", \"disableDropSound\": false },",
+                1,
+            );
+            assert_ne!(dup, text, "splice must apply");
+            let err = load_text(&dup).unwrap_err();
+            assert!(err.to_string().contains("duplicate style name"), "{err}");
+        }
     }
 }

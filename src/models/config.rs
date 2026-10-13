@@ -11,7 +11,7 @@ use thiserror::Error;
 // ---------------------------------------------------------------------------
 
 /// Minimap / beam colors. JSON uses PascalCase matching Rust variant names.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum FilterColor {
     Red,
     Green,
@@ -26,8 +26,45 @@ pub enum FilterColor {
     Purple,
 }
 
+impl FilterColor {
+    pub const ALL: [FilterColor; 11] = [
+        FilterColor::Red,
+        FilterColor::Green,
+        FilterColor::Blue,
+        FilterColor::Brown,
+        FilterColor::White,
+        FilterColor::Yellow,
+        FilterColor::Cyan,
+        FilterColor::Grey,
+        FilterColor::Orange,
+        FilterColor::Pink,
+        FilterColor::Purple,
+    ];
+
+    /// The PascalCase variant name, identical to the serde spelling.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FilterColor::Red => "Red",
+            FilterColor::Green => "Green",
+            FilterColor::Blue => "Blue",
+            FilterColor::Brown => "Brown",
+            FilterColor::White => "White",
+            FilterColor::Yellow => "Yellow",
+            FilterColor::Cyan => "Cyan",
+            FilterColor::Grey => "Grey",
+            FilterColor::Orange => "Orange",
+            FilterColor::Pink => "Pink",
+            FilterColor::Purple => "Purple",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == name)
+    }
+}
+
 /// Minimap icon shapes. JSON uses PascalCase matching Rust variant names.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum MinimapShape {
     Circle,
     Diamond,
@@ -43,8 +80,47 @@ pub enum MinimapShape {
     UpsideDownHouse,
 }
 
+impl MinimapShape {
+    pub const ALL: [MinimapShape; 12] = [
+        MinimapShape::Circle,
+        MinimapShape::Diamond,
+        MinimapShape::Hexagon,
+        MinimapShape::Square,
+        MinimapShape::Star,
+        MinimapShape::Triangle,
+        MinimapShape::Cross,
+        MinimapShape::Moon,
+        MinimapShape::Raindrop,
+        MinimapShape::Kite,
+        MinimapShape::Pentagon,
+        MinimapShape::UpsideDownHouse,
+    ];
+
+    /// The PascalCase variant name, identical to the serde spelling.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MinimapShape::Circle => "Circle",
+            MinimapShape::Diamond => "Diamond",
+            MinimapShape::Hexagon => "Hexagon",
+            MinimapShape::Square => "Square",
+            MinimapShape::Star => "Star",
+            MinimapShape::Triangle => "Triangle",
+            MinimapShape::Cross => "Cross",
+            MinimapShape::Moon => "Moon",
+            MinimapShape::Raindrop => "Raindrop",
+            MinimapShape::Kite => "Kite",
+            MinimapShape::Pentagon => "Pentagon",
+            MinimapShape::UpsideDownHouse => "UpsideDownHouse",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == name)
+    }
+}
+
 /// Style action — whether the matched item is shown or hidden.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum StyleAction {
     Show,
     Hide,
@@ -78,7 +154,9 @@ pub struct Beam {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Sound {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom: Option<String>,
     pub vol: u16,
 }
@@ -98,6 +176,36 @@ pub struct Style {
     pub sound: Option<Sound>,
     pub action: StyleAction,
     pub disable_drop_sound: bool,
+}
+
+impl Style {
+    /// Default for a newly added style: Show, no colours, nothing else set.
+    pub fn blank_show() -> Style {
+        Style {
+            text: None,
+            border: None,
+            background: None,
+            font: None,
+            minimap: None,
+            beam: None,
+            sound: None,
+            action: StyleAction::Show,
+            disable_drop_sound: false,
+        }
+    }
+}
+
+/// Why a typed style name is refused by [`StyleSet::insert_new`]. The Display strings are UI copy.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum StyleNameError {
+    #[error("Enter a style name")]
+    Empty,
+    #[error("Style names can't start or end with a space or contain control characters")]
+    Invalid,
+    #[error("A style with this name already exists")]
+    Duplicate,
+    #[error("That name is reserved for the built-in style {required}")]
+    ShadowsRequired { required: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +452,54 @@ impl StyleSet {
             }
         }
         Ok(())
+    }
+
+    /// True for the nine [`Self::REQUIRED`] styles, which can never be deleted.
+    pub fn is_builtin(name: &str) -> bool {
+        Self::REQUIRED.contains(&name)
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.0.contains_key(name)
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Style> {
+        self.0.get_mut(name)
+    }
+
+    /// `(name, style)` pairs in file order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Style)> {
+        self.0.iter().map(|(n, s)| (n.as_str(), s))
+    }
+
+    /// Append a new style. Does not trim (the view trims first). The name rule mirrors
+    /// `styled::style_name_ok` (models must not depend on `styled`); uniqueness is
+    /// case-sensitive like tag lookup, but case-only shadows of built-ins are reserved.
+    pub fn insert_new(&mut self, name: &str, style: Style) -> Result<(), StyleNameError> {
+        if name.is_empty() {
+            return Err(StyleNameError::Empty);
+        }
+        if name != name.trim() || name.chars().any(char::is_control) {
+            return Err(StyleNameError::Invalid);
+        }
+        if self.contains(name) {
+            return Err(StyleNameError::Duplicate);
+        }
+        if let Some(req) = Self::REQUIRED.iter().find(|r| r.eq_ignore_ascii_case(name)) {
+            return Err(StyleNameError::ShadowsRequired {
+                required: req.to_string(),
+            });
+        }
+        self.0.insert(name.to_string(), style);
+        Ok(())
+    }
+
+    /// Delete a non-built-in style, preserving the order of the rest. `None` for built-ins.
+    pub fn remove_custom(&mut self, name: &str) -> Option<Style> {
+        if Self::is_builtin(name) {
+            return None;
+        }
+        self.0.shift_remove(name)
     }
 
     #[cfg(test)]
@@ -712,6 +868,122 @@ fn deserialize_present_value<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn insert_new_appends_in_order() {
+        let mut set = StyleSet::committed_for_tests();
+        let n = set.len();
+        set.insert_new("Gold", Style::blank_show()).unwrap();
+        assert_eq!(set.len(), n + 1);
+        assert_eq!(set.names().last(), Some("Gold"));
+        set.validate().unwrap();
+    }
+
+    #[test]
+    fn insert_new_refuses_bad_names() {
+        let mut set = StyleSet::committed_for_tests();
+        let b = Style::blank_show;
+        assert_eq!(set.insert_new("", b()), Err(StyleNameError::Empty));
+        assert_eq!(set.insert_new("  Gold", b()), Err(StyleNameError::Invalid));
+        assert_eq!(set.insert_new("Go\tld", b()), Err(StyleNameError::Invalid));
+        assert_eq!(set.insert_new("S", b()), Err(StyleNameError::Duplicate));
+        assert_eq!(
+            set.insert_new("Recycle", b()),
+            Err(StyleNameError::Duplicate)
+        );
+        assert!(set.insert_new("recycle", b()).is_ok());
+        assert_eq!(
+            set.insert_new("hIdDeN", b()),
+            Err(StyleNameError::ShadowsRequired {
+                required: "hidden".into()
+            })
+        );
+    }
+
+    #[test]
+    fn remove_custom_keeps_order_and_protects_builtins() {
+        let mut set = StyleSet::committed_for_tests();
+        let before: Vec<String> = set.names().map(String::from).collect();
+        for name in StyleSet::REQUIRED {
+            assert!(StyleSet::is_builtin(name));
+            assert!(set.remove_custom(name).is_none(), "{name}");
+        }
+        assert_eq!(set.names().map(String::from).collect::<Vec<_>>(), before);
+        assert!(set.remove_custom("kite").is_some());
+        let expect: Vec<&String> = before.iter().filter(|n| *n != "kite").collect();
+        assert_eq!(set.names().collect::<Vec<_>>(), expect);
+        assert!(!StyleSet::is_builtin("kite"));
+    }
+
+    #[test]
+    fn get_mut_and_iter() {
+        let mut set = StyleSet::committed_for_tests();
+        set.get_mut("S").unwrap().font = Some(12);
+        assert_eq!(set.get("S").unwrap().font, Some(12));
+        assert_eq!(
+            set.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+            set.names().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn blank_show_is_blank() {
+        let s = Style::blank_show();
+        assert_eq!(s.action, StyleAction::Show);
+        assert!(s.text.is_none() && s.sound.is_none() && s.minimap.is_none());
+        assert!(!s.disable_drop_sound);
+    }
+
+    #[test]
+    fn enum_vocabularies_round_trip() {
+        assert_eq!(FilterColor::ALL.len(), 11);
+        assert_eq!(MinimapShape::ALL.len(), 12);
+        for c in FilterColor::ALL {
+            assert_eq!(FilterColor::from_name(c.as_str()), Some(c));
+            assert_eq!(
+                serde_json::to_string(&c).unwrap(),
+                format!("\"{}\"", c.as_str())
+            );
+        }
+        for m in MinimapShape::ALL {
+            assert_eq!(MinimapShape::from_name(m.as_str()), Some(m));
+            assert_eq!(
+                serde_json::to_string(&m).unwrap(),
+                format!("\"{}\"", m.as_str())
+            );
+        }
+        assert_eq!(FilterColor::from_name("red"), None);
+    }
+
+    #[test]
+    fn style_name_with_space_survives_tag_round_trip() {
+        let mut doc = crate::filter::parse(b"Show\n  Class \"Rings\"\n").unwrap();
+        let id = doc.blocks().next().unwrap().id();
+        doc.set_meta(id, "style", "My Style").unwrap();
+        let again = crate::filter::parse(doc.serialize().as_bytes()).unwrap();
+        let id2 = again.blocks().next().unwrap().id();
+        assert_eq!(again.meta_get(id2, "style"), Some("My Style"));
+    }
+
+    #[test]
+    fn sound_omits_unset_keys() {
+        let custom = Sound {
+            id: None,
+            custom: Some("a.mp3".into()),
+            vol: 100,
+        };
+        let j = serde_json::to_string(&custom).unwrap();
+        assert!(!j.contains("\"id\""), "{j}");
+        let builtin = Sound {
+            id: Some(3),
+            custom: None,
+            vol: 100,
+        };
+        let j = serde_json::to_string(&builtin).unwrap();
+        assert!(!j.contains("custom"), "{j}");
+        let back: Sound = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, builtin);
+    }
 
     const CONFIG_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config.json"));
 

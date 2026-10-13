@@ -457,12 +457,16 @@ mod imp {
             Acquired::First(g) => Launch::Run(g),
             Acquired::AlreadyRunning => {
                 let outcome = signal_running(names, startup_ms, ack_ms);
-                if outcome != Wait::Signaled
-                    && let Acquired::First(g) = acquire_named(names)
-                {
-                    return Launch::Run(g);
+                if outcome == Wait::Signaled {
+                    return Launch::Exit(signal_message(outcome));
                 }
-                Launch::Exit(signal_message(outcome))
+                // The signal failed: re-check the name once. A failed re-check reports its own
+                // error rather than the stale signal outcome (review iteration 3, IN-02).
+                match acquire_named(names) {
+                    Acquired::First(g) => Launch::Run(g),
+                    Acquired::Failed(code) => Launch::Exit(Some(check_failed_message(code))),
+                    Acquired::AlreadyRunning => Launch::Exit(signal_message(outcome)),
+                }
             }
             Acquired::Failed(code) => Launch::Exit(Some(check_failed_message(code))),
         }

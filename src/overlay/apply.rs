@@ -1,21 +1,15 @@
-//! The Apply outcome and the unapplied-changes indicator (D-03, D-15..D-17).
+//! The Apply outcome, the footer's button decisions and the unapplied-changes indicator.
 //!
-//! Pure — no GUI-framework types of any kind anywhere in this file (D-18: `PITFALLS.md` §8's rule
-//! that logic belongs in the library, presentation at the edge). `app.rs` is the only caller: it
-//! drives the dynamic module's compile-and-write pair directly (D-15 — those functions stay
-//! Phase 12's, unmodified, and this module never wraps or re-implements them), then turns
-//! the `Result` into an [`ApplyOutcome`] and updates the [`ApplyState`] it holds across frames.
+//! Pure -- no GUI-framework types of any kind anywhere in this file (`PITFALLS.md` §8: logic
+//! belongs in the library, presentation at the edge). `app.rs` is the only caller: it drives
+//! [`crate::dynamic::apply_file`] directly (the same function the CLI's `apply` uses) and turns
+//! the `Result` into an [`ApplyOutcome`], then updates the [`ApplyState`] held across frames.
 //!
-//! **Why this state exists at all (D-02/D-03):** `dynamic.json` autosaves on every edit, but
-//! `dynamic.filter` — the file the game actually reads — changes only when the player presses
-//! Apply. Those two can diverge the moment the store autosaves and Apply has not run since. If
-//! the UI does not say so, the player has no way to tell "did my edit reach the game" from
-//! "nothing happened" — PoE2 gives no feedback of its own either way (`PITFALLS.md` §1). This
-//! state is deliberately transient and in-memory only, never written to `dynamic.json` or
-//! anywhere else — it describes the current overlay session's belief about two files on disk, not
-//! a fact worth persisting past a restart (a fresh launch has no idea what the last session did
-//! last, which is exactly why [`ApplyState::NeverApplied`] reads identically to
-//! [`ApplyState::Unapplied`] below).
+//! **Why this state exists at all:** the filter file is the store, but PoE2 never re-reads it on its
+//! own, so "did my change reach the game" has no feedback of its own (`PITFALLS.md` §1). This
+//! state is deliberately transient and in-memory only -- it describes the current overlay
+//! session's belief about the file, which is why [`ApplyState::NeverApplied`] reads identically to
+//! [`ApplyState::Unapplied`] below.
 
 use std::path::{Path, PathBuf};
 
@@ -30,17 +24,15 @@ use std::path::{Path, PathBuf};
 /// not get to depend on glyph coverage.
 pub const RELOAD_INSTRUCTION: &str = "Options > Game > Item Filter > Refresh";
 
-/// Whether the filter on disk (`dynamic.filter`) currently matches the saved rule store
-/// (`dynamic.json`), as far as this overlay session knows.
+/// Whether the filter on disk matches what the last Apply wrote, as far as this overlay session
+/// knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyState {
-    /// No Apply has happened this session. Because D-02 lets the store and the filter move
-    /// independently, whatever `dynamic.filter` holds right now is whatever the *last* session
-    /// left — it must not be presented as "up to date" just because this session hasn't touched
-    /// it yet. [`indicator`] deliberately renders this identically to [`ApplyState::Unapplied`].
+    /// No Apply has happened this session. Whatever the file holds was left by an earlier session
+    /// or another program, so it is not presented as "up to date". [`indicator`] renders this
+    /// identically to [`ApplyState::Unapplied`].
     NeverApplied,
-    /// An edit has landed in the store since the most recent successful Apply. The filter on disk
-    /// does not match the saved rules.
+    /// The in-memory view may differ from the file on disk.
     Unapplied,
     /// The most recent Apply attempt succeeded and no edit has landed since.
     Applied,
@@ -60,17 +52,15 @@ impl ApplyState {
 }
 
 /// What an Apply attempt produced, for the caller to render. `app.rs` builds this from the
-/// `Result`s [`crate::dynamic::compile_store`] and [`crate::dynamic::write_filter`] return —
-/// this type itself performs neither call (D-15's second-caller reuse stays in `app.rs`, where
-/// the acceptance criteria can grep for exactly one call site each).
+/// `Result` of [`crate::dynamic::apply_file`]; this type itself performs no call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyOutcome {
-    /// Compiled and written successfully; carries the path [`crate::dynamic::write_filter`]
-    /// reported.
+    /// The file was rewritten; carries its path.
     Written(PathBuf),
-    /// Compilation or the write failed; carries a single displayable string naming the failing
-    /// path (D-17) — a `DynamicError`'s `Display` text, or an equivalent rendered failure for a
-    /// missing default destination (never a raw `Debug` dump, never a panic).
+    /// The new text equals what is on disk; nothing was touched.
+    Unchanged(PathBuf),
+    /// Apply failed; a single displayable string (a `DynamicError`'s `Display`), never a raw
+    /// `Debug` dump and never a panic.
     Failed(String),
 }
 
@@ -82,33 +72,80 @@ pub fn success_message(written: &Path) -> String {
     format!("Wrote {}. Reload it in-game: {RELOAD_INSTRUCTION}", written.display())
 }
 
-/// Decides whether Apply may go on to compile, given how the store save went.
-///
-/// `Ok(())` means proceed. `Err(outcome)` is terminal: the caller must apply that outcome and
-/// **not** compile.
-///
-/// **Why this is a function and not an `if` at the call site.** Apply's contract is "persist the
-/// store, THEN compile the filter from it", and the order is load-bearing because
-/// [`crate::dynamic::compile_store`] reads `dynamic.json` back from disk. The original code
-/// recorded a save failure and then carried on regardless, which inverted the contract in the one
-/// case it exists for: the compile read the *previous* store, the write succeeded, and Apply
-/// reported success. That also advanced the Revert baseline to edits that had never been
-/// persisted and cleared the dirty flag, so the only surviving copy of the player's work was
-/// destroyed by the act of reporting that it had been saved. Found by the v0.4 milestone audit
-/// (BLOCKER-1), confirmed against the running build.
-///
-/// The failure text quotes the save's own message rather than inventing one: the player needs to
-/// know it was the *store* that could not be written, not the filter. Returning an
-/// [`ApplyOutcome::Failed`] rather than leaving the red save line to speak for itself also means
-/// the stripe tells one story — before this, the red save error and the green "Wrote ..." line
-/// rendered at the same time, contradicting each other.
-pub fn guard_save(save: Result<(), String>) -> Result<(), ApplyOutcome> {
-    match save {
-        Ok(()) => Ok(()),
-        Err(message) => Err(ApplyOutcome::Failed(format!(
-            "Could not save the rule store: {message} Nothing was written to the filter."
-        ))),
+/// The message rendered after an Apply that found nothing to change.
+pub fn unchanged_message(path: &Path) -> String {
+    format!("{} is already up to date; nothing was written", path.display())
+}
+
+/// True only for the guarded-write refusal "the filter changed on disk since it was loaded" --
+/// the one failure whose recovery is RELOAD.
+pub fn is_changed_on_disk(err: &crate::dynamic::DynamicError) -> bool {
+    matches!(
+        err,
+        crate::dynamic::DynamicError::Write(crate::safe_write::WriteError::ChangedOnDisk { .. })
+    )
+}
+
+/// What the footer knows about the filter file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterState {
+    /// The file could not be loaded (unreadable, not UTF-8, damaged v0.4 shape).
+    LoadFailed,
+    /// The file does not exist yet.
+    Absent,
+    /// The file exists and has no economy section.
+    NoSection,
+    /// The economy section markers are damaged.
+    Damaged,
+    /// The file has an economy section.
+    HasSection,
+}
+
+/// Which footer buttons are live. Computed once per frame by [`footer_actions`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FooterActions {
+    pub sync: bool,
+    pub apply: bool,
+    pub add_economy: bool,
+    pub reload: bool,
+}
+
+/// The footer's button rules. A missing app root disables everything that touches files; after a
+/// changed-on-disk refusal only RELOAD (and SYNC) remain; ADD ECONOMY SECTION is the only way a
+/// section is ever created -- APPLY never does it implicitly.
+pub fn footer_actions(root_ok: bool, state: FilterState, needs_reload: bool) -> FooterActions {
+    FooterActions {
+        sync: root_ok,
+        reload: needs_reload,
+        apply: root_ok && state == FilterState::HasSection && !needs_reload,
+        add_economy: root_ok
+            && matches!(state, FilterState::Absent | FilterState::NoSection)
+            && !needs_reload,
     }
+}
+
+/// The stripe's status text for the filter file.
+pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
+    let mut text = match state {
+        FilterState::Absent => {
+            "The filter does not exist yet. ADD ECONOMY SECTION creates it.".to_string()
+        }
+        FilterState::NoSection => {
+            "The filter has no economy section. ADD ECONOMY SECTION adds one at the end.".to_string()
+        }
+        FilterState::Damaged => {
+            "The economy section markers are damaged. Fix them by hand, then RELOAD.".to_string()
+        }
+        FilterState::HasSection => "Economy section found.".to_string(),
+        FilterState::LoadFailed => "The filter could not be loaded.".to_string(),
+    };
+    if migrated {
+        text.push_str(
+            " This is a v0.4 dynamic.filter. It will be converted on the next APPLY \
+             (a .ffbak backup of the original is kept).",
+        );
+    }
+    text
 }
 
 /// D-03's short status text. `NeverApplied` and `Unapplied` read identically — both mean "the
@@ -127,47 +164,6 @@ pub fn indicator(state: ApplyState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // -- guard_save (v0.4 milestone audit, BLOCKER-1) --------------------------
-
-    #[test]
-    fn a_successful_save_lets_apply_proceed_to_the_compile() {
-        assert_eq!(guard_save(Ok(())), Ok(()));
-    }
-
-    #[test]
-    fn a_failed_save_stops_apply_before_it_compiles() {
-        // The regression this exists for: the old code recorded the error and compiled anyway,
-        // which read the PREVIOUS store off disk, wrote it successfully, and reported success.
-        let stopped = guard_save(Err("permission denied".to_string()));
-        assert!(
-            stopped.is_err(),
-            "a failed save must be terminal -- compiling after it builds the filter from the \
-             previous store and then reports success"
-        );
-        assert!(
-            !matches!(stopped, Err(ApplyOutcome::Written(_))),
-            "a failed save can never produce a Written outcome"
-        );
-    }
-
-    #[test]
-    fn the_failure_names_the_store_as_the_thing_that_could_not_be_written() {
-        // The player has to be able to tell "your rules are not saved" from "the filter did not
-        // get written" -- they imply completely different recovery.
-        let Err(ApplyOutcome::Failed(message)) = guard_save(Err("disk full".to_string())) else {
-            panic!("expected a Failed outcome");
-        };
-        assert!(message.contains("disk full"), "must quote the underlying cause: {message}");
-        assert!(
-            message.to_lowercase().contains("store"),
-            "must say it was the store that failed: {message}"
-        );
-        assert!(
-            message.to_lowercase().contains("nothing was written"),
-            "must say the filter was left alone: {message}"
-        );
-    }
 
     #[test]
     fn a_failed_apply_never_advances_the_state_to_applied() {
@@ -220,5 +216,70 @@ mod tests {
         for start in [ApplyState::NeverApplied, ApplyState::Unapplied, ApplyState::Applied] {
             assert_eq!(start.on_apply_failure(), start);
         }
+    }
+
+    #[test]
+    fn unchanged_message_says_nothing_was_written_and_omits_reload() {
+        let m = unchanged_message(Path::new("x.filter"));
+        assert!(m.contains("x.filter") && m.contains("nothing was written"));
+        assert!(!m.contains("Refresh"));
+    }
+
+    #[test]
+    fn changed_on_disk_is_recognised_only_for_that_refusal() {
+        use crate::dynamic::DynamicError;
+        let yes = DynamicError::Write(crate::safe_write::WriteError::ChangedOnDisk {
+            path: "p".into(),
+        });
+        assert!(is_changed_on_disk(&yes));
+        assert!(!is_changed_on_disk(&DynamicError::EconomyUnavailable));
+    }
+
+    #[test]
+    fn footer_without_a_root_disables_every_file_action() {
+        for st in [
+            FilterState::Absent,
+            FilterState::NoSection,
+            FilterState::HasSection,
+            FilterState::Damaged,
+            FilterState::LoadFailed,
+        ] {
+            assert_eq!(footer_actions(false, st, false), FooterActions::default());
+        }
+    }
+
+    #[test]
+    fn footer_absent_and_no_section_offer_add_economy_not_apply() {
+        for st in [FilterState::Absent, FilterState::NoSection] {
+            let a = footer_actions(true, st, false);
+            assert!(a.add_economy && !a.apply && a.sync && !a.reload);
+        }
+    }
+
+    #[test]
+    fn footer_has_section_offers_apply_only() {
+        let a = footer_actions(true, FilterState::HasSection, false);
+        assert!(a.apply && !a.add_economy && a.sync);
+    }
+
+    #[test]
+    fn footer_damaged_and_load_failed_offer_neither() {
+        for st in [FilterState::Damaged, FilterState::LoadFailed] {
+            let a = footer_actions(true, st, false);
+            assert!(!a.apply && !a.add_economy && a.sync);
+        }
+    }
+
+    #[test]
+    fn footer_reload_first_after_a_changed_on_disk_refusal() {
+        let a = footer_actions(true, FilterState::HasSection, true);
+        assert!(a.reload && !a.apply && !a.add_economy);
+    }
+
+    #[test]
+    fn state_messages_name_the_actions_and_the_backup() {
+        assert!(filter_state_message(FilterState::Absent, false).contains("ADD ECONOMY SECTION"));
+        assert!(filter_state_message(FilterState::HasSection, true).contains(".ffbak"));
+        assert!(!filter_state_message(FilterState::HasSection, false).contains(".ffbak"));
     }
 }

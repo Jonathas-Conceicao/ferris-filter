@@ -4,7 +4,7 @@
 //! thin view over it. If a bug can only be found by clicking, it is in the wrong
 //! layer — `app.rs` and friends should stay presentation-only, delegating to
 //! `ferrisfilter::dynamic` / `ferrisfilter::compile` for anything that touches
-//! `dynamic.json` or the filter compiler.
+//! the filter file or the filter compiler.
 
 pub mod app;
 pub mod apply;
@@ -13,7 +13,6 @@ pub mod edit;
 pub mod hotkey;
 pub mod layout;
 pub mod rule_editor;
-pub mod store;
 pub mod theme;
 pub mod tray;
 pub mod view_model;

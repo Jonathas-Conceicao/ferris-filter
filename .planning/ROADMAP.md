@@ -331,7 +331,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 23-03-PLAN.md — Wiring: CONFIG FILTER toggle (saved on change), WinSink, run_apply hook with worker and status replacement
+- [x] 23-03-PLAN.md — Wiring: CONFIG FILTER toggle (saved on change), WinSink, run_apply hook with worker and status replacement
 - [ ] 23-04-PLAN.md — Docs: CLAUDE.md overlay notes, CHANGELOG [Unreleased], 23-MANUAL-VERIFICATION.md
 
 ### Progress
@@ -345,7 +345,7 @@ Plans:
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
-| 23. Auto-Reload Filter in Game on Apply | 2/4 | In Progress|  |
+| 23. Auto-Reload Filter in Game on Apply | 3/4 | In Progress|  |
 
 ## Backlog
 

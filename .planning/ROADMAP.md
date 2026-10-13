@@ -271,7 +271,7 @@ Plans:
 
 - [x] 21-01-PLAN.md — StyleSet public editing API (add/edit/delete, built-ins protected, name validation) + render_styles/render_tiers
 - [x] 21-02-PLAN.md — safe_write::write_all_or_none (two-file all-or-none with rollback) + settings module (ff-settings.json, filter names, game-folder listing)
-- [ ] 21-03-PLAN.md — Drop #ff:style tags naming missing styles on RULES Apply, keeping actions
+- [x] 21-03-PLAN.md — Drop #ff:style tags naming missing styles on RULES Apply, keeping actions
 
 **Wave 2** *(blocked on 21-01, 21-02)*
 
@@ -309,7 +309,7 @@ Plans:
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
-| 21. Overlay Configuration Tab | 2/6 | In Progress|  |
+| 21. Overlay Configuration Tab | 3/6 | In Progress|  |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 
 ## Backlog

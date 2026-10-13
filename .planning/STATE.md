@@ -4,13 +4,13 @@ milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: verifying
 stopped_at: Completed 21-02-PLAN.md
-last_updated: "2026-10-13T05:34:31.631Z"
+last_updated: "2026-10-13T05:36:45.253Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 5
   total_plans: 37
-  completed_plans: 33
+  completed_plans: 34
   percent: 29
 ---
 
@@ -69,6 +69,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 20 P01 | 25min | 3 tasks | 5 files |
 | Phase 21 P01 | 15min | 2 tasks | 3 files |
 | Phase 21 P02 | 20min | 2 tasks | 4 files |
+| Phase 21 P03 | 15min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,7 @@ work (carried forward past the v0.3 close):
 - [Phase 20]: 20-01: Whole patch refuses only new Errors; other line ops refuse new Errors and Warnings; set_continue/set_block_keyword stay lenient on invalid disabled blocks
 - [Phase 20-07]: Condition cards: value controls on line 2; list shapes and Rarity start as pending rows; opaque lines are raw Whole-edit rows; refused raw edits surface via ListUi.line_error
 - [Phase 21]: Spaced style names allowed (tag round trip proven); render_tiers never sorts
+- [Phase 21]: remove_meta works on disabled blocks; dangling style tags dropped there too
 
 ### Pending Todos
 

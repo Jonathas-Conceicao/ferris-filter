@@ -231,7 +231,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 20-04-PLAN.md — emitter::style_action_lines (generate byte-identical) and styled::rewrite_styled (idempotent, unknown-style report)
+- [x] 20-04-PLAN.md — emitter::style_action_lines (generate byte-identical) and styled::rewrite_styled (idempotent, unknown-style report)
 - [ ] 20-05-PLAN.md — WorkingFilter body_view and EditLine/AddLine/RemoveLine RowActions with stale guard and coalescing
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -289,7 +289,7 @@ Plans:
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
-| 20. Full-Grammar Block Editing | 3/9 | In Progress|  |
+| 20. Full-Grammar Block Editing | 4/9 | In Progress|  |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 

@@ -66,10 +66,22 @@ fn flush(items: &mut Vec<Item>, from: usize, to: usize) {
     }
 }
 
+/// True for an economy-section marker line (`#ff:economy-begin` / `#ff:economy-end`).
+fn is_economy_marker(line: &Line) -> bool {
+    matches!(
+        line.ff_marker().map(|(k, _)| k),
+        Some(super::section::BEGIN_KEY | super::section::END_KEY)
+    )
+}
+
 /// Start of the maximal run of comment lines directly above `header`, not reaching below `floor`.
+///
+/// The run stops at an economy marker: a marker is a fence around the economy section, never a
+/// block's metadata. Attached to the block below it, the marker would travel with any span edit of
+/// that block (delete, move, reorder) and silently break the section.
 fn lead_start(ls: &[Line], floor: usize, header: usize) -> usize {
     let mut j = header;
-    while j > floor && is_comment_line(ls[j - 1].text()) {
+    while j > floor && is_comment_line(ls[j - 1].text()) && !is_economy_marker(&ls[j - 1]) {
         j -= 1;
     }
     j

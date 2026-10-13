@@ -543,6 +543,21 @@ mod tests {
     }
 
     #[test]
+    fn a_marker_directly_above_a_block_is_not_that_blocks_metadata() {
+        // Both markers sit flush against a header, with a real #ff: name line in between for the
+        // second block: the name stays attached, the markers never do.
+        let s = format!("{BEGIN_LINE}\nShow # x\n\n{END_LINE}\n#ff:name Zed\nShow # Z\n");
+        let d = doc(&s);
+        let span = find(&d).unwrap().unwrap();
+        for m in [span.begin, span.end] {
+            assert!(d.blocks().all(|b| !b.span().contains(&m)), "marker line {m} in a block");
+        }
+        let blocks: Vec<_> = d.blocks().collect();
+        assert_eq!(d.block_meta(blocks[0].id()), Vec::<(&str, &str)>::new());
+        assert_eq!(d.block_meta(blocks[1].id()), vec![("name", "Zed")]);
+    }
+
+    #[test]
     fn markers_are_trivia_and_blocks_counted() {
         let x = "Show # A\n  Rarity Rare\n\nHide # B\n  Class == \"Rings\"\n";
         let a = add(x, BODY).unwrap();

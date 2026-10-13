@@ -690,7 +690,9 @@ mod windows_tests {
         let t = spawn_responder(&n, Duration::ZERO, Arc::clone(&stop));
         assert_eq!(signal_running(&n, 1000, ACK_TIMEOUT_MS), Wait::Signaled);
         stop.store(true, Ordering::SeqCst);
-        assert_eq!(t.join().unwrap(), 1);
+        // `>= 1`, not `== 1` (review iteration 2, IN-01): a re-sent request that lands
+        // between the responder's consume and its ack is answered once more, harmlessly.
+        assert!(t.join().unwrap() >= 1);
     }
 
     #[test]
@@ -764,7 +766,8 @@ mod windows_tests {
         assert_eq!(signal_running(&n, 5000, 300), Wait::Signaled);
         assert!(started.elapsed() >= Duration::from_millis(300));
         stop.store(true, Ordering::SeqCst);
-        assert_eq!(responder.join().unwrap(), 1);
+        // `>= 1` for the same reason as in the responder test above (IN-01).
+        assert!(responder.join().unwrap() >= 1);
     }
 
     #[test]

@@ -279,7 +279,7 @@ Plans:
 
 **Wave 3** *(blocked on 21-03, 21-04)*
 
-- [ ] 21-05-PLAN.md — CONFIG view: FILTER/STYLES/TIERS sections, preview chip, opaque colour swatch, footer
+- [x] 21-05-PLAN.md — CONFIG view: FILTER/STYLES/TIERS sections, preview chip, opaque colour swatch, footer
 
 **Wave 4** *(blocked on 21-05)*
 
@@ -309,7 +309,7 @@ Plans:
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
-| 21. Overlay Configuration Tab | 4/6 | In Progress|  |
+| 21. Overlay Configuration Tab | 5/6 | In Progress|  |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 
 ## Backlog

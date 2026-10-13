@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: verifying
-stopped_at: Completed 21-04-PLAN.md
-last_updated: "2026-10-13T05:41:00.005Z"
+status: executing
+stopped_at: Completed 21-05-PLAN.md
+last_updated: "2026-10-13T05:47:28.287Z"
 last_activity: 2026-10-13
 progress:
   total_phases: 17
   completed_phases: 5
   total_plans: 37
-  completed_plans: 35
+  completed_plans: 36
   percent: 29
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 18 — Filter as Store & Economy Section
+**Current focus:** Phase 21 -- Overlay Configuration Tab
 
 ## Current Position
 
-Phase: 20 (Full Grammar Block Editing) — executed, human UAT pending (20-MANUAL-VERIFICATION.md)
-Plan: 9 of 9
-Status: Phase complete — ready for verification
+Phase: 21 (Overlay Configuration Tab) -- executing
+Plan: 5 of 6 complete (21-06 app wiring next)
+Status: In progress
 Last activity: 2026-10-13
 
 Progress: [█████████░] 93%
@@ -71,6 +71,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 21 P02 | 20min | 2 tasks | 4 files |
 | Phase 21 P03 | 15min | 2 tasks | 6 files |
 | Phase 21 P04 | 25min | 2 tasks | 2 files |
+| Phase 21 P05 | 35min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -140,6 +141,7 @@ work (carried forward past the v0.3 close):
 - [Phase 20-07]: Condition cards: value controls on line 2; list shapes and Rarity start as pending rows; opaque lines are raw Whole-edit rows; refused raw edits surface via ListUi.line_error
 - [Phase 21]: Spaced style names allowed (tag round trip proven); render_tiers never sorts
 - [Phase 21]: remove_meta works on disabled blocks; dangling style tags dropped there too
+- [Phase 21]: Config colour picker is opaque; show_sections owns its ScrollArea; Keep editing dismisses the outside-edit guard
 
 ### Pending Todos
 
@@ -279,8 +281,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-13T05:40:59.997Z
-Stopped at: Completed 21-04-PLAN.md
+Last session: 2026-10-13T05:47:28.278Z
+Stopped at: Completed 21-05-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

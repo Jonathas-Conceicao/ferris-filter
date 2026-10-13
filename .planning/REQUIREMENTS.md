@@ -115,7 +115,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Configuration Tab (CONF)
 
-- [ ] **CONF-01**: The overlay has a configuration tab, separate from the rule editor.
+- [x] **CONF-01**: The overlay has a configuration tab, separate from the rule editor.
 - [x] **CONF-02**: User can add, edit and delete named styles: text, border and background colour
   (colour picker), font size, sound, minimap icon and beam. Built-in styles cannot be deleted.
 
@@ -202,7 +202,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STYLE-02 | Phase 17 | Complete |
 | STYLE-03 | Phase 20 | Complete (UAT pending) |
 | STYLE-04 | Phase 17 | Complete |
-| CONF-01 | Phase 21 | Pending |
+| CONF-01 | Phase 21 | Complete |
 | CONF-02 | Phase 21 | Complete |
 | CONF-03 | Phase 21 | Complete |
 | CONF-04 | Phase 21 | Complete |

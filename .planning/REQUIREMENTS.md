@@ -194,7 +194,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ECON-03 | Phase 18 | Complete |
 | ECON-04 | Phase 18 | Complete |
 | STORE-01 | Phase 18 | Complete |
-| STORE-02 | Phase 21 | Complete |
+| STORE-02 | Phase 21 | Complete (UAT pending) |
 | STORE-03 | Phase 18 | Complete |
 | STORE-04 | Phase 18 | Complete |
 | STORE-05 | Phase 18 | Complete |
@@ -202,10 +202,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STYLE-02 | Phase 17 | Complete |
 | STYLE-03 | Phase 20 | Complete (UAT pending) |
 | STYLE-04 | Phase 17 | Complete |
-| CONF-01 | Phase 21 | Complete |
-| CONF-02 | Phase 21 | Complete |
-| CONF-03 | Phase 21 | Complete |
-| CONF-04 | Phase 21 | Complete |
+| CONF-01 | Phase 21 | Complete (UAT pending) |
+| CONF-02 | Phase 21 | Complete (UAT pending) |
+| CONF-03 | Phase 21 | Complete (UAT pending) |
+| CONF-04 | Phase 21 | Complete (UAT pending) |
 | INST-01 | Phase 22 | Pending |
 
 **Coverage:**

@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Overlay **CONFIG tab** (Phase 21). The stripe now has RULES | CONFIG tabs; switching never applies
+  or discards anything, and a tab shows ` *` when the other one holds unapplied edits.
+  - **FILTER:** pick any `*.filter` in the game folder, or create a new empty one (it is written by
+    the first RULES Apply). The choice is remembered in the git-ignored per-user `ff-settings.json`
+    (default `dynamic.filter`) and restored on the next launch. Switching while the RULES tab has
+    unapplied edits asks first (`Switch and discard` / `Stay`).
+  - **STYLES:** add, edit and delete named styles with preview chips; the built-ins S-F, `unchanged`
+    and `hidden` cannot be deleted. Deleting a style used by rules shows how many, and warns when
+    `config.json` itself references it. The colour pickers are opaque: styles store RGB and the
+    filter always emits alpha 255.
+  - **TIERS:** edit the `tiers.json` cutoffs with inline validation; Apply is disabled while any
+    cutoff is invalid.
+  - Its own **Apply** (writes `styles.json` and `tiers.json`, all or none, and nothing else) and
+    **Revert**. A file edited outside the overlay is detected on opening the tab and at Apply, and
+    offers Reload from disk / Overwrite / Keep editing instead of being overwritten silently. After
+    a CONFIG Apply both tabs say the filter is out of date until a RULES Apply regenerates it.
+
 - Full-grammar block editing in the overlay: every condition and action of any block is editable
   with structured controls (grouped searchable **+ condition** / **+ action** pickers, operator
   dropdown with plain-English labels, sliders with exact numbers, class groups from `config.json`,
@@ -72,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A rule whose `#ff:style` tag names a style that no longer exists now loses that tag on the next
+  RULES Apply and keeps its actions (previously the tag was kept and only reported). Deleting a
+  style in the CONFIG tab therefore detaches its rules instead of leaving dangling tags.
 - Overlay layout: all footer messages share one outcome area capped at 96px, the stale indicator
   is 14px body text, controls use 24px click targets, spacing follows a 4/8/16 scale, accent text
   uses a higher-contrast token, and a rule row's label keeps at least 140px (extra flags fold into

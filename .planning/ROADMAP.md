@@ -196,7 +196,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 19-05-PLAN.md — overlay::rule_list egui view: virtualized rows, flags, expanded body, search bar, economy footer row
+- [x] 19-05-PLAN.md — overlay::rule_list egui view: virtualized rows, flags, expanded body, search bar, economy footer row
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -260,7 +260,7 @@ Plans:
 | 16. Lossless Filter Parser | 0/? | Not started | - |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
-| 19. Overlay Rule List Over Parsed Blocks | 4/7 | In Progress|  |
+| 19. Overlay Rule List Over Parsed Blocks | 5/7 | In Progress|  |
 | 20. Full-Grammar Block Editing | 0/? | Not started | - |
 | 21. Overlay Configuration Tab | 0/? | Not started | - |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
@@ -347,7 +347,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 4/7 plans executed
+**Plans:** 5/7 plans executed
 
 Plans:
 

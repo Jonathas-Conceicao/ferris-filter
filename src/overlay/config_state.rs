@@ -389,7 +389,15 @@ impl ConfigState {
     }
 
     fn apply_inner(&mut self, force: bool) -> Result<ConfigApplyReport, ConfigApplyError> {
-        if !self.can_apply() {
+        // A forced (Overwrite) apply rewrites from memory even with nothing dirty.
+        let applicable = if force {
+            !self.has_tier_errors()
+                && self.tiers_error().is_none()
+                && self.styles_error().is_none()
+        } else {
+            self.can_apply()
+        };
+        if !applicable {
             let reason = self
                 .styles_error()
                 .or_else(|| self.tiers_error())
@@ -472,11 +480,27 @@ impl ConfigState {
                 ConfigApplyError::Write(not_applied_message(&format!("{}: {}", file_label(p), e)))
             })
         };
-        self.styles_bytes = read(&paths.styles)?;
-        self.tiers_bytes = read(&paths.tiers)?;
+        let styles_bytes = read(&paths.styles)?;
+        let tiers_bytes = read(&paths.tiers)?;
+        // Keep the old baselines so a failed Overwrite does not silently adopt the outside edit.
+        let old = (
+            std::mem::replace(&mut self.styles_bytes, styles_bytes),
+            std::mem::replace(&mut self.tiers_bytes, tiers_bytes),
+            self.styles_mtime,
+            self.tiers_mtime,
+        );
         self.styles_mtime = mtime_of(&paths.styles);
         self.tiers_mtime = mtime_of(&paths.tiers);
-        self.apply_inner(true)
+        let result = self.apply_inner(true);
+        if result.is_err() {
+            (
+                self.styles_bytes,
+                self.tiers_bytes,
+                self.styles_mtime,
+                self.tiers_mtime,
+            ) = old;
+        }
+        result
     }
 }
 
@@ -885,6 +909,32 @@ mod tests {
         let tiers: Vec<TierEntry> =
             serde_json::from_slice(&fs::read(&tiers_path).unwrap()).unwrap();
         assert_eq!(tiers.iter().find(|e| e.tier == "S").unwrap().min, 35.0);
+        assert_eq!(s.outside_by_bytes(), OutsideEdit::None);
+    }
+
+    #[test]
+    fn failed_overwrite_keeps_the_outside_edit_detectable() {
+        let (dir, mut s) = loaded();
+        s.set_tier_text("S", "35");
+        let tiers_path = dir.path().join("tiers.json");
+        let mut text = fs::read_to_string(&tiers_path).unwrap();
+        text.push('\n');
+        fs::write(&tiers_path, text).unwrap();
+        assert!(s.apply().is_err());
+        // Break validation so the forced apply fails before writing.
+        s.set_tier_text("A", "abc");
+        assert!(s.overwrite().is_err());
+        assert_ne!(s.outside_by_bytes(), OutsideEdit::None);
+    }
+
+    #[test]
+    fn overwrite_with_no_edits_rewrites_from_memory() {
+        let (dir, mut s) = loaded();
+        let tiers_path = dir.path().join("tiers.json");
+        let mut text = fs::read_to_string(&tiers_path).unwrap();
+        text.push('\n');
+        fs::write(&tiers_path, text).unwrap();
+        assert!(s.overwrite().is_ok());
         assert_eq!(s.outside_by_bytes(), OutsideEdit::None);
     }
 

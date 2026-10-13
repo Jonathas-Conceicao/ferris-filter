@@ -599,8 +599,25 @@ struct PendingReload {
     interim: String,
 }
 
+/// The Apply status line after the stripe is concealed. Hiding normally clears it, but not while
+/// a reload is in flight and its interim line is still showing: the reload's own focus change is
+/// what hides the stripe (the click-away rule sees the game take focus), so clearing here would
+/// drop every reload result, success or failure, before it could land (review CR-01). The kept
+/// interim line is replaced by [`landed_reload_message`] and read on the next reveal.
+fn apply_message_after_conceal(
+    current: Option<String>,
+    pending: Option<&PendingReload>,
+) -> Option<String> {
+    match (current, pending) {
+        (Some(line), Some(p)) if line == p.interim => Some(line),
+        _ => None,
+    }
+}
+
 /// The status line once the reload worker reports, or `None` when the interim line is gone
-/// (stripe concealed, an edit or a later message replaced it) and the later message stays.
+/// (an edit, a RELOAD/switch or a later message replaced it) and the later message stays. A
+/// conceal does not remove the interim line ([`apply_message_after_conceal`]), so a result that
+/// lands while the stripe is hidden is still shown on the next reveal.
 fn landed_reload_message(
     current: Option<&str>,
     pending: &PendingReload,
@@ -1391,16 +1408,6 @@ impl eframe::App for OverlayApp {
         if self.economy.poll() {
             ui.ctx().request_repaint();
         }
-        // The reload result lands after the worker's last step; the line is only replaced if it
-        // is still the interim one.
-        if let Some(result) = self.reload.poll() {
-            if let Some(p) = self.reload_pending.take()
-                && let Some(msg) = landed_reload_message(self.apply_message.as_deref(), &p, &result)
-            {
-                self.apply_message = Some(msg);
-            }
-            ui.ctx().request_repaint();
-        }
 
         // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here; the
         // actual close-the-viewport send is deferred to after the body renders. Quit is still the
@@ -1482,16 +1489,36 @@ impl eframe::App for OverlayApp {
         //
         // Conceal, not Reveal: clearing on the way out means the result stays readable for as
         // long as the player keeps the stripe open, which is the whole point of showing it.
+        //
+        // The one exception is a reload in flight: sending it focuses the game, which is itself
+        // the click-away that hides the stripe. Its interim line is kept so the result can
+        // replace it below and be read on the next reveal (review CR-01).
         if matches!(
             visibility::effect_for(self.visibility, next),
             Some(visibility::Effect::Conceal)
         ) {
-            self.apply_message = None;
+            self.apply_message = apply_message_after_conceal(
+                self.apply_message.take(),
+                self.reload_pending.as_ref(),
+            );
             self.economy.clear_message();
         }
 
         self.visibility = next;
         self.toggle_requested = false;
+
+        // The reload result lands after the worker's last step; the line is only replaced if it
+        // is still the interim one. Polled after the conceal above, so a result and a hide in the
+        // same frame cannot clear the result it just wrote: it lands into a hidden stripe and is
+        // shown on the next reveal.
+        if let Some(result) = self.reload.poll() {
+            if let Some(p) = self.reload_pending.take()
+                && let Some(msg) = landed_reload_message(self.apply_message.as_deref(), &p, &result)
+            {
+                self.apply_message = Some(msg);
+            }
+            ui.ctx().request_repaint();
+        }
 
         // Explicit polling cadence rather than relying on eframe's internal
         // heartbeat (RESEARCH Pattern 3). eframe >= 0.34 already gives
@@ -2158,6 +2185,55 @@ mod tests {
         assert!(err.ends_with(" [x]"));
         assert_eq!(landed_reload_message(None, &p, &Ok(())), None);
         assert_eq!(landed_reload_message(Some("other"), &p, &Ok(())), None);
+    }
+
+    #[test]
+    fn conceal_keeps_only_an_in_flight_reload_line() {
+        use super::apply_message_after_conceal;
+        let p = pending("interim");
+        // A reload in flight with its interim line showing: the focus change hides the stripe,
+        // and the line must survive for the result to replace it (review CR-01).
+        assert_eq!(
+            apply_message_after_conceal(Some("interim".into()), Some(&p)),
+            Some("interim".to_string())
+        );
+        // Every other case clears, as before.
+        assert_eq!(
+            apply_message_after_conceal(Some("interim".into()), None),
+            None
+        );
+        assert_eq!(
+            apply_message_after_conceal(Some("other".into()), Some(&p)),
+            None
+        );
+        assert_eq!(
+            apply_message_after_conceal(Some("other".into()), None),
+            None
+        );
+        assert_eq!(apply_message_after_conceal(None, Some(&p)), None);
+    }
+
+    #[test]
+    fn a_reload_result_that_lands_while_hidden_is_shown_on_the_next_reveal() {
+        use super::{apply_message_after_conceal, landed_reload_message};
+        for (result, want) in [
+            (Ok(()), "Reloaded in game"),
+            (
+                Err("a modifier key (Ctrl, Shift or Alt) was held down".to_string()),
+                "Options > Game > Item Filter > Refresh",
+            ),
+        ] {
+            let p = pending("interim");
+            // Apply sets the interim line; focusing the game conceals the stripe.
+            let after_hide = apply_message_after_conceal(Some("interim".into()), Some(&p));
+            // The worker reports while the stripe is hidden.
+            let landed = landed_reload_message(after_hide.as_deref(), &p, &result)
+                .expect("the result must replace the kept interim line");
+            assert!(landed.contains(want), "{landed}");
+            // The result is now the status line the next reveal draws; the hide after that
+            // (no reload pending any more) clears it as usual.
+            assert_eq!(apply_message_after_conceal(Some(landed), None), None);
+        }
     }
 
     #[test]

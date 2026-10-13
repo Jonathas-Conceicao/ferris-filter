@@ -6,7 +6,9 @@
 //! not depend on `models::config`.
 //!
 //! Rules: disabled blocks and economy-section blocks are never touched; an unknown style name is
-//! reported and its rule keeps its actions; a rule that already matches its style is not edited,
+//! reported by `rewrite_styled` (its rule keeps its actions) and its tag is removed by
+//! [`drop_unknown_style_tags`], which callers run after `rewrite_styled` on Apply (CONTEXT
+//! "Deleting"); a rule that already matches its style is not edited,
 //! which keeps the pass idempotent.
 
 use crate::emitter::style_action_lines;
@@ -27,6 +29,9 @@ pub struct StyleReport {
     /// (e.g. a compact header such as `Hide Continue`). Such a rule keeps its current actions,
     /// like an unknown style, instead of blocking the whole pass.
     pub failed: Vec<(usize, String)>,
+    /// `(1-based rule index, style name)` for rules whose `#ff:style` tag was removed because the
+    /// style no longer exists. [`rewrite_styled`] never fills it; [`drop_unknown_style_tags`] does.
+    pub dropped: Vec<(usize, String)>,
 }
 
 /// False when `name` is empty, padded with whitespace or holds a control character: such a name
@@ -156,6 +161,35 @@ pub fn rewrite_styled(doc: &mut Document, styles: &StyleSet) -> StyleReport {
         }
     }
     report
+}
+
+/// Remove the `#ff:style` tag from every non-economy rule (enabled or disabled) whose style is
+/// not in `styles`; the rule keeps its current actions (CONTEXT "Deleting"). Returns
+/// `(1-based rule index, style name)` per removed tag. Callers run it after [`rewrite_styled`]
+/// and only when a StyleSet actually loaded. A block whose tag cannot be removed is skipped.
+pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(usize, String)> {
+    let span = economy_span(doc);
+    let ids: Vec<(BlockId, usize)> = doc
+        .blocks()
+        .map(|b| (b.id(), b.header_line()))
+        .filter(|&(_, header)| !in_economy(span, header))
+        .collect();
+    let mut dropped = Vec::new();
+    for (id, _) in ids {
+        let Some(name) = doc.meta_get(id, "style").map(str::to_string) else {
+            continue;
+        };
+        if styles.get(&name).is_some() {
+            continue;
+        }
+        let Some(index) = rule_index_of(doc, id) else {
+            continue;
+        };
+        if doc.remove_meta(id, "style").is_ok() {
+            dropped.push((index, name));
+        }
+    }
+    dropped
 }
 
 #[cfg(test)]
@@ -303,6 +337,48 @@ mod tests {
         let (out, rep) = run(src);
         assert_eq!(out, "#ff:style unchanged\nShow\n");
         assert_eq!(rep.rewritten, 1);
+    }
+
+    fn drop_run(src: &str) -> (String, Vec<(usize, String)>) {
+        let mut doc = parse(src.as_bytes()).unwrap();
+        let d = drop_unknown_style_tags(&mut doc, &styles());
+        (doc.serialize(), d)
+    }
+
+    #[test]
+    fn drop_removes_unknown_tag_keeps_actions_and_other_meta() {
+        let src = "#ff:style S\nShow\n  Class \"A\"\n\n#ff:style Gone\n#ff:name Rings\nShow\n  Class \"Rings\"\n  SetFontSize 40\n";
+        let (out, d) = drop_run(src);
+        assert_eq!(d, vec![(2, "Gone".to_string())]);
+        assert!(!out.contains("Gone"));
+        assert!(out.contains("#ff:style S\n"));
+        assert!(out.contains("#ff:name Rings"));
+        assert!(out.contains("  Class \"Rings\"\n  SetFontSize 40\n"));
+        let (again, d2) = drop_run(&out);
+        assert!(d2.is_empty());
+        assert_eq!(again, out);
+    }
+
+    #[test]
+    fn drop_handles_disabled_block() {
+        let src = "#ff:style Gone\n#Show\n#  Class \"Rings\"\n#  SetFontSize 20\n";
+        let (out, d) = drop_run(src);
+        assert_eq!(d, vec![(1, "Gone".to_string())]);
+        assert!(!out.contains("#ff:style"));
+        assert!(out.contains("#Show\n#  Class \"Rings\"\n"));
+    }
+
+    #[test]
+    fn drop_skips_economy_blocks() {
+        let src = format!(
+            "{}\n#ff:style Gone\nShow\n  SetFontSize 20\n{}\n",
+            section::BEGIN_LINE,
+            section::END_LINE
+        );
+        let (out, d) = drop_run(&src);
+        assert!(d.is_empty());
+        assert_eq!(out, src);
+        assert!(StyleReport::default().dropped.is_empty());
     }
 
     #[test]

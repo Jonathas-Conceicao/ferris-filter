@@ -15,6 +15,7 @@ pub mod rules;
 pub mod text_entry;
 pub mod theme;
 pub mod tray;
+pub mod virtual_list;
 pub mod visibility;
 pub mod widgets;
 pub mod win;

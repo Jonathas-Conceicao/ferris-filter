@@ -1,4 +1,4 @@
-//! Pure working model of the rule list: no egui, no file IO.
+//! Pure working model of the rule list: no GUI types, no file IO.
 //!
 //! [`WorkingFilter`] owns the edited [`Document`], the last-applied text (the Revert target) and a
 //! cached `Vec<RuleRow>`. Rows are rebuilt once per mutation, never per frame, so a 500-block

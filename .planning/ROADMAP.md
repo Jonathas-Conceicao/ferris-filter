@@ -265,7 +265,26 @@ Plans:
   4. The tab has its own Apply and Revert, and Apply writes all of its files or none of them
   5. User selects a different filter in the game folder from this tab and the choice is remembered across launches
 
-**Plans**: TBD
+**Plans**: 6 plans
+Plans:
+**Wave 1**
+
+- [ ] 21-01-PLAN.md — StyleSet public editing API (add/edit/delete, built-ins protected, name validation) + render_styles/render_tiers
+- [ ] 21-02-PLAN.md — safe_write::write_all_or_none (two-file all-or-none with rollback) + settings module (ff-settings.json, filter names, game-folder listing)
+- [ ] 21-03-PLAN.md — Drop #ff:style tags naming missing styles on RULES Apply, keeping actions
+
+**Wave 2** *(blocked on 21-01, 21-02)*
+
+- [ ] 21-04-PLAN.md — Pure ConfigState model: drafts, dirty count, tier validation, Apply/Revert/Reload/Overwrite, outside-edit guard
+
+**Wave 3** *(blocked on 21-03, 21-04)*
+
+- [ ] 21-05-PLAN.md — CONFIG view: FILTER/STYLES/TIERS sections, preview chip, opaque colour swatch, footer
+
+**Wave 4** *(blocked on 21-05)*
+
+- [ ] 21-06-PLAN.md — App wiring: RULES|CONFIG tabs, config footer, filter selection + switch guard, out-of-date indicator; docs + UAT script
+
 **UI hint**: yes
 
 ### Phase 22: Single-Instance Overlay

@@ -575,6 +575,14 @@ fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     }
 }
 
+/// `current` with the reload-after-Apply preference replaced; the filter and unknown keys stay.
+fn settings_with_reload(current: &Settings, on: bool) -> Settings {
+    Settings {
+        reload_after_apply: Some(on),
+        ..current.clone()
+    }
+}
+
 impl OverlayApp {
     /// Builds the app state around a tray and hotkey already constructed on
     /// the main thread (thread affinity -- see `overlay::launch`).
@@ -752,6 +760,20 @@ impl OverlayApp {
         self.refresh_inputs();
         self.config_changed_pending = self.compute_config_pending();
         self.refresh_filters();
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Persist the reload-after-Apply preference at once. A view preference, not a CONFIG draft
+    /// edit: it never touches the loaded filter or the CONFIG pending state.
+    fn set_reload_after_apply(&mut self, on: bool) {
+        let next = settings_with_reload(&self.settings, on);
+        let save_error = match &self.root {
+            Ok(root) => settings::save(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
@@ -959,6 +981,7 @@ impl OverlayApp {
                     self.config_ui.disarm_all();
                 }
                 ConfigAction::SelectFilter(name) => self.select_filter(name),
+                ConfigAction::SetReloadAfterApply(on) => self.set_reload_after_apply(on),
                 ConfigAction::CreateFilter(input) => {
                     let name = settings::new_filter_name(&input);
                     if let Err(problem) = settings::valid_filter_name(&name) {
@@ -1065,6 +1088,7 @@ impl OverlayApp {
             config_refs: &self.config_refs,
             outside: self.config_outside,
             out_of_date: self.config_changed_pending,
+            reload_after_apply: self.settings.reload_after_apply(),
         };
         // The footer is claimed first so it keeps its height whatever the sections hold; the
         // view's own scroll area then takes the rest (no ScrollArea nested around it).
@@ -1916,6 +1940,7 @@ mod tests {
             config_refs: &refs,
             outside: OutsideEdit::None,
             out_of_date: false,
+            reload_after_apply: true,
         };
         let mut cfg = ConfigUi::default();
         let long = "x ".repeat(95);
@@ -2000,6 +2025,35 @@ mod tests {
         let next = settings_with_filter(&current, "ssf.filter");
         assert_eq!(next.filter_name(), "ssf.filter");
         assert_eq!(next.extra.get("future"), current.extra.get("future"));
+    }
+
+    #[test]
+    fn saved_settings_keep_reload_flag() {
+        use super::settings_with_filter;
+        let mut current = crate::settings::Settings {
+            reload_after_apply: Some(false),
+            ..Default::default()
+        };
+        current.extra.insert("future".into(), serde_json::json!(1));
+        let next = settings_with_filter(&current, "ssf.filter");
+        assert_eq!(next.reload_after_apply, Some(false));
+        assert_eq!(next.extra.get("future"), current.extra.get("future"));
+    }
+
+    #[test]
+    fn toggling_reload_keeps_filter_and_unknown_keys() {
+        use super::settings_with_reload;
+        let mut current = crate::settings::Settings {
+            filter: Some("a.filter".into()),
+            ..Default::default()
+        };
+        current.extra.insert("future".into(), serde_json::json!(1));
+        for on in [false, true] {
+            let next = settings_with_reload(&current, on);
+            assert_eq!(next.reload_after_apply, Some(on));
+            assert_eq!(next.filter.as_deref(), Some("a.filter"));
+            assert_eq!(next.extra.get("future"), current.extra.get("future"));
+        }
     }
 
     #[test]

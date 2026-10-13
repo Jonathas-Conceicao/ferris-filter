@@ -29,6 +29,10 @@ const NOT_SET: &str = "Not set (game default)";
 const BUILTIN_TIP: &str = "Built-in styles can't be deleted.";
 const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete this one.";
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
+/// Label of the FILTER section toggle that sends `/reloaditemfilter` after a RULES Apply.
+pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
+/// Caveat shown under the toggle: the game reloads whichever filter is selected in game.
+pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply.";
 const APPLY_NOTHING_TIP: &str = "No unapplied config changes.";
 const APPLY_LOAD_ERROR_TIP: &str =
     "styles.json or tiers.json failed to load. Revert to reload them.";
@@ -40,6 +44,7 @@ pub enum ConfigAction {
     CreateFilter(String),
     ConfirmSwitch,
     CancelSwitch,
+    SetReloadAfterApply(bool),
     AddStyle(String),
     EditStyle { name: String, edit: StyleEdit },
     DeleteStyle(String),
@@ -112,6 +117,8 @@ pub struct ConfigViewCtx<'a> {
     pub config_refs: &'a BTreeSet<String>,
     pub outside: OutsideEdit,
     pub out_of_date: bool,
+    /// Current value of the reload-after-Apply setting.
+    pub reload_after_apply: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -356,6 +363,22 @@ fn show_filter(
             } else {
                 helper(ui, "Saved on this computer. Default: dynamic.filter.");
             }
+
+            ui.add_space(4.0);
+            let mut on = ctx.reload_after_apply;
+            ui.horizontal(|ui| {
+                let toggle = widgets::circular_toggle(ui, &mut on)
+                    .on_hover_text(RELOAD_TOGGLE_CAPTION);
+                if toggle.changed() {
+                    actions.push(ConfigAction::SetReloadAfterApply(on));
+                }
+                ui.label(
+                    RichText::new(RELOAD_TOGGLE_LABEL)
+                        .size(theme::ROW_SUMMARY_SIZE)
+                        .color(theme::VALUE_TEXT),
+                );
+            });
+            helper(ui, RELOAD_TOGGLE_CAPTION);
         });
 }
 
@@ -1205,6 +1228,33 @@ mod tests {
             config_refs: refs,
             outside: OutsideEdit::None,
             out_of_date: false,
+            reload_after_apply: true,
+        }
+    }
+
+    #[test]
+    fn reload_toggle_text_is_fixed_ascii_and_renders_quietly() {
+        assert_eq!(RELOAD_TOGGLE_LABEL, "Reload filter in game after Apply");
+        assert!(RELOAD_TOGGLE_CAPTION.contains("/reloaditemfilter"));
+        assert!(RELOAD_TOGGLE_CAPTION.contains("selected in game"));
+        assert!(RELOAD_TOGGLE_CAPTION.is_ascii() && RELOAD_TOGGLE_LABEL.is_ascii());
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let filters = vec!["dynamic.filter".to_string()];
+        for list in [Some(filters.as_slice()), None] {
+            for on in [true, false] {
+                let (ctx, input) = headless();
+                let mut cfg = ConfigUi::default();
+                let mut vctx = view_ctx(list, &users, &refs);
+                vctx.reload_after_apply = on;
+                let mut actions = None;
+                let out = ctx.run_ui(input, |ui| {
+                    actions = Some(show_sections(ui, &state, &mut cfg, &vctx));
+                });
+                out.drop_without_applying_deltas();
+                assert_eq!(actions, Some(vec![]));
+            }
         }
     }
 

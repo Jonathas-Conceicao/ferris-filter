@@ -1,8 +1,7 @@
 //! App-root resolver (STORE-05, D-12).
 //!
 //! `ff.exe` must work when double-clicked from Explorer, where the working directory is not the
-//! repo. One resolver finds the FerrisFilter folder (the one holding `styles.json` / `config.json`)
-//! in this order:
+//! repo. One resolver finds the FerrisFilter folder (the one holding `styles.json`) in this order:
 //!
 //! 1. the `FERRISFILTER_HOME` environment variable (must be an existing directory, otherwise an
 //!    error: never a silent fall-through);
@@ -36,11 +35,16 @@ pub enum RootError {
     NotFound { tried: String },
 }
 
-/// A directory is a root when it holds the styles or config file. File names come from
-/// `InputPaths` so they are spelled in exactly one place.
+/// A directory is a root when it holds `styles.json`. The file name comes from `InputPaths` so it
+/// is spelled in exactly one place.
+///
+/// `styles.json` alone is the marker; `config.json` is deliberately not accepted (the Phase 18
+/// context allowed either). `config.json` is a very common file name, so an unrelated one above
+/// the exe would stop the walk-up at the wrong folder and hide a correct working-directory
+/// fallback. And `apply`/the overlay never read `config.json` -- they need `styles.json`, so a
+/// folder holding only `config.json` could not serve them anyway.
 fn is_root(dir: &Path) -> bool {
-    let p = crate::compile::InputPaths::relative_to(dir);
-    p.styles.is_file() || p.config.is_file()
+    crate::compile::InputPaths::relative_to(dir).styles.is_file()
 }
 
 /// Pure resolver: see the module docs for the order.
@@ -72,7 +76,7 @@ pub fn resolve_from(
     }
 
     let exe_part = match exe_dir {
-        Some(d) => format!("no styles.json or config.json above `{}`", d.display()),
+        Some(d) => format!("no styles.json above `{}`", d.display()),
         None => "the executable's directory is unknown".to_string(),
     };
     let cwd_part = match cwd {
@@ -149,13 +153,17 @@ mod tests {
     }
 
     #[test]
-    fn exe_walk_up_accepts_config_json() {
+    fn config_json_alone_does_not_stop_the_walk_up() {
+        // An unrelated config.json above the exe must not capture the root: the walk-up passes
+        // it and the working directory holding styles.json wins.
         let t = tempfile::tempdir().unwrap();
         marker(t.path(), "config.json");
         let exe = t.path().join("a").join("b");
         fs::create_dir_all(&exe).unwrap();
-        let r = resolve_from(None, Some(&exe), None).unwrap();
-        assert_eq!(r, t.path());
+        let cwd = tempfile::tempdir().unwrap();
+        marker(cwd.path(), "styles.json");
+        let r = resolve_from(None, Some(&exe), Some(cwd.path())).unwrap();
+        assert_eq!(r, cwd.path());
     }
 
     #[test]

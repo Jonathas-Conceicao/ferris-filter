@@ -103,8 +103,11 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > status, the grammar-gate and unknown-style lines) share one outcome area capped at 96px that
 > scrolls, so APPLY, REVERT and RELOAD stay on screen. A RULES Apply that writes the filter sends
 > `/reloaditemfilter` to a running Path of Exile 2 when the CONFIG setting **Reload filter in game
-> after Apply** is on (the default), and the outcome reads `Reloaded in game`; an "already up to date"
-> or refused Apply sends nothing. When nothing is sent the outcome keeps the **Options → Game → Item
+> after Apply** is on (the default), and the outcome reads `Reloaded in game` -- meaning every key was
+> sent to the game window; ff cannot see whether the game ran the command (an elevated game silently
+> drops the keys, see the caveats below), so if the filter did not change, Refresh by hand. The result
+> lands after the game has taken focus (which hides the stripe) and is shown on the next reveal. An
+> "already up to date" or refused Apply sends nothing. When nothing is sent the outcome keeps the **Options → Game → Item
 > Filter → Refresh** reminder plus the reason (`game not running`, `reload setting is off`, `a reload
 > is already in progress`, `could not reload in game: <cause>`).
 
@@ -144,7 +147,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > Awakened PoE Trade share this), so if it was already open with text, the first Enter sends that
 > text as a chat message and `/reloaditemfilter` is not sent. No key is pressed before that Enter
 > on purpose (with chat closed it would reach the game's own bindings). Run `ff` and the
-> game at the same privilege level (Windows silently drops input into an elevated game). The clipboard's
+> game at the same privilege level (Windows silently drops input into an elevated game, undetectably,
+> so the status still reads `Reloaded in game`). The clipboard's
 > text is restored about 120 ms later unless something else was copied meanwhile; non-text clipboard
 > content (an image, copied files) is replaced. The setting is the `reload_after_apply` key in
 > `ff-settings.json`, saved as soon as it is toggled; absent means on. `ff-cli apply` does not send

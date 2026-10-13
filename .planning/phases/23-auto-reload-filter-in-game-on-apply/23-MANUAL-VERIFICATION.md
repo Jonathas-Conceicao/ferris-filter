@@ -26,9 +26,11 @@ Record Result as PASS / FAIL with a note for every step.
 
 1. **Game running, setting on.** Make a visible rule edit (for example a style on a common base),
    then RULES Apply.
-   **Expected:** status first "Reloading in game...", then "Wrote <path>. Reloaded in game"; the game
-   takes focus; the chat shows no stray text; the edit is visible in game without opening Options;
-   exactly one command is sent. **Result:**
+   **Expected:** status first "Reloading in game..."; the game takes focus and the stripe hides (the
+   usual click-away rule); the chat shows no stray text; the edit is visible in game without
+   opening Options; exactly one command is sent. Press Ctrl+Shift+Z: the stripe shows
+   "Wrote <path>. Reloaded in game" (the result is kept for the next reveal). Note that this status
+   means the keys were sent, not that the game confirmed the reload. **Result:**
 
 2. **Clipboard restored.** Copy some text elsewhere, repeat check 1, then paste into Notepad.
    **Expected:** the original text, not `/reloaditemfilter`. **Result:**
@@ -95,3 +97,9 @@ Record Result as PASS / FAIL with a note for every step.
 15. **Timing (A8).** If any step drops keys (chat opens but no command arrives), note it; the delays
     are the four consts in `src/overlay/chat.rs` (`FOCUS_SETTLE_MS`, `CHAT_OPEN_MS`,
     `PASTE_SETTLE_MS`, `RESTORE_AFTER_MS`). **Expected:** no dropped keys. **Result:**
+
+16. **Elevated game (optional, documented limitation).** Run PoE2 as administrator and `ff` normally,
+    then Apply with an edit.
+    **Expected:** Windows silently drops the keys (UIPI), so nothing changes in game, while the
+    status may still read "Reloaded in game" (ff cannot detect this; the CONFIG tooltip and CLAUDE.md
+    say so). Record what the status says. **Result:**

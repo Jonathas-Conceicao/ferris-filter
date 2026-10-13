@@ -34,6 +34,8 @@ pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
 /// Caveats shown under the toggle: the game reloads whichever filter is selected in game, and text
 /// left in an open chat box is sent first (nothing outside the game can see whether chat is open).
 pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
+/// The toggle's hover text: what "Reloaded in game" does and does not certify (review WR-01).
+pub const RELOAD_TOGGLE_TIP: &str = "\"Reloaded in game\" means the command was sent to the game window; ff cannot see whether the game ran it. A game running as administrator ignores the keys unless ff runs as administrator too. If the filter did not change, use Options > Game > Item Filter > Refresh.";
 const APPLY_NOTHING_TIP: &str = "No unapplied config changes.";
 const APPLY_LOAD_ERROR_TIP: &str =
     "styles.json or tiers.json failed to load. Revert to reload them.";
@@ -368,8 +370,8 @@ fn show_filter(
             ui.add_space(4.0);
             let mut on = ctx.reload_after_apply;
             ui.horizontal(|ui| {
-                let toggle = widgets::circular_toggle(ui, &mut on)
-                    .on_hover_text(RELOAD_TOGGLE_CAPTION);
+                let toggle =
+                    widgets::circular_toggle(ui, &mut on).on_hover_text(RELOAD_TOGGLE_TIP);
                 if toggle.changed() {
                     actions.push(ConfigAction::SetReloadAfterApply(on));
                 }
@@ -1239,6 +1241,10 @@ mod tests {
         assert!(RELOAD_TOGGLE_CAPTION.contains("/reloaditemfilter"));
         assert!(RELOAD_TOGGLE_CAPTION.contains("selected in game"));
         assert!(RELOAD_TOGGLE_CAPTION.contains("Close the chat box"));
+        assert!(RELOAD_TOGGLE_TIP.contains("command was sent"));
+        assert!(RELOAD_TOGGLE_TIP.contains("administrator"));
+        assert!(RELOAD_TOGGLE_TIP.contains(super::super::apply::RELOAD_INSTRUCTION));
+        assert!(RELOAD_TOGGLE_TIP.is_ascii());
         assert!(RELOAD_TOGGLE_CAPTION.is_ascii() && RELOAD_TOGGLE_LABEL.is_ascii());
         let (_d, state) = loaded();
         let users = HashMap::new();

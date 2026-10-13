@@ -338,9 +338,13 @@ mod imp {
         }
     }
 
-    /// Sends the whole slice in one `SendInput` call so no other input interleaves. A send
-    /// blocked by UIPI (ff and an elevated game at different integrity levels) is silent and
-    /// cannot be detected here; only a short count is reported.
+    /// Sends the whole slice in one `SendInput` call so no other input interleaves. A return
+    /// count lower than the number of events requested is a failure (review WR-01): the send
+    /// stops there and the status shows the Refresh reminder. A send blocked by UIPI (the game
+    /// running elevated, ff not) is usually *not* visible here: Microsoft documents that neither
+    /// the return value nor `GetLastError` identifies UIPI blocking, so the keys can be dropped
+    /// while every count matches. That is why "Reloaded in game" means "the keys were sent", and
+    /// why the docs require ff and the game to run at the same privilege level.
     fn send_batch(inputs: &[INPUT]) -> Result<(), String> {
         // SAFETY: `inputs` is a live slice of `inputs.len()` fully initialised `INPUT`s and the
         // size argument is the true size of one element.
@@ -351,8 +355,10 @@ mod imp {
                 std::mem::size_of::<INPUT>() as i32,
             )
         };
-        if sent as usize != inputs.len() {
-            return Err("Windows blocked the key press".into());
+        if (sent as usize) < inputs.len() {
+            return Err(
+                "Windows blocked the key press (is the game running as administrator?)".into(),
+            );
         }
         Ok(())
     }

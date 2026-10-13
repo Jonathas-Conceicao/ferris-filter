@@ -89,8 +89,13 @@ pub fn reason_send_failed(cause: &str) -> String {
     format!("could not reload in game: {cause}")
 }
 
-/// The message after a reload was sent. `/reloaditemfilter` reloads the filter selected in game,
-/// which is not necessarily the file just written, so this says only that a reload was sent.
+/// The message after a reload was sent. The wording "Reloaded in game" is the author's choice
+/// (review WR-01), but what it actually certifies is narrower: every key of the send sequence
+/// was delivered to the game window. Nothing outside the game can confirm the game ran the
+/// command: an elevated game silently drops input from a non-elevated ff (UIPI), keys can be lost
+/// to timing, text in an already-open chat box is sent instead (chat.rs, CR-02), and
+/// `/reloaditemfilter` reloads the filter selected in game, which is not necessarily the file
+/// just written. The CONFIG tooltip and CLAUDE.md say so, and point to the manual Refresh.
 pub fn reloaded_message(written: &Path) -> String {
     format!("Wrote {}. Reloaded in game", written.display())
 }

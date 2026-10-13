@@ -57,7 +57,7 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
-## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-23)
+## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-24)
 
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
 output, with the style palette and economy tier cutoffs configurable from the overlay.
@@ -70,6 +70,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 - [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
+- [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay
 
 ### Phase 16: Lossless Filter Parser
 
@@ -334,6 +335,24 @@ Plans:
 - [x] 23-03-PLAN.md — Wiring: CONFIG FILTER toggle (saved on change), WinSink, run_apply hook with worker and status replacement
 - [x] 23-04-PLAN.md — Docs: CLAUDE.md overlay notes, CHANGELOG [Unreleased], 23-MANUAL-VERIFICATION.md
 
+### Phase 24: UAT Feedback Fixes
+
+**Goal**: The author's v0.5 hands-on UAT feedback is applied to the overlay: less text, tighter controls, PoE2-only vocabulary
+**Depends on**: Phase 23
+**Requirements**: UAT-01, UAT-02, UAT-03, UAT-04, UAT-05, UAT-06, UAT-07, UAT-08, UAT-09, UAT-10, UAT-11, UAT-12, UAT-13
+**Success Criteria** (what must be TRUE):
+
+  1. A RULES Apply with the game not running shows no reload message; other skip reasons keep theirs
+  2. CONFIG Styles lists built-in styles then custom styles under separate headings, only custom ones removable, each with an on/off Show/Hide slide switch that takes effect on the next RULES Apply
+  3. No control offers Minimal; a foreign Minimal block still displays as Minimal and is left untouched
+  4. Condition ✕ buttons are right-aligned; quoted lists are a capped-height scrollable vertical list with per-entry Remove, Enter/+ ADD and quoted-paste splitting; Class shows only the grouped picker; booleans are a compact Yes/No control
+  5. The PoE1-only conditions are gone from the keyword table and picker; a filter using them still round-trips byte-identically, shows them as raw rows, and Apply is not blocked
+  6. Every numeric default lies inside its slider range (table-wide test)
+  7. The style section sits at the end of the rule body: Custom or a preset plus Show/Hide; Custom shows the action rows, a preset hides them; preset→Custom keeps the actions and drops the tag
+  8. Collapsed rules show a condition summary line, hidden when expanded, with correct virtualization at ~460 blocks; untouched lines are never rewritten
+
+**Plans**: TBD
+
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -346,6 +365,7 @@ Plans:
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
+| 24. UAT Feedback Fixes | 0/? | Not started | - |
 
 ## Backlog
 

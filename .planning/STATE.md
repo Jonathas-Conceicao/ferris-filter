@@ -81,6 +81,9 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 
 ### Roadmap Evolution
 
+- Phase 24 added (2026-10-13): **UAT Feedback Fixes** — thirteen overlay fixes from the author's
+  hands-on v0.5 UAT (UAT-01..UAT-13), run autonomously.
+
 - Phase 23 added (2026-10-13): **Auto-Reload Filter in Game on Apply** — after a RULES Apply that
   writes the filter, send `/reloaditemfilter` to a running game (RELOAD-01). Added after the v0.5
   milestone audit at the author's request.

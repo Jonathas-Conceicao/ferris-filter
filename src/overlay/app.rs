@@ -2680,7 +2680,7 @@ mod tests {
             "{extras}"
         );
         let written = std::fs::read_to_string(&path).unwrap();
-        assert!(!written.contains("#ff:style Gone"), "{written}");
+        assert!(!written.contains("ff:style Gone"), "{written}");
         assert!(written.contains("SetFontSize 40"), "{written}");
         let (outcome, extras, _) = apply_working(root.path(), &mut loaded, &mut working);
         assert_eq!(outcome, ApplyOutcome::Written(path.clone()), "{extras}");

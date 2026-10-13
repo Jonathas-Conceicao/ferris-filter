@@ -216,7 +216,7 @@ fn cmd_apply(
     if loaded.migrated() {
         println!(
             "converting {shown} from the v0.4 layout: the economy section is wrapped in \
-             #ff:economy markers and rule names are kept as #ff:name lines"
+             # ff:economy markers and rule names are kept as # ff:name lines"
         );
     }
 

@@ -1,6 +1,6 @@
 //! Styled-rule rewrite (STYLE-03 / EDIT-06).
 //!
-//! A rule tagged `#ff:style <name>` for a known style gets that style's action lines and its
+//! A rule tagged `# ff:style <name>` for a known style gets that style's action lines and its
 //! Show/Hide keyword whenever [`rewrite_styled`] runs (on Apply). Pure and library-level: no IO,
 //! no UI, so a later style editor can reuse it. It lives outside `filter` because `filter` must
 //! not depend on `models::config`.
@@ -29,7 +29,7 @@ pub struct StyleReport {
     /// (e.g. a compact header such as `Hide Continue`). Such a rule keeps its current actions,
     /// like an unknown style, instead of blocking the whole pass.
     pub failed: Vec<(usize, String)>,
-    /// `(1-based rule index, style name)` for rules whose `#ff:style` tag was removed because the
+    /// `(1-based rule index, style name)` for rules whose `# ff:style` tag was removed because the
     /// style no longer exists. [`rewrite_styled`] never fills it; [`drop_unknown_style_tags`] does.
     pub dropped: Vec<(usize, String)>,
 }
@@ -125,7 +125,7 @@ pub fn rewrite_block(doc: &mut Document, id: BlockId, style: &Style) -> Result<b
     Ok(true)
 }
 
-/// Rewrite every enabled, non-economy rule whose `#ff:style` names a known style.
+/// Rewrite every enabled, non-economy rule whose `# ff:style` names a known style.
 ///
 /// A rule whose rewrite is refused is left byte-identical (`rewrite_block` is all-or-nothing)
 /// and listed in [`StyleReport::failed`]; the pass goes on with the other rules.
@@ -163,7 +163,7 @@ pub fn rewrite_styled(doc: &mut Document, styles: &StyleSet) -> StyleReport {
     report
 }
 
-/// Remove the `#ff:style` tag from every non-economy rule (enabled or disabled) whose style is
+/// Remove the `# ff:style` tag from every non-economy rule (enabled or disabled) whose style is
 /// not in `styles`; the rule keeps its current actions (CONTEXT "Deleting"). Returns
 /// `(1-based rule index, style name)` per removed tag. Callers run it after [`rewrite_styled`]
 /// and only when a StyleSet actually loaded. A block whose tag cannot be removed is skipped.
@@ -351,8 +351,8 @@ mod tests {
         let (out, d) = drop_run(src);
         assert_eq!(d, vec![(2, "Gone".to_string())]);
         assert!(!out.contains("Gone"));
-        assert!(out.contains("#ff:style S\n"));
-        assert!(out.contains("#ff:name Rings"));
+        assert!(out.contains("ff:style S\n"));
+        assert!(out.contains("ff:name Rings"));
         assert!(out.contains("  Class \"Rings\"\n  SetFontSize 40\n"));
         let (again, d2) = drop_run(&out);
         assert!(d2.is_empty());
@@ -364,7 +364,7 @@ mod tests {
         let src = "#ff:style Gone\n#Show\n#  Class \"Rings\"\n#  SetFontSize 20\n";
         let (out, d) = drop_run(src);
         assert_eq!(d, vec![(1, "Gone".to_string())]);
-        assert!(!out.contains("#ff:style"));
+        assert!(!out.contains("ff:style"));
         assert!(out.contains("#Show\n#  Class \"Rings\"\n"));
     }
 

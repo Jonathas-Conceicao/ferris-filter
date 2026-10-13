@@ -13,6 +13,10 @@ use crate::models::config::{
 };
 use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
+/// The rule framing the economy section's heading. Every comment line the generator writes
+/// carries a space after `#` (the bare `#` spacer lines in the file header have no text at all).
+pub const SECTION_BANNER: &str = "# ============================================================";
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -112,8 +116,8 @@ pub fn generate_as(
 /// Render only the economy body (currency/category sections, then price-tiered uniques) from a
 /// [`StyleSet`] and priced data - no `Config` needed.
 ///
-/// This is the text Apply splices between the `#ff:economy-*` markers. It equals the tail of
-/// [`generate`] from the first `#====` banner line. With empty priced data it yields the banner
+/// This is the text Apply splices between the `# ff:economy-*` markers. It equals the tail of
+/// [`generate`] from the first [`SECTION_BANNER`] line. With empty priced data it yields the banner
 /// block only; callers must refuse `PriceSource::Absent` before writing it.
 pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String, GenerateError> {
     styles.validate()?;
@@ -482,11 +486,7 @@ fn emit_currency_sections(
     styles: &StyleSet,
     blocks: &[CategoryBlock],
 ) -> Result<(), GenerateError> {
-    writeln!(
-        out,
-        "#============================================================"
-    )
-    .unwrap();
+    writeln!(out, "{SECTION_BANNER}").unwrap();
     writeln!(
         out,
         "# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]"
@@ -507,11 +507,7 @@ fn emit_currency_sections(
         "# Gems are intentionally omitted (fall through to game default)."
     )
     .unwrap();
-    writeln!(
-        out,
-        "#============================================================"
-    )
-    .unwrap();
+    writeln!(out, "{SECTION_BANNER}").unwrap();
     writeln!(out).unwrap();
 
     for category in blocks {
@@ -1142,7 +1138,7 @@ mod tests {
         assert_eq!(d.source_name, "config.json");
     }
 
-    const BANNER: &str = "#============================================================";
+    const BANNER: &str = SECTION_BANNER;
 
     fn economy_tail(full: &str) -> String {
         let idx = full

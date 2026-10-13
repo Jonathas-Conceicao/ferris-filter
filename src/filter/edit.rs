@@ -1,5 +1,5 @@
 //! Minimal block-scoped edit API (PARSE-04): enable/disable, replace a block's lines, set or
-//! remove a `#ff:` key.
+//! remove a `# ff:` key.
 //!
 //! Every operation validates first and mutates after: the candidate line vector is rebuilt and
 //! checked before it replaces the document's lines, so an `Err` leaves the [`Document`] untouched.
@@ -391,7 +391,7 @@ impl Document {
         })
     }
 
-    /// Set a `#ff:<key> <value>` setting: rewrite an existing line, or insert one directly above
+    /// Set a `# ff:<key> <value>` setting: rewrite an existing line, or insert one directly above
     /// the header (D-05).
     pub fn set_meta(&mut self, id: BlockId, key: &str, value: &str) -> Result<(), EditError> {
         if key.is_empty()
@@ -418,7 +418,7 @@ impl Document {
         let existing = b
             .leading()
             .find(|&i| self.lines[i].ff_marker().is_some_and(|(k, _)| k == key));
-        let text = format!("#ff:{key} {value}");
+        let text = super::meta::ff_line(key, Some(value));
         let mut lines = self.lines.clone();
         let new_header = match existing {
             Some(i) => {
@@ -441,7 +441,7 @@ impl Document {
             .map_err(|_| EditError::WouldReattributeLines)
     }
 
-    /// Remove every `#ff:<key>` line attached to the block. Removing an absent key is a no-op.
+    /// Remove every `# ff:<key>` line attached to the block. Removing an absent key is a no-op.
     pub fn remove_meta(&mut self, id: BlockId, key: &str) -> Result<(), EditError> {
         let pos = self.block_pos(id)?;
         let b = self.block(id).ok_or(EditError::UnknownBlock)?;
@@ -640,7 +640,7 @@ mod tests {
     }
 
     /// Clean commented grammar lines (any indentation) in the run of commented lines below the
-    /// disabled header `h`, up to a header, a `#ff:` line or a non-comment line: the conditions and
+    /// disabled header `h`, up to a header, a `# ff:` line or a non-comment line: the conditions and
     /// actions a reader takes the rule to contain.
     fn commented_conditions(d: &Document, h: usize) -> usize {
         let mut n = 0;
@@ -1029,13 +1029,13 @@ mod tests {
         d.set_meta(id, "name", "Exceptional 3 socks").unwrap();
         assert_eq!(
             s(&d),
-            "Hide\r\n\r\n#ff:name Exceptional 3 socks\r\nShow\r\n\tRarity Rare\r\n"
+            "Hide\r\n\r\n# ff:name Exceptional 3 socks\r\nShow\r\n\tRarity Rare\r\n"
         );
         assert_eq!(d.meta_get(id, "name"), Some("Exceptional 3 socks"));
         d.set_meta(id, "name", "new").unwrap();
         assert_eq!(
             s(&d),
-            "Hide\r\n\r\n#ff:name new\r\nShow\r\n\tRarity Rare\r\n"
+            "Hide\r\n\r\n# ff:name new\r\nShow\r\n\tRarity Rare\r\n"
         );
         assert_eq!(d.meta_get(id, "name"), Some("new"));
         d.set_meta(id, "style", "S").unwrap();
@@ -1048,7 +1048,14 @@ mod tests {
         let mut d = p(src);
         let id = ids(&d)[0];
         d.set_meta(id, "name", "x").unwrap();
-        assert_eq!(s(&d), "# a\n#ff:name x\n#ff:style S\nShow\n");
+        // The rewritten line takes the current prefix; the untouched legacy line stays as it is
+        // (Apply normalizes it).
+        assert_eq!(s(&d), "# a\n# ff:name x\n#ff:style S\nShow\n");
+        assert_eq!(d.meta_get(id, "style"), Some("S"));
+        d.set_meta(id, "style", "A").unwrap();
+        assert_eq!(s(&d), "# a\n# ff:name x\n# ff:style A\nShow\n");
+        d.remove_meta(id, "name").unwrap();
+        assert_eq!(s(&d), "# a\n# ff:style A\nShow\n");
     }
 
     #[test]
@@ -1057,7 +1064,7 @@ mod tests {
         let mut d = p("# a\nShow\n");
         let id = ids(&d)[0];
         d.set_meta(id, "name", "  padded \t").unwrap();
-        assert_eq!(s(&d), "# a\n#ff:name padded\nShow\n");
+        assert_eq!(s(&d), "# a\n# ff:name padded\nShow\n");
         assert_eq!(d.meta_get(id, "name"), Some("padded"));
         assert!(matches!(
             d.set_meta(id, "name", ""),
@@ -1067,13 +1074,13 @@ mod tests {
             d.set_meta(id, "name", " \t "),
             Err(EditError::InvalidMeta(_))
         ));
-        assert_eq!(s(&d), "# a\n#ff:name padded\nShow\n");
+        assert_eq!(s(&d), "# a\n# ff:name padded\nShow\n");
         d.set_meta(id, "style", "S").unwrap();
         d.remove_meta(id, "name").unwrap();
-        assert_eq!(s(&d), "# a\n#ff:style S\nShow\n");
+        assert_eq!(s(&d), "# a\n# ff:style S\nShow\n");
         assert_eq!(d.meta_get(id, "name"), None);
         d.remove_meta(id, "name").unwrap();
-        assert_eq!(s(&d), "# a\n#ff:style S\nShow\n");
+        assert_eq!(s(&d), "# a\n# ff:style S\nShow\n");
         // Duplicates are all removed, other blocks untouched, ids stable.
         let mut d = p("#ff:name a\n#ff:name b\nShow\n\n#ff:name c\nHide\n");
         let all = ids(&d);
@@ -1089,7 +1096,7 @@ mod tests {
 
     #[test]
     fn edit_never_reattributes_neighbour_lines() {
-        // Iteration-2 WR-03: removing the `#ff:` line would hand `#	SetFontSize 40` from
+        // Iteration-2 WR-03: removing the `# ff:` line would hand `#	SetFontSize 40` from
         // Hide's leading comments to Show's trailing run. Refused, nothing changes.
         let src = "Show
 	Rarity Rare

@@ -270,7 +270,7 @@ pub fn styled_rules_message(n: usize) -> String {
     }
 }
 
-/// Footer line for rules whose `#ff:style` names a style that does not exist.
+/// Footer line for rules whose `# ff:style` names a style that does not exist.
 pub fn unknown_styles_message(count: usize, first_rule: usize) -> String {
     if count == 1 {
         format!("1 rule uses an unknown style (first: rule {first_rule}).")
@@ -279,7 +279,7 @@ pub fn unknown_styles_message(count: usize, first_rule: usize) -> String {
     }
 }
 
-/// Apply-message tail for rules whose `#ff:style` tag was removed because the style is gone.
+/// Apply-message tail for rules whose `# ff:style` tag was removed because the style is gone.
 pub fn dropped_styles_message(count: usize, first_rule: usize) -> String {
     if count == 1 {
         format!(

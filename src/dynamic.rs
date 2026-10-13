@@ -266,12 +266,15 @@ pub fn apply_file(loaded: &mut LoadedFilter, op: ApplyOp<'_>) -> Result<ApplyRep
     write_new_text(loaded, new_text)
 }
 
-/// The one guarded write, shared by [`apply_file`] and [`apply_edited`]. On success the loaded
-/// baseline becomes the written bytes; on error `loaded` is unchanged.
+/// The one guarded write, shared by [`apply_file`] and [`apply_edited`]. Legacy-spelled `#ff:`
+/// metadata and marker lines are rewritten to the current `# ff:` prefix first; nothing else
+/// changes. On success the loaded baseline becomes the written bytes; on error `loaded` is
+/// unchanged.
 fn write_new_text(
     loaded: &mut LoadedFilter,
     new_text: String,
 ) -> Result<ApplyReport, DynamicError> {
+    let new_text = crate::filter::meta::normalize_ff_prefix(&new_text);
     let outcome = crate::safe_write::write_guarded(
         &loaded.path,
         loaded.disk.as_deref(),
@@ -531,7 +534,8 @@ mod tests {
         assert_eq!(fs::read(&bak).unwrap(), orig);
         let written = fs::read_to_string(&p).unwrap();
         assert!(crate::filter::section::has_section(&written).unwrap());
-        assert!(written.contains("#ff:name"));
+        assert!(written.contains("# ff:name"));
+        assert!(!written.contains("#ff:"));
         assert_eq!(written.len(), r.bytes);
 
         let bak_bytes = fs::read(&bak).unwrap();
@@ -701,6 +705,36 @@ mod tests {
         assert_eq!(r.bytes, text.len());
         let r2 = apply_edited(&mut l, text, EconomyOp::Keep).unwrap();
         assert_eq!(r2.outcome, crate::safe_write::WriteOutcome::Unchanged);
+    }
+
+    #[test]
+    fn apply_normalizes_legacy_meta_lines_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        let body = seed_body();
+        let legacy = "# my notes\r\n#ff:name Rings\r\n#ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n#Show\r\n#\tClass \"Bows\"\r\n\r\n#ff:economy-begin old text\r\n\r\nShow # old\r\n\r\n# ff:economy-end\r\n";
+        fs::write(&p, legacy).unwrap();
+        let mut l = LoadedFilter::load(&p).unwrap();
+        // Reading the legacy spelling works: the section is found.
+        assert!(l.has_section().unwrap());
+        apply_file(&mut l, ApplyOp::Refresh(&body)).unwrap();
+        let written = fs::read_to_string(&p).unwrap();
+        assert!(!written.contains("#ff:"), "{written}");
+        assert!(written.starts_with(
+            "# my notes\r\n# ff:name Rings\r\n# ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n#Show\r\n#\tClass \"Bows\"\r\n\r\n# ff:economy-begin old text\r\n"
+        ));
+        assert!(written.ends_with("# ff:economy-end\r\n"));
+
+        // The overlay's path normalizes too; an all-current file goes out byte-identical.
+        let p2 = dir.path().join("other.filter");
+        let mut l2 = LoadedFilter::load(&p2).unwrap();
+        apply_edited(&mut l2, "#ff:name x\nShow\n", EconomyOp::Keep).unwrap();
+        assert_eq!(fs::read_to_string(&p2).unwrap(), "# ff:name x\nShow\n");
+        assert_eq!(l2.text(), "# ff:name x\nShow\n");
+        let current = "# a\n# ff:name x\nShow # #ff:not-meta\n#Show\n#\tRarity Rare\n";
+        let r = apply_edited(&mut l2, current, EconomyOp::Keep).unwrap();
+        assert_eq!(fs::read_to_string(&p2).unwrap(), current);
+        assert_eq!(r.bytes, current.len());
     }
 
     #[test]

@@ -70,7 +70,7 @@ impl Block {
     pub fn can_enable(&self) -> bool {
         matches!(self.disabled, Some(DisabledState::Valid))
     }
-    /// Attached comment lines directly above the header (includes `#ff:` lines).
+    /// Attached comment lines directly above the header (includes `# ff:` lines).
     pub fn leading(&self) -> Range<usize> {
         self.lead_start..self.header
     }

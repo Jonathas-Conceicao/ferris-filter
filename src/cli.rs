@@ -61,8 +61,8 @@ pub enum Commands {
     },
     /// Refresh the economy section of a filter in place
     ///
-    /// The filter itself is the store: only the lines between `#ff:economy-begin` and
-    /// `#ff:economy-end` are regenerated from prices.json, tiers.json and styles.json found in
+    /// The filter itself is the store: only the lines between `# ff:economy-begin` and
+    /// `# ff:economy-end` are regenerated from prices.json, tiers.json and styles.json found in
     /// the FerrisFilter folder (FERRISFILTER_HOME, else the folder holding ff-cli.exe, else the
     /// working directory). The first write keeps `<name>.filter.ffbak`; a v0.4 dynamic.filter is
     /// converted on its first apply. PoE2 still needs the filter reloaded in-game afterwards.

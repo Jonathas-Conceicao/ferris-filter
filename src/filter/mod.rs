@@ -75,7 +75,7 @@ impl Document {
     pub fn block(&self, id: BlockId) -> Option<&Block> {
         self.blocks().find(|b| b.id() == id)
     }
-    /// `#ff:` settings attached to a block, in order, as `(key, value)` (missing value = "").
+    /// `# ff:` settings attached to a block, in order, as `(key, value)` (missing value = "").
     pub fn block_meta(&self, id: BlockId) -> Vec<(&str, &str)> {
         let Some(b) = self.block(id) else {
             return Vec::new();
@@ -85,7 +85,7 @@ impl Document {
             .map(|(k, v)| (k, v.unwrap_or("")))
             .collect()
     }
-    /// First `#ff:<key>` value attached to the block. Foreign header comments are never a name.
+    /// First `# ff:<key>` value attached to the block. Foreign header comments are never a name.
     pub fn meta_get(&self, id: BlockId, key: &str) -> Option<&str> {
         let b = self.block(id)?;
         b.leading()

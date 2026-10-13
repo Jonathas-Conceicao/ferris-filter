@@ -119,7 +119,7 @@ fn prose_shaped(kw: &Keyword, inner: &str, t: &TokenizedLine) -> bool {
 }
 
 /// Whether a clean commented grammar line (at any indentation) follows line `from` within the run
-/// of commented lines that a header, a `#ff:` line or a non-comment line ends. Used after prose
+/// of commented lines that a header, a `# ff:` line or a non-comment line ends. Used after prose
 /// ends a disabled block: such a line reads as part of the rule, and enabling the block would
 /// leave it behind as a comment, producing a live rule broader than its text (iteration-3 CR-01).
 /// Returns the 0-based line of the first one.
@@ -236,11 +236,11 @@ pub(crate) fn enabled_text(text: &str) -> Cow<'_, str> {
 /// - a doubly commented-out body line (`##\tKw ...`) extends it only within the trailing run after
 ///   the last body line, which a blank (`#`) line or a heading/prose comment closes, just like the
 ///   live trailing run;
-/// - the first prose line, `#ff:` line, header, or uncommented line ends the scan (WR-04). That prose and
+/// - the first prose line, `# ff:` line, header, or uncommented line ends the scan (WR-04). That prose and
 ///   anything after it is the next block's leading run or standalone comment text, never part of
 ///   this block, so enabling can never turn prose into a live line (CR-01).
 /// - when prose ends the scan but a clean commented condition follows further down the same
-///   commented run (before a header, `#ff:` line or uncommented line), the block keeps its extent
+///   commented run (before a header, `# ff:` line or uncommented line), the block keeps its extent
 ///   but is `Invalid`: enabling it would leave that condition behind and write a broader live rule
 ///   than the text (iteration-3 CR-01).
 pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
@@ -257,7 +257,7 @@ pub(crate) fn detect(ls: &[Line], h: usize) -> Option<Disabled> {
         let Some(inner) = uncomment_once(text) else {
             break;
         };
-        // A `#ff:` line belongs to the header run of the block below it (D-05), never inside
+        // A `# ff:` line belongs to the header run of the block below it (D-05), never inside
         // another block.
         if parse_ff_line(text).is_some() {
             break;
@@ -451,7 +451,7 @@ mod tests {
             assert!(d.set_enabled(id, true).is_err(), "{src:?}");
             assert_eq!(d.serialize(), src);
         }
-        // A `#ff:` line or a header ends the look-ahead: what follows belongs to the next block.
+        // A `# ff:` line or a header ends the look-ahead: what follows belongs to the next block.
         for src in [
             "#Show\n#\tRarity Rare\n# note\n#ff:name x\n#\tClass \"Bows\"\nHide\n",
             "#Show\n#\tRarity Rare\n# note\n#Hide\n#\tClass \"Bows\"\n",
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn ff_line_is_never_pulled_into_a_block() {
-        // Iteration-2 WR-02: a `#ff:` line belongs to the header run of the block below it, even
+        // Iteration-2 WR-02: a `# ff:` line belongs to the header run of the block below it, even
         // when a commented body line follows it, in the disabled and the live case alike.
         for src in [
             "#Show\n#\tRarity Rare\n#ff:name x\n#\tSetFontSize 40\nHide\n",

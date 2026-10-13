@@ -11,8 +11,8 @@ use predicates::str::contains;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const BEGIN: &str = "#ff:economy-begin";
-const END: &str = "#ff:economy-end";
+const BEGIN: &str = "# ff:economy-begin";
+const END: &str = "# ff:economy-end";
 
 /// Normalize CRLF to LF. The generator emits LF-only; the working tree is CRLF on Windows.
 fn normalize(s: &str) -> String {
@@ -121,7 +121,7 @@ fn economy_section_matches_generate() {
         .assert()
         .success();
     let generated = normalize(&read(&dir.join("universal.filter")));
-    let expected = &generated[generated.find("#============").expect("banner")..];
+    let expected = &generated[generated.find("# ============").expect("banner")..];
 
     let f = gfs(&dir);
     apply(&dir, &["--filter", &f, "--add-economy"]).success();
@@ -220,8 +220,8 @@ fn v04_filter_is_converted_on_first_apply() {
         .stdout(contains("converting"));
     let text = read(&gf(&dir));
     assert!(text.contains(BEGIN) && text.contains(END));
-    assert!(text.contains("#ff:name Chance bases"));
-    assert!(!text.contains("#ff:name rule 4"));
+    assert!(text.contains("# ff:name Chance bases"));
+    assert!(!text.contains("ff:name rule 4"));
     assert_eq!(fs::read(ffbak(&dir)).unwrap(), fixture);
     apply(&dir, &["--filter", &f])
         .success()

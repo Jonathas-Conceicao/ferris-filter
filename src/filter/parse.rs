@@ -66,7 +66,7 @@ fn flush(items: &mut Vec<Item>, from: usize, to: usize) {
     }
 }
 
-/// True for an economy-section marker line (`#ff:economy-begin` / `#ff:economy-end`).
+/// True for an economy-section marker line (`# ff:economy-begin` / `# ff:economy-end`).
 fn is_economy_marker(line: &Line) -> bool {
     matches!(
         line.ff_marker().map(|(k, _)| k),
@@ -316,7 +316,7 @@ fn scan_live_body_with<'a>(
         k += 1;
     }
     // Trailing run (WR-03): the comment lines directly after the last keyword line are scanned
-    // until the first line that is not a comment, is a heading/prose, or is a `#ff:` line. A
+    // until the first line that is not a comment, is a heading/prose, or is a `# ff:` line. A
     // commented-out body line laid out like this block's body (`#\tSetFontSize 40`, see
     // `disabled::classify_inner`) extends the block, together with any neutral comment lines
     // (`#`, `## ...`) before it. `disabled::detect` applies the same rule one `#` deeper, so

@@ -353,10 +353,29 @@ fn edit_set_meta_inserts_only_one_line() {
     let at = byte_offset(&doc, doc.block(id).unwrap().header_line());
     doc.set_meta(id, "name", "Exceptional 3 socks").unwrap();
     let mut want = orig[..at].to_vec();
-    want.extend_from_slice(b"#ff:name Exceptional 3 socks\r\n");
+    want.extend_from_slice(b"# ff:name Exceptional 3 socks\r\n");
     want.extend_from_slice(&orig[at..]);
     assert_bytes_eq("set_meta", &doc.to_bytes(), &want);
     assert_eq!(doc.meta_get(id, "name"), Some("Exceptional 3 socks"));
+}
+
+#[test]
+fn both_meta_spellings_read_and_untouched_files_roundtrip() {
+    let src = "# notes\r\n#ff:name Legacy\r\n#ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n# ff:name Current\r\n#Hide\r\n#\tClass \"Bows\"\r\n\r\n#ff:economy-begin\r\n\r\nShow # eco\r\n\r\n# ff:economy-end\r\n";
+    let doc = parse(src.as_bytes()).unwrap();
+    assert_eq!(doc.to_bytes(), src.as_bytes());
+    let blocks: Vec<_> = doc.blocks().cloned().collect();
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(doc.meta_get(blocks[0].id(), "name"), Some("Legacy"));
+    assert_eq!(doc.meta_get(blocks[0].id(), "style"), Some("S"));
+    assert_eq!(doc.meta_get(blocks[1].id(), "name"), Some("Current"));
+    assert!(!blocks[1].is_enabled());
+    assert!(ferrisfilter::filter::section::find(&doc).unwrap().is_some());
+    // Rewriting a legacy setting writes the current prefix in place; other bytes stay.
+    let mut doc = doc;
+    doc.set_meta(blocks[0].id(), "name", "New").unwrap();
+    let out = String::from_utf8(doc.to_bytes()).unwrap();
+    assert_eq!(out, src.replace("#ff:name Legacy", "# ff:name New"));
 }
 
 #[test]

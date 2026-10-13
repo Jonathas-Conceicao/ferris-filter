@@ -118,6 +118,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Comment spacing: every comment FerrisFilter writes has a space after `#`.** Metadata and economy
+  marker lines are now written `# ff:<key> <value>` (`# ff:name`, `# ff:style`,
+  `# ff:economy-begin`, `# ff:economy-end`); the old `#ff:` spelling is still read everywhere (a
+  `#ff:economy-begin` pairs with a `# ff:economy-end`, and one of each counts as a duplicate), and
+  every Apply (`ff-cli apply` and the overlay) rewrites any remaining `#ff:` line to `# ff:` while
+  leaving all other bytes alone. The `generate` economy banner is now `# ====...` (the only change
+  to `generate` output; the seed fixture and snapshot were regenerated). Disabled blocks are still
+  written `#Show` / `#\tRarity ...` so disable/enable stays exactly reversible.
 - A RULES Apply whose result equals the file on disk no longer reports "already up to date; nothing
   was written": it counts as applied (same status as a write, in-game reload sent). The identical
   file is still not rewritten. `ff-cli apply` keeps its message.

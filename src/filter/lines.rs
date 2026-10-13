@@ -36,7 +36,7 @@ impl Line {
     pub fn eol(&self) -> Eol {
         self.eol
     }
-    /// If this line is a `#ff:<key> [value]` metadata/marker comment, its key and value view.
+    /// If this line is a `# ff:<key> [value]` metadata/marker comment, its key and value view.
     pub fn ff_marker(&self) -> Option<(&str, Option<&str>)> {
         super::meta::parse_ff_line(&self.text)
     }

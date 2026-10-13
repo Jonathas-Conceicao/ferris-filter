@@ -5,7 +5,7 @@
 //! filter stays responsive. Every edit goes through the `filter::Document` structural ops; this
 //! module only translates [`RowAction`]s into them and projects the result for the view.
 //!
-//! Naming rule (CONTEXT, Rule naming): a row's name comes only from the `#ff:name` setting. The
+//! Naming rule (CONTEXT, Rule naming): a row's name comes only from the `# ff:name` setting. The
 //! foreign header comment text (`$type->currency %D4 !slug`) is never a name, never part of a
 //! label and never searched.
 
@@ -82,7 +82,7 @@ fn text_kind(text: &str) -> Option<Kind> {
     crate::filter::keywords::lookup(&text[kw]).map(|k| k.kind)
 }
 
-/// What a rule's `#ff:style` tag means against the loaded styles.
+/// What a rule's `# ff:style` tag means against the loaded styles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StyleState {
     /// No tag.
@@ -195,7 +195,7 @@ pub struct RuleRow {
     pub keyword: BlockKeyword,
     pub has_continue: bool,
     pub name: Option<String>,
-    /// The `#ff:style` tag judged against the loaded styles.
+    /// The `# ff:style` tag judged against the loaded styles.
     pub style: StyleState,
     pub label: String,
     /// Lowercase search text: name, label, Class and BaseType values.
@@ -599,7 +599,7 @@ impl WorkingFilter {
         &self.rows
     }
 
-    /// How many rules carry each `#ff:style` name (known, unknown or unchecked alike).
+    /// How many rules carry each `# ff:style` name (known, unknown or unchecked alike).
     pub fn style_users(&self) -> HashMap<String, usize> {
         let mut users = HashMap::new();
         for row in &self.rows {
@@ -1269,15 +1269,15 @@ Show
         let o = wf.apply_action(RowAction::ApplyStyle(id, "S".into()));
         assert!(o.changed, "{o:?}");
         let t = wf.text();
-        assert!(t.starts_with("#ff:style S\nShow\n"), "{t}");
+        assert!(t.starts_with("# ff:style S\nShow\n"), "{t}");
         assert!(t.contains(S_FONT) && !t.contains("SetFontSize 20"), "{t}");
         assert_eq!(wf.rows()[0].style, StyleState::Known("S".into()));
         // switching style rewrites the single tag
         let o = wf.apply_action(RowAction::ApplyStyle(id, "hidden".into()));
         assert!(o.changed);
         let t = wf.text();
-        assert_eq!(t.matches("#ff:style").count(), 1, "{t}");
-        assert!(t.starts_with("#ff:style hidden\nHide\n"), "{t}");
+        assert_eq!(t.matches("ff:style").count(), 1, "{t}");
+        assert!(t.starts_with("# ff:style hidden\nHide\n"), "{t}");
     }
 
     #[test]
@@ -1304,7 +1304,7 @@ Show
         assert!(o.changed, "{o:?}");
         let t = wf.text();
         assert!(
-            t.contains("#ff:style S") && t.contains("#  SetFontSize 20"),
+            t.contains("# ff:style S") && t.contains("#  SetFontSize 20"),
             "{t}"
         );
         assert!(!t.contains("SetFontSize 37"), "{t}");
@@ -1422,9 +1422,9 @@ Show
         assert!(wf.style_rewrite_pending());
         let (t, rep) = wf.text_with_styles().expect("ok");
         assert_eq!(rep.dropped, vec![(1, "Gone".to_string())]);
-        assert!(!t.contains("#ff:style"));
+        assert!(!t.contains("ff:style"));
         assert!(t.contains("SetFontSize 40"));
-        assert!(wf.text().contains("#ff:style Gone"));
+        assert!(wf.text().contains("ff:style Gone"));
     }
 
     #[test]
@@ -1596,13 +1596,13 @@ Show
         let mut wf = WorkingFilter::from_text("Show\n  Class \"Rings\"\n");
         let id = wf.rows()[0].id;
         wf.apply_action(RowAction::SetName(id, "  My rule  ".into()));
-        assert!(wf.text().contains("#ff:name My rule\n"));
+        assert!(wf.text().contains("# ff:name My rule\n"));
         assert_eq!(wf.rows()[0].label, "1  Show - My rule");
         wf.apply_action(RowAction::SetName(id, "  ".into()));
         assert!(wf.rows()[0].name.is_none());
         wf.apply_action(RowAction::SetName(id, "x".into()));
         wf.apply_action(RowAction::ClearName(id));
-        assert!(!wf.text().contains("#ff:name"));
+        assert!(!wf.text().contains("ff:name"));
     }
 
     #[test]

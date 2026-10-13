@@ -65,6 +65,14 @@ pub enum WriteError {
         source: io::Error,
     },
 
+    /// The target is read-only, so it cannot be replaced; not retried.
+    #[error("Cannot write `{path}`: the file is read-only; clear its read-only attribute and apply again")]
+    ReadOnly {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+
     /// The target stayed locked through every retry.
     #[error("`{path}` is in use (tried {attempts} times); close anything holding it, such as the game or OneDrive, and apply again")]
     Busy {
@@ -99,8 +107,23 @@ pub fn write_guarded(
     )
 }
 
+/// Windows sharing/lock violations: `ERROR_ACCESS_DENIED` (5), `ERROR_SHARING_VIOLATION` (32),
+/// `ERROR_LOCK_VIOLATION` (33). These are Windows error codes; elsewhere the same numbers mean
+/// unrelated things (`EIO`, `EPIPE`, `EDOM`), so nothing is retried there.
+#[cfg(windows)]
 fn is_retriable(e: &io::Error) -> bool {
     matches!(e.raw_os_error(), Some(5 | 32 | 33))
+}
+
+#[cfg(not(windows))]
+fn is_retriable(_e: &io::Error) -> bool {
+    false
+}
+
+/// True when `path` exists and carries the read-only attribute. A replace onto such a target fails
+/// with access denied, which is not a lock and never clears by waiting.
+fn is_read_only(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.permissions().readonly())
 }
 
 /// Create the one-time backup `bp` holding `original`. Returns `Ok(true)` when this call created
@@ -215,6 +238,12 @@ fn write_guarded_with(
         match persist(temp, path) {
             Ok(_) => return Ok(WriteOutcome::Written { backup }),
             Err(e) => {
+                if is_read_only(path) {
+                    return Err(WriteError::ReadOnly {
+                        path: shown(),
+                        source: e.error,
+                    });
+                }
                 if !is_retriable(&e.error) {
                     return Err(WriteError::Unwritable {
                         path: shown(),
@@ -374,6 +403,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn retries_sharing_violation_then_succeeds() {
         let t = tempfile::tempdir().unwrap();
@@ -388,6 +418,7 @@ mod tests {
         assert_eq!(names(t.path()), vec!["x.filter"]);
     }
 
+    #[cfg(windows)]
     #[test]
     fn persistent_lock_is_busy_and_cleans_up() {
         let t = tempfile::tempdir().unwrap();
@@ -403,6 +434,33 @@ mod tests {
         }
         assert_eq!(sleeps, MAX_ATTEMPTS - 1);
         assert!(names(t.path()).is_empty());
+    }
+
+    #[test]
+    fn read_only_target_is_reported_as_read_only_not_busy() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("x.filter");
+        fs::write(&p, "A").unwrap();
+        let mut perms = fs::metadata(&p).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&p, perms.clone()).unwrap();
+
+        let mut sleeps = 0;
+        let r = write_guarded_with(&p, Some(b"A"), b"B", failing_persist(5, u32::MAX), |_| {
+            sleeps += 1
+        });
+
+        // Clear the attribute so the tempdir can be removed.
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&p, perms).unwrap();
+
+        match r {
+            Err(e @ WriteError::ReadOnly { .. }) => assert!(e.to_string().contains("read-only")),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sleeps, 0, "a read-only target is not retried");
+        assert_eq!(fs::read(&p).unwrap(), b"A");
     }
 
     #[test]

@@ -26,13 +26,15 @@ use std::time::Duration;
 use global_hotkey::GlobalHotKeyManager;
 
 use crate::compile::{InputPaths, PriceSource, PriceSourcePolicy};
-use crate::dynamic::{self, ApplyOp, LoadedFilter};
+use crate::dynamic::{self, EconomyOp, LoadedFilter};
 use crate::safe_write::WriteOutcome;
 
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::economy;
 use super::hotkey::HotkeyStatus;
 use super::layout;
+use super::rule_list::{self, ListUi};
+use super::rules::{self, EconomyPlan, EconomyView, RowAction, WorkingFilter};
 use super::theme;
 use super::tray::{self, OverlayCommand, TrayHandles};
 use super::visibility::{self, Visibility};
@@ -92,6 +94,146 @@ pub struct OverlayApp {
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
+
+    /// The edited document (Some exactly when `filter` loaded). Every row operation edits this
+    /// in memory; Apply is the single writer.
+    working: Option<WorkingFilter>,
+
+    /// View state of the rule list (expanded row, pending scroll, confirmations).
+    list: ListUi,
+
+    /// The search box contents.
+    query: String,
+
+    /// The latest row-operation status (refusals, revert, hidden add).
+    list_status: Option<String>,
+
+    /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
+    applied_this_session: bool,
+}
+
+/// Builds the working document from a loaded filter (the migrated text, never the raw bytes).
+fn working_from(filter: &Result<LoadedFilter, String>) -> Option<WorkingFilter> {
+    filter
+        .as_ref()
+        .ok()
+        .map(|loaded| WorkingFilter::from_text(loaded.text()))
+}
+
+/// The one Apply path over the edited document: price the economy section when the plan needs it,
+/// then write through [`dynamic::apply_edited`] (grammar gate, guarded atomic write). Returns the
+/// outcome, sentences to append to the success message, and whether only RELOAD can recover.
+fn apply_working(
+    root: &std::path::Path,
+    loaded: &mut LoadedFilter,
+    working: &mut WorkingFilter,
+) -> (ApplyOutcome, String, bool) {
+    let mut extras = String::new();
+    let plan = working.economy_plan();
+    let body = match plan {
+        EconomyPlan::Refresh | EconomyPlan::Add => {
+            match dynamic::economy_body(&InputPaths::relative_to(root), PriceSourcePolicy::Auto) {
+                Ok((body, source)) => {
+                    if matches!(source, PriceSource::Fallback(_)) {
+                        extras.push_str(" Used the fallback prices.");
+                    }
+                    Some(body)
+                }
+                Err(err) => return (ApplyOutcome::Failed(err.to_string()), extras, false),
+            }
+        }
+        EconomyPlan::Keep | EconomyPlan::Remove => None,
+    };
+    let op = match (plan, body.as_deref()) {
+        (EconomyPlan::Refresh, Some(b)) => EconomyOp::Refresh(b),
+        (EconomyPlan::Add, Some(b)) => EconomyOp::Add(b),
+        (EconomyPlan::Remove, _) => EconomyOp::Remove,
+        _ => EconomyOp::Keep,
+    };
+    match dynamic::apply_edited(loaded, &working.text(), op) {
+        Ok(report) => {
+            working.on_applied(loaded.text());
+            if report.migrated {
+                extras.push_str(" Converted from v0.4.");
+            }
+            let outcome = match report.outcome {
+                WriteOutcome::Unchanged => ApplyOutcome::Unchanged(report.path),
+                WriteOutcome::Written { backup } => {
+                    if let Some(backup) = backup {
+                        extras.push_str(&format!(" Kept the original as {}.", backup.display()));
+                    }
+                    ApplyOutcome::Written(report.path)
+                }
+            };
+            (outcome, extras, false)
+        }
+        Err(dynamic::DynamicError::InvalidBlocks {
+            count,
+            first_rule,
+            first_line,
+            ..
+        }) => (
+            ApplyOutcome::Failed(apply::invalid_blocks_message(count, first_rule, first_line)),
+            extras,
+            false,
+        ),
+        Err(err) if apply::is_changed_on_disk(&err) => (
+            ApplyOutcome::Failed(apply::CHANGED_ON_DISK_MESSAGE.to_string()),
+            extras,
+            true,
+        ),
+        Err(err) => (ApplyOutcome::Failed(err.to_string()), extras, false),
+    }
+}
+
+/// Applies the frame's collected row actions once, after the list rendered. Returns whether the
+/// document changed and the last status worth showing.
+fn apply_row_actions(
+    working: &mut WorkingFilter,
+    list: &mut ListUi,
+    query: &str,
+    actions: Vec<RowAction>,
+) -> (bool, Option<String>) {
+    let mut changed = false;
+    let mut status = None;
+    for action in actions {
+        let is_add = matches!(action, RowAction::AddRule);
+        let is_duplicate = matches!(action, RowAction::Duplicate(_));
+        let is_move = matches!(action, RowAction::Move(..));
+        let deleted = match &action {
+            RowAction::Delete(id) => Some(*id),
+            _ => None,
+        };
+        let outcome = working.apply_action(action);
+        if outcome.changed {
+            changed = true;
+            if let Some(id) = deleted {
+                if list.expanded == Some(id) {
+                    list.expanded = None;
+                }
+                if list.confirm_delete == Some(id) {
+                    list.confirm_delete = None;
+                }
+            }
+            if let Some(focus) = outcome.focus {
+                if is_add || is_duplicate {
+                    list.expanded = Some(focus);
+                    list.pending_scroll = Some(focus);
+                } else if is_move {
+                    list.pending_scroll = Some(focus);
+                }
+                if is_add && !query.trim().is_empty() && !working.row_matches(focus, query) {
+                    if let Some(row) = working.row(focus) {
+                        status = Some(apply::added_hidden_message(row.index));
+                    }
+                }
+            }
+        }
+        if outcome.status.is_some() {
+            status = outcome.status;
+        }
+    }
+    (changed, status)
 }
 
 impl OverlayApp {
@@ -105,6 +247,7 @@ impl OverlayApp {
         let root = crate::paths::app_root().map_err(|e| e.to_string());
         // Loading never writes (D-10).
         let filter = Self::load_filter();
+        let working = working_from(&filter);
 
         Self {
             docked: false,
@@ -127,6 +270,11 @@ impl OverlayApp {
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
+            working,
+            list: ListUi::default(),
+            query: String::new(),
+            list_status: None,
+            applied_this_session: false,
         }
     }
 
@@ -141,82 +289,99 @@ impl OverlayApp {
         }
     }
 
-    /// What the footer knows about the filter, for [`apply::footer_actions`].
+    /// What the footer knows about the filter, for [`apply::footer_actions`]. The economy part
+    /// comes from the projected working view, so a staged add/remove is reflected immediately.
     fn filter_state(&self) -> FilterState {
-        match &self.filter {
-            Err(_) => FilterState::LoadFailed,
-            Ok(loaded) if !loaded.existed() => FilterState::Absent,
-            Ok(loaded) => match loaded.has_section() {
-                Ok(true) => FilterState::HasSection,
-                Ok(false) => FilterState::NoSection,
-                Err(_) => FilterState::Damaged,
+        match (&self.filter, &self.working) {
+            (Ok(loaded), Some(working)) => match working.economy() {
+                EconomyView::Damaged(_) => FilterState::Damaged,
+                EconomyView::Present { .. } => FilterState::HasSection,
+                EconomyView::Absent => {
+                    if !loaded.existed() && working.rows().is_empty() {
+                        FilterState::Absent
+                    } else {
+                        FilterState::NoSection
+                    }
+                }
             },
+            _ => FilterState::LoadFailed,
         }
     }
 
-    /// The one Apply path: price the economy section from the app root, then refresh it
-    /// (`add == false`) or create it (`add == true`, the explicit ADD ECONOMY SECTION action).
-    fn run_apply(&mut self, add: bool) {
-        let Ok(root) = &self.root else {
+    /// The one Apply path: write the edited document (and any staged economy op) through
+    /// [`apply_working`], then re-key the list's view state to the re-parsed document.
+    fn run_apply(&mut self) {
+        let (Ok(root), Ok(loaded), Some(working)) =
+            (&self.root, &mut self.filter, &mut self.working)
+        else {
             return;
         };
-        let Ok(loaded) = &mut self.filter else {
-            return;
-        };
-        let paths = InputPaths::relative_to(root);
-        // Sentences appended after the main message.
-        let mut extras = String::new();
-        let outcome = match dynamic::economy_body(&paths, PriceSourcePolicy::Auto) {
-            Err(err) => ApplyOutcome::Failed(err.to_string()),
-            Ok((body, source)) => {
-                if matches!(source, PriceSource::Fallback(_)) {
-                    extras.push_str(" Used the fallback prices.");
-                }
-                let op = if add {
-                    ApplyOp::AddEconomy(&body)
-                } else {
-                    ApplyOp::Refresh(&body)
-                };
-                match dynamic::apply_file(loaded, op) {
-                    Ok(report) => {
-                        if report.migrated {
-                            extras.push_str(" Converted from v0.4.");
-                        }
-                        match report.outcome {
-                            WriteOutcome::Unchanged => ApplyOutcome::Unchanged(report.path),
-                            WriteOutcome::Written { backup } => {
-                                if let Some(backup) = backup {
-                                    extras.push_str(&format!(
-                                        " Kept the original as {}.",
-                                        backup.display()
-                                    ));
-                                }
-                                ApplyOutcome::Written(report.path)
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        self.needs_reload = apply::is_changed_on_disk(&err);
-                        ApplyOutcome::Failed(err.to_string())
-                    }
-                }
-            }
-        };
+        // Ids reset on re-parse, so remember the expanded row by position instead.
+        let expanded_index = self
+            .list
+            .expanded
+            .and_then(|id| working.row(id))
+            .map(|r| r.index);
+        let (outcome, extras, needs_reload) = apply_working(root, loaded, working);
         match outcome {
             ApplyOutcome::Written(path) => {
-                self.needs_reload = false;
                 self.apply_message = Some(format!("{}{extras}", apply::success_message(&path)));
                 self.apply_state = self.apply_state.on_apply_success();
             }
             ApplyOutcome::Unchanged(path) => {
-                self.needs_reload = false;
                 self.apply_message = Some(format!("{}{extras}", apply::unchanged_message(&path)));
                 self.apply_state = self.apply_state.on_apply_success();
             }
             ApplyOutcome::Failed(message) => {
                 self.apply_message = Some(message);
                 self.apply_state = self.apply_state.on_apply_failure();
+                if needs_reload {
+                    self.needs_reload = true;
+                }
+                return;
             }
+        }
+        self.needs_reload = false;
+        self.applied_this_session = true;
+        self.list_status = None;
+        self.list.clear_ids();
+        self.list.expanded = expanded_index.and_then(|i| working.rows().get(i - 1).map(|r| r.id));
+    }
+
+    /// REVERT: discard every in-memory edit and staged economy op.
+    fn revert(&mut self) {
+        let Some(working) = &mut self.working else {
+            return;
+        };
+        working.revert();
+        self.list.clear_ids();
+        self.list_status = Some(apply::REVERTED_MESSAGE.to_string());
+        self.apply_state = if self.applied_this_session {
+            ApplyState::Applied
+        } else {
+            ApplyState::NeverApplied
+        };
+    }
+
+    /// Stages adding the economy section; it is written by the next APPLY.
+    fn stage_add_economy(&mut self) {
+        let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
+            return;
+        };
+        match dynamic::economy_body(&InputPaths::relative_to(root), PriceSourcePolicy::Auto) {
+            Ok((body, _)) => {
+                working.stage_add_economy(rules::count_blocks(&body));
+                self.apply_state = ApplyState::Unapplied;
+            }
+            Err(err) => self.list_status = Some(err.to_string()),
+        }
+    }
+
+    /// Stages removing the economy section; it is written by the next APPLY.
+    fn stage_remove_economy(&mut self) {
+        if let Some(working) = &mut self.working {
+            working.stage_remove_economy();
+            self.apply_state = ApplyState::Unapplied;
         }
     }
 
@@ -226,8 +391,13 @@ impl OverlayApp {
     fn reload(&mut self) {
         self.root = crate::paths::app_root().map_err(|e| e.to_string());
         self.filter = Self::load_filter();
+        self.working = working_from(&self.filter);
+        self.list.clear_ids();
+        self.query.clear();
+        self.list_status = None;
         self.needs_reload = false;
         self.apply_message = None;
+        self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
     }
 }
@@ -377,7 +547,10 @@ impl eframe::App for OverlayApp {
 
         // Computed once per frame; every button below is shown/enabled strictly from it.
         let state = self.filter_state();
-        let actions = apply::footer_actions(self.root.is_ok(), state, self.needs_reload);
+        let dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
+        let actions =
+            apply::footer_actions(self.root.is_ok(), state, self.needs_reload, dirty, blocking);
 
         egui::CentralPanel::default()
             .frame(panel_frame)
@@ -454,14 +627,21 @@ impl eframe::App for OverlayApp {
                                     });
                                 }
                             }
-                            if actions.add_economy && ui.button("ADD ECONOMY SECTION").clicked() {
-                                self.run_apply(true);
-                            }
                             if ui
-                                .add_enabled(actions.apply, egui::Button::new("APPLY"))
+                                .add_enabled(actions.revert, egui::Button::new("REVERT"))
                                 .clicked()
                             {
-                                self.run_apply(false);
+                                self.revert();
+                            }
+                            let apply_button =
+                                ui.add_enabled(actions.apply, egui::Button::new("APPLY"));
+                            let apply_button = if blocking > 0 {
+                                apply_button.on_disabled_hover_text(apply::APPLY_BLOCKED_TOOLTIP)
+                            } else {
+                                apply_button
+                            };
+                            if apply_button.clicked() {
+                                self.run_apply();
                             }
                         });
                         // The sync's own status line. Rendered before the Apply message so a fresh
@@ -660,5 +840,121 @@ mod tests {
             "the pre-fix arrangement was expected to push APPLY off-screen, but it did not \
              ({old_bottom} <= {screen_bottom}) -- this test is no longer exercising the defect"
         );
+    }
+
+    // ---- controller helpers (Phase 19-06) ----
+
+    use super::{apply_row_actions, apply_working};
+    use crate::dynamic::LoadedFilter;
+    use crate::overlay::apply::{self, ApplyOutcome};
+    use crate::overlay::rule_list::ListUi;
+    use crate::overlay::rules::{RowAction, WorkingFilter};
+
+    const RULES: &str = "Show\n  Class \"Rings\"\n\nHide\n  Rarity Normal\n";
+
+    fn loaded_in(dir: &tempfile::TempDir, text: &str) -> (std::path::PathBuf, LoadedFilter) {
+        let path = dir.path().join("dynamic.filter");
+        std::fs::write(&path, text).unwrap();
+        let loaded = LoadedFilter::load(&path).unwrap();
+        (path, loaded)
+    }
+
+    #[test]
+    fn apply_working_writes_edits_then_reports_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, mut loaded) = loaded_in(&dir, RULES);
+        let mut working = WorkingFilter::from_text(loaded.text());
+        working.apply_action(RowAction::AddRule);
+        assert!(working.is_dirty());
+        let (outcome, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+        assert!(!reload);
+        assert!(!working.is_dirty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), working.text());
+        let (again, _, _) = apply_working(dir.path(), &mut loaded, &mut working);
+        assert!(matches!(again, ApplyOutcome::Unchanged(_)), "{again:?}");
+    }
+
+    #[test]
+    fn apply_working_refuses_enabled_grammar_errors_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = "Show\n  Rarity Bogus\n\nHide\n";
+        let (path, mut loaded) = loaded_in(&dir, bad);
+        let mut working = WorkingFilter::from_text(loaded.text());
+        let (outcome, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
+        match outcome {
+            ApplyOutcome::Failed(m) => assert!(m.starts_with("Apply refused"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!reload);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bad);
+    }
+
+    #[test]
+    fn apply_working_after_an_external_edit_demands_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, mut loaded) = loaded_in(&dir, RULES);
+        let mut working = WorkingFilter::from_text(loaded.text());
+        working.apply_action(RowAction::AddRule);
+        std::fs::write(&path, "Show\n  Class \"Belts\"\n").unwrap();
+        let (outcome, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
+        assert_eq!(
+            outcome,
+            ApplyOutcome::Failed(apply::CHANGED_ON_DISK_MESSAGE.to_string())
+        );
+        assert!(reload);
+        assert!(working.is_dirty(), "edits survive until RELOAD");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "Show\n  Class \"Belts\"\n"
+        );
+    }
+
+    #[test]
+    fn apply_working_adds_the_economy_section_from_the_repo_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, mut loaded) = loaded_in(&dir, RULES);
+        let mut working = WorkingFilter::from_text(loaded.text());
+        // The repo root is read-only input here (styles, tiers, fallback prices).
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let body = crate::dynamic::economy_body(
+            &crate::compile::InputPaths::relative_to(&root),
+            crate::compile::PriceSourcePolicy::Auto,
+        )
+        .unwrap()
+        .0;
+        working.stage_add_economy(crate::overlay::rules::count_blocks(&body));
+        let (outcome, _, _) = apply_working(&root, &mut loaded, &mut working);
+        assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(crate::filter::section::has_section(&written).unwrap());
+    }
+
+    #[test]
+    fn adding_a_rule_the_search_hides_says_so_and_expands_it() {
+        let mut working = WorkingFilter::from_text(RULES);
+        let mut list = ListUi::default();
+        let (changed, status) =
+            apply_row_actions(&mut working, &mut list, "zzz", vec![RowAction::AddRule]);
+        assert!(changed);
+        assert_eq!(
+            status.as_deref(),
+            Some("Rule added at position 3 (hidden by the current search)")
+        );
+        let new_id = working.rows().last().unwrap().id;
+        assert_eq!(list.expanded, Some(new_id));
+        assert_eq!(list.pending_scroll, Some(new_id));
+    }
+
+    #[test]
+    fn deleting_the_expanded_row_collapses_it() {
+        let mut working = WorkingFilter::from_text(RULES);
+        let mut list = ListUi::default();
+        let id = working.rows()[0].id;
+        list.expanded = Some(id);
+        let (changed, _) =
+            apply_row_actions(&mut working, &mut list, "", vec![RowAction::Delete(id)]);
+        assert!(changed);
+        assert!(list.expanded.is_none());
     }
 }

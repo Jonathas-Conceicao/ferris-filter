@@ -2,7 +2,7 @@
 //!
 //! Pure -- no GUI-framework types of any kind anywhere in this file (`PITFALLS.md` §8: logic
 //! belongs in the library, presentation at the edge). `app.rs` is the only caller: it drives
-//! [`crate::dynamic::apply_file`] directly (the same function the CLI's `apply` uses) and turns
+//! [`crate::dynamic::apply_edited`] (the guarded writer the CLI shares) and turns
 //! the `Result` into an [`ApplyOutcome`], then updates the [`ApplyState`] held across frames.
 //!
 //! **Why this state exists at all:** the filter file is the store, but PoE2 never re-reads it on its
@@ -52,7 +52,7 @@ impl ApplyState {
 }
 
 /// What an Apply attempt produced, for the caller to render. `app.rs` builds this from the
-/// `Result` of [`crate::dynamic::apply_file`]; this type itself performs no call.
+/// `Result` of [`crate::dynamic::apply_edited`]; this type itself performs no call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyOutcome {
     /// The file was rewritten; carries its path.
@@ -112,40 +112,77 @@ pub enum FilterState {
 pub struct FooterActions {
     pub sync: bool,
     pub apply: bool,
-    pub add_economy: bool,
+    pub revert: bool,
+    pub add_rule: bool,
     pub reload: bool,
 }
 
+/// Refusal copy shown after a changed-on-disk refusal; only RELOAD recovers.
+pub const CHANGED_ON_DISK_MESSAGE: &str = "The filter changed on disk since it was loaded, so nothing was written. RELOAD to pick up the new file. Your unapplied edits are discarded by RELOAD.";
+
+/// Status after REVERT.
+pub const REVERTED_MESSAGE: &str = "Reverted to the last applied filter.";
+
+/// Tooltip on the disabled APPLY button while an enabled rule has a grammar error.
+pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix or disable the rules marked \"grammar error\" first.";
+
+/// The status shown when Apply is refused by the grammar gate.
+pub fn invalid_blocks_message(count: usize, first_rule: usize, first_line: usize) -> String {
+    let noun = if count == 1 {
+        "1 enabled rule has a grammar error".to_string()
+    } else {
+        format!("{count} enabled rules have grammar errors")
+    };
+    format!(
+        "Apply refused: {noun} (first: rule {first_rule}, line {first_line}). Fix them or turn them off."
+    )
+}
+
+/// The status after adding a rule the current search hides.
+pub fn added_hidden_message(position: usize) -> String {
+    format!("Rule added at position {position} (hidden by the current search)")
+}
+
 /// The footer's button rules. A missing app root disables everything that touches files; after a
-/// changed-on-disk refusal only RELOAD (and SYNC) remain; ADD ECONOMY SECTION is the only way a
-/// section is ever created -- APPLY never does it implicitly.
+/// changed-on-disk refusal only RELOAD (and SYNC) remain.
+///
+/// APPLY no longer needs an economy section (OD-2): a rules-only filter is written as-is. A
+/// filter that does not exist yet can be created once there is something to write (`dirty`).
+/// `blocking` is the number of enabled-rule grammar errors, which disable APPLY.
 ///
 /// RELOAD is also offered whenever the overlay is stuck in a state only a re-read can clear: no
-/// app root, damaged markers, or a filter that failed to load. Without it, the only recovery from
-/// any of those would be quitting the process from the tray and relaunching.
-pub fn footer_actions(root_ok: bool, state: FilterState, needs_reload: bool) -> FooterActions {
+/// app root, damaged markers, or a filter that failed to load.
+pub fn footer_actions(
+    root_ok: bool,
+    state: FilterState,
+    needs_reload: bool,
+    dirty: bool,
+    blocking: usize,
+) -> FooterActions {
+    let editable = !matches!(state, FilterState::LoadFailed | FilterState::Damaged);
+    let writable = match state {
+        FilterState::HasSection | FilterState::NoSection => true,
+        FilterState::Absent => dirty,
+        FilterState::Damaged | FilterState::LoadFailed => false,
+    };
     FooterActions {
         sync: root_ok,
         reload: needs_reload
             || !root_ok
             || matches!(state, FilterState::Damaged | FilterState::LoadFailed),
-        apply: root_ok && state == FilterState::HasSection && !needs_reload,
-        add_economy: root_ok
-            && matches!(state, FilterState::Absent | FilterState::NoSection)
-            && !needs_reload,
+        apply: root_ok && writable && !needs_reload && blocking == 0,
+        revert: dirty && !needs_reload && state != FilterState::LoadFailed,
+        add_rule: !needs_reload && editable,
     }
 }
 
 /// The stripe's status text for the filter file.
 pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     let mut text = match state {
-        FilterState::Absent => {
-            "The filter does not exist yet. ADD ECONOMY SECTION creates it.".to_string()
-        }
-        FilterState::NoSection => {
-            "The filter has no economy section. ADD ECONOMY SECTION adds one at the end."
-                .to_string()
-        }
+        FilterState::Absent => "The filter does not exist yet. APPLY creates it once it has rules \
+             or an economy section."
+            .to_string(),
+        FilterState::NoSection => "The filter has no economy section.".to_string(),
         FilterState::Damaged => {
             "The economy section markers are damaged. Fix them by hand, then RELOAD.".to_string()
         }
@@ -277,36 +314,33 @@ mod tests {
             FilterState::Damaged,
             FilterState::LoadFailed,
         ] {
-            assert_eq!(
-                footer_actions(false, st, false),
-                FooterActions {
-                    reload: true,
-                    ..FooterActions::default()
-                }
-            );
+            let a = footer_actions(false, st, false, true, 0);
+            assert!(!a.sync && !a.apply && a.reload, "{st:?}");
         }
     }
 
     #[test]
-    fn footer_absent_and_no_section_offer_add_economy_not_apply() {
-        for st in [FilterState::Absent, FilterState::NoSection] {
-            let a = footer_actions(true, st, false);
-            assert!(a.add_economy && !a.apply && a.sync && !a.reload);
+    fn apply_is_live_with_or_without_an_economy_section() {
+        for st in [FilterState::HasSection, FilterState::NoSection] {
+            assert!(footer_actions(true, st, false, false, 0).apply, "{st:?}");
+            assert!(!footer_actions(true, st, false, false, 1).apply, "{st:?}");
         }
     }
 
     #[test]
-    fn footer_has_section_offers_apply_only() {
-        let a = footer_actions(true, FilterState::HasSection, false);
-        assert!(a.apply && !a.add_economy && a.sync);
+    fn apply_on_an_absent_filter_needs_something_to_write() {
+        assert!(!footer_actions(true, FilterState::Absent, false, false, 0).apply);
+        assert!(footer_actions(true, FilterState::Absent, false, true, 0).apply);
     }
 
     #[test]
     fn footer_damaged_and_load_failed_offer_reload_only() {
         for st in [FilterState::Damaged, FilterState::LoadFailed] {
-            let a = footer_actions(true, st, false);
-            assert!(!a.apply && !a.add_economy && a.sync && a.reload);
+            let a = footer_actions(true, st, false, true, 0);
+            assert!(!a.apply && !a.add_rule && a.sync && a.reload, "{st:?}");
         }
+        assert!(!footer_actions(true, FilterState::LoadFailed, false, true, 0).revert);
+        assert!(footer_actions(true, FilterState::Damaged, false, true, 0).revert);
     }
 
     #[test]
@@ -316,20 +350,45 @@ mod tests {
             FilterState::NoSection,
             FilterState::HasSection,
         ] {
-            assert!(!footer_actions(true, st, false).reload, "{st:?}");
+            assert!(!footer_actions(true, st, false, false, 0).reload, "{st:?}");
         }
     }
 
     #[test]
     fn footer_reload_first_after_a_changed_on_disk_refusal() {
-        let a = footer_actions(true, FilterState::HasSection, true);
-        assert!(a.reload && !a.apply && !a.add_economy);
+        let a = footer_actions(true, FilterState::HasSection, true, true, 0);
+        assert!(a.sync && a.reload && !a.apply && !a.revert && !a.add_rule);
+    }
+
+    #[test]
+    fn revert_follows_dirty() {
+        assert!(!footer_actions(true, FilterState::HasSection, false, false, 0).revert);
+        assert!(footer_actions(true, FilterState::HasSection, false, true, 0).revert);
     }
 
     #[test]
     fn state_messages_name_the_actions_and_the_backup() {
-        assert!(filter_state_message(FilterState::Absent, false).contains("ADD ECONOMY SECTION"));
+        assert!(!filter_state_message(FilterState::Absent, false).contains("ADD ECONOMY SECTION"));
+        assert!(
+            !filter_state_message(FilterState::NoSection, false).contains("ADD ECONOMY SECTION")
+        );
         assert!(filter_state_message(FilterState::HasSection, true).contains(".ffbak"));
         assert!(!filter_state_message(FilterState::HasSection, false).contains(".ffbak"));
+    }
+
+    #[test]
+    fn refusal_and_status_copy() {
+        assert_eq!(
+            invalid_blocks_message(2, 12, 3),
+            "Apply refused: 2 enabled rules have grammar errors (first: rule 12, line 3). Fix them or turn them off."
+        );
+        assert!(invalid_blocks_message(1, 1, 1).contains("1 enabled rule has a grammar error"));
+        assert_eq!(REVERTED_MESSAGE, "Reverted to the last applied filter.");
+        assert!(CHANGED_ON_DISK_MESSAGE.contains("RELOAD"));
+        assert!(APPLY_BLOCKED_TOOLTIP.contains("grammar error"));
+        assert_eq!(
+            added_hidden_message(7),
+            "Rule added at position 7 (hidden by the current search)"
+        );
     }
 }

@@ -127,13 +127,6 @@ fn flags_for(row: &RuleRow) -> Vec<Flag> {
             tip: diag_tip(&row.warnings),
         });
     }
-    if row.cannot_enable {
-        out.push(Flag {
-            text: "can't enable",
-            color: theme::WARM_ACCENT,
-            tip: CANNOT_ENABLE_LONG.to_string(),
-        });
-    }
     if row.moved_across_continue {
         out.push(Flag {
             text: "moved across Continue",
@@ -361,6 +354,9 @@ fn expanded_body(
         }
     }
     if name_on {
+        // Keep the field open while typing: emptying a loaded name clears `row.name`, which
+        // would otherwise collapse the editor under the cursor.
+        list.name_open.insert(id);
         let draft = list
             .name_drafts
             .entry(id)

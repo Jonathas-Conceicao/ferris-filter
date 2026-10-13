@@ -341,7 +341,7 @@ fn centered_notice(ui: &mut egui::Ui, heading: &str, body: &str) {
     ui.add_space(16.0);
     ui.vertical_centered(|ui| {
         ui.label(theme::section_header(heading));
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         ui.add(egui::Label::new(egui::RichText::new(body).color(theme::TAB_ACTIVE)).wrap());
     });
 }
@@ -569,6 +569,90 @@ impl OverlayApp {
     }
 }
 
+/// One message in the footer's outcome area.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OutcomeLine {
+    pub text: String,
+    pub accent: bool,
+    pub jump: Option<BlockId>,
+}
+
+/// Height cap of the outcome area; longer content scrolls inside it.
+pub(crate) const OUTCOME_MAX_HEIGHT: f32 = 96.0;
+
+/// The present footer messages, in display order: list status, Apply outcome, sync status, then
+/// the persistent grammar-gate and unknown-style lines.
+pub(crate) fn outcome_lines(
+    list_status: Option<String>,
+    apply_message: Option<(String, bool)>,
+    sync_status: Option<(String, bool)>,
+    grammar_gate: Option<(String, BlockId)>,
+    unknown_summary: Option<(String, BlockId)>,
+) -> Vec<OutcomeLine> {
+    let mut out = Vec::new();
+    if let Some(text) = list_status {
+        out.push(OutcomeLine {
+            text,
+            accent: false,
+            jump: None,
+        });
+    }
+    for (text, accent) in [apply_message, sync_status].into_iter().flatten() {
+        out.push(OutcomeLine {
+            text,
+            accent,
+            jump: None,
+        });
+    }
+    for (text, id) in [grammar_gate, unknown_summary].into_iter().flatten() {
+        out.push(OutcomeLine {
+            text,
+            accent: true,
+            jump: Some(id),
+        });
+    }
+    out
+}
+
+/// Draws the outcome lines inside one capped scroll area. Returns the rule a clicked line jumps to.
+pub(crate) fn outcome_area(ui: &mut egui::Ui, lines: &[OutcomeLine]) -> Option<BlockId> {
+    if lines.is_empty() {
+        return None;
+    }
+    let mut jump = None;
+    egui::ScrollArea::vertical()
+        .id_salt("outcome")
+        .max_height(96.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for line in lines {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(8.0);
+                    let color = if line.accent {
+                        theme::WARM_ACCENT_TEXT
+                    } else {
+                        theme::TAB_ACTIVE
+                    };
+                    let mut label =
+                        egui::Label::new(egui::RichText::new(&line.text).size(13.0).color(color))
+                            .wrap();
+                    if line.jump.is_some() {
+                        label = label.sense(egui::Sense::click());
+                    }
+                    let resp = ui.add(label);
+                    if let Some(target) = line.jump
+                        && resp
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                    {
+                        jump = Some(target);
+                    }
+                });
+            }
+        });
+    jump
+}
+
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if !self.docked {
@@ -771,7 +855,7 @@ impl eframe::App for OverlayApp {
                                 left: 0,
                                 right: 0,
                                 top: 0,
-                                bottom: 10,
+                                bottom: 8,
                             }),
                     )
                     .show(ui, |ui| {
@@ -786,14 +870,18 @@ impl eframe::App for OverlayApp {
                                 can_edit_economy,
                             );
                         }
-                        ui.add_space(10.0);
+                        ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            ui.add_space(10.0);
-                            ui.label(theme::row_label(apply::indicator(self.apply_state)));
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new(apply::indicator(self.apply_state))
+                                    .size(14.0)
+                                    .color(theme::TAB_ACTIVE),
+                            );
                         });
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
-                            ui.add_space(10.0);
+                            ui.add_space(8.0);
                             if ui
                                 .add_enabled(actions.add_rule, egui::Button::new("+ ADD RULE"))
                                 .clicked()
@@ -852,113 +940,60 @@ impl eframe::App for OverlayApp {
                                 self.run_apply();
                             }
                         });
-                        // The sync's own status line. Rendered before the Apply message so a fresh
-                        // sync result is not hidden underneath a stale Apply one.
-                        match self.economy.state() {
-                            economy::SyncState::Idle => {}
+                        // Every message lives in one capped area so a long one can never push
+                        // the buttons or the list off screen.
+                        let sync_status = match self.economy.state() {
+                            economy::SyncState::Idle => None,
                             economy::SyncState::Running => {
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    ui.add_space(10.0);
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new("Fetching economy prices\u{2026}")
-                                                .color(theme::TAB_ACTIVE),
-                                        )
-                                        .wrap(),
-                                    );
-                                });
+                                Some(("Fetching economy prices\u{2026}".to_string(), false))
                             }
                             economy::SyncState::Finished(outcome) => {
-                                ui.add_space(4.0);
-                                let colour = if outcome.is_failure() {
-                                    theme::WARM_ACCENT
-                                } else {
-                                    theme::TAB_ACTIVE
-                                };
-                                let text = outcome.message().to_string();
-                                ui.horizontal(|ui| {
-                                    ui.add_space(10.0);
-                                    ui.add(
-                                        egui::Label::new(egui::RichText::new(text).color(colour))
-                                            .wrap(),
-                                    );
-                                });
+                                Some((outcome.message().to_string(), outcome.is_failure()))
                             }
-                        }
-
-                        if let Some(message) = &self.apply_message {
-                            let text_color =
-                                if self.apply_state == ApplyState::Applied && !self.needs_reload {
-                                    theme::LABEL_TAN
-                                } else {
-                                    theme::WARM_ACCENT
-                                };
-                            ui.horizontal_wrapped(|ui| {
-                                ui.add_space(10.0);
-                                ui.colored_label(text_color, message);
-                            });
-                        }
-                        if let Some(message) = &self.list_status {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.add_space(10.0);
-                                ui.colored_label(theme::TAB_ACTIVE, message);
-                            });
-                        }
-                        // The grammar gate, as a clickable line: jumps to the first offending rule.
-                        if let Some(first) = &first_blocking {
-                            let text = apply::invalid_blocks_message(
-                                blocking,
-                                first.rule_index,
-                                first.diagnostic.line,
-                            );
-                            ui.horizontal_wrapped(|ui| {
-                                ui.add_space(10.0);
-                                let label = egui::Label::new(
-                                    egui::RichText::new(text).color(theme::WARM_ACCENT),
-                                )
-                                .sense(egui::Sense::click());
-                                if ui
-                                    .add(label)
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
-                                    jump_to = Some(first.block);
-                                }
-                            });
-                        }
-                        // Unknown styles never block Apply; the line only points at the first one.
-                        if let Some((first_rule, first_id)) = unknown_styles.first() {
-                            let text =
-                                apply::unknown_styles_message(unknown_styles.len(), *first_rule);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.add_space(10.0);
-                                let label = egui::Label::new(
-                                    egui::RichText::new(text).color(theme::WARM_ACCENT_TEXT),
-                                )
-                                .sense(egui::Sense::click());
-                                if ui
-                                    .add(label)
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
-                                    jump_to = Some(*first_id);
-                                }
-                            });
+                        };
+                        let apply_line = self.apply_message.as_ref().map(|m| {
+                            let ok = self.apply_state == ApplyState::Applied && !self.needs_reload;
+                            (m.clone(), !ok)
+                        });
+                        let gate = first_blocking.as_ref().map(|first| {
+                            (
+                                apply::invalid_blocks_message(
+                                    blocking,
+                                    first.rule_index,
+                                    first.diagnostic.line,
+                                ),
+                                first.block,
+                            )
+                        });
+                        let unknown = unknown_styles.first().map(|(rule, id)| {
+                            (
+                                apply::unknown_styles_message(unknown_styles.len(), *rule),
+                                *id,
+                            )
+                        });
+                        let lines = outcome_lines(
+                            self.list_status.clone(),
+                            apply_line,
+                            sync_status,
+                            gate,
+                            unknown,
+                        );
+                        if let Some(target) = outcome_area(ui, &lines) {
+                            jump_to = Some(target);
                         }
                     });
 
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 let total_rules = self.working.as_ref().map_or(0, |w| w.rows().len());
                 let shown_rules = match &mut self.working {
                     Some(w) => w.matches(&self.query).len(),
                     None => 0,
                 };
                 ui.horizontal(|ui| {
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
                     ui.label(theme::section_header("FILTER"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(10.0);
+                        ui.add_space(8.0);
                         ui.label(
                             egui::RichText::new(rule_count_text(
                                 total_rules,
@@ -969,13 +1004,13 @@ impl eframe::App for OverlayApp {
                         );
                     });
                 });
-                ui.add_space(6.0);
+                ui.add_space(8.0);
 
                 // Status block: root, filter path and state, v0.4 notice.
                 let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
                 let mut lines: Vec<(egui::Color32, String)> = Vec::new();
                 if let Err(message) = &self.root {
-                    lines.push((theme::WARM_ACCENT, message.clone()));
+                    lines.push((theme::WARM_ACCENT_TEXT, message.clone()));
                 }
                 if let Ok(loaded) = &self.filter {
                     lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
@@ -984,7 +1019,7 @@ impl eframe::App for OverlayApp {
                         _ => apply::filter_state_message(state, false),
                     };
                     let colour = if state == FilterState::Damaged {
-                        theme::WARM_ACCENT
+                        theme::WARM_ACCENT_TEXT
                     } else {
                         theme::LABEL_TAN
                     };
@@ -1000,7 +1035,7 @@ impl eframe::App for OverlayApp {
                 }
                 for (colour, text) in lines {
                     ui.horizontal(|ui| {
-                        ui.add_space(10.0);
+                        ui.add_space(8.0);
                         ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).wrap());
                     });
                     ui.add_space(4.0);
@@ -1009,10 +1044,10 @@ impl eframe::App for OverlayApp {
                 match (&mut self.working, &self.filter) {
                     (Some(working), _) => {
                         ui.horizontal(|ui| {
-                            ui.add_space(10.0);
+                            ui.add_space(8.0);
                             rule_list::search_bar(ui, &mut self.query);
                         });
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                         let visible = working.matches(&self.query);
                         if working.rows().is_empty() {
                             centered_notice(
@@ -1042,7 +1077,7 @@ impl eframe::App for OverlayApp {
                     (None, Err(message)) => {
                         centered_notice(ui, "The filter could not be loaded.", message);
                         ui.horizontal(|ui| {
-                            ui.add_space(10.0);
+                            ui.add_space(8.0);
                             ui.label(
                                 egui::RichText::new("Fix the file and press RELOAD.")
                                     .color(theme::LABEL_TAN),
@@ -1171,6 +1206,67 @@ mod tests {
             old_bottom > screen_bottom,
             "the pre-fix arrangement was expected to push APPLY off-screen, but it did not \
              ({old_bottom} <= {screen_bottom}) -- this test is no longer exercising the defect"
+        );
+    }
+
+    #[test]
+    fn outcome_lines_order_and_jump_targets() {
+        use crate::overlay::app::outcome_lines;
+        let a = WorkingFilter::from_text(
+            "Show
+",
+        )
+        .rows()[0]
+            .id;
+        let lines = outcome_lines(
+            Some("list".into()),
+            Some(("apply".into(), false)),
+            Some(("sync".into(), true)),
+            Some(("gate".into(), a)),
+            Some(("unknown".into(), a)),
+        );
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["list", "apply", "sync", "gate", "unknown"]);
+        assert!(lines[3].jump.is_some() && lines[4].jump.is_some());
+        assert!(lines[0].jump.is_none() && !lines[0].accent && lines[2].accent);
+        assert!(outcome_lines(None, None, None, None, None).is_empty());
+    }
+
+    /// Long messages scroll inside the capped outcome area; APPLY stays on screen below it.
+    #[test]
+    fn outcome_area_is_capped_and_keeps_apply_on_screen() {
+        use crate::overlay::app::{OUTCOME_MAX_HEIGHT, OutcomeLine, outcome_area};
+        let long = "x ".repeat(95);
+        let lines: Vec<OutcomeLine> = (0..6)
+            .map(|_| OutcomeLine {
+                text: long.clone(),
+                accent: true,
+                jump: None,
+            })
+            .collect();
+        let ctx = egui::Context::default();
+        let mut area_h = 0.0_f32;
+        let mut apply_bottom = 0.0_f32;
+        let mut screen_bottom = 0.0_f32;
+        for _ in 0..4 {
+            ctx.run_ui(stripe_input(), |ui| {
+                screen_bottom = ui.max_rect().max.y;
+                egui::CentralPanel::default().show(ui, |ui| {
+                    egui::Panel::bottom(egui::Id::new("f")).show(ui, |ui| {
+                        let top = ui.cursor().min.y;
+                        outcome_area(ui, &lines);
+                        area_h = ui.cursor().min.y - top;
+                        apply_bottom = ui.button("APPLY").rect.max.y;
+                    });
+                });
+            })
+            .drop_without_applying_deltas();
+        }
+        assert!(area_h > 0.0, "outcome area drew nothing");
+        assert!(area_h <= OUTCOME_MAX_HEIGHT + 8.0, "area {area_h}");
+        assert!(
+            apply_bottom <= screen_bottom,
+            "{apply_bottom} {screen_bottom} {area_h}"
         );
     }
 

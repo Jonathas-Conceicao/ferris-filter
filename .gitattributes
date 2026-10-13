@@ -7,6 +7,7 @@
 
 # Parser fixtures must keep their exact bytes (CRLF/LF/no-final-newline); never renormalize.
 tests/fixtures/parser/*.filter -text
+tests/fixtures/v04-dynamic.filter -text
 
 # Treat audio as binary (no EOL conversion, no diff).
 *.mp3 binary

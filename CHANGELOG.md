@@ -49,16 +49,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error. The overlay's SYNC ECONOMY writes prices.json there. A relative `apply --tiers` /
   `--styles` resolves against that same folder, so `apply --tiers tiers-fallback.json` works from
   any working directory.
+- Overlay rule list over the parsed blocks of the game-folder filter: a virtualized list with search,
+  add, delete, duplicate, reorder, enable/disable via comment-out, Show/Hide/Minimal and Continue,
+  `#ff:name` naming, an economy footer row (Add / Remove section), Apply / Revert, and a grammar-error
+  gate that refuses Apply. `filter::Document` gained structural edits (append before the economy
+  section, remove, duplicate, move, keyword, Continue); `dynamic::apply_edited` and
+  `dynamic::blocking_errors` back Apply. A rule's `#ff:style` tag is displayed, but its action is not
+  yet applied on Apply (Phase 20).
 - One-time conversion of a v0.4 `dynamic.filter` on its first apply (markers added, `Show # <name>`
   names kept as `#ff:name`).
 
 ### Changed
 
+- APPLY no longer requires an economy section; the ADD ECONOMY SECTION button moved into the
+  economy footer row; the overlay's v0.4 JSON-rule modules (edit, rule editor, view model) were removed.
 - **BREAKING:** the game-folder filter is now the only store. `dynamic.json` and
   `dynamic_base.json` are gone (the template survives only as the test fixture
   `tests/fixtures/v04-dynamic-base.json`); `apply --reset`, `--base`, `--store` and `--dest` are
   removed; plain `apply` refreshes only the economy section of an existing filter. The overlay's
-  rule editor is temporarily replaced by a status notice until the next phase. A leftover
+  rule editor returned as the rule list over the filter's parsed blocks (see Added). A leftover
   repo-root `dynamic.json` is no longer read and can be deleted; it stays git-ignored so it is
   never committed. `*.ffbak` backups are git-ignored too.
 - **BREAKING:** `config.json` and `dynamic_base.json` no longer have a `styles` section. A config

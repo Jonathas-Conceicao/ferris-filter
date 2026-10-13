@@ -33,7 +33,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
 | `ferrisfilter apply` | `ff-cli apply [--filter <path>] [--add-economy \| --remove-economy] [--tiers <path>] [--styles <path>]`. Refreshes the economy section of the filter at `--filter` (default `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2\dynamic.filter`). Plain apply only refreshes an existing section and **never adds one**; `--add-economy` creates it at the end of the file, `--remove-economy` deletes it. The old reset, base, store and dest flags no longer exist. **App root:** apply and the overlay find `styles.json` / `tiers.json` / `prices.json` via `FERRISFILTER_HOME`, else by walking up from the exe's folder to the one holding `styles.json` (only `styles.json` marks it — a stray `config.json` is not a marker), else the working directory, else an error. A relative `--tiers`/`--styles` given to apply also resolves against the app root (`--filter` stays working-directory relative). `generate`, `install` and `sync` stay working-directory relative, so `sync` run elsewhere writes `prices.json` there while apply reads the app root's. |
 | `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |
-| `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. Since Phase 18 it drives the game-folder `dynamic.filter` (Apply / Add economy section / Reload / Sync economy); the rule editor returns in Phase 19 — see the overlay note below. |
+| `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. Since Phase 18 it drives the game-folder `dynamic.filter` as a rule list over its parsed blocks (add, delete, duplicate, reorder, enable/disable, Show/Hide/Minimal + Continue, naming; Apply / Revert / Reload / Sync economy) — see the overlay note below. |
 | `ff-cli` (binary, v0.4) | The short-name console CLI — identical behavior to `ferrisfilter`, just a shorter name to type. Holds the console shim body `ff` used to have before it became the GUI binary. |
 | `ferrisfilter` (binary) | The long-name console CLI, unchanged: `generate` / `sync` / `install` / `apply`. |
 | `CLAUDE.md` | This file — the filter-syntax reference so we rarely need to re-fetch the docs. |
@@ -48,20 +48,30 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > stripe's own `✕` only **hides** it, and the system tray icon's **Quit** is the only way to exit
 > the process.
 >
-> **The overlay between Phase 18 and Phase 19:** the overlay now treats the game-folder
-> `dynamic.filter` as its store (see the `dynamic.filter` row above); `dynamic.json`, Revert and the
-> in-memory rule edits are gone. The rule editor is **temporarily replaced by a status notice**
-> ("Rule editing returns in the next update.") until Phase 19 brings the rule list back on top of the
-> filter parser. Until then the stripe offers only **APPLY** (refresh the economy section of the
-> loaded filter), **ADD ECONOMY SECTION** (shown for a missing or section-less filter; APPLY never
-> creates a section), **RELOAD** (re-resolves the FerrisFilter folder and re-reads the file; offered
-> after an APPLY was refused because the file changed on disk, and whenever the folder was not
-> found, the filter could not be loaded, or its economy markers are damaged) and **SYNC ECONOMY**. Opening the overlay never writes: a v0.4 filter is announced as
-> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. PoE2
-> never re-reads a filter on its own, so after every successful Apply reload via **Options → Game →
-> Item Filter → Refresh**. (The legacy rule-editor modules `edit.rs`, `rule_editor.rs` and
-> `view_model.rs` are still compiled and unit-tested against `tests/fixtures/v04-dynamic-base.json`;
-> Phase 19 replaces them.)
+> **The rule list (Phase 19):** the overlay treats the game-folder `dynamic.filter` as its store (see
+> the `dynamic.filter` row above); there is no `dynamic.json`. Every block of the loaded filter is a
+> row in a flat, virtualized list (responsive on the ~500-block NeverSink/FilterBlade sample), with a
+> search box matching the `#ff:name`, the derived label and Class/BaseType values. A rule's name comes
+> only from its `#ff:name` line; foreign header text such as NeverSink's `$type->` tags is kept on disk
+> but never shown. An unnamed rule reads `<index>  Show · <first class> · BaseType ×N`. Rows expand in
+> place (one at a time) with NAME, ACTION (Show / Hide / Minimal plus a Continue checkbox; locked, with
+> a note, when the rule carries a `#ff:style` tag, since the style decides Show or Hide), read-only
+> CONDITIONS (editing arrives in a later phase), and Duplicate / Delete (inline confirm). Arrows reorder
+> (disabled while searching; a move across a Continue rule is flagged `moved across Continue`). The
+> circular toggle comments a block out or back in; commented-out blocks load as disabled rules, and a
+> commented block that is not valid grammar is flagged `can't enable`. Enabled rules with grammar
+> errors are flagged and **APPLY is refused** until they are fixed or disabled (warnings are flagged
+> but do not block). **+ ADD RULE** appends an empty `Show` rule before the economy section. The
+> economy blocks are never listed: a footer row shows `+ N locked rule blocks (economy)` with Remove,
+> or **Add economy section** when absent. All edits stay in memory until **APPLY** writes them (a
+> filter without an economy section can be applied); **REVERT** re-reads the last applied text,
+> **RELOAD** re-reads the file and discards unapplied edits (also offered when the folder was not
+> found, the filter could not be loaded, or APPLY was refused because the file changed on disk), and
+> **SYNC ECONOMY** is described below. Opening the overlay never writes: a v0.4 filter is announced as
+> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. A rule's
+> `#ff:style` tag is displayed, but applying its action on Apply arrives in Phase 20. PoE2 never
+> re-reads a filter on its own, so after every successful Apply reload via **Options → Game → Item
+> Filter → Refresh**.
 
 > **Economy sync from the overlay (v0.4):** a **SYNC ECONOMY** button beside Apply refreshes
 > `prices.json` in the app root (see the App root note in the `ferrisfilter apply` row), on a worker thread so the stripe never freezes on network

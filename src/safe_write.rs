@@ -103,6 +103,44 @@ fn is_retriable(e: &io::Error) -> bool {
     matches!(e.raw_os_error(), Some(5 | 32 | 33))
 }
 
+/// Create the one-time backup `bp` holding `original`. Returns `Ok(true)` when this call created
+/// it and `Ok(false)` when a backup file already exists (it is never overwritten).
+///
+/// The bytes go to a same-directory temp file, are synced, and only then published under the
+/// final name without clobbering. A write that fails partway therefore never leaves a truncated
+/// `.ffbak` behind to block every later backup: the temp file is deleted on drop. `write` is the
+/// byte writer, injectable so tests can fail it partway.
+fn create_backup_with(
+    bp: &Path,
+    dest_dir: &Path,
+    original: &[u8],
+    write: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
+) -> Result<bool, WriteError> {
+    let err = |source: io::Error| WriteError::Backup {
+        path: bp.display().to_string(),
+        source,
+    };
+    if bp.is_file() {
+        return Ok(false);
+    }
+    if bp.exists() {
+        return Err(err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "the backup path exists and is not a file",
+        )));
+    }
+    let mut t = tempfile::NamedTempFile::new_in(dest_dir).map_err(err)?;
+    write(t.as_file_mut(), original)
+        .and_then(|_| t.as_file().sync_all())
+        .map_err(err)?;
+    match t.persist_noclobber(bp) {
+        Ok(_) => Ok(true),
+        // Lost a race with another writer that published a backup first: keep theirs.
+        Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists && bp.is_file() => Ok(false),
+        Err(e) => Err(err(e.error)),
+    }
+}
+
 fn write_guarded_with(
     path: &Path,
     loaded: Option<&[u8]>,
@@ -150,23 +188,8 @@ fn write_guarded_with(
     let mut backup = None;
     if let Some(original) = loaded {
         let bp = backup_path(path);
-        match fs::OpenOptions::new().write(true).create_new(true).open(&bp) {
-            Ok(mut f) => {
-                f.write_all(original)
-                    .and_then(|_| f.sync_all())
-                    .map_err(|e| WriteError::Backup {
-                        path: bp.display().to_string(),
-                        source: e,
-                    })?;
-                backup = Some(bp);
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && bp.is_file() => {}
-            Err(e) => {
-                return Err(WriteError::Backup {
-                    path: bp.display().to_string(),
-                    source: e,
-                })
-            }
+        if create_backup_with(&bp, dest_dir, original, |f, bytes| f.write_all(bytes))? {
+            backup = Some(bp);
         }
     }
 
@@ -298,6 +321,27 @@ mod tests {
         assert!(matches!(r, Err(WriteError::Backup { .. })), "{r:?}");
         assert_eq!(fs::read(&p).unwrap(), b"A");
         assert_eq!(names(t.path()), vec!["x.filter", "x.filter.ffbak"]);
+    }
+
+    #[test]
+    fn failed_backup_write_leaves_no_partial_ffbak() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("x.filter");
+        fs::write(&p, "ABCDEF").unwrap();
+        let bp = backup_path(&p);
+
+        // Fail partway: half the bytes land, then the write errors.
+        let r = create_backup_with(&bp, t.path(), b"ABCDEF", |f, bytes| {
+            f.write_all(&bytes[..3])?;
+            Err(io::Error::other("disk full"))
+        });
+        assert!(matches!(r, Err(WriteError::Backup { .. })), "{r:?}");
+        assert_eq!(names(t.path()), vec!["x.filter"], "no .ffbak and no temp file left");
+
+        // The next write still gets a complete backup.
+        let r = write_guarded(&p, Some(b"ABCDEF"), b"B").unwrap();
+        assert_eq!(r, WriteOutcome::Written { backup: Some(bp.clone()) });
+        assert_eq!(fs::read(&bp).unwrap(), b"ABCDEF");
     }
 
     #[test]

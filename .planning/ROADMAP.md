@@ -160,7 +160,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 18-06-PLAN.md — Overlay re-pointed at the app root and loaded filter; JSON store deleted
+- [x] 18-06-PLAN.md — Overlay re-pointed at the app root and loaded filter; JSON store deleted
 
 **Wave 5** *(blocked on Wave 4 completion)*
 

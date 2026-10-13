@@ -206,55 +206,58 @@ impl MinimapShape {
 //   8. DisableDropSound                 — if disable_drop_sound == true
 // ---------------------------------------------------------------------------
 
-fn emit_style_actions(out: &mut String, style: &Style) {
-    // 1. Beam (PlayEffect)
+/// Filter action lines for a style (no indent), in the canonical order above.
+///
+/// The single definition of what a style emits: `generate` indents these two spaces, and the
+/// styled-rule rewrite (`crate::styled`) splices them into hand-authored rules.
+pub fn style_action_lines(style: &Style) -> Vec<String> {
+    let mut lines = Vec::new();
     if let Some(beam) = &style.beam {
         let temp = if beam.temp { " Temp" } else { "" };
-        writeln!(out, "  PlayEffect {}{}", beam.color.as_filter_str(), temp).unwrap();
+        lines.push(format!("PlayEffect {}{}", beam.color.as_filter_str(), temp));
     }
-    // 2. Minimap icon
     if let Some(mm) = &style.minimap {
-        writeln!(
-            out,
-            "  MinimapIcon {} {} {}",
+        lines.push(format!(
+            "MinimapIcon {} {} {}",
             mm.size,
             mm.color.as_filter_str(),
             mm.shape.as_filter_str()
-        )
-        .unwrap();
+        ));
     }
-    // 3. Text color
     if let Some(rgb) = style.text {
-        writeln!(out, "  SetTextColor {} {} {} 255", rgb[0], rgb[1], rgb[2]).unwrap();
+        lines.push(format!("SetTextColor {} {} {} 255", rgb[0], rgb[1], rgb[2]));
     }
-    // 4. Background color
     if let Some(rgb) = style.background {
-        writeln!(
-            out,
-            "  SetBackgroundColor {} {} {} 255",
+        lines.push(format!(
+            "SetBackgroundColor {} {} {} 255",
             rgb[0], rgb[1], rgb[2]
-        )
-        .unwrap();
+        ));
     }
-    // 5. Border color
     if let Some(rgb) = style.border {
-        writeln!(out, "  SetBorderColor {} {} {} 255", rgb[0], rgb[1], rgb[2]).unwrap();
+        lines.push(format!(
+            "SetBorderColor {} {} {} 255",
+            rgb[0], rgb[1], rgb[2]
+        ));
     }
-    // 6. Font size
     if let Some(font) = style.font {
-        writeln!(out, "  SetFontSize {}", font).unwrap();
+        lines.push(format!("SetFontSize {}", font));
     }
-    // 7. Sound
     if let Some(sound) = &style.sound {
         if let Some(custom) = &sound.custom {
-            writeln!(out, "  CustomAlertSound \"{}\" {}", custom, sound.vol).unwrap();
+            lines.push(format!("CustomAlertSound \"{}\" {}", custom, sound.vol));
         } else if let Some(id) = sound.id {
-            writeln!(out, "  PlayAlertSound {} {}", id, sound.vol).unwrap();
+            lines.push(format!("PlayAlertSound {} {}", id, sound.vol));
         }
     }
-    // 8. DisableDropSound
     if style.disable_drop_sound {
-        writeln!(out, "  DisableDropSound").unwrap();
+        lines.push("DisableDropSound".to_string());
+    }
+    lines
+}
+
+fn emit_style_actions(out: &mut String, style: &Style) {
+    for line in style_action_lines(style) {
+        writeln!(out, "  {}", line).unwrap();
     }
 }
 
@@ -658,6 +661,38 @@ fn derive_block_label(category: &str, tier: &str, class: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn committed_styles() -> StyleSet {
+        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json")).unwrap()
+    }
+
+    #[test]
+    fn style_action_lines_full_style_in_canonical_order() {
+        let styles = committed_styles();
+        let lines = style_action_lines(styles.get("S").unwrap());
+        assert_eq!(
+            lines,
+            vec![
+                "PlayEffect Pink",
+                "MinimapIcon 1 Pink Circle",
+                "SetTextColor 255 121 198 255",
+                "SetBackgroundColor 40 42 54 255",
+                "SetBorderColor 255 121 198 255",
+                "SetFontSize 37",
+                "CustomAlertSound \"uwu.mp3\" 300",
+            ]
+        );
+    }
+
+    #[test]
+    fn style_action_lines_hidden_and_unchanged() {
+        let styles = committed_styles();
+        assert_eq!(
+            style_action_lines(styles.get("hidden").unwrap()),
+            vec!["SetFontSize 21", "DisableDropSound"]
+        );
+        assert!(style_action_lines(styles.get("unchanged").unwrap()).is_empty());
+    }
     use crate::models::config::Config;
     use crate::models::tiers::ValidatedTiers;
     use crate::models::{prices::PricesFile, tiers::TierEntry};

@@ -120,8 +120,10 @@ pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
 ///   store seeded from the old template and never restyled) — the section is dropped, since
 ///   nothing in it would be lost. `overlay::store::save` never writes `styles`, so the next
 ///   Apply rewrites the store without it.
-/// - any entry is missing from, or differs from, the styles file — a load error naming those
-///   styles, because silently ignoring them would hide an edit that no longer does anything.
+/// - any entry is missing from, differs from, or does not parse as a style for the styles file —
+///   a load error naming those styles, because silently ignoring them would hide an edit that no
+///   longer does anything. The one exception is a `null` entry for a name the styles file does
+///   not define (pre-Phase-17 saves wrote `"craftable": null`): it carries nothing to lose.
 ///
 /// # Errors
 ///
@@ -155,8 +157,16 @@ fn check_legacy_styles(
     let differing: Vec<String> = entries
         .iter()
         .filter(|(name, value)| {
-            let inline = serde_json::from_value::<Style>((*value).clone()).ok();
-            inline.as_ref() != styles.get(name)
+            if value.is_null() {
+                // Old saves wrote `"craftable": null` for an unset optional style: nothing to
+                // lose, unless the styles file defines the name (then the inline copy disagrees).
+                return styles.get(name).is_some();
+            }
+            match serde_json::from_value::<Style>((*value).clone()) {
+                Ok(inline) => Some(&inline) != styles.get(name),
+                // Unparseable user content is never silently discarded.
+                Err(_) => true,
+            }
         })
         .map(|(name, _)| name.clone())
         .collect();
@@ -221,6 +231,60 @@ mod tests {
             matches!(err, LoadError::Styles(StyleError::InlineStylesSection { .. })),
             "{err}"
         );
+    }
+
+    /// Load the committed `config.json` with `styles` replaced by `inline`.
+    fn load_with_inline_styles(inline: serde_json::Value) -> Result<Config, LoadError> {
+        let dir = tempfile::tempdir().unwrap();
+        let styles_p = dir.path().join("styles.json");
+        std::fs::write(&styles_p, STYLES).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/config.json"
+        )))
+        .unwrap();
+        v["styles"] = inline;
+        let cfg_p = dir.path().join("config.json");
+        std::fs::write(&cfg_p, v.to_string()).unwrap();
+        load_config(cfg_p.to_str().unwrap(), styles_p.to_str().unwrap())
+    }
+
+    fn rejected_names(err: LoadError) -> Vec<String> {
+        match err {
+            LoadError::Styles(StyleError::InlineStylesSection { differing, .. }) => differing,
+            other => panic!("expected InlineStylesSection, got {other}"),
+        }
+    }
+
+    /// Iteration-2 WR-01: an inline entry that does not parse as a style is rejected by name,
+    /// not treated as equal to an absent style and dropped.
+    #[test]
+    fn load_config_rejects_an_unparseable_inline_style() {
+        let err = load_with_inline_styles(serde_json::json!({ "Bogus": 7 })).unwrap_err();
+        assert_eq!(rejected_names(err), vec!["Bogus".to_string()]);
+    }
+
+    #[test]
+    fn load_config_rejects_an_inline_style_with_a_misspelled_field() {
+        let err = load_with_inline_styles(serde_json::json!({
+            "craftable": { "fnt": 30, "action": "Show" }
+        }))
+        .unwrap_err();
+        assert_eq!(rejected_names(err), vec!["craftable".to_string()]);
+    }
+
+    /// Pre-Phase-17 saves wrote `"craftable": null`; that carries nothing and still loads.
+    #[test]
+    fn load_config_accepts_a_null_inline_entry_for_an_undefined_style() {
+        let cfg = load_with_inline_styles(serde_json::json!({ "craftable": null })).unwrap();
+        assert_eq!(cfg.styles.len(), 12);
+    }
+
+    /// A `null` entry for a style the styles file defines disagrees with it.
+    #[test]
+    fn load_config_rejects_a_null_inline_entry_for_a_defined_style() {
+        let err = load_with_inline_styles(serde_json::json!({ "S": null })).unwrap_err();
+        assert_eq!(rejected_names(err), vec!["S".to_string()]);
     }
 
     #[test]

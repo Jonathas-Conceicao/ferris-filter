@@ -429,7 +429,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 4/4 plans complete
+**Plans:** 7/7 plans complete
 
 Plans:
 

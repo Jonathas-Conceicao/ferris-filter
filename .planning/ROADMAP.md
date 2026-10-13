@@ -275,7 +275,7 @@ Plans:
 
 **Wave 2** *(blocked on 21-01, 21-02)*
 
-- [ ] 21-04-PLAN.md — Pure ConfigState model: drafts, dirty count, tier validation, Apply/Revert/Reload/Overwrite, outside-edit guard
+- [x] 21-04-PLAN.md — Pure ConfigState model: drafts, dirty count, tier validation, Apply/Revert/Reload/Overwrite, outside-edit guard
 
 **Wave 3** *(blocked on 21-03, 21-04)*
 
@@ -309,7 +309,7 @@ Plans:
 | 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
 | 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
-| 21. Overlay Configuration Tab | 3/6 | In Progress|  |
+| 21. Overlay Configuration Tab | 4/6 | In Progress|  |
 | 22. Single-Instance Overlay | 0/? | Not started | - |
 
 ## Backlog

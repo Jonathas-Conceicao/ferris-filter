@@ -54,8 +54,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > ("Rule editing returns in the next update.") until Phase 19 brings the rule list back on top of the
 > filter parser. Until then the stripe offers only **APPLY** (refresh the economy section of the
 > loaded filter), **ADD ECONOMY SECTION** (shown for a missing or section-less filter; APPLY never
-> creates a section), **RELOAD** (re-reads the file after an APPLY was refused because it changed on
-> disk) and **SYNC ECONOMY**. Opening the overlay never writes: a v0.4 filter is announced as
+> creates a section), **RELOAD** (re-resolves the FerrisFilter folder and re-reads the file; offered
+> after an APPLY was refused because the file changed on disk, and whenever the folder was not
+> found, the filter could not be loaded, or its economy markers are damaged) and **SYNC ECONOMY**. Opening the overlay never writes: a v0.4 filter is announced as
 > "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. PoE2
 > never re-reads a filter on its own, so after every successful Apply reload via **Options → Game →
 > Item Filter → Refresh**. (The legacy rule-editor modules `edit.rs`, `rule_editor.rs` and

@@ -109,7 +109,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > lands after the game has taken focus (which hides the stripe) and is shown on the next reveal. An
 > "already up to date" or refused Apply sends nothing. When nothing is sent the outcome keeps the **Options → Game → Item
 > Filter → Refresh** reminder plus the reason (`game not running`, `reload setting is off`, `a reload
-> is already in progress`, `could not reload in game: <cause>`).
+> is already in progress`, `the overlay window is not ready`, `could not reload in game: <cause>`).
 
 > **The CONFIG tab (Phase 21):** the stripe has **RULES | CONFIG** tabs under the header. Switching tabs
 > never applies or discards anything; a tab label shows ` *` when the other tab has unapplied edits.

@@ -885,11 +885,13 @@ impl OverlayApp {
             self.reload.is_running(),
             win::find_game_window,
         );
-        let owner = self.window.as_ref().map(win::clipboard_owner);
+        // No cached stripe window means no clipboard owner: skip rather than fall back to an
+        // ownerless clipboard, whose write fails after emptying it (review WR-02).
+        let decision = chat::with_owner(decision, self.window.as_ref().map(win::clipboard_owner));
         match outcome {
             ApplyOutcome::Written(path) => {
                 match decision {
-                    Some(chat::Decision::Send(game)) => {
+                    Some(chat::Decision::Send((game, owner))) => {
                         let interim = format!("{}{extras}", apply::reloading_message(&path));
                         self.apply_message = Some(interim.clone());
                         let repaint = ctx.clone();
@@ -2245,6 +2247,7 @@ mod tests {
             SkipReason::SettingOff,
             SkipReason::Busy,
             SkipReason::GameNotRunning,
+            SkipReason::NoWindow,
         ] {
             let m = skipped_reload_message(path, " [x]", reason);
             assert!(m.contains("Options > Game > Item Filter > Refresh"), "{m}");

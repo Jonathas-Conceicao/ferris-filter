@@ -83,6 +83,9 @@ pub const REASON_GAME_NOT_RUNNING: &str = "game not running";
 pub const REASON_SETTING_OFF: &str = "reload setting is off";
 /// Reason shown when no reload was sent because another one is still in flight.
 pub const REASON_BUSY: &str = "a reload is already in progress";
+/// Reason shown when no reload was sent because the stripe's window handle is not available, so
+/// the clipboard could not be used safely.
+pub const REASON_NO_WINDOW: &str = "the overlay window is not ready";
 
 /// Reason shown when sending the reload to the game failed.
 pub fn reason_send_failed(cause: &str) -> String {

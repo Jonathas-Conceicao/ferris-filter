@@ -58,6 +58,33 @@ pub fn is_game_window(title: &str, image_path: Option<&str>) -> bool {
     is_game_title(title) && image_path.is_some_and(is_game_exe)
 }
 
+/// Why a clipboard write failed, and whether the user's clipboard had already been emptied by it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardWriteError {
+    pub message: String,
+    /// `true` once `EmptyClipboard` succeeded: the previous content is gone and only a restore
+    /// can bring it back (review WR-02).
+    pub emptied: bool,
+}
+
+impl ClipboardWriteError {
+    /// A failure before anything on the clipboard changed.
+    pub fn untouched(message: impl Into<String>) -> Self {
+        ClipboardWriteError {
+            message: message.into(),
+            emptied: false,
+        }
+    }
+
+    /// A failure after the clipboard was emptied.
+    pub fn emptied(message: impl Into<String>) -> Self {
+        ClipboardWriteError {
+            message: message.into(),
+            emptied: true,
+        }
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     // Reached via eframe's own re-export (`eframe::wgpu::rwh`, wgpu's alias for
@@ -388,7 +415,8 @@ mod imp {
 
     /// The stripe's window, passed to `OpenClipboard`. Microsoft documents that `EmptyClipboard`
     /// after `OpenClipboard(NULL)` leaves the clipboard ownerless and `SetClipboardData` then
-    /// fails; `None` (no window cached yet) falls back to null.
+    /// fails, so there is no null fallback: without a cached stripe window no send is attempted
+    /// at all (review WR-02).
     #[derive(Clone, Copy)]
     pub struct ClipboardOwner(HWND);
 
@@ -413,11 +441,11 @@ mod imp {
         }
     }
 
-    fn open_clipboard(owner: Option<ClipboardOwner>) -> Result<ClipboardGuard, String> {
-        let hwnd = owner.map_or(std::ptr::null_mut(), |o| o.0);
+    fn open_clipboard(owner: ClipboardOwner) -> Result<ClipboardGuard, String> {
         for attempt in 0..5 {
-            // SAFETY: `OpenClipboard` takes a window handle or null; failure is reported by 0.
-            if unsafe { OpenClipboard(hwnd) } != 0 {
+            // SAFETY: `OpenClipboard` takes a window handle (our own stripe's); failure is
+            // reported by 0.
+            if unsafe { OpenClipboard(owner.0) } != 0 {
                 return Ok(ClipboardGuard);
             }
             if attempt < 4 {
@@ -429,7 +457,7 @@ mod imp {
 
     /// The clipboard's Unicode text, or `Ok(None)` when it holds none. The text is returned to
     /// the caller only, never logged.
-    pub fn read_clipboard_text(owner: Option<ClipboardOwner>) -> Result<Option<String>, String> {
+    pub fn read_clipboard_text(owner: ClipboardOwner) -> Result<Option<String>, String> {
         let _guard = open_clipboard(owner)?;
         // SAFETY: plain value argument; the clipboard is open.
         if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } == 0 {
@@ -461,18 +489,25 @@ mod imp {
     }
 
     /// Replaces the clipboard with `text` and returns the sequence number read after closing it.
-    pub fn write_clipboard_text(owner: Option<ClipboardOwner>, text: &str) -> Result<u32, String> {
+    /// A failure after `EmptyClipboard` succeeded reports `emptied: true`, so the caller knows
+    /// the user's clipboard is gone and must be restored (review WR-02).
+    pub fn write_clipboard_text(
+        owner: ClipboardOwner,
+        text: &str,
+    ) -> Result<u32, super::ClipboardWriteError> {
+        use super::ClipboardWriteError as E;
         let units: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
         {
-            let _guard = open_clipboard(owner)?;
+            let _guard = open_clipboard(owner).map_err(E::untouched)?;
             // SAFETY: the clipboard is open.
             if unsafe { EmptyClipboard() } == 0 {
-                return Err("could not clear the clipboard".into());
+                return Err(E::untouched("could not clear the clipboard"));
             }
+            // From here on the user's clipboard content is gone; every error says so.
             // SAFETY: plain values; null (failure) is handled below.
             let h = unsafe { GlobalAlloc(GMEM_MOVEABLE, units.len() * 2) };
             if h.is_null() {
-                return Err("could not allocate clipboard memory".into());
+                return Err(E::emptied("could not allocate clipboard memory"));
             }
             // SAFETY: `h` is a fresh moveable block of `units.len() * 2` bytes.
             let dst = unsafe { GlobalLock(h) } as *mut u16;
@@ -481,7 +516,7 @@ mod imp {
                 unsafe {
                     GlobalFree(h);
                 }
-                return Err("could not lock clipboard memory".into());
+                return Err(E::emptied("could not lock clipboard memory"));
             }
             // SAFETY: `dst` points at `units.len()` writable units; the source is a live Vec and
             // the regions cannot overlap.
@@ -495,7 +530,7 @@ mod imp {
                 unsafe {
                     GlobalFree(h);
                 }
-                return Err("could not set the clipboard".into());
+                return Err(E::emptied("could not set the clipboard"));
             }
             // On success the system owns `h`; it must not be freed.
         }
@@ -503,7 +538,7 @@ mod imp {
     }
 
     /// Empties the clipboard.
-    pub fn clear_clipboard(owner: Option<ClipboardOwner>) -> Result<(), String> {
+    pub fn clear_clipboard(owner: ClipboardOwner) -> Result<(), String> {
         let _guard = open_clipboard(owner)?;
         // SAFETY: the clipboard is open.
         if unsafe { EmptyClipboard() } == 0 {
@@ -565,7 +600,7 @@ mod imp {
     #[derive(Clone, Copy)]
     pub struct ClipboardOwner;
 
-    /// No owner window off Windows.
+    /// Off Windows there is no window to own the clipboard.
     pub fn clipboard_owner(_w: &OverlayWindow) -> ClipboardOwner {
         ClipboardOwner
     }
@@ -586,20 +621,22 @@ mod imp {
     }
 
     /// Clipboard access is not supported off Windows.
-    pub fn read_clipboard_text(_owner: Option<ClipboardOwner>) -> Result<Option<String>, String> {
+    pub fn read_clipboard_text(_owner: ClipboardOwner) -> Result<Option<String>, String> {
         Err("not supported on this platform".into())
     }
 
     /// Clipboard access is not supported off Windows.
     pub fn write_clipboard_text(
-        _owner: Option<ClipboardOwner>,
+        _owner: ClipboardOwner,
         _text: &str,
-    ) -> Result<u32, String> {
-        Err("not supported on this platform".into())
+    ) -> Result<u32, super::ClipboardWriteError> {
+        Err(super::ClipboardWriteError::untouched(
+            "not supported on this platform",
+        ))
     }
 
     /// Clipboard access is not supported off Windows.
-    pub fn clear_clipboard(_owner: Option<ClipboardOwner>) -> Result<(), String> {
+    pub fn clear_clipboard(_owner: ClipboardOwner) -> Result<(), String> {
         Err("not supported on this platform".into())
     }
 

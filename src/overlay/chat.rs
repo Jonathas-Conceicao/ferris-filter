@@ -152,6 +152,8 @@ pub enum SkipReason {
     SettingOff,
     Busy,
     GameNotRunning,
+    /// The stripe's own window handle is not cached, so there is no clipboard owner.
+    NoWindow,
 }
 
 impl SkipReason {
@@ -161,6 +163,7 @@ impl SkipReason {
             SkipReason::SettingOff => apply::REASON_SETTING_OFF,
             SkipReason::Busy => apply::REASON_BUSY,
             SkipReason::GameNotRunning => apply::REASON_GAME_NOT_RUNNING,
+            SkipReason::NoWindow => apply::REASON_NO_WINDOW,
         }
     }
 }
@@ -195,6 +198,23 @@ pub fn decide<G>(
         Some(g) => Decision::Send(g),
         None => Decision::Skip(SkipReason::GameNotRunning),
     })
+}
+
+/// Pair a `Send` decision with the clipboard owner window. Without one the send is skipped
+/// ([`SkipReason::NoWindow`]): an ownerless `EmptyClipboard` makes the following clipboard write
+/// fail, which would lose the user's clipboard (review WR-02). Every other decision passes
+/// through unchanged.
+pub fn with_owner<G, O>(
+    decision: Option<Decision<G>>,
+    owner: Option<O>,
+) -> Option<Decision<(G, O)>> {
+    match decision? {
+        Decision::Send(game) => Some(match owner {
+            Some(o) => Decision::Send((game, o)),
+            None => Decision::Skip(SkipReason::NoWindow),
+        }),
+        Decision::Skip(reason) => Some(Decision::Skip(reason)),
+    }
 }
 
 /// Reported when the worker dies without sending a result.
@@ -255,10 +275,26 @@ impl ReloadSend {
 const MODIFIER_POLLS: u32 = 12;
 const MODIFIER_POLL_MS: u64 = 25;
 
+/// The clipboard sequence number the restore guard compares against after a `SetClipboard`
+/// step: ours on success. A failed write that had already emptied the clipboard still counts as
+/// ours (the sequence right after the failure), so the saved text is put back instead of the
+/// user's clipboard being lost (review WR-02). A write that failed before touching anything
+/// leaves the clipboard alone (`None`).
+fn ours_after_write(
+    result: &Result<u32, win::ClipboardWriteError>,
+    now: impl FnOnce() -> u32,
+) -> Option<u32> {
+    match result {
+        Ok(seq) => Some(*seq),
+        Err(e) if e.emptied => Some(now()),
+        Err(_) => None,
+    }
+}
+
 /// The production [`InputSink`] over the safe wrappers in `win.rs`. Never constructed in tests.
 pub struct WinSink {
     game: win::GameWindow,
-    owner: Option<win::ClipboardOwner>,
+    owner: win::ClipboardOwner,
     /// The clipboard text before our write; `Some(None)` means it held no text.
     saved: Option<Option<String>>,
     /// The clipboard sequence number right after our write.
@@ -266,7 +302,10 @@ pub struct WinSink {
 }
 
 impl WinSink {
-    pub fn new(game: win::GameWindow, owner: Option<win::ClipboardOwner>) -> Self {
+    /// `owner` is the stripe's own window; there is no ownerless fallback (an ownerless
+    /// `EmptyClipboard` makes the following `SetClipboardData` fail), so the caller skips the
+    /// send when no window is cached.
+    pub fn new(game: win::GameWindow, owner: win::ClipboardOwner) -> Self {
         WinSink {
             game,
             owner,
@@ -303,8 +342,9 @@ impl InputSink for WinSink {
                 Ok(())
             }
             Step::SetClipboard(text) => {
-                self.ours = Some(win::write_clipboard_text(self.owner, text)?);
-                Ok(())
+                let result = win::write_clipboard_text(self.owner, text);
+                self.ours = ours_after_write(&result, win::clipboard_sequence);
+                result.map(|_| ()).map_err(|e| e.message)
             }
             Step::Tap(k) => win::send_tap(k.vk()),
             Step::Chord(m, k) => win::send_chord(m.vk(), k.vk()),
@@ -315,12 +355,13 @@ impl InputSink for WinSink {
             Step::RestoreClipboard => {
                 let saved = self.saved.take();
                 let ours = self.ours.take();
-                // Only when nothing else wrote the clipboard since our write; otherwise leave
-                // whatever the user copied meanwhile alone. The saved text is never logged.
+                // Only when nothing else wrote the clipboard since our write (or our failed write
+                // that emptied it); otherwise leave whatever the user copied meanwhile alone. The
+                // saved text is never logged.
                 if ours == Some(win::clipboard_sequence()) {
                     match saved {
                         Some(Some(text)) => {
-                            win::write_clipboard_text(self.owner, &text)?;
+                            win::write_clipboard_text(self.owner, &text).map_err(|e| e.message)?;
                         }
                         Some(None) => win::clear_clipboard(self.owner)?,
                         None => {}
@@ -518,6 +559,48 @@ mod tests {
     }
 
     #[test]
+    fn clipboard_write_failure_restores_once_and_sends_no_key() {
+        let at = reload_steps()
+            .iter()
+            .position(|s| matches!(s, Step::SetClipboard(_)))
+            .unwrap();
+        let mut sink = FailingSink {
+            fail_at: at,
+            calls: vec![],
+        };
+        assert_eq!(execute(&mut sink, &reload_steps()), Err("boom".into()));
+        assert_eq!(restores(&sink.calls), 1);
+        assert_eq!(sink.calls.last(), Some(&Step::RestoreClipboard));
+        assert!(
+            !sink
+                .calls
+                .iter()
+                .any(|s| matches!(s, Step::Tap(_) | Step::Chord(..)))
+        );
+    }
+
+    #[test]
+    fn a_write_that_emptied_the_clipboard_still_counts_as_ours() {
+        use win::ClipboardWriteError as E;
+        // Success: the sequence the write returned; `now` is not consulted.
+        assert_eq!(
+            ours_after_write(&Ok(7), || panic!("not read on success")),
+            Some(7)
+        );
+        // Emptied, then failed: the restore must run, so the guard gets the current sequence
+        // (review WR-02: the user's clipboard must never be lost).
+        assert_eq!(
+            ours_after_write(&Err(E::emptied("could not set the clipboard")), || 9),
+            Some(9)
+        );
+        // Failed before touching anything (busy): leave the clipboard alone.
+        assert_eq!(
+            ours_after_write(&Err(E::untouched("the clipboard is busy")), || 9),
+            None
+        );
+    }
+
+    #[test]
     fn restore_failure_does_not_fail_the_send() {
         // Fail the last call, which is the final RestoreClipboard.
         let mut sink = FailingSink {
@@ -573,6 +656,28 @@ mod tests {
             SkipReason::GameNotRunning.text(),
             apply::REASON_GAME_NOT_RUNNING
         );
+        assert_eq!(SkipReason::NoWindow.text(), apply::REASON_NO_WINDOW);
+        assert!(apply::REASON_NO_WINDOW.is_ascii());
+    }
+
+    #[test]
+    fn a_send_without_a_clipboard_owner_is_skipped() {
+        assert_eq!(
+            with_owner(Some(Decision::Send(1u8)), Some('o')),
+            Some(Decision::Send((1u8, 'o')))
+        );
+        // Review WR-02: never fall back to an ownerless clipboard.
+        assert_eq!(
+            with_owner(Some(Decision::Send(1u8)), None::<char>),
+            Some(Decision::Skip(SkipReason::NoWindow))
+        );
+        for owner in [Some('o'), None] {
+            assert_eq!(
+                with_owner(Some(Decision::<u8>::Skip(SkipReason::SettingOff)), owner),
+                Some(Decision::Skip(SkipReason::SettingOff))
+            );
+            assert_eq!(with_owner(None::<Decision<u8>>, owner), None);
+        }
     }
 
     fn settle(r: &mut ReloadSend) -> Result<(), String> {

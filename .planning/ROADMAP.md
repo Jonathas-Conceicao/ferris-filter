@@ -415,10 +415,28 @@ Plans:
   7. The condition picker opens with every section collapsed
   8. Tray Quit with unapplied edits shows Apply & quit / Quit without applying / Cancel; Apply & quit quits only if the Apply succeeds; with nothing pending Quit exits immediately; Phase 22 shutdown ordering is kept
 
-**Plans**: 0 plans
+**Plans**: 9 plans
 Plans:
+**Wave 1**
 
-- [ ] TBD (run /gsd-plan-phase 26 to break down)
+- [ ] 26-01-PLAN.md — Style ids model: id field, deterministic load assignment, validation, tag resolution + retagging rewrite, rename_custom, committed styles.json ids (UAT3-02)
+- [ ] 26-02-PLAN.md — Pure rule-editor logic: BaseDefencePercentile removed, Defences picker entry, card_plan/presence/Between helpers (UAT3-05, UAT3-06)
+- [ ] 26-03-PLAN.md — Tray Quit confirm (pure quit_step + modal, Phase 22 order kept) and RowAction::InsertLineAfter (UAT3-08, UAT3-06)
+- [ ] 26-04-PLAN.md — First-click collapse root cause + regression test; operator on pending rows; picker sections collapsed (UAT3-04, UAT3-07)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 26-05-PLAN.md — Overlay models link by id: tag status, canonical tags on Apply, silent id persistence, ConfigState rename (UAT3-02, UAT3-03)
+- [ ] 26-06-PLAN.md — Picker greys present conditions and focuses them; one Defences card (UAT3-05, UAT3-06)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 26-07-PLAN.md — CONFIG styles table per group with Order column, inline rename, RULES follows the in-memory style set (UAT3-01, UAT3-02, UAT3-03)
+- [ ] 26-08-PLAN.md — Between card, switch to/from Between, loaded pairs keep bytes, Between in Defences (UAT3-06)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 26-09-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 26-MANUAL-VERIFICATION.md (UAT3-01..08)
 
 ### Progress
 

@@ -76,11 +76,13 @@ its rows.
 - Everything that today keys styles by name inside the overlay (rule tag status, style counts,
   visibility toggle, CONFIG edits) must resolve through the id where a tag is involved so a rename
   does not orphan rules.
-- **Committed styles.json**: the orchestrator (not the executors) adds the ids to the committed
-  `styles.json` after execution, without disturbing the author's uncommitted local edits to that
-  file. Executors must **not** edit or commit the repo-root `styles.json`, and tests must not
-  depend on the repo-root styles.json having ids (use in-memory/temp fixtures; tests that
-  `include_str!` styles.json must work with or without ids).
+- **Committed styles.json**: deliberately update the repo-root `styles.json` (the one allowed
+  edit to a committed config file): built-ins get `builtin:<name>`, every existing custom style
+  (`Recycle`, `kite`, `exceptional`) gets a fixed random id generated once now; keep the one-line-
+  per-style layout produced by `render_styles`. (The orchestrator has parked the author's
+  uncommitted local edits to styles.json/tiers.json for the duration of this phase and will merge
+  them back afterwards; executors just edit the file as it is in the working tree.) Do not touch
+  tiers.json or config.json.
 
 **UAT3-03: style picker lists the in-memory style set.** The rule editor's style dropdown lists the
 CONFIG tab's in-memory (unapplied) StyleSet, including added and renamed styles not yet applied, in

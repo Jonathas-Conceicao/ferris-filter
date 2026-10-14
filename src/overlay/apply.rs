@@ -345,6 +345,59 @@ pub fn combined_dirty(rules_dirty: bool, style_pending: bool, config_dirty: bool
     rules_dirty || style_pending || config_dirty
 }
 
+/// The user's answer in the tray-Quit confirm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitChoice {
+    ApplyAndQuit,
+    QuitWithoutApplying,
+    Cancel,
+}
+
+/// Something that can change what the tray Quit does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitEvent {
+    TrayQuit,
+    Choice(QuitChoice),
+    ApplyFinished { ok: bool },
+}
+
+/// What the app does next about quitting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitStep {
+    /// Run the shutdown sequence now.
+    QuitNow,
+    /// Show the stripe with the confirm.
+    OpenConfirm,
+    /// Confirm already open: nothing to do.
+    KeepConfirm,
+    /// Close the confirm, stay open.
+    CloseConfirm,
+    /// Run the combined Apply.
+    RunApply,
+    /// Apply succeeded: quit once any in-game reload worker has finished.
+    QuitWhenIdle,
+}
+
+/// Pure decision for the tray Quit: pending edits x confirm state x event -> next step.
+pub fn quit_step(dirty: bool, confirm_open: bool, event: QuitEvent) -> QuitStep {
+    match event {
+        QuitEvent::TrayQuit if !dirty => QuitStep::QuitNow,
+        QuitEvent::TrayQuit if confirm_open => QuitStep::KeepConfirm,
+        QuitEvent::TrayQuit => QuitStep::OpenConfirm,
+        QuitEvent::Choice(QuitChoice::Cancel) => QuitStep::CloseConfirm,
+        QuitEvent::Choice(QuitChoice::QuitWithoutApplying) => QuitStep::QuitNow,
+        QuitEvent::Choice(QuitChoice::ApplyAndQuit) => QuitStep::RunApply,
+        QuitEvent::ApplyFinished { ok: true } => QuitStep::QuitWhenIdle,
+        QuitEvent::ApplyFinished { ok: false } => QuitStep::CloseConfirm,
+    }
+}
+
+pub const QUIT_CONFIRM_TITLE: &str = "Unapplied changes";
+pub const QUIT_APPLY_LABEL: &str = "Apply & quit";
+pub const QUIT_DISCARD_LABEL: &str = "Quit without applying";
+pub const QUIT_CANCEL_LABEL: &str = "Cancel";
+pub const QUIT_DISCARD_TIP: &str = "Unapplied edits are lost";
+
 /// The RULES footer: APPLY follows the combined state (CONFIG edits alone can make an absent
 /// filter writable), REVERT follows only the rule edits it would discard.
 pub fn footer_actions_combined(
@@ -411,6 +464,27 @@ pub const OTHER_TAB_DIRTY_TIP: &str = "Unapplied changes on this tab";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quit_step_table() {
+        use QuitChoice::*;
+        use QuitEvent::*;
+        use QuitStep::*;
+        let cases = [
+            (false, false, TrayQuit, QuitNow),
+            (false, true, TrayQuit, QuitNow),
+            (true, false, TrayQuit, OpenConfirm),
+            (true, true, TrayQuit, KeepConfirm),
+            (true, true, Choice(Cancel), CloseConfirm),
+            (true, true, Choice(QuitWithoutApplying), QuitNow),
+            (true, true, Choice(ApplyAndQuit), RunApply),
+            (true, false, ApplyFinished { ok: true }, QuitWhenIdle),
+            (true, false, ApplyFinished { ok: false }, CloseConfirm),
+        ];
+        for (dirty, open, ev, want) in cases {
+            assert_eq!(quit_step(dirty, open, ev), want, "{dirty} {open} {ev:?}");
+        }
+    }
 
     #[test]
     fn combined_dirty_marks_unapplied() {

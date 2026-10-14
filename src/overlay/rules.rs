@@ -134,6 +134,14 @@ pub enum RowAction {
         line: usize,
         expect: String,
     },
+    /// Insert a condition line directly after line `after` (whose text must still be `expect`),
+    /// e.g. the second bound of a Between.
+    InsertLineAfter {
+        id: BlockId,
+        after: usize,
+        expect: String,
+        text: String,
+    },
 }
 
 /// Keep only the last `EditLine` per `(id, line, patch variant)`, at the position of the last;
@@ -916,6 +924,30 @@ impl WorkingFilter {
                     return refused(msg);
                 }
                 self.doc.remove_body_line(id, at).map_err(|e| e.to_string())
+            }
+            RowAction::InsertLineAfter {
+                id,
+                after,
+                expect,
+                text,
+            } => {
+                if let Some(msg) = self.line_refusal(id, Some((after, &expect))) {
+                    return refused(msg);
+                }
+                if text_kind(&text) == Some(Kind::Action) {
+                    return refused(
+                        self.style_lock(id)
+                            .unwrap_or_else(|| ACTION_IN_CONDITIONS_STATUS.to_string()),
+                    );
+                }
+                match self.doc.insert_body_line(id, after, &text) {
+                    Ok(new) => {
+                        focus = Some(id);
+                        line = Some(new);
+                        Ok(())
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
             }
             RowAction::AddLine { id, kind, text } => {
                 if let Some(msg) = self.line_refusal(id, None) {
@@ -1742,6 +1774,60 @@ Show
         let id = bad.rows()[0].id;
         assert!(!bad.body_view(id).is_empty());
         assert!(!bad.body_editable(id));
+    }
+
+    #[test]
+    fn insert_line_after_goes_directly_after_the_anchor() {
+        let mut wf = WorkingFilter::from_text("Show\n  ItemLevel >= 60\n  Rarity Rare\n");
+        let id = wf.rows()[0].id;
+        let o = wf.apply_action(RowAction::InsertLineAfter {
+            id,
+            after: 1,
+            expect: "  ItemLevel >= 60".into(),
+            text: "ItemLevel <= 80".into(),
+        });
+        assert!(o.changed);
+        assert_eq!(o.line, Some(2));
+        assert_eq!(
+            wf.text(),
+            "Show\n  ItemLevel >= 60\n  ItemLevel <= 80\n  Rarity Rare\n"
+        );
+    }
+
+    #[test]
+    fn insert_line_after_refuses_stale_and_action_text() {
+        let mut wf = WorkingFilter::from_text("Show\n  ItemLevel >= 60\n");
+        let id = wf.rows()[0].id;
+        let before = wf.text();
+        let o = wf.apply_action(RowAction::InsertLineAfter {
+            id,
+            after: 1,
+            expect: "  ItemLevel >= 99".into(),
+            text: "ItemLevel <= 80".into(),
+        });
+        assert!(!o.changed);
+        assert_eq!(o.status.as_deref(), Some(STALE_LINE_STATUS));
+        let o = wf.apply_action(RowAction::InsertLineAfter {
+            id,
+            after: 1,
+            expect: "  ItemLevel >= 60".into(),
+            text: "SetFontSize 30".into(),
+        });
+        assert!(!o.changed);
+        assert_eq!(o.status.as_deref(), Some(ACTION_IN_CONDITIONS_STATUS));
+        assert_eq!(wf.text(), before);
+    }
+
+    #[test]
+    fn coalesce_edits_leaves_insert_line_after_alone() {
+        let ins = |t: &str| RowAction::InsertLineAfter {
+            id: BlockId(1),
+            after: 1,
+            expect: "x".into(),
+            text: t.into(),
+        };
+        let v = vec![ins("A >= 1"), ins("A <= 2")];
+        assert_eq!(coalesce_edits(v.clone()), v);
     }
 
     #[test]

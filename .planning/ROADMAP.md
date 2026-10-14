@@ -419,10 +419,10 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 26-01-PLAN.md — Style ids model: id field, deterministic load assignment, validation, tag resolution + retagging rewrite, rename_custom, committed styles.json ids (UAT3-02)
-- [ ] 26-02-PLAN.md — Pure rule-editor logic: BaseDefencePercentile removed, Defences picker entry, card_plan/presence/Between helpers (UAT3-05, UAT3-06)
-- [ ] 26-03-PLAN.md — Tray Quit confirm (pure quit_step + modal, Phase 22 order kept) and RowAction::InsertLineAfter (UAT3-08, UAT3-06)
-- [ ] 26-04-PLAN.md — First-click collapse root cause + regression test; operator on pending rows; picker sections collapsed (UAT3-04, UAT3-07)
+- [x] 26-01-PLAN.md — Style ids model: id field, deterministic load assignment, validation, tag resolution + retagging rewrite, rename_custom, committed styles.json ids (UAT3-02)
+- [x] 26-02-PLAN.md — Pure rule-editor logic: BaseDefencePercentile removed, Defences picker entry, card_plan/presence/Between helpers (UAT3-05, UAT3-06)
+- [x] 26-03-PLAN.md — Tray Quit confirm (pure quit_step + modal, Phase 22 order kept) and RowAction::InsertLineAfter (UAT3-08, UAT3-06)
+- [x] 26-04-PLAN.md — First-click collapse root cause + regression test; operator on pending rows; picker sections collapsed (UAT3-04, UAT3-07)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -452,7 +452,7 @@ Plans:
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
-| 26. UAT Feedback Fixes 3 | 0/? | Not started | - |
+| 26. UAT Feedback Fixes 3 | 4/9 | In Progress|  |
 
 ## Backlog
 

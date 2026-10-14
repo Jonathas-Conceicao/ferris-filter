@@ -355,14 +355,9 @@ pub fn conditions_group(
 
 type Groups = Vec<(&'static str, Vec<&'static Keyword>)>;
 
-/// The label a picker row shows: the display name, suffixed when PoE 2 ignores the keyword.
+/// The label a picker row shows: the display name.
 pub(crate) fn picker_label(kw: &Keyword) -> String {
-    let name = grammar::display_name(kw.name);
-    if grammar::POE1_ONLY.contains(&kw.name) {
-        format!("{name} (PoE 1)")
-    } else {
-        name
-    }
+    grammar::display_name(kw.name)
 }
 
 /// Keep the keywords whose name or display name contains `query` (case-insensitive); empty
@@ -2271,7 +2266,7 @@ mod tests {
     #[test]
     fn expanded_scalar_conditions_are_idle() {
         let wf = WorkingFilter::from_text(
-            "Show\n    ItemLevel >= 70\n    Corrupted True\n    Rarity Rare\n    HasInfluence Shaper\n    FutureKw 3\n",
+            "Show\n    ItemLevel >= 70\n    Corrupted True\n    Rarity Rare\n    Identified False\n    FutureKw 3\n",
         );
         let ctx = headless_ctx();
         let mut list = ListUi::default();
@@ -2516,7 +2511,7 @@ mod tests {
     #[test]
     fn class_card_with_a_catalogue_is_idle_and_keeps_unknown_classes() {
         let wf = WorkingFilter::from_text(
-            "Show\n    Class \"Amulets\" \"Custom Thing\"\n    BaseType == \"Heavy Belt\"\n    HasExplicitMod >=1 \"Tyrannical\"\n    Sockets >= 5GGG\n    ItemLevel 60 65\n    TransfiguredGem True\n",
+            "Show\n    Class \"Amulets\" \"Custom Thing\"\n    BaseType == \"Heavy Belt\"\n    HasExplicitMod >=1 \"Tyrannical\"\n    Sockets >= 5GGG\n    ItemLevel 60 65\n    Corrupted True\n",
         );
         let cat = committed_catalog();
         let ctx = headless_ctx();
@@ -2577,8 +2572,10 @@ mod tests {
     }
 
     #[test]
-    fn transfigured_gem_any_and_named() {
-        let (_, id, e) = entries_of("Show\n    TransfiguredGem False\n");
+    fn bool_or_name_any_and_named() {
+        // No keyword uses BoolOrName today; the edit helper is keyword-independent, so any
+        // entry exercises it.
+        let (_, id, e) = entries_of("Show\n    Corrupted False\n");
         assert_eq!(
             values_of(bool_or_name_edit(id, &e[0], true, "").unwrap()),
             Some("True".to_string())
@@ -2625,10 +2622,12 @@ mod tests {
     }
 
     #[test]
-    fn poe1_only_keywords_are_labelled() {
-        let linked = crate::filter::keywords::lookup("LinkedSockets").unwrap();
-        assert_eq!(picker_label(linked), "Linked Sockets (PoE 1)");
-        assert!(names_of(&picker_entries("linked")).contains(&"LinkedSockets"));
+    fn removed_poe1_keywords_are_not_offered() {
+        assert!(picker_entries("linked").is_empty());
+        let mirage = picker_entries("mirage");
+        assert_eq!(names_of(&mirage), ["MirageMap"]);
+        let kw = crate::filter::keywords::lookup("MirageMap").unwrap();
+        assert_eq!(picker_label(kw), "Mirage Map");
         let item = crate::filter::keywords::lookup("ItemLevel").unwrap();
         assert_eq!(picker_label(item), "Item Level");
     }

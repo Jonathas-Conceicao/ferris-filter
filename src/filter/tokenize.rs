@@ -451,7 +451,6 @@ mod tests {
             "CustomAlertSound \"uwu.mp3\" 300",
             "Sockets > 4",
             "Sockets 5GGG",
-            "SocketGroup RGB",
             "Corrupted True",
             "Continue",
             "DisableDropSound",

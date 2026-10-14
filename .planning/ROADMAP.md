@@ -361,7 +361,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-04-PLAN.md — Condition editors: right-aligned X, vertical quoted lists, chip-free class picker, Yes/No booleans (UAT-05, UAT-06, UAT-07, UAT-12)
+- [x] 24-04-PLAN.md — Condition editors: right-aligned X, vertical quoted lists, chip-free class picker, Yes/No booleans (UAT-05, UAT-06, UAT-07, UAT-12)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -383,7 +383,7 @@ Plans:
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
-| 24. UAT Feedback Fixes | 3/6 | In Progress|  |
+| 24. UAT Feedback Fixes | 4/6 | In Progress|  |
 
 ## Backlog
 
@@ -467,7 +467,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 3/6 plans executed
+**Plans:** 4/6 plans executed
 
 Plans:
 

@@ -43,7 +43,7 @@ use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::apply_all::{self, ApplyAllError, DiskFile, FilterInput};
 use super::chat;
 use super::classes::ClassCatalog;
-use super::config_state::{self, ConfigState, OUT_OF_DATE_MESSAGE, OutsideEdit};
+use super::config_state::{self, ConfigState};
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
@@ -163,12 +163,6 @@ pub struct OverlayApp {
     /// The CONFIG footer's latest message and whether it is an accent (problem) line.
     config_message: Option<(String, bool)>,
 
-    /// A config file changed outside the overlay (checked on activation and at Apply only).
-    config_outside: OutsideEdit,
-
-    /// A CONFIG Apply landed that no RULES Apply has regenerated the filter for yet.
-    config_changed_pending: bool,
-
     /// Styles `config.json` itself references, for the delete warning.
     config_refs: BTreeSet<String>,
 
@@ -215,12 +209,6 @@ fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<Str
         )
     })
     .map_err(|e| e.to_string())
-}
-
-fn tiers_mtime_at(root: &std::path::Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(InputPaths::relative_to(root).tiers)
-        .and_then(|m| m.modified())
-        .ok()
 }
 
 /// Draws the RULES | CONFIG strip and returns the tab the user picked this frame.
@@ -361,6 +349,35 @@ fn refusal(err: ApplyAllError, filter_path: Option<&Path>) -> AllResult {
             result
         }
         other => AllResult::failed(other.message()),
+    }
+}
+
+/// RELOAD after a changed-on-disk refusal: re-reads only the files in `changed`, discarding the
+/// edits of the side that owns each (the filter: RULES edits; styles.json and tiers.json: CONFIG
+/// edits, reloaded together). The other side keeps its edits. The rules always pick up the styles
+/// now on disk.
+fn reload_changed_files(
+    root: &Path,
+    changed: &[DiskFile],
+    config: &mut Result<ConfigState, String>,
+    filter: &mut Result<LoadedFilter, String>,
+    working: &mut Option<WorkingFilter>,
+) {
+    if changed.contains(&DiskFile::Filter)
+        && let Ok(loaded) = &*filter
+    {
+        let path = loaded.path().to_path_buf();
+        *filter = LoadedFilter::load(&path).map_err(|e| e.to_string());
+        *working = working_from(filter);
+    }
+    if changed
+        .iter()
+        .any(|f| matches!(f, DiskFile::Styles | DiskFile::Tiers))
+    {
+        *config = ConfigState::load(root);
+    }
+    if let Some(w) = working {
+        w.set_styles(load_styles_at(root));
     }
 }
 
@@ -793,8 +810,6 @@ impl OverlayApp {
             config,
             config_ui: ConfigUi::default(),
             config_message: None,
-            config_outside: OutsideEdit::None,
-            config_changed_pending: false,
             config_refs: BTreeSet::new(),
             settings,
             game_dir,
@@ -805,7 +820,6 @@ impl OverlayApp {
         if settings_warning.is_some() {
             app.list_status = settings_warning;
         }
-        app.config_changed_pending = app.compute_config_pending();
         app
     }
 
@@ -815,18 +829,6 @@ impl OverlayApp {
             .game_dir
             .as_deref()
             .and_then(|dir| settings::list_filters(dir).ok());
-    }
-
-    /// Whether styles.json / tiers.json are newer than the loaded filter file. Read once per
-    /// load, never per frame.
-    fn compute_config_pending(&self) -> bool {
-        let (Ok(root), Ok(loaded)) = (&self.root, &self.filter) else {
-            return false;
-        };
-        let filter_mtime = std::fs::metadata(loaded.path())
-            .and_then(|m| m.modified())
-            .ok();
-        apply::config_newer_than_filter(filter_mtime, styles_mtime_at(root), tiers_mtime_at(root))
     }
 
     /// (Re)reads `styles.json` into the working filter and `config.json` into the class
@@ -889,6 +891,11 @@ impl OverlayApp {
     fn reset_filter_state(&mut self) {
         self.filter = Self::load_filter(self.game_dir.as_deref(), self.settings.filter_name());
         self.working = working_from(&self.filter);
+        self.reset_filter_view();
+    }
+
+    /// Resets the per-filter session state after the filter and working document were replaced.
+    fn reset_filter_view(&mut self) {
         // A switched or reloaded filter makes an interim reload line meaningless.
         self.reload_pending = None;
         self.list.clear_ids();
@@ -912,7 +919,6 @@ impl OverlayApp {
         self.settings = next;
         self.reset_filter_state();
         self.refresh_inputs();
-        self.config_changed_pending = self.compute_config_pending();
         self.refresh_filters();
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
@@ -1060,8 +1066,6 @@ impl OverlayApp {
             }
         }
         self.apply_state = self.apply_state.on_apply_success();
-        self.config_changed_pending = false;
-        self.config_outside = OutsideEdit::None;
         self.config_message = None;
         self.config_ui.disarm_all();
         self.styles_mtime = styles_mtime_at(root);
@@ -1084,11 +1088,9 @@ impl OverlayApp {
         working.revert();
         self.list.clear_ids();
         self.list_status = Some(apply::REVERTED_MESSAGE.to_string());
-        self.apply_state = if self.applied_this_session {
-            ApplyState::Applied
-        } else {
-            ApplyState::NeverApplied
-        };
+        // Per tab: CONFIG edits survive a RULES revert, so the state may stay out of date.
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        self.apply_state = apply::state_after_revert(self.applied_this_session, config_dirty);
     }
 
     /// Stages adding the economy section; it is written by the next APPLY.
@@ -1150,14 +1152,67 @@ impl OverlayApp {
                 Ok(root) => ConfigState::load(root),
                 Err(message) => Err(message.clone()),
             };
-            self.config_outside = OutsideEdit::None;
         }
-        self.config_changed_pending = self.compute_config_pending();
+    }
+
+    /// RELOAD on either tab: after a changed-on-disk refusal only the files that changed are
+    /// re-read; otherwise everything is ([`Self::reload`]).
+    fn reload_pressed(&mut self) {
+        if self.changed_on_disk.is_empty() {
+            self.reload();
+        } else {
+            self.reload_changed();
+        }
+    }
+
+    /// Re-reads the files a refused Apply found changed, discarding only the edits of the tab
+    /// that owns each one (the filter: RULES edits; styles.json/tiers.json: CONFIG edits).
+    fn reload_changed(&mut self) {
+        let changed = std::mem::take(&mut self.changed_on_disk);
+        let Ok(root) = self.root.clone() else {
+            return;
+        };
+        reload_changed_files(
+            &root,
+            &changed,
+            &mut self.config,
+            &mut self.filter,
+            &mut self.working,
+        );
+        if changed.contains(&DiskFile::Filter) {
+            self.reset_filter_view();
+        }
+        if changed
+            .iter()
+            .any(|f| matches!(f, DiskFile::Styles | DiskFile::Tiers))
+        {
+            self.config_ui.disarm_all();
+            self.config_message = None;
+            self.apply_message = None;
+        }
+        self.styles_mtime = styles_mtime_at(&root);
+        // The tab whose edits were kept may still hold unapplied changes.
+        let kept_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty())
+            || self.working.as_ref().is_some_and(|w| w.is_dirty());
+        self.apply_state = apply::state_after_revert(self.applied_this_session, kept_dirty);
     }
 
     /// Applies the CONFIG tab's collected actions. Filter actions are handled by the filter
     /// selection code; everything else edits the `ConfigState`.
     fn handle_config_actions(&mut self, ctx: &egui::Context, actions: Vec<ConfigAction>) {
+        // A config edit makes the last Apply message stale, as a rule edit does on RULES.
+        if actions.iter().any(|a| {
+            matches!(
+                a,
+                ConfigAction::AddStyle(_)
+                    | ConfigAction::EditStyle { .. }
+                    | ConfigAction::DeleteStyle(_)
+                    | ConfigAction::MoveStyle { .. }
+                    | ConfigAction::TierText { .. }
+            )
+        }) {
+            self.apply_message = None;
+        }
         for action in actions {
             match action {
                 ConfigAction::AddStyle(input) => {
@@ -1213,17 +1268,24 @@ impl OverlayApp {
                         self.config_ui.disarm_all();
                         self.config_message = Some(("Reverted config changes.".to_string(), false));
                     }
+                    // Per tab: rule edits survive a CONFIG revert, so the state may stay stale.
+                    let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+                    self.apply_state =
+                        apply::state_after_revert(self.applied_this_session, rules_dirty);
                 }
                 ConfigAction::Apply => self.run_apply(ctx, false),
                 ConfigAction::Overwrite => self.run_apply(ctx, true),
                 ConfigAction::Reload => {
-                    self.config = match &self.root {
-                        Ok(root) => ConfigState::load(root),
-                        Err(message) => Err(message.clone()),
-                    };
-                    self.config_outside = OutsideEdit::None;
-                    self.config_message = None;
-                    self.config_ui.disarm_all();
+                    if self.changed_on_disk.is_empty() {
+                        self.config = match &self.root {
+                            Ok(root) => ConfigState::load(root),
+                            Err(message) => Err(message.clone()),
+                        };
+                        self.config_message = None;
+                        self.config_ui.disarm_all();
+                    } else {
+                        self.reload_changed();
+                    }
                 }
                 ConfigAction::SelectFilter(name) => self.select_filter(name),
                 ConfigAction::SetReloadAfterApply(on) => self.set_reload_after_apply(on),
@@ -1269,7 +1331,7 @@ impl OverlayApp {
     }
 
     /// Draws the CONFIG tab below the tab strip and returns what the user asked for.
-    fn config_body(&mut self, ui: &mut egui::Ui) -> Vec<ConfigAction> {
+    fn config_body(&mut self, ui: &mut egui::Ui, footer: ConfigFooterState) -> Vec<ConfigAction> {
         let mut actions = Vec::new();
         // Fresh every frame: it must be right after a switch or a reload.
         let users = self
@@ -1285,8 +1347,10 @@ impl OverlayApp {
             pending_switch: self.pending_switch.as_deref(),
             rule_users: &users,
             config_refs: &self.config_refs,
-            outside: self.config_outside,
-            out_of_date: self.config_changed_pending,
+            changed_on_disk: !self.changed_on_disk.is_empty(),
+            apply_enabled: footer.apply_enabled,
+            rules_blocking: footer.rules_blocking,
+            indicator: apply::indicator(self.apply_state),
             reload_after_apply: self.settings.reload_after_apply(),
         };
         // The footer is claimed first so it keeps its height whatever the sections hold; the
@@ -1347,6 +1411,13 @@ impl OverlayApp {
             });
         actions
     }
+}
+
+/// What the CONFIG footer needs from the per-frame Apply decision.
+#[derive(Debug, Clone, Copy)]
+struct ConfigFooterState {
+    apply_enabled: bool,
+    rules_blocking: bool,
 }
 
 /// One message in the footer's outcome area.
@@ -1643,11 +1714,12 @@ impl eframe::App for OverlayApp {
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        if (style_pending || config_dirty) && self.apply_state == ApplyState::Applied {
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        // One unapplied state for both tabs: rule edits, a pending style rewrite or CONFIG edits.
+        let combined_dirty = apply::combined_dirty(rules_dirty, style_pending, config_dirty);
+        if combined_dirty && self.apply_state == ApplyState::Applied {
             self.apply_state = ApplyState::Unapplied;
         }
-        let dirty =
-            style_pending || config_dirty || self.working.as_ref().is_some_and(|w| w.is_dirty());
         let unknown_styles = self
             .working
             .as_ref()
@@ -1658,13 +1730,26 @@ impl eframe::App for OverlayApp {
             .as_ref()
             .and_then(|w| w.blocking().first().cloned());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
-        let actions = apply::footer_actions(
+        let changed = !self.changed_on_disk.is_empty();
+        let actions = apply::footer_actions_combined(
             self.root.is_ok(),
             state,
-            !self.changed_on_disk.is_empty(),
-            dirty,
+            changed,
+            rules_dirty || style_pending,
+            config_dirty,
             blocking,
         );
+        let config_footer = ConfigFooterState {
+            apply_enabled: apply::config_apply_enabled(
+                self.root.is_ok(),
+                self.config.as_ref().is_ok_and(|c| c.validate().is_ok()),
+                state,
+                changed,
+                combined_dirty,
+                blocking,
+            ),
+            rules_blocking: blocking > 0,
+        };
 
         // Everything the panels want to change is collected here and applied once, after both have
         // rendered (deferred-action rule): row operations, the economy footer and the jump.
@@ -1673,7 +1758,6 @@ impl eframe::App for OverlayApp {
         let mut jump_to: Option<BlockId> = None;
         let mut config_actions: Vec<ConfigAction> = Vec::new();
         let mut picked_tab: Option<Tab> = None;
-        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
 
         egui::CentralPanel::default()
             .frame(panel_frame)
@@ -1697,7 +1781,7 @@ impl eframe::App for OverlayApp {
                 );
                 ui.add_space(4.0);
                 if self.tab == Tab::Config {
-                    config_actions = self.config_body(ui);
+                    config_actions = self.config_body(ui, config_footer);
                     return;
                 }
 
@@ -1755,7 +1839,7 @@ impl eframe::App for OverlayApp {
                                     .on_hover_text(apply::RELOAD_TOOLTIP)
                                     .clicked()
                             {
-                                self.reload();
+                                self.reload_pressed();
                             }
                             // Beside RELOAD after a changed-on-disk refusal: the other way out,
                             // keeping the edits. Accent fill like CONFIG's Overwrite.
@@ -1882,9 +1966,6 @@ impl eframe::App for OverlayApp {
                     };
                     lines.push((colour, text));
                 }
-                if self.config_changed_pending {
-                    lines.push((theme::VALUE_TEXT, OUT_OF_DATE_MESSAGE.to_string()));
-                }
                 if migrated {
                     lines.push((
                         theme::LABEL_TAN,
@@ -1970,16 +2051,11 @@ impl eframe::App for OverlayApp {
                 }
             });
 
-        // Tab switch and CONFIG actions come first. Switching never applies or discards anything;
-        // arriving on CONFIG re-checks the files for outside edits (never per frame).
+        // Tab switch and CONFIG actions come first. Switching never applies or discards anything.
         if let Some(tab) = picked_tab {
             self.tab = tab;
             if tab == Tab::Config {
                 self.config_ui.disarm_all();
-                self.config_outside = self
-                    .config
-                    .as_ref()
-                    .map_or(OutsideEdit::None, |c| c.outside_by_mtime());
                 self.refresh_filters();
             }
         }
@@ -2175,7 +2251,7 @@ mod tests {
     #[test]
     fn the_config_footer_keeps_apply_on_screen_with_a_long_styles_list() {
         use crate::overlay::app::{OutcomeLine, outcome_area};
-        use crate::overlay::config_state::{ConfigState, OutsideEdit};
+        use crate::overlay::config_state::ConfigState;
         use crate::overlay::config_view::{self, ConfigUi, ConfigViewCtx};
         use std::collections::{BTreeSet, HashMap};
 
@@ -2189,8 +2265,10 @@ mod tests {
             pending_switch: None,
             rule_users: &users,
             config_refs: &refs,
-            outside: OutsideEdit::None,
-            out_of_date: false,
+            changed_on_disk: false,
+            apply_enabled: true,
+            rules_blocking: false,
+            indicator: "Filter out of date",
             reload_after_apply: true,
         };
         let mut cfg = ConfigUi::default();
@@ -2699,6 +2777,91 @@ mod tests {
         let again = rig.apply(false);
         assert!(matches!(again.outcome, AllOutcome::Applied { .. }));
         assert!(again.changed.is_empty());
+    }
+
+    #[test]
+    fn reload_changed_discards_only_the_owning_side() {
+        use super::reload_changed_files;
+        let outside = "Show\n  Class \"Belts\"\n";
+        for which in [DiskFile::Filter, DiskFile::Styles, DiskFile::Tiers] {
+            let Rig {
+                root,
+                _game,
+                path,
+                loaded,
+                mut working,
+                mut config,
+            } = rig(RULES);
+            working.apply_action(RowAction::AddRule);
+            assert!(config.edit_style("S", StyleEdit::Font(Some(41))));
+            let (mut config, mut filter) = (Ok(config), Ok(loaded));
+            let mut working = Some(working);
+            match which {
+                DiskFile::Filter => std::fs::write(&path, outside).unwrap(),
+                DiskFile::Styles => {
+                    let p = root.path().join("styles.json");
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    std::fs::write(p, text.replacen("\"font\":29", "\"font\":30", 1)).unwrap();
+                }
+                DiskFile::Tiers => {
+                    let p = root.path().join("tiers.json");
+                    let mut text = std::fs::read_to_string(&p).unwrap();
+                    text.push('\n');
+                    std::fs::write(p, text).unwrap();
+                }
+            }
+            reload_changed_files(
+                root.path(),
+                &[which],
+                &mut config,
+                &mut filter,
+                &mut working,
+            );
+            let (config, filter, working) = (config.unwrap(), filter.unwrap(), working.unwrap());
+            if which == DiskFile::Filter {
+                // The filter's owner (RULES) lost its edits; CONFIG kept its own.
+                assert_eq!(filter.text(), outside);
+                assert_eq!(working.text(), outside);
+                assert!(!working.is_dirty());
+                assert!(config.is_dirty(), "config edits survive a filter reload");
+            } else {
+                // The config files' owner (CONFIG) lost its edits; RULES kept its own.
+                assert!(!config.is_dirty(), "{which:?}");
+                assert!(working.is_dirty(), "rule edits survive a config reload");
+                assert_eq!(filter.text(), RULES);
+            }
+        }
+    }
+
+    #[test]
+    fn per_tab_revert_is_independent() {
+        let mut rig = rig(RULES);
+        rig.working.apply_action(RowAction::AddRule);
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+
+        // RULES revert: config edits remain, so the indicator stays out of date.
+        rig.working.revert();
+        assert!(!rig.working.is_dirty() && rig.config.is_dirty());
+        assert_eq!(
+            apply::state_after_revert(true, rig.config.is_dirty()),
+            apply::ApplyState::Unapplied
+        );
+
+        // CONFIG revert: rule edits remain.
+        rig.working.apply_action(RowAction::AddRule);
+        rig.config.revert();
+        assert!(!rig.config.is_dirty() && rig.working.is_dirty());
+        assert_eq!(
+            apply::state_after_revert(true, rig.working.is_dirty()),
+            apply::ApplyState::Unapplied
+        );
+
+        // Both reverted: back to the session's baseline.
+        rig.working.revert();
+        assert_eq!(
+            apply::state_after_revert(true, false),
+            apply::ApplyState::Applied
+        );
     }
 
     #[test]

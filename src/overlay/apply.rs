@@ -337,17 +337,57 @@ pub fn styles_unavailable_message(err: &str) -> String {
     format!("styles.json could not be read, so styled rules cannot be updated: {err}")
 }
 
-/// Whether a config file was changed after the filter was last written, so the written filter no
-/// longer reflects the styles and tiers. An absent filter is never stale (nothing was generated).
-pub fn config_newer_than_filter(
-    filter: Option<std::time::SystemTime>,
-    styles: Option<std::time::SystemTime>,
-    tiers: Option<std::time::SystemTime>,
+/// Whether anything is waiting for the next Apply: rule edits (or a staged economy op), a style
+/// rewrite the written filter does not have yet, or CONFIG edits. Both tabs show this one state.
+pub fn combined_dirty(rules_dirty: bool, style_pending: bool, config_dirty: bool) -> bool {
+    rules_dirty || style_pending || config_dirty
+}
+
+/// The RULES footer: APPLY follows the combined state (CONFIG edits alone can make an absent
+/// filter writable), REVERT follows only the rule edits it would discard.
+pub fn footer_actions_combined(
+    root_ok: bool,
+    state: FilterState,
+    needs_reload: bool,
+    rules_dirty: bool,
+    config_dirty: bool,
+    blocking: usize,
+) -> FooterActions {
+    let mut actions = footer_actions(
+        root_ok,
+        state,
+        needs_reload,
+        rules_dirty || config_dirty,
+        blocking,
+    );
+    actions.revert = footer_actions(root_ok, state, needs_reload, rules_dirty, blocking).revert;
+    actions
+}
+
+/// Whether the CONFIG tab's APPLY is live: the config is valid, nothing changed on disk, something
+/// is pending on either tab, and (when a filter will be written too) no enabled rule has a grammar
+/// error.
+pub fn config_apply_enabled(
+    root_ok: bool,
+    config_valid: bool,
+    state: FilterState,
+    changed_on_disk: bool,
+    dirty: bool,
+    blocking: usize,
 ) -> bool {
-    let Some(filter) = filter else {
-        return false;
-    };
-    [styles, tiers].into_iter().flatten().any(|t| t > filter)
+    let has_filter = state != FilterState::LoadFailed;
+    root_ok && config_valid && !changed_on_disk && dirty && (!has_filter || blocking == 0)
+}
+
+/// The indicator after one tab's REVERT: still out of date when the other tab holds edits.
+pub fn state_after_revert(applied_this_session: bool, other_dirty: bool) -> ApplyState {
+    if other_dirty {
+        ApplyState::Unapplied
+    } else if applied_this_session {
+        ApplyState::Applied
+    } else {
+        ApplyState::NeverApplied
+    }
 }
 
 /// A tab's label, with ` *` when the OTHER tab holds unapplied edits.
@@ -367,15 +407,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_staleness_needs_an_existing_filter_and_a_newer_config() {
-        use std::time::{Duration, SystemTime};
-        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
-        let t1 = t0 + Duration::from_secs(5);
-        assert!(!config_newer_than_filter(None, Some(t1), Some(t1)));
-        assert!(config_newer_than_filter(Some(t0), Some(t1), Some(t0)));
-        assert!(config_newer_than_filter(Some(t0), Some(t0), Some(t1)));
-        assert!(!config_newer_than_filter(Some(t1), Some(t0), Some(t0)));
-        assert!(!config_newer_than_filter(Some(t0), None, None));
+    fn combined_dirty_marks_unapplied() {
+        assert!(!combined_dirty(false, false, false));
+        for (r, s, c) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            assert!(combined_dirty(r, s, c));
+        }
+        // RULES Apply with only CONFIG edits: live even for a filter that does not exist yet.
+        let a = footer_actions_combined(true, FilterState::Absent, false, false, true, 0);
+        assert!(a.apply && !a.revert, "revert follows the rule edits only");
+        assert!(!footer_actions_combined(true, FilterState::Absent, false, false, false, 0).apply);
+        // CONFIG Apply with only RULES edits.
+        let st = FilterState::HasSection;
+        assert!(config_apply_enabled(true, true, st, false, true, 0));
+        assert!(
+            !config_apply_enabled(true, true, st, false, false, 0),
+            "nothing pending"
+        );
+        assert!(
+            !config_apply_enabled(true, false, st, false, true, 0),
+            "invalid config"
+        );
+        assert!(
+            !config_apply_enabled(true, true, st, true, true, 0),
+            "changed on disk"
+        );
+        assert!(
+            !config_apply_enabled(true, true, st, false, true, 2),
+            "grammar errors block"
+        );
+        // Without a filter part the config alone applies.
+        assert!(config_apply_enabled(
+            true,
+            true,
+            FilterState::LoadFailed,
+            false,
+            true,
+            2
+        ));
+    }
+
+    #[test]
+    fn revert_state_depends_on_the_other_tab() {
+        assert_eq!(state_after_revert(true, true), ApplyState::Unapplied);
+        assert_eq!(state_after_revert(false, true), ApplyState::Unapplied);
+        assert_eq!(state_after_revert(true, false), ApplyState::Applied);
+        assert_eq!(state_after_revert(false, false), ApplyState::NeverApplied);
     }
 
     #[test]

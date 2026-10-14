@@ -10,7 +10,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use crate::compile::InputPaths;
 use crate::models::config::{
@@ -23,10 +22,6 @@ const DISPLAY_ORDER: [&str; 7] = ["S", "A", "B", "C", "D", "E", "F"];
 
 /// Shown beside a tier row whose text is not a finite number >= 0.
 const ENTER_A_NUMBER: &str = "Enter a number";
-
-/// Out-of-date notice repeated after a config Apply.
-pub const OUT_OF_DATE_MESSAGE: &str =
-    "Filter out of date: config changed. Press Apply on the RULES tab to regenerate it.";
 
 /// Tooltip on a disabled Apply button while tier errors exist.
 pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix the tier errors first.";
@@ -94,18 +89,12 @@ pub struct ConfigState {
     errors: TierErrors,
     styles_bytes: Vec<u8>,
     tiers_bytes: Vec<u8>,
-    styles_mtime: Option<SystemTime>,
-    tiers_mtime: Option<SystemTime>,
 }
 
 fn file_label(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
-}
-
-fn mtime_of(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 fn tiers_equal(a: &[TierEntry], b: &[TierEntry]) -> bool {
@@ -142,8 +131,6 @@ impl ConfigState {
             tiers,
             buffers: BTreeMap::new(),
             errors: TierErrors::default(),
-            styles_mtime: mtime_of(&paths.styles),
-            tiers_mtime: mtime_of(&paths.tiers),
             styles_bytes,
             tiers_bytes,
         };
@@ -437,15 +424,12 @@ impl ConfigState {
     }
 
     /// Adopt `w` as the new applied state after its bytes were written to both files by the
-    /// caller: snapshots, baselines and mtimes move, tier buffers are rebuilt.
+    /// caller: snapshots and baselines move, tier buffers are rebuilt.
     pub fn adopt(&mut self, w: ConfigWrite) {
-        let paths = InputPaths::relative_to(&self.root);
         self.styles_applied = self.styles.clone();
         self.tiers_applied = self.tiers.clone();
         self.styles_bytes = w.styles_new;
         self.tiers_bytes = w.tiers_new;
-        self.styles_mtime = mtime_of(&paths.styles);
-        self.tiers_mtime = mtime_of(&paths.tiers);
         self.resync_buffers();
     }
 
@@ -455,52 +439,6 @@ impl ConfigState {
         self.tiers = self.tiers_applied.clone();
         self.resync_buffers();
     }
-
-    // -- apply / outside edits ------------------------------------------------------------------
-
-    /// Cheap check for tab activation: compare current mtimes to the remembered ones.
-    pub fn outside_by_mtime(&self) -> OutsideEdit {
-        let paths = InputPaths::relative_to(&self.root);
-        outside_from(
-            mtime_of(&paths.styles) != self.styles_mtime,
-            mtime_of(&paths.tiers) != self.tiers_mtime,
-        )
-    }
-
-    /// Authoritative check: current bytes against the loaded baselines (mtime can be coarse or
-    /// touched without a content change).
-    pub fn outside_by_bytes(&self) -> OutsideEdit {
-        let paths = InputPaths::relative_to(&self.root);
-        let differs = |p: &Path, base: &[u8]| fs::read(p).map(|b| b != base).unwrap_or(true);
-        outside_from(
-            differs(&paths.styles, &self.styles_bytes),
-            differs(&paths.tiers, &self.tiers_bytes),
-        )
-    }
-
-    /// Discard edits and return to the on-disk content (including any outside change).
-    pub fn reload(&mut self) -> Result<(), String> {
-        *self = ConfigState::load(&self.root)?;
-        Ok(())
-    }
-}
-
-fn outside_from(styles: bool, tiers: bool) -> OutsideEdit {
-    match (styles, tiers) {
-        (false, false) => OutsideEdit::None,
-        (true, false) => OutsideEdit::Styles,
-        (false, true) => OutsideEdit::Tiers,
-        (true, true) => OutsideEdit::Both,
-    }
-}
-
-/// Which config file(s) changed outside the overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutsideEdit {
-    None,
-    Styles,
-    Tiers,
-    Both,
 }
 
 /// Why the CONFIG edits cannot be written: the finished reason.
@@ -577,14 +515,6 @@ pub fn not_applied_message(reason: &str) -> String {
         "Config not applied: {}. Nothing was changed on disk.",
         reason.trim_end_matches('.')
     )
-}
-
-pub fn outside_edit_message(which: OutsideEdit) -> &'static str {
-    match which {
-        OutsideEdit::Styles => "styles.json changed outside the overlay.",
-        OutsideEdit::Tiers => "tiers.json changed outside the overlay.",
-        OutsideEdit::Both | OutsideEdit::None => "Both config files changed outside the overlay.",
-    }
 }
 
 /// A cutoff is a finite number >= 0.
@@ -867,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_discards_edits_and_takes_outside_change() {
+    fn loading_again_discards_edits_and_takes_outside_change() {
         let (dir, mut s) = loaded();
         s.set_tier_text("S", "35");
         s.add_style("Gold").unwrap();
@@ -876,7 +806,7 @@ mod tests {
             .unwrap()
             .replace("30.0", "31.0");
         fs::write(&tiers_path, text).unwrap();
-        s.reload().unwrap();
+        s = ConfigState::load(dir.path()).unwrap();
         assert_eq!(s.dirty_count(), 0);
         assert_eq!(s.tier_rows()[0].buffer, "31");
         assert_eq!(s.style_names().len(), 12);
@@ -892,25 +822,6 @@ mod tests {
         s.revert();
         assert_eq!(s.tier_rows()[0].buffer, "35");
         assert_eq!(s.dirty_count(), 0);
-    }
-
-    #[test]
-    fn mtime_guard_detects_outside_write_and_clears_after_own_save() {
-        let (dir, mut s) = loaded();
-        assert_eq!(s.outside_by_mtime(), OutsideEdit::None);
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let styles_path = dir.path().join("styles.json");
-        let bytes = fs::read(&styles_path).unwrap();
-        fs::write(&styles_path, bytes).unwrap();
-        assert_eq!(s.outside_by_mtime(), OutsideEdit::Styles);
-        let tiers_path = dir.path().join("tiers.json");
-        let bytes = fs::read(&tiers_path).unwrap();
-        fs::write(&tiers_path, bytes).unwrap();
-        assert_eq!(s.outside_by_mtime(), OutsideEdit::Both);
-        s.reload().unwrap();
-        s.set_tier_text("S", "35");
-        save(&mut s);
-        assert_eq!(s.outside_by_mtime(), OutsideEdit::None);
     }
 
     #[test]
@@ -945,18 +856,6 @@ mod tests {
         assert_eq!(
             not_applied_message("x"),
             "Config not applied: x. Nothing was changed on disk."
-        );
-        assert_eq!(
-            outside_edit_message(OutsideEdit::Styles),
-            "styles.json changed outside the overlay."
-        );
-        assert_eq!(
-            outside_edit_message(OutsideEdit::Tiers),
-            "tiers.json changed outside the overlay."
-        );
-        assert_eq!(
-            outside_edit_message(OutsideEdit::Both),
-            "Both config files changed outside the overlay."
         );
     }
 

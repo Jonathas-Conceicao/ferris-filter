@@ -16,10 +16,10 @@ use crate::models::config::{
 };
 use crate::settings;
 
+use super::apply;
 use super::body;
 use super::config_state::{
-    APPLY_BLOCKED_TOOLTIP, ColourSlot, ConfigState, OutsideEdit, StyleEdit, config_warning,
-    delete_confirm_text, outside_edit_message,
+    APPLY_BLOCKED_TOOLTIP, ColourSlot, ConfigState, StyleEdit, config_warning, delete_confirm_text,
 };
 use super::theme;
 use super::widgets::{self, ArrowDirection};
@@ -41,7 +41,7 @@ pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
 pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
 /// The toggle's hover text: what "Reloaded in game" does and does not certify (review WR-01).
 pub const RELOAD_TOGGLE_TIP: &str = "\"Reloaded in game\" means the command was sent to the game window; ff cannot see whether the game ran it. A game running as administrator ignores the keys unless ff runs as administrator too. If the game did not reload, use Options > Game > Item Filter > Refresh.";
-const APPLY_NOTHING_TIP: &str = "No unapplied config changes.";
+const APPLY_NOTHING_TIP: &str = "Nothing to apply.";
 const APPLY_LOAD_ERROR_TIP: &str =
     "styles.json or tiers.json failed to load. Revert to reload them.";
 
@@ -91,8 +91,6 @@ pub struct ConfigUi {
     pub revert_armed: bool,
     /// A just-added style to scroll into view.
     pub scroll_to: Option<String>,
-    /// `Keep editing` was pressed on the outside-edit guard.
-    pub outside_dismissed: bool,
     /// A name draft was just opened; its text field takes focus once.
     pub focus_draft: bool,
 }
@@ -118,7 +116,6 @@ impl ConfigUi {
     pub fn disarm_all(&mut self) {
         self.delete_armed = None;
         self.revert_armed = false;
-        self.outside_dismissed = false;
     }
 }
 
@@ -134,8 +131,14 @@ pub struct ConfigViewCtx<'a> {
     pub rule_users: &'a HashMap<String, usize>,
     /// Styles `config.json` itself references.
     pub config_refs: &'a BTreeSet<String>,
-    pub outside: OutsideEdit,
-    pub out_of_date: bool,
+    /// Styles, tiers or the filter changed on disk since they were loaded (the shared refusal).
+    pub changed_on_disk: bool,
+    /// Whether the combined APPLY is live.
+    pub apply_enabled: bool,
+    /// Enabled rules have grammar errors (explains a disabled APPLY).
+    pub rules_blocking: bool,
+    /// The one Apply state line both tabs show.
+    pub indicator: &'a str,
     /// Current value of the reload-after-Apply setting.
     pub reload_after_apply: bool,
 }
@@ -211,26 +214,21 @@ pub fn revert_prompt(n: usize) -> String {
     }
 }
 
-/// The footer's buttons as (label, enabled), left to right. The footer renders from this.
+/// The footer's buttons as (label, enabled), left to right. The footer renders from this. After a
+/// changed-on-disk refusal only RELOAD and OVERWRITE remain, the same two as the RULES footer.
 pub fn footer_buttons(
     state: &ConfigState,
     cfg: &ConfigUi,
-    outside: OutsideEdit,
+    changed_on_disk: bool,
+    apply_enabled: bool,
 ) -> Vec<(&'static str, bool)> {
-    if outside != OutsideEdit::None && !cfg.outside_dismissed {
-        return vec![
-            ("Reload from disk", true),
-            ("Overwrite", true),
-            ("Keep editing", true),
-        ];
+    if changed_on_disk {
+        return vec![("RELOAD", true), ("OVERWRITE", true)];
     }
-    if cfg.revert_armed && state.dirty_count() > 0 {
-        return vec![("Discard", true), ("Keep editing", true)];
+    if cfg.revert_armed && state.is_dirty() {
+        return vec![("Discard", true), ("Cancel", true)];
     }
-    vec![
-        ("Apply", state.can_apply()),
-        ("Revert", state.dirty_count() > 0),
-    ]
+    vec![("Apply", apply_enabled), ("Revert", state.is_dirty())]
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1220,35 +1218,30 @@ pub fn show_footer(
     ctx: &ConfigViewCtx,
 ) -> Vec<ConfigAction> {
     let mut actions = Vec::new();
-    let guard = ctx.outside != OutsideEdit::None && !cfg.outside_dismissed;
     // A revert confirm cannot outlive its edits.
-    if state.dirty_count() == 0 {
+    if !state.is_dirty() {
         cfg.revert_armed = false;
     }
 
-    let revert_prompt_open = !guard && cfg.revert_armed && state.dirty_count() > 0;
-    if guard {
-        ui.add(
-            egui::Label::new(
-                RichText::new(outside_edit_message(ctx.outside))
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(theme::WARM_ACCENT_TEXT),
-            )
-            .wrap(),
-        );
-    } else if revert_prompt_open {
+    if cfg.revert_armed && state.is_dirty() && !ctx.changed_on_disk {
         ui.label(
             RichText::new(revert_prompt(state.dirty_count()))
                 .size(theme::ROW_SUMMARY_SIZE)
                 .color(theme::VALUE_TEXT),
         );
     }
+    // The same state line as the RULES footer: one Apply state for both tabs.
+    ui.label(
+        RichText::new(ctx.indicator)
+            .size(theme::ROW_SUMMARY_SIZE)
+            .color(theme::TAB_ACTIVE),
+    );
 
-    let buttons = footer_buttons(state, cfg, ctx.outside);
+    let buttons = footer_buttons(state, cfg, ctx.changed_on_disk, ctx.apply_enabled);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         for (label, enabled) in buttons {
-            let accent = matches!(label, "Overwrite" | "Discard");
+            let accent = matches!(label, "OVERWRITE" | "Discard");
             let text = RichText::new(label);
             let mut button = egui::Button::new(text).min_size(vec2(0.0, 28.0));
             if accent {
@@ -1260,10 +1253,17 @@ pub fn show_footer(
                     APPLY_BLOCKED_TOOLTIP
                 } else if state.styles_error().is_some() || state.tiers_error().is_some() {
                     APPLY_LOAD_ERROR_TIP
+                } else if ctx.rules_blocking {
+                    apply::APPLY_BLOCKED_TOOLTIP
                 } else {
                     APPLY_NOTHING_TIP
                 };
                 response = response.on_disabled_hover_text(tip);
+            }
+            match label {
+                "RELOAD" => response = response.on_hover_text(apply::RELOAD_TOOLTIP),
+                "OVERWRITE" => response = response.on_hover_text(apply::OVERWRITE_TOOLTIP),
+                _ => {}
             }
             if !response.clicked() {
                 continue;
@@ -1275,12 +1275,9 @@ pub fn show_footer(
                     cfg.revert_armed = false;
                     actions.push(ConfigAction::Revert);
                 }
-                "Reload from disk" => actions.push(ConfigAction::Reload),
-                "Overwrite" => actions.push(ConfigAction::Overwrite),
-                "Keep editing" => {
-                    cfg.revert_armed = false;
-                    cfg.outside_dismissed = true;
-                }
+                "RELOAD" => actions.push(ConfigAction::Reload),
+                "OVERWRITE" => actions.push(ConfigAction::Overwrite),
+                "Cancel" => cfg.revert_armed = false,
                 _ => {}
             }
         }
@@ -1351,8 +1348,10 @@ mod tests {
             pending_switch: None,
             rule_users: users,
             config_refs: refs,
-            outside: OutsideEdit::None,
-            out_of_date: false,
+            changed_on_disk: false,
+            apply_enabled: true,
+            rules_blocking: false,
+            indicator: "",
             reload_after_apply: true,
         }
     }
@@ -1616,40 +1615,35 @@ mod tests {
     }
 
     #[test]
-    fn footer_buttons_follow_the_state() {
+    fn footer_buttons_follow_the_shared_state() {
         let (_d, mut state) = loaded();
         let mut cfg = ConfigUi::default();
+        // Apply follows the combined state the app computes; Revert follows the config edits.
         assert_eq!(
-            footer_buttons(&state, &cfg, OutsideEdit::None),
+            footer_buttons(&state, &cfg, false, true),
+            vec![("Apply", true), ("Revert", false)]
+        );
+        assert_eq!(
+            footer_buttons(&state, &cfg, false, false),
             vec![("Apply", false), ("Revert", false)]
         );
-
         state.set_tier_text("S", "oops");
         assert_eq!(
-            footer_buttons(&state, &cfg, OutsideEdit::None),
+            footer_buttons(&state, &cfg, false, false),
             vec![("Apply", false), ("Revert", true)]
         );
         assert!(state.has_tier_errors());
 
-        state.set_tier_text("S", "31");
-        assert_eq!(
-            footer_buttons(&state, &cfg, OutsideEdit::None)[0],
-            ("Apply", true)
-        );
+        // After a changed-on-disk refusal: the same two buttons as the RULES footer, no guard.
+        let changed = footer_buttons(&state, &cfg, true, true);
+        assert_eq!(changed, vec![("RELOAD", true), ("OVERWRITE", true)]);
+        assert!(changed.iter().all(|(l, _)| *l != "Cancel"));
 
-        assert_eq!(
-            footer_buttons(&state, &cfg, OutsideEdit::Tiers),
-            vec![
-                ("Reload from disk", true),
-                ("Overwrite", true),
-                ("Keep editing", true)
-            ]
-        );
-
+        // The Revert confirm still works.
         cfg.revert_armed = true;
         assert_eq!(
-            footer_buttons(&state, &cfg, OutsideEdit::None),
-            vec![("Discard", true), ("Keep editing", true)]
+            footer_buttons(&state, &cfg, false, true),
+            vec![("Discard", true), ("Cancel", true)]
         );
         assert_eq!(revert_prompt(3), "Discard 3 unapplied config changes?");
     }
@@ -1902,16 +1896,19 @@ mod tests {
         let vctx = view_ctx(None, &users, &refs);
         let screen = input.screen_rect.unwrap();
         let mut footer_rect = egui::Rect::NOTHING;
-        let out = ctx.run_ui(input, |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                egui::Panel::bottom(egui::Id::new("cfg-test-footer")).show(ui, |ui| {
-                    show_footer(ui, &state, &mut cfg, &vctx);
-                    footer_rect = ui.min_rect();
+        // A few frames: a bottom panel sizes itself from the previous frame's content.
+        for _ in 0..4 {
+            let out = ctx.run_ui(input.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    egui::Panel::bottom(egui::Id::new("cfg-test-footer")).show(ui, |ui| {
+                        show_footer(ui, &state, &mut cfg, &vctx);
+                        footer_rect = ui.min_rect();
+                    });
+                    show_sections(ui, &state, &mut cfg, &vctx);
                 });
-                show_sections(ui, &state, &mut cfg, &vctx);
             });
-        });
-        out.drop_without_applying_deltas();
+            out.drop_without_applying_deltas();
+        }
         assert!(
             footer_rect.max.y <= screen.max.y,
             "footer {footer_rect:?} outside {screen:?}"

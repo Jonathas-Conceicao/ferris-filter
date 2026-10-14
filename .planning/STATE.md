@@ -81,6 +81,10 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 
 ### Roadmap Evolution
 
+- Phase 25 added (2026-10-14): **UAT Feedback Fixes 2** — the author's second v0.5 UAT round
+  (UAT2-01..UAT2-10): rule-body layout, Sockets slider, CONFIG styles table, one all-or-nothing
+  Apply covering config and rules. Run autonomously.
+
 - Phase 24 added (2026-10-13): **UAT Feedback Fixes** — thirteen overlay fixes from the author's
   hands-on v0.5 UAT (UAT-01..UAT-13), run autonomously.
 

@@ -57,7 +57,7 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
-## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-24)
+## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-25)
 
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
 output, with the style palette and economy tier cutoffs configurable from the overlay.
@@ -71,6 +71,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 - [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
 - [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (executed 2026-10-14; awaiting human UAT)
+- [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything
 
 ### Phase 16: Lossless Filter Parser
 
@@ -371,6 +372,25 @@ Plans:
 
 - [x] 24-06-PLAN.md — CLAUDE.md overlay notes, CHANGELOG [Unreleased], 24-MANUAL-VERIFICATION.md (UAT-01..UAT-13)
 
+### Phase 25: UAT Feedback Fixes 2
+
+**Goal**: The author's second v0.5 UAT round is applied: tidier rule body and CONFIG styles table, and one all-or-nothing Apply that saves and applies config and rules together
+**Depends on**: Phase 24
+**Requirements**: UAT2-01, UAT2-02, UAT2-03, UAT2-04, UAT2-05, UAT2-06, UAT2-07, UAT2-08, UAT2-09, UAT2-10
+**Success Criteria** (what must be TRUE):
+
+  1. "Continue to later rules" is its own line, last in the rule body; the Custom style's add-action button reads "+ style"; Show/Hide sits below the style dropdown and appears only for Custom
+  2. A rule name is a plain text box with no toggle and no derived default: empty writes no `# ff:name` line (clearing removes it), typing adds/updates it
+  3. Sockets is a plain numeric condition with a 0-6 slider and no socket-colour "+ socket" entry; `Exceptional` is out of the keyword table and a foreign line using it loads losslessly as a raw row that does not block Apply
+  4. CONFIG has no "no unapplied changes" status line and no "new" tag on Styles; Add style sits next to the Custom heading; the styles table has a Visibility | Name | Preview header, custom styles reorder with up/down arrows (order persisted in styles.json), built-ins stay first and can only toggle visibility and edit actions
+  5. APPLY on either tab validates everything first, then writes styles.json, tiers.json and the filter all-or-none (rollback on a late rename failure) and reloads in game; any refusal (changed on disk, bad tiers, grammar error, damaged markers) writes nothing and reloads nothing; OVERWRITE overwrites every changed file and RELOAD reloads from disk
+  6. The filter is rendered with the styles/tiers being applied; Revert stays per tab; both tabs' stale indicators reflect the single Apply; untouched lines are never rewritten
+
+**Plans**: 0 plans
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 25 to break down)
+
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -384,6 +404,7 @@ Plans:
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
+| 25. UAT Feedback Fixes 2 | 0/? | Not started | - |
 
 ## Backlog
 

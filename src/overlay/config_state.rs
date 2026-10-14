@@ -32,15 +32,6 @@ pub const OUT_OF_DATE_MESSAGE: &str =
 /// Tooltip on a disabled Apply button while tier errors exist.
 pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix the tier errors first.";
 
-/// `Config: no unapplied changes` / `Config: 1 unapplied change` / `Config: N unapplied changes`.
-pub fn dirty_status(n: usize) -> String {
-    match n {
-        0 => "Config: no unapplied changes".to_string(),
-        1 => "Config: 1 unapplied change".to_string(),
-        n => format!("Config: {n} unapplied changes"),
-    }
-}
-
 /// Which of a style's three colour slots an edit targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColourSlot {
@@ -70,8 +61,6 @@ pub enum StyleEdit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StyleBadges {
     pub builtin: bool,
-    pub new: bool,
-    pub edited: bool,
     pub hide: bool,
 }
 
@@ -184,12 +173,9 @@ impl ConfigState {
     }
 
     pub fn badges(&self, name: &str) -> StyleBadges {
-        let applied = self.styles_applied.get(name);
         let now = self.styles.get(name);
         StyleBadges {
             builtin: StyleSet::is_builtin(name),
-            new: applied.is_none(),
-            edited: matches!((applied, now), (Some(a), Some(b)) if a != b),
             hide: matches!(now, Some(s) if s.action == StyleAction::Hide),
         }
     }
@@ -784,7 +770,6 @@ mod tests {
         let (_d, mut s) = loaded();
         assert_eq!(s.add_style("  Gold ").unwrap(), "Gold");
         assert_eq!(s.dirty_count(), 1);
-        assert!(s.badges("Gold").new);
         assert_eq!(s.add_style("Gold"), Err(StyleNameError::Duplicate));
         assert_eq!(s.add_style("   "), Err(StyleNameError::Empty));
     }
@@ -807,11 +792,9 @@ mod tests {
     fn style_dirty_is_value_compare() {
         let (_d, mut s) = loaded();
         assert!(s.edit_style("S", StyleEdit::Font(Some(40))));
-        assert!(s.badges("S").edited);
         assert_eq!(s.dirty_count(), 1);
         assert!(s.edit_style("S", StyleEdit::Font(Some(37))));
         assert_eq!(s.dirty_count(), 0);
-        assert!(!s.badges("S").edited);
     }
 
     #[test]
@@ -893,13 +876,6 @@ mod tests {
         assert_eq!(order, ["F", "E", "D", "C", "B", "A", "S"]);
         s.set_tier_text("Z", "9");
         assert_eq!(s.dirty_count(), 1);
-    }
-
-    #[test]
-    fn dirty_status_copy() {
-        assert_eq!(dirty_status(0), "Config: no unapplied changes");
-        assert_eq!(dirty_status(1), "Config: 1 unapplied change");
-        assert_eq!(dirty_status(3), "Config: 3 unapplied changes");
     }
 
     const EXTRA: [&str; 3] = ["config.json", "prices-fallback.json", "tiers-fallback.json"];

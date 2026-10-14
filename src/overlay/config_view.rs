@@ -18,16 +18,20 @@ use crate::settings;
 
 use super::body;
 use super::config_state::{
-    APPLY_BLOCKED_TOOLTIP, ColourSlot, ConfigState, OUT_OF_DATE_MESSAGE, OutsideEdit, StyleEdit,
-    config_warning, delete_confirm_text, dirty_status, outside_edit_message,
+    APPLY_BLOCKED_TOOLTIP, ColourSlot, ConfigState, OutsideEdit, StyleEdit, config_warning,
+    delete_confirm_text, outside_edit_message,
 };
 use super::theme;
-use super::widgets;
+use super::widgets::{self, ArrowDirection};
 
 const WHOLE_NUMBER: &str = "Enter a whole number";
 const NOT_SET: &str = "Not set (game default)";
-const SWITCH_TIP: &str =
-    "On: shown. Off: hidden (Alt reveals). Takes effect on the next RULES Apply.";
+const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
+/// Fixed widths of the styles table columns (Visibility | Name | Preview), shared by the header
+/// and every row so they stay aligned across the Built-in and Custom groups.
+const COL_VISIBILITY: f32 = 48.0;
+const COL_NAME: f32 = 104.0;
+const COL_PREVIEW: f32 = 120.0;
 const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete this one.";
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
 /// Label of the FILTER section toggle that sends `/reloaditemfilter` after a RULES Apply.
@@ -50,9 +54,20 @@ pub enum ConfigAction {
     CancelSwitch,
     SetReloadAfterApply(bool),
     AddStyle(String),
-    EditStyle { name: String, edit: StyleEdit },
+    EditStyle {
+        name: String,
+        edit: StyleEdit,
+    },
     DeleteStyle(String),
-    TierText { tier: String, text: String },
+    /// Move a custom style one place up or down among the customs.
+    MoveStyle {
+        name: String,
+        up: bool,
+    },
+    TierText {
+        tier: String,
+        text: String,
+    },
     Apply,
     Revert,
     Reload,
@@ -524,6 +539,62 @@ fn caption_text(text: &str) -> RichText {
     RichText::new(text).small().color(theme::LABEL_TAN)
 }
 
+// Layout probe for tests: records where a named element was drawn. A no-op outside tests.
+#[cfg(test)]
+thread_local! {
+    static PROBE: std::cell::RefCell<Vec<(&'static str, egui::Rect)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn probe(tag: &'static str, rect: egui::Rect) {
+    PROBE.with(|p| p.borrow_mut().push((tag, rect)));
+}
+
+#[cfg(not(test))]
+fn probe(_tag: &'static str, _rect: egui::Rect) {}
+
+/// One fixed-width table cell. Header and rows both go through here so their columns line up.
+fn cell<R>(
+    ui: &mut egui::Ui,
+    salt: &'static str,
+    width: f32,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::Rect, R) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(salt)
+            .max_rect(rect)
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    let out = add(&mut child);
+    (rect, out)
+}
+
+/// The Visibility | Name | Preview header, drawn once above the groups.
+fn styles_table_header(ui: &mut egui::Ui) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(8, 0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let head = |ui: &mut egui::Ui, salt: &'static str, width: f32, text: &str| {
+                    let (rect, _) = cell(ui, salt, width, |ui| {
+                        ui.label(caption_text(text));
+                    });
+                    rect
+                };
+                probe("head-vis", head(ui, "h-vis", COL_VISIBILITY, "Visibility"));
+                probe("head-name", head(ui, "h-name", COL_NAME, "Name"));
+                probe(
+                    "head-preview",
+                    head(ui, "h-preview", COL_PREVIEW, "Preview"),
+                );
+            });
+        });
+}
+
 fn show_styles(
     ui: &mut egui::Ui,
     state: &ConfigState,
@@ -531,42 +602,51 @@ fn show_styles(
     ctx: &ConfigViewCtx,
     actions: &mut Vec<ConfigAction>,
 ) {
-    ui.horizontal(|ui| {
-        ui.label(theme::section_header("STYLES"));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.add(small_button("+ ADD STYLE")).clicked() && cfg.style_draft.is_none() {
-                cfg.style_draft = Some(String::new());
-                cfg.focus_draft = true;
-            }
-        });
-    });
-    helper(
-        ui,
-        "Named looks that rules can share. Changes reach rules on the RULES tab's Apply.",
-    );
-
-    if let Some(draft) = cfg.style_draft.clone() {
-        style_draft_row(ui, state, cfg, draft, actions);
-    }
+    ui.label(theme::section_header("STYLES"));
 
     let (builtin, custom) = style_groups(state);
     if builtin.is_empty() && custom.is_empty() {
         helper(ui, "No styles loaded. Revert to reload styles.json.");
         return;
     }
-    for (heading, group) in [("Built-in", &builtin), ("Custom", &custom)] {
-        if group.is_empty() {
-            continue;
+    styles_table_header(ui);
+    if !builtin.is_empty() {
+        ui.label(caption_text("Built-in"));
+        for (i, name) in builtin.iter().enumerate() {
+            style_row(ui, state, cfg, ctx, i, name, None, actions);
         }
-        if heading == "Custom" && !builtin.is_empty() {
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(4.0);
-        }
-        ui.label(caption_text(heading));
-        for (i, name) in group.iter().enumerate() {
-            style_row(ui, state, cfg, ctx, i, name, actions);
-        }
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+    }
+    // Always drawn, so Add style is reachable before the first custom style exists.
+    ui.horizontal(|ui| {
+        let heading = ui.label(caption_text("Custom"));
+        probe("custom-heading", heading.rect);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let add = ui.add(small_button("+ ADD STYLE"));
+            probe("add-style", add.rect);
+            if add.clicked() && cfg.style_draft.is_none() {
+                cfg.style_draft = Some(String::new());
+                cfg.focus_draft = true;
+            }
+        });
+    });
+    if let Some(draft) = cfg.style_draft.clone() {
+        style_draft_row(ui, state, cfg, draft, actions);
+    }
+    let last = custom.len().saturating_sub(1);
+    for (i, name) in custom.iter().enumerate() {
+        style_row(
+            ui,
+            state,
+            cfg,
+            ctx,
+            i,
+            name,
+            Some((i > 0, i < last)),
+            actions,
+        );
     }
 }
 
@@ -578,6 +658,9 @@ pub fn style_groups(state: &ConfigState) -> (Vec<String>, Vec<String>) {
         .partition(|n| state.badges(n).builtin)
 }
 
+/// One styles-table row. `reorder` is `Some((can_move_up, can_move_down))` for custom styles and
+/// `None` for built-ins, which draw no arrows.
+#[allow(clippy::too_many_arguments)]
 fn style_row(
     ui: &mut egui::Ui,
     state: &ConfigState,
@@ -585,6 +668,7 @@ fn style_row(
     ctx: &ConfigViewCtx,
     i: usize,
     name: &str,
+    reorder: Option<(bool, bool)>,
     actions: &mut Vec<ConfigAction>,
 ) {
     let Some(style) = state.style(name) else {
@@ -594,29 +678,14 @@ fn style_row(
     ui.push_id(("style", name, epoch), |ui| {
         widgets::zebra_row(ui, i, |ui| {
             let is_expanded = cfg.expanded.as_deref() == Some(name);
-            let badges = state.badges(name);
-            let mut switch_left = None;
+            let mut name_left = None;
+            let mut arrows_left = None;
             let header = ui.horizontal(|ui| {
                 ui.set_min_height(24.0);
-                ui.add_sized(
-                    vec2(96.0, 20.0),
-                    egui::Label::new(RichText::new(name).size(14.0).color(theme::VALUE_TEXT))
-                        .truncate()
-                        .sense(egui::Sense::hover()),
-                )
-                .on_hover_text(name);
-                widgets::style_preview_chip(ui, name, style);
                 ui.spacing_mut().item_spacing.x = 4.0;
-                if badges.new {
-                    widgets::badge(ui, "new", "Added this session; not applied yet.");
-                }
-                if badges.edited {
-                    widgets::badge(ui, "edited", "Changed since the last Apply.");
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (vis, _) = cell(ui, "vis", COL_VISIBILITY, |ui| {
                     let mut on = style.action == StyleAction::Show;
                     let resp = widgets::slide_switch(ui, &mut on).on_hover_text(SWITCH_TIP);
-                    switch_left = Some(resp.rect.left());
                     if resp.changed() {
                         let action = if on {
                             StyleAction::Show
@@ -626,10 +695,51 @@ fn style_row(
                         edit(actions, name, StyleEdit::Action(action));
                     }
                 });
+                probe("row-vis", vis);
+                let (label, _) = cell(ui, "name", COL_NAME, |ui| {
+                    ui.add_sized(
+                        vec2(COL_NAME, 20.0),
+                        egui::Label::new(RichText::new(name).size(14.0).color(theme::VALUE_TEXT))
+                            .truncate()
+                            .sense(egui::Sense::hover()),
+                    )
+                    .on_hover_text(name);
+                });
+                probe("row-name", label);
+                name_left = Some(label.left());
+                let (chip, _) = cell(ui, "preview", COL_PREVIEW, |ui| {
+                    widgets::style_preview_chip(ui, name, style);
+                });
+                probe("row-preview", chip);
+                if let Some((can_up, can_down)) = reorder {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
+                        let up = widgets::arrow_button(ui, ArrowDirection::Up, can_up);
+                        probe("row-up", up.rect);
+                        probe("row-down", down.rect);
+                        arrows_left = Some(up.rect.left() - 4.0);
+                        if down.clicked() {
+                            actions.push(ConfigAction::MoveStyle {
+                                name: name.to_string(),
+                                up: false,
+                            });
+                        }
+                        if up.clicked() {
+                            actions.push(ConfigAction::MoveStyle {
+                                name: name.to_string(),
+                                up: true,
+                            });
+                        }
+                    });
+                }
             });
-            // The row's click target stops short of the switch so the two never overlap.
+            // The row's click target covers the name and preview columns only, so it never
+            // overlaps the switch or the arrows.
             let mut row_rect = header.response.rect;
-            if let Some(left) = switch_left {
+            if let Some(left) = name_left {
+                row_rect.min.x = left;
+            }
+            if let Some(left) = arrows_left {
                 row_rect.max.x = (left - 2.0).max(row_rect.min.x);
             }
             let row = ui
@@ -1102,25 +1212,6 @@ fn beam_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<C
 // Status, footer, load error
 // ---------------------------------------------------------------------------------------------
 
-/// The status block above the scroll area: dirty count, plus the out-of-date notice.
-pub fn show_status(ui: &mut egui::Ui, state: &ConfigState, ctx: &ConfigViewCtx) {
-    ui.label(
-        RichText::new(dirty_status(state.dirty_count()))
-            .size(theme::ROW_SUMMARY_SIZE)
-            .color(theme::TAB_ACTIVE),
-    );
-    if ctx.out_of_date {
-        ui.add(
-            egui::Label::new(
-                RichText::new(OUT_OF_DATE_MESSAGE)
-                    .size(14.0)
-                    .color(theme::VALUE_TEXT),
-            )
-            .wrap(),
-        );
-    }
-}
-
 /// The pinned button row. The app draws the outcome area above it.
 pub fn show_footer(
     ui: &mut egui::Ui,
@@ -1438,7 +1529,7 @@ mod tests {
         let mut found = 0;
         let mut first_hit = false;
         for y in (0..140).step_by(3) {
-            for x in (400..456).step_by(4) {
+            for x in (8..56).step_by(4) {
                 let (ctx, base) = headless();
                 let pos = egui::pos2(x as f32, y as f32);
                 let mut input = base;
@@ -1563,20 +1654,242 @@ mod tests {
         assert_eq!(revert_prompt(3), "Discard 3 unapplied config changes?");
     }
 
+    fn drain_probes() -> Vec<(&'static str, egui::Rect)> {
+        PROBE.with(|p| std::mem::take(&mut *p.borrow_mut()))
+    }
+
+    fn shape_texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| shape_texts(s, out)),
+            _ => {}
+        }
+    }
+
+    fn tall_input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                vec2(460.0, 1400.0),
+            )),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn status_lines_cover_dirty_and_out_of_date() {
-        let (_d, state) = loaded();
+    fn no_status_line_or_text_badges() {
+        let (_d, mut state) = loaded();
+        state.add_style("Gold").unwrap();
+        assert!(state.edit_style("S", StyleEdit::Font(Some(40))));
         let users = HashMap::new();
         let refs = BTreeSet::new();
-        let (ctx, input) = headless();
-        let mut vctx = view_ctx(None, &users, &refs);
-        vctx.out_of_date = true;
-        let out = ctx.run_ui(input, |ui| show_status(ui, &state, &vctx));
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let out = ctx.run_ui(tall_input(), |ui| {
+            show_sections(ui, &state, &mut cfg, &vctx);
+        });
+        let mut texts = Vec::new();
+        for clipped in &out.shapes {
+            shape_texts(&clipped.shape, &mut texts);
+        }
         out.drop_without_applying_deltas();
+        assert!(!texts.is_empty(), "nothing was drawn");
+        for t in &texts {
+            assert!(!t.contains("unapplied change"), "{t}");
+            assert!(t != "new" && t != "edited", "{t}");
+        }
+    }
+
+    #[test]
+    fn custom_heading_always_shows_add_button() {
+        let (_d, mut state) = loaded();
+        for name in style_groups(&state).1 {
+            assert!(state.delete_style(&name));
+        }
+        assert!(style_groups(&state).1.is_empty(), "no custom styles left");
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        let heading: Vec<_> = probes
+            .iter()
+            .filter(|(t, _)| *t == "custom-heading")
+            .collect();
+        let add: Vec<_> = probes.iter().filter(|(t, _)| *t == "add-style").collect();
+        assert_eq!(heading.len(), 1, "the Custom heading is always drawn");
         assert_eq!(
-            dirty_status(state.dirty_count()),
-            "Config: no unapplied changes"
+            add.len(),
+            1,
+            "exactly one add button, on the Custom heading"
         );
+        let (h, a) = (heading[0].1, add[0].1);
+        assert!(
+            a.top() < h.bottom() && h.top() < a.bottom(),
+            "button {a:?} is not on the heading row {h:?}"
+        );
+        assert!(
+            a.left() > h.right(),
+            "button sits to the right of the heading"
+        );
+    }
+
+    #[test]
+    fn styles_table_header_and_columns() {
+        let (_d, mut state) = loaded();
+        state.add_style("k1").unwrap();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        let of = |tag: &str| -> Vec<egui::Rect> {
+            probes
+                .iter()
+                .filter(|(t, _)| *t == tag)
+                .map(|(_, r)| *r)
+                .collect()
+        };
+        let (hv, hn, hp) = (of("head-vis"), of("head-name"), of("head-preview"));
+        assert_eq!((hv.len(), hn.len(), hp.len()), (1, 1, 1));
+        assert!(hv[0].left() < hn[0].left() && hn[0].left() < hp[0].left());
+        let total = state.style_names().len();
+        for (tag, head) in [
+            ("row-vis", hv[0]),
+            ("row-name", hn[0]),
+            ("row-preview", hp[0]),
+        ] {
+            let rows = of(tag);
+            assert_eq!(rows.len(), total, "{tag}");
+            for r in rows {
+                assert!(
+                    (r.left() - head.left()).abs() <= 1.0,
+                    "{tag} {r:?} vs header {head:?}"
+                );
+            }
+        }
+    }
+
+    /// Clicks `target` on a fresh frame after one settling frame.
+    fn click_styles(
+        ctx: &egui::Context,
+        state: &ConfigState,
+        cfg: &mut ConfigUi,
+        target: egui::Pos2,
+    ) -> Vec<ConfigAction> {
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, state, cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let mut input = tall_input();
+        input.events = vec![
+            egui::Event::PointerMoved(target),
+            button(true),
+            button(false),
+        ];
+        ctx.run_ui(input, |ui| {
+            show_styles(ui, state, cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        actions
+    }
+
+    fn moves(actions: &[ConfigAction]) -> Vec<&ConfigAction> {
+        actions
+            .iter()
+            .filter(|a| matches!(a, ConfigAction::MoveStyle { .. }))
+            .collect()
+    }
+
+    #[test]
+    fn custom_arrows_reorder_and_builtins_have_none() {
+        let (_d, mut state) = loaded();
+        for n in ["k1", "k2", "k3"] {
+            state.add_style(n).unwrap();
+        }
+        let (builtin, custom) = style_groups(&state);
+        assert_eq!(custom.last().map(String::as_str), Some("k3"));
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        let rects = |tag: &str| -> Vec<egui::Rect> {
+            probes
+                .iter()
+                .filter(|(t, _)| *t == tag)
+                .map(|(_, r)| *r)
+                .collect()
+        };
+        let (ups, downs) = (rects("row-up"), rects("row-down"));
+        assert_eq!(ups.len(), custom.len(), "arrows only on custom rows");
+        assert_eq!(downs.len(), custom.len());
+
+        // The ends are disabled: a click on them emits nothing.
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let first_up = click_styles(&ctx, &state, &mut cfg, ups[0].center());
+        assert!(moves(&first_up).is_empty(), "the first Up is disabled");
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let last_down = click_styles(&ctx, &state, &mut cfg, downs[downs.len() - 1].center());
+        assert!(moves(&last_down).is_empty(), "the last Down is disabled");
+
+        // k3's Up reorders.
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let clicked = click_styles(&ctx, &state, &mut cfg, ups[ups.len() - 1].center());
+        assert_eq!(
+            moves(&clicked),
+            [&ConfigAction::MoveStyle {
+                name: "k3".to_string(),
+                up: true
+            }]
+        );
+        assert!(state.move_style("k3", true));
+        let (builtin_after, custom_after) = style_groups(&state);
+        assert_eq!(builtin_after, builtin, "built-ins are unchanged");
+        let tail: Vec<_> = custom_after
+            .iter()
+            .rev()
+            .take(3)
+            .rev()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(tail, ["k1", "k3", "k2"]);
+        assert!(!state.move_style("S", true), "built-ins never move");
     }
 
     #[test]

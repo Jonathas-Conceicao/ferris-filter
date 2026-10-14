@@ -1115,6 +1115,16 @@ impl OverlayApp {
                         self.config_message = None;
                     }
                 }
+                ConfigAction::MoveStyle { name, up } => {
+                    if let Ok(state) = &mut self.config
+                        && state.move_style(&name, up)
+                    {
+                        self.config_message = None;
+                        if self.apply_state == ApplyState::Applied {
+                            self.apply_state = ApplyState::Unapplied;
+                        }
+                    }
+                }
                 ConfigAction::TierText { tier, text } => {
                     if let Ok(state) = &mut self.config {
                         state.set_tier_text(&tier, &text);
@@ -1286,8 +1296,6 @@ impl OverlayApp {
             .inner_margin(egui::Margin::symmetric(8, 0))
             .show(ui, |ui| match &self.config {
                 Ok(state) => {
-                    config_view::show_status(ui, state, &ctx);
-                    ui.add_space(4.0);
                     actions.extend(config_view::show_sections(
                         ui,
                         state,

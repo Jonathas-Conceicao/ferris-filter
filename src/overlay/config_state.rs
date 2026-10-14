@@ -343,7 +343,58 @@ impl ConfigState {
                 buffer_differs || e.min != base.min
             })
             .count();
-        added + deleted + edited + tiers
+        added + deleted + edited + tiers + usize::from(self.reordered())
+    }
+
+    /// `StyleSet` equality ignores order, so a pure reorder needs its own check: do the names
+    /// present in both snapshots appear in a different relative order?
+    fn reordered(&self) -> bool {
+        let common = |a: &StyleSet, b: &StyleSet| -> Vec<String> {
+            a.names()
+                .filter(|n| b.contains(n))
+                .map(str::to_string)
+                .collect()
+        };
+        common(&self.styles, &self.styles_applied) != common(&self.styles_applied, &self.styles)
+    }
+
+    /// The styles differ from the applied snapshot in value, membership or order.
+    fn styles_changed(&self) -> bool {
+        self.styles != self.styles_applied || !self.styles.names().eq(self.styles_applied.names())
+    }
+
+    /// Any unapplied CONFIG edit (styles, tiers or style order).
+    pub fn is_dirty(&self) -> bool {
+        self.dirty_count() > 0
+    }
+
+    /// Move a custom style up or down among the customs. False (no change) for built-ins,
+    /// unknown names and the ends of the custom group.
+    pub fn move_style(&mut self, name: &str, up: bool) -> bool {
+        self.styles.move_custom(name, up)
+    }
+
+    /// The working styles, including edits not yet applied.
+    pub fn pending_styles(&self) -> &StyleSet {
+        &self.styles
+    }
+
+    /// The working tier entries (file order), including edits not yet applied.
+    pub fn pending_tiers(&self) -> &[TierEntry] {
+        &self.tiers
+    }
+
+    pub fn styles_path(&self) -> PathBuf {
+        InputPaths::relative_to(&self.root).styles
+    }
+
+    pub fn tiers_path(&self) -> PathBuf {
+        InputPaths::relative_to(&self.root).tiers
+    }
+
+    /// The bytes read at load (or written by the last apply): the changed-on-disk baselines.
+    pub fn baselines(&self) -> (&[u8], &[u8]) {
+        (&self.styles_bytes, &self.tiers_bytes)
     }
 
     pub fn can_apply(&self) -> bool {
@@ -351,6 +402,66 @@ impl ConfigState {
             && !self.has_tier_errors()
             && self.tiers_error().is_none()
             && self.styles_error().is_none()
+    }
+
+    /// Everything that would stop the working state from being written, without writing.
+    pub fn validate(&self) -> Result<(), ConfigApplyError> {
+        if self.has_tier_errors() || self.tiers_error().is_some() || self.styles_error().is_some() {
+            let reason = self
+                .styles_error()
+                .or_else(|| self.tiers_error())
+                .unwrap_or_else(|| "Fix the tier errors first".to_string());
+            return Err(ConfigApplyError::Invalid(reason));
+        }
+        // Defensive re-check: never render something the loaders would reject.
+        self.styles
+            .validate()
+            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        ValidatedTiers::try_from(self.tiers.clone())
+            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Validate and render the bytes both files should hold, without writing. A file whose
+    /// working value equals its applied snapshot keeps its loaded bytes (no reformatting), so the
+    /// all-or-none writer drops it.
+    pub fn prepare_write(&self) -> Result<ConfigWrite, ConfigApplyError> {
+        self.prepare_write_inner(false)
+    }
+
+    fn prepare_write_inner(&self, force: bool) -> Result<ConfigWrite, ConfigApplyError> {
+        self.validate()?;
+        let styles_changed = force || self.styles_changed();
+        let tiers_changed = force || !tiers_equal(&self.tiers, &self.tiers_applied);
+        let styles_new = if styles_changed {
+            crate::loader::render_styles(&self.styles).into_bytes()
+        } else {
+            self.styles_bytes.clone()
+        };
+        let tiers_new = if tiers_changed {
+            crate::loader::render_tiers(&self.tiers).into_bytes()
+        } else {
+            self.tiers_bytes.clone()
+        };
+        Ok(ConfigWrite {
+            styles_new,
+            tiers_new,
+            styles_changed,
+            tiers_changed,
+        })
+    }
+
+    /// Adopt `w` as the new applied state after its bytes were written to both files by the
+    /// caller: snapshots, baselines and mtimes move, tier buffers are rebuilt.
+    pub fn adopt(&mut self, w: ConfigWrite) {
+        let paths = InputPaths::relative_to(&self.root);
+        self.styles_applied = self.styles.clone();
+        self.tiers_applied = self.tiers.clone();
+        self.styles_bytes = w.styles_new;
+        self.tiers_bytes = w.tiers_new;
+        self.styles_mtime = mtime_of(&paths.styles);
+        self.tiers_mtime = mtime_of(&paths.tiers);
+        self.resync_buffers();
     }
 
     /// Discard in-memory edits back to the last-applied snapshot.
@@ -402,35 +513,19 @@ impl ConfigState {
                 .unwrap_or_else(|| "Fix the tier errors first".to_string());
             return Err(ConfigApplyError::Invalid(reason));
         }
-        // Defensive re-check: never render something the loaders would reject.
-        self.styles
-            .validate()
-            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
-        ValidatedTiers::try_from(self.tiers.clone())
-            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
-
-        let styles_new = if force || self.styles != self.styles_applied {
-            crate::loader::render_styles(&self.styles).into_bytes()
-        } else {
-            self.styles_bytes.clone()
-        };
-        let tiers_new = if force || !tiers_equal(&self.tiers, &self.tiers_applied) {
-            crate::loader::render_tiers(&self.tiers).into_bytes()
-        } else {
-            self.tiers_bytes.clone()
-        };
+        let write = self.prepare_write_inner(force)?;
 
         let paths = InputPaths::relative_to(&self.root);
         let targets = [
             Target {
                 path: &paths.styles,
                 loaded: Some(&self.styles_bytes),
-                new: &styles_new,
+                new: &write.styles_new,
             },
             Target {
                 path: &paths.tiers,
                 loaded: Some(&self.tiers_bytes),
-                new: &tiers_new,
+                new: &write.tiers_new,
             },
         ];
         let outcomes = match write_all_or_none(&targets) {
@@ -448,13 +543,7 @@ impl ConfigState {
         let written = |i: usize| matches!(outcomes.get(i), Some(WriteOutcome::Written { .. }));
         let (styles_written, tiers_written) = (written(0), written(1));
 
-        self.styles_applied = self.styles.clone();
-        self.tiers_applied = self.tiers.clone();
-        self.styles_bytes = styles_new;
-        self.tiers_bytes = tiers_new;
-        self.styles_mtime = mtime_of(&paths.styles);
-        self.tiers_mtime = mtime_of(&paths.tiers);
-        self.resync_buffers();
+        self.adopt(write);
         Ok(ConfigApplyReport {
             styles: self.styles.len(),
             tiers: self.tiers.len(),
@@ -545,6 +634,28 @@ impl ConfigApplyError {
             ConfigApplyError::OutsideEdit(which) => outside_edit_message(*which).to_string(),
             ConfigApplyError::Write(text) => text.clone(),
         }
+    }
+}
+
+/// The validated, rendered bytes of the two config files, ready to be written by the caller and
+/// then handed back to [`ConfigState::adopt`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigWrite {
+    pub styles_new: Vec<u8>,
+    pub tiers_new: Vec<u8>,
+    styles_changed: bool,
+    tiers_changed: bool,
+}
+
+impl ConfigWrite {
+    /// The styles differ from the applied snapshot (value, membership or order).
+    pub fn styles_changed(&self) -> bool {
+        self.styles_changed
+    }
+
+    /// The tier cutoffs differ from the applied snapshot.
+    pub fn tiers_changed(&self) -> bool {
+        self.tiers_changed
     }
 }
 
@@ -1032,5 +1143,99 @@ mod tests {
             outside_edit_message(OutsideEdit::Both),
             "Both config files changed outside the overlay."
         );
+    }
+
+    /// A temp root whose styles.json is canonical `render_styles` output, with two customs added
+    /// so there is something to reorder.
+    fn reorder_root() -> (tempfile::TempDir, ConfigState, Vec<String>) {
+        let dir = temp_root();
+        let mut set: StyleSet =
+            serde_json::from_slice(&fs::read(dir.path().join("styles.json")).unwrap()).unwrap();
+        set.insert_new("Gold", Style::blank_show()).unwrap();
+        set.insert_new("Silver", Style::blank_show()).unwrap();
+        fs::write(
+            dir.path().join("styles.json"),
+            crate::loader::render_styles(&set),
+        )
+        .unwrap();
+        let s = ConfigState::load(dir.path()).unwrap();
+        let customs: Vec<String> = s
+            .style_names()
+            .into_iter()
+            .filter(|n| !StyleSet::is_builtin(n))
+            .collect();
+        (dir, s, customs)
+    }
+
+    #[test]
+    fn reorder_is_dirty_and_reverts() {
+        let (_dir, mut s, customs) = reorder_root();
+        let before = s.style_names();
+        assert!(!s.is_dirty());
+        let last = customs.last().unwrap();
+        assert!(s.move_style(last, true));
+        assert!(s.dirty_count() >= 1);
+        assert!(s.is_dirty());
+        assert!(s.can_apply());
+        assert_ne!(s.style_names(), before);
+        s.revert();
+        assert_eq!(s.style_names(), before);
+        assert_eq!(s.dirty_count(), 0);
+        assert!(!s.move_style("S", true));
+    }
+
+    #[test]
+    fn reorder_persists_in_file_order() {
+        let (dir, mut s, customs) = reorder_root();
+        let path = dir.path().join("styles.json");
+        let old = fs::read_to_string(&path).unwrap();
+        let last = customs.last().unwrap().clone();
+        assert!(s.move_style(&last, true));
+        let expect = s.style_names();
+
+        let w = s.prepare_write().unwrap();
+        assert!(w.styles_changed());
+        assert!(!w.tiers_changed());
+        assert_eq!(w.tiers_new, s.baselines().1);
+        let targets = [
+            Target {
+                path: &s.styles_path(),
+                loaded: Some(s.baselines().0),
+                new: &w.styles_new,
+            },
+            Target {
+                path: &s.tiers_path(),
+                loaded: Some(s.baselines().1),
+                new: &w.tiers_new,
+            },
+        ];
+        write_all_or_none(&targets).unwrap();
+        s.adopt(w);
+        assert_eq!(s.dirty_count(), 0);
+
+        let new = fs::read_to_string(&path).unwrap();
+        for line in old.lines() {
+            let line = line.trim_end_matches(',');
+            assert!(new.contains(line), "lost line: {line}");
+        }
+        let reloaded = ConfigState::load(dir.path()).unwrap();
+        assert_eq!(reloaded.style_names(), expect);
+        assert_eq!(reloaded.dirty_count(), 0);
+    }
+
+    #[test]
+    fn prepare_write_clean_keeps_loaded_bytes() {
+        let (_dir, mut s) = loaded();
+        let w = s.prepare_write().unwrap();
+        let (sb, tb) = s.baselines();
+        assert_eq!(w.styles_new, sb);
+        assert_eq!(w.tiers_new, tb);
+        assert!(!w.styles_changed() && !w.tiers_changed());
+
+        s.set_tier_text("S", "abc");
+        assert!(matches!(
+            s.prepare_write(),
+            Err(ConfigApplyError::Invalid(_))
+        ));
     }
 }

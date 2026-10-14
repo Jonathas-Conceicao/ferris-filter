@@ -71,7 +71,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 - [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
 - [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (executed 2026-10-14; awaiting human UAT)
-- [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything
+- [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (executed 2026-10-14; awaiting human UAT)
 
 ### Phase 16: Lossless Filter Parser
 
@@ -395,8 +395,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 25-03-PLAN.md — Wire one APPLY on both tabs (OVERWRITE/RELOAD, per-tab Revert, shared state/message) + CONFIG styles table (UAT2-07..10)
-- [ ] 25-04-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 25-MANUAL-VERIFICATION.md (UAT2-01..10)
+- [x] 25-03-PLAN.md — Wire one APPLY on both tabs (OVERWRITE/RELOAD, per-tab Revert, shared state/message) + CONFIG styles table (UAT2-07..10)
+- [x] 25-04-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 25-MANUAL-VERIFICATION.md (UAT2-01..10)
 
 ### Progress
 
@@ -411,7 +411,7 @@ Plans:
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
-| 25. UAT Feedback Fixes 2 | 2/4 | In Progress|  |
+| 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 
 ## Backlog
 

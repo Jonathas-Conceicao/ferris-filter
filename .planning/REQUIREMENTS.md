@@ -155,16 +155,16 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### UAT Feedback Round 2 (UAT2)
 
-- [ ] **UAT2-01**: "Continue to later rules" is its own line after the style section, last in the rule body.
-- [ ] **UAT2-02**: In the Custom style, the button that adds action lines is labelled "+ style" instead of "+ action".
-- [ ] **UAT2-03**: Show/Hide sits below the style dropdown and is shown only when Custom is selected; with a preset the style decides Show/Hide and the control is hidden.
-- [ ] **UAT2-04**: A rule name is a plain text box with no on/off toggle and no derived default name: empty = no `# ff:name` line (clearing removes it), typing adds/updates it.
-- [ ] **UAT2-05**: Sockets is a plain numeric condition with a 0-6 slider; the PoE1 socket-colour "+ socket" entry is gone.
-- [ ] **UAT2-06**: `Exceptional` is removed from the keyword table; a foreign line using it loads losslessly as a raw row and does not block Apply.
-- [ ] **UAT2-07**: The CONFIG panel has no "Config: no unapplied changes" status line and the Styles section has no "new" tag.
-- [ ] **UAT2-08**: The Add style button sits next to the Custom group heading.
-- [ ] **UAT2-09**: The styles table has a Visibility | Name | Preview header row; custom styles reorder with up/down arrows (order = styles.json order); built-ins can toggle visibility and edit actions but cannot be renamed, moved or deleted, and stay first.
-- [ ] **UAT2-10**: APPLY on either tab saves and applies everything pending (styles.json, tiers.json, the filter rendered with the new styles/tiers, then the in-game reload), all-or-nothing: any refusal writes and reloads nothing; OVERWRITE overwrites every changed file, RELOAD reloads from disk; Revert stays per tab; both tabs' stale indicators reflect the single Apply.
+- [x] **UAT2-01**: "Continue to later rules" is its own line after the style section, last in the rule body.
+- [x] **UAT2-02**: In the Custom style, the button that adds action lines is labelled "+ style" instead of "+ action".
+- [x] **UAT2-03**: Show/Hide sits below the style dropdown and is shown only when Custom is selected; with a preset the style decides Show/Hide and the control is hidden.
+- [x] **UAT2-04**: A rule name is a plain text box with no on/off toggle and no derived default name: empty = no `# ff:name` line (clearing removes it), typing adds/updates it.
+- [x] **UAT2-05**: Sockets is a plain numeric condition with a 0-6 slider; the PoE1 socket-colour "+ socket" entry is gone.
+- [x] **UAT2-06**: `Exceptional` is removed from the keyword table; a foreign line using it loads losslessly as a raw row and does not block Apply.
+- [x] **UAT2-07**: The CONFIG panel has no "Config: no unapplied changes" status line and the Styles section has no "new" tag.
+- [x] **UAT2-08**: The Add style button sits next to the Custom group heading.
+- [x] **UAT2-09**: The styles table has a Visibility | Name | Preview header row; custom styles reorder with up/down arrows (order = styles.json order); built-ins can toggle visibility and edit actions but cannot be renamed, moved or deleted, and stay first.
+- [x] **UAT2-10**: APPLY on either tab saves and applies everything pending (styles.json, tiers.json, the filter rendered with the new styles/tiers, then the in-game reload), all-or-nothing: any refusal writes and reloads nothing; OVERWRITE overwrites every changed file, RELOAD reloads from disk; Revert stays per tab; both tabs' stale indicators reflect the single Apply.
 
 ## Future Requirements
 
@@ -257,16 +257,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT-11 | Phase 24 | Complete (UAT pending) |
 | UAT-12 | Phase 24 | Complete (UAT pending) |
 | UAT-13 | Phase 24 | Complete (UAT pending) |
-| UAT2-01 | Phase 25 | Pending |
-| UAT2-02 | Phase 25 | Pending |
-| UAT2-03 | Phase 25 | Pending |
-| UAT2-04 | Phase 25 | Pending |
-| UAT2-05 | Phase 25 | Pending |
-| UAT2-06 | Phase 25 | Pending |
-| UAT2-07 | Phase 25 | Pending |
-| UAT2-08 | Phase 25 | Pending |
-| UAT2-09 | Phase 25 | Pending |
-| UAT2-10 | Phase 25 | Pending |
+| UAT2-01 | Phase 25 | Complete (UAT pending) |
+| UAT2-02 | Phase 25 | Complete (UAT pending) |
+| UAT2-03 | Phase 25 | Complete (UAT pending) |
+| UAT2-04 | Phase 25 | Complete (UAT pending) |
+| UAT2-05 | Phase 25 | Complete (UAT pending) |
+| UAT2-06 | Phase 25 | Complete (UAT pending) |
+| UAT2-07 | Phase 25 | Complete (UAT pending) |
+| UAT2-08 | Phase 25 | Complete (UAT pending) |
+| UAT2-09 | Phase 25 | Complete (UAT pending) |
+| UAT2-10 | Phase 25 | Complete (UAT pending) |
 
 **Coverage:**
 
@@ -276,4 +276,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-14 after Phase 25 added (UAT2-01..UAT2-10)*
+*Last updated: 2026-10-14 after Phase 25 executed (UAT2-01..UAT2-10, human UAT pending)*

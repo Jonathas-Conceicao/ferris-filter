@@ -144,7 +144,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > filter while the RULES tab has unapplied edits asks first (`Switch and discard` / `Stay`). **STYLES**
 > is a table with a `Visibility | Name | Preview` header: built-in styles first (their switch and
 > actions are editable; no rename, move or delete), then a divider and the **Custom** heading, which
-> carries the **Add style** button and is shown even with no custom styles. Custom styles can be
+> carries the **+ ADD STYLE** button and is shown even with no custom styles. Custom styles can be
 > deleted and reordered with up/down arrows (order = `styles.json` order, saved by Apply, undone by
 > Revert; a custom style never moves above the built-ins). There is no status line and no new/edited
 > tag. Each style has an on/off

@@ -54,10 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     filter always emits alpha 255.
   - **TIERS:** edit the `tiers.json` cutoffs with inline validation; Apply is disabled while any
     cutoff is invalid.
-  - Its own **Apply** (writes `styles.json` and `tiers.json`, all or none, and nothing else) and
-    **Revert**. A file edited outside the overlay is detected on opening the tab and at Apply, and
-    offers Reload from disk / Overwrite / Keep editing instead of being overwritten silently. After
-    a CONFIG Apply both tabs say the filter is out of date until a RULES Apply regenerates it.
+  - Its own **Revert**. CONFIG edits are saved by the one shared **Apply** (see the UAT round 2
+    entry below): `styles.json`, `tiers.json` and the filter are written all or none, and a file
+    edited outside the overlay is refused rather than overwritten silently (RELOAD / OVERWRITE).
 
 - Full-grammar block editing in the overlay: every condition and action of any block is editable
   with structured controls (grouped searchable **+ condition** / **+ action** pickers, operator

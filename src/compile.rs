@@ -28,6 +28,7 @@ use thiserror::Error;
 use crate::emitter::{self, FilterIdentity, GenerateError};
 use crate::loader::{self, LoadError};
 use crate::models::config::{Config, StyleSet};
+use crate::models::tiers::{TierEntry, ValidatedTiers};
 use crate::pricer::{self, PriceRateError, PricedData};
 
 /// Conventional file name for the policy config.
@@ -246,6 +247,23 @@ pub fn load_economy(
     })
 }
 
+/// [`load_economy`] with in-memory inputs: the caller's `styles` replace `styles.json` and
+/// `live_tiers` replace `tiers.json` (the overlay's pending, not yet applied CONFIG edits). The
+/// early-league fallback pair is untouched: its tiers are calibrated to its own prices.
+pub fn load_economy_with(
+    paths: &InputPaths,
+    policy: PriceSourcePolicy,
+    styles: StyleSet,
+    live_tiers: &[TierEntry],
+) -> Result<EconomyInputs, CompileError> {
+    let (priced, price_source) = load_priced_with(paths, policy, Some(live_tiers))?;
+    Ok(EconomyInputs {
+        styles,
+        priced,
+        price_source,
+    })
+}
+
 /// Pure counterpart of [`load_economy`]: render the economy body text.
 pub fn compile_economy(inputs: &EconomyInputs) -> Result<String, CompileError> {
     Ok(emitter::generate_economy(&inputs.styles, &inputs.priced)?)
@@ -257,6 +275,21 @@ fn load_priced(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<(PricedData, PriceSource), CompileError> {
+    load_priced_with(paths, policy, None)
+}
+
+/// [`load_priced`] where `Some(live_tiers)` replaces the reads of `paths.tiers`.
+fn load_priced_with(
+    paths: &InputPaths,
+    policy: PriceSourcePolicy,
+    live_tiers: Option<&[TierEntry]>,
+) -> Result<(PricedData, PriceSource), CompileError> {
+    let live = |paths: &InputPaths| -> Result<ValidatedTiers, CompileError> {
+        match live_tiers {
+            Some(t) => Ok(ValidatedTiers::try_from(t.to_vec()).map_err(LoadError::from)?),
+            None => Ok(loader::load_tiers(&path_str(&paths.tiers))?),
+        }
+    };
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
     // prices-fallback.json with tiers-fallback.json — their values are calibrated to each other
     // (exalt-denominated cutoffs), so they must travel together.
@@ -277,7 +310,7 @@ fn load_priced(
             match loader::load_prices_optional(&path_str(&paths.prices))? {
                 // Live prices present and non-empty → normal path.
                 Some(prices) if !prices.items.is_empty() => {
-                    let tiers = loader::load_tiers(&path_str(&paths.tiers))?;
+                    let tiers = live(paths)?;
                     (Some(prices), tiers, PriceSource::Live)
                 }
                 // Absent or empty → fall back to the committed early-league pair.
@@ -292,7 +325,7 @@ fn load_priced(
                     }
                     // No prices anywhere → currency/category blocks are omitted (GEN-05).
                     None => {
-                        let tiers = loader::load_tiers(&path_str(&paths.tiers))?;
+                        let tiers = live(paths)?;
                         (None, tiers, PriceSource::Absent)
                     }
                 },

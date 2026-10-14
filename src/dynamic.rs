@@ -201,6 +201,15 @@ impl LoadedFilter {
         Ok(())
     }
 
+    /// Move the baseline to `text` after the caller wrote exactly those bytes to the file (by
+    /// another writer, e.g. the combined all-or-none Apply). The text and the guard bytes both
+    /// become `text`, and the v0.4 migration is considered consumed.
+    pub fn adopt_written(&mut self, text: String) {
+        self.disk = Some(text.clone().into_bytes());
+        self.text = text;
+        self.migrated = false;
+    }
+
     pub fn has_section(&self) -> Result<bool, DynamicError> {
         crate::filter::section::has_section(&self.text).map_err(|e| DynamicError::Section {
             path: self.path.display().to_string(),
@@ -230,6 +239,23 @@ pub fn economy_body(
     policy: PriceSourcePolicy,
 ) -> Result<(String, PriceSource), DynamicError> {
     let inputs = compile::load_economy(paths, policy)?;
+    if inputs.price_source == PriceSource::Absent {
+        return Err(DynamicError::EconomyUnavailable);
+    }
+    let text = compile::compile_economy(&inputs)?;
+    Ok((text, inputs.price_source))
+}
+
+/// [`economy_body`] priced from in-memory `styles` and live `tiers` (the overlay's pending CONFIG
+/// edits) instead of `styles.json` / `tiers.json`. Prices, the fallback pair and the `Absent`
+/// refusal behave exactly as in [`economy_body`].
+pub fn economy_body_with(
+    paths: &InputPaths,
+    policy: PriceSourcePolicy,
+    styles: &crate::models::config::StyleSet,
+    tiers: &[crate::models::tiers::TierEntry],
+) -> Result<(String, PriceSource), DynamicError> {
+    let inputs = compile::load_economy_with(paths, policy, styles.clone(), tiers)?;
     if inputs.price_source == PriceSource::Absent {
         return Err(DynamicError::EconomyUnavailable);
     }
@@ -282,9 +308,7 @@ fn write_new_text(
     )?;
     let migrated = loaded.migrated;
     let bytes = new_text.len();
-    loaded.disk = Some(new_text.clone().into_bytes());
-    loaded.text = new_text;
-    loaded.migrated = false;
+    loaded.adopt_written(new_text);
     Ok(ApplyReport {
         path: loaded.path.clone(),
         outcome,
@@ -351,6 +375,18 @@ pub fn apply_edited(
     edited_text: &str,
     op: EconomyOp<'_>,
 ) -> Result<ApplyReport, DynamicError> {
+    let new_text = prepare_edited(loaded, edited_text, op)?;
+    write_new_text(loaded, new_text)
+}
+
+/// The pure half of [`apply_edited`]: everything it checks and computes before writing, returned
+/// as the exact text it would write (current `# ff:` prefixes). Writes nothing and leaves
+/// `loaded` untouched.
+pub fn prepare_edited(
+    loaded: &LoadedFilter,
+    edited_text: &str,
+    op: EconomyOp<'_>,
+) -> Result<String, DynamicError> {
     use crate::filter::section::{self, SectionError};
     let shown = loaded.path.display().to_string();
     if !loaded.existed() && edited_text.trim().is_empty() && !matches!(op, EconomyOp::Add(_)) {
@@ -383,7 +419,7 @@ pub fn apply_edited(
             source: other,
         },
     })?;
-    write_new_text(loaded, new_text)
+    Ok(crate::filter::meta::normalize_ff_prefix(&new_text))
 }
 
 #[cfg(test)]
@@ -516,6 +552,96 @@ mod tests {
         )
         .expect_err("absent");
         assert!(matches!(err, DynamicError::EconomyUnavailable));
+    }
+
+    #[test]
+    fn economy_body_with_uses_pending_tiers_and_styles() {
+        let dir = seed_dir();
+        let paths = InputPaths::relative_to(dir.path());
+        let styles = crate::loader::load_styles(&paths.styles.display().to_string()).unwrap();
+        let tiers: Vec<crate::models::tiers::TierEntry> =
+            serde_json::from_str(&fs::read_to_string(&paths.tiers).unwrap()).unwrap();
+        let on_disk = economy_body(&paths, PriceSourcePolicy::Auto).unwrap();
+
+        // The on-disk values reproduce economy_body byte for byte.
+        let same = economy_body_with(&paths, PriceSourcePolicy::Auto, &styles, &tiers).unwrap();
+        assert_eq!(same, on_disk);
+
+        // A higher S cutoff changes the pricing.
+        let mut high = tiers.clone();
+        high.iter_mut().find(|t| t.tier == "S").unwrap().min = 1.0e6;
+        let moved = economy_body_with(&paths, PriceSourcePolicy::Auto, &styles, &high).unwrap();
+        assert_ne!(moved.0, on_disk.0);
+
+        // A restyled S changes the rendering.
+        let mut restyled = styles.clone();
+        restyled.get_mut("S").unwrap().font = Some(11);
+        let changed =
+            economy_body_with(&paths, PriceSourcePolicy::Auto, &restyled, &tiers).unwrap();
+        assert_ne!(changed.0, on_disk.0);
+
+        // Without live prices the fallback pair is used whatever tiers are passed.
+        let empty = tempfile::tempdir().unwrap();
+        fs::copy(repo_file("tiers.json"), empty.path().join("tiers.json")).unwrap();
+        fs::copy(repo_file("styles.json"), empty.path().join("styles.json")).unwrap();
+        fs::copy(
+            repo_file("prices-fallback.json"),
+            empty.path().join("prices-fallback.json"),
+        )
+        .unwrap();
+        fs::copy(
+            repo_file("tiers-fallback.json"),
+            empty.path().join("tiers-fallback.json"),
+        )
+        .unwrap();
+        let fp = InputPaths::relative_to(empty.path());
+        let a = economy_body_with(&fp, PriceSourcePolicy::Auto, &styles, &tiers).unwrap();
+        let b = economy_body_with(&fp, PriceSourcePolicy::Auto, &styles, &high).unwrap();
+        assert!(matches!(a.1, PriceSource::Fallback(_)));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn prepare_edited_matches_apply_edited() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        let body = seed_body();
+        let mut l = LoadedFilter::load(&p).unwrap();
+        let first = "# ff:name a\nShow # a\n\tRarity Rare\n";
+        apply_edited(&mut l, first, EconomyOp::Add(&body)).unwrap();
+        let with = fs::read_to_string(&p).unwrap();
+        let before = fs::read(&p).unwrap();
+
+        let prepared = prepare_edited(&l, &with, EconomyOp::Refresh(&body)).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), before, "prepare writes nothing");
+        assert!(!crate::safe_write::backup_path(&p).exists());
+        let edited = with.replace("Rarity Rare", "Rarity Magic");
+        let prepared_edit = prepare_edited(&l, &edited, EconomyOp::Refresh(&body)).unwrap();
+        apply_edited(&mut l, &edited, EconomyOp::Refresh(&body)).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), prepared_edit.as_bytes());
+        assert_eq!(prepared, with);
+
+        assert!(matches!(
+            prepare_edited(&l, bad_rule(), EconomyOp::Keep),
+            Err(DynamicError::InvalidBlocks { .. })
+        ));
+        let absent = LoadedFilter::load(&dir.path().join("none.filter")).unwrap();
+        assert!(matches!(
+            prepare_edited(&absent, "  \n", EconomyOp::Keep),
+            Err(DynamicError::FilterNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn adopt_written_moves_the_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = copy_fixture(dir.path(), "v04-dynamic.filter");
+        let mut l = LoadedFilter::load(&p).unwrap();
+        assert!(l.migrated());
+        l.adopt_written("Show # x\n".to_string());
+        assert_eq!(l.disk(), Some(&b"Show # x\n"[..]));
+        assert_eq!(l.text(), "Show # x\n");
+        assert!(!l.migrated());
     }
 
     #[test]

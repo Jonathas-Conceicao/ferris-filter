@@ -98,6 +98,22 @@ pub fn backup_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{name}.ffbak"))
 }
 
+/// Create the one-time `<name>.ffbak` for `path` holding `original`, if it does not exist yet.
+/// `Some(path)` when this call created it, `None` when a backup was already there (never replaced).
+pub fn ensure_backup(path: &Path, original: &[u8]) -> Result<Option<PathBuf>, WriteError> {
+    let bp = backup_path(path);
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    if !dir.is_dir() {
+        return Err(WriteError::DestinationMissing {
+            path: dir.display().to_string(),
+        });
+    }
+    Ok(create_backup_with(&bp, dir, original, |f, bytes| f.write_all(bytes))?.then_some(bp))
+}
+
 /// Write `new_bytes` to `path`, guarded by the exact bytes read at load (`None` = did not exist).
 pub fn write_guarded(
     path: &Path,
@@ -299,7 +315,7 @@ pub enum AllOrNoneError {
     NothingWritten(WriteError),
 
     /// A later file failed; the earlier ones were restored from the loaded bytes.
-    #[error("{failed} The other file was restored, so nothing was changed.")]
+    #[error("{failed} Every file already replaced was restored, so nothing was changed.")]
     RolledBack { failed: WriteError },
 
     /// A later file failed and at least one earlier file could not be restored.
@@ -363,7 +379,8 @@ fn stage(path: &Path, bytes: &[u8]) -> Result<tempfile::NamedTempFile, WriteErro
     Ok(t)
 }
 
-fn write_all_or_none_with(
+/// Test hook: `write_all_or_none` with an injectable persist (for forced rename failures).
+pub(crate) fn write_all_or_none_with(
     targets: &[Target],
     mut persist: impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>,
     mut sleep: impl FnMut(Duration),
@@ -915,6 +932,52 @@ mod tests {
         assert_eq!(fs::read(&a).unwrap(), b"A0");
         assert_eq!(fs::read(&b).unwrap(), b"B0");
         assert_eq!(names(t.path()), vec!["a.json", "b.json"]);
+    }
+
+    #[test]
+    fn three_targets_third_persist_fails_restores_first_two() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = two(t.path());
+        let c = t.path().join("c.json");
+        fs::write(&c, "C0").unwrap();
+        let r = write_all_or_none_with(
+            &[
+                Target {
+                    path: &a,
+                    loaded: Some(b"A0"),
+                    new: b"A1",
+                },
+                Target {
+                    path: &b,
+                    loaded: Some(b"B0"),
+                    new: b"B1",
+                },
+                Target {
+                    path: &c,
+                    loaded: Some(b"C0"),
+                    new: b"C1",
+                },
+            ],
+            failing_on(vec![3]),
+            |_| {},
+        );
+        assert!(matches!(r, Err(AllOrNoneError::RolledBack { .. })), "{r:?}");
+        assert_eq!(fs::read(&a).unwrap(), b"A0");
+        assert_eq!(fs::read(&b).unwrap(), b"B0");
+        assert_eq!(fs::read(&c).unwrap(), b"C0");
+        assert_eq!(names(t.path()), vec!["a.json", "b.json", "c.json"]);
+    }
+
+    #[test]
+    fn ensure_backup_once() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("x.filter");
+        fs::write(&p, "orig").unwrap();
+        let bp = ensure_backup(&p, b"orig").unwrap();
+        assert_eq!(bp, Some(backup_path(&p)));
+        assert_eq!(fs::read(backup_path(&p)).unwrap(), b"orig");
+        assert_eq!(ensure_backup(&p, b"later").unwrap(), None);
+        assert_eq!(fs::read(backup_path(&p)).unwrap(), b"orig");
     }
 
     #[test]

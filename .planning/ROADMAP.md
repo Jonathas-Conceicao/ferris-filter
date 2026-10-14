@@ -72,6 +72,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
 - [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (executed 2026-10-14; awaiting human UAT)
+- [ ] **Phase 26: UAT Feedback Fixes 3** - Apply the author's third v0.5 UAT round: grouped styles table with renamable id-linked custom styles, steadier rule editor (Defences card, Between, no duplicates), Quit asks before discarding edits
 
 ### Phase 16: Lossless Filter Parser
 
@@ -398,6 +399,27 @@ Plans:
 - [x] 25-03-PLAN.md — Wire one APPLY on both tabs (OVERWRITE/RELOAD, per-tab Revert, shared state/message) + CONFIG styles table (UAT2-07..10)
 - [x] 25-04-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 25-MANUAL-VERIFICATION.md (UAT2-01..10)
 
+### Phase 26: UAT Feedback Fixes 3
+
+**Goal**: The author's third v0.5 UAT round is applied: a grouped CONFIG styles table with renamable custom styles linked by stable ids, a steadier rule editor (no collapse, visible operators, one Defences card, Between, no duplicate conditions), and a Quit that asks before discarding unapplied edits
+**Depends on**: Phase 25
+**Requirements**: UAT3-01, UAT3-02, UAT3-03, UAT3-04, UAT3-05, UAT3-06, UAT3-07, UAT3-08
+**Success Criteria** (what must be TRUE):
+
+  1. CONFIG Styles shows each group as heading -> column header -> rows: Built-in (Visibility | Name | Preview) and Custom (+ ADD STYLE on the heading; Visibility | Name | Preview | Order)
+  2. Every style in styles.json has an `id` (`builtin:<name>` for built-ins, a unique random short id for custom styles); rules link by id via `# ff:style <id> <name>`; old `# ff:style <name>` tags still resolve and are rewritten on Apply; custom styles can be renamed (unique, non-empty), built-ins cannot; `generate` output and the artifact_guard/generate_snapshot fixtures stay byte-identical
+  3. The rule editor's style picker lists the in-memory (unapplied) style set, including added/renamed styles
+  4. Picking a value in a multi-select never collapses the rule; every condition shows its operator as soon as it is added; a condition with no value writes no line
+  5. One Defences condition (after Rarity) holds Armour / Evasion / Energy Shield toggles, each with its own operator and slider writing its own line; BaseDefencePercentile is out of the keyword table and foreign lines using removed keywords still load losslessly and do not block Apply
+  6. The + condition picker greys out conditions already on the rule (clicking one focuses the existing card); numeric conditions offer Between (two lines `>= min` / `<= max`), and a loaded `>=`/`<=` pair shows as one Between card without rewriting its bytes until edited
+  7. The condition picker opens with every section collapsed
+  8. Tray Quit with unapplied edits shows Apply & quit / Quit without applying / Cancel; Apply & quit quits only if the Apply succeeds; with nothing pending Quit exits immediately; Phase 22 shutdown ordering is kept
+
+**Plans**: 0 plans
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 26 to break down)
+
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -412,6 +434,7 @@ Plans:
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
+| 26. UAT Feedback Fixes 3 | 0/? | Not started | - |
 
 ## Backlog
 

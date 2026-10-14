@@ -166,11 +166,21 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **UAT2-09**: The styles table has a Visibility | Name | Preview header row; custom styles reorder with up/down arrows (order = styles.json order); built-ins can toggle visibility and edit actions but cannot be renamed, moved or deleted, and stay first.
 - [x] **UAT2-10**: APPLY on either tab saves and applies everything pending (styles.json, tiers.json, the filter rendered with the new styles/tiers, then the in-game reload), all-or-nothing: any refusal writes and reloads nothing; OVERWRITE overwrites every changed file, RELOAD reloads from disk; Revert stays per tab; both tabs' stale indicators reflect the single Apply.
 
+### UAT Feedback Round 3 (UAT3)
+
+- [ ] **UAT3-01**: The CONFIG styles table is laid out per group as heading -> column header -> rows: "Built-in" (Visibility | Name | Preview) and "Custom" (+ ADD STYLE on the heading; Visibility | Name | Preview | Order, Order holding the up/down arrows).
+- [ ] **UAT3-02**: Every style in styles.json has a stable `id` (`builtin:<name>` for built-ins; a unique random short lowercase-alphanumeric id for custom styles); rules link to styles by id via `# ff:style <id> <name>` (name informational, refreshed on Apply); old `# ff:style <name>` tags resolve by name and are rewritten on Apply; custom styles are renamable (unique, non-empty), built-ins are not; config.json and `generate` keep referencing styles by name and their fixtures stay byte-identical.
+- [ ] **UAT3-03**: The rule editor's style picker lists the in-memory (unapplied) style set, including added and renamed styles not yet applied.
+- [ ] **UAT3-04**: Picking a value in a multi-select condition never collapses the rule row; every condition shows its operator dropdown as soon as it is added; a condition with no value writes no line.
+- [ ] **UAT3-05**: One "Defences" condition (Item section, after Rarity) with Armour / Evasion / Energy Shield toggles, each with its own operator and slider writing its own `BaseArmour`/`BaseEvasion`/`BaseEnergyShield` line; the separate picker entries and `BaseDefencePercentile` are removed; foreign lines with removed keywords load losslessly as raw rows and do not block Apply.
+- [ ] **UAT3-06**: The + condition picker greys out conditions already on the rule (clicking focuses the existing card); numeric conditions offer a Between operator writing `>= min` and `<= max` lines; a loaded rule with exactly one lower and one upper bound line for a keyword shows one Between card, bytes preserved until edited.
+- [ ] **UAT3-07**: The condition picker opens with every section collapsed.
+- [ ] **UAT3-08**: Tray Quit with unapplied edits on either tab shows the stripe with Apply & quit / Quit without applying / Cancel; Apply & quit quits only when the combined Apply succeeds; with nothing pending Quit exits immediately; the Phase 22 shutdown ordering is kept.
+
 ## Future Requirements
 
 Deferred. Tracked but not in the v0.5 roadmap.
 
-- **Style rename** (with tag rewriting across the filter).
 - **Per-user `styles.json`** in a user config location rather than the repo root (installation
   story).
 
@@ -267,13 +277,21 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT2-08 | Phase 25 | Complete (UAT pending) |
 | UAT2-09 | Phase 25 | Complete (UAT pending) |
 | UAT2-10 | Phase 25 | Complete (UAT pending) |
+| UAT3-01 | Phase 26 | Pending |
+| UAT3-02 | Phase 26 | Pending |
+| UAT3-03 | Phase 26 | Pending |
+| UAT3-04 | Phase 26 | Pending |
+| UAT3-05 | Phase 26 | Pending |
+| UAT3-06 | Phase 26 | Pending |
+| UAT3-07 | Phase 26 | Pending |
+| UAT3-08 | Phase 26 | Pending |
 
 **Coverage:**
 
-- v0.5 requirements: 56 total
-- Mapped to phases: 56
+- v0.5 requirements: 64 total
+- Mapped to phases: 64
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-14 after Phase 25 executed (UAT2-01..UAT2-10, human UAT pending)*
+*Last updated: 2026-10-14 after Phase 26 added (UAT3-01..UAT3-08)*

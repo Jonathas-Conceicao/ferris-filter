@@ -81,6 +81,11 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 
 ### Roadmap Evolution
 
+- Phase 26 added (2026-10-14): **UAT Feedback Fixes 3** — the author's third v0.5 UAT round
+  (UAT3-01..UAT3-08): grouped styles table, stable style ids + custom-style rename, in-memory style
+  picker, no rule collapse, Defences card, Between + no duplicate conditions, collapsed picker,
+  Quit confirm with unapplied edits. Run autonomously.
+
 - Phase 25 added (2026-10-14): **UAT Feedback Fixes 2** — the author's second v0.5 UAT round
   (UAT2-01..UAT2-10): rule-body layout, Sockets slider, CONFIG styles table, one all-or-nothing
   Apply covering config and rules. Run autonomously.

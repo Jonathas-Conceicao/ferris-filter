@@ -34,7 +34,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
 | `ferrisfilter apply` | `ff-cli apply [--filter <path>] [--add-economy \| --remove-economy] [--tiers <path>] [--styles <path>]`. Refreshes the economy section of the filter at `--filter` (default `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2\dynamic.filter`). Plain apply only refreshes an existing section and **never adds one**; `--add-economy` creates it at the end of the file, `--remove-economy` deletes it. The old reset, base, store and dest flags no longer exist. **App root:** apply and the overlay find `styles.json` / `tiers.json` / `prices.json` via `FERRISFILTER_HOME`, else by walking up from the exe's folder to the one holding `styles.json` (only `styles.json` marks it — a stray `config.json` is not a marker), else the working directory, else an error. A relative `--tiers`/`--styles` given to apply also resolves against the app root (`--filter` stays working-directory relative). `generate`, `install` and `sync` stay working-directory relative, so `sync` run elsewhere writes `prices.json` there while apply reads the app root's. |
 | `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |
-| `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. Since Phase 18 it drives the game-folder `dynamic.filter` as a rule list over its parsed blocks (add, delete, duplicate, reorder, enable/disable, Show/Hide/Minimal + Continue, naming; Apply / Revert / Reload / Sync economy) and a CONFIG tab (filter choice, `styles.json`, `tiers.json`) — see the overlay notes below. |
+| `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. Since Phase 18 it drives the game-folder `dynamic.filter` as a rule list over its parsed blocks (add, delete, duplicate, reorder, enable/disable, Show/Hide + Continue, naming; Apply / Revert / Reload / Sync economy) and a CONFIG tab (filter choice, `styles.json`, `tiers.json`) — see the overlay notes below. |
 | `ff-cli` (binary, v0.4) | The short-name console CLI — identical behavior to `ferrisfilter`, just a shorter name to type. Holds the console shim body `ff` used to have before it became the GUI binary. |
 | `ferrisfilter` (binary) | The long-name console CLI, unchanged: `generate` / `sync` / `install` / `apply`. |
 | `CLAUDE.md` | This file — the filter-syntax reference so we rarely need to re-fetch the docs. |
@@ -67,16 +67,28 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > search box matching the `# ff:name`, the derived label and Class/BaseType values. A rule's name comes
 > only from its `# ff:name` line; foreign header text such as NeverSink's `$type->` tags is kept on disk
 > but never shown. An unnamed rule reads `<index>  Show · <first class> · BaseType ×N`. Rows expand in
-> place (one at a time) with NAME, STYLE, CONDITIONS, ACTIONS (Show / Hide / Minimal and a Continue
-> toggle come first; the Show/Hide disposition is locked, with a note, when a style owns it) and
-> Duplicate / Delete (inline confirm). Every condition and action is editable with structured
+> place (one at a time) with NAME, CONDITIONS, then STYLE, then Duplicate / Delete (inline confirm).
+> STYLE is one picker of **Custom** plus every `styles.json` preset, with Show / Hide and Continue
+> beside it. **Custom** shows and edits the action rows (with **+ action**) under the picker; a preset
+> hides them and writes `# ff:style <name>`. Switching a preset back to Custom keeps the current
+> actions and drops the tag. A styled rule's Show/Hide is set by its style. Only Show and Hide are
+> offered: a foreign `Minimal` block is shown as Minimal and left as is unless changed. No caption
+> text; an unknown style is flagged on the picker with a tooltip. Every condition and action is editable with structured
 > controls: a grouped, searchable **+ condition** / **+ action** picker, an operator dropdown with
 > plain-English labels (an existing operator is never normalized), sliders paired with exact numbers,
-> a class picker whose groups come from `config.json`, chip lists for BaseType/Class, a colour
+> a class picker whose groups come from `config.json`, quoted lists, a colour
 > picker with alpha, and minimap / beam / sound controls. An edit rewrites only the edited value's
 > lines. A list condition added with **+ condition** is an unwritten row until its first entry.
+> Quoted lists (BaseType, mod names) are a vertical list, one entry per line with its own remove, a
+> type + Enter / **+ ADD** field that splits a pasted quoted list, in a scroll area of about 7 rows.
+> Class is the grouped picker only (classes outside `config.json`'s groups are kept and listed on one
+> compact line). Booleans are a compact **Yes | No** control (no operator; remove the condition to
+> match either; an existing operator such as `!=` is kept). Condition remove buttons are right-aligned.
 > Lines with an unknown keyword show as raw rows (Enter commits; an edit that would add a grammar
-> Error shows an inline hint and changes nothing), and an invalid commented-out block is shown
+> Error shows an inline hint and changes nothing). PoE1-only conditions (e.g. `LinkedSockets`,
+> `SocketGroup`, `HasInfluence`, `MapTier`) are not in the keyword table or picker; a filter using
+> them still loads byte-for-byte, shows them as raw rows, and Apply is not blocked (warnings never
+> block), and an invalid commented-out block is shown
 > read-only. Arrows reorder
 > (disabled while searching; a move across a Continue rule is flagged `moved across Continue`). The
 > circular toggle comments a block out (`# ` before each line) or back in; commented-out blocks load as disabled rules, and a
@@ -95,15 +107,15 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > retry and one-time `.ffbak`), and on success counts as an Apply, in-game reload included. An Apply
 > whose result equals the file on disk is not rewritten but still counts as applied: same status,
 > same in-game reload. Opening the overlay never writes: a v0.4 filter is announced as
-> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. Picking a style in the STYLE group writes
+> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. Picking a preset in the STYLE section writes
 > `# ff:style <name>` and sets the rule's actions from `styles.json`. On every Apply, styled rules are
 > rewritten from the current `styles.json` (re-read at Apply, and watched while the overlay runs: a
 > change on disk marks the filter as having unapplied changes), and the outcome says
-> `Updated N styled rules.`. A style's actions are locked in the UI (`from style` rows); a hand edit
-> of a styled rule's actions in the file is overwritten on the next Apply. **Remove style** keeps the
-> current actions as the rule's own, after which they can be customized. A tag naming a style that
+> `Updated N styled rules.`. A preset's actions are not shown in the UI; a hand edit
+> of a styled rule's actions in the file is overwritten on the next Apply. Switching to **Custom**
+> keeps the current actions as the rule's own. A tag naming a style that
 > does not exist is flagged `unknown style`, reported in the outcome area, and never rewritten or
-> blocking. A disabled styled rule is rewritten once it is enabled. Collapsed rows show `styled:
+> blocking. A disabled styled rule is rewritten once it is enabled. A collapsed rule shows a one-line condition summary under its header (hidden when expanded). Collapsed rows show `styled:
 > <name>` (truncated to 12 characters) and fold flags beyond a 120px budget into a `+N` badge, so the
 > rule label always keeps at least 140px. All footer messages (Apply outcome, list status, sync
 > status, the grammar-gate and unknown-style lines) share one outcome area capped at 96px that
@@ -113,8 +125,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > sent to the game window; ff cannot see whether the game ran the command (an elevated game silently
 > drops the keys, see the caveats below), so if the game did not reload, Refresh by hand. The result
 > lands after the game has taken focus (which hides the stripe) and is shown on the next reveal. A
-> refused Apply sends nothing. When nothing is sent the outcome keeps the **Options → Game → Item
-> Filter → Refresh** reminder plus the reason (`game not running`, `reload setting is off`, `a reload
+> refused Apply sends nothing. With the game not running the outcome is just `Wrote <path>.` (the game reads the filter when it starts). For the other reasons the outcome keeps the **Options → Game → Item
+> Filter → Refresh** reminder plus the reason (`reload setting is off`, `a reload
 > is already in progress`, `the overlay window is not ready`, `could not reload in game: <cause>`).
 
 > **The CONFIG tab (Phase 21):** the stripe has **RULES | CONFIG** tabs under the header. Switching tabs
@@ -124,7 +136,10 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > in `ff-settings.json` and is restored on the next launch (default `dynamic.filter`). FILTER also holds
 > the **Reload filter in game after Apply** toggle (saved on change). Picking another
 > filter while the RULES tab has unapplied edits asks first (`Switch and discard` / `Stay`). **STYLES**
-> adds, edits and deletes named styles (built-ins S-F, `unchanged`, `hidden` cannot be deleted; the
+> lists built-in styles first and custom styles second under their own headings with a divider, and
+> adds, edits and deletes named styles (only custom styles can be deleted). Each style has an on/off
+> slide switch (on = Show, off = Hide) that reaches the filter on the next RULES Apply (styled rules
+> and the economy section are regenerated), which hides a whole group of styled rules at once (the
 > colour picker is opaque because styles store RGB and the filter always emits alpha 255). Deleting a
 > style shows how many rules use it, and warns when `config.json` itself references it
 > (`generate` would then fail). **TIERS** edits the `tiers.json` cutoffs with inline validation.
@@ -255,8 +270,8 @@ Show # Human description (optional-slug)
   unidentified items (e.g. `UnidentifiedItemTier >= 4`). Used by the unidentified rules, which
   wear the `kite` style. Note the condition and the style are independent: the condition is what
   matches, `kite` is only how a match is drawn.
-- `GemLevel`, `MapTier` (PoE1), `MemoryStrands`, etc. — exist in the grammar but verify
-  PoE2 applicability before relying on them.
+- `GemLevel` etc. — verify PoE2 applicability before relying on them. PoE1-only conditions are
+  not in FerrisFilter's keyword table (kept as raw lines when met).
 
 **Boolean (value `True`/`False`)**
 - `Corrupted`, `Mirrored`, `Identified`, `FracturedItem`, `HasImplicitMod`, `AnyEnchantment`

@@ -118,6 +118,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Overlay UAT fixes** (Phase 24, UAT-01..UAT-13). No reload text when the game is closed; Styles
+  grouped Built-in/Custom with no badge; per-style Show/Hide slide switch; no Minimal option, a foreign
+  Minimal block is untouched; condition remove button right-aligned; quoted lists vertical and capped;
+  Class picker without chips; no style caption; 25 PoE1-only conditions removed from the keyword table
+  and picker (still loaded as raw rows, Apply not blocked); GemLevel default 20 and every default inside
+  its slider range; style section moved to the end with Custom or a preset; Yes/No booleans; collapsed
+  rows show a condition summary. No generator change.
+
 - **Comment spacing: every comment FerrisFilter writes has a space after `#`.** Metadata and economy
   marker lines are now written `# ff:<key> <value>` (`# ff:name`, `# ff:style`,
   `# ff:economy-begin`, `# ff:economy-end`); the old `#ff:` spelling is still read everywhere (a

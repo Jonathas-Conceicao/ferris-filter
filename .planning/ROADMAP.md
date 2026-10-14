@@ -70,7 +70,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
 - [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
 - [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
-- [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay
+- [x] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (completed 2026-10-14)
 
 ### Phase 16: Lossless Filter Parser
 
@@ -369,7 +369,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 24-06-PLAN.md — CLAUDE.md overlay notes, CHANGELOG [Unreleased], 24-MANUAL-VERIFICATION.md (UAT-01..UAT-13)
+- [x] 24-06-PLAN.md — CLAUDE.md overlay notes, CHANGELOG [Unreleased], 24-MANUAL-VERIFICATION.md (UAT-01..UAT-13)
 
 ### Progress
 
@@ -383,7 +383,7 @@ Plans:
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
-| 24. UAT Feedback Fixes | 5/6 | In Progress|  |
+| 24. UAT Feedback Fixes | 6/6 | Complete   | 2026-10-14 |
 
 ## Backlog
 
@@ -467,7 +467,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 

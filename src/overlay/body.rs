@@ -23,6 +23,7 @@ use super::rule_list::{ListUi, PendingRow};
 use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
 use super::theme;
 use super::widgets;
+#[cfg(test)]
 use crate::models::config::Style;
 
 const LABEL_W: f32 = 120.0;

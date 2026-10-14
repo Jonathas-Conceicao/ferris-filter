@@ -390,8 +390,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 25-01-PLAN.md — Rule editor: Continue last, + style, Show/Hide only for Custom, plain name box, Sockets 0-6 slider, Exceptional removed (UAT2-01..06)
-- [ ] 25-02-PLAN.md — Combined-Apply back end: validate all, render with pending styles/tiers, three-file all-or-none write; custom-style reorder model (UAT2-09, UAT2-10)
+- [x] 25-01-PLAN.md — Rule editor: Continue last, + style, Show/Hide only for Custom, plain name box, Sockets 0-6 slider, Exceptional removed (UAT2-01..06)
+- [x] 25-02-PLAN.md — Combined-Apply back end: validate all, render with pending styles/tiers, three-file all-or-none write; custom-style reorder model (UAT2-09, UAT2-10)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -411,7 +411,7 @@ Plans:
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
-| 25. UAT Feedback Fixes 2 | 0/? | Not started | - |
+| 25. UAT Feedback Fixes 2 | 2/4 | In Progress|  |
 
 ## Backlog
 

@@ -4,8 +4,8 @@ milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
 stopped_at: Completed 24-05-PLAN.md
-last_updated: "2026-10-14T19:34:28.817Z"
-last_activity: 2026-10-14 -- Phase 25 planning complete
+last_updated: "2026-10-14T19:34:42.308Z"
+last_activity: 2026-10-14 -- Phase 25 execution started
 progress:
   total_phases: 21
   completed_phases: 9
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 23 — auto-reload-filter-in-game-on-apply
+**Current focus:** Phase 25 — UAT feedback fixes 2
 
 ## Current Position
 
-Phase: 24 (uat-feedback-fixes) — HUMAN UAT PENDING
-Plan: 6 of 6 complete
-Status: Ready to execute
-Last activity: 2026-10-14 -- Phase 25 planning complete
+Phase: 25 (UAT feedback fixes 2) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 25
+Last activity: 2026-10-14 -- Phase 25 execution started
 
 Progress: [█████████░] 93%
 

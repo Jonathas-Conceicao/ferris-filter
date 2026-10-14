@@ -26,7 +26,8 @@ use super::widgets;
 
 const WHOLE_NUMBER: &str = "Enter a whole number";
 const NOT_SET: &str = "Not set (game default)";
-const BUILTIN_TIP: &str = "Built-in styles can't be deleted.";
+const SWITCH_TIP: &str =
+    "On: shown. Off: hidden (Alt reveals). Takes effect on the next RULES Apply.";
 const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete this one.";
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
 /// Label of the FILTER section toggle that sends `/reloaditemfilter` after a RULES Apply.
@@ -548,80 +549,124 @@ fn show_styles(
         style_draft_row(ui, state, cfg, draft, actions);
     }
 
-    let names = state.style_names();
-    if names.is_empty() {
+    let (builtin, custom) = style_groups(state);
+    if builtin.is_empty() && custom.is_empty() {
         helper(ui, "No styles loaded. Revert to reload styles.json.");
         return;
     }
-    let epoch = cfg.epoch;
-    for (i, name) in names.iter().enumerate() {
-        let Some(style) = state.style(name) else {
+    for (heading, group) in [("Built-in", &builtin), ("Custom", &custom)] {
+        if group.is_empty() {
             continue;
-        };
-        ui.push_id(("style", name.as_str(), epoch), |ui| {
-            widgets::zebra_row(ui, i, |ui| {
-                let is_expanded = cfg.expanded.as_deref() == Some(name.as_str());
-                let badges = state.badges(name);
-                let header = ui.horizontal(|ui| {
-                    ui.set_min_height(24.0);
-                    ui.add_sized(
-                        vec2(96.0, 20.0),
-                        egui::Label::new(RichText::new(name).size(14.0).color(theme::VALUE_TEXT))
-                            .truncate()
-                            .sense(egui::Sense::hover()),
-                    )
-                    .on_hover_text(name);
-                    widgets::style_preview_chip(ui, name, style);
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    if badges.hide {
-                        widgets::badge(ui, "Hide", "Hidden in game; Alt reveals it.");
-                    }
-                    if badges.builtin {
-                        widgets::badge(ui, "built-in", BUILTIN_TIP);
-                    }
-                    if badges.new {
-                        widgets::badge(ui, "new", "Added this session; not applied yet.");
-                    }
-                    if badges.edited {
-                        widgets::badge(ui, "edited", "Changed since the last Apply.");
-                    }
-                });
-                let row = ui
-                    .interact(
-                        header.response.rect,
-                        ui.id().with(("style-row", name.as_str())),
-                        egui::Sense::click(),
-                    )
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                row.widget_info(|| {
-                    egui::WidgetInfo::selected(
-                        egui::WidgetType::CollapsingHeader,
-                        true,
-                        is_expanded,
-                        name.as_str(),
-                    )
-                });
-                if cfg.scroll_to.as_deref() == Some(name.as_str()) {
-                    row.scroll_to_me(Some(Align::Center));
-                    cfg.scroll_to = None;
-                }
-                if row.clicked() {
-                    cfg.set_expanded(name);
-                    egui::Popup::close_all(ui.ctx());
-                }
-                if is_expanded {
-                    ui.add_space(4.0);
-                    egui::Frame::new()
-                        .fill(theme::ROW_BASE)
-                        .inner_margin(egui::Margin::same(8))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            style_editor(ui, state, cfg, ctx, name, style, actions);
-                        });
-                }
-            });
-        });
+        }
+        if heading == "Custom" && !builtin.is_empty() {
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+        }
+        ui.label(caption_text(heading));
+        for (i, name) in group.iter().enumerate() {
+            style_row(ui, state, cfg, ctx, i, name, actions);
+        }
     }
+}
+
+/// The style names split into (built-in, custom), each keeping file order.
+pub fn style_groups(state: &ConfigState) -> (Vec<String>, Vec<String>) {
+    state
+        .style_names()
+        .into_iter()
+        .partition(|n| state.badges(n).builtin)
+}
+
+fn style_row(
+    ui: &mut egui::Ui,
+    state: &ConfigState,
+    cfg: &mut ConfigUi,
+    ctx: &ConfigViewCtx,
+    i: usize,
+    name: &str,
+    actions: &mut Vec<ConfigAction>,
+) {
+    let Some(style) = state.style(name) else {
+        return;
+    };
+    let epoch = cfg.epoch;
+    ui.push_id(("style", name, epoch), |ui| {
+        widgets::zebra_row(ui, i, |ui| {
+            let is_expanded = cfg.expanded.as_deref() == Some(name);
+            let badges = state.badges(name);
+            let mut switch_left = None;
+            let header = ui.horizontal(|ui| {
+                ui.set_min_height(24.0);
+                ui.add_sized(
+                    vec2(96.0, 20.0),
+                    egui::Label::new(RichText::new(name).size(14.0).color(theme::VALUE_TEXT))
+                        .truncate()
+                        .sense(egui::Sense::hover()),
+                )
+                .on_hover_text(name);
+                widgets::style_preview_chip(ui, name, style);
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if badges.new {
+                    widgets::badge(ui, "new", "Added this session; not applied yet.");
+                }
+                if badges.edited {
+                    widgets::badge(ui, "edited", "Changed since the last Apply.");
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let mut on = style.action == StyleAction::Show;
+                    let resp = widgets::slide_switch(ui, &mut on).on_hover_text(SWITCH_TIP);
+                    switch_left = Some(resp.rect.left());
+                    if resp.changed() {
+                        let action = if on {
+                            StyleAction::Show
+                        } else {
+                            StyleAction::Hide
+                        };
+                        edit(actions, name, StyleEdit::Action(action));
+                    }
+                });
+            });
+            // The row's click target stops short of the switch so the two never overlap.
+            let mut row_rect = header.response.rect;
+            if let Some(left) = switch_left {
+                row_rect.max.x = (left - 2.0).max(row_rect.min.x);
+            }
+            let row = ui
+                .interact(
+                    row_rect,
+                    ui.id().with(("style-row", name)),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            row.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::CollapsingHeader,
+                    true,
+                    is_expanded,
+                    name,
+                )
+            });
+            if cfg.scroll_to.as_deref() == Some(name) {
+                row.scroll_to_me(Some(Align::Center));
+                cfg.scroll_to = None;
+            }
+            if row.clicked() {
+                cfg.set_expanded(name);
+                egui::Popup::close_all(ui.ctx());
+            }
+            if is_expanded {
+                ui.add_space(4.0);
+                egui::Frame::new()
+                    .fill(theme::ROW_BASE)
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        style_editor(ui, state, cfg, ctx, name, style, actions);
+                    });
+            }
+        });
+    });
 }
 
 fn style_draft_row(
@@ -711,20 +756,6 @@ fn style_editor(
                 .sense(egui::Sense::hover()),
         )
         .on_hover_text(RENAME_TIP);
-    });
-
-    // Action.
-    ui.vertical(|ui| {
-        body::caption(ui, "ACTION");
-        let current = usize::from(style.action == StyleAction::Hide);
-        if let Some(pick) = segmented(ui, &["Show", "Hide"], current) {
-            let action = if pick == 0 {
-                StyleAction::Show
-            } else {
-                StyleAction::Hide
-            };
-            edit(actions, name, StyleEdit::Action(action));
-        }
     });
 
     // Colours.
@@ -1384,6 +1415,83 @@ mod tests {
         assert_eq!(actions, Some(vec![]));
         assert_eq!(cfg.style_draft.as_deref(), Some("Gold"));
         assert_eq!(cfg.filter_draft.as_deref(), Some("ssf"));
+    }
+
+    #[test]
+    fn styles_split_builtin_first_then_custom() {
+        let (_d, state) = loaded();
+        let (builtin, custom) = style_groups(&state);
+        assert!(!builtin.is_empty());
+        assert!(builtin.iter().all(|n| state.badges(n).builtin));
+        assert!(custom.iter().all(|n| !state.badges(n).builtin));
+        assert_eq!(builtin.len() + custom.len(), state.style_names().len());
+    }
+
+    #[test]
+    fn style_switch_click_emits_hide() {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (builtin, _) = style_groups(&state);
+        let first = builtin[0].clone();
+        assert_eq!(state.style(&first).unwrap().action, StyleAction::Show);
+        let mut found = 0;
+        let mut first_hit = false;
+        for y in (0..140).step_by(3) {
+            for x in (400..456).step_by(4) {
+                let (ctx, base) = headless();
+                let pos = egui::pos2(x as f32, y as f32);
+                let mut input = base;
+                input.events = vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Default::default(),
+                    },
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Default::default(),
+                    },
+                ];
+                let mut cfg = ConfigUi::default();
+                let vctx = view_ctx(None, &users, &refs);
+                let mut actions = Vec::new();
+                // Frame 1 settles layout and hover; frame 2 delivers the click.
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: input.screen_rect,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+                    },
+                )
+                .drop_without_applying_deltas();
+                ctx.run_ui(input, |ui| {
+                    show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+                })
+                .drop_without_applying_deltas();
+                let hits: Vec<_> = actions
+                    .iter()
+                    .filter(|a| matches!(a, ConfigAction::EditStyle { .. }))
+                    .collect();
+                if let Some(ConfigAction::EditStyle { name, edit }) = hits.first() {
+                    assert_eq!(hits.len(), 1);
+                    assert!(builtin.contains(name));
+                    if name == &first {
+                        first_hit = true;
+                    }
+                    assert_eq!(*edit, StyleEdit::Action(StyleAction::Hide));
+                    assert_eq!(cfg.expanded, None, "switch click must not expand the row");
+                    found += 1;
+                }
+            }
+        }
+        assert!(found > 0 && first_hit, "no click reached the first switch");
     }
 
     #[test]

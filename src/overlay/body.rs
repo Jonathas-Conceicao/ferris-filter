@@ -393,7 +393,7 @@ pub(crate) fn picker_entries(query: &str) -> Groups {
     filter_groups(&grammar::condition_groups(), query)
 }
 
-/// A searchable, grouped keyword picker anchored to `button` (shared with `+ action`). Returns
+/// A searchable, grouped keyword picker anchored to `button` (shared with `+ style`). Returns
 /// the keyword the user picked this frame. Keywords for which `disabled` gives a reason are shown
 /// greyed with that reason as their tooltip.
 pub(crate) fn picker_popup(
@@ -1095,7 +1095,7 @@ pub(crate) fn count_names_edit(
     )
 }
 
-/// Edit for a socket line: a count plus colour slots (`5GRG`).
+/// Edit for a socket line: the count, with any colour letters (`5GRG`) kept as given.
 pub(crate) fn sockets_edit(
     id: BlockId,
     entry: &BodyEntry,
@@ -1112,19 +1112,6 @@ pub(crate) fn sockets_edit(
     )
     .ok()
     .flatten()
-}
-
-/// `colours` with slot `i` set to `choice`; `None` (Any) drops the slot.
-pub(crate) fn set_slot(colours: &str, i: usize, choice: Option<char>) -> String {
-    let mut v: Vec<char> = colours.chars().collect();
-    match (choice, v.get_mut(i)) {
-        (Some(c), Some(slot)) => *slot = c,
-        (None, Some(_)) => {
-            v.remove(i);
-        }
-        _ => {}
-    }
-    v.into_iter().collect()
 }
 
 /// `Any` writes `True`; `Named` writes the quoted name.
@@ -1340,16 +1327,6 @@ fn count_names_control(
     card.commit(ui, res, actions);
 }
 
-const SLOT_CHOICES: [(&str, Option<char>); 7] = [
-    ("Any", None),
-    ("R", Some('R')),
-    ("G", Some('G')),
-    ("B", Some('B')),
-    ("W", Some('W')),
-    ("A", Some('A')),
-    ("D", Some('D')),
-];
-
 fn sockets_control(
     ui: &mut egui::Ui,
     card: &Card,
@@ -1357,8 +1334,8 @@ fn sockets_control(
     colours: &str,
     actions: &mut Vec<RowAction>,
 ) {
+    // Count only: colour letters on a foreign line pass through verbatim; the UI never offers them.
     let mut v = count;
-    let mut new_colours = colours.to_string();
     let mut changed = false;
     ui.horizontal(|ui| {
         let (lo, hi, _) = grammar::slider_range("Sockets");
@@ -1366,38 +1343,9 @@ fn sockets_control(
         let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
         changed = s.changed() || n.response.changed();
     });
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-        for (i, ch) in colours.chars().enumerate() {
-            let mut picked: Option<Option<char>> = None;
-            egui::ComboBox::from_id_salt((card.salt("slot"), i))
-                .selected_text(ch.to_string())
-                .width(56.0)
-                .show_ui(ui, |ui| {
-                    for (label, c) in SLOT_CHOICES {
-                        if ui.selectable_label(c == Some(ch), label).clicked() && c != Some(ch) {
-                            picked = Some(c);
-                        }
-                    }
-                });
-            if let Some(c) = picked {
-                new_colours = set_slot(&new_colours, i, c);
-                changed = true;
-            }
-        }
-        let small = |t: &str| egui::Button::new(RichText::new(t).size(theme::ROW_SUMMARY_SIZE));
-        if colours.chars().count() < 6 && ui.add(small("+ socket")).clicked() {
-            new_colours.push('R');
-            changed = true;
-        }
-        if !colours.is_empty() && ui.add(small("Remove")).clicked() {
-            new_colours.pop();
-            changed = true;
-        }
-    });
     if changed
-        && (v != count || new_colours != colours)
-        && let Some(a) = sockets_edit(card.id, card.entry, v, &new_colours)
+        && v != count
+        && let Some(a) = sockets_edit(card.id, card.entry, v, colours)
     {
         actions.push(a);
     }
@@ -1596,8 +1544,6 @@ pub(crate) fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
 /// Minimal block is displayed as such and left alone until the user picks Show or Hide.
 pub(crate) const DISPOSITION_CHOICES: [BlockKeyword; 2] = [BlockKeyword::Show, BlockKeyword::Hide];
 
-const DISPOSITION_LOCKED_TIP: &str = "Set by the style. Pick Custom to choose.";
-
 fn disposition_word(kw: BlockKeyword) -> &'static str {
     match kw {
         BlockKeyword::Show => "Show",
@@ -1606,11 +1552,10 @@ fn disposition_word(kw: BlockKeyword) -> &'static str {
     }
 }
 
-/// Segmented Show/Hide control (locked on a known style).
+/// Segmented Show/Hide control, drawn only for Custom rules (a preset's action decides it).
 fn disposition_control(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
     let row = ctx.row;
     let id = row.id;
-    let locked = matches!(row.style, StyleState::Known(_));
     if row.keyword == BlockKeyword::Minimal {
         ui.label(
             RichText::new(disposition_word(BlockKeyword::Minimal)).color(theme::SECTION_CREAM),
@@ -1618,25 +1563,14 @@ fn disposition_control(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAc
     }
     for kw in DISPOSITION_CHOICES {
         let selected = row.keyword == kw;
-        let (text_color, fill) = if locked {
-            (theme::DISABLED_TEXT, theme::ROW_BASE)
-        } else if selected {
+        let (text_color, fill) = if selected {
             (theme::SECTION_CREAM, theme::HEADER_PLATE)
         } else {
             (theme::LABEL_TAN, theme::ROW_BASE)
         };
-        let fill = if locked && selected {
-            theme::HEADER_PLATE
-        } else {
-            fill
-        };
         let btn =
             egui::Button::new(RichText::new(disposition_word(kw)).color(text_color)).fill(fill);
-        let mut resp = ui.add_enabled(!locked, btn);
-        if locked {
-            resp = resp.on_disabled_hover_text(DISPOSITION_LOCKED_TIP);
-        }
-        if resp.clicked() && !selected {
+        if ui.add(btn).clicked() && !selected {
             actions.push(RowAction::SetKeyword(id, kw));
         }
     }
@@ -1725,8 +1659,8 @@ fn style_picker(ui: &mut egui::Ui, ctx: &BodyCtx) -> Option<StylePick> {
     picked
 }
 
-/// The STYLE section, last in the rule body: the Custom/preset picker with Show/Hide and
-/// `Continue`, then (unless a preset owns them) the action rows.
+/// The STYLE section, last in the rule body: the Custom/preset picker, then (Custom only)
+/// Show/Hide and the action rows, then `Continue` on its own last line.
 pub fn style_section(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
@@ -1743,7 +1677,7 @@ pub fn style_section(
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let btn = ui.add_enabled(
                     ctx.editable,
-                    egui::Button::new(RichText::new("+ action").size(theme::ROW_SUMMARY_SIZE)),
+                    egui::Button::new(RichText::new("+ style").size(theme::ROW_SUMMARY_SIZE)),
                 );
                 let disabled = |k: &Keyword| added.contains(&k.name).then_some("(added)");
                 picked_action = picker_popup(ui, &btn, &grammar::action_groups(), false, &disabled);
@@ -1757,27 +1691,29 @@ pub fn style_section(
     }
     ui.spacing_mut().item_spacing.y = 4.0;
     ui.add_enabled_ui(ctx.editable, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            if let Some(p) = style_picker(ui, ctx)
-                && let Some(a) = style_pick_action(id, &ctx.row.style, p)
-            {
-                actions.push(a);
-            }
-            disposition_control(ui, ctx, actions);
-            // A style never owns `Continue`, so the checkbox stays editable on a styled rule.
-            let mut cont = ctx.row.has_continue;
-            let cb = egui::Checkbox::new(
-                &mut cont,
-                RichText::new("Continue to later rules").color(theme::LABEL_TAN),
-            );
-            if ui.add(cb).changed() {
-                actions.push(RowAction::SetContinue(id, cont));
-            }
-        });
+        if let Some(p) = style_picker(ui, ctx)
+            && let Some(a) = style_pick_action(id, &ctx.row.style, p)
+        {
+            actions.push(a);
+        }
+        if show_rows {
+            ui.horizontal(|ui| disposition_control(ui, ctx, actions));
+        }
     });
     if show_rows {
         action_rows(ui, ctx, list, actions);
     }
+    ui.add_enabled_ui(ctx.editable, |ui| {
+        // A style never owns `Continue`, so the checkbox stays editable on a styled rule.
+        let mut cont = ctx.row.has_continue;
+        let cb = egui::Checkbox::new(
+            &mut cont,
+            RichText::new("Continue to later rules").color(theme::LABEL_TAN),
+        );
+        if ui.add(cb).changed() {
+            actions.push(RowAction::SetContinue(id, cont));
+        }
+    });
 }
 
 /// One card per action line (Custom / unstyled rules).
@@ -2750,21 +2686,96 @@ mod tests {
     }
 
     #[test]
-    fn sockets_edits_and_slots() {
-        let (_, id, e) = entries_of("Show\n    Sockets >= 5GGG\n");
+    fn sockets_slider_keeps_colour_letters() {
+        let (wf, id, e) = entries_of("Show\n    Sockets >= 5GGG\n");
         assert_eq!(e[0].values, ["5GGG"]);
-        let colours = set_slot("GGG", 1, Some('R'));
-        assert_eq!(colours, "GRG");
-        assert_eq!(
-            values_of(sockets_edit(id, &e[0], 5, &colours)),
-            Some("5GRG".to_string())
-        );
-        assert_eq!(set_slot("GRG", 1, None), "GG");
-        assert_eq!(
-            values_of(sockets_edit(id, &e[0], 5, "")),
-            Some("5".to_string())
-        );
+        let a = sockets_edit(id, &e[0], 3, "GGG");
+        assert_eq!(values_of(a.clone()), Some("3GGG".to_string()));
+        let mut wf = wf;
+        wf.apply_action(a.unwrap());
+        assert_eq!(wf.text(), "Show\n    Sockets >= 3GGG\n");
+        let (wf, id, e) = entries_of("Show\n    Sockets >= 5GGG\n");
         assert_eq!(sockets_edit(id, &e[0], 5, "GGG"), None);
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+        let production = include_str!("body.rs").split("mod tests {").next().unwrap();
+        assert!(!production.contains(&["\"+ ", "socket\""].concat()));
+        assert!(!production.contains("SLOT_CHOICES"));
+    }
+
+    /// Topmost y at which a click emits an action matching `pred` (scan over the body).
+    fn first_click_y(wf: &WorkingFilter, pred: impl Fn(&RowAction) -> bool) -> Option<f32> {
+        let id = wf.rows()[0].id;
+        for y in (20..700).step_by(4) {
+            for x in (8..456).step_by(8) {
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                frame_of(&ctx, input(vec![]), wf, &mut list, None);
+                let a = frame_of(
+                    &ctx,
+                    input(click_events(Pos2::new(x as f32, y as f32))),
+                    wf,
+                    &mut list,
+                    None,
+                );
+                if a.iter().any(&pred) {
+                    return Some(y as f32);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn continue_is_the_last_body_line() {
+        let wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n    SetFontSize 37\n");
+        let cont = first_click_y(&wf, |a| matches!(a, RowAction::SetContinue(..)))
+            .expect("Continue checkbox clickable");
+        let disp = first_click_y(&wf, |a| matches!(a, RowAction::SetKeyword(..)))
+            .expect("Show/Hide clickable");
+        let remove = first_click_y(&wf, |a| matches!(a, RowAction::RemoveLine { line: 2, .. }))
+            .expect("action row clickable");
+        assert!(
+            cont > disp,
+            "Continue ({cont}) not below Show/Hide ({disp})"
+        );
+        assert!(
+            cont > remove,
+            "Continue ({cont}) not below actions ({remove})"
+        );
+    }
+
+    #[test]
+    fn custom_add_button_reads_plus_style() {
+        let production = include_str!("body.rs").split("mod tests {").next().unwrap();
+        assert!(production.contains(&["\"+ ", "style\""].concat()));
+        assert!(!production.contains(&["\"+ ", "action\""].concat()));
+    }
+
+    #[test]
+    fn disposition_hidden_for_presets() {
+        let preset = styled("#ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n");
+        assert!(first_click_y(&preset, |a| matches!(a, RowAction::SetKeyword(..))).is_none());
+        let minimal_preset = styled("#ff:style S\nMinimal\n    Class \"Rings\"\n");
+        assert!(
+            first_click_y(&minimal_preset, |a| matches!(a, RowAction::SetKeyword(..))).is_none()
+        );
+        let custom = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        assert!(first_click_y(&custom, |a| matches!(a, RowAction::SetKeyword(..))).is_some());
+        let minimal = WorkingFilter::from_text("Minimal\n    Class \"Rings\"\n");
+        assert!(
+            first_click_y(&minimal, |a| matches!(
+                a,
+                RowAction::SetKeyword(_, BlockKeyword::Show)
+            ))
+            .is_some()
+        );
     }
 
     #[test]

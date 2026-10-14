@@ -720,6 +720,66 @@ pub fn chip_list(
             });
         });
 
+    let (added, rejected) = add_field(ui, id, hint);
+    outcome.added = added;
+    outcome.rejected = rejected;
+    outcome
+}
+
+/// A vertical list: one row per entry (value on the left, its own remove X flush right) in a
+/// scroll area capped at `max_rows` rows, then the shared add field. No counter line.
+pub fn string_list(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    items: &[String],
+    hint: &str,
+    max_rows: usize,
+) -> ChipListOutcome {
+    const ROW_H: f32 = 26.0;
+    let id = salted_id(ui, id_salt);
+    let mut outcome = ChipListOutcome::default();
+
+    egui::ScrollArea::vertical()
+        .id_salt(id.with("scroll"))
+        .max_height(max_rows as f32 * ROW_H)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (index, item) in items.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.set_height(ROW_H);
+                    let label = format!("Remove {item}");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if remove_x_button_with_id(ui, id.with(("x", index)), &label).clicked() {
+                            outcome.removed = Some(index);
+                        }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(item)
+                                        .size(theme::ROW_SUMMARY_SIZE)
+                                        .color(theme::VALUE_TEXT),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(item);
+                        });
+                    });
+                });
+            }
+        });
+
+    let (added, rejected) = add_field(ui, id, hint);
+    outcome.added = added;
+    outcome.rejected = rejected;
+    outcome
+}
+
+/// The shared add field: draft in temp memory under `id`, Enter / + ADD commits, a quoted paste
+/// is split, stray quotes and control characters are refused visibly with the draft kept.
+fn add_field(ui: &mut egui::Ui, id: egui::Id, hint: &str) -> (Vec<String>, Option<String>) {
+    let field_id = id.with("field");
+    let mut added = Vec::new();
+    let mut rejected = None;
     let mut draft: String = ui
         .data_mut(|d| d.get_temp::<String>(id.with("draft")))
         .unwrap_or_default();
@@ -747,12 +807,12 @@ pub fn chip_list(
                 if entry.chars().any(|c| c == '"' || c.is_control()) {
                     refused = true;
                 } else {
-                    outcome.added.push(entry);
+                    added.push(entry);
                 }
             }
         }
         if refused {
-            outcome.rejected = Some(CHIP_REJECT_MESSAGE.to_owned());
+            rejected = Some(CHIP_REJECT_MESSAGE.to_owned());
         } else {
             draft.clear();
         }
@@ -761,7 +821,7 @@ pub fn chip_list(
     if enter {
         ui.memory_mut(|m| m.request_focus(field_id));
     }
-    outcome
+    (added, rejected)
 }
 
 #[cfg(test)]
@@ -1274,6 +1334,84 @@ mod tests {
         assert_eq!(out.added, ["Sapphire Ring"]);
     }
 
+    #[test]
+    fn string_list_one_row_per_entry_and_remove() {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        let mut x_id = egui::Id::NULL;
+        ctx.run_ui(RawInput::default(), |ui| {
+            x_id = salted_id(ui, "list").with(("x", 1usize));
+            string_list(ui, "list", &items, "hint", 7);
+        })
+        .drop_without_applying_deltas();
+        let rect = ctx
+            .read_response(x_id)
+            .map(|r| r.rect)
+            .unwrap_or(Rect::NOTHING);
+        assert_eq!(rect.size(), egui::vec2(24.0, 24.0));
+        let mut out = ChipListOutcome::default();
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            out = string_list(ui, "list", &items, "hint", 7);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(out.removed, Some(1));
+        assert!(out.added.is_empty());
+    }
+
+    fn string_list_commit(draft: &str) -> (ChipListOutcome, String) {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        let mut ids = (egui::Id::NULL, egui::Id::NULL);
+        ctx.run_ui(RawInput::default(), |ui| {
+            let id = salted_id(ui, "list");
+            ids = (id.with("draft"), id.with("field"));
+            ui.data_mut(|d| d.insert_temp(ids.0, draft.to_owned()));
+            ui.memory_mut(|m| m.request_focus(ids.1));
+            string_list(ui, "list", &items, "hint", 7);
+        })
+        .drop_without_applying_deltas();
+        ctx.run_ui(RawInput::default(), |ui| {
+            string_list(ui, "list", &items, "hint", 7);
+        })
+        .drop_without_applying_deltas();
+        let mut out = ChipListOutcome::default();
+        ctx.run_ui(key_input(egui::Key::Enter), |ui| {
+            out = string_list(ui, "list", &items, "hint", 7);
+        })
+        .drop_without_applying_deltas();
+        let left = ctx
+            .data_mut(|d| d.get_temp::<String>(ids.0))
+            .unwrap_or_default();
+        (out, left)
+    }
+
+    #[test]
+    fn string_list_quoted_paste_splits() {
+        let (out, left) = string_list_commit("\"Heavy Belt\" \"Utility Belt\"");
+        assert_eq!(out.added, ["Heavy Belt", "Utility Belt"]);
+        assert!(left.is_empty());
+    }
+
+    #[test]
+    fn string_list_rejects_a_stray_quote() {
+        let (out, left) = string_list_commit("Foo\"Bar");
+        assert!(out.added.is_empty());
+        assert!(out.rejected.is_some());
+        assert_eq!(left, "Foo\"Bar");
+    }
+
+    #[test]
+    fn string_list_idle_is_quiet() {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        ctx.run_ui(RawInput::default(), |ui| {
+            assert_eq!(
+                string_list(ui, "list", &items, "hint", 7),
+                ChipListOutcome::default()
+            );
+        })
+        .drop_without_applying_deltas();
+    }
     #[test]
     fn chip_list_counter_pluralises() {
         for (n, expected) in [(14usize, "14 items"), (1, "1 item")] {

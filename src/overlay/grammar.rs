@@ -824,9 +824,7 @@ mod tests {
         let labels: Vec<_> = condition_groups().iter().map(|g| g.0).collect();
         assert_eq!(
             labels,
-            [
-                "Item", "Sockets", "Status", "Mods", "Endgame", "Other"
-            ]
+            ["Item", "Sockets", "Status", "Mods", "Endgame", "Other"]
         );
     }
 

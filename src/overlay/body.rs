@@ -2299,6 +2299,22 @@ mod tests {
     }
 
     #[test]
+    fn removed_poe1_keyword_is_a_raw_row() {
+        let (wf, _, e) = entries_of("Show\n    LinkedSockets 6\n");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].kind, EntryKind::Opaque);
+        assert_eq!(e[0].text, "    LinkedSockets 6");
+        assert!(e[0].keyword.is_none());
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+    }
+
+    #[test]
     fn placeholder_text_is_gone_and_empty_state_exists() {
         let src = include_str!("rule_list.rs");
         let needle = ["Editing conditions arrives", " in a later update."].concat();

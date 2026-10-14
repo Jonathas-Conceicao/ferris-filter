@@ -34,11 +34,11 @@ const COL_NAME: f32 = 104.0;
 const COL_PREVIEW: f32 = 120.0;
 const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete this one.";
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
-/// Label of the FILTER section toggle that sends `/reloaditemfilter` after a RULES Apply.
+/// Label of the FILTER section toggle that sends `/reloaditemfilter` after an Apply.
 pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
 /// Caveats shown under the toggle: the game reloads whichever filter is selected in game, and text
 /// left in an open chat box is sent first (nothing outside the game can see whether chat is open).
-pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after a RULES Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
+pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
 /// The toggle's hover text: what "Reloaded in game" does and does not certify (review WR-01).
 pub const RELOAD_TOGGLE_TIP: &str = "\"Reloaded in game\" means the command was sent to the game window; ff cannot see whether the game ran it. A game running as administrator ignores the keys unless ff runs as administrator too. If the game did not reload, use Options > Game > Item Filter > Refresh.";
 const APPLY_NOTHING_TIP: &str = "Nothing to apply.";

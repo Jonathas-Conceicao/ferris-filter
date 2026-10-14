@@ -1,5 +1,9 @@
 //! Styled-rule rewrite (STYLE-03 / EDIT-06).
 //!
+//! A tag is `# ff:style <id> <name>` (UAT3-02): the id is the identity, the name a readable hint.
+//! A legacy tag that is just a style name still resolves by name; `rewrite_styled_with(.., true)`
+//! migrates such tags (and stale names after a rename) to the canonical form.
+//!
 //! A rule tagged `# ff:style <name>` for a known style gets that style's action lines and its
 //! Show/Hide keyword whenever [`rewrite_styled`] runs (on Apply). Pure and library-level: no IO,
 //! no UI, so a later style editor can reuse it. It lives outside `filter` because `filter` must
@@ -32,6 +36,9 @@ pub struct StyleReport {
     /// `(1-based rule index, style name)` for rules whose `# ff:style` tag was removed because the
     /// style no longer exists. [`rewrite_styled`] never fills it; [`drop_unknown_style_tags`] does.
     pub dropped: Vec<(usize, String)>,
+    /// Rules whose `# ff:style` tag line was rewritten to the canonical `<id> <name>` form
+    /// (only [`rewrite_styled_with`] with `retag = true` fills it).
+    pub retagged: usize,
 }
 
 /// False when `name` is empty, padded with whitespace or holds a control character: such a name
@@ -130,6 +137,14 @@ pub fn rewrite_block(doc: &mut Document, id: BlockId, style: &Style) -> Result<b
 /// A rule whose rewrite is refused is left byte-identical (`rewrite_block` is all-or-nothing)
 /// and listed in [`StyleReport::failed`]; the pass goes on with the other rules.
 pub fn rewrite_styled(doc: &mut Document, styles: &StyleSet) -> StyleReport {
+    rewrite_styled_with(doc, styles, false)
+}
+
+/// [`rewrite_styled`], optionally migrating tags. With `retag`, every non-economy rule (enabled
+/// or disabled) whose tag resolves but is not canonical gets its tag line rewritten to
+/// `<id> <name>`; a canonical tag line is never touched. Actions are rewritten for enabled rules
+/// only, as before.
+pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -> StyleReport {
     let span = economy_span(doc);
     let ids: Vec<(BlockId, bool, usize)> = doc
         .blocks()
@@ -137,25 +152,34 @@ pub fn rewrite_styled(doc: &mut Document, styles: &StyleSet) -> StyleReport {
         .collect();
     let mut report = StyleReport::default();
     for (id, enabled, header) in ids {
-        if !enabled || in_economy(span, header) {
+        if in_economy(span, header) {
             continue;
         }
-        let Some(name) = doc.meta_get(id, "style").map(str::to_string) else {
+        let Some(tag) = doc.meta_get(id, "style").map(str::to_string) else {
             continue;
         };
-        match styles.get(&name) {
-            Some(style) => match rewrite_block(doc, id, style) {
-                Ok(true) => report.rewritten += 1,
-                Ok(false) => {}
-                Err(e) => {
-                    if let Some(i) = rule_index_of(doc, id) {
-                        report.failed.push((i, e.to_string()));
-                    }
-                }
-            },
-            None => {
+        let Some(m) = styles.resolve_tag(&tag) else {
+            if enabled && let Some(i) = rule_index_of(doc, id) {
+                report.unknown.push((i, tag));
+            }
+            continue;
+        };
+        if retag
+            && !m.canonical
+            && let Some(canon) = styles.tag_for(m.name)
+            && doc.set_meta(id, "style", &canon).is_ok()
+        {
+            report.retagged += 1;
+        }
+        if !enabled {
+            continue;
+        }
+        match rewrite_block(doc, id, m.style) {
+            Ok(true) => report.rewritten += 1,
+            Ok(false) => {}
+            Err(e) => {
                 if let Some(i) = rule_index_of(doc, id) {
-                    report.unknown.push((i, name));
+                    report.failed.push((i, e.to_string()));
                 }
             }
         }
@@ -179,7 +203,7 @@ pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(us
         let Some(name) = doc.meta_get(id, "style").map(str::to_string) else {
             continue;
         };
-        if styles.get(&name).is_some() {
+        if styles.resolve_tag(&name).is_some() {
             continue;
         }
         let Some(index) = rule_index_of(doc, id) else {
@@ -395,5 +419,86 @@ mod tests {
         let ids: Vec<_> = doc.blocks().map(|b| b.id()).collect();
         assert_eq!(rule_index_of(&doc, ids[0]), Some(1));
         assert_eq!(rule_index_of(&doc, ids[1]), Some(2));
+    }
+
+    fn run_with(src: &str, set: &StyleSet, retag: bool) -> (String, StyleReport) {
+        let mut doc = parse(src.as_bytes()).unwrap();
+        let rep = rewrite_styled_with(&mut doc, set, retag);
+        (doc.serialize(), rep)
+    }
+
+    #[test]
+    fn retag_migrates_legacy_tag_and_actions() {
+        let src = "#ff:style S\nHide\n  Class \"Rings\"\n  SetFontSize 20\n  Continue\n";
+        let (out, rep) = run_with(src, &styles(), true);
+        let expect =
+            format!("# ff:style builtin:S S\nShow\n  Class \"Rings\"\n{S_LINES}  Continue\n");
+        assert_eq!(out, expect);
+        assert_eq!(rep.retagged, 1);
+        assert_eq!(rep.rewritten, 1);
+    }
+
+    #[test]
+    fn no_retag_leaves_tag_lines_alone() {
+        let src = "#ff:style S\nHide\n  Class \"Rings\"\n";
+        let (out, rep) = run_with(src, &styles(), false);
+        assert!(out.starts_with("#ff:style S\nShow\n"));
+        assert_eq!(rep.retagged, 0);
+        let (via_plain, _) = run(src);
+        assert_eq!(out, via_plain);
+    }
+
+    #[test]
+    fn canonical_tag_line_is_untouched() {
+        let src = format!("#ff:style builtin:S S\nShow\n  Class \"Rings\"\n{S_LINES}");
+        let (out, rep) = run_with(&src, &styles(), true);
+        assert_eq!(out, src);
+        assert_eq!(rep.retagged, 0);
+        assert_eq!(rep.rewritten, 0);
+    }
+
+    #[test]
+    fn disabled_rule_legacy_tag_is_retagged() {
+        let src = "#ff:style hidden\n#Hide\n#  Class \"Rings\"\n";
+        let mut doc = parse(src.as_bytes()).unwrap();
+        let id = doc.blocks().next().unwrap().id();
+        assert!(!doc.block(id).unwrap().is_enabled());
+        let rep = rewrite_styled_with(&mut doc, &styles(), true);
+        assert_eq!(rep.retagged, 1);
+        assert_eq!(doc.meta_get(id, "style"), Some("builtin:hidden hidden"));
+    }
+
+    #[test]
+    fn unknown_tag_reported_and_untouched_even_when_retagging() {
+        let src = "#ff:style zzzzzz kite\nHide\n  SetFontSize 20\n";
+        let (out, rep) = run_with(src, &styles(), true);
+        assert_eq!(out, src);
+        assert_eq!(rep.unknown, vec![(1, "zzzzzz kite".to_string())]);
+    }
+
+    #[test]
+    fn drop_unknown_keeps_legacy_name_and_id_tags() {
+        let src = "#ff:style S\nShow\n\n#ff:style builtin:A A\nShow\n\n#ff:style Nope\nShow\n";
+        let mut doc = parse(src.as_bytes()).unwrap();
+        let dropped = drop_unknown_style_tags(&mut doc, &styles());
+        assert_eq!(dropped, vec![(3, "Nope".to_string())]);
+        let out = doc.serialize();
+        assert!(out.contains("#ff:style S\n") && out.contains("#ff:style builtin:A A\n"));
+        assert!(!out.contains("Nope"));
+    }
+
+    #[test]
+    fn renamed_style_tag_follows_the_id() {
+        let mut set = styles();
+        let kite_id = set.id_of("kite").unwrap().to_string();
+        set.rename_custom("kite", "locator").unwrap();
+        let src = format!("#ff:style {kite_id} kite\nShow\n  Class \"Rings\"\n");
+        let (out, rep) = run_with(&src, &set, true);
+        assert!(
+            out.starts_with(&format!("# ff:style {kite_id} locator\n")),
+            "{out}"
+        );
+        assert_eq!(rep.retagged, 1);
+        assert!(rep.unknown.is_empty());
     }
 }

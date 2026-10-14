@@ -163,7 +163,11 @@ fn check_legacy_styles(
                 return styles.get(name).is_some();
             }
             match serde_json::from_value::<Style>((*value).clone()) {
-                Ok(inline) => Some(&inline) != styles.get(name),
+                Ok(mut inline) => {
+                    // The id is identity metadata the pre-id inline copy never had.
+                    inline.id = styles.id_of(name).map(str::to_string);
+                    Some(&inline) != styles.get(name)
+                }
                 // Unparseable user content is never silently discarded.
                 Err(_) => true,
             }
@@ -188,7 +192,8 @@ fn check_legacy_styles(
 /// - Unreadable file or bad JSON/duplicate name: `LoadError::Read` / `LoadError::Parse`.
 /// - Failed validation: `LoadError::Styles`.
 pub fn load_styles(path: &str) -> Result<StyleSet, LoadError> {
-    let set: StyleSet = load_json(path)?;
+    let mut set: StyleSet = load_json(path)?;
+    set.assign_missing_ids();
     set.validate()?;
     Ok(set)
 }
@@ -445,5 +450,35 @@ mod tests {
             let err = load_text(&dup).unwrap_err();
             assert!(err.to_string().contains("duplicate style name"), "{err}");
         }
+    }
+
+    #[test]
+    fn render_styles_writes_id_first() {
+        let set = StyleSet::committed_for_tests();
+        let text = render_styles(&set);
+        let s_line = text.lines().find(|l| l.starts_with("  \"S\":")).unwrap();
+        assert!(s_line.contains(r#": {"id":"builtin:S","#), "{s_line}");
+        for line in text.lines().skip(1).take(set.len()) {
+            assert!(line.contains(r#": {"id":""#), "{line}");
+        }
+    }
+
+    #[test]
+    fn load_styles_assigns_ids_deterministically() {
+        let dir = std::env::temp_dir().join("ff-26-01-load-ids");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("styles.json");
+        let mut set = StyleSet::committed_for_tests();
+        let names: Vec<String> = set.names().map(str::to_string).collect();
+        for n in &names {
+            set.get_mut(n).unwrap().id = None;
+        }
+        std::fs::write(&path, render_styles(&set)).unwrap();
+        let a = load_styles(path.to_str().unwrap()).unwrap();
+        let b = load_styles(path.to_str().unwrap()).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.id_of("S"), Some("builtin:S"));
+        assert!(a.id_of("kite").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -301,8 +301,12 @@ impl ConfigState {
             .iter()
             .filter(|(n, s)| matches!(self.styles_applied.get(n), Some(a) if a != *s))
             .count();
-        let tiers = self
-            .tiers
+        added + deleted + edited + self.tiers_dirty_count() + usize::from(self.reordered())
+    }
+
+    /// Tier rows whose value or text differs from the applied snapshot.
+    fn tiers_dirty_count(&self) -> usize {
+        self.tiers
             .iter()
             .filter(|e| {
                 let Some(base) = self.tiers_applied.iter().find(|a| a.tier == e.tier) else {
@@ -314,8 +318,51 @@ impl ConfigState {
                     .is_some_and(|b| *b != format!("{}", base.min));
                 buffer_differs || e.min != base.min
             })
-            .count();
-        added + deleted + edited + tiers + usize::from(self.reordered())
+            .count()
+    }
+
+    /// Re-read every config file the user has not edited whose bytes on disk differ from its
+    /// baseline, so a clean file follows the disk instead of being guarded or written back. A file
+    /// with pending edits keeps its baseline (changed-on-disk refusal, OVERWRITE). On error (a
+    /// clean file that no longer loads) nothing changes. Returns whether anything was re-read.
+    pub fn follow_disk(&mut self) -> Result<bool, String> {
+        let paths = InputPaths::relative_to(&self.root);
+        let read = |p: &Path| fs::read(p).map_err(|e| format!("{}: {e}", file_label(p)));
+        let mut styles = None;
+        if !self.styles_changed() {
+            let now = read(&paths.styles)?;
+            if now != self.styles_bytes {
+                let set: StyleSet = serde_json::from_slice(&now)
+                    .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+                set.validate()
+                    .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+                styles = Some((set, now));
+            }
+        }
+        let mut tiers = None;
+        if self.tiers_dirty_count() == 0 {
+            let now = read(&paths.tiers)?;
+            if now != self.tiers_bytes {
+                let entries: Vec<TierEntry> = serde_json::from_slice(&now)
+                    .map_err(|e| format!("{}: {e}", file_label(&paths.tiers)))?;
+                ValidatedTiers::try_from(entries.clone())
+                    .map_err(|e| format!("{}: {e}", file_label(&paths.tiers)))?;
+                tiers = Some((entries, now));
+            }
+        }
+        let changed = styles.is_some() || tiers.is_some();
+        if let Some((set, bytes)) = styles {
+            self.styles_applied = set.clone();
+            self.styles = set;
+            self.styles_bytes = bytes;
+        }
+        if let Some((entries, bytes)) = tiers {
+            self.tiers_applied = entries.clone();
+            self.tiers = entries;
+            self.tiers_bytes = bytes;
+            self.resync_buffers();
+        }
+        Ok(changed)
     }
 
     /// `StyleSet` equality ignores order, so a pure reorder needs its own check: do the names
@@ -951,5 +998,47 @@ mod tests {
             s.prepare_write(),
             Err(ConfigApplyError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn follow_disk_adopts_only_clean_files() {
+        let (dir, mut s) = loaded();
+        assert_eq!(s.follow_disk(), Ok(false), "nothing changed on disk");
+
+        // A clean tiers.json follows an outside edit; an edited styles.json keeps its baseline.
+        assert!(s.edit_style("S", StyleEdit::Font(Some(41))));
+        let styles_base = s.baselines().0.to_vec();
+        let mut styles_disk = styles_base.clone();
+        styles_disk.push(b'\n');
+        fs::write(s.styles_path(), &styles_disk).unwrap();
+        let tiers: Vec<TierEntry> =
+            serde_json::from_slice(&fs::read(s.tiers_path()).unwrap()).unwrap();
+        let mut outside = tiers.clone();
+        outside.iter_mut().find(|e| e.tier == "S").unwrap().min = 31.0;
+        let tiers_disk = crate::loader::render_tiers(&outside).into_bytes();
+        fs::write(s.tiers_path(), &tiers_disk).unwrap();
+
+        assert_eq!(s.follow_disk(), Ok(true));
+        assert_eq!(
+            s.baselines().0,
+            &styles_base[..],
+            "edited file keeps its baseline"
+        );
+        assert_eq!(s.baselines().1, &tiers_disk[..]);
+        assert_eq!(
+            s.pending_tiers()
+                .iter()
+                .find(|e| e.tier == "S")
+                .unwrap()
+                .min,
+            31.0
+        );
+        assert_eq!(s.style("S").unwrap().font, Some(41), "edits survive");
+        assert_eq!(s.dirty_count(), 1);
+
+        // A clean file that no longer loads is an error and changes nothing.
+        fs::write(dir.path().join("tiers.json"), b"not json").unwrap();
+        assert!(s.follow_disk().unwrap_err().starts_with("tiers.json"));
+        assert_eq!(s.baselines().1, &tiers_disk[..]);
     }
 }

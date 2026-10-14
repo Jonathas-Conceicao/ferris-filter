@@ -223,7 +223,8 @@ pub fn prepare(
         }
     }
 
-    // 3. Changed on disk: every participating file against its baseline.
+    // 3. Changed on disk: every participating file against its baseline. A config file without a
+    // pending change does not participate: it is neither guarded nor written (CR-01).
     let mut changed = Vec::new();
     let mut config_part = None;
     if let (Some(c), Some(write)) = (config, config_write) {
@@ -232,10 +233,10 @@ pub fn prepare(
         let (styles_base, tiers_base) = c.baselines();
         let styles_now = read_now(&styles_path)?;
         let tiers_now = read_now(&tiers_path)?;
-        if styles_now.as_deref() != Some(styles_base) {
+        if write.styles_changed() && styles_now.as_deref() != Some(styles_base) {
             changed.push(DiskFile::Styles);
         }
-        if tiers_now.as_deref() != Some(tiers_base) {
+        if write.tiers_changed() && tiers_now.as_deref() != Some(tiers_base) {
             changed.push(DiskFile::Tiers);
         }
         let (styles_guard, tiers_guard) = if overwrite {
@@ -307,18 +308,22 @@ pub(crate) fn commit_with(
     let mut targets: Vec<Target> = Vec::new();
     let (mut styles_at, mut tiers_at, mut filter_at) = (None, None, None);
     if let Some(c) = &config_part {
-        styles_at = Some(targets.len());
-        targets.push(Target {
-            path: &c.styles_path,
-            loaded: c.styles_guard.as_deref(),
-            new: &c.write.styles_new,
-        });
-        tiers_at = Some(targets.len());
-        targets.push(Target {
-            path: &c.tiers_path,
-            loaded: c.tiers_guard.as_deref(),
-            new: &c.write.tiers_new,
-        });
+        if c.write.styles_changed() {
+            styles_at = Some(targets.len());
+            targets.push(Target {
+                path: &c.styles_path,
+                loaded: c.styles_guard.as_deref(),
+                new: &c.write.styles_new,
+            });
+        }
+        if c.write.tiers_changed() {
+            tiers_at = Some(targets.len());
+            targets.push(Target {
+                path: &c.tiers_path,
+                loaded: c.tiers_guard.as_deref(),
+                new: &c.write.tiers_new,
+            });
+        }
     }
     if let Some(f) = &filter_part {
         filter_at = Some(targets.len());
@@ -686,6 +691,32 @@ mod tests {
             fs::read(safe_write::backup_path(&fx.filter)).unwrap(),
             outside_filter.as_bytes()
         );
+    }
+
+    #[test]
+    fn clean_config_is_neither_guarded_nor_written() {
+        let fx = Fixture::new();
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        // Outside edit to tiers.json while CONFIG holds no edits.
+        let tiers_path = fx.root.path().join("tiers.json");
+        let mut outside = fs::read(&tiers_path).unwrap();
+        outside.push(b'\n');
+        fs::write(&tiers_path, &outside).unwrap();
+        let before = fx.bytes();
+
+        for overwrite in [false, true] {
+            let p = prepare(
+                fx.root.path(),
+                Some(&cfg),
+                Some(input(&lf, EconomyPlan::Keep)),
+                overwrite,
+            )
+            .unwrap();
+            let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();
+            assert!(!done.styles_written && !done.tiers_written, "{overwrite}");
+            assert_eq!(fx.bytes(), before, "{overwrite}");
+        }
     }
 
     #[test]

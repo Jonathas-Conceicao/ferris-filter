@@ -398,6 +398,14 @@ fn apply_everything(
 ) -> AllResult {
     let filter_path = filter.as_ref().map(|(l, _)| l.path().to_path_buf());
 
+    // A config file without pending edits follows the disk, so an outside edit is rendered with
+    // and never written back over.
+    if let Some(c) = config.as_deref_mut()
+        && let Err(e) = c.follow_disk()
+    {
+        return AllResult::failed(format!("Nothing was applied: {}.", e.trim_end_matches('.')));
+    }
+
     // Styled rules are rewritten on a clone with the pending styles; a failure here happens
     // before anything is written and leaves the user's edits exactly as they were.
     let mut report = None;
@@ -864,12 +872,18 @@ impl OverlayApp {
         }
     }
 
-    /// Reloads the styles when `styles.json` changed on disk (polled, not watched).
+    /// Reloads the styles when `styles.json` changed on disk (polled, not watched), and lets clean
+    /// config files follow the disk.
     fn poll_styles(&mut self, now: f64) {
         if now - self.styles_checked < STYLES_POLL_SECS {
             return;
         }
         self.styles_checked = now;
+        // Config files without pending edits follow outside edits. A file that does not load
+        // right now is left as it is; the next Apply reports it.
+        if let Ok(c) = &mut self.config {
+            let _ = c.follow_disk();
+        }
         let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
             return;
         };
@@ -2777,6 +2791,52 @@ mod tests {
         let again = rig.apply(false);
         assert!(matches!(again.outcome, AllOutcome::Applied { .. }));
         assert!(again.changed.is_empty());
+    }
+
+    #[test]
+    fn clean_config_follows_outside_edits_and_never_writes_them_back() {
+        let mut rig = rig(S_RULE);
+        rig.working.apply_action(RowAction::AddRule);
+        // Outside edits to both config files while CONFIG holds no edits.
+        let styles_path = rig.root.path().join("styles.json");
+        let original = std::fs::read_to_string(&styles_path).unwrap();
+        let styles = original.replacen("\"font\": 37", "\"font\": 38", 1);
+        assert_ne!(styles, original);
+        std::fs::write(&styles_path, &styles).unwrap();
+        let tiers_path = rig.root.path().join("tiers.json");
+        let mut tiers = std::fs::read_to_string(&tiers_path).unwrap();
+        tiers.push('\n');
+        std::fs::write(&tiers_path, &tiers).unwrap();
+
+        // A RULES-only Apply goes through, renders with the disk styles, writes neither file.
+        let r = rig.apply(false);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        assert!(r.changed.is_empty() && !r.styles_written && !r.tiers_written);
+        assert_eq!(rig.read("styles.json"), styles.as_bytes());
+        assert_eq!(rig.read("tiers.json"), tiers.as_bytes());
+        let filter = std::fs::read_to_string(&rig.path).unwrap();
+        assert!(filter.contains("SetFontSize 38"), "{filter}");
+        assert!(!rig.config.is_dirty());
+
+        // OVERWRITE never rewrites a clean config file either.
+        let styles = styles.replacen("\"font\": 38", "\"font\": 39", 1);
+        std::fs::write(&styles_path, &styles).unwrap();
+        rig.working.apply_action(RowAction::AddRule);
+        let r = rig.apply(true);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        assert!(!r.styles_written && !r.tiers_written);
+        assert_eq!(rig.read("styles.json"), styles.as_bytes());
+        assert_eq!(rig.read("tiers.json"), tiers.as_bytes());
+        let filter = std::fs::read_to_string(&rig.path).unwrap();
+        assert!(filter.contains("SetFontSize 39"), "{filter}");
     }
 
     #[test]

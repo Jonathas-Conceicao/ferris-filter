@@ -145,6 +145,51 @@ pub fn circular_toggle(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response 
     response
 }
 
+/// A modern on/off slide switch: a fixed 32x16 pill whose knob sits right when on, left when off.
+///
+/// Same allocate -> interact -> paint shape as [`circular_toggle`]: flips `*on` and calls
+/// [`egui::Response::mark_changed`] on a click, so callers branch on `.changed()`.
+pub fn slide_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let size = egui::vec2(32.0, 16.0);
+    let auto_id = ui.next_auto_id();
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let mut response = ui.interact(rect.expand(3.0), auto_id.with("hit"), egui::Sense::click());
+    let state = *on;
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, state, "Switch")
+    });
+
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+
+    let t = ui.ctx().animate_bool_responsive(auto_id.with("anim"), *on);
+    let track = if *on {
+        theme::WARM_ACCENT
+    } else {
+        theme::INPUT_FILL
+    };
+    let edge = if response.hovered() {
+        theme::SECTION_CREAM
+    } else {
+        theme::CONTROL_GLYPH
+    };
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        size.y / 2.0,
+        track,
+        egui::Stroke::new(1.0, edge),
+        egui::StrokeKind::Inside,
+    );
+    let r = size.y / 2.0 - 3.0;
+    let x = egui::lerp((rect.left() + r + 3.0)..=(rect.right() - r - 3.0), t);
+    painter.circle_filled(egui::pos2(x, rect.center().y), r, edge);
+
+    response
+}
+
 /// Which way [`arrow_button`] points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrowDirection {
@@ -777,6 +822,42 @@ mod tests {
 
         assert!(checked, "a click must flip checked to true");
         assert!(changed, "a click must report Response::changed()");
+    }
+
+    #[test]
+    fn slide_switch_flips_on_click() {
+        let ctx = headless_ctx();
+        let mut on = false;
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            rect = slide_switch(ui, &mut on).rect;
+        })
+        .drop_without_applying_deltas();
+        assert!((rect.width() - 32.0).abs() < 7.0 && !on);
+
+        let mut changed = false;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            changed = slide_switch(ui, &mut on).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(on && changed);
+
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            changed = slide_switch(ui, &mut on).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(!on && changed);
+    }
+
+    #[test]
+    fn slide_switch_idle_frame_changes_nothing() {
+        let ctx = headless_ctx();
+        let mut on = true;
+        ctx.run_ui(RawInput::default(), |ui| {
+            assert!(!slide_switch(ui, &mut on).changed());
+        })
+        .drop_without_applying_deltas();
+        assert!(on);
     }
 
     #[test]

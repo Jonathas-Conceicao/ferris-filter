@@ -87,6 +87,12 @@ pub struct OverlayApp {
     /// while currently hidden. Consumed once per frame by [`visibility::advance`].
     toggle_requested: bool,
 
+    /// The tray-Quit confirm ("Unapplied changes") is showing.
+    quit_confirm: bool,
+
+    /// Apply & quit succeeded; the shutdown runs once any in-game reload worker has finished.
+    quit_after_apply: bool,
+
     /// The show/hide decision -- see `super::visibility` for why this is three states, not two.
     visibility: Visibility,
 
@@ -547,17 +553,20 @@ fn apply_row_actions(
         let edited_block = match &action {
             RowAction::EditLine { id, .. }
             | RowAction::AddLine { id, .. }
+            | RowAction::InsertLineAfter { id, .. }
             | RowAction::RemoveLine { id, .. } => Some(*id),
             _ => None,
         };
         let added_in = match &action {
-            RowAction::AddLine { id, .. } => Some(*id),
+            RowAction::AddLine { id, .. } | RowAction::InsertLineAfter { id, .. } => Some(*id),
             _ => None,
         };
         // Edits that can shift the keyword ordinals of the cards after them: removing or adding
         // a line, and a raw whole-line edit that changes the line's keyword (WR-07, IN-07).
         let shifts_ordinals = match &action {
-            RowAction::RemoveLine { .. } | RowAction::AddLine { .. } => true,
+            RowAction::RemoveLine { .. }
+            | RowAction::AddLine { .. }
+            | RowAction::InsertLineAfter { .. } => true,
             RowAction::EditLine {
                 expect,
                 patch: LinePatch::Whole(text),
@@ -808,6 +817,8 @@ impl OverlayApp {
             hotkey_status,
             instance: Some(instance),
             toggle_requested: false,
+            quit_confirm: false,
+            quit_after_apply: false,
             // The window created in `overlay::launch` starts visible
             // (`with_active(false)` only suppresses activation, not
             // visibility) and has never been focused -- `ShownUnfocused` is
@@ -995,9 +1006,9 @@ impl OverlayApp {
     /// CONFIG edits and the filter together, then the in-game reload is decided as before and the
     /// list's view state is re-keyed to the re-parsed document. `overwrite` is OVERWRITE after a
     /// changed-on-disk refusal; it otherwise behaves exactly like APPLY, in-game reload included.
-    fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) {
+    fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) -> bool {
         let Ok(root) = &self.root else {
-            return;
+            return false;
         };
         // Ids reset on re-parse, so remember the expanded row by position instead.
         let expanded_index = self
@@ -1032,7 +1043,7 @@ impl OverlayApp {
                 if !changed.is_empty() {
                     self.changed_on_disk = changed;
                 }
-                return;
+                return false;
             }
             AllOutcome::Applied { filter } => filter,
         };
@@ -1111,6 +1122,35 @@ impl OverlayApp {
                 .as_ref()
                 .and_then(|w| w.rows().get(i - 1).map(|r| r.id))
         });
+        true
+    }
+
+    /// Anything waiting for an Apply, judged with the same inputs as the per-frame indicator:
+    /// rule edits (a staged economy op is part of `is_dirty`), a pending style rewrite, CONFIG edits.
+    fn quit_dirty(&mut self) -> bool {
+        let style_pending = self
+            .working
+            .as_mut()
+            .is_some_and(|w| w.style_rewrite_pending());
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        apply::combined_dirty(rules_dirty, style_pending, config_dirty)
+    }
+
+    /// The Phase 22 release order: give up what a new instance must own (the hotkey, then the
+    /// tray icon) before the name it races for. If the name went first, a relaunch could win it
+    /// while `Ctrl+Shift+Z` was still registered here, fail to register it, and run with no
+    /// hotkey (review iteration 3, WR-01). The caller then sets `quit_requested` for the single
+    /// deferred viewport Close.
+    fn begin_shutdown(&mut self) {
+        if let Some(manager) = self.hotkey_manager.take() {
+            hotkey::release_toggle(manager);
+        }
+        self.tray.release();
+        // Release the instance name now, before this frame's show-request poll: from here on a
+        // relaunch becomes the new first instance rather than waiting on (or being acked by) a
+        // process that is about to close.
+        self.instance = None;
     }
 
     /// REVERT: discard every in-memory edit and staged economy op.
@@ -1306,8 +1346,12 @@ impl OverlayApp {
                     self.apply_state =
                         apply::state_after_revert(self.applied_this_session, rules_dirty);
                 }
-                ConfigAction::Apply => self.run_apply(ctx, false),
-                ConfigAction::Overwrite => self.run_apply(ctx, true),
+                ConfigAction::Apply => {
+                    self.run_apply(ctx, false);
+                }
+                ConfigAction::Overwrite => {
+                    self.run_apply(ctx, true);
+                }
                 ConfigAction::Reload => {
                     match config_reload_plan(self.config.is_err(), &self.changed_on_disk) {
                         ConfigReload::ConfigOnly => {
@@ -1637,22 +1681,31 @@ impl eframe::App for OverlayApp {
                 }
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
                 Some(OverlayCommand::Quit) => {
-                    quit_requested = true;
-                    // Give up what a new instance must own (the hotkey, then the tray icon)
-                    // before the name it races for. If the name went first, a relaunch could win
-                    // it while `Ctrl+Shift+Z` was still registered here, fail to register it, and
-                    // run with no hotkey (review iteration 3, WR-01).
-                    if let Some(manager) = self.hotkey_manager.take() {
-                        hotkey::release_toggle(manager);
+                    let dirty = self.quit_dirty();
+                    match apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit) {
+                        apply::QuitStep::QuitNow => {
+                            quit_requested = true;
+                            self.begin_shutdown();
+                        }
+                        apply::QuitStep::OpenConfirm => {
+                            self.quit_confirm = true;
+                            // Reveal the stripe the way tray Show does.
+                            if self.visibility == Visibility::Hidden {
+                                self.toggle_requested = true;
+                            }
+                        }
+                        _ => {}
                     }
-                    self.tray.release();
-                    // Release the instance name now, before this frame's show-request poll:
-                    // from here on a relaunch becomes the new first instance rather than
-                    // waiting on (or being acked by) a process that is about to close.
-                    self.instance = None;
                 }
                 None => {}
             }
+        }
+        // Apply & quit succeeded: leave once an in-game reload (if one started) has finished, so
+        // it is never cut off mid-sequence. The quit itself sends no keystrokes.
+        if self.quit_after_apply && !self.reload.is_running() {
+            self.quit_after_apply = false;
+            quit_requested = true;
+            self.begin_shutdown();
         }
 
         // INST-01 (CONTEXT "Behaviour"): a second launch is a reveal, never a toggle (same rule
@@ -2135,6 +2188,55 @@ impl eframe::App for OverlayApp {
             Some(rule_list::EconomyFooterAction::Add) => self.stage_add_economy(),
             Some(rule_list::EconomyFooterAction::Remove) => self.stage_remove_economy(),
             None => {}
+        }
+
+        if self.quit_confirm && !quit_requested {
+            let mut choice = None;
+            let modal = egui::Modal::new(egui::Id::new("quit_confirm")).show(ui.ctx(), |ui| {
+                ui.heading(apply::QUIT_CONFIRM_TITLE);
+                ui.horizontal(|ui| {
+                    if ui.button(apply::QUIT_APPLY_LABEL).clicked() {
+                        choice = Some(apply::QuitChoice::ApplyAndQuit);
+                    }
+                    if ui
+                        .button(apply::QUIT_DISCARD_LABEL)
+                        .on_hover_text(apply::QUIT_DISCARD_TIP)
+                        .clicked()
+                    {
+                        choice = Some(apply::QuitChoice::QuitWithoutApplying);
+                    }
+                    if ui.button(apply::QUIT_CANCEL_LABEL).clicked() {
+                        choice = Some(apply::QuitChoice::Cancel);
+                    }
+                });
+            });
+            // Escape or a click outside counts as Cancel.
+            if choice.is_none() && modal.should_close() {
+                choice = Some(apply::QuitChoice::Cancel);
+            }
+            if let Some(choice) = choice {
+                let dirty = self.quit_dirty();
+                match apply::quit_step(dirty, true, apply::QuitEvent::Choice(choice)) {
+                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
+                    apply::QuitStep::QuitNow => {
+                        self.quit_confirm = false;
+                        quit_requested = true;
+                        self.begin_shutdown();
+                    }
+                    apply::QuitStep::RunApply => {
+                        self.quit_confirm = false;
+                        let egui_ctx = ui.ctx().clone();
+                        let ok = self.run_apply(&egui_ctx, false);
+                        // A refusal leaves the stripe open showing it (OVERWRITE/RELOAD as today).
+                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
+                            == apply::QuitStep::QuitWhenIdle
+                        {
+                            self.quit_after_apply = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if quit_requested {
@@ -3340,5 +3442,15 @@ mod tests {
         };
         assert!(apply_row_actions(&mut working, &mut list, "", vec![add]).0);
         assert_ne!(list.epoch, epoch, "an added line can shift ordinals");
+        let epoch = list.epoch;
+        let insert = RowAction::InsertLineAfter {
+            id,
+            after: 1,
+            expect: "  BaseType \"A\"".into(),
+            text: "ItemLevel <= 80".into(),
+        };
+        assert!(apply_row_actions(&mut working, &mut list, "", vec![insert]).0);
+        assert_ne!(list.epoch, epoch, "an inserted line can shift ordinals");
+        assert_eq!(list.focus_line.map(|(_, l)| l), Some(2));
     }
 }

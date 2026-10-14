@@ -3429,4 +3429,152 @@ mod tests {
             "no click position emitted SetContinue on a styled rule"
         );
     }
+
+    /// Mirrors `app::apply_row_actions` for the actions a value click emits. Every `ListUi`/
+    /// `WorkingFilter` call it makes, in app.rs order:
+    /// 1. `working.apply_action(action)` for each action;
+    /// 2. on `changed` + `AddLine`: `list.focus_line = Some((block, outcome.line))`;
+    /// 3. on `changed` + (`AddLine` | `RemoveLine`): `list.forget_card_state()` (WR-07).
+    ///
+    /// The `list.expanded` / `pending_scroll` resets in app.rs only fire for AddRule, Duplicate,
+    /// Move and Delete, none of which a value click emits.
+    fn mirror_apply(wf: &mut WorkingFilter, list: &mut ListUi, actions: Vec<RowAction>) {
+        for action in actions {
+            let shifts = matches!(
+                action,
+                RowAction::AddLine { .. } | RowAction::RemoveLine { .. }
+            );
+            let added_in = match &action {
+                RowAction::AddLine { id, .. } => Some(*id),
+                _ => None,
+            };
+            let outcome = wf.apply_action(action);
+            if outcome.changed {
+                if let (Some(b), Some(line)) = (added_in, outcome.line) {
+                    list.focus_line = Some((b, line));
+                }
+                if shifts {
+                    list.forget_card_state();
+                }
+            }
+        }
+    }
+
+    /// One frame of the list, a click at `at` when given, then the app.rs bookkeeping.
+    fn click_step(
+        ctx: &egui::Context,
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        cat: &ClassCatalog,
+        at: Option<Pos2>,
+    ) -> Vec<RowAction> {
+        let raw = match at {
+            Some(p) => input(click_events(p)),
+            None => input(vec![]),
+        };
+        let actions = frame_of(ctx, raw, wf, list, Some(cat));
+        mirror_apply(wf, list, actions.clone());
+        actions
+    }
+
+    const CLASS_HEADER_X: f32 = 40.0;
+
+    /// A fresh session with an expanded rule and a pending Class row, after the group header at
+    /// `header` was clicked and (when given) the checkbox at `box_at` was clicked.
+    fn pending_class_session(
+        cat: &ClassCatalog,
+        header: f32,
+        box_at: Option<Pos2>,
+    ) -> (
+        egui::Context,
+        WorkingFilter,
+        ListUi,
+        BlockId,
+        Vec<RowAction>,
+    ) {
+        let mut wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
+        let id = wf.rows()[0].id;
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(id);
+        let class = crate::filter::keywords::lookup("Class").unwrap();
+        assert_eq!(pick_condition(id, class, &mut list), None);
+        click_step(&ctx, &mut wf, &mut list, cat, None);
+        click_step(&ctx, &mut wf, &mut list, cat, None);
+        click_step(
+            &ctx,
+            &mut wf,
+            &mut list,
+            cat,
+            Some(Pos2::new(CLASS_HEADER_X, header)),
+        );
+        // The group opens over a few frames (egui animates it).
+        for _ in 0..3 {
+            click_step(&ctx, &mut wf, &mut list, cat, None);
+        }
+        let mut got = Vec::new();
+        if let Some(p) = box_at {
+            got = click_step(&ctx, &mut wf, &mut list, cat, Some(p));
+            for _ in 0..3 {
+                click_step(&ctx, &mut wf, &mut list, cat, None);
+            }
+        }
+        (ctx, wf, list, id, got)
+    }
+
+    #[test]
+    fn first_class_click_keeps_rule_and_group_open() {
+        let cat = committed_catalog();
+        // Find a group header y and a checkbox position below it whose click writes the first
+        // class.
+        let mut found = None;
+        'scan: for hy in (164..188).step_by(4) {
+            for cx in [36.0f32, 60.0, 90.0, 130.0] {
+                for cy in ((hy + 16)..(hy + 120)).step_by(4) {
+                    let at = Pos2::new(cx, cy as f32);
+                    let (_, _, _, _, got) = pending_class_session(&cat, hy as f32, Some(at));
+                    if got.iter().any(|a| matches!(a, RowAction::AddLine { .. })) {
+                        found = Some((hy as f32, at));
+                        break 'scan;
+                    }
+                }
+            }
+        }
+        let (hy, at) = found.expect("a pending Class group checkbox is clickable");
+
+        // After the AddLine the rule is still the expanded one.
+        let (_, wf, list, id, _) = pending_class_session(&cat, hy, Some(at));
+        assert!(wf.text().contains("Class"), "the line was written");
+        assert_eq!(list.expanded, Some(id), "the rule row stayed expanded");
+
+        // And the group the click happened in is still open: some click in the body now toggles
+        // a second class checkbox (an EditLine that rewrites the Class values).
+        let mut reopened = false;
+        'second: for y in (40..700).step_by(4) {
+            let (ctx, mut wf, mut list, _, _) = pending_class_session(&cat, hy, Some(at));
+            let a = click_step(
+                &ctx,
+                &mut wf,
+                &mut list,
+                &cat,
+                Some(Pos2::new(at.x, y as f32)),
+            );
+            if a.iter().any(|a| {
+                matches!(
+                    a,
+                    RowAction::EditLine {
+                        patch: LinePatch::Values(t),
+                        ..
+                    } if t.contains('"')
+                )
+            }) {
+                reopened = true;
+                break 'second;
+            }
+        }
+        assert!(
+            reopened,
+            "the class group closed when the first class turned the pending row into a line"
+        );
+    }
 }

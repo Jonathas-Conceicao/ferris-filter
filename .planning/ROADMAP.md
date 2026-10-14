@@ -386,10 +386,17 @@ Plans:
   5. APPLY on either tab validates everything first, then writes styles.json, tiers.json and the filter all-or-none (rollback on a late rename failure) and reloads in game; any refusal (changed on disk, bad tiers, grammar error, damaged markers) writes nothing and reloads nothing; OVERWRITE overwrites every changed file and RELOAD reloads from disk
   6. The filter is rendered with the styles/tiers being applied; Revert stays per tab; both tabs' stale indicators reflect the single Apply; untouched lines are never rewritten
 
-**Plans**: 0 plans
+**Plans**: 4 plans
 Plans:
+**Wave 1**
 
-- [ ] TBD (run /gsd-plan-phase 25 to break down)
+- [ ] 25-01-PLAN.md — Rule editor: Continue last, + style, Show/Hide only for Custom, plain name box, Sockets 0-6 slider, Exceptional removed (UAT2-01..06)
+- [ ] 25-02-PLAN.md — Combined-Apply back end: validate all, render with pending styles/tiers, three-file all-or-none write; custom-style reorder model (UAT2-09, UAT2-10)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 25-03-PLAN.md — Wire one APPLY on both tabs (OVERWRITE/RELOAD, per-tab Revert, shared state/message) + CONFIG styles table (UAT2-07..10)
+- [ ] 25-04-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 25-MANUAL-VERIFICATION.md (UAT2-01..10)
 
 ### Progress
 

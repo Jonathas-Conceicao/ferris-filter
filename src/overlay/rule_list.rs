@@ -477,7 +477,7 @@ fn draw_row(
     if !is_expanded {
         // The summary comes from the row (built once at rebuild); only the paint happens here.
         debug_assert!((row_h - header_h - SUMMARY_LINE_H).abs() < 0.5);
-        let (srect, sresp) = ui.allocate_exact_size(vec2(width, SUMMARY_LINE_H), Sense::click());
+        let (srect, _) = ui.allocate_exact_size(vec2(width, SUMMARY_LINE_H), Sense::hover());
         ui.painter().rect_filled(srect, 0.0, fill);
         if !row.summary.is_empty() {
             let color = if row.enabled {
@@ -499,8 +499,18 @@ fn draw_row(
                         .size(theme::ROW_SUMMARY_SIZE)
                         .color(color),
                 )
-                .truncate(),
+                .truncate()
+                .selectable(false),
             );
+        }
+        // Registered after the label so it is the topmost hit: a click on the text expands the
+        // row instead of starting a text selection (same pattern as the header's `row_click`).
+        let sresp = ui.interact(
+            srect,
+            ui.id().with(("ff-summary-click", row.id)),
+            Sense::click(),
+        );
+        if !row.summary.is_empty() {
             sresp.clone().on_hover_text(&row.summary);
         }
         if sresp.clicked() {
@@ -925,6 +935,35 @@ Show
             offsets.last().copied().unwrap(),
             2.0 * row_h + list.expanded_h
         );
+    }
+
+    /// WR-01 (review 24): a click on the summary *text* expands the row. The label is laid out
+    /// with real fonts (not `headless_ctx`'s empty set) so the text actually covers the point.
+    #[test]
+    fn clicking_the_summary_text_expands_the_row() {
+        let wf = filter_of(3);
+        assert!(!wf.rows()[0].summary.is_empty());
+        let ctx = egui::Context::default();
+        let mut list = ListUi::default();
+        let (_, row_h) = run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        let mut header = 0.0;
+        ctx.run_ui(input(vec![]), |ui| header = header_height(ui))
+            .drop_without_applying_deltas();
+        let click = |list: &mut ListUi, pos: Pos2| {
+            // Hover first so the press lands on last frame's hit-test, then press and release.
+            for events in click_events(pos).into_iter().map(|e| vec![e]) {
+                run_frame(&ctx, input(events), &wf, list, true);
+            }
+        };
+        let y = row_h + header + SUMMARY_LINE_H / 2.0;
+        // Control: the blank area far past the text has always expanded the row.
+        click(&mut list, Pos2::new(440.0, y));
+        assert_eq!(list.expanded, Some(wf.rows()[1].id), "blank-area click");
+        list.expanded = None;
+        run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        // Second row, a few pixels into the summary text (past the indent).
+        click(&mut list, Pos2::new(SUMMARY_INDENT + 12.0, y));
+        assert_eq!(list.expanded, Some(wf.rows()[1].id), "summary-text click");
     }
 
     #[test]

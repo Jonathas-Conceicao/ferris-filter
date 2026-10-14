@@ -351,34 +351,6 @@ fn extract(doc: &Document, b: &Block) -> Extracted {
     out
 }
 
-fn derived_pieces(x: &Extracted) -> String {
-    let mut pieces: Vec<String> = Vec::new();
-    if let Some(first) = x.class.first() {
-        pieces.push(if x.class.len() > 1 {
-            format!("{first} +{} more", x.class.len() - 1)
-        } else {
-            first.clone()
-        });
-    }
-    if !x.base_type.is_empty() {
-        pieces.push(format!("BaseType \u{00D7}{}", x.base_type.len()));
-    }
-    if pieces.is_empty() {
-        if let Some(first) = x.other_names.first() {
-            pieces.push(if x.other_names.len() > 1 {
-                format!("{first} +{} more", x.other_names.len() - 1)
-            } else {
-                first.clone()
-            });
-        }
-    }
-    if pieces.is_empty() {
-        "matches everything".to_string()
-    } else {
-        pieces.join(" \u{00B7} ")
-    }
-}
-
 impl WorkingFilter {
     pub fn from_text(text: &str) -> Self {
         let mut wf = WorkingFilter {
@@ -441,7 +413,7 @@ impl WorkingFilter {
             let kw = keyword_word(b.keyword());
             let label = match &name {
                 Some(n) => format!("{index}  {kw} - {n}"),
-                None => format!("{index}  {kw} \u{00B7} {}", derived_pieces(&x)),
+                None => format!("{index}  {kw}"),
             };
             let mut hay = String::new();
             if let Some(n) = &name {
@@ -449,7 +421,12 @@ impl WorkingFilter {
                 hay.push('\n');
             }
             hay.push_str(&label);
-            for v in x.class.iter().chain(x.base_type.iter()) {
+            for v in x
+                .class
+                .iter()
+                .chain(x.base_type.iter())
+                .chain(x.other_names.iter())
+            {
                 hay.push('\n');
                 hay.push_str(v);
             }
@@ -1134,21 +1111,19 @@ Show
     }
 
     #[test]
-    fn derived_labels() {
-        let bases: Vec<String> = (0..14).map(|i| format!("\"Base {i}\"")).collect();
-        let t = format!(
-            "Show\n  Class \"Stackable Currency\"\n  BaseType == {}\n\nShow\n  Class \"Rings\" \"Amulets\" \"Belts\"\n\nHide\n\nShow\n  AreaLevel <= 65\n  Rarity Magic\n",
-            bases.join(" ")
-        );
-        let wf = WorkingFilter::from_text(&t);
-        let l: Vec<&str> = wf.rows().iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(
-            l[0],
-            "1  Show \u{00B7} Stackable Currency \u{00B7} BaseType \u{00D7}14"
-        );
-        assert_eq!(l[1], "2  Show \u{00B7} Rings +2 more");
-        assert_eq!(l[2], "3  Hide \u{00B7} matches everything");
-        assert_eq!(l[3], "4  Show \u{00B7} AreaLevel +1 more");
+    fn unnamed_label_is_index_and_keyword() {
+        let t = "Show\n  Class \"Rings\"\n\nHide\n";
+        let wf = WorkingFilter::from_text(t);
+        assert_eq!(wf.rows()[0].label, "1  Show");
+        assert_eq!(wf.rows()[1].label, "2  Hide");
+        let wf = WorkingFilter::from_text("#ff:name My rule\nShow\n  Class \"Rings\"\n");
+        assert_eq!(wf.rows()[0].label, "1  Show - My rule");
+        let wf =
+            WorkingFilter::from_text("Show\n  Class \"Rings\"\n  BaseType == \"Heavy Belt\"\n");
+        let id = wf.rows()[0].id;
+        assert_eq!(wf.rows()[0].label, "1  Show");
+        assert!(wf.row_matches(id, "rings"));
+        assert!(wf.row_matches(id, "heavy belt"));
     }
 
     #[test]
@@ -1529,7 +1504,7 @@ Show
         assert!(o.changed);
         let id = o.focus.expect("focus");
         let row = wf.row(id).expect("row");
-        assert_eq!(row.label, "2  Show \u{00B7} matches everything");
+        assert_eq!(row.label, "2  Show");
         assert_eq!(wf.rows().len(), 4);
         assert!(wf.is_dirty());
         assert_eq!(*wf.economy(), EconomyView::Present { blocks: 2 });

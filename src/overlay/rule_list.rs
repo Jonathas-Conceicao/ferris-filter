@@ -5,7 +5,7 @@
 //! `ScrollArea::show_viewport` over a cached offset table ([`super::virtual_list`]) because the
 //! single expanded row has a variable height (so `show_rows` does not fit).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use egui::{Align, Color32, Layout, RichText, Sense, UiBuilder, vec2};
 
@@ -28,7 +28,6 @@ const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so t
 pub struct ListUi {
     pub expanded: Option<BlockId>,
     pub confirm_delete: Option<BlockId>,
-    pub name_open: HashSet<BlockId>,
     pub name_drafts: HashMap<BlockId, String>,
     /// Last measured height of the expanded row (header plus body).
     pub expanded_h: f32,
@@ -63,7 +62,6 @@ impl Default for ListUi {
         ListUi {
             expanded: None,
             confirm_delete: None,
-            name_open: HashSet::new(),
             name_drafts: HashMap::new(),
             expanded_h: 180.0,
             pending_scroll: None,
@@ -82,7 +80,6 @@ impl ListUi {
     pub fn clear_ids(&mut self) {
         self.expanded = None;
         self.confirm_delete = None;
-        self.name_open.clear();
         self.name_drafts.clear();
         self.pending_scroll = None;
         self.confirm_economy_remove = false;
@@ -548,6 +545,15 @@ fn caption(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
 }
 
+/// What the name box emits for its current text: an empty box removes the `# ff:name` line.
+fn name_action(id: BlockId, draft: &str) -> RowAction {
+    if draft.trim().is_empty() {
+        RowAction::ClearName(id)
+    } else {
+        RowAction::SetName(id, draft.to_string())
+    }
+}
+
 fn expanded_body(
     ui: &mut egui::Ui,
     working: &WorkingFilter,
@@ -560,39 +566,20 @@ fn expanded_body(
 
     // NAME
     caption(ui, "NAME");
-    let mut name_on = row.name.is_some() || list.name_open.contains(&id);
-    ui.horizontal(|ui| {
-        let toggle = widgets::circular_toggle(ui, &mut name_on);
-        let changed = toggle.changed();
-        toggle.on_hover_text(if name_on {
-            "Remove this rule's name"
-        } else {
-            "Name this rule"
-        });
-        if changed {
-            if name_on {
-                list.name_open.insert(id);
-            } else {
-                actions.push(RowAction::ClearName(id));
-                list.name_open.remove(&id);
-                list.name_drafts.remove(&id);
-            }
-        }
-        if !name_on {
-            return;
-        }
-        // Keep the field open while typing: emptying a loaded name clears `row.name`, which
-        // would otherwise collapse the editor under the cursor.
-        list.name_open.insert(id);
-        let draft = list
-            .name_drafts
-            .entry(id)
-            .or_insert_with(|| row.name.clone().unwrap_or_default());
-        let resp = ui.add(egui::TextEdit::singleline(draft).desired_width(f32::INFINITY));
-        if resp.changed() {
-            actions.push(RowAction::SetName(id, draft.clone()));
-        }
-    });
+    // The draft outlives `row.name`: emptying the box clears the meta line, and the box must
+    // keep its focus while the author retypes.
+    let draft = list
+        .name_drafts
+        .entry(id)
+        .or_insert_with(|| row.name.clone().unwrap_or_default());
+    let resp = ui.add(
+        egui::TextEdit::singleline(draft)
+            .hint_text("name")
+            .desired_width(f32::INFINITY),
+    );
+    if resp.changed() {
+        actions.push(name_action(id, draft));
+    }
     ui.add_space(8.0);
 
     let entries = working.body_view(row.id);
@@ -1100,7 +1087,6 @@ Show
         list.focus_line = Some((id, 1));
         list.last_expanded = Some(id);
         list.line_error = Some((id, 1, "x".into()));
-        list.name_open.insert(id);
         list.name_drafts.insert(id, "x".into());
         let epoch = list.epoch;
         list.clear_ids();
@@ -1110,7 +1096,6 @@ Show
         );
         assert!(list.expanded.is_none());
         assert!(list.confirm_delete.is_none());
-        assert!(list.name_open.is_empty());
         assert!(list.name_drafts.is_empty());
         assert!(list.pending_scroll.is_none());
         assert!(!list.confirm_economy_remove);
@@ -1152,6 +1137,57 @@ Show
         let style = f.find("body::style_section").unwrap();
         assert!(name < cond && cond < style);
         assert!(!f.contains("body::style_group") && !f.contains("body::actions_group"));
+    }
+
+    /// Focus the name box by clicking down its right edge, then send `events`; returns the actions
+    /// of the first scan position whose frame emitted any.
+    fn type_in_name_box(wf: &WorkingFilter, events: Vec<Event>) -> (Vec<RowAction>, ListUi) {
+        let id = wf.rows()[0].id;
+        for y in (20..220).step_by(3) {
+            let ctx = headless_ctx();
+            let mut list = ListUi::default();
+            list.expanded = Some(id);
+            run_frame(&ctx, input(vec![]), wf, &mut list, true);
+            run_frame(
+                &ctx,
+                input(click_events(Pos2::new(440.0, y as f32))),
+                wf,
+                &mut list,
+                true,
+            );
+            let (f, _) = run_frame(&ctx, input(events.clone()), wf, &mut list, true);
+            if f.actions
+                .iter()
+                .any(|a| matches!(a, RowAction::SetName(..) | RowAction::ClearName(..)))
+            {
+                return (f.actions, list);
+            }
+        }
+        panic!("name box never produced a name action");
+    }
+
+    #[test]
+    fn empty_name_box_writes_no_meta() {
+        let mut wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        let id = wf.rows()[0].id;
+        // Typing adds the meta line.
+        let (actions, list) = type_in_name_box(&wf, vec![Event::Text("Boots".into())]);
+        assert!(list.name_drafts.contains_key(&id));
+        for a in actions {
+            wf.apply_action(a);
+        }
+        assert!(wf.text().contains("# ff:name Boots"), "{}", wf.text());
+        // Clearing the box removes it; the draft is kept so the box keeps focus.
+        assert_eq!(name_action(id, ""), RowAction::ClearName(id));
+        assert_eq!(name_action(id, "  "), RowAction::ClearName(id));
+        assert_eq!(name_action(id, "x"), RowAction::SetName(id, "x".into()));
+        wf.apply_action(name_action(id, ""));
+        assert!(!wf.text().contains("ff:name"), "{}", wf.text());
+        // No toggle any more.
+        let src = include_str!("rule_list.rs");
+        let body = &src[src.find("fn expanded_body(").unwrap()..];
+        let body = &body[..body.find("body::conditions_group").unwrap()];
+        assert!(!body.contains("circular_toggle") && !body.contains("name_open"));
     }
 
     #[test]

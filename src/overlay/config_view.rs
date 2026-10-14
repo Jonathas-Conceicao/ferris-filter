@@ -137,6 +137,8 @@ pub struct ConfigViewCtx<'a> {
     pub apply_enabled: bool,
     /// Enabled rules have grammar errors (explains a disabled APPLY).
     pub rules_blocking: bool,
+    /// The filter's economy markers are damaged (explains a disabled APPLY).
+    pub filter_damaged: bool,
     /// The one Apply state line both tabs show.
     pub indicator: &'a str,
     /// Current value of the reload-after-Apply setting.
@@ -1255,6 +1257,8 @@ pub fn show_footer(
                     APPLY_LOAD_ERROR_TIP
                 } else if ctx.rules_blocking {
                     apply::APPLY_BLOCKED_TOOLTIP
+                } else if ctx.filter_damaged {
+                    apply::DAMAGED_MARKERS_MESSAGE
                 } else {
                     APPLY_NOTHING_TIP
                 };
@@ -1351,6 +1355,7 @@ mod tests {
             changed_on_disk: false,
             apply_enabled: true,
             rules_blocking: false,
+            filter_damaged: false,
             indicator: "",
             reload_after_apply: true,
         }

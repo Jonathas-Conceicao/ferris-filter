@@ -1364,6 +1364,7 @@ impl OverlayApp {
             changed_on_disk: !self.changed_on_disk.is_empty(),
             apply_enabled: footer.apply_enabled,
             rules_blocking: footer.rules_blocking,
+            filter_damaged: footer.filter_damaged,
             indicator: apply::indicator(self.apply_state),
             reload_after_apply: self.settings.reload_after_apply(),
         };
@@ -1432,6 +1433,7 @@ impl OverlayApp {
 struct ConfigFooterState {
     apply_enabled: bool,
     rules_blocking: bool,
+    filter_damaged: bool,
 }
 
 /// One message in the footer's outcome area.
@@ -1763,6 +1765,7 @@ impl eframe::App for OverlayApp {
                 blocking,
             ),
             rules_blocking: blocking > 0,
+            filter_damaged: state == FilterState::Damaged,
         };
 
         // Everything the panels want to change is collected here and applied once, after both have
@@ -2282,6 +2285,7 @@ mod tests {
             changed_on_disk: false,
             apply_enabled: true,
             rules_blocking: false,
+            filter_damaged: false,
             indicator: "Filter out of date",
             reload_after_apply: true,
         };

@@ -252,6 +252,10 @@ pub fn footer_actions(
     }
 }
 
+/// The status line for damaged economy markers; also the disabled CONFIG Apply tooltip.
+pub const DAMAGED_MARKERS_MESSAGE: &str =
+    "The economy section markers are damaged. Fix them by hand, then RELOAD.";
+
 /// The stripe's status text for the filter file.
 pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     let mut text = match state {
@@ -259,9 +263,7 @@ pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
              or an economy section."
             .to_string(),
         FilterState::NoSection => "The filter has no economy section.".to_string(),
-        FilterState::Damaged => {
-            "The economy section markers are damaged. Fix them by hand, then RELOAD.".to_string()
-        }
+        FilterState::Damaged => DAMAGED_MARKERS_MESSAGE.to_string(),
         FilterState::HasSection => "Economy section found.".to_string(),
         FilterState::LoadFailed => "The filter could not be loaded.".to_string(),
     };
@@ -366,7 +368,7 @@ pub fn footer_actions_combined(
 
 /// Whether the CONFIG tab's APPLY is live: the config is valid, nothing changed on disk, something
 /// is pending on either tab, and (when a filter will be written too) no enabled rule has a grammar
-/// error.
+/// error and the economy markers are not damaged.
 pub fn config_apply_enabled(
     root_ok: bool,
     config_valid: bool,
@@ -376,7 +378,11 @@ pub fn config_apply_enabled(
     blocking: usize,
 ) -> bool {
     let has_filter = state != FilterState::LoadFailed;
-    root_ok && config_valid && !changed_on_disk && dirty && (!has_filter || blocking == 0)
+    root_ok
+        && config_valid
+        && !changed_on_disk
+        && dirty
+        && (!has_filter || (blocking == 0 && state != FilterState::Damaged))
 }
 
 /// The indicator after one tab's REVERT: still out of date when the other tab holds edits.
@@ -438,6 +444,10 @@ mod tests {
         assert!(
             !config_apply_enabled(true, true, st, false, true, 2),
             "grammar errors block"
+        );
+        assert!(
+            !config_apply_enabled(true, true, FilterState::Damaged, false, true, 0),
+            "damaged economy markers block"
         );
         // Without a filter part the config alone applies.
         assert!(config_apply_enabled(

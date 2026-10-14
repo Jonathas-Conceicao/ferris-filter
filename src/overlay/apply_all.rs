@@ -173,6 +173,10 @@ pub fn prepare(
     let mut filter_part: Option<FilterPart> = None;
     if let Some(input) = filter {
         let edited = input.styled.map_err(ApplyAllError::Invalid)?;
+        // Damaged economy markers refuse whatever the plan (a Keep plan never inspects them).
+        if let Err(e) = input.loaded.has_section() {
+            return Err(ApplyAllError::Invalid(e.to_string()));
+        }
         let body = match input.plan {
             EconomyPlan::Refresh | EconomyPlan::Add => {
                 let paths = InputPaths::relative_to(root);
@@ -691,6 +695,31 @@ mod tests {
             fs::read(safe_write::backup_path(&fx.filter)).unwrap(),
             outside_filter.as_bytes()
         );
+    }
+
+    #[test]
+    fn damaged_markers_refuse_even_a_config_only_apply() {
+        let fx = Fixture::new();
+        let damaged = fs::read_to_string(&fx.filter)
+            .unwrap()
+            .replace("# ff:economy-end", "");
+        fs::write(&fx.filter, &damaged).unwrap();
+        let lf = fx.loaded();
+        let mut cfg = fx.config();
+        cfg.set_tier_text("S", "35");
+        let before = fx.bytes();
+        // A damaged filter's plan is Keep, which never inspects the markers.
+        for overwrite in [false, true] {
+            let r = prepare(
+                fx.root.path(),
+                Some(&cfg),
+                Some(input(&lf, EconomyPlan::Keep)),
+                overwrite,
+            );
+            assert!(matches!(r, Err(ApplyAllError::Invalid(_))), "{overwrite}");
+        }
+        assert_eq!(fx.bytes(), before);
+        fx.no_ffbak();
     }
 
     #[test]

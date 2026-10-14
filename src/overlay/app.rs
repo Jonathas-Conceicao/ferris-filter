@@ -381,6 +381,25 @@ fn reload_changed_files(
     }
 }
 
+/// What the CONFIG tab's reload asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigReload {
+    /// Re-read only the config files; RULES edits and the filter are left alone.
+    ConfigOnly,
+    /// The shared RELOAD after a changed-on-disk refusal ([`reload_changed_files`]).
+    Changed,
+}
+
+/// The load-error view's "Reload from disk" (config failed to load) always retries the config
+/// itself and never touches the filter; the footer RELOAD after a refusal re-reads what changed.
+fn config_reload_plan(config_failed: bool, changed: &[DiskFile]) -> ConfigReload {
+    if config_failed || changed.is_empty() {
+        ConfigReload::ConfigOnly
+    } else {
+        ConfigReload::Changed
+    }
+}
+
 /// The one Apply path (UAT2-10): the CONFIG edits (`styles.json`, `tiers.json`) and the RULES edits
 /// (the filter, rendered with the pending styles and tier cutoffs) validated together, then
 /// written all-or-none by [`apply_all`]. `config` is `None` when the CONFIG state failed to load;
@@ -1290,15 +1309,18 @@ impl OverlayApp {
                 ConfigAction::Apply => self.run_apply(ctx, false),
                 ConfigAction::Overwrite => self.run_apply(ctx, true),
                 ConfigAction::Reload => {
-                    if self.changed_on_disk.is_empty() {
-                        self.config = match &self.root {
-                            Ok(root) => ConfigState::load(root),
-                            Err(message) => Err(message.clone()),
-                        };
-                        self.config_message = None;
-                        self.config_ui.disarm_all();
-                    } else {
-                        self.reload_changed();
+                    match config_reload_plan(self.config.is_err(), &self.changed_on_disk) {
+                        ConfigReload::ConfigOnly => {
+                            self.config = match &self.root {
+                                Ok(root) => ConfigState::load(root),
+                                Err(message) => Err(message.clone()),
+                            };
+                            // A pending filter refusal stays for the RULES tab to resolve.
+                            self.changed_on_disk.retain(|f| *f == DiskFile::Filter);
+                            self.config_message = None;
+                            self.config_ui.disarm_all();
+                        }
+                        ConfigReload::Changed => self.reload_changed(),
                     }
                 }
                 ConfigAction::SelectFilter(name) => self.select_filter(name),
@@ -2795,6 +2817,27 @@ mod tests {
         let again = rig.apply(false);
         assert!(matches!(again.outcome, AllOutcome::Applied { .. }));
         assert!(again.changed.is_empty());
+    }
+
+    #[test]
+    fn config_load_error_reload_retries_the_config_and_spares_the_filter() {
+        use super::{ConfigReload, config_reload_plan};
+        // Config failed to load, the filter was refused as changed on disk: "Reload from disk"
+        // retries the config and must not reload the filter (which would drop RULES edits).
+        assert_eq!(
+            config_reload_plan(true, &[DiskFile::Filter]),
+            ConfigReload::ConfigOnly
+        );
+        assert_eq!(config_reload_plan(true, &[]), ConfigReload::ConfigOnly);
+        assert_eq!(config_reload_plan(false, &[]), ConfigReload::ConfigOnly);
+        // The footer RELOAD after a refusal keeps the shared semantics.
+        for changed in [
+            &[DiskFile::Filter][..],
+            &[DiskFile::Styles],
+            &[DiskFile::Tiers, DiskFile::Filter],
+        ] {
+            assert_eq!(config_reload_plan(false, changed), ConfigReload::Changed);
+        }
     }
 
     #[test]

@@ -668,6 +668,37 @@ mod tests {
     }
 
     #[test]
+    fn gate_ignores_removed_poe1_keyword() {
+        let text = "Show # six link\n\tLinkedSockets 6\n\tRarity Rare\n";
+        let doc = crate::filter::parse(text.as_bytes()).unwrap();
+        assert_eq!(doc.serialize(), text);
+        assert!(
+            doc.diagnostics()
+                .iter()
+                .any(|d| d.severity == crate::filter::Severity::Warning
+                    && d.message.contains("LinkedSockets"))
+        );
+        assert!(
+            doc.diagnostics()
+                .iter()
+                .all(|d| d.severity != crate::filter::Severity::Error)
+        );
+        assert!(blocking_errors(&doc).is_empty());
+    }
+
+    #[test]
+    fn apply_edited_writes_a_removed_keyword_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dynamic.filter");
+        let mut l = LoadedFilter::load(&p).unwrap();
+        let text = "Show # six link\n\tLinkedSockets 6\n\tRarity Rare\n";
+        apply_edited(&mut l, text, EconomyOp::Keep).unwrap();
+        let written = fs::read_to_string(&p).unwrap();
+        assert!(written.contains("\tLinkedSockets 6"), "{written}");
+        assert_eq!(written, text);
+    }
+
+    #[test]
     fn gate_numbering_skips_economy_and_counts_after_end() {
         let base = "Show # first\n\tRarity Rare\n\n";
         let with = crate::filter::section::add(base, "Show # eco\n\tRarity Rare\n").unwrap();

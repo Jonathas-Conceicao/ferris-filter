@@ -355,14 +355,9 @@ pub fn conditions_group(
 
 type Groups = Vec<(&'static str, Vec<&'static Keyword>)>;
 
-/// The label a picker row shows: the display name, suffixed when PoE 2 ignores the keyword.
+/// The label a picker row shows: the display name.
 pub(crate) fn picker_label(kw: &Keyword) -> String {
-    let name = grammar::display_name(kw.name);
-    if grammar::POE1_ONLY.contains(&kw.name) {
-        format!("{name} (PoE 1)")
-    } else {
-        name
-    }
+    grammar::display_name(kw.name)
 }
 
 /// Keep the keywords whose name or display name contains `query` (case-insensitive); empty
@@ -1271,7 +1266,8 @@ fn count_names_control(
                 "Count"
             };
             ui.label(RichText::new(lead).size(14.0).color(theme::VALUE_TEXT));
-            let s = widgets::themed_slider(ui, &mut v, 0, 6, false);
+            let (lo, hi, _) = grammar::slider_range("Sockets");
+            let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
             let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
             changed = s.changed() || n.response.changed();
             ui.label(
@@ -1320,7 +1316,8 @@ fn sockets_control(
     let mut new_colours = colours.to_string();
     let mut changed = false;
     ui.horizontal(|ui| {
-        let s = widgets::themed_slider(ui, &mut v, 0, 6, false);
+        let (lo, hi, _) = grammar::slider_range("Sockets");
+        let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
         let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
         changed = s.changed() || n.response.changed();
     });
@@ -1831,7 +1828,13 @@ fn font_control(
     let mut new = None;
     let mut primary = None;
     ui.horizontal(|ui| {
-        let (n, r) = slider_pair(ui, card.salt("num"), current, (1, 45), &mut invalid);
+        let (n, r) = slider_pair(
+            ui,
+            card.salt("num"),
+            current,
+            grammar::FONT_SIZE_RANGE,
+            &mut invalid,
+        );
         new = n;
         primary = Some(r);
     });
@@ -1865,14 +1868,27 @@ fn sound_control(
     let mut primary = None;
     ui.horizontal(|ui| {
         caption(ui, "Sound");
-        let (n, r) = slider_pair(ui, card.salt("sid"), sound, (1, 16), &mut invalid);
+        let (n, r) = slider_pair(
+            ui,
+            card.salt("sid"),
+            sound,
+            grammar::SOUND_ID_RANGE,
+            &mut invalid,
+        );
         new_id = n;
         primary = Some(r);
     });
     ui.horizontal(|ui| {
         caption(ui, "Volume");
         let shown = volume.unwrap_or(100);
-        new_vol = slider_pair(ui, card.salt("svol"), shown, (0, 300), &mut invalid).0;
+        new_vol = slider_pair(
+            ui,
+            card.salt("svol"),
+            shown,
+            grammar::VOLUME_RANGE,
+            &mut invalid,
+        )
+        .0;
     });
     if invalid {
         hint(ui, WHOLE_NUMBER_HINT);
@@ -1929,7 +1945,7 @@ fn custom_sound_control(
             ui,
             card.salt("cvol"),
             volume.unwrap_or(100),
-            (0, 300),
+            grammar::VOLUME_RANGE,
             &mut invalid,
         )
         .0;
@@ -2271,8 +2287,24 @@ mod tests {
     #[test]
     fn expanded_scalar_conditions_are_idle() {
         let wf = WorkingFilter::from_text(
-            "Show\n    ItemLevel >= 70\n    Corrupted True\n    Rarity Rare\n    HasInfluence Shaper\n    FutureKw 3\n",
+            "Show\n    ItemLevel >= 70\n    Corrupted True\n    Rarity Rare\n    Identified False\n    FutureKw 3\n",
         );
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+    }
+
+    #[test]
+    fn removed_poe1_keyword_is_a_raw_row() {
+        let (wf, _, e) = entries_of("Show\n    LinkedSockets 6\n");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].kind, EntryKind::Opaque);
+        assert_eq!(e[0].text, "    LinkedSockets 6");
+        assert!(e[0].keyword.is_none());
         let ctx = headless_ctx();
         let mut list = ListUi::default();
         list.expanded = Some(wf.rows()[0].id);
@@ -2516,7 +2548,7 @@ mod tests {
     #[test]
     fn class_card_with_a_catalogue_is_idle_and_keeps_unknown_classes() {
         let wf = WorkingFilter::from_text(
-            "Show\n    Class \"Amulets\" \"Custom Thing\"\n    BaseType == \"Heavy Belt\"\n    HasExplicitMod >=1 \"Tyrannical\"\n    Sockets >= 5GGG\n    ItemLevel 60 65\n    TransfiguredGem True\n",
+            "Show\n    Class \"Amulets\" \"Custom Thing\"\n    BaseType == \"Heavy Belt\"\n    HasExplicitMod >=1 \"Tyrannical\"\n    Sockets >= 5GGG\n    ItemLevel 60 65\n    Corrupted True\n",
         );
         let cat = committed_catalog();
         let ctx = headless_ctx();
@@ -2577,8 +2609,10 @@ mod tests {
     }
 
     #[test]
-    fn transfigured_gem_any_and_named() {
-        let (_, id, e) = entries_of("Show\n    TransfiguredGem False\n");
+    fn bool_or_name_any_and_named() {
+        // No keyword uses BoolOrName today; the edit helper is keyword-independent, so any
+        // entry exercises it.
+        let (_, id, e) = entries_of("Show\n    Corrupted False\n");
         assert_eq!(
             values_of(bool_or_name_edit(id, &e[0], true, "").unwrap()),
             Some("True".to_string())
@@ -2625,10 +2659,12 @@ mod tests {
     }
 
     #[test]
-    fn poe1_only_keywords_are_labelled() {
-        let linked = crate::filter::keywords::lookup("LinkedSockets").unwrap();
-        assert_eq!(picker_label(linked), "Linked Sockets (PoE 1)");
-        assert!(names_of(&picker_entries("linked")).contains(&"LinkedSockets"));
+    fn removed_poe1_keywords_are_not_offered() {
+        assert!(picker_entries("linked").is_empty());
+        let mirage = picker_entries("mirage");
+        assert_eq!(names_of(&mirage), ["MirageMap"]);
+        let kw = crate::filter::keywords::lookup("MirageMap").unwrap();
+        assert_eq!(picker_label(kw), "Mirage Map");
         let item = crate::filter::keywords::lookup("ItemLevel").unwrap();
         assert_eq!(picker_label(item), "Item Level");
     }

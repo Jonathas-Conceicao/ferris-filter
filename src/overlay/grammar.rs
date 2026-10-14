@@ -42,11 +42,10 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
             "BaseArmour",
             "BaseEvasion",
             "BaseEnergyShield",
-            "BaseWard",
             "BaseDefencePercentile",
         ],
     ),
-    ("Sockets", &["Sockets", "SocketGroup", "LinkedSockets"]),
+    ("Sockets", &["Sockets"]),
     (
         "Status",
         &[
@@ -54,7 +53,6 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
             "Corrupted",
             "Mirrored",
             "FracturedItem",
-            "Replica",
             "Foulborn",
             "Imbued",
             "Vestigial",
@@ -70,33 +68,14 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
             "HasImplicitMod",
             "HasEnchantment",
             "AnyEnchantment",
-            "HasInfluence",
             "HasVaalUniqueMod",
             "IsVaalUnique",
-            "EnchantmentPassiveNode",
-            "EnchantmentPassiveNum",
-            "ArchnemesisMod",
-            "AlternateQuality",
             "Exceptional",
         ],
     ),
     (
         "Endgame",
-        &[
-            "AreaLevel",
-            "WaystoneTier",
-            "MapTier",
-            "GemLevel",
-            "GemQualityType",
-            "TransfiguredGem",
-            "MemoryStrands",
-            "ZanaMemory",
-            "BlightedMap",
-            "ShapedMap",
-            "UberBlightedMap",
-            "MirageMap",
-            "ElderMap",
-        ],
+        &["AreaLevel", "WaystoneTier", "GemLevel", "MirageMap"],
     ),
 ];
 
@@ -125,24 +104,6 @@ const ACTION_GROUPS: &[(&str, &[&str])] = &[
             "EnableDropSoundIfAlertSound",
         ],
     ),
-];
-
-/// Keywords the PoE2 docs do not honour. They stay selectable; the picker only suffixes them.
-pub static POE1_ONLY: &[&str] = &[
-    "LinkedSockets",
-    "ElderMap",
-    "ShapedMap",
-    "BlightedMap",
-    "UberBlightedMap",
-    "MirageMap",
-    "ElderItem",
-    "ShaperItem",
-    "SynthesisedItem",
-    "Scourged",
-    "HasCruciblePassiveTree",
-    "HasEaterOfWorldsImplicit",
-    "HasSearingExarchImplicit",
-    "ArchnemesisMod",
 ];
 
 fn resolve(names: &[&str]) -> Vec<&'static Keyword> {
@@ -308,36 +269,44 @@ pub fn operator_label(kw: &Keyword, op: Option<Operator>, list_form: bool) -> &'
 // Ranges and defaults
 // ---------------------------------------------------------------------------------------------
 
+/// `SetFontSize` slider bounds.
+pub const FONT_SIZE_RANGE: (i64, i64) = (1, 45);
+/// Alert sound id slider bounds.
+pub const SOUND_ID_RANGE: (i64, i64) = (1, 16);
+/// Alert sound volume slider bounds.
+pub const VOLUME_RANGE: (i64, i64) = (0, 300);
+/// Minimap icon size bounds (0 largest, 2 smallest).
+pub const MINIMAP_SIZE_RANGE: (i64, i64) = (0, 2);
+
 /// Slider range `(min, max, logarithmic)` for a keyword. Typing outside it stays allowed.
 pub fn slider_range(name: &str) -> (i64, i64, bool) {
     match name {
         "ItemLevel" | "AreaLevel" | "DropLevel" => (1, 100, false),
         "Quality" => (0, 30, false),
         "StackSize" => (1, 5000, true),
-        "BaseArmour" | "BaseEvasion" | "BaseEnergyShield" | "BaseWard" => (0, 1000, true),
-        "WaystoneTier" | "MapTier" => (1, 17, false),
+        "BaseArmour" | "BaseEvasion" | "BaseEnergyShield" => (0, 1000, true),
+        "WaystoneTier" => (1, 17, false),
         "GemLevel" => (1, 21, false),
         "UnidentifiedItemTier" => (1, 5, false),
         "Width" => (1, 2, false),
         "Height" => (1, 4, false),
-        "Sockets" | "SocketGroup" | "LinkedSockets" => (0, 6, false),
-        "SetFontSize" => (1, 45, false),
+        "Sockets" => (0, 6, false),
+        "SetFontSize" => (FONT_SIZE_RANGE.0, FONT_SIZE_RANGE.1, false),
         _ => (0, 100, false),
     }
 }
 
 fn int_default(name: &str) -> i64 {
     match name {
-        "ItemLevel" | "AreaLevel" | "DropLevel" | "GemLevel" => 65,
+        "ItemLevel" | "AreaLevel" | "DropLevel" => 65,
+        "GemLevel" => 20,
         "Quality"
         | "Sockets"
         | "StackSize"
         | "WaystoneTier"
-        | "MapTier"
         | "BaseArmour"
         | "BaseEvasion"
         | "BaseEnergyShield"
-        | "BaseWard"
         | "UnidentifiedItemTier" => 1,
         other => slider_range(other).0,
     }
@@ -795,9 +764,6 @@ mod tests {
                 assert!(lookup(n).is_some(), "group names unknown keyword {n}");
             }
         }
-        for n in POE1_ONLY {
-            assert!(lookup(n).is_some(), "{n}");
-        }
         let labels: Vec<_> = condition_groups().iter().map(|g| g.0).collect();
         assert_eq!(
             labels,
@@ -942,12 +908,12 @@ mod tests {
             ("ItemLevel", Some("ItemLevel >= 65")),
             ("AreaLevel", Some("AreaLevel >= 65")),
             ("Quality", Some("Quality >= 1")),
+            ("GemLevel", Some("GemLevel >= 20")),
             ("Corrupted", Some("Corrupted True")),
             ("BaseType", None),
             ("Class", None),
             ("Rarity", None),
             ("HasExplicitMod", None),
-            ("HasInfluence", Some("HasInfluence Shaper")),
             ("Sockets", Some("Sockets >= 1")),
             ("SetTextColor", Some("SetTextColor 248 248 242 255")),
             (
@@ -960,14 +926,55 @@ mod tests {
             ("PlayAlertSound", Some("PlayAlertSound 1 300")),
             ("CustomAlertSound", Some("CustomAlertSound \"uwu.mp3\" 300")),
             ("DisableDropSound", Some("DisableDropSound")),
-            ("TransfiguredGem", Some("TransfiguredGem True")),
         ];
         for (n, want) in cases {
             assert_eq!(default_line(kw(n)).as_deref(), want, "{n}");
         }
     }
 
+    #[test]
+    fn every_numeric_default_is_inside_its_slider() {
+        fn within(n: i64, (lo, hi): (i64, i64), what: &str) {
+            assert!(lo <= n && n <= hi, "{what}: {n} outside {lo}..={hi}");
+        }
+        for k in KEYWORDS {
+            let Some(line) = default_line(k) else {
+                continue;
+            };
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            let num = |s: &str| s.parse::<i64>().unwrap();
+            match k.value {
+                ValueShape::Int | ValueShape::Sockets => {
+                    let (lo, hi, _) = slider_range(k.name);
+                    within(num(toks[2]), (lo, hi), k.name);
+                }
+                ValueShape::FontSize => within(num(toks[1]), FONT_SIZE_RANGE, k.name),
+                ValueShape::SoundId => {
+                    within(num(toks[1]), SOUND_ID_RANGE, k.name);
+                    within(num(toks[2]), VOLUME_RANGE, k.name);
+                }
+                ValueShape::CustomSound => within(num(toks[2]), VOLUME_RANGE, k.name),
+                ValueShape::MinimapIcon => within(num(toks[1]), MINIMAP_SIZE_RANGE, k.name),
+                _ => {}
+            }
+        }
+    }
+
     // ---- codec ----
+
+    // No keyword uses the Enum or BoolOrName shapes today; keep their codec arms covered.
+    static TEST_ENUM: Keyword = Keyword {
+        name: "TestEnum",
+        kind: Kind::Condition,
+        ops: keywords::Ops::Compare,
+        value: ValueShape::Enum(&["Shaper", "Elder"]),
+    };
+    static TEST_BOOL_OR_NAME: Keyword = Keyword {
+        name: "TestBoolOrName",
+        kind: Kind::Condition,
+        ops: keywords::Ops::Compare,
+        value: ValueShape::BoolOrName,
+    };
 
     fn d(k: &str, t: &[&str]) -> Value {
         decode(kw(k), t)
@@ -1004,11 +1011,6 @@ mod tests {
                 names: vec!["A".into()]
             }
         );
-        assert_eq!(
-            d("HasInfluence", &["Shaper"]),
-            Value::Enum(vec!["Shaper".into()])
-        );
-        assert!(matches!(d("HasInfluence", &["Bogus"]), Value::Raw(_)));
         assert_eq!(
             d("Sockets", &["5GGG"]),
             Value::Sockets {
@@ -1100,9 +1102,14 @@ mod tests {
             Value::OptionalBool(Some(true))
         );
         assert_eq!(
-            d("TransfiguredGem", &["True"]),
+            decode(&TEST_BOOL_OR_NAME, &["True"]),
             Value::BoolOrName(BoolOrName::Bool(true))
         );
+        assert_eq!(
+            decode(&TEST_ENUM, &["Shaper"]),
+            Value::Enum(vec!["Shaper".into()])
+        );
+        assert!(matches!(decode(&TEST_ENUM, &["Bogus"]), Value::Raw(_)));
     }
 
     #[test]

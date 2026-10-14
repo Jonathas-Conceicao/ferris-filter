@@ -393,6 +393,15 @@ pub(crate) fn picker_entries(query: &str) -> Groups {
     filter_groups(&grammar::condition_groups(), query)
 }
 
+/// Picker sections start closed (UAT3-07); only a search opens the matching ones.
+const PICKER_SECTION_DEFAULT_OPEN: bool = false;
+
+/// A forced open state for every picker section: open while searching, otherwise the user's own
+/// toggling stands.
+fn picker_section_override(searching: bool) -> Option<bool> {
+    searching.then_some(true)
+}
+
 /// A searchable, grouped keyword picker anchored to `button` (shared with `+ style`). Returns
 /// the keyword the user picked this frame. Keywords for which `disabled` gives a reason are shown
 /// greyed with that reason as their tooltip.
@@ -441,16 +450,16 @@ pub(crate) fn picker_popup(
                     if filtered.is_empty() {
                         caption(ui, "Nothing matches");
                     }
-                    for (gi, (label, kws)) in filtered.iter().enumerate() {
+                    for (label, kws) in filtered.iter() {
                         let mut header = egui::CollapsingHeader::new(
                             RichText::new(*label)
                                 .size(theme::ROW_SUMMARY_SIZE)
                                 .color(theme::LABEL_TAN),
                         )
                         .id_salt((popup_id, *label))
-                        .default_open(gi == 0);
-                        if searching {
-                            header = header.open(Some(true));
+                        .default_open(PICKER_SECTION_DEFAULT_OPEN);
+                        if let Some(open) = picker_section_override(searching) {
+                            header = header.open(Some(open));
                         }
                         header.show(ui, |ui| {
                             for kw in kws {
@@ -596,13 +605,14 @@ fn pending_card(
     actions: &mut Vec<RowAction>,
 ) {
     let mut discard = false;
+    let mut picked_op: Option<Option<Operator>> = None;
     let mut items: Option<Vec<String>> = None;
     // Set when the first entry could not be written, so the refusal is shown instead of the entry
     // vanishing (WR-06).
     let bad_id = ui.id().with((p.block, p.keyword.name, "pending-bad"));
     let bad = ui.data(|d| d.get_temp::<bool>(bad_id).unwrap_or(false));
     ui.push_id((p.block, p.keyword.name, "pending"), |ui| {
-        card_frame(idx).show(ui, |ui| {
+        let framed = card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             discard = condition_header(
@@ -610,20 +620,28 @@ fn pending_card(
                 &grammar::display_name(p.keyword.name),
                 p.keyword.name,
                 |ui| {
-                    // Show the operator the first entry will be written with, so a carried-over
-                    // negation is never silent (WR-01, iteration 2).
-                    if p.op.is_some() {
-                        ui.label(
-                            RichText::new(grammar::operator_label(p.keyword, p.op, false))
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::LABEL_TAN),
-                        );
+                    // The operator the first entry will be written with is a dropdown from the
+                    // start, so a carried-over negation is never silent (WR-01, iteration 2) and
+                    // the author can pick it before any value exists.
+                    let choices = grammar::operator_choices(p.keyword, p.op, false);
+                    if !choices.is_empty() {
+                        egui::ComboBox::from_id_salt((p.block, p.keyword.name, "pending-op"))
+                            .selected_text(grammar::operator_label(p.keyword, p.op, false))
+                            .width(OP_W)
+                            .show_ui(ui, |ui| {
+                                for c in &choices {
+                                    if ui.selectable_label(c.op == p.op, c.label).clicked()
+                                        && c.op != p.op
+                                    {
+                                        picked_op = Some(c.op);
+                                    }
+                                }
+                            });
                     }
                 },
                 "Discard this condition",
             )
             .clicked();
-            caption(ui, "Add an entry to create this condition");
             // The salt the real card will use once this row gets its first line: the new line's
             // keyword ordinal, and the same tag, so state keyed on it (the open class group)
             // carries over from the pending card to the real one.
@@ -648,16 +666,32 @@ fn pending_card(
                 hint(ui, BAD_TEXT_HINT);
             }
         });
+        framed
+            .response
+            .on_hover_text("Add an entry to create this condition");
     });
+    // A picked operator is kept on the pending row (matched by block + keyword, whatever its
+    // current operator) and used by this frame's first entry; nothing is written for it.
+    let mut eff = p.clone();
+    if let Some(op) = picked_op {
+        eff.op = op;
+        if let Some(row) = list
+            .pending
+            .iter_mut()
+            .find(|q| q.block == p.block && q.keyword.name == p.keyword.name)
+        {
+            row.op = op;
+        }
+    }
     if discard {
         ui.data_mut(|d| d.remove::<bool>(bad_id));
-        list.pending.retain(|q| q != p);
+        list.pending.retain(|q| q != p && q != &eff);
     } else if let Some(items) = items.filter(|i| !i.is_empty()) {
-        match pending_first_entry(p, &items) {
+        match pending_first_entry(&eff, &items) {
             Some(a) => {
                 ui.data_mut(|d| d.remove::<bool>(bad_id));
                 actions.push(a);
-                list.pending.retain(|q| q != p);
+                list.pending.retain(|q| q != p && q != &eff);
             }
             None => ui.data_mut(|d| {
                 d.insert_temp(bad_id, true);
@@ -3548,6 +3582,170 @@ mod tests {
             }
         }
         (ctx, wf, list, id, got)
+    }
+
+    /// A fresh expanded rule with a pending row for `kw`, settled for a few frames.
+    fn pending_session(
+        cat: &ClassCatalog,
+        kw: &str,
+    ) -> (egui::Context, WorkingFilter, ListUi, BlockId) {
+        let mut wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
+        let id = wf.rows()[0].id;
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(id);
+        let kw = crate::filter::keywords::lookup(kw).unwrap();
+        assert_eq!(pick_condition(id, kw, &mut list), None);
+        for _ in 0..3 {
+            click_step(&ctx, &mut wf, &mut list, cat, None);
+        }
+        (ctx, wf, list, id)
+    }
+
+    /// Click each point in turn, three idle frames after each; the click-frame actions.
+    fn play(
+        ctx: &egui::Context,
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        cat: &ClassCatalog,
+        clicks: &[Pos2],
+    ) -> Vec<RowAction> {
+        let mut out = Vec::new();
+        for p in clicks {
+            out.extend(click_step(ctx, wf, list, cat, Some(*p)));
+            for _ in 0..3 {
+                click_step(ctx, wf, list, cat, None);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn pending_class_operator_is_chosen_before_a_value_and_used_by_it() {
+        let cat = committed_catalog();
+        // The operator dropdown is on the pending card: some click opens a popup.
+        let mut combo = None;
+        'a: for y in (110..170).step_by(4) {
+            for x in (150..440).step_by(10) {
+                let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
+                let p = Pos2::new(x as f32, y as f32);
+                play(&ctx, &mut wf, &mut list, &cat, &[p]);
+                if egui::Popup::is_any_open(&ctx) {
+                    combo = Some(p);
+                    break 'a;
+                }
+            }
+        }
+        let combo = combo.expect("a pending Class row shows an operator dropdown");
+
+        // Choosing "Not" is stored on the pending row and writes nothing.
+        let mut item = None;
+        'b: for y in ((combo.y as i32 + 8)..(combo.y as i32 + 120)).step_by(4) {
+            for x in [combo.x - 20.0, combo.x, combo.x + 20.0] {
+                let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
+                let before = wf.text();
+                let p = Pos2::new(x, y as f32);
+                let a = play(&ctx, &mut wf, &mut list, &cat, &[combo, p]);
+                if list.pending.len() == 1 && list.pending[0].op == Some(Operator::Ne) {
+                    assert!(a.is_empty(), "choosing an operator writes nothing: {a:?}");
+                    assert_eq!(wf.text(), before);
+                    item = Some(p);
+                    break 'b;
+                }
+            }
+        }
+        let item = item.expect("the dropdown offers Not");
+
+        // An idle frame with the operator set still writes nothing.
+        let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
+        let before = wf.text();
+        play(&ctx, &mut wf, &mut list, &cat, &[combo, item]);
+        assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        assert_eq!(wf.text(), before);
+
+        // The first class then lands with that operator.
+        let mut text = None;
+        'c: for hy in (160..184).step_by(4) {
+            for (cx, cy) in [36.0f32, 90.0, 130.0]
+                .into_iter()
+                .flat_map(|x| ((hy + 16)..(hy + 120)).step_by(4).map(move |y| (x, y)))
+            {
+                let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
+                let a = play(
+                    &ctx,
+                    &mut wf,
+                    &mut list,
+                    &cat,
+                    &[
+                        combo,
+                        item,
+                        Pos2::new(CLASS_HEADER_X, hy as f32),
+                        Pos2::new(cx, cy as f32),
+                    ],
+                );
+                for act in a {
+                    if let RowAction::AddLine { text: t, .. } = act {
+                        text = Some(t);
+                        break 'c;
+                    }
+                }
+            }
+        }
+        let text = text.expect("a class click writes the line");
+        assert!(text.starts_with("Class != \""), "{text}");
+    }
+
+    #[test]
+    fn pending_base_type_starts_exact_and_shows_its_operator() {
+        let cat = committed_catalog();
+        let (_, _, list, _) = pending_session(&cat, "BaseType");
+        assert_eq!(list.pending[0].op, Some(Operator::EqEq));
+        let p = list.pending[0].clone();
+        let a = pending_first_entry(&p, &["Heavy Belt".to_string()]).unwrap();
+        assert!(
+            matches!(&a, RowAction::AddLine { text, .. } if text == "BaseType == \"Heavy Belt\"")
+        );
+        assert!(!grammar::operator_choices(p.keyword, p.op, false).is_empty());
+    }
+
+    #[test]
+    fn pending_rarity_operator_applies_to_one_chip_but_not_to_two() {
+        let cat = committed_catalog();
+        let (_, _, mut list, id) = pending_session(&cat, "Rarity");
+        assert!(!grammar::operator_choices(list.pending[0].keyword, None, false).is_empty());
+        list.pending[0].op = Some(Operator::Ge);
+        let p = list.pending[0].clone();
+        let one = pending_first_entry(&p, &["Magic".to_string()]).unwrap();
+        assert!(
+            matches!(&one, RowAction::AddLine { id: i, text, .. } if *i == id && text == "Rarity >= Magic")
+        );
+        let two = pending_first_entry(&p, &["Magic".to_string(), "Rare".to_string()]).unwrap();
+        assert!(matches!(&two, RowAction::AddLine { text, .. } if text == "Rarity Magic Rare"));
+    }
+
+    #[test]
+    fn idle_pending_rows_write_nothing_for_any_keyword() {
+        let cat = committed_catalog();
+        for kw in ["Class", "BaseType", "Rarity"] {
+            let (ctx, mut wf, mut list, _) = pending_session(&cat, kw);
+            let before = wf.text();
+            for _ in 0..3 {
+                assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+            }
+            assert_eq!(wf.text(), before, "{kw}");
+            assert_eq!(list.pending.len(), 1, "{kw}");
+        }
+    }
+
+    #[test]
+    fn picker_sections_start_collapsed_and_a_search_opens_them() {
+        // Nothing opens by itself (this was `gi == 0`, which opened "Item").
+        assert!(!PICKER_SECTION_DEFAULT_OPEN);
+        assert_eq!(picker_section_override(false), None);
+        assert_eq!(picker_section_override(true), Some(true));
+        let production = include_str!("body.rs").split("mod tests {").next().unwrap();
+        assert!(!production.contains(&["default_open(gi", " == 0)"].concat()));
+        assert!(production.contains("default_open(PICKER_SECTION_DEFAULT_OPEN)"));
     }
 
     #[test]

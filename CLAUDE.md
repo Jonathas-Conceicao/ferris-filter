@@ -154,8 +154,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > style shows how many rules use it, and warns when `config.json` itself references it
 > (`generate` would then fail). **TIERS** edits the `tiers.json` cutoffs with inline validation.
 > There is **one APPLY**, the same on either tab. It validates everything first (tier cutoffs, rule
-> grammar, economy markers and pricing, style rewrites, and the changed-on-disk guard of all three
-> files), then writes `styles.json`, `tiers.json` and the filter (rendered with the pending styles and
+> grammar, economy markers and pricing, style rewrites, and the changed-on-disk guard of the filter and of any config file
+> with CONFIG edits; an unedited `styles.json`/`tiers.json` just follows the disk and is never
+> written), then writes `styles.json`, `tiers.json` and the filter (rendered with the pending styles and
 > tiers) all or none, then reloads in game under the existing rules. With no filter loaded it writes
 > the config files only. A refusal writes nothing. When a file changed on disk the refusal names it
 > and both tabs offer **RELOAD** (re-reads the changed files; a changed filter discards rule edits, a
@@ -166,7 +167,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > `# ff:style` names a deleted style lose that tag on that Apply and keep their actions.
 >
 > **Development warning:** running `ff` from the repo resolves the repo root as the app root, so Apply
-> (from either tab) would rewrite the committed `styles.json` / `tiers.json` that `artifact_guard` reads. For manual
+> (from either tab, once CONFIG has edits) would rewrite the committed `styles.json` / `tiers.json` that `artifact_guard` reads. For manual
 > testing set `FERRISFILTER_HOME` (and `USERPROFILE`) to a temp copy first.
 >
 > **In-game reload after Apply (Phase 23, RELOAD-01):** the mechanism is: focus the game, Enter,

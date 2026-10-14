@@ -125,7 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has no unapplied-changes line and no "new" tag; Add style sits on the Custom heading; the styles
   table has a Visibility | Name | Preview header and custom styles reorder with arrows; one
   all-or-none APPLY on both tabs writes `styles.json`, `tiers.json` and the filter together, with
-  OVERWRITE/RELOAD on both tabs and per-tab Revert. No generator change.
+  OVERWRITE/RELOAD on both tabs and per-tab Revert (an unedited `styles.json`/`tiers.json` follows
+  the disk and is never written or guarded). No generator change.
 - **Overlay UAT fixes** (Phase 24, UAT-01..UAT-13). No reload text when the game is closed; Styles
   grouped Built-in/Custom with no badge; per-style Show/Hide slide switch; no Minimal option, a foreign
   Minimal block is untouched; condition remove button right-aligned; quoted lists vertical and capped;

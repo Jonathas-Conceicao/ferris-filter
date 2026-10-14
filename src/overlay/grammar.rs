@@ -269,6 +269,15 @@ pub fn operator_label(kw: &Keyword, op: Option<Operator>, list_form: bool) -> &'
 // Ranges and defaults
 // ---------------------------------------------------------------------------------------------
 
+/// `SetFontSize` slider bounds.
+pub const FONT_SIZE_RANGE: (i64, i64) = (1, 45);
+/// Alert sound id slider bounds.
+pub const SOUND_ID_RANGE: (i64, i64) = (1, 16);
+/// Alert sound volume slider bounds.
+pub const VOLUME_RANGE: (i64, i64) = (0, 300);
+/// Minimap icon size bounds (0 largest, 2 smallest).
+pub const MINIMAP_SIZE_RANGE: (i64, i64) = (0, 2);
+
 /// Slider range `(min, max, logarithmic)` for a keyword. Typing outside it stays allowed.
 pub fn slider_range(name: &str) -> (i64, i64, bool) {
     match name {
@@ -282,14 +291,15 @@ pub fn slider_range(name: &str) -> (i64, i64, bool) {
         "Width" => (1, 2, false),
         "Height" => (1, 4, false),
         "Sockets" => (0, 6, false),
-        "SetFontSize" => (1, 45, false),
+        "SetFontSize" => (FONT_SIZE_RANGE.0, FONT_SIZE_RANGE.1, false),
         _ => (0, 100, false),
     }
 }
 
 fn int_default(name: &str) -> i64 {
     match name {
-        "ItemLevel" | "AreaLevel" | "DropLevel" | "GemLevel" => 65,
+        "ItemLevel" | "AreaLevel" | "DropLevel" => 65,
+        "GemLevel" => 20,
         "Quality"
         | "Sockets"
         | "StackSize"
@@ -898,6 +908,7 @@ mod tests {
             ("ItemLevel", Some("ItemLevel >= 65")),
             ("AreaLevel", Some("AreaLevel >= 65")),
             ("Quality", Some("Quality >= 1")),
+            ("GemLevel", Some("GemLevel >= 20")),
             ("Corrupted", Some("Corrupted True")),
             ("BaseType", None),
             ("Class", None),
@@ -918,6 +929,34 @@ mod tests {
         ];
         for (n, want) in cases {
             assert_eq!(default_line(kw(n)).as_deref(), want, "{n}");
+        }
+    }
+
+    #[test]
+    fn every_numeric_default_is_inside_its_slider() {
+        fn within(n: i64, (lo, hi): (i64, i64), what: &str) {
+            assert!(lo <= n && n <= hi, "{what}: {n} outside {lo}..={hi}");
+        }
+        for k in KEYWORDS {
+            let Some(line) = default_line(k) else {
+                continue;
+            };
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            let num = |s: &str| s.parse::<i64>().unwrap();
+            match k.value {
+                ValueShape::Int | ValueShape::Sockets => {
+                    let (lo, hi, _) = slider_range(k.name);
+                    within(num(toks[2]), (lo, hi), k.name);
+                }
+                ValueShape::FontSize => within(num(toks[1]), FONT_SIZE_RANGE, k.name),
+                ValueShape::SoundId => {
+                    within(num(toks[1]), SOUND_ID_RANGE, k.name);
+                    within(num(toks[2]), VOLUME_RANGE, k.name);
+                }
+                ValueShape::CustomSound => within(num(toks[2]), VOLUME_RANGE, k.name),
+                ValueShape::MinimapIcon => within(num(toks[1]), MINIMAP_SIZE_RANGE, k.name),
+                _ => {}
+            }
         }
     }
 

@@ -1266,7 +1266,8 @@ fn count_names_control(
                 "Count"
             };
             ui.label(RichText::new(lead).size(14.0).color(theme::VALUE_TEXT));
-            let s = widgets::themed_slider(ui, &mut v, 0, 6, false);
+            let (lo, hi, _) = grammar::slider_range("Sockets");
+            let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
             let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
             changed = s.changed() || n.response.changed();
             ui.label(
@@ -1315,7 +1316,8 @@ fn sockets_control(
     let mut new_colours = colours.to_string();
     let mut changed = false;
     ui.horizontal(|ui| {
-        let s = widgets::themed_slider(ui, &mut v, 0, 6, false);
+        let (lo, hi, _) = grammar::slider_range("Sockets");
+        let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
         let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
         changed = s.changed() || n.response.changed();
     });
@@ -1826,7 +1828,13 @@ fn font_control(
     let mut new = None;
     let mut primary = None;
     ui.horizontal(|ui| {
-        let (n, r) = slider_pair(ui, card.salt("num"), current, (1, 45), &mut invalid);
+        let (n, r) = slider_pair(
+            ui,
+            card.salt("num"),
+            current,
+            grammar::FONT_SIZE_RANGE,
+            &mut invalid,
+        );
         new = n;
         primary = Some(r);
     });
@@ -1860,14 +1868,27 @@ fn sound_control(
     let mut primary = None;
     ui.horizontal(|ui| {
         caption(ui, "Sound");
-        let (n, r) = slider_pair(ui, card.salt("sid"), sound, (1, 16), &mut invalid);
+        let (n, r) = slider_pair(
+            ui,
+            card.salt("sid"),
+            sound,
+            grammar::SOUND_ID_RANGE,
+            &mut invalid,
+        );
         new_id = n;
         primary = Some(r);
     });
     ui.horizontal(|ui| {
         caption(ui, "Volume");
         let shown = volume.unwrap_or(100);
-        new_vol = slider_pair(ui, card.salt("svol"), shown, (0, 300), &mut invalid).0;
+        new_vol = slider_pair(
+            ui,
+            card.salt("svol"),
+            shown,
+            grammar::VOLUME_RANGE,
+            &mut invalid,
+        )
+        .0;
     });
     if invalid {
         hint(ui, WHOLE_NUMBER_HINT);
@@ -1924,7 +1945,7 @@ fn custom_sound_control(
             ui,
             card.salt("cvol"),
             volume.unwrap_or(100),
-            (0, 300),
+            grammar::VOLUME_RANGE,
             &mut invalid,
         )
         .0;

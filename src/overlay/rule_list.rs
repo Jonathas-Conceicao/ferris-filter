@@ -335,6 +335,10 @@ fn draw_row(
     reorder_enabled: bool,
     actions: &mut Vec<RowAction>,
 ) {
+    // The virtual list's offsets assume a row spans exactly `row_h` (collapsed) or
+    // `list.expanded_h` (expanded). That only holds with no spacing between the stacked
+    // allocations, so the row enforces it itself instead of relying on the caller.
+    ui.spacing_mut().item_spacing.y = 0.0;
     let is_expanded = list.expanded == Some(row.id);
     let width = ui.available_width();
     let header_h = header_height(ui);
@@ -934,6 +938,56 @@ Show
         assert_eq!(
             offsets.last().copied().unwrap(),
             2.0 * row_h + list.expanded_h
+        );
+    }
+
+    /// WR-03 (review 24): the height `draw_row` actually allocates matches what the virtual list
+    /// assumes: `row_height` collapsed, `list.expanded_h` expanded. Drawn in a plain UI with the
+    /// default (non-zero) item spacing, so it does not lean on `show_list` zeroing it.
+    #[test]
+    fn painted_row_heights_match_the_virtual_list() {
+        let wf = filter_of(2);
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[1].id),
+            ..Default::default()
+        };
+        let mut measure = |list: &mut ListUi, i: usize| -> (f32, f32) {
+            let mut out = (0.0, 0.0);
+            ctx.run_ui(input(vec![]), |ui| {
+                assert!(ui.spacing().item_spacing.y > 0.0, "test needs real spacing");
+                let row_h = row_height(ui);
+                let mut actions = Vec::new();
+                let drawn = ui.push_id(("rule", i), |ui| {
+                    draw_row(
+                        ui,
+                        &wf,
+                        None,
+                        &wf.rows()[i],
+                        i,
+                        row_h,
+                        list,
+                        true,
+                        &mut actions,
+                    );
+                });
+                out = (drawn.response.rect.height(), row_h);
+            })
+            .drop_without_applying_deltas();
+            out
+        };
+        let (collapsed, row_h) = measure(&mut list, 0);
+        assert!((collapsed - row_h).abs() < 0.5, "{collapsed} vs {row_h}");
+        // The expanded height settles after a frame or two (it is measured, then stored).
+        for _ in 0..3 {
+            measure(&mut list, 1);
+        }
+        let (expanded, _) = measure(&mut list, 1);
+        assert!(list.expanded_h > row_h);
+        assert!(
+            (expanded - list.expanded_h).abs() < 0.5,
+            "{expanded} vs {}",
+            list.expanded_h
         );
     }
 

@@ -21,7 +21,7 @@ use crate::dynamic::{self, DynamicError, EconomyOp, LoadedFilter};
 use crate::overlay::apply::invalid_blocks_message;
 use crate::overlay::config_state::{ConfigState, ConfigWrite};
 use crate::overlay::rules::EconomyPlan;
-use crate::safe_write::{self, AllOrNoneError, Target, WriteOutcome};
+use crate::safe_write::{self, AllOrNoneError, Target, WriteError, WriteOutcome};
 
 /// One of the (up to) three files an Apply writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,37 +276,33 @@ pub fn prepare(
     })
 }
 
-/// Write a [`Prepared`] Apply: the one-time filter backup first, then styles, tiers and filter
-/// all-or-none. States adopt their new baselines only on success.
+/// Write a [`Prepared`] Apply: styles, tiers and filter all-or-none, with the one-time filter
+/// backup made once every refusal is behind us, just before the first rename. States adopt their
+/// new baselines only on success.
 pub fn commit(
     p: Prepared,
     config: Option<&mut ConfigState>,
     loaded: Option<&mut LoadedFilter>,
 ) -> Result<Committed, ApplyAllError> {
-    commit_with(p, config, loaded, safe_write::write_all_or_none)
+    commit_with(p, config, loaded, |targets, before| {
+        safe_write::write_all_or_none_before(targets, before)
+    })
 }
+
+/// The pre-persist step [`commit_with`] hands its writer.
+pub(crate) type BeforePersist<'a> = &'a mut dyn FnMut() -> Result<(), WriteError>;
 
 pub(crate) fn commit_with(
     p: Prepared,
     config: Option<&mut ConfigState>,
     loaded: Option<&mut LoadedFilter>,
-    write: impl FnOnce(&[Target]) -> Result<Vec<WriteOutcome>, AllOrNoneError>,
+    write: impl FnOnce(&[Target], BeforePersist<'_>) -> Result<Vec<WriteOutcome>, AllOrNoneError>,
 ) -> Result<Committed, ApplyAllError> {
     let Prepared {
         config: config_part,
         filter: filter_part,
         used_fallback,
     } = p;
-
-    // The one-time `.ffbak` is a copy of bytes already on disk, so it never needs a rollback.
-    let mut backup = None;
-    if let Some(f) = &filter_part
-        && let Some(original) = f.guard.as_deref()
-        && original != f.text.as_bytes()
-    {
-        backup = safe_write::ensure_backup(&f.path, original)
-            .map_err(|e| ApplyAllError::Write(format!("Nothing was applied: {e}.")))?;
-    }
 
     // Targets in write order; remember which slot is which.
     let mut targets: Vec<Target> = Vec::new();
@@ -338,7 +334,21 @@ pub(crate) fn commit_with(
         });
     }
 
-    let outcomes = match write(&targets) {
+    // The one-time `.ffbak` is a copy of bytes already on disk, so it never needs a rollback. It is
+    // made only once the writer has guarded, staged and preflighted every target, so a refused
+    // write never leaves one behind (WR-02).
+    let mut backup = None;
+    let mut make_backup = || -> Result<(), WriteError> {
+        if let Some(f) = &filter_part
+            && let Some(original) = f.guard.as_deref()
+            && original != f.text.as_bytes()
+        {
+            backup = safe_write::ensure_backup(&f.path, original)?;
+        }
+        Ok(())
+    };
+    let written = write(&targets, &mut make_backup);
+    let outcomes = match written {
         Ok(o) => o,
         Err(e) => {
             if let Some(path) = e.changed_on_disk_path() {
@@ -575,6 +585,58 @@ mod tests {
     }
 
     #[test]
+    fn commit_time_refusal_leaves_no_ffbak() {
+        let fx = Fixture::new();
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        cfg.set_tier_text("S", "1000000");
+        let before = fx.bytes();
+        let prepare_refresh = |cfg: &ConfigState, lf: &LoadedFilter| {
+            prepare(
+                fx.root.path(),
+                Some(cfg),
+                Some(FilterInput {
+                    loaded: lf,
+                    styled: Ok(lf.text().to_string()),
+                    plan: EconomyPlan::Refresh,
+                }),
+                false,
+            )
+            .unwrap()
+        };
+
+        // (i) tiers.json turns read-only after prepare: the preflight refuses.
+        let tiers_path = fx.root.path().join("tiers.json");
+        let mut perms = fs::metadata(&tiers_path).unwrap().permissions();
+        let p = prepare_refresh(&cfg, &lf);
+        perms.set_readonly(true);
+        fs::set_permissions(&tiers_path, perms.clone()).unwrap();
+        let r = commit(p, Some(&mut cfg), Some(&mut lf));
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&tiers_path, perms).unwrap();
+        assert!(
+            matches!(r, Err(ApplyAllError::Write(ref m)) if m.starts_with("Nothing was applied")),
+            "{r:?}"
+        );
+        assert_eq!(fx.bytes(), before);
+        fx.no_ffbak();
+
+        // (ii) the filter changes between prepare and commit: the guard refuses.
+        let p = prepare_refresh(&cfg, &lf);
+        let mut outside = before[2].clone();
+        outside.extend_from_slice(b"# outside\n");
+        fs::write(&fx.filter, &outside).unwrap();
+        let r = commit(p, Some(&mut cfg), Some(&mut lf));
+        assert_eq!(
+            r.err(),
+            Some(ApplyAllError::ChangedOnDisk(vec![DiskFile::Filter]))
+        );
+        fx.no_ffbak();
+        assert!(cfg.is_dirty());
+    }
+
+    #[test]
     fn third_rename_failure_rolls_back_all() {
         let fx = Fixture::new();
         let mut cfg = fx.config();
@@ -593,24 +655,30 @@ mod tests {
         )
         .unwrap();
         let mut calls = 0;
-        let r = commit_with(prepared, Some(&mut cfg), Some(&mut lf), |targets| {
-            assert_eq!(targets.len(), 3);
-            safe_write::write_all_or_none_with(
-                targets,
-                |file, target| {
-                    calls += 1;
-                    if calls == 3 {
-                        Err(tempfile::PersistError {
-                            error: io::Error::from_raw_os_error(2),
-                            file,
-                        })
-                    } else {
-                        file.persist(target)
-                    }
-                },
-                |_| {},
-            )
-        });
+        let r = commit_with(
+            prepared,
+            Some(&mut cfg),
+            Some(&mut lf),
+            |targets, before| {
+                assert_eq!(targets.len(), 3);
+                safe_write::write_all_or_none_with_hook(
+                    targets,
+                    |file, target| {
+                        calls += 1;
+                        if calls == 3 {
+                            Err(tempfile::PersistError {
+                                error: io::Error::from_raw_os_error(2),
+                                file,
+                            })
+                        } else {
+                            file.persist(target)
+                        }
+                    },
+                    |_| {},
+                    before,
+                )
+            },
+        );
         assert!(matches!(r, Err(ApplyAllError::Write(_))), "{r:?}");
         assert_eq!(
             fx.bytes(),

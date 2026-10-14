@@ -379,11 +379,37 @@ fn stage(path: &Path, bytes: &[u8]) -> Result<tempfile::NamedTempFile, WriteErro
     Ok(t)
 }
 
+/// [`write_all_or_none`] with `before_persist` run once, after every target was guarded, staged
+/// and preflighted and before the first rename: the place for a side effect that must not happen
+/// when the write is refused (the filter's one-time `.ffbak`). Its error refuses the write with
+/// nothing replaced.
+pub fn write_all_or_none_before(
+    targets: &[Target],
+    before_persist: impl FnOnce() -> Result<(), WriteError>,
+) -> Result<Vec<WriteOutcome>, AllOrNoneError> {
+    write_all_or_none_with_hook(
+        targets,
+        |temp, target| temp.persist(target),
+        std::thread::sleep,
+        before_persist,
+    )
+}
+
 /// Test hook: `write_all_or_none` with an injectable persist (for forced rename failures).
 pub(crate) fn write_all_or_none_with(
     targets: &[Target],
+    persist: impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>,
+    sleep: impl FnMut(Duration),
+) -> Result<Vec<WriteOutcome>, AllOrNoneError> {
+    write_all_or_none_with_hook(targets, persist, sleep, || Ok(()))
+}
+
+/// Test hook: [`write_all_or_none_before`] with an injectable persist.
+pub(crate) fn write_all_or_none_with_hook(
+    targets: &[Target],
     mut persist: impl FnMut(tempfile::NamedTempFile, &Path) -> Result<fs::File, tempfile::PersistError>,
     mut sleep: impl FnMut(Duration),
+    before_persist: impl FnOnce() -> Result<(), WriteError>,
 ) -> Result<Vec<WriteOutcome>, AllOrNoneError> {
     let nothing = AllOrNoneError::NothingWritten;
 
@@ -452,7 +478,10 @@ pub(crate) fn write_all_or_none_with(
         }
     }
 
-    // e. Persist in input order; restore on failure.
+    // e. Every refusal is behind us: run the caller's pre-persist step.
+    before_persist().map_err(nothing)?;
+
+    // f. Persist in input order; restore on failure.
     let mut replaced: Vec<usize> = Vec::new();
     for (&i, temp) in pending.iter().zip(staged) {
         match persist_with_retry(temp, targets[i].path, &mut persist, &mut sleep) {
@@ -482,7 +511,7 @@ pub(crate) fn write_all_or_none_with(
         }
     }
 
-    // f. Report per input target.
+    // g. Report per input target.
     Ok((0..targets.len())
         .map(|i| {
             if pending.contains(&i) {

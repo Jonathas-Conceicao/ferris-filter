@@ -355,9 +355,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 24-01-PLAN.md — PoE1-only conditions out of the keyword table/picker (lossless, Apply-safe) + slider defaults inside ranges (UAT-09, UAT-10)
-- [ ] 24-02-PLAN.md — CONFIG Styles: built-in/custom groups, per-style Show/Hide slide switch (UAT-02, UAT-03, UAT-04)
-- [ ] 24-03-PLAN.md — No reload message when the game is closed + collapsed-row condition summary (UAT-01, UAT-13)
+- [x] 24-01-PLAN.md — PoE1-only conditions out of the keyword table/picker (lossless, Apply-safe) + slider defaults inside ranges (UAT-09, UAT-10)
+- [x] 24-02-PLAN.md — CONFIG Styles: built-in/custom groups, per-style Show/Hide slide switch (UAT-02, UAT-03, UAT-04)
+- [x] 24-03-PLAN.md — No reload message when the game is closed + collapsed-row condition summary (UAT-01, UAT-13)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -383,7 +383,7 @@ Plans:
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
 | 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
-| 24. UAT Feedback Fixes | 0/6 | Planned | - |
+| 24. UAT Feedback Fixes | 3/6 | In Progress|  |
 
 ## Backlog
 
@@ -467,7 +467,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 7/7 plans complete
+**Plans:** 3/6 plans executed
 
 Plans:
 

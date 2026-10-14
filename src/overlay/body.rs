@@ -1530,6 +1530,7 @@ pub(crate) fn optional_bool_edit(id: BlockId, entry: &BodyEntry, on: bool) -> Op
 }
 
 /// Whether `style` writes the `keyword` action line.
+#[cfg(test)]
 pub(crate) fn style_owned(style: &Style, keyword: &str) -> bool {
     crate::emitter::style_action_lines(style)
         .iter()
@@ -1590,94 +1591,197 @@ pub(crate) fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
     ui.painter().circle_filled(rect.center(), 6.0, colour);
 }
 
-/// Segmented Show/Hide/Minimal selector (locked on a known style) plus `Continue to later rules`
-/// (always editable: no style owns `Continue`).
-fn disposition_line(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
-    let row = ctx.row;
-    let id = row.id;
-    let locked = matches!(row.style, StyleState::Known(_));
-    ui.horizontal(|ui| {
-        for (kw, word) in [
-            (BlockKeyword::Show, "Show"),
-            (BlockKeyword::Hide, "Hide"),
-            (BlockKeyword::Minimal, "Minimal"),
-        ] {
-            let selected = row.keyword == kw;
-            let (text_color, fill) = if locked {
-                (theme::DISABLED_TEXT, theme::ROW_BASE)
-            } else if selected {
-                (theme::SECTION_CREAM, theme::HEADER_PLATE)
-            } else {
-                (theme::LABEL_TAN, theme::ROW_BASE)
-            };
-            let fill = if locked && selected {
-                theme::HEADER_PLATE
-            } else {
-                fill
-            };
-            let btn = egui::Button::new(RichText::new(word).color(text_color)).fill(fill);
-            if ui.add_enabled(!locked, btn).clicked() && !selected {
-                actions.push(RowAction::SetKeyword(id, kw));
-            }
-        }
-    });
-    // A style never owns `Continue` (style_action_lines never emits it and the rewrite keeps it),
-    // so the checkbox stays editable on a styled rule (WR-01).
-    let mut cont = row.has_continue;
-    let cb = egui::Checkbox::new(
-        &mut cont,
-        RichText::new("Continue to later rules").color(theme::LABEL_TAN),
-    );
-    if ui.add(cb).changed() {
-        actions.push(RowAction::SetContinue(id, cont));
-    }
-    if locked {
-        ui.add(
-            egui::Label::new(
-                RichText::new("The style decides Show or Hide. Remove the style to choose here.")
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(theme::TAB_ACTIVE),
-            )
-            .wrap(),
-        );
+/// The dispositions the editor offers. `Minimal` is a real header but is never offered; a foreign
+/// Minimal block is displayed as such and left alone until the user picks Show or Hide.
+pub(crate) const DISPOSITION_CHOICES: [BlockKeyword; 2] = [BlockKeyword::Show, BlockKeyword::Hide];
+
+const DISPOSITION_LOCKED_TIP: &str = "Set by the style. Pick Custom to choose.";
+
+fn disposition_word(kw: BlockKeyword) -> &'static str {
+    match kw {
+        BlockKeyword::Show => "Show",
+        BlockKeyword::Hide => "Hide",
+        BlockKeyword::Minimal => "Minimal",
     }
 }
 
-/// The ACTIONS section of an expanded row: disposition first, then one card per action line.
-pub fn actions_group(
+/// Segmented Show/Hide control (locked on a known style).
+fn disposition_control(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
+    let row = ctx.row;
+    let id = row.id;
+    let locked = matches!(row.style, StyleState::Known(_));
+    if row.keyword == BlockKeyword::Minimal {
+        ui.label(
+            RichText::new(disposition_word(BlockKeyword::Minimal)).color(theme::SECTION_CREAM),
+        );
+    }
+    for kw in DISPOSITION_CHOICES {
+        let selected = row.keyword == kw;
+        let (text_color, fill) = if locked {
+            (theme::DISABLED_TEXT, theme::ROW_BASE)
+        } else if selected {
+            (theme::SECTION_CREAM, theme::HEADER_PLATE)
+        } else {
+            (theme::LABEL_TAN, theme::ROW_BASE)
+        };
+        let fill = if locked && selected {
+            theme::HEADER_PLATE
+        } else {
+            fill
+        };
+        let btn =
+            egui::Button::new(RichText::new(disposition_word(kw)).color(text_color)).fill(fill);
+        let mut resp = ui.add_enabled(!locked, btn);
+        if locked {
+            resp = resp.on_disabled_hover_text(DISPOSITION_LOCKED_TIP);
+        }
+        if resp.clicked() && !selected {
+            actions.push(RowAction::SetKeyword(id, kw));
+        }
+    }
+}
+
+/// What the style picker can choose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StylePick {
+    Custom,
+    Preset(String),
+}
+
+/// The tag a rule carries, whatever its state.
+fn style_tag(state: &StyleState) -> Option<&str> {
+    match state {
+        StyleState::None => None,
+        StyleState::Known(n) | StyleState::Unknown(n) | StyleState::Unchecked(n) => Some(n),
+    }
+}
+
+/// What a picker choice does: Custom drops the tag and keeps the actions; a preset sets the tag
+/// and applies its actions. Re-picking the current choice does nothing.
+pub(crate) fn style_pick_action(
+    id: BlockId,
+    state: &StyleState,
+    pick: StylePick,
+) -> Option<RowAction> {
+    match pick {
+        StylePick::Custom => style_tag(state).map(|_| RowAction::RemoveStyle(id)),
+        StylePick::Preset(n) => (!matches!(state, StyleState::Known(k) if *k == n))
+            .then_some(RowAction::ApplyStyle(id, n)),
+    }
+}
+
+/// A preset owns the actions; every other state lets the author edit them.
+pub(crate) fn shows_action_rows(state: &StyleState) -> bool {
+    !matches!(state, StyleState::Known(_))
+}
+
+const STYLE_UNKNOWN_TIP: &str = "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.";
+const STYLE_UNCHECKED_TIP: &str =
+    "styles.json could not be read; this style is not applied until it loads.";
+const STYLE_KNOWN_TIP: &str = "Actions come from this style; Apply rewrites them.";
+
+/// The picker: Custom first, then every preset with a swatch of its text colour.
+fn style_picker(ui: &mut egui::Ui, ctx: &BodyCtx) -> Option<StylePick> {
+    let id = ctx.row.id;
+    let state = &ctx.row.style;
+    let tag = style_tag(state);
+    let (shown, colour, tip) = match state {
+        StyleState::None => ("Custom".to_string(), theme::VALUE_TEXT, None),
+        StyleState::Known(n) => (n.clone(), theme::VALUE_TEXT, Some(STYLE_KNOWN_TIP)),
+        StyleState::Unknown(n) => (n.clone(), theme::WARM_ACCENT_TEXT, Some(STYLE_UNKNOWN_TIP)),
+        StyleState::Unchecked(n) => (
+            n.clone(),
+            theme::WARM_ACCENT_TEXT,
+            Some(STYLE_UNCHECKED_TIP),
+        ),
+    };
+    let mut picked = None;
+    let combo = egui::ComboBox::from_id_salt((id, "style-pick"))
+        .selected_text(RichText::new(shown).color(colour))
+        .width(140.0)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(tag.is_none(), "Custom").clicked() {
+                picked = Some(StylePick::Custom);
+            }
+            for name in ctx.working.style_names() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if let Some(t) = ctx.working.style(&name).and_then(|s| s.text) {
+                        dot(ui, egui::Color32::from_rgb(t[0], t[1], t[2]));
+                    }
+                    if ui
+                        .selectable_label(tag == Some(name.as_str()), &name)
+                        .clicked()
+                    {
+                        picked = Some(StylePick::Preset(name.clone()));
+                    }
+                });
+            }
+        });
+    if let Some(t) = tip {
+        combo.response.on_hover_text(t);
+    }
+    picked
+}
+
+/// The STYLE section, last in the rule body: the Custom/preset picker with Show/Hide and
+/// `Continue`, then (unless a preset owns them) the action rows.
+pub fn style_section(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
     list: &mut ListUi,
     actions: &mut Vec<RowAction>,
 ) {
     let id = ctx.row.id;
-    let known = match &ctx.row.style {
-        StyleState::Known(n) => Some(n.clone()),
-        _ => None,
-    };
     let added = added_actions(ctx.entries);
-    let mut picked = None;
+    let show_rows = shows_action_rows(&ctx.row.style);
+    let mut picked_action = None;
     ui.horizontal(|ui| {
-        caption(ui, "ACTIONS");
-        if known.is_none() {
+        caption(ui, "STYLE");
+        if show_rows {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let btn = ui.add_enabled(
                     ctx.editable,
                     egui::Button::new(RichText::new("+ action").size(theme::ROW_SUMMARY_SIZE)),
                 );
                 let disabled = |k: &Keyword| added.contains(&k.name).then_some("(added)");
-                picked = picker_popup(ui, &btn, &grammar::action_groups(), false, &disabled);
+                picked_action = picker_popup(ui, &btn, &grammar::action_groups(), false, &disabled);
             });
         }
     });
-    if let Some(kw) = picked
+    if let Some(kw) = picked_action
         && let Some(a) = pick_action(id, kw)
     {
         actions.push(a);
     }
     ui.spacing_mut().item_spacing.y = 4.0;
-    disposition_line(ui, ctx, actions);
+    ui.add_enabled_ui(ctx.editable, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            if let Some(p) = style_picker(ui, ctx)
+                && let Some(a) = style_pick_action(id, &ctx.row.style, p)
+            {
+                actions.push(a);
+            }
+            disposition_control(ui, ctx, actions);
+            // A style never owns `Continue`, so the checkbox stays editable on a styled rule.
+            let mut cont = ctx.row.has_continue;
+            let cb = egui::Checkbox::new(
+                &mut cont,
+                RichText::new("Continue to later rules").color(theme::LABEL_TAN),
+            );
+            if ui.add(cb).changed() {
+                actions.push(RowAction::SetContinue(id, cont));
+            }
+        });
+    });
+    if show_rows {
+        action_rows(ui, ctx, list, actions);
+    }
+}
 
+/// One card per action line (Custom / unstyled rules).
+fn action_rows(ui: &mut egui::Ui, ctx: &BodyCtx, list: &mut ListUi, actions: &mut Vec<RowAction>) {
+    let id = ctx.row.id;
     let lines: Vec<&BodyEntry> = ctx
         .entries
         .iter()
@@ -1691,15 +1795,10 @@ pub fn actions_group(
         );
         return;
     }
-    let style = known.as_deref().and_then(|n| ctx.working.style(n));
     for (idx, e) in lines.into_iter().enumerate() {
         match e.keyword {
             Some(kw) if ctx.editable => {
-                let lock = known.as_deref().map(|n| {
-                    let owned = style.is_some_and(|s| style_owned(s, kw.name));
-                    (n, owned)
-                });
-                action_card(ui, ctx, e, kw, idx, lock, list, actions);
+                action_card(ui, ctx, e, kw, idx, None, list, actions);
             }
             _ => {
                 card_frame(idx).show(ui, |ui| {
@@ -2147,122 +2246,6 @@ fn optional_bool_control(ui: &mut egui::Ui, card: &Card, actions: &mut Vec<RowAc
     if changed && let Some(a) = optional_bool_edit(card.id, card.entry, on) {
         actions.push(a);
     }
-}
-
-// ---------------------------------------------------------------------------------------------
-// The STYLE group
-// ---------------------------------------------------------------------------------------------
-
-const STYLE_NONE_HELP: &str = "Apply a style to set this rule's look from your Styles tab.";
-const STYLE_KNOWN_EXPLAIN: &str = "This rule's look comes from the style. Edits to the style reach it when you press Apply. Hand edits here are overwritten.";
-const STYLE_UNKNOWN_EXPLAIN: &str = "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.";
-const STYLE_UNCHECKED_EXPLAIN: &str =
-    "styles.json could not be read; this style is not applied until it loads.";
-
-/// A dropdown of every style (with a swatch of its text colour). Returns the picked name.
-fn style_combo(
-    ui: &mut egui::Ui,
-    ctx: &BodyCtx,
-    salt: impl std::hash::Hash + std::fmt::Debug,
-    current: Option<&str>,
-    placeholder: &str,
-) -> Option<String> {
-    let mut picked = None;
-    egui::ComboBox::from_id_salt(salt)
-        .selected_text(current.unwrap_or(placeholder))
-        .width(160.0)
-        .show_ui(ui, |ui| {
-            if current.is_none() {
-                let _ = ui.selectable_label(true, "(none)");
-            }
-            for name in ctx.working.style_names() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    if let Some(t) = ctx.working.style(&name).and_then(|s| s.text) {
-                        dot(ui, egui::Color32::from_rgb(t[0], t[1], t[2]));
-                    }
-                    if ui
-                        .selectable_label(Some(name.as_str()) == current, &name)
-                        .clicked()
-                        && Some(name.as_str()) != current
-                    {
-                        picked = Some(name.clone());
-                    }
-                });
-            }
-        });
-    picked
-}
-
-fn body_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
-    ui.add(
-        egui::Label::new(
-            RichText::new(text)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(color),
-        )
-        .wrap(),
-    );
-}
-
-/// The STYLE section: pick a named style, or see which style a rule carries and remove it.
-pub fn style_group(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
-    let id = ctx.row.id;
-    caption(ui, "STYLE");
-    ui.add_enabled_ui(ctx.editable, |ui| {
-        let (title, tag, explain, colour) = match &ctx.row.style {
-            StyleState::None => {
-                if let Some(n) = style_combo(ui, ctx, (id, "style-pick"), None, "(none)") {
-                    actions.push(RowAction::ApplyStyle(id, n));
-                }
-                body_text(ui, STYLE_NONE_HELP, theme::TAB_ACTIVE);
-                return;
-            }
-            StyleState::Known(n) => (
-                format!("Style: {n}"),
-                Some(n.clone()),
-                STYLE_KNOWN_EXPLAIN,
-                theme::SECTION_CREAM,
-            ),
-            StyleState::Unknown(n) => (
-                format!("Unknown style \"{n}\""),
-                None,
-                STYLE_UNKNOWN_EXPLAIN,
-                theme::WARM_ACCENT_TEXT,
-            ),
-            StyleState::Unchecked(n) => (
-                format!("Style: {n}"),
-                None,
-                STYLE_UNCHECKED_EXPLAIN,
-                theme::SECTION_CREAM,
-            ),
-        };
-        egui::Frame::new()
-            .fill(theme::HEADER_PLATE)
-            .inner_margin(egui::Margin::same(8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(title).size(14.0).color(colour));
-                    let placeholder = "Pick a style\u{2026}";
-                    if let Some(n) =
-                        style_combo(ui, ctx, (id, "style-change"), tag.as_deref(), placeholder)
-                    {
-                        actions.push(RowAction::ApplyStyle(id, n));
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .button(RichText::new("Remove style").size(theme::ROW_SUMMARY_SIZE))
-                            .clicked()
-                        {
-                            actions.push(RowAction::RemoveStyle(id));
-                        }
-                    });
-                });
-                body_text(ui, explain, theme::TAB_ACTIVE);
-            });
-    });
 }
 
 #[cfg(test)]
@@ -3291,16 +3274,73 @@ mod tests {
     }
 
     #[test]
-    fn known_style_row_offers_remove_style() {
-        let wf = styled("#ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n");
-        assert!(matches!(
-            wf.rows()[0].style,
-            super::super::rules::StyleState::Known(_)
-        ));
+    fn style_pick_action_maps_custom_and_presets() {
+        let id = BlockId(1);
+        let known = StyleState::Known("S".into());
+        assert_eq!(
+            style_pick_action(id, &known, StylePick::Custom),
+            Some(RowAction::RemoveStyle(id))
+        );
+        assert_eq!(
+            style_pick_action(id, &StyleState::None, StylePick::Custom),
+            None
+        );
+        assert_eq!(
+            style_pick_action(id, &StyleState::None, StylePick::Preset("S".into())),
+            Some(RowAction::ApplyStyle(id, "S".into()))
+        );
+        assert_eq!(
+            style_pick_action(id, &known, StylePick::Preset("S".into())),
+            None
+        );
+        assert_eq!(
+            style_pick_action(id, &StyleState::Unknown("X".into()), StylePick::Custom),
+            Some(RowAction::RemoveStyle(id))
+        );
+    }
+
+    #[test]
+    fn preset_hides_action_rows_custom_shows_them() {
+        assert!(!shows_action_rows(&StyleState::Known("S".into())));
+        assert!(shows_action_rows(&StyleState::None));
+        assert!(shows_action_rows(&StyleState::Unknown("X".into())));
+        assert!(shows_action_rows(&StyleState::Unchecked("X".into())));
+    }
+
+    #[test]
+    fn preset_to_custom_keeps_actions_and_drops_tag() {
+        let mut wf = styled("#ff:style S\nShow\n  Class \"Rings\"\n  SetFontSize 37\n");
+        let row = &wf.rows()[0];
+        let id = row.id;
+        let a = style_pick_action(id, &row.style, StylePick::Custom).unwrap();
+        wf.apply_action(a);
+        assert_eq!(wf.text(), "Show\n  Class \"Rings\"\n  SetFontSize 37\n");
+    }
+
+    #[test]
+    fn disposition_offers_show_and_hide_only() {
+        assert_eq!(
+            DISPOSITION_CHOICES,
+            [BlockKeyword::Show, BlockKeyword::Hide]
+        );
+    }
+
+    #[test]
+    fn minimal_block_renders_idle_and_untouched() {
+        let src = "Minimal\n    Rarity Rare\n";
+        let wf = WorkingFilter::from_text(src);
         let id = wf.rows()[0].id;
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+        assert_eq!(wf.text(), src);
         let mut found = false;
-        'scan: for y in (20..400).step_by(8) {
-            for x in (300..456).step_by(8) {
+        'scan: for y in (20..600).step_by(6) {
+            for x in (8..456).step_by(8) {
                 let ctx = headless_ctx();
                 let mut list = ListUi::default();
                 list.expanded = Some(id);
@@ -3312,13 +3352,13 @@ mod tests {
                     &mut list,
                     None,
                 );
-                if a.contains(&RowAction::RemoveStyle(id)) {
+                if a.contains(&RowAction::SetKeyword(id, BlockKeyword::Show)) {
                     found = true;
                     break 'scan;
                 }
             }
         }
-        assert!(found, "no click position emitted RemoveStyle");
+        assert!(found, "no click position emitted SetKeyword(Show)");
     }
 
     /// WR-01: `Continue` is not style-owned, so a known-styled rule still lets it be toggled.

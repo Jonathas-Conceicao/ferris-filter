@@ -581,7 +581,6 @@ fn expanded_body(
     });
     ui.add_space(8.0);
 
-    // STYLE
     let entries = working.body_view(row.id);
     let bctx = BodyCtx {
         row,
@@ -590,8 +589,6 @@ fn expanded_body(
         classes,
         working,
     };
-    body::style_group(ui, &bctx, actions);
-    ui.add_space(8.0);
 
     // CONDITIONS
     body::conditions_group(ui, &bctx, list, actions);
@@ -612,8 +609,8 @@ fn expanded_body(
     }
     ui.add_space(16.0);
 
-    // ACTIONS (disposition first)
-    body::actions_group(ui, &bctx, list, actions);
+    // STYLE (Custom or preset, with its actions), last before Duplicate/Delete
+    body::style_section(ui, &bctx, list, actions);
     ui.add_space(8.0);
 
     // Duplicate / Delete
@@ -1048,6 +1045,19 @@ Show
             economy_footer_text(&EconomyView::Damaged("x".into())),
             "Economy markers are damaged"
         );
+    }
+
+    #[test]
+    fn expanded_body_orders_name_conditions_style() {
+        let src = include_str!("rule_list.rs");
+        let start = src.find("fn expanded_body(").unwrap();
+        let end = start + src[start..].find("\n}\n").unwrap();
+        let f = &src[start..end];
+        let name = f.find("caption(ui, \"NAME\")").unwrap();
+        let cond = f.find("body::conditions_group").unwrap();
+        let style = f.find("body::style_section").unwrap();
+        assert!(name < cond && cond < style);
+        assert!(!f.contains("body::style_group") && !f.contains("body::actions_group"));
     }
 
     #[test]

@@ -70,7 +70,6 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
             "AnyEnchantment",
             "HasVaalUniqueMod",
             "IsVaalUnique",
-            "Exceptional",
         ],
     ),
     (

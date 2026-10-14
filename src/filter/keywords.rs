@@ -84,7 +84,6 @@ pub static KEYWORDS: &[Keyword] = &[
     Keyword { name: "AlwaysShow", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
     Keyword { name: "AnyEnchantment", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
     Keyword { name: "Corrupted", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
-    Keyword { name: "Exceptional", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
     Keyword { name: "Foulborn", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
     Keyword { name: "FracturedItem", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
     Keyword { name: "HasImplicitMod", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
@@ -169,7 +168,7 @@ mod tests {
 
     #[test]
     fn documented_vocabulary_present() {
-        let conditions = "AlwaysShow AnyEnchantment Corrupted Exceptional Foulborn FracturedItem \
+        let conditions = "AlwaysShow AnyEnchantment Corrupted Foulborn FracturedItem \
             HasImplicitMod HasVaalUniqueMod Identified Imbued IsVaalUnique MirageMap Mirrored \
             TwiceCorrupted Vestigial AreaLevel BaseArmour BaseDefencePercentile BaseEnergyShield \
             BaseEvasion CorruptedMods DropLevel GemLevel Height ItemLevel Quality StackSize \
@@ -192,7 +191,7 @@ mod tests {
                 "{n}"
             );
         }
-        assert_eq!(KEYWORDS.len(), 55);
+        assert_eq!(KEYWORDS.len(), 54);
     }
 
     #[test]
@@ -223,10 +222,11 @@ mod tests {
             "HasCruciblePassiveTree",
             "ZanaMemory",
             "BaseWard",
+            "Exceptional",
         ] {
             assert!(lookup(n).is_none(), "{n} should be unknown");
         }
-        for n in ["MirageMap", "Exceptional", "Minimal"] {
+        for n in ["MirageMap", "Minimal"] {
             assert!(lookup(n).is_some(), "{n} should stay");
         }
     }

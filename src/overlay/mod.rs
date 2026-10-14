@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod apply;
+pub mod apply_all;
 pub mod body;
 pub mod chat;
 pub mod classes;

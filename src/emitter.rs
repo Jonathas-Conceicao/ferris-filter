@@ -945,6 +945,7 @@ mod tests {
 
     fn bare_style(action: crate::models::config::StyleAction) -> Style {
         Style {
+            id: None,
             text: None,
             border: None,
             background: None,

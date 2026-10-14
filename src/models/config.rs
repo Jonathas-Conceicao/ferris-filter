@@ -167,6 +167,9 @@ pub struct Sound {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Style {
+    /// Stable identity (UAT3-02). First key on disk; absent in older files and assigned at load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub text: Option<[u8; 3]>,
     pub border: Option<[u8; 3]>,
     pub background: Option<[u8; 3]>,
@@ -182,6 +185,7 @@ impl Style {
     /// Default for a newly added style: Show, no colours, nothing else set.
     pub fn blank_show() -> Style {
         Style {
+            id: None,
             text: None,
             border: None,
             background: None,
@@ -206,6 +210,10 @@ pub enum StyleNameError {
     Duplicate,
     #[error("That name is reserved for the built-in style {required}")]
     ShadowsRequired { required: String },
+    #[error("Built-in styles can't be renamed.")]
+    BuiltIn,
+    #[error("No style with that name exists")]
+    Unknown,
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +236,32 @@ pub enum StyleError {
     )]
     #[diagnostic(code(ferrisfilter::styles::shadows_required))]
     ShadowsRequired { name: String, required: String },
+
+    #[error("styles \"{first}\" and \"{second}\" share the id \"{id}\"; style ids must be unique")]
+    #[diagnostic(code(ferrisfilter::styles::duplicate_id))]
+    DuplicateId {
+        id: String,
+        first: String,
+        second: String,
+    },
+
+    #[error(
+        "built-in style \"{name}\" has id \"{id}\"; a built-in's id must be \"builtin:{name}\""
+    )]
+    #[diagnostic(code(ferrisfilter::styles::builtin_id))]
+    BuiltinId { name: String, id: String },
+
+    #[error(
+        "style \"{name}\" has id \"{id}\"; ids starting with \"builtin:\" are reserved for built-in styles"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::reserved_id))]
+    ReservedId { name: String, id: String },
+
+    #[error(
+        "style \"{name}\" has an invalid id {id:?}: it must be non-empty with no whitespace or control characters"
+    )]
+    #[diagnostic(code(ferrisfilter::styles::invalid_id))]
+    InvalidId { name: String, id: String },
 
     #[error(
         "style \"{style}\" has an invalid sound.custom {value:?}: it must not contain a double quote or control character"
@@ -324,6 +358,38 @@ impl<'de> Deserialize<'de> for StyleSet {
     }
 }
 
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Stable FNV-1a hash (unlike `RandomState`, identical in every process).
+fn fnv1a(text: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+/// Base36 lowercase id of 6..=8 characters derived from `v`.
+fn id_from_u64(v: u64) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let len = 6 + (v >> 60) as usize % 3;
+    let mut x = v;
+    (0..len)
+        .map(|_| {
+            let d = DIGITS[(x % 36) as usize] as char;
+            x /= 36;
+            d
+        })
+        .collect()
+}
+
 impl StyleSet {
     /// Styles every config needs: the economy emitter reads S..F, rules lean on
     /// `unchanged`/`hidden`. `kite`, `Recycle` and `exceptional` are deliberately optional.
@@ -372,6 +438,38 @@ impl StyleSet {
                 return Err(StyleError::ShadowsRequired {
                     name: name.clone(),
                     required: req.to_string(),
+                });
+            }
+        }
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for (name, style) in &self.0 {
+            let Some(id) = style.id.as_deref() else {
+                continue;
+            };
+            if id.is_empty() || id.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                return Err(StyleError::InvalidId {
+                    name: name.clone(),
+                    id: id.to_string(),
+                });
+            }
+            if Self::is_builtin(name) {
+                if id != Self::builtin_id(name) {
+                    return Err(StyleError::BuiltinId {
+                        name: name.clone(),
+                        id: id.to_string(),
+                    });
+                }
+            } else if id.starts_with(Self::BUILTIN_ID_PREFIX) {
+                return Err(StyleError::ReservedId {
+                    name: name.clone(),
+                    id: id.to_string(),
+                });
+            }
+            if let Some(first) = seen.insert(id, name.as_str()) {
+                return Err(StyleError::DuplicateId {
+                    id: id.to_string(),
+                    first: first.to_string(),
+                    second: name.clone(),
                 });
             }
         }
@@ -475,14 +573,24 @@ impl StyleSet {
     /// Append a new style. Does not trim (the view trims first). The name rule mirrors
     /// `styled::style_name_ok` (models must not depend on `styled`); uniqueness is
     /// case-sensitive like tag lookup, but case-only shadows of built-ins are reserved.
-    pub fn insert_new(&mut self, name: &str, style: Style) -> Result<(), StyleNameError> {
+    /// The style always receives a fresh id, whatever it carried.
+    pub fn insert_new(&mut self, name: &str, mut style: Style) -> Result<(), StyleNameError> {
+        self.check_new_name(name, None)?;
+        style.id = Some(self.new_custom_id());
+        self.0.insert(name.to_string(), style);
+        Ok(())
+    }
+
+    /// Name rules shared by [`Self::insert_new`] and [`Self::rename_custom`]; `except` is a name
+    /// excluded from the duplicate check (the style being renamed).
+    fn check_new_name(&self, name: &str, except: Option<&str>) -> Result<(), StyleNameError> {
         if name.is_empty() {
             return Err(StyleNameError::Empty);
         }
         if name != name.trim() || name.chars().any(char::is_control) {
             return Err(StyleNameError::Invalid);
         }
-        if self.contains(name) {
+        if self.contains(name) && except != Some(name) {
             return Err(StyleNameError::Duplicate);
         }
         if let Some(req) = Self::REQUIRED.iter().find(|r| r.eq_ignore_ascii_case(name)) {
@@ -490,8 +598,123 @@ impl StyleSet {
                 required: req.to_string(),
             });
         }
-        self.0.insert(name.to_string(), style);
         Ok(())
+    }
+
+    /// Rename a custom style in place: same position, same id. Built-ins refuse.
+    pub fn rename_custom(&mut self, old: &str, new: &str) -> Result<(), StyleNameError> {
+        if Self::is_builtin(old) {
+            return Err(StyleNameError::BuiltIn);
+        }
+        let Some(index) = self.0.get_index_of(old) else {
+            return Err(StyleNameError::Unknown);
+        };
+        if old == new {
+            return Ok(());
+        }
+        self.check_new_name(new, Some(old))?;
+        let (_, style) = self
+            .0
+            .shift_remove_index(index)
+            .expect("index just looked up");
+        self.0.shift_insert(index, new.to_string(), style);
+        Ok(())
+    }
+
+    /// Id prefix reserved for the nine built-in styles.
+    pub const BUILTIN_ID_PREFIX: &'static str = "builtin:";
+
+    /// The fixed id of a built-in style.
+    pub fn builtin_id(name: &str) -> String {
+        format!("{}{name}", Self::BUILTIN_ID_PREFIX)
+    }
+
+    /// A style's id, when it has one.
+    pub fn id_of(&self, name: &str) -> Option<&str> {
+        self.0.get(name).and_then(|s| s.id.as_deref())
+    }
+
+    /// The name of the style carrying `id`.
+    pub fn name_of_id(&self, id: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(_, s)| s.id.as_deref() == Some(id))
+            .map(|(n, _)| n.as_str())
+    }
+
+    fn id_taken(&self, id: &str) -> bool {
+        self.0.values().any(|s| s.id.as_deref() == Some(id))
+    }
+
+    /// Draw candidates from `next` until one is unused in the set and not in the reserved
+    /// built-in namespace.
+    fn fresh_id(&self, next: &mut dyn FnMut() -> String) -> String {
+        loop {
+            let candidate = next();
+            if !candidate.starts_with(Self::BUILTIN_ID_PREFIX) && !self.id_taken(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
+    /// A new random-looking custom id (6..=8 lowercase alphanumerics) unique in this set.
+    pub fn new_custom_id(&self) -> String {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let rs = RandomState::new().build_hasher().finish();
+        let mut state = nanos
+            ^ u64::from(std::process::id()).rotate_left(32)
+            ^ rs
+            ^ COUNTER.fetch_add(0x9E37_79B9, Ordering::Relaxed);
+        self.fresh_id(&mut || id_from_u64(splitmix64(&mut state)))
+    }
+
+    /// Give every id-less style an id. Built-ins get `builtin:<name>`; customs get a
+    /// name-seeded id so an id-less file yields the same ids on every load. Returns whether
+    /// anything was assigned. Existing ids are never changed.
+    pub fn assign_missing_ids(&mut self) -> bool {
+        let mut changed = false;
+        let names: Vec<String> = self.0.keys().cloned().collect();
+        for name in names {
+            if self.0[&name].id.is_some() {
+                continue;
+            }
+            let id = if Self::is_builtin(&name) {
+                Self::builtin_id(&name)
+            } else {
+                let mut state = fnv1a(&name);
+                self.fresh_id(&mut || id_from_u64(splitmix64(&mut state)))
+            };
+            self.0[&name].id = Some(id);
+            changed = true;
+        }
+        changed
+    }
+
+    /// [`Self::assign_missing_ids`] with an injected candidate generator (collision tests).
+    #[cfg(test)]
+    pub(crate) fn assign_missing_ids_with(&mut self, next: &mut dyn FnMut() -> String) -> bool {
+        let mut changed = false;
+        let names: Vec<String> = self.0.keys().cloned().collect();
+        for name in names {
+            if self.0[&name].id.is_some() {
+                continue;
+            }
+            let id = if Self::is_builtin(&name) {
+                Self::builtin_id(&name)
+            } else {
+                self.fresh_id(next)
+            };
+            self.0[&name].id = Some(id);
+            changed = true;
+        }
+        changed
     }
 
     /// Delete a non-built-in style, preserving the order of the rest. `None` for built-ins.
@@ -543,11 +766,12 @@ impl StyleSet {
 
     #[cfg(test)]
     pub(crate) fn committed_for_tests() -> StyleSet {
-        let set: StyleSet = serde_json::from_str(include_str!(concat!(
+        let mut set: StyleSet = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/styles.json"
         )))
         .unwrap_or_else(|e| panic!("committed styles.json failed to parse: {e}"));
+        set.assign_missing_ids();
         set.validate()
             .unwrap_or_else(|e| panic!("committed styles.json failed validation: {e}"));
         set
@@ -2001,5 +2225,158 @@ mod tests {
         assert!(serde_json::from_str::<StyleSet>(&bad).is_err());
         let bad = STYLES_JSON.replacen("\"font\"", "\"fnot\"", 1);
         assert!(serde_json::from_str::<StyleSet>(&bad).is_err());
+    }
+}
+
+#[cfg(test)]
+mod style_id_tests {
+    use super::*;
+
+    fn id_less() -> StyleSet {
+        let mut set = StyleSet::committed_for_tests();
+        let names: Vec<String> = set.names().map(str::to_string).collect();
+        for n in names {
+            set.get_mut(&n).unwrap().id = None;
+        }
+        set
+    }
+
+    #[test]
+    fn builtin_ids_are_assigned() {
+        let mut set = id_less();
+        assert!(set.assign_missing_ids());
+        assert_eq!(set.id_of("S"), Some("builtin:S"));
+        assert_eq!(set.id_of("hidden"), Some("builtin:hidden"));
+        assert!(!set.assign_missing_ids());
+        set.validate().unwrap();
+    }
+
+    #[test]
+    fn custom_ids_are_short_lowercase_alnum_and_unique() {
+        let mut set = id_less();
+        set.assign_missing_ids();
+        let mut seen = std::collections::HashSet::new();
+        for (name, style) in set.iter() {
+            let id = style.id.as_deref().unwrap();
+            if StyleSet::is_builtin(name) {
+                continue;
+            }
+            assert!((6..=8).contains(&id.len()), "{id}");
+            assert!(
+                id.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            );
+            assert!(!id.starts_with("builtin:"));
+            assert!(seen.insert(id.to_string()), "dup {id}");
+        }
+        assert!(!seen.is_empty());
+        let fresh = set.new_custom_id();
+        assert!((6..=8).contains(&fresh.len()));
+        assert!(set.name_of_id(&fresh).is_none());
+    }
+
+    #[test]
+    fn forced_collision_retries_until_unique() {
+        let mut set = id_less();
+        set.assign_missing_ids();
+        set.get_mut("kite").unwrap().id = Some("taken1".into());
+        set.get_mut("Recycle").unwrap().id = None;
+        let mut feed = ["taken1", "taken1", "builtin:x", "fresh33"].into_iter();
+        let mut calls = 0;
+        assert!(set.assign_missing_ids_with(&mut || {
+            calls += 1;
+            feed.next().unwrap().to_string()
+        }));
+        assert_eq!(calls, 4);
+        assert_eq!(set.id_of("Recycle"), Some("fresh33"));
+    }
+
+    #[test]
+    fn assignment_is_deterministic_across_loads() {
+        let mut a = id_less();
+        let mut b = id_less();
+        a.assign_missing_ids();
+        b.assign_missing_ids();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn existing_ids_never_change() {
+        let mut set = id_less();
+        set.get_mut("kite").unwrap().id = Some("mine99".into());
+        set.assign_missing_ids();
+        assert_eq!(set.id_of("kite"), Some("mine99"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_ids() {
+        let base = StyleSet::committed_for_tests();
+        let mut dup = base.clone();
+        let kite = dup.id_of("kite").unwrap().to_string();
+        dup.get_mut("Recycle").unwrap().id = Some(kite);
+        assert!(matches!(
+            dup.validate(),
+            Err(StyleError::DuplicateId { .. })
+        ));
+        let mut bi = base.clone();
+        bi.get_mut("S").unwrap().id = Some("builtin:A".into());
+        assert!(matches!(bi.validate(), Err(StyleError::BuiltinId { .. })));
+        let mut res = base.clone();
+        res.get_mut("kite").unwrap().id = Some("builtin:kite".into());
+        assert!(matches!(res.validate(), Err(StyleError::ReservedId { .. })));
+        for bad in ["", "a b", "a\tb"] {
+            let mut inv = base.clone();
+            inv.get_mut("kite").unwrap().id = Some(bad.into());
+            assert!(
+                matches!(inv.validate(), Err(StyleError::InvalidId { .. })),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn insert_new_assigns_fresh_id() {
+        let mut set = StyleSet::committed_for_tests();
+        let mut s = Style::blank_show();
+        s.id = Some("builtin:S".into());
+        set.insert_new("Brand New", s).unwrap();
+        let id = set.id_of("Brand New").unwrap().to_string();
+        assert_ne!(id, "builtin:S");
+        assert_eq!(set.name_of_id(&id), Some("Brand New"));
+        set.validate().unwrap();
+    }
+
+    #[test]
+    fn rename_custom_keeps_position_and_id() {
+        let mut set = StyleSet::committed_for_tests();
+        let pos = set.names().position(|n| n == "kite").unwrap();
+        let id = set.id_of("kite").unwrap().to_string();
+        set.rename_custom("kite", "locator").unwrap();
+        assert_eq!(set.names().position(|n| n == "locator"), Some(pos));
+        assert_eq!(set.id_of("locator"), Some(id.as_str()));
+        assert!(!set.contains("kite"));
+        set.validate().unwrap();
+    }
+
+    #[test]
+    fn rename_custom_refusals() {
+        let mut set = StyleSet::committed_for_tests();
+        assert_eq!(set.rename_custom("S", "Z"), Err(StyleNameError::BuiltIn));
+        assert_eq!(set.rename_custom("nope", "Z"), Err(StyleNameError::Unknown));
+        assert_eq!(set.rename_custom("kite", ""), Err(StyleNameError::Empty));
+        assert_eq!(
+            set.rename_custom("kite", " x"),
+            Err(StyleNameError::Invalid)
+        );
+        assert_eq!(
+            set.rename_custom("kite", "Recycle"),
+            Err(StyleNameError::Duplicate)
+        );
+        assert!(matches!(
+            set.rename_custom("kite", "s"),
+            Err(StyleNameError::ShadowsRequired { .. })
+        ));
+        assert_eq!(set.rename_custom("kite", "kite"), Ok(()));
+        assert!(set.contains("kite"));
     }
 }

@@ -2279,6 +2279,18 @@ mod style_id_tests {
     }
 
     #[test]
+    fn committed_styles_have_fixed_ids() {
+        let mut set = StyleSet::committed_for_tests();
+        for name in StyleSet::REQUIRED {
+            assert_eq!(set.id_of(name), Some(StyleSet::builtin_id(name).as_str()));
+        }
+        assert_eq!(set.id_of("Recycle"), Some("q8m3vz"));
+        assert_eq!(set.id_of("kite"), Some("t5hw2k"));
+        assert_eq!(set.id_of("exceptional"), Some("n7c4rj"));
+        assert!(!set.assign_missing_ids());
+    }
+
+    #[test]
     fn builtin_ids_are_assigned() {
         let mut set = id_less();
         assert!(set.assign_missing_ids());

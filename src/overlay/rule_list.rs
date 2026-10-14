@@ -112,9 +112,20 @@ pub enum EconomyFooterAction {
     Remove,
 }
 
-/// Fixed height of a collapsed row.
-pub fn row_height(ui: &egui::Ui) -> f32 {
+/// Height of a row's header line (the part that stays when the row is expanded).
+pub fn header_height(ui: &egui::Ui) -> f32 {
     ui.spacing().interact_size.y + 4.0
+}
+
+/// Height of the one-line condition summary under a collapsed row's header.
+pub const SUMMARY_LINE_H: f32 = 16.0;
+
+/// Left indent of the summary line, lining it up under the rule label (past the toggle).
+const SUMMARY_INDENT: f32 = 40.0;
+
+/// Fixed height of a collapsed row: header plus the summary line.
+pub fn row_height(ui: &egui::Ui) -> f32 {
+    header_height(ui) + SUMMARY_LINE_H
 }
 
 struct Flag {
@@ -326,7 +337,8 @@ fn draw_row(
 ) {
     let is_expanded = list.expanded == Some(row.id);
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(vec2(width, row_h), Sense::hover());
+    let header_h = header_height(ui);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, header_h), Sense::hover());
     let fill = if vi % 2 == 0 {
         theme::ROW_BASE
     } else {
@@ -462,6 +474,41 @@ fn draw_row(
     // The click area sits on top of the label, so it carries the full-label tooltip too.
     row_click.on_hover_text(&row.label);
 
+    if !is_expanded {
+        // The summary comes from the row (built once at rebuild); only the paint happens here.
+        debug_assert!((row_h - header_h - SUMMARY_LINE_H).abs() < 0.5);
+        let (srect, sresp) = ui.allocate_exact_size(vec2(width, SUMMARY_LINE_H), Sense::click());
+        ui.painter().rect_filled(srect, 0.0, fill);
+        if !row.summary.is_empty() {
+            let color = if row.enabled {
+                theme::LABEL_TAN
+            } else {
+                theme::DISABLED_TEXT
+            };
+            let mut sui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_max(
+                        egui::pos2(srect.min.x + SUMMARY_INDENT, srect.min.y),
+                        egui::pos2(srect.max.x - 8.0, srect.max.y),
+                    ))
+                    .layout(Layout::left_to_right(Align::Center)),
+            );
+            sui.add(
+                egui::Label::new(
+                    RichText::new(&row.summary)
+                        .size(theme::ROW_SUMMARY_SIZE)
+                        .color(color),
+                )
+                .truncate(),
+            );
+            sresp.clone().on_hover_text(&row.summary);
+        }
+        if sresp.clicked() {
+            list.expanded = Some(row.id);
+            list.confirm_delete = None;
+        }
+    }
+
     if is_expanded {
         let body = egui::Frame::new()
             .fill(theme::PANEL_GROUND)
@@ -470,7 +517,7 @@ fn draw_row(
                 ui.set_width(ui.available_width());
                 expanded_body(ui, working, classes, row, list, actions);
             });
-        let h = row_h + body.response.rect.height();
+        let h = header_h + body.response.rect.height();
         if (h - list.expanded_h).abs() > 0.5 {
             list.expanded_h = h;
             ui.ctx().request_repaint();
@@ -846,6 +893,40 @@ Show
             frame.drawn <= (600.0 / row_h).ceil() as usize + 2,
             "drew {} rows",
             frame.drawn
+        );
+    }
+
+    #[test]
+    fn collapsed_row_height_includes_summary_line() {
+        let ctx = headless_ctx();
+        let mut hs = (0.0, 0.0);
+        ctx.run_ui(input(vec![]), |ui| {
+            hs = (row_height(ui), header_height(ui));
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(hs.0, hs.1 + SUMMARY_LINE_H);
+    }
+
+    #[test]
+    fn expanded_row_height_excludes_summary() {
+        let wf = filter_of(3);
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[1].id);
+        let mut header = 0.0;
+        for _ in 0..3 {
+            ctx.run_ui(input(vec![]), |ui| {
+                header = header_height(ui);
+            })
+            .drop_without_applying_deltas();
+            run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        }
+        assert!(list.expanded_h > header, "{} <= {header}", list.expanded_h);
+        let (_, row_h) = run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        let offsets = build_offsets(3, row_h, Some((1, list.expanded_h)));
+        assert_eq!(
+            offsets.last().copied().unwrap(),
+            2.0 * row_h + list.expanded_h
         );
     }
 

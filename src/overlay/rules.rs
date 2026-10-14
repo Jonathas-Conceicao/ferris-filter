@@ -209,6 +209,21 @@ pub struct RuleRow {
     pub can_move_down: bool,
     pub moved_across_continue: bool,
     pub conditions: Vec<String>,
+    /// Collapsed-row summary: the condition strings joined with `; `, capped at
+    /// `SUMMARY_MAX_CHARS`; built at row rebuild, never per frame.
+    pub summary: String,
+}
+
+/// Longest collapsed-row summary, in characters (the rest is cut with an ellipsis).
+pub const SUMMARY_MAX_CHARS: usize = 160;
+
+/// Joins condition strings into the one-line collapsed-row summary.
+fn row_summary(conditions: &[String]) -> String {
+    let joined = conditions.join("; ");
+    match joined.char_indices().nth(SUMMARY_MAX_CHARS) {
+        Some((cut, _)) => format!("{}\u{2026}", &joined[..cut]),
+        None => joined,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -475,6 +490,7 @@ impl WorkingFilter {
                 can_move_up: movable && same_side_rule(pos.checked_sub(1)),
                 can_move_down: movable && same_side_rule(Some(pos + 1)),
                 moved_across_continue: self.moved.contains(&id),
+                summary: row_summary(&x.conditions),
                 conditions: x.conditions,
             });
         }
@@ -1184,6 +1200,22 @@ Show
         assert_eq!(st(&wf)[0], StyleState::Unchecked("S".into()));
         assert_eq!(wf.styles_error(), Some("bad"));
         assert!(wf.style_names().is_empty());
+    }
+
+    #[test]
+    fn row_summary_joins_conditions() {
+        let wf = WorkingFilter::from_text(
+            "Show\n    Class \"Rings\" \"Amulets\"\n    ItemLevel >= 70\n    Rarity Rare\n",
+        );
+        assert_eq!(
+            wf.rows()[0].summary,
+            "Class: Rings, Amulets; ItemLevel >= 70; Rarity Rare"
+        );
+        let none = WorkingFilter::from_text("Show\n    SetFontSize 30\n");
+        assert_eq!(none.rows()[0].summary, "");
+        let long = row_summary(&["\u{e9}".repeat(SUMMARY_MAX_CHARS + 20)]);
+        assert_eq!(long.chars().count(), SUMMARY_MAX_CHARS + 1);
+        assert!(long.ends_with('\u{2026}'));
     }
 
     #[test]

@@ -76,6 +76,12 @@ pub fn success_message(written: &Path) -> String {
     )
 }
 
+/// The message when the game is not running: the game reads the filter at start, so there is no
+/// reload text and no reason.
+pub fn written_message(written: &Path) -> String {
+    format!("Wrote {}.", written.display())
+}
+
 /// Reason shown when no reload was sent because no game window was found.
 pub const REASON_GAME_NOT_RUNNING: &str = "game not running";
 /// Reason shown when no reload was sent because the user turned the setting off.
@@ -375,6 +381,14 @@ mod tests {
             indicator(ApplyState::NeverApplied),
             "the player must still be told the filter does not match their rules"
         );
+    }
+
+    #[test]
+    fn written_message_has_no_reload_text() {
+        let p = Path::new("C:/g/dynamic.filter");
+        let m = written_message(p);
+        assert_eq!(m, format!("Wrote {}.", p.display()));
+        assert!(!m.contains("Refresh") && !m.contains("Reload"), "{m}");
     }
 
     #[test]

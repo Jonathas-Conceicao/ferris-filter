@@ -680,10 +680,14 @@ fn landed_reload_message(
 
 /// The status line when no reload was sent: the success line, the reason and the Refresh reminder.
 fn skipped_reload_message(path: &Path, extras: &str, reason: chat::SkipReason) -> String {
-    format!(
-        "{}{extras}",
-        apply::not_reloaded_message(path, reason.text())
-    )
+    // Game not running: the game reads the filter at start, so only the written path is shown.
+    match reason {
+        chat::SkipReason::GameNotRunning => format!("{}{extras}", apply::written_message(path)),
+        _ => format!(
+            "{}{extras}",
+            apply::not_reloaded_message(path, reason.text())
+        ),
+    }
 }
 
 impl OverlayApp {
@@ -2312,7 +2316,6 @@ mod tests {
         for reason in [
             SkipReason::SettingOff,
             SkipReason::Busy,
-            SkipReason::GameNotRunning,
             SkipReason::NoWindow,
         ] {
             let m = skipped_reload_message(path, " [x]", reason);
@@ -2320,6 +2323,18 @@ mod tests {
             assert!(m.contains(reason.text()), "{m}");
             assert!(m.ends_with(" [x]"));
         }
+    }
+
+    #[test]
+    fn game_not_running_shows_no_reload_message() {
+        use super::skipped_reload_message;
+        use crate::overlay::apply;
+        use crate::overlay::chat::SkipReason;
+        let path = std::path::Path::new("C:/g/dynamic.filter");
+        let m = skipped_reload_message(path, " [x]", SkipReason::GameNotRunning);
+        assert_eq!(m, format!("{} [x]", apply::written_message(path)));
+        assert!(!m.contains("Options > Game > Item Filter > Refresh"), "{m}");
+        assert!(!m.contains(apply::REASON_GAME_NOT_RUNNING), "{m}");
     }
 
     #[test]

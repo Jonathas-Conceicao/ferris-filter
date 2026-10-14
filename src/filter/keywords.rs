@@ -97,7 +97,6 @@ pub static KEYWORDS: &[Keyword] = &[
     Keyword { name: "Vestigial", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Bool },
     Keyword { name: "AreaLevel", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Int },
     Keyword { name: "BaseArmour", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Int },
-    Keyword { name: "BaseDefencePercentile", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Int },
     Keyword { name: "BaseEnergyShield", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Int },
     Keyword { name: "BaseEvasion", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Int },
     Keyword { name: "CorruptedMods", kind: Kind::Condition, ops: Ops::Compare, value: ValueShape::Int },
@@ -170,7 +169,7 @@ mod tests {
     fn documented_vocabulary_present() {
         let conditions = "AlwaysShow AnyEnchantment Corrupted Foulborn FracturedItem \
             HasImplicitMod HasVaalUniqueMod Identified Imbued IsVaalUnique MirageMap Mirrored \
-            TwiceCorrupted Vestigial AreaLevel BaseArmour BaseDefencePercentile BaseEnergyShield \
+            TwiceCorrupted Vestigial AreaLevel BaseArmour BaseEnergyShield \
             BaseEvasion CorruptedMods DropLevel GemLevel Height ItemLevel Quality StackSize \
             UnidentifiedItemTier WaystoneTier Width BaseType Class HasEnchantment HasExplicitMod \
             Rarity Sockets";
@@ -191,7 +190,7 @@ mod tests {
                 "{n}"
             );
         }
-        assert_eq!(KEYWORDS.len(), 54);
+        assert_eq!(KEYWORDS.len(), 53);
     }
 
     #[test]
@@ -222,6 +221,7 @@ mod tests {
             "HasCruciblePassiveTree",
             "ZanaMemory",
             "BaseWard",
+            "BaseDefencePercentile",
             "Exceptional",
         ] {
             assert!(lookup(n).is_none(), "{n} should be unknown");

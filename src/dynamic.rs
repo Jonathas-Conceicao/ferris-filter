@@ -813,6 +813,25 @@ mod tests {
     }
 
     #[test]
+    fn gate_ignores_removed_base_defence_percentile() {
+        let text = "Show # pct\n\tBaseDefencePercentile 50\n\tRarity Rare\n";
+        let doc = crate::filter::parse(text.as_bytes()).unwrap();
+        assert_eq!(doc.serialize(), text);
+        assert!(
+            doc.diagnostics()
+                .iter()
+                .any(|d| d.severity == crate::filter::Severity::Warning
+                    && d.message.contains("BaseDefencePercentile"))
+        );
+        assert!(
+            doc.diagnostics()
+                .iter()
+                .all(|d| d.severity != crate::filter::Severity::Error)
+        );
+        assert!(blocking_errors(&doc).is_empty());
+    }
+
+    #[test]
     fn apply_edited_writes_a_removed_keyword_line() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("dynamic.filter");

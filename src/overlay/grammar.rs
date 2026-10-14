@@ -21,6 +21,38 @@ use crate::filter::tokenize::Operator;
 // Picker groups
 // ---------------------------------------------------------------------------------------------
 
+/// Sentinel in `CONDITION_GROUPS` for the single Defences picker entry.
+const DEFENCES_MARKER: &str = "@Defences";
+
+/// The three keywords the Defences entry stands for; reachable only through it.
+const DEFENCE_KEYWORDS: [&str; 3] = ["BaseArmour", "BaseEvasion", "BaseEnergyShield"];
+
+/// One entry of the condition picker: a keyword, or the combined Defences card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionEntry {
+    Keyword(&'static Keyword),
+    Defences,
+}
+
+impl ConditionEntry {
+    pub fn label(&self) -> String {
+        match self {
+            ConditionEntry::Defences => "Defences".to_string(),
+            ConditionEntry::Keyword(k) => display_name(k.name),
+        }
+    }
+
+    /// Text the picker search matches against (lower case).
+    pub fn search_text(&self) -> String {
+        match self {
+            ConditionEntry::Defences => "defences armour evasion energy shield defence".to_string(),
+            ConditionEntry::Keyword(k) => {
+                format!("{} {}", display_name(k.name), k.name).to_lowercase()
+            }
+        }
+    }
+}
+
 const CONDITION_GROUPS: &[(&str, &[&str])] = &[
     (
         "Item",
@@ -28,21 +60,13 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
             "Class",
             "BaseType",
             "Rarity",
+            DEFENCES_MARKER,
             "ItemLevel",
             "DropLevel",
             "Quality",
             "Width",
             "Height",
             "StackSize",
-        ],
-    ),
-    (
-        "Defences",
-        &[
-            "BaseArmour",
-            "BaseEvasion",
-            "BaseEnergyShield",
-            "BaseDefencePercentile",
         ],
     ),
     ("Sockets", &["Sockets"]),
@@ -116,24 +140,58 @@ fn resolve(names: &[&str]) -> Vec<&'static Keyword> {
         .collect()
 }
 
-/// Condition picker groups in UI order. `Other` collects every condition keyword not named in a
-/// group, in table order, so none is ever unreachable.
-pub fn condition_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
-    let mut out: Vec<(&'static str, Vec<&'static Keyword>)> = CONDITION_GROUPS
+/// Condition picker groups in UI order, with one `Defences` entry after Rarity. `Other` collects
+/// every condition keyword not named in a group (the defence keywords excepted), in table order.
+pub fn condition_picker_groups() -> Vec<(&'static str, Vec<ConditionEntry>)> {
+    let mut out: Vec<(&'static str, Vec<ConditionEntry>)> = CONDITION_GROUPS
         .iter()
-        .map(|(g, names)| (*g, resolve(names)))
+        .map(|(g, names)| {
+            let entries = names
+                .iter()
+                .filter_map(|n| {
+                    if *n == DEFENCES_MARKER {
+                        Some(ConditionEntry::Defences)
+                    } else {
+                        let k = keywords::lookup(n);
+                        debug_assert!(k.is_some(), "grammar group names unknown keyword {n}");
+                        k.map(ConditionEntry::Keyword)
+                    }
+                })
+                .collect();
+            (*g, entries)
+        })
         .collect();
-    let other: Vec<&'static Keyword> = KEYWORDS
+    let other: Vec<ConditionEntry> = KEYWORDS
         .iter()
         .filter(|k| k.kind == Kind::Condition)
+        .filter(|k| !DEFENCE_KEYWORDS.contains(&k.name))
         .filter(|k| {
             !CONDITION_GROUPS
                 .iter()
                 .any(|(_, names)| names.contains(&k.name))
         })
+        .map(ConditionEntry::Keyword)
         .collect();
     out.push(("Other", other));
     out
+}
+
+/// Legacy keyword-only projection of [`condition_picker_groups`]: the Defences entry expands in
+/// place to the three defence keywords.
+pub fn condition_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
+    condition_picker_groups()
+        .into_iter()
+        .map(|(g, entries)| {
+            let kws = entries
+                .into_iter()
+                .flat_map(|e| match e {
+                    ConditionEntry::Keyword(k) => vec![k],
+                    ConditionEntry::Defences => resolve(&DEFENCE_KEYWORDS),
+                })
+                .collect();
+            (g, kws)
+        })
+        .collect()
 }
 
 /// Action picker groups in UI order.
@@ -759,17 +817,65 @@ mod tests {
                 .count()
         );
         for (_, ns) in CONDITION_GROUPS.iter().chain(ACTION_GROUPS) {
-            for n in *ns {
+            for n in ns.iter().filter(|n| **n != DEFENCES_MARKER) {
                 assert!(lookup(n).is_some(), "group names unknown keyword {n}");
             }
         }
         let labels: Vec<_> = condition_groups().iter().map(|g| g.0).collect();
         assert_eq!(
             labels,
+            ["Item", "Sockets", "Status", "Mods", "Endgame", "Other"]
+        );
+    }
+
+    #[test]
+    fn picker_has_one_defences_entry_after_rarity() {
+        let groups = condition_picker_groups();
+        let labels: Vec<_> = groups.iter().map(|g| g.0).collect();
+        assert_eq!(
+            labels,
+            ["Item", "Sockets", "Status", "Mods", "Endgame", "Other"]
+        );
+        let item: Vec<String> = groups[0].1.iter().map(|e| e.label()).collect();
+        assert_eq!(
+            item,
             [
-                "Item", "Defences", "Sockets", "Status", "Mods", "Endgame", "Other"
+                "Class",
+                "BaseType",
+                "Rarity",
+                "Defences",
+                "Item Level",
+                "Drop Level",
+                "Quality",
+                "Width",
+                "Height",
+                "Stack Size"
             ]
         );
+        for (_, es) in &groups {
+            for e in es {
+                if let ConditionEntry::Keyword(k) = e {
+                    assert!(!DEFENCE_KEYWORDS.contains(&k.name), "{}", k.name);
+                }
+            }
+        }
+        assert!(ConditionEntry::Defences.search_text().contains("armour"));
+    }
+
+    #[test]
+    fn legacy_projection_lists_each_defence_keyword_once_inside_item() {
+        let groups = condition_groups();
+        let item: Vec<_> = groups[0].1.iter().map(|k| k.name).collect();
+        let at = item.iter().position(|n| *n == "BaseArmour").unwrap();
+        assert_eq!(
+            &item[at..at + 3],
+            ["BaseArmour", "BaseEvasion", "BaseEnergyShield"]
+        );
+        assert_eq!(item[at - 1], "Rarity");
+        let all = names(&groups);
+        for n in DEFENCE_KEYWORDS {
+            assert_eq!(all.iter().filter(|x| **x == n).count(), 1);
+        }
     }
 
     #[test]

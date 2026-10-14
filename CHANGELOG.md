@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disk since it was loaded.` and offers OVERWRITE beside RELOAD (tooltips explain both): it replaces
   the outside change with the in-memory rules through the same guarded write (current disk bytes
   become the baseline; atomic write, retry and one-time `.ffbak` unchanged), then counts as an Apply,
-  in-game reload included. The CONFIG tab already offered Overwrite for outside edits.
+  in-game reload included. Since Phase 25 the same RELOAD/OVERWRITE pair is offered on both tabs.
 - **In-game reload after Apply** (Phase 23, RELOAD-01). A successful RULES Apply now sends
   `/reloaditemfilter` to a running Path of Exile 2 (focus, Enter, paste, Enter, with no Ctrl+A, as EE2 does for `/` commands; clipboard
   text restored), status `Reloaded in game` (the keys were sent; ff cannot confirm the game ran the
@@ -118,6 +118,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Overlay UAT fixes, round 2** (Phase 25, UAT2-01..UAT2-10). Continue to later rules is the last
+  line of the rule body; the Custom action button reads **+ style**; Show/Hide appears below the style
+  picker for Custom only; the rule name is a plain text box and an unnamed rule header shows only the
+  index and Show/Hide (no derived label); Sockets is a plain 0-6 slider (colour letters in existing
+  lines are kept, never edited); `Exceptional` leaves the keyword table and loads as a raw row; CONFIG
+  has no unapplied-changes line and no "new" tag; Add style sits on the Custom heading; the styles
+  table has a Visibility | Name | Preview header and custom styles reorder with arrows; one
+  all-or-none APPLY on both tabs writes `styles.json`, `tiers.json` and the filter together, with
+  OVERWRITE/RELOAD on both tabs and per-tab Revert. No generator change.
 - **Overlay UAT fixes** (Phase 24, UAT-01..UAT-13). No reload text when the game is closed; Styles
   grouped Built-in/Custom with no badge; per-style Show/Hide slide switch; no Minimal option, a foreign
   Minimal block is untouched; condition remove button right-aligned; quoted lists vertical and capped;

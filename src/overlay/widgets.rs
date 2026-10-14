@@ -673,7 +673,6 @@ pub fn chip_list(
     max_height: f32,
 ) -> ChipListOutcome {
     let id = salted_id(ui, id_salt);
-    let field_id = id.with("field");
     let mut outcome = ChipListOutcome::default();
 
     let count = items.len();

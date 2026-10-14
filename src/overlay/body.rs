@@ -250,9 +250,11 @@ pub(crate) fn raw_row(
         {
             actions.push(a);
         }
-        if widgets::remove_x_button(ui, "Remove this line").clicked() {
-            actions.push(remove(id, entry));
-        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if widgets::remove_x_button(ui, "Remove this line").clicked() {
+                actions.push(remove(id, entry));
+            }
+        });
     });
     if let Some(msg) = error_for(list, id, entry.line) {
         hint(ui, msg);
@@ -602,28 +604,24 @@ fn pending_card(
         card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [LABEL_W, 24.0],
-                    egui::Label::new(
-                        RichText::new(grammar::display_name(p.keyword.name))
-                            .size(14.0)
-                            .color(theme::VALUE_TEXT),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(p.keyword.name);
-                // Show the operator the first entry will be written with, so a carried-over
-                // negation is never silent (WR-01, iteration 2).
-                if p.op.is_some() {
-                    ui.label(
-                        RichText::new(grammar::operator_label(p.keyword, p.op, false))
-                            .size(theme::ROW_SUMMARY_SIZE)
-                            .color(theme::LABEL_TAN),
-                    );
-                }
-                discard = widgets::remove_x_button(ui, "Discard this condition").clicked();
-            });
+            discard = condition_header(
+                ui,
+                &grammar::display_name(p.keyword.name),
+                p.keyword.name,
+                |ui| {
+                    // Show the operator the first entry will be written with, so a carried-over
+                    // negation is never silent (WR-01, iteration 2).
+                    if p.op.is_some() {
+                        ui.label(
+                            RichText::new(grammar::operator_label(p.keyword, p.op, false))
+                                .size(theme::ROW_SUMMARY_SIZE)
+                                .color(theme::LABEL_TAN),
+                        );
+                    }
+                },
+                "Discard this condition",
+            )
+            .clicked();
             caption(ui, "Add an entry to create this condition");
             let salt: Salt = (p.block, p.keyword.name, usize::MAX, "pending");
             items = match p.keyword.value {
@@ -632,7 +630,7 @@ fn pending_card(
                 }
                 _ => match ctx.classes {
                     Some(cat) if p.keyword.name == "Class" => class_picker(ui, salt, cat, &[]),
-                    _ => list_chips(ui, salt, &[], chip_hint(p.keyword)),
+                    _ => quoted_list(ui, salt, &[], chip_hint(p.keyword)),
                 },
             };
             if bad {
@@ -717,27 +715,33 @@ fn condition_card(
         let framed = card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [LABEL_W, 24.0],
-                    egui::Label::new(
-                        RichText::new(grammar::display_name(kw.name))
-                            .size(14.0)
-                            .color(theme::VALUE_TEXT),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(kw.name);
-                if let Some(op) = operator_combo(ui, &card, list_form)
-                    && let Some(a) = op_edit(id, entry, op)
-                {
-                    actions.push(a);
-                }
-                if widgets::remove_x_button(ui, "Remove this condition").clicked() {
-                    actions.push(remove(id, entry));
-                }
-            });
-            primary = value_controls(ui, &card, &value, list, actions);
+            let compact_bool = match (&kw.value, &value) {
+                (ValueShape::Bool, Value::Bool { value: v }) => bool_effective(entry.op, *v),
+                _ => None,
+            };
+            let x = condition_header(
+                ui,
+                &grammar::display_name(kw.name),
+                kw.name,
+                |ui| {
+                    if let Some(eff) = compact_bool {
+                        if let Some(want) = bool_yes_no(ui, eff) {
+                            actions.extend(bool_edit(id, entry, want));
+                        }
+                    } else if let Some(op) = operator_combo(ui, &card, list_form)
+                        && let Some(a) = op_edit(id, entry, op)
+                    {
+                        actions.push(a);
+                    }
+                },
+                "Remove this condition",
+            );
+            if x.clicked() {
+                actions.push(remove(id, entry));
+            }
+            if compact_bool.is_none() {
+                primary = value_controls(ui, &card, &value, list, actions);
+            }
             if ui
                 .data(|d| d.get_temp::<bool>(card.bad_id))
                 .unwrap_or(false)
@@ -756,6 +760,83 @@ fn condition_card(
             list.focus_line = None;
         }
     });
+}
+
+/// One condition header row: fixed-width keyword label, the `middle` control, and the remove X
+/// flush against the right edge so the X buttons line up across rows. Returns the X response.
+fn condition_header(
+    ui: &mut egui::Ui,
+    label_text: &str,
+    label_hover: &str,
+    middle: impl FnOnce(&mut egui::Ui),
+    remove_tip: &str,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [LABEL_W, 24.0],
+            egui::Label::new(
+                RichText::new(label_text)
+                    .size(14.0)
+                    .color(theme::VALUE_TEXT),
+            )
+            .truncate(),
+        )
+        .on_hover_text(label_hover);
+        middle(ui);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            widgets::remove_x_button(ui, remove_tip)
+        })
+        .inner
+    })
+    .inner
+}
+
+/// The Yes/No a boolean line reads as: negating operators flip the written word; ordering
+/// operators have no Yes/No reading (`None`).
+pub(crate) fn bool_effective(op: Option<Operator>, value: bool) -> Option<bool> {
+    match op {
+        None | Some(Operator::Eq) | Some(Operator::EqEq) => Some(value),
+        Some(Operator::Ne) | Some(Operator::Bang) => Some(!value),
+        _ => None,
+    }
+}
+
+/// Set a boolean line to Yes (`want == true`) or No, keeping its operator and rewriting only the
+/// value word. `None` when the line already reads that way or is not a plain boolean.
+pub(crate) fn bool_edit(id: BlockId, entry: &BodyEntry, want: bool) -> Option<RowAction> {
+    let value = match entry.values.as_slice() {
+        [v] if v == "True" => true,
+        [v] if v == "False" => false,
+        _ => return None,
+    };
+    if bool_effective(entry.op, value)? == want {
+        return None;
+    }
+    let negated = matches!(entry.op, Some(Operator::Ne) | Some(Operator::Bang));
+    values_edit(
+        id,
+        entry,
+        &Value::Bool {
+            value: want ^ negated,
+        },
+    )
+    .ok()
+    .flatten()
+}
+
+/// The compact `Yes | No` control; `Some(want)` when the unselected side was clicked.
+fn bool_yes_no(ui: &mut egui::Ui, effective: bool) -> Option<bool> {
+    let mut picked = None;
+    ui.spacing_mut().item_spacing.x = 2.0;
+    for (label, val) in [("Yes", true), ("No", false)] {
+        let mut sel = effective == val;
+        let r = widgets::toggle_chip(ui, label, &mut sel);
+        if r.changed() && val != effective {
+            picked = Some(val);
+        }
+        r.on_hover_text("Remove the condition to match either.");
+    }
+    picked
 }
 
 /// The operator dropdown; `Some(new)` only when the user picked a different operator.
@@ -810,10 +891,6 @@ fn value_controls(
             bool_or_name_control(ui, card, b, list, actions);
             None
         }
-        Value::Bool { value } => {
-            bool_control(ui, card, *value, actions);
-            None
-        }
         Value::Enum(vs) => {
             enum_control(ui, card, vs, actions);
             None
@@ -854,23 +931,6 @@ fn int_control(
         actions.push(a);
     }
     primary
-}
-
-fn bool_control(ui: &mut egui::Ui, card: &Card, current: bool, actions: &mut Vec<RowAction>) {
-    let mut b = current;
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        changed = widgets::circular_toggle(ui, &mut b).changed();
-        ui.label(
-            RichText::new(if b { "Yes" } else { "No" })
-                .size(14.0)
-                .color(theme::VALUE_TEXT),
-        );
-    });
-    if changed && b != current {
-        let res = values_edit(card.id, card.entry, &Value::Bool { value: b });
-        card.commit(ui, res, actions);
-    }
 }
 
 fn enum_control(ui: &mut egui::Ui, card: &Card, current: &[String], actions: &mut Vec<RowAction>) {
@@ -1098,40 +1158,15 @@ fn chip_hint(kw: &Keyword) -> &'static str {
     }
 }
 
-/// A removable selected-value chip; true when its X was clicked.
-fn selected_chip(ui: &mut egui::Ui, label: &str) -> bool {
-    let mut removed = false;
-    egui::Frame::new()
-        .fill(theme::INPUT_FILL)
-        .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
-        .inner_margin(egui::Margin {
-            left: 4,
-            right: 0,
-            top: 0,
-            bottom: 0,
-        })
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(label)
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(theme::VALUE_TEXT),
-                );
-                removed = widgets::remove_x_button(ui, &format!("Remove {label}")).clicked();
-            });
-        });
-    removed
-}
-
-/// A chip list with the quoted-paste add field. Returns the new list when it changed.
-fn list_chips(
+/// A vertical list of quoted names with the quoted-paste add field, capped at 7 rows. Returns
+/// the new list when it changed.
+fn quoted_list(
     ui: &mut egui::Ui,
     salt: impl std::hash::Hash,
     items: &[String],
     hint_text: &str,
 ) -> Option<Vec<String>> {
-    let out = widgets::chip_list(ui, salt, items, hint_text, 160.0);
+    let out = widgets::string_list(ui, salt, items, hint_text, 7);
     if let Some(msg) = &out.rejected {
         hint(ui, msg);
     }
@@ -1152,8 +1187,15 @@ fn list_chips(
     changed.then_some(next)
 }
 
-/// The grouped class picker: chips for what is selected, then one collapsible group per
-/// catalogue group (labels and members come from config.json). Natural height, no inner scroll
+/// Selected classes the catalogue does not list; kept on write-back and surfaced on one line.
+pub(crate) fn unknown_classes<'a>(
+    selected: &'a [String],
+    catalog: &ClassCatalog,
+) -> Vec<&'a String> {
+    selected.iter().filter(|c| !catalog.contains(c)).collect()
+}
+
+/// The grouped class picker: one collapsible group per catalogue group (labels and members come from config.json). Natural height, no inner scroll
 /// area (Pitfall 8). Returns the new class list when the user changed it.
 fn class_picker(
     ui: &mut egui::Ui,
@@ -1162,21 +1204,6 @@ fn class_picker(
     selected: &[String],
 ) -> Option<Vec<String>> {
     let mut result = None;
-    let unknown: Vec<&String> = selected.iter().filter(|c| !catalog.contains(c)).collect();
-    let known: Vec<&String> = selected.iter().filter(|c| catalog.contains(c)).collect();
-    if !selected.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-            for c in unknown.iter().chain(known.iter().take(6)) {
-                if selected_chip(ui, c) {
-                    result = Some(class_toggle(selected, c, false));
-                }
-            }
-        });
-        if known.len() > 6 {
-            caption(ui, &format!("+{} more", known.len() - 6));
-        }
-    }
     for (label, classes) in catalog.groups() {
         let n = classes.iter().filter(|c| selected.contains(c)).count();
         egui::CollapsingHeader::new(
@@ -1195,13 +1222,30 @@ fn class_picker(
             }
         });
     }
+    let unknown = unknown_classes(selected, catalog);
+    if !unknown.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            for c in unknown {
+                ui.label(
+                    RichText::new(c.as_str())
+                        .size(theme::ROW_SUMMARY_SIZE)
+                        .color(theme::LABEL_TAN),
+                )
+                .on_hover_text("Not in config.json's class list; kept as written.");
+                if widgets::remove_x_button(ui, &format!("Remove {c}")).clicked() {
+                    result = Some(class_toggle(selected, c, false));
+                }
+            }
+        });
+    }
     result
 }
 
 fn list_control(ui: &mut egui::Ui, card: &Card, names: &[String], actions: &mut Vec<RowAction>) {
     let next = match card.classes {
         Some(cat) if card.kw.name == "Class" => class_picker(ui, card.salt("class"), cat, names),
-        _ => list_chips(ui, card.salt("chips"), names, chip_hint(card.kw)),
+        _ => quoted_list(ui, card.salt("chips"), names, chip_hint(card.kw)),
     };
     if let Some(next) = next {
         let res = list_edit(card.id, card.entry, &next);
@@ -1282,7 +1326,7 @@ fn count_names_control(
     } else {
         caption(ui, "Any of these:");
     }
-    let next = list_chips(ui, card.salt("names"), names, chip_hint(card.kw));
+    let next = quoted_list(ui, card.salt("names"), names, chip_hint(card.kw));
     if next.is_none() && new_count == count {
         return;
     }
@@ -2576,6 +2620,137 @@ mod tests {
             values_of(list_edit(id, &e[0], &items).unwrap()),
             Some("\"Utility Belt\" \"Heavy Belt\" \"Armoured Cap\"".to_string())
         );
+    }
+
+    #[test]
+    fn base_type_list_is_vertical_and_idle() {
+        let wf =
+            WorkingFilter::from_text("Show\n    BaseType == \"Heavy Belt\" \"Utility Belt\"\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+        let src = include_str!("body.rs");
+        assert!(src.contains(&["widgets::string", "_list("].concat()));
+        assert!(!src.contains(&["fn list", "_chips"].concat()));
+    }
+
+    #[test]
+    fn base_type_remove_writes_only_that_line() {
+        let (_, id, e) = entries_of("Show\n    BaseType == \"Heavy Belt\" \"Utility Belt\"\n");
+        let r = list_edit(id, &e[0], &["Utility Belt".to_string()]).unwrap();
+        assert_eq!(values_of(r.clone()), Some("\"Utility Belt\"".to_string()));
+        assert!(matches!(
+            r,
+            Some(RowAction::EditLine {
+                patch: LinePatch::Values(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn class_picker_preserves_unknown_classes() {
+        let cat = committed_catalog();
+        let sel = vec!["Amulets".to_string(), "Custom Thing".to_string()];
+        assert_eq!(unknown_classes(&sel, &cat), ["Custom Thing"]);
+        let next = class_toggle(&sel, "Rings", true);
+        assert!(next.contains(&"Custom Thing".to_string()));
+        let (_, id, e) = entries_of("Show\n    Class \"Amulets\" \"Custom Thing\"\n");
+        let v = values_of(list_edit(id, &e[0], &next).unwrap()).unwrap();
+        assert!(v.contains("\"Custom Thing\""), "{v}");
+    }
+
+    #[test]
+    fn bool_edit_writes_only_the_value_and_keeps_the_operator() {
+        let (_, id, e) = entries_of("Show\n    Corrupted == True\n");
+        let r = bool_edit(id, &e[0], false).unwrap();
+        assert_eq!(
+            r,
+            RowAction::EditLine {
+                id,
+                line: 1,
+                expect: e[0].text.clone(),
+                patch: LinePatch::Values("False".into()),
+            }
+        );
+        assert_eq!(bool_edit(id, &e[0], true), None);
+    }
+
+    #[test]
+    fn bool_effective_reads_negations() {
+        assert_eq!(bool_effective(Some(Operator::Ne), true), Some(false));
+        assert_eq!(bool_effective(Some(Operator::Bang), true), Some(false));
+        assert_eq!(bool_effective(None, true), Some(true));
+        assert_eq!(bool_effective(Some(Operator::EqEq), true), Some(true));
+        assert_eq!(bool_effective(Some(Operator::Ne), false), Some(true));
+        assert_eq!(bool_effective(Some(Operator::Gt), true), None);
+    }
+
+    #[test]
+    fn negated_bool_flip_keeps_bang_eq() {
+        let (_, id, e) = entries_of("Show\n    Corrupted != True\n");
+        assert_eq!(bool_edit(id, &e[0], false), None);
+        let r = bool_edit(id, &e[0], true).unwrap();
+        assert_eq!(values_of(Some(r)), Some("False".to_string()));
+    }
+
+    #[test]
+    fn bool_with_ordering_operator_stays_raw() {
+        let (_, id, e) = entries_of("Show\n    Corrupted > True\n");
+        assert_eq!(bool_edit(id, &e[0], false), None);
+        assert_eq!(bool_edit(id, &e[0], true), None);
+        let wf = WorkingFilter::from_text("Show\n    Corrupted > True\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            assert!(frame_of(&ctx, input(vec![]), &wf, &mut list, None).is_empty());
+        }
+    }
+
+    #[test]
+    fn expanded_bool_conditions_are_idle() {
+        let wf = WorkingFilter::from_text(
+            "Show\n    Corrupted == True\n    Identified False\n    Mirrored != True\n",
+        );
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        list.expanded = Some(wf.rows()[0].id);
+        for _ in 0..3 {
+            let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+        }
+    }
+
+    #[test]
+    fn condition_x_buttons_line_up() {
+        let ctx = headless_ctx();
+        let mut rights = Vec::new();
+        let mut edge = 0.0;
+        ctx.run_ui(input(vec![]), |ui| {
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0));
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            edge = child.max_rect().right();
+            let r1 = condition_header(&mut child, "Short", "a", |_| {}, "Remove");
+            let r2 = condition_header(
+                &mut child,
+                "A longer label",
+                "b",
+                |ui| {
+                    ui.label("middle control");
+                },
+                "Remove",
+            );
+            rights.push(r1.rect.right());
+            rights.push(r2.rect.right());
+        })
+        .drop_without_applying_deltas();
+        assert!((rights[0] - rights[1]).abs() < 0.5, "{rights:?}");
+        assert!((rights[0] - edge).abs() < 0.5, "{rights:?} vs {edge}");
     }
 
     #[test]

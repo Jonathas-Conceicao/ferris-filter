@@ -17,7 +17,6 @@ use crate::models::config::{
     Beam, Config, Minimap, Sound, Style, StyleAction, StyleNameError, StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
-use crate::safe_write::{AllOrNoneError, Target, WriteOutcome, write_all_or_none};
 
 /// Display order of the tier rows. Presentation only: rows map to entries by tier name.
 const DISPLAY_ORDER: [&str; 7] = ["S", "A", "B", "C", "D", "E", "F"];
@@ -479,101 +478,10 @@ impl ConfigState {
         )
     }
 
-    /// Validate both files, then write `styles.json` and `tiers.json` all-or-none. A file whose
-    /// working value equals its applied snapshot keeps its loaded bytes (no reformatting).
-    pub fn apply(&mut self) -> Result<ConfigApplyReport, ConfigApplyError> {
-        self.apply_inner(false)
-    }
-
-    fn apply_inner(&mut self, force: bool) -> Result<ConfigApplyReport, ConfigApplyError> {
-        // A forced (Overwrite) apply rewrites from memory even with nothing dirty.
-        let applicable = if force {
-            !self.has_tier_errors() && self.tiers_error().is_none() && self.styles_error().is_none()
-        } else {
-            self.can_apply()
-        };
-        if !applicable {
-            let reason = self
-                .styles_error()
-                .or_else(|| self.tiers_error())
-                .unwrap_or_else(|| "Fix the tier errors first".to_string());
-            return Err(ConfigApplyError::Invalid(reason));
-        }
-        let write = self.prepare_write_inner(force)?;
-
-        let paths = InputPaths::relative_to(&self.root);
-        let targets = [
-            Target {
-                path: &paths.styles,
-                loaded: Some(&self.styles_bytes),
-                new: &write.styles_new,
-            },
-            Target {
-                path: &paths.tiers,
-                loaded: Some(&self.tiers_bytes),
-                new: &write.tiers_new,
-            },
-        ];
-        let outcomes = match write_all_or_none(&targets) {
-            Ok(o) => o,
-            Err(e) => {
-                if e.changed_on_disk_path().is_some() {
-                    let which = self.outside_by_bytes();
-                    if which != OutsideEdit::None {
-                        return Err(ConfigApplyError::OutsideEdit(which));
-                    }
-                }
-                return Err(ConfigApplyError::Write(write_message(&e)));
-            }
-        };
-        let written = |i: usize| matches!(outcomes.get(i), Some(WriteOutcome::Written { .. }));
-        let (styles_written, tiers_written) = (written(0), written(1));
-
-        self.adopt(write);
-        Ok(ConfigApplyReport {
-            styles: self.styles.len(),
-            tiers: self.tiers.len(),
-            styles_written,
-            tiers_written,
-        })
-    }
-
     /// Discard edits and return to the on-disk content (including any outside change).
     pub fn reload(&mut self) -> Result<(), String> {
         *self = ConfigState::load(&self.root)?;
         Ok(())
-    }
-
-    /// Apply the in-memory edits over an outside change. Only call after the user's explicit
-    /// Overwrite confirm; both files are rewritten from the in-memory state.
-    pub fn overwrite(&mut self) -> Result<ConfigApplyReport, ConfigApplyError> {
-        let paths = InputPaths::relative_to(&self.root);
-        let read = |p: &Path| {
-            fs::read(p).map_err(|e| {
-                ConfigApplyError::Write(not_applied_message(&format!("{}: {}", file_label(p), e)))
-            })
-        };
-        let styles_bytes = read(&paths.styles)?;
-        let tiers_bytes = read(&paths.tiers)?;
-        // Keep the old baselines so a failed Overwrite does not silently adopt the outside edit.
-        let old = (
-            std::mem::replace(&mut self.styles_bytes, styles_bytes),
-            std::mem::replace(&mut self.tiers_bytes, tiers_bytes),
-            self.styles_mtime,
-            self.tiers_mtime,
-        );
-        self.styles_mtime = mtime_of(&paths.styles);
-        self.tiers_mtime = mtime_of(&paths.tiers);
-        let result = self.apply_inner(true);
-        if result.is_err() {
-            (
-                self.styles_bytes,
-                self.tiers_bytes,
-                self.styles_mtime,
-                self.tiers_mtime,
-            ) = old;
-        }
-        result
     }
 }
 
@@ -586,16 +494,6 @@ fn outside_from(styles: bool, tiers: bool) -> OutsideEdit {
     }
 }
 
-/// The user-facing sentence for a failed write. A failed rollback must not claim that nothing
-/// changed, so it uses the error's own text.
-fn write_message(e: &AllOrNoneError) -> String {
-    match e {
-        AllOrNoneError::NothingWritten(w) => not_applied_message(&w.to_string()),
-        AllOrNoneError::RolledBack { failed } => not_applied_message(&failed.to_string()),
-        AllOrNoneError::RollbackFailed { .. } => e.to_string(),
-    }
-}
-
 /// Which config file(s) changed outside the overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutsideEdit {
@@ -605,20 +503,16 @@ pub enum OutsideEdit {
     Both,
 }
 
-/// Why a config Apply did not happen. `Write` carries the finished sentence.
+/// Why the CONFIG edits cannot be written: the finished reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigApplyError {
     Invalid(String),
-    OutsideEdit(OutsideEdit),
-    Write(String),
 }
 
 impl ConfigApplyError {
     pub fn message(&self) -> String {
         match self {
             ConfigApplyError::Invalid(reason) => not_applied_message(reason),
-            ConfigApplyError::OutsideEdit(which) => outside_edit_message(*which).to_string(),
-            ConfigApplyError::Write(text) => text.clone(),
         }
     }
 }
@@ -643,14 +537,6 @@ impl ConfigWrite {
     pub fn tiers_changed(&self) -> bool {
         self.tiers_changed
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigApplyReport {
-    pub styles: usize,
-    pub tiers: usize,
-    pub styles_written: bool,
-    pub tiers_written: bool,
 }
 
 /// Styles used by enabled rules and the two `alwaysShow` entries.
@@ -686,10 +572,6 @@ pub fn config_warning(name: &str) -> String {
     )
 }
 
-pub fn applied_message(styles: usize, tiers: usize) -> String {
-    format!("Applied config: {styles} styles, {tiers} tiers.")
-}
-
 pub fn not_applied_message(reason: &str) -> String {
     format!(
         "Config not applied: {}. Nothing was changed on disk.",
@@ -714,6 +596,7 @@ fn parse_cutoff(text: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::safe_write::{Target, write_all_or_none};
 
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -901,8 +784,31 @@ mod tests {
         v
     }
 
+    /// Write the prepared bytes with the real all-or-none writer, then adopt them: what the
+    /// combined Apply does for the two config files.
+    fn save(s: &mut ConfigState) -> ConfigWrite {
+        let w = s.prepare_write().unwrap();
+        let (sp, tp) = (s.styles_path(), s.tiers_path());
+        let (sb, tb) = (s.baselines().0.to_vec(), s.baselines().1.to_vec());
+        write_all_or_none(&[
+            Target {
+                path: &sp,
+                loaded: Some(&sb),
+                new: &w.styles_new,
+            },
+            Target {
+                path: &tp,
+                loaded: Some(&tb),
+                new: &w.tiers_new,
+            },
+        ])
+        .unwrap();
+        s.adopt(w.clone());
+        w
+    }
+
     #[test]
-    fn apply_writes_only_the_two_files() {
+    fn save_writes_only_the_two_files() {
         let dir = full_root();
         let mut s = ConfigState::load(dir.path()).unwrap();
         let styles_before = fs::read(dir.path().join("styles.json")).unwrap();
@@ -913,11 +819,8 @@ mod tests {
         let names_before = listing(dir.path());
 
         s.set_tier_text("S", "35");
-        let report = s.apply().unwrap();
-        assert_eq!(report.styles, 12);
-        assert_eq!(report.tiers, 7);
-        assert!(report.tiers_written);
-        assert!(!report.styles_written);
+        let w = save(&mut s);
+        assert!(w.tiers_changed() && !w.styles_changed());
         assert_eq!(s.dirty_count(), 0);
 
         let tiers: Vec<TierEntry> =
@@ -938,12 +841,11 @@ mod tests {
     }
 
     #[test]
-    fn apply_new_style_writes_it_last() {
+    fn save_new_style_writes_it_last() {
         let (dir, mut s) = loaded();
         s.add_style("Gold").unwrap();
-        let report = s.apply().unwrap();
-        assert!(report.styles_written);
-        assert_eq!(report.styles, 13);
+        let w = save(&mut s);
+        assert!(w.styles_changed());
         let text = fs::read_to_string(dir.path().join("styles.json")).unwrap();
         let lines: Vec<_> = text.lines().collect();
         assert!(lines[lines.len() - 2].trim_start().starts_with("\"Gold\""));
@@ -954,73 +856,14 @@ mod tests {
     }
 
     #[test]
-    fn apply_refuses_when_not_applicable() {
+    fn prepare_write_refuses_invalid_edits_and_writes_nothing() {
         let (dir, mut s) = loaded();
         let before = fs::read(dir.path().join("tiers.json")).unwrap();
-        assert!(matches!(s.apply(), Err(ConfigApplyError::Invalid(_))));
         s.set_tier_text("S", "5");
-        let e = s.apply().unwrap_err();
+        let e = s.prepare_write().unwrap_err();
         assert!(matches!(e, ConfigApplyError::Invalid(_)));
         assert!(e.message().starts_with("Config not applied: "));
         assert_eq!(fs::read(dir.path().join("tiers.json")).unwrap(), before);
-    }
-
-    #[test]
-    fn outside_edit_refuses() {
-        let (dir, mut s) = loaded();
-        s.set_tier_text("S", "35");
-        let tiers_path = dir.path().join("tiers.json");
-        let mut text = fs::read_to_string(&tiers_path).unwrap();
-        text.push('\n');
-        fs::write(&tiers_path, &text).unwrap();
-        assert_eq!(s.outside_by_bytes(), OutsideEdit::Tiers);
-        let e = s.apply().unwrap_err();
-        assert_eq!(e, ConfigApplyError::OutsideEdit(OutsideEdit::Tiers));
-        assert_eq!(fs::read_to_string(&tiers_path).unwrap(), text);
-        assert_eq!(s.dirty_count(), 1);
-    }
-
-    #[test]
-    fn overwrite_applies_edits_over_an_outside_change() {
-        let (dir, mut s) = loaded();
-        s.set_tier_text("S", "35");
-        let tiers_path = dir.path().join("tiers.json");
-        let mut text = fs::read_to_string(&tiers_path).unwrap();
-        text.push('\n');
-        fs::write(&tiers_path, text).unwrap();
-        assert!(s.apply().is_err());
-        let report = s.overwrite().unwrap();
-        assert!(report.tiers_written);
-        let tiers: Vec<TierEntry> =
-            serde_json::from_slice(&fs::read(&tiers_path).unwrap()).unwrap();
-        assert_eq!(tiers.iter().find(|e| e.tier == "S").unwrap().min, 35.0);
-        assert_eq!(s.outside_by_bytes(), OutsideEdit::None);
-    }
-
-    #[test]
-    fn failed_overwrite_keeps_the_outside_edit_detectable() {
-        let (dir, mut s) = loaded();
-        s.set_tier_text("S", "35");
-        let tiers_path = dir.path().join("tiers.json");
-        let mut text = fs::read_to_string(&tiers_path).unwrap();
-        text.push('\n');
-        fs::write(&tiers_path, text).unwrap();
-        assert!(s.apply().is_err());
-        // Break validation so the forced apply fails before writing.
-        s.set_tier_text("A", "abc");
-        assert!(s.overwrite().is_err());
-        assert_ne!(s.outside_by_bytes(), OutsideEdit::None);
-    }
-
-    #[test]
-    fn overwrite_with_no_edits_rewrites_from_memory() {
-        let (dir, mut s) = loaded();
-        let tiers_path = dir.path().join("tiers.json");
-        let mut text = fs::read_to_string(&tiers_path).unwrap();
-        text.push('\n');
-        fs::write(&tiers_path, text).unwrap();
-        assert!(s.overwrite().is_ok());
-        assert_eq!(s.outside_by_bytes(), OutsideEdit::None);
     }
 
     #[test]
@@ -1040,10 +883,10 @@ mod tests {
     }
 
     #[test]
-    fn revert_after_apply_returns_to_applied_values() {
+    fn revert_after_save_returns_to_saved_values() {
         let (_d, mut s) = loaded();
         s.set_tier_text("S", "35");
-        s.apply().unwrap();
+        save(&mut s);
         s.set_tier_text("S", "40");
         assert_eq!(s.dirty_count(), 1);
         s.revert();
@@ -1052,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn mtime_guard_detects_outside_write_and_clears_after_own_apply() {
+    fn mtime_guard_detects_outside_write_and_clears_after_own_save() {
         let (dir, mut s) = loaded();
         assert_eq!(s.outside_by_mtime(), OutsideEdit::None);
         std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -1066,7 +909,7 @@ mod tests {
         assert_eq!(s.outside_by_mtime(), OutsideEdit::Both);
         s.reload().unwrap();
         s.set_tier_text("S", "35");
-        s.apply().unwrap();
+        save(&mut s);
         assert_eq!(s.outside_by_mtime(), OutsideEdit::None);
     }
 
@@ -1098,10 +941,6 @@ mod tests {
         assert_eq!(
             config_warning("kite"),
             "config.json uses \"kite\", so ferrisfilter generate will fail until you add the style back or change those rules."
-        );
-        assert_eq!(
-            applied_message(12, 7),
-            "Applied config: 12 styles, 7 tiers."
         );
         assert_eq!(
             not_applied_message("x"),

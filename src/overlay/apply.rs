@@ -162,9 +162,32 @@ pub struct FooterActions {
     pub overwrite: bool,
 }
 
-/// Refusal copy shown after a changed-on-disk refusal; RELOAD and OVERWRITE recover, and their
-/// tooltips carry the explanation.
-pub const CHANGED_ON_DISK_MESSAGE: &str = "Filter changed on disk since it was loaded.";
+/// Refusal copy shown after a changed-on-disk refusal, naming every file that changed; RELOAD and
+/// OVERWRITE recover, and their tooltips carry the explanation.
+pub fn changed_on_disk_message(names: &[String]) -> String {
+    format!("Changed on disk since it was loaded: {}.", names.join(", "))
+}
+
+/// The start of the Apply message when `styles.json` / `tiers.json` were written ("" when neither
+/// was); the filter part of the message follows it.
+pub fn config_saved_prefix(styles_written: bool, tiers_written: bool) -> String {
+    match (styles_written, tiers_written) {
+        (false, false) => String::new(),
+        (true, false) => "Saved styles.json. ".to_string(),
+        (false, true) => "Saved tiers.json. ".to_string(),
+        (true, true) => "Saved styles.json and tiers.json. ".to_string(),
+    }
+}
+
+/// The Apply message when there was no filter to write: just what the config part did.
+pub fn config_only_message(styles_written: bool, tiers_written: bool) -> String {
+    let prefix = config_saved_prefix(styles_written, tiers_written);
+    if prefix.is_empty() {
+        "Config already up to date.".to_string()
+    } else {
+        prefix.trim_end().to_string()
+    }
+}
 
 /// Tooltip on RELOAD.
 pub const RELOAD_TOOLTIP: &str = "Discard your edits and load the file from disk.";
@@ -538,8 +561,18 @@ mod tests {
         assert!(invalid_blocks_message(1, 1, 1).contains("1 enabled rule has a grammar error"));
         assert_eq!(REVERTED_MESSAGE, "Reverted to the last applied filter.");
         assert_eq!(
-            CHANGED_ON_DISK_MESSAGE,
-            "Filter changed on disk since it was loaded."
+            changed_on_disk_message(&["styles.json".to_string(), "dynamic.filter".to_string()]),
+            "Changed on disk since it was loaded: styles.json, dynamic.filter."
+        );
+        assert_eq!(config_saved_prefix(false, false), "");
+        assert_eq!(
+            config_saved_prefix(true, true),
+            "Saved styles.json and tiers.json. "
+        );
+        assert_eq!(config_only_message(false, true), "Saved tiers.json.");
+        assert_eq!(
+            config_only_message(false, false),
+            "Config already up to date."
         );
         assert!(RELOAD_TOOLTIP.contains("Discard") && OVERWRITE_TOOLTIP.contains("Replace"));
         assert!(APPLY_BLOCKED_TOOLTIP.contains("grammar error"));

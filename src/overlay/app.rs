@@ -32,27 +32,25 @@ use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
 
-use crate::compile::{InputPaths, PriceSource, PriceSourcePolicy};
-use crate::dynamic::{self, EconomyOp, LoadedFilter};
+use crate::compile::{InputPaths, PriceSourcePolicy};
+use crate::dynamic::{self, LoadedFilter};
 use crate::filter::{BlockId, LinePatch};
 use crate::loader;
 use crate::models::config::StyleSet;
-use crate::safe_write::WriteOutcome;
 use crate::settings::{self, Settings};
 
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
+use super::apply_all::{self, ApplyAllError, DiskFile, FilterInput};
 use super::chat;
 use super::classes::ClassCatalog;
-use super::config_state::{
-    self, ConfigApplyError, ConfigState, OUT_OF_DATE_MESSAGE, OutsideEdit, applied_message,
-};
+use super::config_state::{self, ConfigState, OUT_OF_DATE_MESSAGE, OutsideEdit};
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
 use super::instance;
 use super::layout;
 use super::rule_list::{self, ListUi};
-use super::rules::{self, EconomyPlan, EconomyView, RowAction, WorkingFilter};
+use super::rules::{self, EconomyView, RowAction, WorkingFilter};
 use super::theme;
 use super::tray::{self, OverlayCommand, TrayHandles};
 use super::visibility::{self, Visibility};
@@ -104,9 +102,9 @@ pub struct OverlayApp {
     /// The loaded game-folder filter. `Err` holds the rendered load failure.
     filter: Result<LoadedFilter, String>,
 
-    /// Set when Apply was refused because the file changed on disk; RELOAD or a successful
-    /// OVERWRITE clears it.
-    needs_reload: bool,
+    /// The files found changed on disk (since they were loaded) by the last refused Apply;
+    /// RELOAD or a successful OVERWRITE clears it.
+    changed_on_disk: Vec<DiskFile>,
 
     /// Whether the filter on disk matches what the last Apply wrote, as far as this session
     /// knows. A failed Apply leaves it exactly as it was.
@@ -315,120 +313,162 @@ fn working_from(filter: &Result<LoadedFilter, String>) -> Option<WorkingFilter> 
         .map(|loaded| WorkingFilter::from_text(loaded.text()))
 }
 
-/// The one Apply path over the edited document: price the economy section when the plan needs it,
-/// then write through [`dynamic::apply_edited`] (grammar gate, guarded atomic write). Returns the
-/// outcome, sentences to append to the success message, and whether the file changed on disk
-/// (recovered only by RELOAD or OVERWRITE).
-///
-/// Bytes identical to the file on disk are not rewritten, but still report
-/// [`ApplyOutcome::Written`]: pressing Apply always counts as applied, so the in-game reload
-/// still runs.
-fn apply_working(
-    root: &std::path::Path,
-    loaded: &mut LoadedFilter,
-    working: &mut WorkingFilter,
-) -> (ApplyOutcome, String, bool) {
-    let mut extras = String::new();
-    // Styled rules are rewritten on a clone; a failure here happens before anything is written
-    // and leaves the user's edits exactly as they were.
-    let (text, style_report) = match working.text_with_styles() {
-        Ok(pair) => pair,
-        Err(message) => return (ApplyOutcome::Failed(message), extras, false),
-    };
-    let plan = working.economy_plan();
-    let body = match plan {
-        EconomyPlan::Refresh | EconomyPlan::Add => {
-            match dynamic::economy_body(&InputPaths::relative_to(root), PriceSourcePolicy::Auto) {
-                Ok((body, source)) => {
-                    if matches!(source, PriceSource::Fallback(_)) {
-                        extras.push_str(" Used the fallback prices.");
-                    }
-                    Some(body)
-                }
-                Err(err) => return (ApplyOutcome::Failed(err.to_string()), extras, false),
-            }
+/// What one combined Apply did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AllOutcome {
+    /// Applied. `filter` is the written filter's path, or `None` when there was no filter part
+    /// (none loaded) and only the config files were handled.
+    Applied { filter: Option<PathBuf> },
+    /// Refused or failed: a finished sentence. Nothing was changed (or a failed write was rolled
+    /// back).
+    Failed(String),
+}
+
+/// The result of [`apply_everything`].
+struct AllResult {
+    outcome: AllOutcome,
+    /// Sentences to append to the success message.
+    extras: String,
+    styles_written: bool,
+    tiers_written: bool,
+    /// On a changed-on-disk refusal, every file found changed (recovered by RELOAD or OVERWRITE).
+    changed: Vec<DiskFile>,
+}
+
+impl AllResult {
+    fn failed(message: String) -> Self {
+        AllResult {
+            outcome: AllOutcome::Failed(message),
+            extras: String::new(),
+            styles_written: false,
+            tiers_written: false,
+            changed: Vec::new(),
         }
-        EconomyPlan::Keep | EconomyPlan::Remove => None,
-    };
-    let op = match (plan, body.as_deref()) {
-        (EconomyPlan::Refresh, Some(b)) => EconomyOp::Refresh(b),
-        (EconomyPlan::Add, Some(b)) => EconomyOp::Add(b),
-        (EconomyPlan::Remove, _) => EconomyOp::Remove,
-        _ => EconomyOp::Keep,
-    };
-    match dynamic::apply_edited(loaded, &text, op) {
-        Ok(report) => {
-            working.on_applied(loaded.text());
-            extras.push_str(&apply::styled_rules_message(style_report.rewritten));
-            if let Some((first_rule, _)) = style_report.dropped.first() {
-                extras.push(' ');
-                extras.push_str(&apply::dropped_styles_message(
-                    style_report.dropped.len(),
-                    *first_rule,
-                ));
-            } else if let Some((first_rule, _)) = style_report.unknown.first() {
-                extras.push(' ');
-                extras.push_str(&apply::unknown_styles_message(
-                    style_report.unknown.len(),
-                    *first_rule,
-                ));
-            }
-            if let Some((first_rule, err)) = style_report.failed.first() {
-                extras.push(' ');
-                extras.push_str(&apply::failed_styles_message(
-                    style_report.failed.len(),
-                    *first_rule,
-                    err,
-                ));
-            }
-            if report.migrated {
-                extras.push_str(" Converted from v0.4.");
-            }
-            if let WriteOutcome::Written {
-                backup: Some(backup),
-            } = &report.outcome
-            {
-                extras.push_str(&format!(" Kept the original as {}.", backup.display()));
-            }
-            (ApplyOutcome::Written(report.path), extras, false)
-        }
-        Err(dynamic::DynamicError::InvalidBlocks {
-            count,
-            first_rule,
-            first_line,
-            ..
-        }) => (
-            ApplyOutcome::Failed(apply::invalid_blocks_message(count, first_rule, first_line)),
-            extras,
-            false,
-        ),
-        Err(err) if apply::is_changed_on_disk(&err) => (
-            ApplyOutcome::Failed(apply::CHANGED_ON_DISK_MESSAGE.to_string()),
-            extras,
-            true,
-        ),
-        Err(err) => (ApplyOutcome::Failed(err.to_string()), extras, false),
     }
 }
 
-/// OVERWRITE after a changed-on-disk refusal: re-read the file's current bytes as the guard
-/// baseline, then the normal [`apply_working`] (same atomic write, retry and one-time `.ffbak`).
-/// The rebase happens on a copy that is adopted only on success, so a failed overwrite leaves the
-/// old baseline -- and with it the changed-on-disk refusal -- in place.
-fn overwrite_working(
-    root: &std::path::Path,
-    loaded: &mut LoadedFilter,
-    working: &mut WorkingFilter,
-) -> (ApplyOutcome, String, bool) {
-    let mut rebased = loaded.clone();
-    if let Err(err) = rebased.rebase_to_disk() {
-        return (ApplyOutcome::Failed(err.to_string()), String::new(), true);
+/// A refusal as a result: the changed files named by their real names.
+fn refusal(err: ApplyAllError, filter_path: Option<&Path>) -> AllResult {
+    match err {
+        ApplyAllError::ChangedOnDisk(files) => {
+            let fallback = Path::new("the filter");
+            let names: Vec<String> = files
+                .iter()
+                .map(|f| f.label(filter_path.unwrap_or(fallback)))
+                .collect();
+            let mut result = AllResult::failed(apply::changed_on_disk_message(&names));
+            result.changed = files;
+            result
+        }
+        other => AllResult::failed(other.message()),
     }
-    let result = apply_working(root, &mut rebased, working);
-    if matches!(result.0, ApplyOutcome::Written(_)) {
-        *loaded = rebased;
+}
+
+/// The one Apply path (UAT2-10): the CONFIG edits (`styles.json`, `tiers.json`) and the RULES edits
+/// (the filter, rendered with the pending styles and tier cutoffs) validated together, then
+/// written all-or-none by [`apply_all`]. `config` is `None` when the CONFIG state failed to load;
+/// `filter` is `None` when no filter is loaded, in which case only the config part is applied.
+///
+/// Bytes identical to the file on disk are not rewritten, but still count as applied: pressing
+/// Apply always counts, so the in-game reload still runs. With `overwrite`, files that changed on
+/// disk since they were loaded are written over (OVERWRITE after a changed-on-disk refusal); the
+/// baselines move only on success, so a failed overwrite leaves the refusal in place.
+fn apply_everything(
+    root: &Path,
+    mut config: Option<&mut ConfigState>,
+    mut filter: Option<(&mut LoadedFilter, &mut WorkingFilter)>,
+    overwrite: bool,
+) -> AllResult {
+    let filter_path = filter.as_ref().map(|(l, _)| l.path().to_path_buf());
+
+    // Styled rules are rewritten on a clone with the pending styles; a failure here happens
+    // before anything is written and leaves the user's edits exactly as they were.
+    let mut report = None;
+    let input = match &filter {
+        Some((loaded, working)) => {
+            let styled = match config.as_deref() {
+                Some(c) => {
+                    let (text, r) = working.text_with_style_set(c.pending_styles());
+                    report = Some(r);
+                    Ok(text)
+                }
+                None => working.text_with_styles().map(|(text, r)| {
+                    report = Some(r);
+                    text
+                }),
+            };
+            Some(FilterInput {
+                loaded: &**loaded,
+                styled,
+                plan: working.economy_plan(),
+            })
+        }
+        None => None,
+    };
+
+    let prepared = match apply_all::prepare(root, config.as_deref(), input, overwrite) {
+        Ok(p) => p,
+        Err(err) => return refusal(err, filter_path.as_deref()),
+    };
+    let used_fallback = prepared.used_fallback();
+    let committed = match apply_all::commit(
+        prepared,
+        config.as_deref_mut(),
+        filter.as_mut().map(|(l, _)| &mut **l),
+    ) {
+        Ok(c) => c,
+        Err(err) => return refusal(err, filter_path.as_deref()),
+    };
+
+    // The working document picks up what was written: the new text, then the applied styles.
+    if let Some((loaded, working)) = filter.as_mut() {
+        if committed.filter.is_some() {
+            working.on_applied(loaded.text());
+        }
+        if let Some(c) = config.as_deref() {
+            working.set_styles(Ok(c.pending_styles().clone()));
+        }
     }
-    result
+
+    let mut extras = String::new();
+    if used_fallback {
+        extras.push_str(" Used the fallback prices.");
+    }
+    if let (Some(r), Some(_)) = (&report, &committed.filter) {
+        extras.push_str(&apply::styled_rules_message(r.rewritten));
+        if let Some((first_rule, _)) = r.dropped.first() {
+            extras.push(' ');
+            extras.push_str(&apply::dropped_styles_message(r.dropped.len(), *first_rule));
+        } else if let Some((first_rule, _)) = r.unknown.first() {
+            extras.push(' ');
+            extras.push_str(&apply::unknown_styles_message(r.unknown.len(), *first_rule));
+        }
+        if let Some((first_rule, err)) = r.failed.first() {
+            extras.push(' ');
+            extras.push_str(&apply::failed_styles_message(
+                r.failed.len(),
+                *first_rule,
+                err,
+            ));
+        }
+    }
+    if let Some(f) = &committed.filter {
+        if f.migrated {
+            extras.push_str(" Converted from v0.4.");
+        }
+        if let Some(backup) = &f.backup {
+            extras.push_str(&format!(" Kept the original as {}.", backup.display()));
+        }
+    }
+    AllResult {
+        outcome: AllOutcome::Applied {
+            filter: committed.filter.map(|f| f.path),
+        },
+        extras,
+        styles_written: committed.styles_written,
+        tiers_written: committed.tiers_written,
+        changed: Vec::new(),
+    }
 }
 
 /// A line's first word, lowercased, past its indent and a disabled block's `#`. Keyword lookup
@@ -639,6 +679,8 @@ fn settings_with_reload(current: &Settings, on: bool) -> Settings {
 /// A reload that was started and has not reported yet.
 struct PendingReload {
     path: PathBuf,
+    /// The config part of the message ("Saved styles.json. "), which leads it.
+    prefix: String,
     extras: String,
     /// The interim status line; the result replaces it only while it is still showing.
     interim: String,
@@ -672,7 +714,8 @@ fn landed_reload_message(
         return None;
     }
     Some(format!(
-        "{}{}",
+        "{}{}{}",
+        pending.prefix,
         apply::reload_result_message(&pending.path, result),
         pending.extras
     ))
@@ -732,7 +775,7 @@ impl OverlayApp {
             window: None,
             root,
             filter,
-            needs_reload: false,
+            changed_on_disk: Vec::new(),
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
@@ -851,7 +894,7 @@ impl OverlayApp {
         self.list.clear_ids();
         self.query.clear();
         self.list_status = None;
-        self.needs_reload = false;
+        self.changed_on_disk.clear();
         self.apply_message = None;
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
@@ -909,46 +952,70 @@ impl OverlayApp {
         }
     }
 
-    /// The one Apply path: write the edited document (and any staged economy op) through
-    /// [`apply_working`], then re-key the list's view state to the re-parsed document.
-    /// `overwrite` is OVERWRITE after a changed-on-disk refusal ([`overwrite_working`]); it
-    /// otherwise behaves exactly like APPLY, in-game reload included.
+    /// The one Apply path, for APPLY and OVERWRITE on either tab: [`apply_everything`] saves the
+    /// CONFIG edits and the filter together, then the in-game reload is decided as before and the
+    /// list's view state is re-keyed to the re-parsed document. `overwrite` is OVERWRITE after a
+    /// changed-on-disk refusal; it otherwise behaves exactly like APPLY, in-game reload included.
     fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) {
-        let (Ok(root), Ok(loaded), Some(working)) =
-            (&self.root, &mut self.filter, &mut self.working)
-        else {
+        let Ok(root) = &self.root else {
             return;
         };
         // Ids reset on re-parse, so remember the expanded row by position instead.
         let expanded_index = self
-            .list
-            .expanded
-            .and_then(|id| working.row(id))
+            .working
+            .as_ref()
+            .and_then(|w| self.list.expanded.and_then(|id| w.row(id)))
             .map(|r| r.index);
-        // The styles are re-read at every Apply, so a styles.json edited a moment ago counts.
-        self.styles_mtime = styles_mtime_at(root);
-        working.set_styles(load_styles_at(root));
-        let (outcome, extras, needs_reload) = if overwrite {
-            overwrite_working(root, loaded, working)
-        } else {
-            apply_working(root, loaded, working)
+        // Without an in-memory CONFIG the styles are re-read at every Apply, so a styles.json
+        // edited a moment ago counts.
+        if self.config.is_err()
+            && let Some(working) = &mut self.working
+        {
+            self.styles_mtime = styles_mtime_at(root);
+            working.set_styles(load_styles_at(root));
+        }
+        let filter_part = match (&mut self.filter, &mut self.working) {
+            (Ok(loaded), Some(working)) => Some((loaded, working)),
+            _ => None,
         };
-        // Every successful Apply decides, identical bytes included; the setting is checked before
-        // any window search.
-        let decision = chat::decide(
-            &outcome,
-            self.settings.reload_after_apply(),
-            self.reload.is_running(),
-            win::find_game_window,
-        );
-        // No cached stripe window means no clipboard owner: skip rather than fall back to an
-        // ownerless clipboard, whose write fails after emptying it (review WR-02).
-        let decision = chat::with_owner(decision, self.window.as_ref().map(win::clipboard_owner));
-        match outcome {
-            ApplyOutcome::Written(path) => {
+        let result = apply_everything(root, self.config.as_mut().ok(), filter_part, overwrite);
+        let AllResult {
+            outcome,
+            extras,
+            styles_written,
+            tiers_written,
+            changed,
+        } = result;
+        let applied_path = match outcome {
+            AllOutcome::Failed(message) => {
+                self.apply_message = Some(message);
+                self.apply_state = self.apply_state.on_apply_failure();
+                if !changed.is_empty() {
+                    self.changed_on_disk = changed;
+                }
+                return;
+            }
+            AllOutcome::Applied { filter } => filter,
+        };
+        let prefix = apply::config_saved_prefix(styles_written, tiers_written);
+        match applied_path {
+            // Every successful filter Apply decides, identical bytes included; the setting is
+            // checked before any window search.
+            Some(path) => {
+                let decision = chat::decide(
+                    &ApplyOutcome::Written(path.clone()),
+                    self.settings.reload_after_apply(),
+                    self.reload.is_running(),
+                    win::find_game_window,
+                );
+                // No cached stripe window means no clipboard owner: skip rather than fall back
+                // to an ownerless clipboard, whose write fails after emptying it (review WR-02).
+                let decision =
+                    chat::with_owner(decision, self.window.as_ref().map(win::clipboard_owner));
                 match decision {
                     Some(chat::Decision::Send((game, owner))) => {
-                        let interim = format!("{}{extras}", apply::reloading_message(&path));
+                        let interim =
+                            format!("{prefix}{}{extras}", apply::reloading_message(&path));
                         self.apply_message = Some(interim.clone());
                         let repaint = ctx.clone();
                         let started = self.reload.start(
@@ -961,43 +1028,52 @@ impl OverlayApp {
                         if started {
                             self.reload_pending = Some(PendingReload {
                                 path: path.clone(),
+                                prefix: prefix.clone(),
                                 extras: extras.clone(),
                                 interim,
                             });
                         } else {
-                            self.apply_message = Some(skipped_reload_message(
-                                &path,
-                                &extras,
-                                chat::SkipReason::Busy,
+                            self.apply_message = Some(format!(
+                                "{prefix}{}",
+                                skipped_reload_message(&path, &extras, chat::SkipReason::Busy)
                             ));
                         }
                     }
                     Some(chat::Decision::Skip(reason)) => {
-                        self.apply_message = Some(skipped_reload_message(&path, &extras, reason));
+                        self.apply_message = Some(format!(
+                            "{prefix}{}",
+                            skipped_reload_message(&path, &extras, reason)
+                        ));
                     }
                     None => {
                         self.apply_message =
-                            Some(format!("{}{extras}", apply::success_message(&path)));
+                            Some(format!("{prefix}{}{extras}", apply::success_message(&path)));
                     }
                 }
-                self.apply_state = self.apply_state.on_apply_success();
-                // Cleared here, not from the mtime: identical bytes are not rewritten.
-                self.config_changed_pending = false;
             }
-            ApplyOutcome::Failed(message) => {
-                self.apply_message = Some(message);
-                self.apply_state = self.apply_state.on_apply_failure();
-                if needs_reload {
-                    self.needs_reload = true;
-                }
-                return;
+            // No filter part: the config files alone, nothing to reload in game.
+            None => {
+                self.apply_message = Some(format!(
+                    "{}{extras}",
+                    apply::config_only_message(styles_written, tiers_written)
+                ));
             }
         }
-        self.needs_reload = false;
+        self.apply_state = self.apply_state.on_apply_success();
+        self.config_changed_pending = false;
+        self.config_outside = OutsideEdit::None;
+        self.config_message = None;
+        self.config_ui.disarm_all();
+        self.styles_mtime = styles_mtime_at(root);
+        self.changed_on_disk.clear();
         self.applied_this_session = true;
         self.list_status = None;
         self.list.clear_ids();
-        self.list.expanded = expanded_index.and_then(|i| working.rows().get(i - 1).map(|r| r.id));
+        self.list.expanded = expanded_index.and_then(|i| {
+            self.working
+                .as_ref()
+                .and_then(|w| w.rows().get(i - 1).map(|r| r.id))
+        });
     }
 
     /// REVERT: discard every in-memory edit and staged economy op.
@@ -1081,7 +1157,7 @@ impl OverlayApp {
 
     /// Applies the CONFIG tab's collected actions. Filter actions are handled by the filter
     /// selection code; everything else edits the `ConfigState`.
-    fn handle_config_actions(&mut self, actions: Vec<ConfigAction>) {
+    fn handle_config_actions(&mut self, ctx: &egui::Context, actions: Vec<ConfigAction>) {
         for action in actions {
             match action {
                 ConfigAction::AddStyle(input) => {
@@ -1138,8 +1214,8 @@ impl OverlayApp {
                         self.config_message = Some(("Reverted config changes.".to_string(), false));
                     }
                 }
-                ConfigAction::Apply => self.config_apply(false),
-                ConfigAction::Overwrite => self.config_apply(true),
+                ConfigAction::Apply => self.run_apply(ctx, false),
+                ConfigAction::Overwrite => self.run_apply(ctx, true),
                 ConfigAction::Reload => {
                     self.config = match &self.root {
                         Ok(root) => ConfigState::load(root),
@@ -1192,52 +1268,6 @@ impl OverlayApp {
         }
     }
 
-    /// CONFIG Apply (or Overwrite after the user confirmed over an outside edit). On success the
-    /// RULES tab sees the new styles at once; the written filter is stale until a RULES Apply.
-    fn config_apply(&mut self, overwrite: bool) {
-        let Ok(state) = &mut self.config else {
-            return;
-        };
-        let result = if overwrite {
-            state.overwrite()
-        } else {
-            state.apply()
-        };
-        match result {
-            Ok(report) => {
-                let wrote = report.styles_written || report.tiers_written;
-                self.config_message = Some((
-                    if wrote {
-                        format!(
-                            "{} {OUT_OF_DATE_MESSAGE}",
-                            applied_message(report.styles, report.tiers)
-                        )
-                    } else {
-                        applied_message(report.styles, report.tiers)
-                    },
-                    false,
-                ));
-                if wrote {
-                    self.config_changed_pending = true;
-                }
-                self.config_outside = OutsideEdit::None;
-                self.config_ui.disarm_all();
-                if let Ok(root) = &self.root {
-                    self.styles_mtime = styles_mtime_at(root);
-                    if let Some(working) = &mut self.working {
-                        working.set_styles(load_styles_at(root));
-                    }
-                }
-            }
-            Err(ConfigApplyError::OutsideEdit(which)) => {
-                self.config_outside = which;
-                // Re-raise the guard: a dismissed guard would leave Apply a silent no-op.
-                self.config_ui.outside_dismissed = false;
-            }
-            Err(err) => self.config_message = Some((err.message(), true)),
-        }
-    }
-
     /// Draws the CONFIG tab below the tab strip and returns what the user asked for.
     fn config_body(&mut self, ui: &mut egui::Ui) -> Vec<ConfigAction> {
         let mut actions = Vec::new();
@@ -1273,12 +1303,20 @@ impl OverlayApp {
                     }),
             )
             .show(ui, |ui| {
+                // The shared Apply result shows on whichever tab is open.
+                let apply_line = self.apply_message.as_ref().map(|m| {
+                    let ok =
+                        self.apply_state == ApplyState::Applied && self.changed_on_disk.is_empty();
+                    (m.clone(), !ok)
+                });
                 let lines: Vec<OutcomeLine> = self
                     .config_message
                     .iter()
+                    .cloned()
+                    .chain(apply_line)
                     .map(|(text, accent)| OutcomeLine {
-                        text: text.clone(),
-                        accent: *accent,
+                        text,
+                        accent,
                         jump: None,
                     })
                     .collect();
@@ -1604,10 +1642,12 @@ impl eframe::App for OverlayApp {
             .working
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
-        if style_pending && self.apply_state == ApplyState::Applied {
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        if (style_pending || config_dirty) && self.apply_state == ApplyState::Applied {
             self.apply_state = ApplyState::Unapplied;
         }
-        let dirty = style_pending || self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let dirty =
+            style_pending || config_dirty || self.working.as_ref().is_some_and(|w| w.is_dirty());
         let unknown_styles = self
             .working
             .as_ref()
@@ -1618,8 +1658,13 @@ impl eframe::App for OverlayApp {
             .as_ref()
             .and_then(|w| w.blocking().first().cloned());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
-        let actions =
-            apply::footer_actions(self.root.is_ok(), state, self.needs_reload, dirty, blocking);
+        let actions = apply::footer_actions(
+            self.root.is_ok(),
+            state,
+            !self.changed_on_disk.is_empty(),
+            dirty,
+            blocking,
+        );
 
         // Everything the panels want to change is collected here and applied once, after both have
         // rendered (deferred-action rule): row operations, the economy footer and the jump.
@@ -1629,7 +1674,6 @@ impl eframe::App for OverlayApp {
         let mut config_actions: Vec<ConfigAction> = Vec::new();
         let mut picked_tab: Option<Tab> = None;
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
-        let config_dirty = self.config.as_ref().is_ok_and(|c| c.dirty_count() > 0);
 
         egui::CentralPanel::default()
             .frame(panel_frame)
@@ -1678,7 +1722,8 @@ impl eframe::App for OverlayApp {
                         // The pinned economy summary row: a locked block count, with Add/Remove
                         // staged in memory and written by the next APPLY.
                         if let Some(working) = &self.working {
-                            let can_edit_economy = self.root.is_ok() && !self.needs_reload;
+                            let can_edit_economy =
+                                self.root.is_ok() && self.changed_on_disk.is_empty();
                             economy_action = rule_list::economy_footer(
                                 ui,
                                 working.economy(),
@@ -1785,7 +1830,8 @@ impl eframe::App for OverlayApp {
                             }
                         };
                         let apply_line = self.apply_message.as_ref().map(|m| {
-                            let ok = self.apply_state == ApplyState::Applied && !self.needs_reload;
+                            let ok = self.apply_state == ApplyState::Applied
+                                && self.changed_on_disk.is_empty();
                             (m.clone(), !ok)
                         });
                         let gate = first_blocking.as_ref().map(|first| {
@@ -1938,7 +1984,8 @@ impl eframe::App for OverlayApp {
             }
         }
         if !config_actions.is_empty() {
-            self.handle_config_actions(config_actions);
+            let egui_ctx = ui.ctx().clone();
+            self.handle_config_actions(&egui_ctx, config_actions);
         }
 
         // Deferred mutations: jump from the grammar line, then row operations, then the economy
@@ -2234,6 +2281,7 @@ mod tests {
     fn pending(interim: &str) -> super::PendingReload {
         super::PendingReload {
             path: std::path::PathBuf::from("C:/g/dynamic.filter"),
+            prefix: String::new(),
             extras: " [x]".to_string(),
             interim: interim.to_string(),
         }
@@ -2465,7 +2513,7 @@ mod tests {
 
     // ---- controller helpers (Phase 19-06) ----
 
-    use super::{apply_row_actions, apply_working};
+    use super::{AllOutcome, apply_everything, apply_row_actions};
     use crate::dynamic::LoadedFilter;
     use crate::overlay::apply::{self, ApplyOutcome};
     use crate::overlay::rule_list::ListUi;
@@ -2478,6 +2526,197 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         let loaded = LoadedFilter::load(&path).unwrap();
         (path, loaded)
+    }
+
+    /// The rules-only Apply (no CONFIG state), as the pre-Phase-25 tests drove it: the outcome,
+    /// the appended sentences, and whether the file changed on disk.
+    fn apply_rules(
+        root: &std::path::Path,
+        loaded: &mut LoadedFilter,
+        working: &mut WorkingFilter,
+        overwrite: bool,
+    ) -> (ApplyOutcome, String, bool) {
+        let r = apply_everything(root, None, Some((loaded, working)), overwrite);
+        let outcome = match r.outcome {
+            AllOutcome::Applied { filter: Some(path) } => ApplyOutcome::Written(path),
+            AllOutcome::Applied { filter: None } => panic!("a filter was passed"),
+            AllOutcome::Failed(message) => ApplyOutcome::Failed(message),
+        };
+        (outcome, r.extras, !r.changed.is_empty())
+    }
+
+    fn apply_working(
+        root: &std::path::Path,
+        loaded: &mut LoadedFilter,
+        working: &mut WorkingFilter,
+    ) -> (ApplyOutcome, String, bool) {
+        apply_rules(root, loaded, working, false)
+    }
+
+    fn overwrite_working(
+        root: &std::path::Path,
+        loaded: &mut LoadedFilter,
+        working: &mut WorkingFilter,
+    ) -> (ApplyOutcome, String, bool) {
+        apply_rules(root, loaded, working, true)
+    }
+
+    // ---- the combined Apply (Phase 25-03) ----
+
+    use crate::overlay::apply_all::DiskFile;
+    use crate::overlay::config_state::{ConfigState, StyleEdit};
+
+    /// A temp app root holding copies of the committed styles.json and tiers.json.
+    fn config_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["styles.json", "tiers.json"] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(f),
+                dir.path().join(f),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    /// Everything one combined Apply touches, in temp dirs.
+    struct Rig {
+        root: tempfile::TempDir,
+        _game: tempfile::TempDir,
+        path: std::path::PathBuf,
+        loaded: LoadedFilter,
+        working: WorkingFilter,
+        config: ConfigState,
+    }
+
+    fn rig(filter_text: &str) -> Rig {
+        let root = config_root();
+        let game = tempfile::tempdir().unwrap();
+        let (path, loaded) = loaded_in(&game, filter_text);
+        let mut working = WorkingFilter::from_text(loaded.text());
+        let config = ConfigState::load(root.path()).unwrap();
+        working.set_styles(Ok(config.pending_styles().clone()));
+        Rig {
+            root,
+            _game: game,
+            path,
+            loaded,
+            working,
+            config,
+        }
+    }
+
+    impl Rig {
+        fn apply(&mut self, overwrite: bool) -> super::AllResult {
+            apply_everything(
+                self.root.path(),
+                Some(&mut self.config),
+                Some((&mut self.loaded, &mut self.working)),
+                overwrite,
+            )
+        }
+
+        fn read(&self, name: &str) -> Vec<u8> {
+            std::fs::read(self.root.path().join(name)).unwrap()
+        }
+    }
+
+    #[test]
+    fn combined_apply_renders_rules_with_pending_styles() {
+        let mut rig = rig(S_RULE);
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        assert!(rig.config.is_dirty());
+        let r = rig.apply(false);
+        assert_eq!(
+            r.outcome,
+            AllOutcome::Applied {
+                filter: Some(rig.path.clone())
+            }
+        );
+        assert!(r.styles_written && !r.tiers_written);
+        let styles = String::from_utf8(rig.read("styles.json")).unwrap();
+        assert!(styles.contains("\"font\":41"), "{styles}");
+        let filter = std::fs::read_to_string(&rig.path).unwrap();
+        assert!(filter.contains("SetFontSize 41"), "{filter}");
+        assert!(!filter.contains("SetFontSize 20"), "{filter}");
+        assert!(!rig.config.is_dirty() && !rig.working.is_dirty());
+        assert_eq!(rig.working.style("S").unwrap().font, Some(41));
+        assert!(!rig.working.style_rewrite_pending());
+    }
+
+    #[test]
+    fn combined_apply_refusal_writes_nothing() {
+        let mut rig = rig("Show\n  Rarity Bogus\n");
+        rig.working.apply_action(RowAction::AddRule);
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        let (styles, tiers) = (rig.read("styles.json"), rig.read("tiers.json"));
+        let filter = std::fs::read(&rig.path).unwrap();
+        let r = rig.apply(false);
+        match r.outcome {
+            AllOutcome::Failed(m) => assert!(m.starts_with("Apply refused"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(r.changed.is_empty());
+        assert_eq!(rig.read("styles.json"), styles);
+        assert_eq!(rig.read("tiers.json"), tiers);
+        assert_eq!(std::fs::read(&rig.path).unwrap(), filter);
+        assert!(rig.config.is_dirty(), "config edits survive a refusal");
+        assert!(rig.working.is_dirty(), "rule edits survive a refusal");
+    }
+
+    #[test]
+    fn changed_on_disk_then_overwrite() {
+        let mut rig = rig(S_RULE);
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        // Someone else touches styles.json.
+        let mut outside = rig.read("styles.json");
+        outside.push(b'\n');
+        std::fs::write(rig.root.path().join("styles.json"), &outside).unwrap();
+        let r = rig.apply(false);
+        match &r.outcome {
+            AllOutcome::Failed(m) => assert!(m.contains("styles.json"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(r.changed, vec![DiskFile::Styles]);
+        assert_eq!(rig.read("styles.json"), outside, "nothing was written");
+        assert!(rig.config.is_dirty());
+
+        let r = rig.apply(true);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        assert!(r.changed.is_empty());
+        let styles = String::from_utf8(rig.read("styles.json")).unwrap();
+        assert!(styles.contains("\"font\":41"), "{styles}");
+        assert!(
+            std::fs::read_to_string(&rig.path)
+                .unwrap()
+                .contains("SetFontSize 41")
+        );
+        // The written files are the new baselines: a plain Apply goes through.
+        let again = rig.apply(false);
+        assert!(matches!(again.outcome, AllOutcome::Applied { .. }));
+        assert!(again.changed.is_empty());
+    }
+
+    #[test]
+    fn no_filter_apply_writes_config_only() {
+        let root = config_root();
+        let mut config = ConfigState::load(root.path()).unwrap();
+        assert!(config.edit_style("S", StyleEdit::Font(Some(41))));
+        let tiers = std::fs::read(root.path().join("tiers.json")).unwrap();
+        let r = apply_everything(root.path(), Some(&mut config), None, false);
+        assert_eq!(r.outcome, AllOutcome::Applied { filter: None });
+        assert!(r.styles_written && !r.tiers_written);
+        assert!(!config.is_dirty());
+        let styles = std::fs::read_to_string(root.path().join("styles.json")).unwrap();
+        assert!(styles.contains("\"font\":41"));
+        assert_eq!(
+            std::fs::read(root.path().join("tiers.json")).unwrap(),
+            tiers
+        );
     }
 
     #[test]
@@ -2510,7 +2749,7 @@ mod tests {
         let (refused, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
         assert!(matches!(refused, ApplyOutcome::Failed(_)) && reload);
 
-        let (outcome, _, reload) = super::overwrite_working(dir.path(), &mut loaded, &mut working);
+        let (outcome, _, reload) = overwrite_working(dir.path(), &mut loaded, &mut working);
         assert_eq!(outcome, ApplyOutcome::Written(path.clone()));
         assert!(!reload);
         assert!(!working.is_dirty());
@@ -2535,7 +2774,7 @@ mod tests {
         let (path, mut loaded) = loaded_in(&dir, RULES);
         let mut working = WorkingFilter::from_text(bad);
         std::fs::write(&path, "Show\n  Class \"Belts\"\n").unwrap();
-        let (outcome, _, _) = super::overwrite_working(dir.path(), &mut loaded, &mut working);
+        let (outcome, _, _) = overwrite_working(dir.path(), &mut loaded, &mut working);
         assert!(matches!(outcome, ApplyOutcome::Failed(_)), "{outcome:?}");
         assert_eq!(loaded.disk(), Some(RULES.as_bytes()));
         assert_eq!(
@@ -2569,7 +2808,9 @@ mod tests {
         let (outcome, _, reload) = apply_working(dir.path(), &mut loaded, &mut working);
         assert_eq!(
             outcome,
-            ApplyOutcome::Failed(apply::CHANGED_ON_DISK_MESSAGE.to_string())
+            ApplyOutcome::Failed(apply::changed_on_disk_message(&[
+                "dynamic.filter".to_string()
+            ]))
         );
         assert!(reload);
         assert!(working.is_dirty(), "edits survive until RELOAD");

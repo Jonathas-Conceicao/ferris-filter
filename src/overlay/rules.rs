@@ -545,10 +545,16 @@ impl WorkingFilter {
             }
             return Ok((self.text(), StyleReport::default()));
         };
+        Ok(self.text_with_style_set(set))
+    }
+
+    /// The text Apply should write when the styles are `set` (the pending CONFIG styles) rather
+    /// than the loaded ones: same rewrite, on a clone.
+    pub fn text_with_style_set(&self, set: &StyleSet) -> (String, StyleReport) {
         let mut clone = self.doc.clone();
         let mut report = styled::rewrite_styled(&mut clone, set);
         report.dropped = styled::drop_unknown_style_tags(&mut clone, set);
-        Ok((clone.serialize(), report))
+        (clone.serialize(), report)
     }
 
     /// Whether Apply would change the text because of styles alone. Cached per
@@ -1470,6 +1476,32 @@ Show
         let g = done.generation();
         let _ = done.style_rewrite_pending();
         assert_eq!(done.generation(), g);
+    }
+
+    #[test]
+    fn text_with_style_set_uses_the_given_set() {
+        let wf = styled_wf("#ff:style S\nShow\n  Class \"Rings\"\n");
+        let base = test_styles();
+        let mut s40 = base.get("S").expect("S").clone();
+        s40.font = Some(40);
+        let set = StyleSet::from_pairs(
+            base.names()
+                .map(|n| {
+                    let st = if n == "S" {
+                        s40.clone()
+                    } else {
+                        base.get(n).expect("n").clone()
+                    };
+                    (n.to_string(), st)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let (given, rep) = wf.text_with_style_set(&set);
+        assert_eq!(rep.rewritten, 1);
+        assert!(given.contains("SetFontSize 40") && !given.contains(S_FONT));
+        // The loaded set is untouched: text_with_styles still renders it.
+        let (loaded, _) = wf.text_with_styles().expect("ok");
+        assert!(loaded.contains(S_FONT) && !loaded.contains("SetFontSize 40"));
     }
 
     #[test]

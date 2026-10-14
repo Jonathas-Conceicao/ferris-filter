@@ -142,14 +142,14 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **UAT-01**: A RULES Apply whose in-game reload was skipped because the game is not running shows no reload message; other skip reasons keep their message.
 - [ ] **UAT-02**: CONFIG → Styles lists built-in styles first and custom styles second under separate headings with a divider (no "built-in" badge); only custom styles can be removed.
 - [ ] **UAT-03**: Each style in CONFIG → Styles has an on/off slide switch (on = Show, off = Hide) that takes effect on the next RULES Apply via the style rewrite and economy regeneration.
-- [ ] **UAT-04**: The style config and the per-rule action control offer only Show and Hide; a foreign Minimal block is still shown as Minimal and left untouched.
+- [x] **UAT-04**: The style config and the per-rule action control offer only Show and Hide; a foreign Minimal block is still shown as Minimal and left untouched.
 - [x] **UAT-05**: The ✕ that removes a condition is right-aligned so the ✕ buttons line up across rows and rules.
 - [x] **UAT-06**: BaseType and other quoted lists are a vertical list (one entry per line with Remove, Enter/+ ADD field, quoted-paste splitting) inside a scrollable panel capped at about 6–8 rows.
 - [x] **UAT-07**: The Class condition shows only the grouped class picker (groups from config.json), without the chip list of selected classes.
-- [ ] **UAT-08**: A styled rule shows no caption text explaining where its style comes from.
+- [x] **UAT-08**: A styled rule shows no caption text explaining where its style comes from.
 - [ ] **UAT-09**: PoE1-only conditions are removed from the keyword table and condition picker; a filter line using one still loads losslessly as a raw row and does not block Apply.
 - [ ] **UAT-10**: Every numeric condition/action default lies inside its slider range (GemLevel fixed), asserted by a table-wide test.
-- [ ] **UAT-11**: The style section sits at the end of the rule body: a picker of Custom plus every preset with a Show/Hide control; Custom shows and edits the action rows, a preset hides them and tags the rule; preset→Custom keeps the actions and drops the tag.
+- [x] **UAT-11**: The style section sits at the end of the rule body: a picker of Custom plus every preset with a Show/Hide control; Custom shows and edits the action rows, a preset hides them and tags the rule; preset→Custom keeps the actions and drops the tag.
 - [x] **UAT-12**: Boolean conditions are a compact Yes/No control (Yes = True, No = False) with no operator dropdown or toggle; untouched lines keep their operator and text.
 - [ ] **UAT-13**: Collapsed rules show a short condition summary under the header, hidden when expanded, with correct row virtualization and performance at ~460 blocks.
 
@@ -234,14 +234,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT-01 | Phase 24 | Pending |
 | UAT-02 | Phase 24 | Pending |
 | UAT-03 | Phase 24 | Pending |
-| UAT-04 | Phase 24 | Pending |
+| UAT-04 | Phase 24 | Complete |
 | UAT-05 | Phase 24 | Complete |
 | UAT-06 | Phase 24 | Complete |
 | UAT-07 | Phase 24 | Complete |
-| UAT-08 | Phase 24 | Pending |
+| UAT-08 | Phase 24 | Complete |
 | UAT-09 | Phase 24 | Pending |
 | UAT-10 | Phase 24 | Pending |
-| UAT-11 | Phase 24 | Pending |
+| UAT-11 | Phase 24 | Complete |
 | UAT-12 | Phase 24 | Complete |
 | UAT-13 | Phase 24 | Pending |
 

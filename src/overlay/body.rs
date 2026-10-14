@@ -624,13 +624,23 @@ fn pending_card(
             )
             .clicked();
             caption(ui, "Add an entry to create this condition");
-            let salt: Salt = (p.block, p.keyword.name, usize::MAX, "pending");
+            // The salt the real card will use once this row gets its first line: the new line's
+            // keyword ordinal, and the same tag, so state keyed on it (the open class group)
+            // carries over from the pending card to the real one.
+            let ordinal = ctx
+                .entries
+                .iter()
+                .filter(|e| e.keyword.is_some_and(|k| k.name == p.keyword.name))
+                .count();
+            let salt: Salt = (p.block, p.keyword.name, ordinal, "class");
             items = match p.keyword.value {
                 ValueShape::Rarity => {
                     rarity_chips(ui, &[]).map(|r| r.iter().map(|s| s.to_string()).collect())
                 }
                 _ => match ctx.classes {
-                    Some(cat) if p.keyword.name == "Class" => class_picker(ui, salt, cat, &[]),
+                    Some(cat) if p.keyword.name == "Class" => {
+                        class_picker(ui, salt, list.row_epoch, cat, &[])
+                    }
                     _ => quoted_list(ui, salt, &[], chip_hint(p.keyword)),
                 },
             };
@@ -874,7 +884,7 @@ fn value_controls(
             None
         }
         Value::List(names) => {
-            list_control(ui, card, names, actions);
+            list_control(ui, card, names, list.row_epoch, actions);
             None
         }
         Value::CountNames { count, names } => {
@@ -1188,19 +1198,26 @@ pub(crate) fn unknown_classes<'a>(
 fn class_picker(
     ui: &mut egui::Ui,
     salt: Salt,
+    row_epoch: u64,
     catalog: &ClassCatalog,
     selected: &[String],
 ) -> Option<Vec<String>> {
     let mut result = None;
     for (label, classes) in catalog.groups() {
         let n = classes.iter().filter(|c| selected.contains(c)).count();
-        egui::CollapsingHeader::new(
+        // Open/closed lives under an absolute id: the header's own id sits under the row's
+        // epoch-scoped `push_id`, which the first value click changes (it adds a line), and under
+        // a different `push_id` for the pending and the real card. Either would close the group
+        // in use.
+        let open_id = egui::Id::new(("ff-class-group-open", row_epoch, salt, *label));
+        let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+        let out = egui::CollapsingHeader::new(
             RichText::new(format!("{label} ({n})"))
                 .size(theme::ROW_SUMMARY_SIZE)
                 .color(theme::LABEL_TAN),
         )
         .id_salt((salt, *label))
-        .default_open(false)
+        .open(Some(open))
         .show(ui, |ui| {
             for c in classes {
                 let mut on = selected.contains(c);
@@ -1209,6 +1226,9 @@ fn class_picker(
                 }
             }
         });
+        if out.header_response.clicked() {
+            ui.data_mut(|d| d.insert_temp(open_id, !open));
+        }
     }
     let unknown = unknown_classes(selected, catalog);
     if !unknown.is_empty() {
@@ -1230,9 +1250,17 @@ fn class_picker(
     result
 }
 
-fn list_control(ui: &mut egui::Ui, card: &Card, names: &[String], actions: &mut Vec<RowAction>) {
+fn list_control(
+    ui: &mut egui::Ui,
+    card: &Card,
+    names: &[String],
+    row_epoch: u64,
+    actions: &mut Vec<RowAction>,
+) {
     let next = match card.classes {
-        Some(cat) if card.kw.name == "Class" => class_picker(ui, card.salt("class"), cat, names),
+        Some(cat) if card.kw.name == "Class" => {
+            class_picker(ui, card.salt("class"), row_epoch, cat, names)
+        }
         _ => quoted_list(ui, card.salt("chips"), names, chip_hint(card.kw)),
     };
     if let Some(next) = next {
@@ -3520,6 +3548,42 @@ mod tests {
             }
         }
         (ctx, wf, list, id, got)
+    }
+
+    #[test]
+    fn first_rarity_chip_click_keeps_the_rule_expanded() {
+        let cat = committed_catalog();
+        let mut wrote = false;
+        'scan: for y in (100..400).step_by(4) {
+            for x in (8..456).step_by(8) {
+                let mut wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
+                let id = wf.rows()[0].id;
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                let rarity = crate::filter::keywords::lookup("Rarity").unwrap();
+                assert_eq!(pick_condition(id, rarity, &mut list), None);
+                for _ in 0..3 {
+                    click_step(&ctx, &mut wf, &mut list, &cat, None);
+                }
+                let a = click_step(
+                    &ctx,
+                    &mut wf,
+                    &mut list,
+                    &cat,
+                    Some(Pos2::new(x as f32, y as f32)),
+                );
+                if a.iter().any(|a| matches!(a, RowAction::AddLine { .. })) {
+                    for _ in 0..3 {
+                        click_step(&ctx, &mut wf, &mut list, &cat, None);
+                    }
+                    assert_eq!(list.expanded, Some(id), "rarity chip collapsed the rule");
+                    wrote = true;
+                    break 'scan;
+                }
+            }
+        }
+        assert!(wrote, "a rarity chip is clickable");
     }
 
     #[test]

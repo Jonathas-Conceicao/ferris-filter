@@ -46,6 +46,11 @@ pub struct ListUi {
     /// both of which can be reused by a different line after a re-parse or a removal; bumping the
     /// epoch orphans that state so it never shows up on another card (WR-07).
     pub epoch: u64,
+    /// Bumped only when the expanded row changes or ids reset (not on every line add or remove).
+    /// Open/closed state of the class groups lives under this instead of [`ListUi::epoch`], so
+    /// the first value click, which turns a pending row into a line and bumps `epoch`, does not
+    /// close the group being used.
+    pub row_epoch: u64,
 }
 
 /// A condition picked from `+ condition` that waits for its first entry (list shapes, Rarity).
@@ -71,6 +76,7 @@ impl Default for ListUi {
             last_expanded: None,
             line_error: None,
             epoch: 0,
+            row_epoch: 0,
         }
     }
 }
@@ -87,6 +93,7 @@ impl ListUi {
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
+        self.row_epoch = self.row_epoch.wrapping_add(1);
         self.forget_card_state();
     }
 
@@ -263,6 +270,7 @@ pub fn show_list(
         list.line_error = None;
         egui::Popup::close_all(ui.ctx());
         list.last_expanded = list.expanded;
+        list.row_epoch = list.row_epoch.wrapping_add(1);
         list.forget_card_state();
     }
     let offsets = build_offsets(

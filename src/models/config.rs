@@ -220,6 +220,15 @@ pub enum StyleNameError {
 // StyleSet — config-driven named styles (Phase 17, STYLE-01/02)
 // ---------------------------------------------------------------------------
 
+/// A `# ff:style` tag resolved against a [`StyleSet`] (see [`StyleSet::resolve_tag`]).
+#[derive(Debug, Clone, Copy)]
+pub struct TagMatch<'a> {
+    pub name: &'a str,
+    pub style: &'a Style,
+    /// True when the tag is already exactly `"<id> <name>"`.
+    pub canonical: bool,
+}
+
 /// Reasons a parsed `styles.json` is rejected by [`StyleSet::validate`].
 #[derive(Debug, Error, Diagnostic)]
 pub enum StyleError {
@@ -619,6 +628,33 @@ impl StyleSet {
             .expect("index just looked up");
         self.0.shift_insert(index, new.to_string(), style);
         Ok(())
+    }
+
+    /// Resolve a `# ff:style` tag value. `"<id> <name>"` resolves by id (canonical when the name
+    /// part is current); a value equal to a style name resolves by name (legacy, never
+    /// canonical); anything else is `None`.
+    pub fn resolve_tag(&self, tag: &str) -> Option<TagMatch<'_>> {
+        let tag = tag.trim();
+        let first = tag.split_whitespace().next()?;
+        if let Some((name, style)) = self.0.iter().find(|(_, s)| s.id.as_deref() == Some(first)) {
+            let canonical = tag == format!("{first} {name}");
+            return Some(TagMatch {
+                name,
+                style,
+                canonical,
+            });
+        }
+        self.0.get_key_value(tag).map(|(name, style)| TagMatch {
+            name,
+            style,
+            canonical: false,
+        })
+    }
+
+    /// The canonical tag value `"<id> <name>"` for a style.
+    pub fn tag_for(&self, name: &str) -> Option<String> {
+        let id = self.id_of(name)?;
+        Some(format!("{id} {name}"))
     }
 
     /// Id prefix reserved for the nine built-in styles.
@@ -2210,7 +2246,8 @@ mod tests {
     #[test]
     fn styleset_keeps_file_order_with_extra_user_style() {
         let mut set = StyleSet::committed_for_tests();
-        let st = set.get("unchanged").unwrap().clone();
+        let mut st = set.get("unchanged").unwrap().clone();
+        st.id = None;
         set.insert("craftable", st);
         set.validate().unwrap();
         assert_eq!(set.names().last(), Some("craftable"));
@@ -2356,6 +2393,27 @@ mod style_id_tests {
         assert_eq!(set.id_of("locator"), Some(id.as_str()));
         assert!(!set.contains("kite"));
         set.validate().unwrap();
+    }
+
+    #[test]
+    fn resolve_tag_by_id_name_and_unknown() {
+        let set = StyleSet::committed_for_tests();
+        let m = set.resolve_tag("builtin:S S").unwrap();
+        assert_eq!((m.name, m.canonical), ("S", true));
+        let m = set.resolve_tag("builtin:S Old").unwrap();
+        assert_eq!((m.name, m.canonical), ("S", false));
+        let m = set.resolve_tag("  kite ").unwrap();
+        assert_eq!((m.name, m.canonical), ("kite", false));
+        assert!(set.resolve_tag("zzzzzz kite").is_none());
+        assert!(set.resolve_tag("Nope").is_none());
+        assert!(set.resolve_tag("").is_none());
+        assert_eq!(set.tag_for("S").as_deref(), Some("builtin:S S"));
+        assert!(set.tag_for("Nope").is_none());
+        let mut spaced = set.clone();
+        spaced
+            .insert_new("Build Gear", Style::blank_show())
+            .unwrap();
+        assert_eq!(spaced.resolve_tag("Build Gear").unwrap().name, "Build Gear");
     }
 
     #[test]

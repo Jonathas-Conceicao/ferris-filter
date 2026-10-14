@@ -163,7 +163,11 @@ fn check_legacy_styles(
                 return styles.get(name).is_some();
             }
             match serde_json::from_value::<Style>((*value).clone()) {
-                Ok(inline) => Some(&inline) != styles.get(name),
+                Ok(mut inline) => {
+                    // The id is identity metadata the pre-id inline copy never had.
+                    inline.id = styles.id_of(name).map(str::to_string);
+                    Some(&inline) != styles.get(name)
+                }
                 // Unparseable user content is never silently discarded.
                 Err(_) => true,
             }

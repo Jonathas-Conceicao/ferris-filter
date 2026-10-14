@@ -1144,7 +1144,8 @@ Show
     fn expanded_body_orders_name_conditions_style() {
         let src = include_str!("rule_list.rs");
         let start = src.find("fn expanded_body(").unwrap();
-        let end = start + src[start..].find("\n}\n").unwrap();
+        // `\n}` (not `\n}\n`) so a CRLF checkout (core.autocrlf) still finds the function end.
+        let end = start + src[start..].find("\n}").unwrap();
         let f = &src[start..end];
         let name = f.find("caption(ui, \"NAME\")").unwrap();
         let cond = f.find("body::conditions_group").unwrap();

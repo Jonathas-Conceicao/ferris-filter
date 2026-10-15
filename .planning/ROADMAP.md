@@ -431,8 +431,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 26-07-PLAN.md — CONFIG styles table per group with Order column, inline rename, RULES follows the in-memory style set (UAT3-01, UAT3-02, UAT3-03)
-- [ ] 26-08-PLAN.md — Between card, switch to/from Between, loaded pairs keep bytes, Between in Defences (UAT3-06)
+- [x] 26-07-PLAN.md — CONFIG styles table per group with Order column, inline rename, RULES follows the in-memory style set (UAT3-01, UAT3-02, UAT3-03)
+- [x] 26-08-PLAN.md — Between card, switch to/from Between, loaded pairs keep bytes, Between in Defences (UAT3-06)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -452,7 +452,7 @@ Plans:
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
-| 26. UAT Feedback Fixes 3 | 6/9 | In Progress|  |
+| 26. UAT Feedback Fixes 3 | 8/9 | In Progress|  |
 
 ## Backlog
 

@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Simple Defences picks base types (quick 261015-nbp).** The card is one line of seven
+  multi-select chips (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES) instead of the
+  AR / EV / ES `Any | Has | No` rows and the combination strip; the selection is exactly what the rule
+  matches. A pick one filter block cannot express is written as the minimum number of blocks (at most
+  four) that are identical apart from their zero-based defence lines, each tagged
+  `# ff:group <id> <k>/<n>`. The overlay shows such a group as one rule (one row, index, search hit and
+  summary) and every edit (conditions, actions, style, name, Show/Hide, Continue, enable/disable,
+  move, duplicate, delete) acts on all of its blocks and keeps them identical; the grammar gate and the
+  styled-rule report count it once. Untouched groups stay byte-identical. A group whose blocks no
+  longer match is shown as separate rules flagged `group broken` and is left as written.
+
 ## [0.5.0] - 2026-10-15
 
 **Generic Filter Editor & Initial App Configuration** — the overlay opens, edits and saves any

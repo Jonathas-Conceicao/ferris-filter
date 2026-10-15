@@ -1,7 +1,7 @@
 ---
 phase: 16-lossless-filter-parser
 verified: 2026-10-12T00:00:00Z
-status: human_needed
+status: passed
 score: 4/4 must-haves verified (criterion 2 has one residual human confirmation)
 overrides_applied: 0
 human_verification:
@@ -95,3 +95,7 @@ After verification, the orchestrator fetched https://www.pathofexile.com/item-fi
 All 80 have a quoted entry in the table, and none is missing. The table also has exactly 80 entries.
 
 This is strong automated evidence for criterion 2. The status stays `human_needed` only because sign-off belongs to the author: approve the UAT item to close it.
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). Partial pass accepted: the keyword table and PoE1-only raw rows not yet confirmed in game moved to backlog 999.12. Status changed from `human_needed` to `passed`.

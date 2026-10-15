@@ -20,6 +20,7 @@ metrics:
   tasks: 2
   files: 3
 completed: 2026-10-13
+requirements-completed: [INST-01]
 ---
 
 # Phase 22 Plan 01: Single-Instance Gate Summary

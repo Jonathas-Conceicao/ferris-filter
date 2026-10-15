@@ -1,7 +1,7 @@
 ---
 phase: 21-overlay-configuration-tab
 verified: 2026-10-13T00:00:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified (code level); GUI behaviour pending UAT
 overrides_applied: 0
 human_verification:
@@ -70,3 +70,7 @@ Run `21-MANUAL-VERIFICATION.md` (17 steps) in a scratch environment; never again
 None at code level. Requirements remain "Complete (UAT pending)" until the manual script is run.
 
 _Verifier: Claude (gsd-verifier)_
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). Results in 21-HUMAN-UAT.md; untested items accepted as assumed passes by the author. Status changed from `human_needed` to `passed`.

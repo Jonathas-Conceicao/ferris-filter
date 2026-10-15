@@ -1,7 +1,7 @@
 ---
 phase: 24-uat-feedback-fixes
 verified: 2026-10-13T00:00:00Z
-status: human_needed
+status: passed
 score: 13/13 must-haves verified (code level)
 overrides_applied: 0
 gaps: []
@@ -54,3 +54,7 @@ WR-02: a styles.json carrying `"action": "Minimal"` is rejected. This is pre-exi
 Run `24-MANUAL-VERIFICATION.md`. It covers the visual and in-game items marked above: group headings and divider, switch rendering, X alignment, list scroll cap, summary line and scrolling smoothness, and no reload message with the game closed.
 
 _Verifier: Claude (gsd-verifier)_
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). All items pass; results in 24-MANUAL-VERIFICATION.md. Status changed from `human_needed` to `passed`.

@@ -25,6 +25,7 @@ decisions:
 metrics:
   tasks: 2
   completed: 2026-10-12
+requirements-completed: [PARSE-04, PARSE-03, PARSE-01]
 ---
 
 # Phase 16 Plan 04: Edit API and PARSE-04 Proof Summary

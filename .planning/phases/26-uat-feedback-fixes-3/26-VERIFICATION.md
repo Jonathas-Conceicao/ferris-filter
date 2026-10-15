@@ -1,7 +1,7 @@
 ---
 phase: 26-uat-feedback-fixes-3
 verified: 2026-10-14T00:00:00Z
-status: human_needed
+status: passed
 score: 8/8 must-haves verified (automated); GUI behaviour pending human UAT
 overrides_applied: 0
 human_verification:
@@ -70,3 +70,7 @@ No blockers seen. Untracked scratch files in the repo root are not phase artifac
 None found by automated checks. Status is human_needed because 26-MANUAL-VERIFICATION.md items 1-8 (modal, popup, real-window behaviour) remain unexecuted.
 
 _Verifier: Claude (gsd-verifier)_
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). All items pass; results in 26-MANUAL-VERIFICATION.md. Status changed from `human_needed` to `passed`.

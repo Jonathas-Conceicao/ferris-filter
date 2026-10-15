@@ -1,7 +1,7 @@
 ---
 phase: 18-filter-as-store-economy-section
 verified: 2026-10-12T00:00:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified
 overrides_applied: 0
 human_verification:
@@ -105,3 +105,7 @@ No gaps. Remaining items are GUI and in-game checks listed in the frontmatter.
 
 _Verified: 2026-10-12_
 _Verifier: Claude (gsd-verifier)_
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). Results in 18-HUMAN-UAT.md; untested items accepted as assumed passes by the author. Status changed from `human_needed` to `passed`.

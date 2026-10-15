@@ -19,25 +19,17 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Filter Parsing (PARSE)
 
-- [x] **PARSE-01
-
-**: User can open any working PoE2 filter without error: FilterBlade/NeverSink,
+- [x] **PARSE-01**: User can open any working PoE2 filter without error: FilterBlade/NeverSink,
   poe2filter.com, hand-written, or FerrisFilter output.
 
-- [x] **PARSE-02
-
-**: Every block type, condition, operator and action documented at
+- [x] **PARSE-02**: Every block type, condition, operator and action documented at
   pathofexile.com/item-filter/about is recognized, including `Continue`, `Import` and `Minimal`.
 
-- [x] **PARSE-03
-
-**: Saving a filter with no edits writes a byte-identical file. Line endings, BOM,
+- [x] **PARSE-03**: Saving a filter with no edits writes a byte-identical file. Line endings, BOM,
   indentation, comments and spacing are all preserved. This is verified against the real
   FilterBlade/NeverSink filter.
 
-- [x] **PARSE-04
-
-**: Saving after editing one block changes only that block's lines. Every other byte
+- [x] **PARSE-04**: Saving after editing one block changes only that block's lines. Every other byte
   of the file is untouched.
 
 ### Rule Editor (EDIT)
@@ -238,16 +230,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PARSE-01 | Phase 16 | Pending |
-| PARSE-02 | Phase 16 | Pending |
-| PARSE-03 | Phase 16 | Pending |
-| PARSE-04 | Phase 16 | Pending |
-| EDIT-01 | Phase 20 | Complete (UAT pending) |
-| EDIT-02 | Phase 20 | Complete (UAT pending) |
+| PARSE-01 | Phase 16 | Complete |
+| PARSE-02 | Phase 16 | Complete |
+| PARSE-03 | Phase 16 | Complete |
+| PARSE-04 | Phase 16 | Complete |
+| EDIT-01 | Phase 20 | Complete |
+| EDIT-02 | Phase 20 | Complete |
 | EDIT-03 | Phase 19 | Complete |
 | EDIT-04 | Phase 19 | Complete |
 | EDIT-05 | Phase 19 | Complete |
-| EDIT-06 | Phase 20 | Complete (UAT pending) |
+| EDIT-06 | Phase 20 | Complete |
 | EDIT-07 | Phase 19 | Complete |
 | EDIT-08 | Phase 19 | Complete |
 | EDIT-09 | Phase 18 | Complete |
@@ -257,20 +249,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ECON-03 | Phase 18 | Complete |
 | ECON-04 | Phase 18 | Complete |
 | STORE-01 | Phase 18 | Complete |
-| STORE-02 | Phase 21 | Complete (UAT pending) |
+| STORE-02 | Phase 21 | Complete |
 | STORE-03 | Phase 18 | Complete |
 | STORE-04 | Phase 18 | Complete |
 | STORE-05 | Phase 18 | Complete |
 | STYLE-01 | Phase 17 | Complete |
 | STYLE-02 | Phase 17 | Complete |
-| STYLE-03 | Phase 20 | Complete (UAT pending) |
+| STYLE-03 | Phase 20 | Complete |
 | STYLE-04 | Phase 17 | Complete |
-| CONF-01 | Phase 21 | Complete (UAT pending) |
-| CONF-02 | Phase 21 | Complete (UAT pending) |
-| CONF-03 | Phase 21 | Complete (UAT pending) |
-| CONF-04 | Phase 21 | Complete (UAT pending) |
-| INST-01 | Phase 22 | Complete (UAT pending) |
-| RELOAD-01 | Phase 23 | Complete (UAT pending) |
+| CONF-01 | Phase 21 | Complete |
+| CONF-02 | Phase 21 | Complete |
+| CONF-03 | Phase 21 | Complete |
+| CONF-04 | Phase 21 | Complete |
+| INST-01 | Phase 22 | Complete |
+| RELOAD-01 | Phase 23 | Complete |
 | UAT-01 | Phase 24 | Complete (UAT verified) |
 | UAT-02 | Phase 24 | Complete (UAT verified) |
 | UAT-03 | Phase 24 | Complete (UAT verified) |
@@ -302,15 +294,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT3-06 | Phase 26 | Complete (UAT verified) |
 | UAT3-07 | Phase 26 | Complete (UAT verified) |
 | UAT3-08 | Phase 26 | Complete (UAT verified) |
-| UAT4-01 | Phase 27 | Complete (UAT pending) |
-| UAT4-02 | Phase 27 | Complete (UAT pending) |
-| UAT4-03 | Phase 27 | Complete (UAT pending) |
+| UAT4-01 | Phase 27 | Complete |
+| UAT4-02 | Phase 27 | Complete |
+| UAT4-03 | Phase 27 | Complete |
 | UAT4-04 | Phase 27 | Complete |
 | DEF-01 | Phase 28 | Complete |
 | DEF-02 | Phase 28 | Complete |
-| DEF-03 | Phase 28 | Complete (UAT pending) |
-| DEF-04 | Phase 28 | Complete (UAT pending) |
-| DEF-05 | Phase 28 | Complete (UAT pending) |
+| DEF-03 | Phase 28 | Complete |
+| DEF-04 | Phase 28 | Complete |
+| DEF-05 | Phase 28 | Complete |
 
 **Coverage:**
 
@@ -320,4 +312,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-15 after Phase 28 added (DEF-01..DEF-05)*
+*Last updated: 2026-10-15 at the v0.5 wrap-up: UAT recorded for Phases 16-28 (Phase 28 accepted as assumed pass)*

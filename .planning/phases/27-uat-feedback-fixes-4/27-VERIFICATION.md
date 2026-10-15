@@ -1,7 +1,7 @@
 ---
 phase: 27-uat-feedback-fixes-4
 verified: 2026-10-15T00:00:00Z
-status: human_needed
+status: passed
 score: 4/4 must-haves verified (automated); GUI behaviour pending human UAT
 overrides_applied: 0
 human_verification:
@@ -54,3 +54,7 @@ No debt markers found in `conditions.rs`. Untracked scratch files in the repo ro
 None found by automated checks. Status is human_needed because 27-MANUAL-VERIFICATION.md items (Order column layout, colour dropdown scroll bar, Simple Defences card behaviour) need a real window.
 
 _Verifier: Claude (gsd-verifier)_
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). UAT4-01..03 pass (author's report that Phases 24-27 passed); results in 27-MANUAL-VERIFICATION.md. Status changed from `human_needed` to `passed`.

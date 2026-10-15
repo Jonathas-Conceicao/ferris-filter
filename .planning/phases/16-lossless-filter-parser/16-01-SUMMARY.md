@@ -27,6 +27,7 @@ decisions:
 metrics:
   tasks: 2
   completed: 2026-10-12
+requirements-completed: [PARSE-03]
 ---
 
 # Phase 16 Plan 01: Lossless Filter Document Foundation Summary

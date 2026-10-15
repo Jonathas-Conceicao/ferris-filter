@@ -23,6 +23,7 @@ decisions:
 metrics:
   tasks: 2
   completed: 2026-10-12
+requirements-completed: [PARSE-02, PARSE-01]
 ---
 
 # Phase 16 Plan 02: Keyword Table and Tokenizer Summary

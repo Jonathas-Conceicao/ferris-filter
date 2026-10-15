@@ -1,7 +1,7 @@
 ---
 phase: 19-overlay-rule-list-over-parsed-blocks
 verified: 2026-10-12T00:00:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified (automatable parts)
 overrides_applied: 0
 human_verification:
@@ -62,3 +62,7 @@ All six IDs appear in PLAN frontmatter, are marked Complete in REQUIREMENTS.md (
 ## Gaps Summary
 
 No gaps. Remaining items are visual/in-game and listed under human_verification.
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). Results in 19-HUMAN-UAT.md; untested items accepted as assumed passes by the author. Status changed from `human_needed` to `passed`.

@@ -1,7 +1,7 @@
 ---
 phase: 25-uat-feedback-fixes-2
 verified: 2026-10-14T00:00:00Z
-status: human_needed
+status: passed
 score: 10/10 must-haves verified (code level)
 overrides_applied: 0
 gaps: []
@@ -57,3 +57,7 @@ Run `25-MANUAL-VERIFICATION.md` (10 steps, one per requirement). Items cover vis
 None at code level.
 
 _Verifier: Claude (gsd-verifier)_
+
+## Human UAT outcome (2026-10-15)
+
+UAT complete (v0.5 wrap-up). All items pass; results in 25-MANUAL-VERIFICATION.md. Status changed from `human_needed` to `passed`.

@@ -31,6 +31,7 @@ decisions:
 metrics:
   tasks: 2
   completed: 2026-10-12
+requirements-completed: [PARSE-01, PARSE-02, PARSE-03]
 ---
 
 # Phase 16 Plan 03: Block Index, Disabled Blocks and Corpus Gate Summary

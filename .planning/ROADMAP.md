@@ -62,19 +62,19 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
 output, with the style palette and economy tier cutoffs configurable from the overlay.
 
-- [ ] **Phase 16: Lossless Filter Parser** - Parse any PoE2 filter and write it back byte-identical
+- [x] **Phase 16: Lossless Filter Parser** - Parse any PoE2 filter and write it back byte-identical (completed 2026-10-15; UAT done)
 - [x] **Phase 17: Config-Driven Styles** - Named styles live in `styles.json`; `generate` output unchanged (completed 2026-10-13)
-- [ ] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (executed 2026-10-13; awaiting human UAT)
+- [x] **Phase 18: Filter as Store & Economy Section** - The `.filter` file is the store; fenced, regenerable economy section (completed 2026-10-15; UAT done)
 - [x] **Phase 19: Overlay Rule List Over Parsed Blocks** - Open, search, reorder, enable/disable and Apply any filter's blocks (completed 2026-10-13)
-- [ ] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (executed 2026-10-13; awaiting human UAT)
+- [x] **Phase 20: Full-Grammar Block Editing** - Edit every condition and action, and apply named styles (completed 2026-10-15; UAT done)
 - [x] **Phase 21: Overlay Configuration Tab** - Edit styles and tier cutoffs, and pick the filter, from the overlay (completed 2026-10-13)
-- [ ] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe
-- [ ] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (executed 2026-10-13; awaiting human UAT)
-- [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (executed 2026-10-14; awaiting human UAT)
-- [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (executed 2026-10-14; awaiting human UAT)
-- [ ] **Phase 26: UAT Feedback Fixes 3** - Apply the author's third v0.5 UAT round: grouped styles table with renamable id-linked custom styles, steadier rule editor (Defences card, Between, no duplicates), Quit asks before discarding edits (executed 2026-10-14; awaiting human UAT)
-- [ ] **Phase 27: UAT Feedback Fixes 4** - Apply the author's fourth v0.5 UAT round: right-aligned styles Order column, colour dropdown scroll bar fix, Simple Defences condition, UAT results recorded (executed 2026-10-15; awaiting human UAT)
-- [ ] **Phase 28: Default config files** - Committed `styles-default.json` / `tiers-default.json`; live `styles.json` / `tiers.json` leave git and fall back to the defaults when absent (executed 2026-10-15; awaiting human UAT)
+- [x] **Phase 22: Single-Instance Overlay** - A second `ff` launch surfaces the running stripe (completed 2026-10-15; UAT done)
+- [x] **Phase 23: Auto-Reload Filter in Game on Apply** - A successful RULES Apply sends `/reloaditemfilter` to the running game (completed 2026-10-15; UAT done)
+- [x] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (completed 2026-10-15; UAT done)
+- [x] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (completed 2026-10-15; UAT done)
+- [x] **Phase 26: UAT Feedback Fixes 3** - Apply the author's third v0.5 UAT round: grouped styles table with renamable id-linked custom styles, steadier rule editor (Defences card, Between, no duplicates), Quit asks before discarding edits (completed 2026-10-15; UAT done)
+- [x] **Phase 27: UAT Feedback Fixes 4** - Apply the author's fourth v0.5 UAT round: right-aligned styles Order column, colour dropdown scroll bar fix, Simple Defences condition, UAT results recorded (completed 2026-10-15; UAT done)
+- [x] **Phase 28: Default config files** - Committed `styles-default.json` / `tiers-default.json`; live `styles.json` / `tiers.json` leave git and fall back to the defaults when absent (completed 2026-10-15; UAT accepted as assumed pass)
 
 ### Phase 16: Lossless Filter Parser
 
@@ -92,19 +92,19 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 Plans:
 **Wave 1**
 
-- [ ] 16-01-PLAN.md — Raw-line document model + byte-identical serializer; FilterBlade fixture committed under a scoped `-text` rule
+- [x] 16-01-PLAN.md — Raw-line document model + byte-identical serializer; FilterBlade fixture committed under a scoped `-text` rule
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 16-02-PLAN.md — The single GGG keyword table and quote-aware line tokenizer/shape validator
+- [x] 16-02-PLAN.md — The single GGG keyword table and quote-aware line tokenizer/shape validator
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 16-03-PLAN.md — Block index (stable BlockIds, attached comments, `#ff:` metadata, disabled-block classification) + real-filter corpus gate
+- [x] 16-03-PLAN.md — Block index (stable BlockIds, attached comments, `#ff:` metadata, disabled-block classification) + real-filter corpus gate
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 16-04-PLAN.md — Block-scoped edit API (enable/disable, replace lines, set_meta) proving PARSE-04 + CHANGELOG
+- [x] 16-04-PLAN.md — Block-scoped edit API (enable/disable, replace lines, set_meta) proving PARSE-04 + CHANGELOG
 
 ### Phase 17: Config-Driven Styles
 
@@ -503,19 +503,19 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 16. Lossless Filter Parser | 0/? | Not started | - |
+| 16. Lossless Filter Parser | 4/4 | Complete | 2026-10-15 |
 | 17. Config-Driven Styles | 4/4 | Complete    | 2026-10-13 |
-| 18. Filter as Store & Economy Section | 7/7 | Human UAT pending | - |
+| 18. Filter as Store & Economy Section | 7/7 | Complete | 2026-10-15 |
 | 19. Overlay Rule List Over Parsed Blocks | 7/7 | Complete   | 2026-10-13 |
-| 20. Full-Grammar Block Editing | 9/9 | Human UAT pending | - |
+| 20. Full-Grammar Block Editing | 9/9 | Complete | 2026-10-15 |
 | 21. Overlay Configuration Tab | 6/6 | Complete   | 2026-10-13 |
-| 22. Single-Instance Overlay | 2/2 | Human UAT pending | - |
-| 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
-| 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
-| 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
-| 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
-| 27. UAT Feedback Fixes 4 | 5/5 | Human UAT pending | - |
-| 28. Default config files | 4/4 | Human UAT pending | - |
+| 22. Single-Instance Overlay | 2/2 | Complete | 2026-10-15 |
+| 23. Auto-Reload Filter in Game on Apply | 4/4 | Complete | 2026-10-15 |
+| 24. UAT Feedback Fixes | 6/6 | Complete | 2026-10-15 |
+| 25. UAT Feedback Fixes 2 | 4/4 | Complete | 2026-10-15 |
+| 26. UAT Feedback Fixes 3 | 9/9 | Complete | 2026-10-15 |
+| 27. UAT Feedback Fixes 4 | 5/5 | Complete | 2026-10-15 |
+| 28. Default config files | 4/4 | Complete | 2026-10-15 |
 
 ## Backlog
 

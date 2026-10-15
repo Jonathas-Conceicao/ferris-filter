@@ -27,3 +27,6 @@ skipped: 0
 blocked: 0
 
 ## Gaps
+
+- Keywords not yet exercised in game, and PoE1-only lines (e.g. `LinkedSockets`) shown as raw rows
+  not confirmed in game: deferred to backlog 999.12 (author, 2026-10-15). Partial pass accepted.

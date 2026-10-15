@@ -16,7 +16,7 @@
 6. **UAT-06** - BaseType condition - Expected: vertical list, long list scrolls at about 7 rows, pasting `"Heavy Belt" "Utility Belt"` adds two entries - Result: pass
 7. **UAT-07** - Class condition - Expected: only the grouped picker; an unknown class stays and is removable - Result: pass
 8. **UAT-08** - style picker - Expected: no caption beneath it; an unknown style shows a warning tooltip - Result: pass
-9. **UAT-09** - the `LinkedSockets 6` line - Expected: raw row, not in the condition picker, Apply succeeds - Result: pass
+9. **UAT-09** - the `LinkedSockets 6` line - Expected: raw row, not in the condition picker, Apply succeeds - Result: pass (in the overlay; how the game itself treats the PoE1-only line was not confirmed, see backlog 999.12)
 10. **UAT-10** - add GemLevel - Expected: starts at 20 and the slider knob is inside its track - Result: pass
 11. **UAT-11** - rule body STYLE section - Expected: last in the body; Custom shows actions, a preset hides them, preset to Custom keeps the actions and drops the tag - Result: pass
 12. **UAT-12** - Corrupted condition - Expected: shows `Yes | No`; the `!= True` line reads No and is unchanged until clicked - Result: pass

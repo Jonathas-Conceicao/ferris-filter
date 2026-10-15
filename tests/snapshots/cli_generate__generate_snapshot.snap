@@ -145,12 +145,12 @@ Hide # flasks/charms fallback
   SetFontSize 21
   DisableDropSound
 
-#============================================================
+# ============================================================
 # alwaysShow.currency — tiered S-F  [styles.S .. styles.F]
 # Each block's tier letter = the styles.<tier> applied. Base lists are
 # curated data carried over from the prior filter (not stored in the model).
 # Gems are intentionally omitted (fall through to game default).
-#============================================================
+# ============================================================
 
 # --- Currency ---
 Show # Currency S

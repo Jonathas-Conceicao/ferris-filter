@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.4
-milestone_name: Overlay Filter Editor Rework
-status: milestone_complete
-stopped_at: v0.4 shipped — archived and tagged
-last_updated: "2026-09-17T00:00:00.000Z"
-last_activity: 2026-09-17 — v0.4 archived, squash-merged to main and tagged
+milestone: v0.5
+milestone_name: Generic Filter Editor & Initial App Configuration
+status: completed
+stopped_at: v0.5 milestone completed, archived and tagged
+last_updated: "2026-10-15T18:00:00.000Z"
+last_activity: 2026-10-15 -- Milestone v0.5 completed, archived, squash-merged to main and tagged v0.5
 progress:
-  total_phases: 7
-  completed_phases: 5
-  total_plans: 16
-  completed_plans: 16
+  total_phases: 13
+  completed_phases: 13
+  total_plans: 71
+  completed_plans: 71
   percent: 100
 ---
 
@@ -18,31 +18,23 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-03)
+See: .planning/PROJECT.md (updated 2026-10-15)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 15 — BaseType Lists and Rule Names
+**Current focus:** Planning next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Milestone: **v0.4 Overlay Filter Editor Rework — SHIPPED 2026-09-17**
-Phase: none in progress. Next milestone not yet scoped.
-
-v0.4 closed with an audit status of `tech_debt`: 26/26 requirements verified across 5/5 phases,
-no unsatisfied requirement and no orphans, but one user-facing blocker deferred by decision —
-`ff` cannot be launched by double-clicking the exe. See *Registered, Not Fixed* below and
-`.planning/milestones/v0.4-MILESTONE-AUDIT.md`.
-
-Start the next milestone with `/gsd-new-milestone`, which defines fresh requirements —
-`.planning/REQUIREMENTS.md` was archived and removed at close.
-
-Last activity: 2026-09-17
+Milestone v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15 (tag `v0.5`).
+Archives: .planning/milestones/v0.5-ROADMAP.md, v0.5-REQUIREMENTS.md, v0.5-MILESTONE-AUDIT.md.
+Status: Between milestones. Next: `/gsd-new-milestone`.
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 42 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16)
+- Total plans completed: 117 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
 
 **By Milestone:**
 
@@ -52,6 +44,7 @@ Last activity: 2026-09-17
 | v0.2 Declarative Rule Model | 3 | 7 | ~38 | 7 days |
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | 15 days |
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
+| v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -64,10 +57,56 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 14 P02 | 70min | 3 tasks | 2 files |
 | Phase 14 P03 | 65min | 3 tasks | 3 files |
 | Phase 14 P04 | ~90min + 2-day fix stream | 3 tasks | 15 files |
+| Phase 16 P02 | 20m | 2 tasks | 3 files |
+| Phase 16 P03 | 30min | 2 tasks | 9 files |
+| Phase 17 P02 | 25min | 2 tasks | 5 files |
+| Phase 17 P04 | 20min | 3 tasks | 7 files |
+| Phase 18 P03 | 25min | 2 tasks | 4 files |
+| Phase 18 P04 | 15min | 2 tasks | 2 files |
+| Phase 18 P05 | 25min | 2 tasks | 4 files |
+| Phase 19 P02 | 25min | 2 tasks | 4 files |
+| Phase 20 P01 | 25min | 3 tasks | 5 files |
+| Phase 21 P01 | 15min | 2 tasks | 3 files |
+| Phase 21 P02 | 20min | 2 tasks | 4 files |
+| Phase 21 P03 | 15min | 2 tasks | 6 files |
+| Phase 21 P04 | 25min | 2 tasks | 2 files |
+| Phase 21 P05 | 35min | 2 tasks | 4 files |
+| Phase 21 P06 | 45min | 3 tasks | 7 files |
+| Phase 23 P02 | 15min | 2 tasks | 2 files |
+| Phase 23 P03 | 25min | 2 tasks | 3 files |
+| Phase 23 P04 | 10min | 2 tasks | 3 files |
+| Phase 28 P02 | 25min | 2 tasks | 5 files |
+| Phase 28 P03 | 10min | 2 tasks | 5 files |
+| Phase 28 P04 | 6 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- Phase 28 added (2026-10-15): **Default config files** — committed `styles-default.json` /
+  `tiers-default.json`; live `styles.json` / `tiers.json` git-ignored and falling back to the
+  defaults when absent (DEF-01..DEF-05). Run autonomously.
+
+- Phase 27 added (2026-10-15): **UAT Feedback Fixes 4** — the author's fourth v0.5 UAT round
+  (UAT4-01..UAT4-04): right-aligned Custom styles Order column, colour dropdown scroll bar fix,
+  Simple Defences condition beside Defences, UAT results of Phases 16 and 23-26 recorded. Run
+  autonomously.
+
+- Phase 26 added (2026-10-14): **UAT Feedback Fixes 3** — the author's third v0.5 UAT round
+  (UAT3-01..UAT3-08): grouped styles table, stable style ids + custom-style rename, in-memory style
+  picker, no rule collapse, Defences card, Between + no duplicate conditions, collapsed picker,
+  Quit confirm with unapplied edits. Run autonomously.
+
+- Phase 25 added (2026-10-14): **UAT Feedback Fixes 2** — the author's second v0.5 UAT round
+  (UAT2-01..UAT2-10): rule-body layout, Sockets slider, CONFIG styles table, one all-or-nothing
+  Apply covering config and rules. Run autonomously.
+
+- Phase 24 added (2026-10-13): **UAT Feedback Fixes** — thirteen overlay fixes from the author's
+  hands-on v0.5 UAT (UAT-01..UAT-13), run autonomously.
+
+- Phase 23 added (2026-10-13): **Auto-Reload Filter in Game on Apply** — after a RULES Apply that
+  writes the filter, send `/reloaditemfilter` to a running game (RELOAD-01). Added after the v0.5
+  milestone audit at the author's request.
 
 - Phase 15 added (2026-09-08): **BaseType Lists and Rule Names** — raw `BaseType` list input with
   `class` demoted to an optional condition, and optional per-rule names shown in the editor and
@@ -123,6 +162,22 @@ work (carried forward past the v0.3 close):
 - [Phase 14]: The `unidentified` style is renamed `kite`, after its minimap icon -- the old name described the rules that used it rather than what it does. Breaking for any config naming the old name (unknown style is a hard generate-time error, by design).
 - [Phase 14]: A fully-selected class group summarises as "Any <group>", not "All" -- a summary reads as the rule's own matching test, and any one class in the list satisfies it (author, reversing the first cut the same day).
 - [Phase 14]: Running the overlay holds a lock on `target\debug\ff.exe`, so `cargo test` fails with "Access is denied" while the stripe is up (cargo builds all bin targets for integration tests). Use `cargo test --lib`, or point CARGO_TARGET_DIR at a scratch path.
+- Phase 16-01: parser fixtures use scoped -text (tests/fixtures/parser/*.filter), not global
+- Phase 16-02: keyword table is 80 entries, Ops None|Compare, lenient shape validation (no range/name checks)
+- 16-03: block metadata accessors live on Document (block_meta/meta_get); disabled-block reasons are Info diagnostics, never Error
+- 16-04: edits rebuild whole index and remap BlockIds by position; edit refused if block count/header/owned length/enabled state would change
+- [Phase 19]: 19-02: structural ops go through commit_structural (explicit ids per block); moves never cross economy markers
+- [Phase 19-03]: Only Error diagnostics in enabled non-economy blocks block Apply; rules-only Apply allowed via EconomyOp::Keep
+- [Phase 20]: 20-01: Whole patch refuses only new Errors; other line ops refuse new Errors and Warnings; set_continue/set_block_keyword stay lenient on invalid disabled blocks
+- [Phase 20-07]: Condition cards: value controls on line 2; list shapes and Rarity start as pending rows; opaque lines are raw Whole-edit rows; refused raw edits surface via ListUi.line_error
+- [Phase 21]: Spaced style names allowed (tag round trip proven); render_tiers never sorts
+- [Phase 21]: remove_meta works on disabled blocks; dangling style tags dropped there too
+- [Phase 21]: Config colour picker is opaque; show_sections owns its ScrollArea; Keep editing dismisses the outside-edit guard
+- [Phase 21]: CONFIG Apply marks filter out of date only when a file was written; RELOAD keeps config edits unless root changes
+- [Phase 23]: Reload toggle persists on change (settings::save) and never marks CONFIG dirty; interim reload line replaced only if still displayed
+- [Phase 28]: 28-02: reads go through InputPaths::styles_source/tiers_source (live, else -default.json); app-root marker is styles-default.json
+- [Phase 28]: 28-03: overlay config files keep two baselines - content (source read) and live (live file bytes or None, the changed-on-disk guard)
+- [Phase 28]: 28-04: styles.json/tiers.json untracked (index only) and git-ignored; committed -default.json files hold the defaults
 
 ### Pending Todos
 
@@ -221,11 +276,13 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
   to surface it" (D-09), and `grep price_source src/overlay/` finds nothing. A status line beside
   the Apply confirmation would close it. Author, 2026-09-09: not a priority, exceptional scenarios
   can wait.
+
 - **`Breachstone` is emitted as `Stackable Currency` but repoe-fork says `QuestItem`.** Found by
   the same audit that caught Vaal Siphoner (2 of 1347 priced items disagree; the other was fixed).
   Not corrected because the right filter `Class` for it is not confirmable from repoe alone, and a
   wrong guess would break a block that currently works. Needs one in-game check, then a
   `classOverrides` entry in `mapping.json` — the mechanism is already there.
+
 - **The overlay league is pinned to `Forbidden Rites` in `sync::OVERLAY_LEAGUE` and must be
   updated each league.** poe.ninja's `indexed` flag flips between leagues — observed reversing
   within six hours on 2026-09-10/11 — so automatic resolution cannot identify the current league.
@@ -237,6 +294,14 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
   and the CLI is the workaround.
 
 ## Deferred Items
+
+Items acknowledged and deferred at the **v0.5** close on 2026-10-15 (open-artifact audit):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Phase 14: 14-UAT.md | diagnosed, 0 pending scenarios (v0.4 artifact) |
+| uat | Phase 16: 16-HUMAN-UAT.md | partial pass accepted, 0 pending; rest in backlog 999.12 |
+| tech_debt | v0.5 audit W1-W4 and accepted review findings | See milestones/v0.5-MILESTONE-AUDIT.md |
 
 Items acknowledged and deferred at the **v0.3** close on 2026-06-27 (open-artifact audit was
 clear — these are scope/debt carries, not open GSD artifacts):
@@ -260,11 +325,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-09-08T18:13:05.246Z
-Stopped at: Phase 15 planned — 3 plans across 3 waves, plan-checker passed
-Resume file: .planning/phases/15-basetype-lists-and-rule-names/15-01-PLAN.md
+Last session: 2026-10-15
+Stopped at: v0.5 milestone complete
+Resume file: None
 
-**Next step:** `/gsd-execute-phase 15`. Phase 14's verification can run before or after — it is
-independent. The v0.4 milestone audit waits on Phase 15 shipping.
-
-**Planned Phase:** 15 (basetype-lists-and-rule-names) — 3 plans — 2026-09-08T21:09:21.802Z
+**Next step:** `/gsd-new-milestone`.

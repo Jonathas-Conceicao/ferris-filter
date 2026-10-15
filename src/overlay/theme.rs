@@ -42,10 +42,11 @@ pub const TAB_ACTIVE: Color32 = Color32::from_rgb(0xB3, 0xAF, 0x93);
 pub const DISABLED_TEXT: Color32 = Color32::from_rgb(0x88, 0x85, 0x6E);
 /// Warm accent / destructive — the red-bronze "USE DEFAULT" button. D-24.
 ///
-/// **Reserved for Phase 14's Reset control**, matching the game's own "use default" action —
-/// nothing in this phase spends it (enforced by an acceptance-criteria grep restricted to
-/// `theme.rs` itself).
+/// Used for fills and strokes only; reserved for the UI-SPEC "Accent reserved for" list. Text uses
+/// of the accent take [`WARM_ACCENT_TEXT`] instead.
 pub const WARM_ACCENT: Color32 = Color32::from_rgb(0xA3, 0x6C, 0x3C);
+/// Text uses of the accent; about 5.6:1 on ROW_BASE, AA at 13px (UI-SPEC carry-over).
+pub const WARM_ACCENT_TEXT: Color32 = Color32::from_rgb(0xBF, 0x85, 0x48);
 
 /// The Cinzel display face's family name, as registered by [`install_fonts`].
 pub const DISPLAY_FONT: &str = "cinzel";
@@ -183,6 +184,7 @@ mod tests {
         assert_eq!(SECTION_CREAM, Color32::from_rgb(0xF1, 0xE4, 0xC2));
         assert_eq!(VALUE_TEXT, Color32::from_rgb(0xFE, 0xFE, 0xFE));
         assert_eq!(WARM_ACCENT, Color32::from_rgb(0xA3, 0x6C, 0x3C));
+        assert_eq!(WARM_ACCENT_TEXT, Color32::from_rgb(0xBF, 0x85, 0x48));
         assert_eq!(DISABLED_TEXT, Color32::from_rgb(0x88, 0x85, 0x6E));
     }
 
@@ -198,6 +200,9 @@ mod tests {
 
     #[test]
     fn poe2_visuals_is_dark_mode_derived() {
-        assert!(poe2_visuals().dark_mode, "poe2_visuals must start from Visuals::dark()");
+        assert!(
+            poe2_visuals().dark_mode,
+            "poe2_visuals must start from Visuals::dark()"
+        );
     }
 }

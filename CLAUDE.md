@@ -11,9 +11,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
   `/gsd-complete-milestone`): move the `[Unreleased]` entries into a new dated version section
   with a one-line milestone summary.
 - **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
-  philosophy. `config.json` is the executable spec the `generate` command compiles. The
+  philosophy. `config.json` + `styles-default.json` are the executable spec the `generate` command compiles. The
   **byte-for-byte acceptance baseline** is now the committed fixture
-  `tests/fixtures/seed-universal.filter` (generated from `config.json` + the seed
+  `tests/fixtures/seed-universal.filter` (generated from `config.json` + `styles-default.json` + `tiers-default.json` + the seed
   `tests/fixtures/seed-prices.json`); the `artifact_guard` test enforces it. The repo-root
   `universal.filter` / `prices.json` are **generated, git-ignored, and not committed**.
   Everything from "Repository layout" down is that reference — keep it accurate.
@@ -22,19 +22,20 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 
 | Path | Purpose |
 |------|---------|
-| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `styles` (the Dracula tier palette + `unchanged`/`hidden`/`kite`), `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` and `styles`, then regenerate. |
+| `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` (and `styles.json` for how a style looks), then regenerate. A `styles` section here is rejected at load unless every entry in it equals the same-named `styles.json` entry (then it is dropped). |
+| `styles-default.json` + `tiers-default.json` (repo root) | **Committed defaults** for the live `styles.json` / `tiers.json`. Never written by the app; the tests and `artifact_guard` read them. `styles-default.json` is also the app-root marker. |
+| `styles.json` | **Per-user live file of named styles** (app root), **git-ignored and not committed**. When it is absent every reader uses `styles-default.json` instead (same for `tiers.json` → `tiers-default.json`); neither present is an error naming both. Delete it to reset to the defaults (there is no reset button). A map of style name to style object (text/border/background colours, font, minimap, beam, sound, `action` Show/Hide, `disableDropSound`), each carrying an `"id"` written first: `builtin:<name>` for the nine built-ins, a random 6-8 character lowercase alphanumeric id for custom styles (+ ADD STYLE). A file without ids still loads (ids are assigned at load, deterministically from a hash of the name so they are stable across loads, and persisted by the next overlay Apply without showing as an edit); duplicate ids, a wrong built-in id or a custom id starting with `builtin:` are load errors. The generator and `config.json` ignore ids and keep using names. File order is the overlay picker order. `S`, `A`, `B`, `C`, `D`, `E`, `F`, `unchanged` and `hidden` are required; every other style is optional, and adding one needs no code change. Read by `generate` (beside the inputs) and by `apply`/the overlay (from the app root); `--styles <path>` on `generate` and `apply` overrides it (an explicit path, no fallback; `--tiers` likewise). A config that still has an inline `styles` section loads only if every inline entry equals the same-named entry here (an untouched pre-v0.5 seed): the section is then dropped in memory (the file itself is not rewritten). Otherwise it is rejected with a message naming the file and the differing styles; move those here and delete the section. The overlay's Apply (either tab) writes this file when the CONFIG tab has edits (one style per line, file order kept, which includes a custom-style reorder; the first such Apply creates it); `tiers.json` is written the same way (entry order kept) — and the `-default` and `-fallback` pairs are never touched. |
 | `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each policy block is headed `Show # <rule name>` (from the `name` field in `config.json`). |
 | `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. `sync --league <name\|slug>` targets a specific poe.ninja league (useful during a league transition, when the automatic pick resolves to the outgoing league). |
-| `dynamic_base.json` (repo root) | **Committed template** for the dynamic filter (v0.4). A full `Config` like `config.json`, but with no `areaLevel` conditions and no rule `name`s — dynamic rules are identified by their **index in the `rules` array**. `ferrisfilter apply` seeds `dynamic.json` from it, and `apply --reset` restores from it to start a filter over without losing the baseline. |
-| `dynamic.json` (repo root) | **Generated + hand/overlay-edited working copy** of the dynamic rule set, seeded from `dynamic_base.json` on first `apply` (CLI) or on the overlay's first launch. **Git-ignored** — per-user state. Rules support `"enabled": false`, which keeps a rule in the file but emits nothing into the filter. The overlay editor (below) holds edits in memory; Apply is the single writer that persists this file and then compiles from it — nothing here changes until Apply is pressed, and a **Revert** button discards in-memory edits back to the last applied state. Two cosmetic round-trip quirks are expected and harmless, now surfacing on Apply rather than on every keystroke: an edited rule's `sockets`/`quality`/`areaLevel` objects can grow explicit `"eq": null`/`"min": null` keys (those types lack `skip_serializing_if`), and `classGroups`/`build.armourTypes` — both `HashMap`s — can reshuffle key order between saves. Both are value-equal round-trips on a git-ignored per-user file (asserted by `overlay::store`'s own round-trip test); neither is "fixed" because doing so would touch `config.json`'s own serde attributes and its fixtures. |
-| `dynamic.filter` | **Generated** by `ferrisfilter apply` and written into the game folder. **Git-ignored** at the repo root. A complete, playable filter: policy blocks from `dynamic.json` plus the economy sections priced from `prices.json`. PoE2 does not hot-reload — after `apply`, reload via Options → Game → Item Filter → Refresh. |
+| `ff-settings.json` (app root) | **Per-user overlay settings, git-ignored.** Written by the overlay's CONFIG tab; holds the selected game-folder filter name (a bare `*.filter` file name, validated before it is ever joined onto the game folder), default `dynamic.filter` when absent or invalid. Unknown keys are preserved on save. Never committed. |
+| `dynamic.filter` | **The store.** Since Phase 18 the filter file itself is the store — there is no `dynamic.json` (a leftover repo-root copy from v0.4 is obsolete and safe to delete; `/dynamic.json` stays git-ignored only so it is never committed). It lives in the game folder and is edited **in place**; general rules in it are the user's and are never touched. The **economy section** at the end of the file is fenced by two marker lines, quoted exactly: `# ff:economy-begin Generated by FerrisFilter from prices.json, tiers.json and styles.json. Do not edit; Apply regenerates everything up to economy-end.` and `# ff:economy-end End of the FerrisFilter economy section.`. Apply regenerates only what lies between them (from `prices.json`, `tiers.json` and `styles.json`) and leaves everything outside untouched; damaged markers stop apply. Every FerrisFilter metadata line (`# ff:name`, `# ff:style`, the two markers) is written with a space after `#`; the pre-v0.5 spelling `#ff:` is still read (either spelling pairs with the other, and one of each is a duplicate marker), and every Apply rewrites a remaining `#ff:` line to `# ff:`, leaving all other bytes alone. Disabled blocks are written the same way: disabling puts `# ` in front of every line (`# Show`, `# \tRarity Rare`; an empty line becomes a bare `#`), and enabling removes the `#` plus one space after it when present, otherwise just the `#` — so the older `#Show` form (earlier FerrisFilter versions, foreign filters) still enables, and disable→enable is byte-exact. Old `#Show` blocks are **not** normalized on Apply (they cannot be told apart from a foreign filter's own disabled blocks); a block takes the `# ` form the next time it is disabled. The first write keeps `<name>.filter.ffbak` next to the file — created once, never overwritten (delete it to take a fresh one); `*.ffbak` is git-ignored. Apply refuses if the file changed on disk since it was loaded (the overlay then offers **RELOAD** and **OVERWRITE**). A v0.4 file is converted once, on its first apply: markers added, `Show # <name>` names kept as `# ff:name`, the stale `# GENERATED FROM dynamic.json` header line left as it is. **Git-ignored** at the repo root. PoE2 does not hot-reload — after `ff-cli apply`, reload via Options → Game → Item Filter → Refresh; the overlay's Apply can send `/reloaditemfilter` instead (see the overlay notes). |
 | `tests/fixtures/seed-prices.json`, `tests/fixtures/seed-universal.filter` | **Committed test fixtures** — the frozen seed prices + its generated filter. These are the test oracle (`include_str!` unit tests + `generate_snapshot`/`artifact_guard`). Regenerate the `.filter` fixture only after a deliberate generator change. |
 | `prices-fallback.json` + `tiers-fallback.json` (repo root) | **Committed early-league fallback pair**, always used *together* (their values are calibrated to each other). `generate` loads them instead of `prices.json`/`tiers.json` when `prices.json` is absent/empty (with a warning) or when `--early-game` is passed. Tier membership comes from a poe2filter.com export; cutoffs are **exalt-denominated** (`unit: "exalt"`) so Divine isn't pinned to the A floor. Every base — orbs included — is priced in **exalt at its tier floor** (Divine 20→S, Chaos 2.5→A, Exalt 1→B). No stored rates: `pricer::derive_rates` reads the three anchor orbs (items[0..2]) and expresses them relative to the Chaos Orb (`exalt_in_chaos = value(Exalt)/value(Chaos)` etc.), so quoting the orbs in exalt is enough. The same code on live chaos-quoted data (Chaos = 1c) reproduces the old numbers. The three anchors must share one unit. |
 | other `*.filter` (repo root) | Active, version-controlled filters we author/maintain. |
 | `reference-old-filters/` | Older/stale filters copied from the game's config folder. **Git-ignored**, kept only as reference. Do not edit these as if they were live; treat them as read-only history. |
-| `ferrisfilter apply` | Compiles `dynamic.json` → `dynamic.filter` and writes it straight into the game folder (seeding the store from `dynamic_base.json` when absent). `--store` / `--base` / `--dest` override the paths; `--reset` restores the store from the template first; `--tiers <path>` overrides tier cutoffs while keeping live prices (same flag `generate` accepts). The dynamic counterpart to `generate` + `install` in one step. |
+| `ferrisfilter apply` | `ff-cli apply [--filter <path>] [--add-economy \| --remove-economy] [--tiers <path>] [--styles <path>]`. Refreshes the economy section of the filter at `--filter` (default `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2\dynamic.filter`). Plain apply only refreshes an existing section and **never adds one**; `--add-economy` creates it at the end of the file, `--remove-economy` deletes it. The old reset, base, store and dest flags no longer exist. **App root:** apply and the overlay find `styles.json` / `tiers.json` / `prices.json` via `FERRISFILTER_HOME`, else by walking up from the exe's folder to the one holding `styles-default.json` (only `styles-default.json` marks it — a stray `config.json` or `styles.json` is not a marker), else the working directory, else an error. A relative `--tiers`/`--styles` given to apply also resolves against the app root (`--filter` stays working-directory relative). `generate`, `install` and `sync` stay working-directory relative, so `sync` run elsewhere writes `prices.json` there while apply reads the app root's. |
 | `ferrisfilter install` | Subcommand that copies `universal.filter` into the in-game config folder (replaces the old `install.bat`). Defaults to `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2`; pass `--dest <dir>` to override and `--input <file>` for a non-default filter. Copy-only — run `generate` first. |
-| `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. As of Phase 14 it is a full editor for `dynamic.json`, plus an Apply button that writes `dynamic.filter` — see the overlay note below. |
+| `ff` (binary, v0.4) | **The GUI overlay** — `cargo build`'s default binary (`default-run = "ff"`). Opens the always-on-top stripe window over the game; Windows GUI subsystem in release builds (no console flash), debug builds keep a console for `eprintln!`/panic visibility. Entry point is `ferrisfilter::overlay::launch()`. Since Phase 18 it drives the game-folder `dynamic.filter` as a rule list over its parsed blocks (add, delete, duplicate, reorder, enable/disable, Show/Hide + Continue, naming; Apply / Revert / Reload / Sync economy) and a CONFIG tab (filter choice, `styles.json`, `tiers.json`) — see the overlay notes below. |
 | `ff-cli` (binary, v0.4) | The short-name console CLI — identical behavior to `ferrisfilter`, just a shorter name to type. Holds the console shim body `ff` used to have before it became the GUI binary. |
 | `ferrisfilter` (binary) | The long-name console CLI, unchanged: `generate` / `sync` / `install` / `apply`. |
 | `CLAUDE.md` | This file — the filter-syntax reference so we rarely need to re-fetch the docs. |
@@ -47,48 +48,185 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > **only while Path of Exile 2 or the stripe itself is the foreground window**, so the binding stays
 > free for other applications; the
 > stripe's own `✕` only **hides** it, and the system tray icon's **Quit** is the only way to exit
-> the process.
+> the process. Only one `ff` runs at a time (`src/overlay/instance.rs`): launching it again
+> (including by double-clicking the exe) brings up the running stripe, even when it is hidden to
+> the tray, and the new process exits; if the running one does not answer within about 2 seconds a
+> message box says "FerrisFilter is already running but not responding". A launch made while the
+> running one is still starting up first waits up to 10 seconds for its first frame before that
+> 2-second window starts, and several launches at once are each answered. Tray **Quit** gives up the
+> hotkey, then the tray icon, then the single-instance name at once, so relaunching right after Quit starts a fresh stripe instead of
+> asking the closing one (and a launch whose running instance quits or crashes while it is asking
+> runs as the new instance rather than showing a message). If the single-instance
+> check itself fails, `ff` does not start (a message box names the Windows error) rather than risk
+> a second stripe. Debug builds use a
+> separate instance name (`-overlay-debug`), so a `cargo run` build can run beside a release `ff`
+> (their hotkeys then conflict, which the tray tooltip already reports).
 >
-> **The rule editor (v0.4, Phase 14):** each rule in the stripe is a row that **expands in place**
-> (an accordion, not a separate edit mode) — clicking it opens its own name/style/class/base-type/
-> rarity/defence/sockets/quality/corrupted/unidentified-tier controls inline, with the rows above
-> and below still visible, since ordinal position *is* precedence in this model. Up/down arrows
-> reorder a rule (arrows, not drag-and-drop); a circular toggle enables/disables it without
-> deleting it; **+ ADD RULE** appends a new no-op rule at the bottom; deleting asks for an inline
-> confirm. Edits are held in memory as you make them — Apply is the single writer,
-> persisting the edits to `dynamic.json` and then compiling `dynamic.filter` from it, in that
-> order — and a **Revert** button discards unsaved in-memory edits back to the last applied state
-> (the accepted trade-off: unsaved edits do not survive closing the overlay or the process, in
-> exchange for a visible, deliberate discard instead of a silent autosave). `dynamic.filter`, the
-> file the game actually reads, changes **only** when **Apply** is pressed (via the same
-> `dynamic::compile_store`/`write_filter` the CLI's own `apply` subcommand uses), and the stripe
-> always shows whether the written filter currently matches the in-memory rules — a stale
-> "unapplied changes" state is expected the moment you edit anything, and clears once Apply
-> succeeds. Because PoE2 never re-reads a filter on its own, the stripe also repeats the reload
-> path after every successful Apply: **Options → Game → Item Filter → Refresh**.
+> **The rule list and editor (Phases 19-20):** the overlay treats the game-folder `dynamic.filter` as its store (see
+> the `dynamic.filter` row above); there is no `dynamic.json`. Every block of the loaded filter is a
+> row in a flat, virtualized list (responsive on the ~500-block NeverSink/FilterBlade sample), with a
+> search box matching the `# ff:name` and Class/BaseType values. A rule's name comes
+> only from its `# ff:name` line; foreign header text such as NeverSink's `$type->` tags is kept on disk
+> but never shown. An unnamed rule's header reads just `<index>  Show` (or `Hide`); the collapsed
+> summary line gives the context. Rows expand in
+> place (one at a time) with NAME, CONDITIONS, then STYLE, then Duplicate / Delete (inline confirm).
+> NAME is a plain text box (no toggle): empty means no `# ff:name` line, clearing it removes the line,
+> typing adds or updates it. STYLE is one picker of **Custom** plus every `styles.json` preset. For
+> **Custom** only, Show / Hide sits on its own line below the picker, followed by the action rows
+> with **+ style**; a preset hides both, decides Show/Hide itself and writes `# ff:style <id> <name>`.
+> Switching a preset back to Custom keeps the current actions and drops the tag. Only Show and Hide
+> are offered: a foreign `Minimal` block is shown as Minimal (Custom only) and left as is unless
+> changed. **Continue to later rules** is its own line, last in the body. No caption
+> text; an unknown style is flagged on the picker with a tooltip. Every condition and action is editable with structured
+> controls: a grouped, searchable **+ condition** / **+ style** picker, an operator dropdown with
+> plain-English labels (an existing operator is never normalized), sliders paired with exact numbers,
+> a class picker whose groups come from `config.json`, quoted lists, a colour
+> picker with alpha, and minimap / beam / sound controls. An edit rewrites only the edited value's
+> lines. A list condition added with **+ condition** is an unwritten row until its first entry.
+> Quoted lists (BaseType, mod names) are a vertical list, one entry per line with its own remove, a
+> type + Enter / **+ ADD** field that splits a pasted quoted list, in a scroll area of about 7 rows.
+> Class is the grouped picker only (classes outside `config.json`'s groups are kept and listed on one
+> compact line). Booleans are a compact **Yes | No** control (no operator; remove the condition to
+> match either; an existing operator such as `!=` is kept). Condition remove buttons are right-aligned.
+> **Sockets** is a plain numeric condition (operator plus a 0-6 slider); the overlay never edits socket
+> colours, but a hand-written `Sockets >= 5GGG` still loads and keeps its letters when the count is
+> changed.
+> **Defences** is one condition (one card per rule) with Armour / Evasion / Energy Shield toggles, each
+> with its own operator and slider; `BaseDefencePercentile` is gone from the keyword table (a line using
+> it loads as a raw row; Ward is not supported yet). **Simple Defences** is the alternative card (same
+> slot: both picker entries sit right after Rarity and are greyed when either is on the rule; clicking
+> focuses the shown card): AR / EV / ES rows, each **Any | Has | No**. Has writes `BaseArmour > 0` (and
+> `BaseEvasion` / `BaseEnergyShield`), No writes the bare `BaseEvasion 0`, Any writes no line. A
+> non-clickable strip of the 7 combinations (AR, EV, ES, AR+ES, AR+EV, EV+ES, AR+EV+ES) lights those
+> the settings match. A rule whose defence lines are all zero-based (`0`, `= 0`, `== 0`, `> 0`,
+> `>= 1`, at most one per type) loads as Simple Defences with its bytes kept until a type is changed;
+> any other defence line loads as Defences. A Defences card stays Defences while editing (even if its
+> lines become zero-based) and Apply keeps it; only Revert, RELOAD or removing the card re-classify
+> from the file; a Simple
+> card whose last Has/No row returns to Any stays open, all Any. There is no armour-class check. Whole-number conditions (and each defence) offer a
+> **Between** operator: one card with two sliders writing `X >= min` and `X <= max`, clamped so min never
+> exceeds max; a loaded one-lower/one-upper pair shows as one card with its bytes kept until edited
+> (a loaded impossible pair is flagged and left as written), while other duplicates (two `>=`) stay
+> separate cards. In the **+ condition** picker, sections start collapsed (a search opens matches), a
+> condition already on the rule is greyed (clicking it focuses the existing card instead of adding
+> another), and a pending condition shows its operator dropdown before the first value.
+> Lines with an unknown keyword show as raw rows (Enter commits; an edit that would add a grammar
+> Error shows an inline hint and changes nothing). PoE1-only conditions (e.g. `LinkedSockets`,
+> `SocketGroup`, `HasInfluence`, `MapTier`, `Exceptional`) are not in the keyword table or picker; a filter using
+> them still loads byte-for-byte, shows them as raw rows, and Apply is not blocked (warnings never
+> block), and an invalid commented-out block is shown
+> read-only. Arrows reorder
+> (disabled while searching; a move across a Continue rule is flagged `moved across Continue`). The
+> circular toggle comments a block out (`# ` before each line) or back in; commented-out blocks load as disabled rules, and a
+> commented block that is not valid grammar is flagged `can't enable`. Enabled rules with grammar
+> errors are flagged and **APPLY is refused** until they are fixed or disabled (warnings are flagged
+> but do not block). **+ ADD RULE** appends an empty `Show` rule before the economy section. The
+> economy blocks are never listed: a footer row shows `+ N locked rule blocks (economy)` with Remove,
+> or **Add economy section** when absent. All edits stay in memory until **APPLY** writes them (a
+> filter without an economy section can be applied); **REVERT** re-reads the last applied text,
+> **RELOAD** re-reads the file and discards unapplied edits (also offered when the folder was not
+> found, the filter could not be loaded, or APPLY was refused because the file changed on disk), and
+> **SYNC ECONOMY** is described below. **APPLY** is one action shared with the CONFIG tab (see the
+> CONFIG note). When it is refused because a file changed on disk the refusal names the file(s) and
+> both tabs offer **RELOAD** and **OVERWRITE** (details in the CONFIG note); OVERWRITE
+> counts as an Apply, in-game reload included (the normal guarded write: same atomic write,
+> retry and one-time `.ffbak`). An Apply
+> whose result equals the file on disk is not rewritten but still counts as applied: same status,
+> same in-game reload. Opening the overlay never writes: a v0.4 filter is announced as
+> "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. Picking a preset in the STYLE section writes
+> `# ff:style <id> <name>` (the id links the rule to the style; the name is informational and refreshed on Apply; an old `# ff:style <name>` tag still resolves by name and is rewritten to the new form on the next Apply; that tag-only migration does not mark the filter unapplied or trigger the Quit confirm) and sets the rule's actions from `styles.json`. On every Apply, styled rules are
+> rewritten from the current `styles.json` (re-read at Apply, and watched while the overlay runs: a
+> change on disk marks the filter as having unapplied changes), and the outcome says
+> `Updated N styled rules.`. A preset's actions are not shown in the UI; a hand edit
+> of a styled rule's actions in the file is overwritten on the next Apply. Switching to **Custom**
+> keeps the current actions as the rule's own. A tag naming a style that
+> does not exist is flagged `unknown style`, reported in the outcome area, and never rewritten or
+> blocking. A disabled styled rule is rewritten once it is enabled. A collapsed rule shows a one-line condition summary under its header (hidden when expanded). Collapsed rows show `styled:
+> <name>` (truncated to 12 characters) and fold flags beyond a 120px budget into a `+N` badge, so the
+> rule label always keeps at least 140px. All footer messages (Apply outcome, list status, sync
+> status, the grammar-gate and unknown-style lines) share one outcome area capped at 96px that
+> scrolls, so APPLY, REVERT and RELOAD stay on screen. A successful Apply on either tab (or OVERWRITE) sends
+> `/reloaditemfilter` to a running Path of Exile 2 when the CONFIG setting **Reload filter in game
+> after Apply** is on (the default), and the outcome reads `Reloaded in game` -- meaning every key was
+> sent to the game window; ff cannot see whether the game ran the command (an elevated game silently
+> drops the keys, see the caveats below), so if the game did not reload, Refresh by hand. The result
+> lands after the game has taken focus (which hides the stripe) and is shown on the next reveal. A
+> refused Apply sends nothing. With the game not running the outcome is just `Wrote <path>.` (the game reads the filter when it starts). For the other reasons the outcome keeps the **Options → Game → Item
+> Filter → Refresh** reminder plus the reason (`reload setting is off`, `a reload
+> is already in progress`, `the overlay window is not ready`, `could not reload in game: <cause>`).
+
+> **The CONFIG tab (Phase 21):** the stripe has **RULES | CONFIG** tabs under the header. Switching tabs
+> never applies or discards anything; a tab label shows ` *` when the other tab has unapplied edits.
+> CONFIG has three sections. **FILTER** picks which `*.filter` in the game folder the RULES tab edits
+> (or creates a new empty one, written by the first Apply); the choice applies at once, is saved
+> in `ff-settings.json` and is restored on the next launch (default `dynamic.filter`). FILTER also holds
+> the **Reload filter in game after Apply** toggle (saved on change). Picking another
+> filter while the RULES tab has unapplied edits asks first (`Switch and discard` / `Stay`). **STYLES**
+> is one table per group, each with its own header: **Built-in** (`Visibility | Name | Preview`; switch and
+> actions editable; no rename, move or delete), then the **Custom** heading, which carries the
+> **+ ADD STYLE** button and is shown even with no custom styles, with an extra right-aligned **Order** column
+> holding the arrows (at the table's right edge, like the RULES arrows). A custom style's name is an inline text field: renaming keeps its rules linked by id (rules
+> still carrying a legacy name-only tag for it are moved to the new name in memory too) and is one
+> revertible edit. Caveat: `config.json` references styles by name, so renaming a custom style it uses
+> makes `generate` fail with the unknown-style error until `config.json` is updated. Custom styles can be
+> deleted and reordered with up/down arrows (order = `styles.json` order, saved by Apply, undone by
+> Revert; a custom style never moves above the built-ins). There is no status line and no new/edited
+> tag. Each style has an on/off
+> slide switch (on = Show, off = Hide) that reaches the filter on the next Apply (styled rules
+> and the economy section are regenerated), which hides a whole group of styled rules at once (the
+> colour picker is opaque because styles store RGB and the filter always emits alpha 255). Deleting a
+> style shows how many rules use it, and warns when `config.json` itself references it
+> (`generate` would then fail). **TIERS** edits the `tiers.json` cutoffs with inline validation.
+> There is **one APPLY**, the same on either tab. It validates everything first (tier cutoffs, rule
+> grammar, economy markers and pricing, style rewrites, and the changed-on-disk guard of the filter and of any config file
+> with CONFIG edits; an unedited `styles.json`/`tiers.json` just follows the disk and is never
+> written), then writes `styles.json`, `tiers.json` and the filter (rendered with the pending styles and
+> tiers) all or none, then reloads in game under the existing rules. With no filter loaded it writes
+> the config files only. A refusal writes nothing. When a file changed on disk the refusal names it
+> and both tabs offer **RELOAD** (re-reads the changed files; a changed filter discards rule edits, a
+> changed `styles.json`/`tiers.json` discards config edits) and **OVERWRITE** (writes everything over
+> them); nothing is overwritten silently. **Revert** stays per tab (RULES discards rule edits, CONFIG
+> discards config edits), and both tabs show the same unapplied state and the same Apply message.
+> The RULES style picker and tag checks follow the unapplied CONFIG style set. Tray **Quit** with anything
+> unapplied asks **Apply & quit** (quits only after a successful Apply, and waits for an in-game reload to
+> finish) / **Quit without applying** / **Cancel**; with nothing pending it exits at once.
+> After Apply the RULES tab sees the new styles at once. Rules whose
+> `# ff:style` names a deleted style lose that tag on that Apply and keep their actions.
 >
-> **Rule name, class off switch, and base-type list (v0.4, Phase 15):** a rule can carry an
-> optional **name**, entered via its own circular toggle at the top of the expanded body; a named
-> rule's row header reads `<index>  <style> - <name>` and the name becomes the emitted filter
-> block's own comment (`Show # <name>`), while an unnamed rule keeps the generator's derived
-> `rule <index>` label — there is no auto-fill, a name is empty until typed. **Classes** gained
-> their own off switch alongside every other condition — and the picker's **JEWELLERY** group
-> carries `Jewels` alongside Rings/Amulets/Belts (added 2026-09-16). A jewel is not jewellery, but
-> it is the only class that would ever sit in a group of its own, and a one-item header would spend
-> a whole collapsible section on one checkbox. The groups are picker convenience only: they come
-> from `config.json`'s `jewelleryClasses` (PITFALLS §10 — never hardcoded in the GUI), the emitter
-> never reads them, and listing a class there writes no rule anywhere. The off switch itself: switching it off hides the class picker
-> entirely (not greyed out) and discards the selection, which is what makes a base-type-only rule
-> — matching on `BaseType` with no `Class` line at all — expressible in the overlay. **Base types**
-> are entered one at a time directly after the class control: type a name and press Enter or
-> **+ ADD** to commit it to the list, and each listed entry has its own `Remove`; a quoted list
-> pasted straight out of a hand-written filter (`"Heavy Belt" "Utility Belt"`) splits into separate
-> entries. Base names are **not validated** against anything — PoE2 itself warns on an unknown
-> base when the filter loads, which is a better and more current oracle than any list this repo
-> could keep up to date across leagues.
+> **Development warning:** running `ff` from the repo resolves the repo root as the app root, so Apply
+> (from either tab, once CONFIG has edits) writes your git-ignored live `styles.json` / `tiers.json` there.
+> Nothing committed changes (`artifact_guard` and the tests read the `-default.json` files), but to keep your
+> own live config intact set `FERRISFILTER_HOME` (and `USERPROFILE`) to a temp copy first.
+>
+> **In-game reload after Apply (Phase 23, RELOAD-01):** the mechanism is: focus the game, Enter,
+> paste `/reloaditemfilter` from the clipboard (Ctrl+V), Enter -- the same clipboard-paste method
+> Exiled Exchange 2 and Awakened PoE Trade use for `/` commands. There is deliberately **no Ctrl+A**
+> (EE2 skips select-all for `/` commands too): a synthetic Ctrl+A fired another tool's global
+> hotkey. Ctrl+V and Enter are the only chords/keys sent. One Apply click runs one send sequence, never repeated
+> or retried. The game window is found by title ("path of exile", so "Exiled Exchange 2" does not count)
+> AND by a process image name starting with `PathOfExile`, so a browser tab titled "Path of Exile 2"
+> is not the game. Keys are sent only after checking the game is the foreground window; otherwise
+> nothing is sent and the reason is shown. Caveats: `/reloaditemfilter` reloads the filter **selected
+> in game**, so if the overlay edits a different filter than the one picked in Options → Game → Item
+> Filter, the reload will not show the edit (the overlay does not switch the game's filter). Close the
+> chat box before pressing Apply: nothing outside the game can tell whether chat is open (EE2 and
+> Awakened PoE Trade share this), so if it was already open with text, the first Enter sends that
+> text as a chat message and `/reloaditemfilter` is not sent. No key is pressed before that Enter
+> on purpose (with chat closed it would reach the game's own bindings). Run `ff` and the
+> game at the same privilege level (Windows silently drops input into an elevated game, undetectably,
+> so the status still reads `Reloaded in game`). The clipboard's
+> text is restored about 120 ms later unless something else was copied meanwhile; non-text clipboard
+> content (an image, copied files) is replaced. The setting is the `reload_after_apply` key in
+> `ff-settings.json`, saved as soon as it is toggled; absent means on, and a value that is not
+> `true`/`false` means **off** with a warning naming the key (an unreadable opt-out fails closed).
+> The same holds for the whole file: an `ff-settings.json` that exists but cannot be used (invalid
+> JSON such as a trailing comma, or unreadable) means `dynamic.filter` **and** reload off, with a
+> warning that says both; only a missing file means the default (on).
+> `ff-cli apply` does not send
+> the command.
 
 > **Economy sync from the overlay (v0.4):** a **SYNC ECONOMY** button beside Apply refreshes
-> `prices.json` in the store's directory, on a worker thread so the stripe never freezes on network
+> `prices.json` in the app root (see the App root note in the `ferrisfilter apply` row), on a worker thread so the stripe never freezes on network
 > I/O. It writes prices and nothing else — `dynamic.filter` still changes only on **Apply**, so the
 > button is safe to press mid-map and the new economy lands on the next Apply you choose to make.
 > The GUI exposes no `--standard`/`--hc`/`--league`/`--tiers` switches: it syncs with the tiers file
@@ -176,8 +314,8 @@ Show # Human description (optional-slug)
   unidentified items (e.g. `UnidentifiedItemTier >= 4`). Used by the unidentified rules, which
   wear the `kite` style. Note the condition and the style are independent: the condition is what
   matches, `kite` is only how a match is drawn.
-- `GemLevel`, `MapTier` (PoE1), `MemoryStrands`, etc. — exist in the grammar but verify
-  PoE2 applicability before relying on them.
+- `GemLevel` etc. — verify PoE2 applicability before relying on them. PoE1-only conditions are
+  not in FerrisFilter's keyword table (kept as raw lines when met).
 
 **Boolean (value `True`/`False`)**
 - `Corrupted`, `Mirrored`, `Identified`, `FracturedItem`, `HasImplicitMod`, `AnyEnchantment`
@@ -340,8 +478,12 @@ future use).
 
 ### Named styles
 
-The `styles` object defines all named styles. An unknown style name in a rule is a hard error
-at generate-time. Current styles:
+`styles.json` (or `styles-default.json` when it is absent) defines all named styles; the overlay's style picker lists them in file order.
+`S`, `A`, `B`, `C`, `D`, `E`, `F`, `unchanged` and `hidden` are required; any other style is
+optional. An unknown style in an enabled rule, a missing required style, a duplicate name, a name
+differing only by case from a required one, or a bad field (unknown colour, unsafe custom sound
+name) is a load-time error naming the problem. A style's `action` decides Show/Hide for the rule
+using it, and Hide styles may set any visual (shown on Alt-reveal). Current styles:
 
 | Name | Action | What it does |
 |---|---|---|
@@ -356,6 +498,7 @@ at generate-time. Current styles:
 | `unchanged` | Show | No color/font/minimap/beam overrides — native rarity color and game defaults |
 | `hidden` | Hide | No color overrides, font 21, DisableDropSound — Alt-reveals as de-emphasized |
 | `kite` | Show | No color overrides (native rarity), Orange beam, Orange Kite minimap, alert sound. A **locator** style, not a value tier — it says "go look over there" without claiming worth, which is why its orange sits outside the Dracula ladder. Renamed from `unidentified` on 2026-09-07: the old name described the rules that happened to use it rather than what it does, so seeing it offered for an unrelated rule in the overlay picker read as nonsense. |
+| `exceptional` | Show | Pink text/border, Dracula bg, no font override, Pink beam, Pink Cross minimap, no sound — the exceptional-gear highlight, kept separate from `S` so it can be retuned independently |
 
 ### `classGroups`
 

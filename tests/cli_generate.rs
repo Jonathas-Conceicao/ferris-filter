@@ -30,8 +30,12 @@ fn generate_on_seed() -> String {
             .as_nanos()
     ));
     fs::create_dir_all(&dir).expect("create temp gen dir");
-    for f in ["config.json", "tiers.json"] {
-        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("config.json", "config.json"),
+        ("tiers-default.json", "tiers.json"),
+        ("styles-default.json", "styles.json"),
+    ] {
+        fs::copy(manifest.join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
     fs::copy(
         manifest.join("tests/fixtures/seed-prices.json"),
@@ -65,15 +69,25 @@ fn generate_early_game() -> String {
             .as_nanos()
     ));
     fs::create_dir_all(&dir).expect("create temp early-game gen dir");
-    for f in ["config.json", "prices-fallback.json", "tiers-fallback.json"] {
-        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("config.json", "config.json"),
+        ("styles-default.json", "styles.json"),
+        ("prices-fallback.json", "prices-fallback.json"),
+        ("tiers-fallback.json", "tiers-fallback.json"),
+    ] {
+        fs::copy(manifest.join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
 
     let out_path = dir.join("out.filter");
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
-        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .success();
 
@@ -101,7 +115,11 @@ fn split_blocks(filter: &str) -> Vec<Vec<String>> {
                 }
             }
             // Start new block with just the keyword
-            let keyword = if line.starts_with("Show") { "Show" } else { "Hide" };
+            let keyword = if line.starts_with("Show") {
+                "Show"
+            } else {
+                "Hide"
+            };
             current = Some(vec![keyword.to_string()]);
         } else if let Some(ref mut blk) = current {
             let trimmed = line.trim();
@@ -206,8 +224,12 @@ fn generate_config_flag_reads_alternate_path() {
     // config.json copied under a non-default name; default name deliberately absent.
     fs::copy(manifest.join("config.json"), dir.join("custom-config.json"))
         .expect("copy config.json as custom-config.json");
-    for f in ["prices-fallback.json", "tiers-fallback.json"] {
-        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("styles-default.json", "styles.json"),
+        ("prices-fallback.json", "prices-fallback.json"),
+        ("tiers-fallback.json", "tiers-fallback.json"),
+    ] {
+        fs::copy(manifest.join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
 
     let out_path = dir.join("out.filter");
@@ -225,7 +247,10 @@ fn generate_config_flag_reads_alternate_path() {
         .assert()
         .success();
 
-    assert!(out_path.exists(), "generate --config did not produce output");
+    assert!(
+        out_path.exists(),
+        "generate --config did not produce output"
+    );
 }
 
 /// Regression: `--standard`/`--hc` are reachable from the bare `sync` command, so
@@ -256,8 +281,8 @@ fn unknown_subcommand_exits_code_2() {
         .stderr(contains("unrecognized subcommand"));
 }
 
-/// `ferrisfilter generate` run from the repo root (where config.json and tiers.json
-/// exist) must exit successfully.
+/// `ferrisfilter generate` run from the repo root (config.json plus explicit default styles/tiers)
+/// must exit successfully.
 ///
 /// Satisfies ROADMAP success criterion — generate + valid inputs → exit 0.
 ///
@@ -266,32 +291,37 @@ fn unknown_subcommand_exits_code_2() {
 /// against itself, defeating its purpose).
 #[test]
 fn generate_in_repo_root_succeeds() {
-    // The test binary's cwd is the Cargo manifest directory, which is the repo root.
-    // config.json is created by plan 01-02; tiers.json is created by plan 01-03.
-    // In the merged state both files exist at the repo root, so this test passes.
-    //
-    // In the plan 01-03 worktree, config.json does not exist yet (plan 01-02 owns it),
-    // so we skip this test if it is absent.
+    // Exercises the repo-root config.json with the committed default styles/tiers
+    // (`styles-default.json` / `tiers-default.json`), passed explicitly so the author's
+    // local live `styles.json` / `tiers.json` are never read.
     let config_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config.json");
-    if !config_path.exists() {
-        eprintln!("SKIP: config.json not present in this worktree (plan 01-02 owns it)");
-        return;
-    }
+    assert!(
+        config_path.exists(),
+        "config.json missing from the repo root"
+    );
 
     let out_path = std::env::temp_dir().join("ferrisfilter_repo_root_test.filter");
 
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--styles",
+            "styles-default.json",
+            "--tiers",
+            "tiers-default.json",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .success();
 }
 
 /// Snapshot test — locks the generator output against future regression (D-05).
 ///
-/// Runs `ferrisfilter generate --output <tmp>` from the repo root (where config.json,
-/// currency.json, and tiers.json live), reads the produced file, normalizes CRLF→LF,
+/// Runs `ferrisfilter generate --output <tmp>` on the seed inputs (config.json plus the
+/// committed styles-default.json / tiers-default.json, copied into a temp dir), reads the produced file, normalizes CRLF→LF,
 /// and asserts it matches the committed snapshot oracle.
 ///
 /// To update the snapshot after a deliberate generator change:
@@ -472,21 +502,31 @@ fn cap_is_rule_driven() {
 
     // Read config.json and mutate the areaLevel.max=75 sentinel to 60.
     // CAP-01 (build weapons) and CAP-02 (build armour) both use max:75; replacing all is fine.
-    let config_text = std::fs::read_to_string(manifest.join("config.json"))
-        .expect("read config.json");
+    let config_text =
+        std::fs::read_to_string(manifest.join("config.json")).expect("read config.json");
     let mutated_config = config_text.replace("\"max\": 75", "\"max\": 60");
 
     // Write the mutated config + other required fallback files into the temp dir.
     std::fs::write(dir.join("config.json"), mutated_config).expect("write mutated config.json");
-    for f in ["prices-fallback.json", "tiers-fallback.json"] {
-        std::fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("styles-default.json", "styles.json"),
+        ("prices-fallback.json", "prices-fallback.json"),
+        ("tiers-fallback.json", "tiers-fallback.json"),
+    ] {
+        std::fs::copy(manifest.join(src), dir.join(dst))
+            .unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
 
     let out_path = dir.join("out.filter");
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
-        .args(["generate", "--early-game", "--output", out_path.to_str().unwrap()])
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
         .assert()
         .success();
 
@@ -524,7 +564,13 @@ fn pricer_section_present_and_unchanged() {
     // With tiers.json (S=30c, A=20c, B=12c) and seed-prices.json:
     // Currency A and B have no items (nothing lands between 12c and 30c for currency);
     // S, C, D, E, F do have items.
-    for tier in &["Currency S", "Currency C", "Currency D", "Currency E", "Currency F"] {
+    for tier in &[
+        "Currency S",
+        "Currency C",
+        "Currency D",
+        "Currency E",
+        "Currency F",
+    ] {
         assert!(
             output.contains(&format!("Show # {}", tier)),
             "Currency tier block '{}' not found in output",
@@ -558,4 +604,233 @@ fn pricer_section_present_and_unchanged() {
         !policy_section.contains("Class == "),
         "policy section must not contain 'Class == ' (bare Class is correct for policy blocks)"
     );
+}
+
+/// `generate --help` and `apply --help` both advertise `--styles` (OD-2).
+#[test]
+fn help_shows_styles_flag_on_generate_and_apply() {
+    for sub in ["generate", "apply"] {
+        Command::cargo_bin("ferrisfilter")
+            .unwrap()
+            .args([sub, "--help"])
+            .assert()
+            .success()
+            .stdout(contains("--styles"));
+    }
+}
+
+/// Fresh temp dir holding the early-game input set (config, fallback pair; no styles.json).
+fn early_game_dir(tag: &str) -> std::path::PathBuf {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_{tag}_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    for f in ["config.json", "prices-fallback.json", "tiers-fallback.json"] {
+        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+    dir
+}
+
+/// STYLE-01 end to end: a style added only to styles.json and referenced from config.json
+/// is emitted by `generate` with no code change.
+#[test]
+fn new_style_in_styles_json_is_emitted_with_no_code_change() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = early_game_dir("new_style");
+
+    let styles =
+        fs::read_to_string(manifest.join("styles-default.json")).expect("read styles-default.json");
+    let end = styles.rfind('}').expect("closing brace");
+    let entry = r#",
+  "craftable": { "text": [1,2,3], "border": [1,2,3], "background": [40,42,54], "font": 31, "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false }
+"#;
+    let new_styles = format!("{}{}{}", styles[..end].trim_end(), entry, &styles[end..]);
+    assert_ne!(new_styles, styles, "styles.json edit must change the text");
+    fs::write(dir.join("styles.json"), new_styles).unwrap();
+
+    let config = fs::read_to_string(dir.join("config.json")).unwrap();
+    let new_config = config.replacen("\"style\": \"Recycle\",", "\"style\": \"craftable\",", 1);
+    assert_ne!(new_config, config, "config.json edit must change the text");
+    fs::write(dir.join("config.json"), new_config).unwrap();
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let out = normalize(&fs::read_to_string(&out_path).unwrap());
+    assert!(
+        out.contains("SetTextColor 1 2 3 255"),
+        "custom style colour missing"
+    );
+    assert!(out.contains("SetFontSize 31"), "custom style font missing");
+}
+
+/// OD-2: `generate --styles <path>` reads that file with the default styles.json absent.
+#[test]
+fn generate_styles_flag_reads_alternate_path() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = early_game_dir("styles_flag");
+    fs::copy(
+        manifest.join("styles-default.json"),
+        dir.join("alt-styles.json"),
+    )
+    .unwrap();
+
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--early-game",
+            "--styles",
+            "alt-styles.json",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let with_flag = normalize(&fs::read_to_string(&out_path).unwrap());
+    assert_eq!(
+        with_flag,
+        generate_early_game(),
+        "alt styles file must match the default run"
+    );
+
+    // Same directory without the flag: neither styles.json nor styles-default.json exists, so it
+    // must fail naming both.
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--early-game",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("styles.json"))
+        .stderr(contains("styles-default.json"));
+}
+
+/// Fresh temp dir with config.json, the committed `styles-default.json` / `tiers-default.json`
+/// under their own names (no live `styles.json` / `tiers.json`) and the seed prices.
+fn seed_dir_with_defaults(tag: &str) -> std::path::PathBuf {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_defaults_{tag}_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    for f in ["config.json", "styles-default.json", "tiers-default.json"] {
+        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+    fs::copy(
+        manifest.join("tests/fixtures/seed-prices.json"),
+        dir.join("prices.json"),
+    )
+    .expect("copy seed-prices.json fixture");
+    dir
+}
+
+/// DEF-03: with no live files, `generate` reads the defaults, reproduces the seed oracle and
+/// creates neither live file.
+#[test]
+fn generate_falls_back_to_default_files() {
+    let dir = seed_dir_with_defaults("fallback");
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+    let generated = normalize(&fs::read_to_string(&out_path).unwrap());
+    let oracle = normalize(
+        &fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-universal.filter"
+        ))
+        .unwrap(),
+    );
+    assert_eq!(generated, oracle);
+    assert!(!dir.join("styles.json").exists(), "styles.json was created");
+    assert!(!dir.join("tiers.json").exists(), "tiers.json was created");
+}
+
+/// DEF-03: a present live styles.json wins over the default beside it.
+#[test]
+fn generate_prefers_live_styles_over_default() {
+    let dir = seed_dir_with_defaults("live_wins");
+    let default = fs::read_to_string(dir.join("styles-default.json")).unwrap();
+    let live = default.replace("\"font\": 37", "\"font\": 44");
+    assert_ne!(live, default, "the edit must change the text");
+    fs::write(dir.join("styles.json"), live).unwrap();
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+    let generated = fs::read_to_string(&out_path).unwrap();
+    assert!(generated.contains("SetFontSize 44"), "live styles not used");
+    assert!(!generated.contains("SetFontSize 37"), "default styles used");
+}
+
+/// DEF-03: an explicit `--styles` path is never swapped for the default.
+#[test]
+fn generate_explicit_styles_flag_never_falls_back() {
+    let dir = seed_dir_with_defaults("explicit");
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--styles",
+            "styles.json",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("Cannot read"))
+        .stderr(contains("styles.json"));
+    assert!(!out_path.exists());
+    assert!(!dir.join("styles.json").exists());
+}
+
+/// DEF-03: neither styles file present -> the error names both.
+#[test]
+fn generate_without_any_styles_file_names_both() {
+    let dir = seed_dir_with_defaults("neither");
+    fs::remove_file(dir.join("styles-default.json")).unwrap();
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("styles.json"))
+        .stderr(contains("styles-default.json"));
 }

@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ferrisfilter", about = "Compile a PoE2 loot filter from your config")]
+#[command(
+    name = "ferrisfilter",
+    about = "Compile a PoE2 loot filter from your config"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -29,7 +32,13 @@ pub enum Commands {
         /// Unlike --early-game this keeps your live prices.json.
         #[arg(long)]
         tiers: Option<String>,
-
+        /// Styles file to use instead of styles.json.
+        ///
+        /// Named styles live in styles.json beside the inputs; point this at another file to
+        /// compile against a different style set (for example one carrying the styles of an
+        /// experimental config) without editing the committed one.
+        #[arg(long)]
+        styles: Option<String>,
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
     Sync {
@@ -50,33 +59,41 @@ pub enum Commands {
         #[command(subcommand)]
         sub: Option<SyncSubcommand>,
     },
-    /// Compile dynamic.json into dynamic.filter and write it to the PoE2 config folder
+    /// Refresh the economy section of a filter in place
     ///
-    /// Seeds dynamic.json from dynamic_base.json on first run. Unlike `generate`, this both
-    /// compiles and installs — PoE2 still needs the filter reloaded in-game afterwards.
+    /// The filter itself is the store: only the lines between `# ff:economy-begin` and
+    /// `# ff:economy-end` are regenerated from prices.json, tiers.json and styles.json found in
+    /// the FerrisFilter folder (FERRISFILTER_HOME, else the folder holding ff-cli.exe, else the
+    /// working directory). The first write keeps `<name>.filter.ffbak`; a v0.4 dynamic.filter is
+    /// converted on its first apply. PoE2 still needs the filter reloaded in-game afterwards.
     Apply {
-        /// Dynamic rule store to compile [default: dynamic.json]
-        #[arg(long, default_value = "dynamic.json")]
-        store: String,
-        /// Template used to seed the store, and to restore it with --reset
-        /// [default: dynamic_base.json]
-        #[arg(long, default_value = "dynamic_base.json")]
-        base: String,
-        /// Destination PoE2 config folder
-        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        /// Filter file to update
+        /// [default: dynamic.filter in %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
         #[arg(long)]
-        dest: Option<String>,
-        /// Discard the current store and restore it from the base before compiling
+        filter: Option<String>,
+        /// Add an economy section at the end of the filter (creates the file if it does not
+        /// exist; its folder must exist)
+        #[arg(long, conflicts_with = "remove_economy")]
+        add_economy: bool,
+        /// Remove the economy section from the filter
         #[arg(long)]
-        reset: bool,
+        remove_economy: bool,
         /// Tier-cutoff file to use instead of tiers.json.
         ///
         /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
         /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
-        /// Unlike --early-game this keeps your live prices.json.
+        /// Unlike --early-game this keeps your live prices.json. A relative path is resolved
+        /// against the FerrisFilter folder, like tiers.json itself.
         #[arg(long)]
         tiers: Option<String>,
-
+        /// Styles file to use instead of styles.json.
+        ///
+        /// Named styles live in styles.json beside the inputs; point this at another file to
+        /// compile against a different style set (for example one carrying the styles of an
+        /// experimental config) without editing the committed one. A relative path is resolved
+        /// against the FerrisFilter folder, like styles.json itself.
+        #[arg(long)]
+        styles: Option<String>,
     },
     /// Copy a generated .filter into the PoE2 config folder so it takes effect in-game
     Install {

@@ -5,8 +5,7 @@ use crate::models::prices::{PriceItem, PricesFile};
 use crate::sync::mapping::Mapping;
 use crate::sync::models::{ExchangeOverview, ItemOverview};
 
-pub const OVERVIEW_URL: &str =
-    "https://poe.ninja/poe2/api/economy/exchange/current/overview";
+pub const OVERVIEW_URL: &str = "https://poe.ninja/poe2/api/economy/exchange/current/overview";
 
 /// Stash item overview endpoint — serves uniques (and other non-fungible items),
 /// keyed by plural `type` values (e.g. `UniqueWeapons`). Different shape than the
@@ -141,7 +140,10 @@ pub fn build_prices(
                     ot.base_type_is_name,
                 ),
                 None => {
-                    eprintln!("Warning: unmapped poe.ninja type '{}', skipping", type_value);
+                    eprintln!(
+                        "Warning: unmapped poe.ninja type '{}', skipping",
+                        type_value
+                    );
                     continue;
                 }
             }
@@ -287,8 +289,11 @@ pub fn build_prices(
                 None => (item_class, category.clone()),
             };
 
-            let (chaos, div, exalt) =
-                convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
+            let (chaos, div, exalt) = convert_primary(
+                &overview.core.primary,
+                line.primary_value,
+                &overview.core.rates,
+            );
 
             let item = PriceItem {
                 name: name.clone(),
@@ -360,7 +365,9 @@ pub fn build_unique_items(
             continue;
         }
         if overview.core.rates.is_empty() {
-            eprintln!("Warning: unique type '{type_value}' has empty rates, skipping (no conversion possible)");
+            eprintln!(
+                "Warning: unique type '{type_value}' has empty rates, skipping (no conversion possible)"
+            );
             continue;
         }
 
@@ -375,8 +382,11 @@ pub fn build_unique_items(
                 continue;
             }
 
-            let (chaos, div, exalt) =
-                convert_primary(&overview.core.primary, line.primary_value, &overview.core.rates);
+            let (chaos, div, exalt) = convert_primary(
+                &overview.core.primary,
+                line.primary_value,
+                &overview.core.rates,
+            );
 
             out.push(PriceItem {
                 name: line.name.clone(),
@@ -527,11 +537,17 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
             Ok(body) => match serde_json::from_str::<ItemOverview>(&body) {
                 Ok(ov) => item_overviews.push((it.r#type.clone(), ov)),
                 Err(e) => {
-                    eprintln!("Warning: failed to parse item overview for type '{}': {e}", it.r#type);
+                    eprintln!(
+                        "Warning: failed to parse item overview for type '{}': {e}",
+                        it.r#type
+                    );
                 }
             },
             Err(e) => {
-                eprintln!("Warning: failed to fetch item overview for type '{}': {e}", it.r#type);
+                eprintln!(
+                    "Warning: failed to fetch item overview for type '{}': {e}",
+                    it.r#type
+                );
             }
         }
     }
@@ -601,7 +617,10 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
         items,
     };
 
-    write_prices_atomic(&base_dir.join("prices.json").to_string_lossy(), &prices_file)?;
+    write_prices_atomic(
+        &base_dir.join("prices.json").to_string_lossy(),
+        &prices_file,
+    )?;
     // The resolved league goes back to the caller, not just into the file. The GUI has no console
     // to read the "Resolved league:" line above, and a sync that silently picks the wrong league
     // is worse than one that fails: the filter would be priced for someone else's economy and look
@@ -689,8 +708,8 @@ mod tests {
     fn make_overview(
         primary: &str,
         rates: &[(&str, f64)],
-        items: &[(&str, &str)],   // (id, name)
-        lines: &[(&str, f64)],    // (id, primaryValue)
+        items: &[(&str, &str)], // (id, name)
+        lines: &[(&str, f64)],  // (id, primaryValue)
     ) -> ExchangeOverview {
         let rates_map: HashMap<String, f64> =
             rates.iter().map(|(k, v)| (k.to_string(), *v)).collect();
@@ -781,7 +800,10 @@ mod tests {
             .expect("build_prices should succeed");
 
         // Find "Some Orb" (not the anchor orbs)
-        let item = items.iter().find(|i| i.name == "Some Orb").expect("Some Orb must be present");
+        let item = items
+            .iter()
+            .find(|i| i.name == "Some Orb")
+            .expect("Some Orb must be present");
         let chaos = item.chaos.expect("chaos must be Some");
         let div = item.div.expect("div must be Some");
         let exalt = item.exalt.expect("exalt must be Some");
@@ -801,7 +823,11 @@ mod tests {
         let overview = make_overview(
             "divine",
             &[("chaos", 32.24), ("exalted", 149.0)],
-            &[("divine", "Divine Orb"), ("chaos", "Chaos Orb"), ("exalted", "Exalted Orb")],
+            &[
+                ("divine", "Divine Orb"),
+                ("chaos", "Chaos Orb"),
+                ("exalted", "Exalted Orb"),
+            ],
             &[("divine", 1.0), ("chaos", 0.031), ("exalted", 0.0067)],
         );
         let mapping = minimal_mapping();
@@ -809,7 +835,10 @@ mod tests {
             .expect("build_prices should succeed");
 
         // Divine Orb: primaryValue=1.0, divine primary → chaos = 1.0 * 32.24 = 32.24
-        let divine = items.iter().find(|i| i.name == "Divine Orb").expect("Divine Orb must be present");
+        let divine = items
+            .iter()
+            .find(|i| i.name == "Divine Orb")
+            .expect("Divine Orb must be present");
         let chaos_val = divine.chaos.expect("Divine Orb chaos must be Some");
         assert!(
             (chaos_val - 32.24).abs() < 0.1,
@@ -868,11 +897,25 @@ mod tests {
         let items = super::build_prices(&[("Currency".to_string(), overview)], &mapping)
             .expect("build_prices should succeed");
 
-        let exalt = items.iter().find(|i| i.name == "Exalted Orb").expect("Exalted Orb must exist");
-        assert_eq!(exalt.exalt, Some(1.0), "Exalted Orb exalt must be 1.0 (by definition)");
+        let exalt = items
+            .iter()
+            .find(|i| i.name == "Exalted Orb")
+            .expect("Exalted Orb must exist");
+        assert_eq!(
+            exalt.exalt,
+            Some(1.0),
+            "Exalted Orb exalt must be 1.0 (by definition)"
+        );
 
-        let chaos = items.iter().find(|i| i.name == "Chaos Orb").expect("Chaos Orb must exist");
-        assert_eq!(chaos.chaos, Some(1.0), "Chaos Orb chaos must be 1.0 (by definition)");
+        let chaos = items
+            .iter()
+            .find(|i| i.name == "Chaos Orb")
+            .expect("Chaos Orb must exist");
+        assert_eq!(
+            chaos.chaos,
+            Some(1.0),
+            "Chaos Orb chaos must be 1.0 (by definition)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -882,10 +925,7 @@ mod tests {
     fn empty_lines_contributes_zero_items_no_error() {
         let empty_overview = make_overview("divine", &[("chaos", 32.24)], &[], &[]);
         let mapping = minimal_mapping();
-        let result = super::build_prices(
-            &[("Currency".to_string(), empty_overview)],
-            &mapping,
-        );
+        let result = super::build_prices(&[("Currency".to_string(), empty_overview)], &mapping);
         assert!(result.is_ok(), "empty lines should not error");
         // Items list may be empty (no anchors either since no data)
         let items = result.unwrap();
@@ -911,7 +951,10 @@ mod tests {
         assert!(result.is_ok(), "empty rates should not error");
         // Should have no items from this type (skipped due to empty rates)
         let items = result.unwrap();
-        assert!(!items.iter().any(|i| i.name == "Some Orb"), "item should be skipped when rates empty");
+        assert!(
+            !items.iter().any(|i| i.name == "Some Orb"),
+            "item should be skipped when rates empty"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -935,11 +978,8 @@ mod tests {
             ],
         );
         let mapping = gem_mapping();
-        let items = super::build_prices(
-            &[("UncutGems".to_string(), gem_overview)],
-            &mapping,
-        )
-        .expect("build_prices with gem filter should succeed");
+        let items = super::build_prices(&[("UncutGems".to_string(), gem_overview)], &mapping)
+            .expect("build_prices with gem filter should succeed");
 
         // All three levels survive — no minLevel floor.
         assert_eq!(
@@ -984,8 +1024,14 @@ mod tests {
         }
 
         // No collapse: three distinct base_types.
-        let l16 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 16)").unwrap();
-        let l20 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 20)").unwrap();
+        let l16 = items
+            .iter()
+            .find(|i| i.base_type == "Uncut Spirit Gem (Level 16)")
+            .unwrap();
+        let l20 = items
+            .iter()
+            .find(|i| i.base_type == "Uncut Spirit Gem (Level 20)")
+            .unwrap();
         assert!(
             (l16.div.unwrap_or(0.0) - 0.1).abs() < 0.001,
             "level 16 keeps its own price (div ~0.1); got {:?}",
@@ -1043,7 +1089,10 @@ mod tests {
             Some("Omen"),
             "leader Sagas are the Omen class"
         );
-        assert_eq!(super::derive_expedition_class("Vorana's Saga"), Some("Omen"));
+        assert_eq!(
+            super::derive_expedition_class("Vorana's Saga"),
+            Some("Omen")
+        );
         assert_eq!(
             super::derive_expedition_class("Thaumaturgic Flux (Level 20)"),
             None,
@@ -1100,7 +1149,10 @@ mod tests {
             "an overridden base type must not inherit its bucket's class — emitting \
              Class == \"Stackable Currency\" for an Incubator produces a rule that never matches"
         );
-        assert_eq!(siphoner.category, "Incubators", "the override also moves its section");
+        assert_eq!(
+            siphoner.category, "Incubators",
+            "the override also moves its section"
+        );
 
         let orb = items
             .iter()
@@ -1231,7 +1283,9 @@ mod tests {
         assert!(items.iter().any(|i| i.name == "Some Orb"));
         // ...and the unresolved slug never appears as a name OR a baseType.
         assert!(
-            !items.iter().any(|i| i.name.contains('-') || i.base_type.contains('-')),
+            !items
+                .iter()
+                .any(|i| i.name.contains('-') || i.base_type.contains('-')),
             "no kebab-case slug should leak into name/baseType: {:?}",
             items.iter().map(|i| &i.base_type).collect::<Vec<_>>()
         );
@@ -1291,8 +1345,14 @@ mod tests {
                 primary: "divine".to_string(),
             },
             lines: vec![
-                ExchangeLine { id: "divine".to_string(), primary_value: 1.0 },
-                ExchangeLine { id: "vaal-cultivation-orb".to_string(), primary_value: 0.5 },
+                ExchangeLine {
+                    id: "divine".to_string(),
+                    primary_value: 1.0,
+                },
+                ExchangeLine {
+                    id: "vaal-cultivation-orb".to_string(),
+                    primary_value: 0.5,
+                },
             ],
             // The comprehensive dictionary — only here, NOT in core.items.
             items: vec![ExchangeItem {
@@ -1339,8 +1399,7 @@ mod tests {
             serde_json::from_str(overview_json).expect("parse item overview");
         // minimal_mapping has empty itemTypes → category defaults to "Uniques".
         let mapping = minimal_mapping();
-        let items =
-            super::build_unique_items(&[("UniqueArmours".to_string(), overview)], &mapping);
+        let items = super::build_unique_items(&[("UniqueArmours".to_string(), overview)], &mapping);
 
         // The empty-baseType line is skipped; the two real ones survive.
         assert_eq!(items.len(), 2, "the empty-baseType unique must be skipped");
@@ -1359,6 +1418,9 @@ mod tests {
         assert_eq!(temp.category, "Uniques");
         // primary=divine → div = primaryValue, chaos = primaryValue * chaos_rate.
         assert_eq!(temp.div, Some(100.0));
-        assert!((temp.chaos.unwrap() - 100.0 * 220.0).abs() < 1.0, "chaos converted via rate");
+        assert!(
+            (temp.chaos.unwrap() - 100.0 * 220.0).abs() < 1.0,
+            "chaos converted via rate"
+        );
     }
 }

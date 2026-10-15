@@ -1,0 +1,893 @@
+# dynamic.filter
+# GENERATED FROM dynamic.json — edit the model, not this file (then regenerate).
+#
+# Block tags link each rule back to the model:
+#   [alwaysShow.K]          -> a level-independent highlight
+#   [areaLevelBands "R".K]  -> band R, show-key K
+#   [styles.X]              -> the style entry applied
+#
+# Philosophy: HIDE what we don't want, STYLE the few highlights, let everything
+# else fall through to the game default (uniques, jewels, gems, jewellery, quest
+# items, waystones, trials, unidentified — no rules touch them).
+# Currency base lists are curated data kept outside the model (carried over here).
+
+Show # Chance bases
+  Rarity == Normal
+  Corrupted False
+  BaseType == "Heavy Belt" "Utility Belt" "Armoured Cap" "Sacred Focus"
+
+Show # Exceptional 3 socks
+  Class "Body Armours" "Two Hand Maces" "Bows" "Crossbows" "Quarterstaves" "Staves"
+  Sockets >= 3
+  Corrupted False
+  PlayEffect Pink
+  MinimapIcon 2 Pink Cross
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+
+Show # Exceptional 2 socks
+  Class "Helmets" "Gloves" "Boots" "Shields" "Bucklers" "Foci" "One Hand Maces" "Sceptres" "Wands" "Spears"
+  Sockets >= 2
+  Corrupted False
+  PlayEffect Pink
+  MinimapIcon 2 Pink Cross
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+
+Show # Exceptional Quality
+  Class "Body Armours" "Two Hand Maces" "Bows" "Crossbows" "Quarterstaves" "Staves" "Helmets" "Gloves" "Boots" "Shields" "Bucklers" "Foci" "One Hand Maces" "Sceptres" "Wands" "Spears" "Talismans"
+  Quality >= 21
+  Corrupted False
+  PlayEffect Pink
+  MinimapIcon 2 Pink Cross
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+
+Show # rule 4
+  Quality >= 1
+  Sockets >= 1
+  PlayEffect Green
+  MinimapIcon 2 Green Cross
+  SetTextColor 80 250 123 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 80 250 123 255
+
+Show # Maybe sell this
+  Class "Rings" "Amulets" "Belts" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers" "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands"
+  UnidentifiedItemTier >= 5
+  PlayEffect Orange
+  MinimapIcon 2 Orange Kite
+  PlayAlertSound 2 200
+
+Hide # Hide other itens
+  Class "Bows" "Crossbows" "Foci" "One Hand Maces" "Quivers" "Quarterstaves" "Sceptres" "Spears" "Talismans" "Staves" "Two Hand Maces" "Wands" "Body Armours" "Helmets" "Gloves" "Boots" "Shields" "Bucklers" "Rings" "Amulets" "Belts" "Life Flasks" "Mana Flasks" "Charms" "Jewels"
+  Rarity <= Rare
+  SetFontSize 21
+  DisableDropSound
+
+Hide # Unwanted Currecny
+  BaseType == "Scroll of Wisdom" "Regal Shard"
+  SetFontSize 21
+  DisableDropSound
+
+Show # Show time-lost jewels
+  BaseType == "Time-Lost Diamond" "Time-Lost Sapphire" "Time-Lost Ruby" "Time-Lost Emerald"
+
+#============================================================
+# alwaysShow.currency — tiered S-F  [styles.S .. styles.F]
+# Each block's tier letter = the styles.<tier> applied. Base lists are
+# curated data carried over from the prior filter (not stored in the model).
+# Gems are intentionally omitted (fall through to game default).
+#============================================================
+
+# --- Currency ---
+Show # Currency S
+  Class == "Stackable Currency"
+  BaseType == "Fracturing Orb" "Perfect Chaos Orb" "Hinekora's Lock" "Mirror of Kalandra"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Currency A
+  Class == "Stackable Currency"
+  BaseType == "Crystallised Corruption" "Perfect Exalted Orb" "Vaal Catalysing Infuser"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Currency B
+  Class == "Stackable Currency"
+  BaseType == "Architect's Orb" "Vaal Cultivation Orb"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Currency C
+  Class == "Stackable Currency"
+  BaseType == "Divine Orb" "Vaal Armourer's Infuser"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Currency D
+  Class == "Stackable Currency"
+  BaseType == "Orb of Annulment" "Core Destabiliser" "Kopec's Orb of Sacrifice" "Perfect Jeweller's Orb" "Vaal Blacksmith's Infuser" "Cryptic Key" "Greater Chaos Orb" "Kamasa's Orb of Sacrifice" "Orb of Extraction" "Perfect Orb of Augmentation"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Currency E
+  Class == "Stackable Currency"
+  BaseType == "Chaos Orb" "Ancient Infuser"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Currency F
+  Class == "Stackable Currency"
+  BaseType == "Exalted Orb" "Orb of Alchemy" "Artificer's Orb" "Orb of Augmentation" "Glassblower's Bauble" "Orb of Chance" "Arcanist's Etcher" "Greater Regal Orb" "Lesser Jeweller's Orb" "Perfect Regal Orb" "Regal Orb" "Armourer's Scrap" "Vaal Arcanist's Infuser" "Artificer's Shard" "Chance Shard" "Gemcutter's Prism" "Greater Exalted Orb" "Greater Jeweller's Orb" "Greater Orb of Augmentation" "Greater Orb of Transmutation" "Perfect Orb of Transmutation" "Transmutation Shard" "Orb of Transmutation" "Vaal Orb" "Blacksmith's Whetstone" "Scroll of Wisdom" "Yaomac's Orb of Sacrifice" "Yugul's Orb of Sacrifice"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Incubators ---
+Show # Incubators F
+  Class == "Incubators"
+  BaseType == "Vaal Siphoner"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Breach ---
+Show # Breach S
+  Class == "Stackable Currency"
+  BaseType == "Refined Sibilant Catalyst"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Breach A
+  Class == "Stackable Currency"
+  BaseType == "Refined Reaver Catalyst"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Breach B
+  Class == "Stackable Currency"
+  BaseType == "Breachstone"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Breach C
+  Class == "Stackable Currency"
+  BaseType == "Refined Necrotic Catalyst" "Sibilant Catalyst"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Breach D
+  Class == "Stackable Currency"
+  BaseType == "Reaver Catalyst" "Skittering Catalyst"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Breach E
+  Class == "Stackable Currency"
+  BaseType == "Esh's Catalyst" "Necrotic Catalyst" "Refined Carapace Catalyst" "Refined Chayula's Catalyst" "Refined Skittering Catalyst" "Refined Tul's Catalyst" "Xoph's Catalyst" "Neural Catalyst" "Refined Adaptive Catalyst" "Refined Esh's Catalyst" "Refined Flesh Catalyst" "Refined Neural Catalyst" "Refined Uul-Netol's Catalyst" "Refined Xoph's Catalyst" "Tul's Catalyst"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Breach F
+  Class == "Stackable Currency"
+  BaseType == "Adaptive Catalyst" "Breach Splinter" "Carapace Catalyst" "Flesh Catalyst" "Uul-Netol's Catalyst" "Chayula's Catalyst"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Delirium ---
+Show # Delirium S
+  Class == "Stackable Currency"
+  BaseType == "Ancient Potent Liquid Contempt" "Potent Liquid Ferocity"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Delirium B
+  Class == "Stackable Currency"
+  BaseType == "Potent Liquid Contempt"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Delirium D
+  Class == "Stackable Currency"
+  BaseType == "Ancient Potent Liquid Melancholy" "Concentrated Liquid Isolation" "Concentrated Liquid Suffering"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Delirium E
+  Class == "Stackable Currency"
+  BaseType == "Ancient Concentrated Liquid Isolation" "Concentrated Liquid Fear"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Delirium F
+  Class == "Stackable Currency"
+  BaseType == "Ancient Concentrated Liquid Suffering" "Ancient Diluted Liquid Greed" "Ancient Diluted Liquid Ire" "Ancient Liquid Disgust" "Ancient Liquid Envy" "Ancient Liquid Paranoia" "Ancient Potent Liquid Ferocity" "Ancient Concentrated Liquid Fear" "Ancient Diluted Liquid Guilt" "Ancient Liquid Despair" "Diluted Liquid Ire" "Liquid Despair" "Liquid Envy" "Liquid Paranoia" "Diluted Liquid Greed" "Diluted Liquid Guilt" "Liquid Disgust" "Potent Liquid Melancholy"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Essences ---
+Show # Essences S
+  Class == "Stackable Currency"
+  BaseType == "Lesser Essence of Haste"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Essences B
+  Class == "Stackable Currency"
+  BaseType == "Essence of Hysteria"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Essences D
+  Class == "Stackable Currency"
+  BaseType == "Essence of Delirium" "Essence of the Breach" "Greater Essence of Opulence" "Essence of Horror" "Essence of Opulence"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Essences E
+  Class == "Stackable Currency"
+  BaseType == "Essence of Sorcery" "Perfect Essence of Battle" "Perfect Essence of Enhancement" "Essence of Abrasion" "Essence of Command" "Essence of Seeking" "Essence of Thawing" "Essence of the Abyss" "Lesser Essence of Seeking"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Essences F
+  Class == "Stackable Currency"
+  BaseType == "Essence of Enhancement" "Greater Essence of Alacrity" "Greater Essence of Command" "Greater Essence of Enhancement" "Greater Essence of Flames" "Greater Essence of Insulation" "Greater Essence of Ruin" "Greater Essence of Sorcery" "Greater Essence of the Body" "Lesser Essence of Command" "Perfect Essence of Abrasion" "Perfect Essence of Alacrity" "Perfect Essence of Command" "Perfect Essence of Electricity" "Perfect Essence of Haste" "Perfect Essence of Opulence" "Perfect Essence of Thawing" "Perfect Essence of the Body" "Perfect Essence of the Infinite" "Greater Essence of Grounding" "Essence of Alacrity" "Essence of Flames" "Essence of Grounding" "Essence of Haste" "Essence of Ice" "Essence of Insanity" "Essence of Insulation" "Essence of the Body" "Essence of the Infinite" "Essence of the Mind" "Essence of Electricity" "Essence of Ruin" "Greater Essence of Ice" "Lesser Essence of Opulence" "Greater Essence of Abrasion" "Greater Essence of Battle" "Greater Essence of Electricity" "Greater Essence of Haste" "Greater Essence of Seeking" "Greater Essence of Thawing" "Greater Essence of the Infinite" "Greater Essence of the Mind" "Lesser Essence of Abrasion" "Lesser Essence of Electricity" "Lesser Essence of Enhancement" "Lesser Essence of Flames" "Lesser Essence of Grounding" "Lesser Essence of Ice" "Lesser Essence of Insulation" "Lesser Essence of Sorcery" "Lesser Essence of Thawing" "Lesser Essence of the Body" "Perfect Essence of Flames" "Perfect Essence of Grounding" "Perfect Essence of Ice" "Perfect Essence of Insulation" "Perfect Essence of Ruin" "Perfect Essence of Seeking" "Perfect Essence of Sorcery" "Perfect Essence of the Mind"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Expedition ---
+Show # Expedition S
+  Class == "Stackable Currency"
+  BaseType == "Perfect Flux"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Expedition B
+  Class == "Omen"
+  BaseType == "Uhtred's Saga"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Expedition D
+  Class == "Omen"
+  BaseType == "Olroth's Saga"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Expedition E
+  Class == "Stackable Currency"
+  BaseType == "Blazing Flux" "Chilling Flux" "Crackling Flux" "Thaumaturgic Flux (Level 20)" "Void Flux" "Thaumaturgic Flux (Level 14)"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Expedition E
+  Class == "Omen"
+  BaseType == "Medved's Saga" "Vorana's Saga"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Expedition F
+  Class == "Stackable Currency"
+  BaseType == "Thaumaturgic Flux (Level 13)" "Thaumaturgic Flux (Level 15)" "Thaumaturgic Flux (Level 17)" "Thaumaturgic Flux (Level 18)" "Thaumaturgic Flux (Level 19)" "Thaumaturgic Flux (Level 16)"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+Show # Expedition F
+  Class == "Expedition Logbooks"
+  BaseType == "Expedition Logbook"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Runes ---
+Show # Runes S
+  Class == "Augment"
+  BaseType == "Aldur's Legacy" "Astrid's Creativity" "Emergent Possibility" "Emergent Vigour"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Runes A
+  Class == "Augment"
+  BaseType == "Greater Rune of Leadership"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Runes B
+  Class == "Augment"
+  BaseType == "Kolr's Hunt" "Perfect Adept Rune" "Perfect Body Rune" "Perfect Charging Rune" "Perfect Desert Rune" "Perfect Glacial Rune" "Perfect Inspiration Rune" "Perfect Mind Rune" "Perfect Stone Rune" "Perfect Storm Rune" "Perfect Vision Rune" "Serle's Triumph" "Perfect Iron Rune" "Perfect Rebirth Rune" "Perfect Resolve Rune" "Perfect Robust Rune" "Perfect Ward Rune"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Runes D
+  Class == "Augment"
+  BaseType == "Ancient Rune of Discovery" "Cadigan's Epiphany" "Masterwork Rune" "Uhtred's Sidereus" "Greater Rune of Alacrity" "Greater Rune of Tithing" "Hedgewitch Assandra's Rune of Wisdom" "Katla's Gloom"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Runes E
+  Class == "Augment"
+  BaseType == "Craiceann's Rune of Warding" "Farrul's Rune of the Chase" "Iron Rune" "Lesser Resolve Rune" "Medved's Tending" "Rune of Acrobatics" "Rune of Foundations" "Rune of the Blossom" "Saqawal's Rune of the Sky" "Thrud's Might" "Vorana's Carnage" "Warding Rune of Equinox" "Warding Rune of Heart" "Warding Rune of Reinforcement" "Emergent Instinct" "Emergent Protection" "Greater Ward Rune" "Lesser Adept Rune" "Mind Rune" "Rebirth Rune" "Rune of Reach" "Warding Rune of Desperation" "Warding Rune of Disintegration"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Runes F
+  Class == "Augment"
+  BaseType == "Adept Rune" "Ancient Rune of Control" "Ancient Rune of Decay" "Ancient Rune of Detonation" "Ancient Rune of Dueling" "Ancient Rune of Prowess" "Ancient Rune of Retaliation" "Ancient Rune of Shattering" "Ancient Rune of Splinters" "Ancient Rune of the Horde" "Ancient Rune of the Titan" "Betrayal of Aldur" "Body Rune" "Breath of Aldur" "Ancient Rune of Witchcraft" "Countess Seske's Rune of Archery" "Courtesan Mannan's Rune of Cruelty" "Craiceann's Rune of Recovery" "Farrul's Rune of the Hunt" "Fenumus' Rune of Agony" "Fenumus' Rune of Draining" "Fenumus' Rune of Spinning" "Glacial Rune" "Greater Adept Rune" "Greater Desert Rune" "Greater Inspiration Rune" "Greater Resolve Rune" "Greater Robust Rune" "Greater Vision Rune" "Lesser Desert Rune" "Resolve Rune" "Robust Rune" "Rune of Confrontation" "Rune of Consistency" "Saqawal's Rune of Erosion" "Storm Rune" "Thane Girt's Rune of Wildness" "Thane Grannell's Rune of Mastery" "Thane Leld's Rune of Spring" "The Greatwolf's Rune of Willpower" "Warding Rune of Armature" "Warding Rune of Hollowing" "Warding Rune of Salvaging" "Warding Rune of Stability" "Desert Rune" "Warding Rune of Obsession" "Greater Rune of Nobility" "Lesser Rebirth Rune" "Lesser Ward Rune" "Farrul's Rune of Grace" "Greater Body Rune" "Greater Charging Rune" "Greater Glacial Rune" "Greater Iron Rune" "Greater Mind Rune" "Greater Rebirth Rune" "Greater Stone Rune" "Greater Storm Rune" "Inspiration Rune" "Ire of Aldur" "Lady Hestra's Rune of Winter" "Lesser Body Rune" "Lesser Glacial Rune" "Lesser Inspiration Rune" "Lesser Iron Rune" "Lesser Mind Rune" "Lesser Robust Rune" "Lesser Stone Rune" "Lesser Storm Rune" "Lesser Vision Rune" "Passion of Aldur" "Rune of Accumulation" "Rune of Culmination" "Rune of Renown" "Rune of the Hunt" "Rune of the Prism" "Rune of Vital Flame" "Rune of Vitality" "Saqawal's Rune of Memory" "Stone Rune" "Thane Myrk's Rune of Summer" "The Greatwolf's Rune of Claws" "Vision Rune" "Warding Rune of Annihilation" "Warding Rune of Bodyguards" "Warding Rune of Courage" "Warding Rune of Glancing" "Warding Rune of Nourishment" "Warding Rune of Protection" "Warding Rune of Symbiosis" "Ward Rune" "Ancient Rune of Animosity"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Omens ---
+Show # Omen S
+  Class == "Omen"
+  BaseType == "Omen of Chance" "Omen of Dextral Annulment" "Omen of Dextral Erasure" "Omen of Light" "Omen of Sinistral Annulment" "Omen of Sinistral Erasure" "Omen of Whittling"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Omen B
+  Class == "Omen"
+  BaseType == "Omen of the Hunt" "Head of the King"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Omen C
+  Class == "Omen"
+  BaseType == "Omen of Secret Compartments" "Omen of Sanctification"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+
+Show # Omen D
+  Class == "Omen"
+  BaseType == "Omen of Abyssal Echoes" "Omen of Chaotic Quantity" "Omen of Dextral Crystallisation" "Omen of Sinistral Crystallisation" "Omen of Chaotic Rarity" "Omen of the Blessed"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Omen E
+  Class == "Omen"
+  BaseType == "An Audience with the King" "Omen of Answered Prayers" "Omen of Reinforcements" "Omen of Sinistral Exaltation" "Sacred Bloom" "Omen of Amelioration" "Omen of Catalysing Exaltation" "Omen of Chaotic Effectiveness" "Omen of Chaotic Monsters"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Omen F
+  Class == "Omen"
+  BaseType == "Omen of Gambling" "Omen of Greater Exaltation" "Omen of Refreshment" "Omen of Sinistral Necromancy" "Omen of the Liege" "Omen of Bartering" "Omen of Dextral Exaltation" "Omen of Dextral Necromancy" "Omen of Putrefaction" "Omen of Resurgence" "Omen of the Ancients" "Omen of the Blackblooded" "Omen of the Sovereign"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Soul Cores ---
+Show # Soul Cores S
+  Class == "Augment"
+  BaseType == "Guatelitzi's Thesis" "Jiquani's Soul Core of Rippling" "Jiquani's Soul Core of Squalls" "Jiquani's Thesis" "Quipolatl's Thesis" "Raven-Touched Shard"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Soul Cores A
+  Class == "Augment"
+  BaseType == "Soul Core of Azcapa"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Soul Cores D
+  Class == "Augment"
+  BaseType == "Atziri's Soul Core of Devotion" "Citaqualotl's Thesis" "Xopec's Soul Core of Power" "Soul Core of Quipolatl"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Soul Cores E
+  Class == "Augment"
+  BaseType == "Atziri's Soul Core of Alacrity" "Atziri's Soul Core of Vitality" "Atziri's Soul Core of Inoculation" "Guatelitzi's Soul Core of Endurance" "Jiquani's Soul Core of Abundance" "Jiquani's Soul Core of Munitions" "Jiquani's Soul Core of Quaking" "Jiquani's Soul Core of Rallying" "Quipolatl's Soul Core of Flow" "Soul Core of Citaqualotl" "Soul Core of Tacati" "Xipocado's Soul Core of Dominion" "Jiquani's Soul Core of Automation" "Jiquani's Soul Core of Severing" "Opiloti's Soul Core of Assault" "Soul Core of Cholotl" "Tzamoto's Soul Core of Ferocity"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Soul Cores F
+  Class == "Augment"
+  BaseType == "Atmohua's Soul Core of Retreat" "Cholotl's Soul Core of War" "Citaqualotl's Soul Core of Foulness" "Jiquani's Soul Core of Malediction" "Soul Core of Jiquani" "Soul Core of Opiloti" "Soul Core of Puhuarte" "Soul Core of Ticaba" "Soul Core of Topotante" "Soul Core of Zantipi" "Topotante's Soul Core of Dampening" "Estazunti's Soul Core of Convalescence" "Hayoxi's Soul Core of Heatproofing" "Jiquani's Soul Core of Radiance" "Jiquani's Soul Core of Snares" "Jiquani's Soul Core of Targeting" "Jiquani's Soul Core of Thundering" "Soul Core of Atmohua" "Soul Core of Tzamoto" "Soul Core of Xopec" "Soul Core of Zalatl" "Tacati's Soul Core of Affliction" "Uromoti's Soul Core of Attenuation" "Zalatl's Soul Core of Insulation"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Abyssal Eyes ---
+Show # Abyssal Eyes S
+  Class == "Augment"
+  BaseType == "Altered Collarbone" "Ancient Collarbone" "Ancient Jawbone" "Ancient Rib" "Kurgal's Gaze" "Preserved Cranium" "Tecrod's Gaze"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Abyssal Eyes D
+  Class == "Augment"
+  BaseType == "Amanamu's Gaze" "Preserved Collarbone" "Ulaman's Gaze"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Abyssal Eyes F
+  Class == "Augment"
+  BaseType == "Gnawed Jawbone" "Preserved Jawbone" "Gnawed Collarbone" "Gnawed Rib" "Preserved Rib"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Map Fragments & Pinnacle Keys ---
+Show # Map Fragments S
+  Class == "Map Fragments"
+  BaseType == "Azmeri Reliquary Key" "Breachlord Sac" "Faded Crisis Fragment" "Kulemak's Invitation" "Origin Cradle" "Tangmazu's Reliquary Key" "Zarokh's Reliquary Key: Against the Darkness" "Origin Core" "Origin Spark" "The Arbiter's Reliquary Key" "The Trialmaster's Reliquary Key" "Xesht's Reliquary Key"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Map Fragments A
+  Class == "Map Fragments"
+  BaseType == "Cowardly Fate" "Deadly Fate" "Raven's Reflection" "Simulacrum" "Victorious Fate"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Map Fragments B
+  Class == "Map Fragments"
+  BaseType == "Olroth's Reliquary Key" "Ritualistic Reliquary Key" "Weathered Crisis Fragment"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+
+Show # Map Fragments D
+  Class == "Map Fragments"
+  BaseType == "Ancient Crisis Fragment" "The Triskelion Reforged" "Shattered Triskelion"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Map Fragments E
+  Class == "Map Fragments"
+  BaseType == "Call of the Shadows"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Map Fragments F
+  Class == "Map Fragments"
+  BaseType == "Twilight Reliquary Key" "Simulacrum Splinter"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Idols ---
+Show # Idols S
+  Class == "Augment"
+  BaseType == "Carved Majesty" "Carved Cunning"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+
+Show # Idols D
+  Class == "Augment"
+  BaseType == "Carved Mischief" "Carved Tenacity"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Idols E
+  Class == "Augment"
+  BaseType == "Idol of Eeshta" "Fox Idol" "Hawk Idol" "Idol of Silk" "Idol of Sirrius" "Idol of the Pharisee" "Rabbit Idol"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Idols F
+  Class == "Augment"
+  BaseType == "Cat Idol" "Bear Idol" "Boar Idol" "Idol of Alira" "Idol of Egrin" "Idol of Eramir" "Idol of Greust" "Idol of Maxarius" "Idol of Oak" "Idol of Ralakesh" "Idol of the Martyr" "Idol of the Sycophant" "Idol of Yeena" "Owl Idol" "Primate Idol" "Stag Idol" "Stoat Idol" "Wolf Idol" "Idol of Grold" "Idol of Kraityn" "Idol of Thruldana" "Ox Idol" "Panther Idol" "Snake Idol"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Verisium ---
+Show # Verisium D
+  Class == "Stackable Currency"
+  BaseType == "Celestial Alloy" "Sovereign Alloy" "Transcendent Alloy" "The Runebinder's Alloy"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 139 233 253 255
+
+Show # Verisium E
+  Class == "Stackable Currency"
+  BaseType == "Adaptive Alloy" "Expansive Alloy"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+
+Show # Verisium F
+  Class == "Stackable Currency"
+  BaseType == "Liquid Verisium" "Protective Alloy" "Runic Alloy" "Swift Alloy" "The Runefather's Alloy" "Venerable Starlit Ore" "Veridical Starlit Ore" "Verisium" "Cyclonic Alloy" "Revered Starlit Ore" "Exceptional Verisium" "Medved's Crest of the Circle" "Mystic Alloy" "Olroth's Crest of the Sun" "Prismatic Alloy" "Uhtred's Crest of the Chalice" "Vorana's Crest of the Scythe" "Warding Starlit Ore"
+  SetTextColor 248 248 242 255
+  SetBackgroundColor 40 42 54 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+
+# --- Uncut Gems ---
+Show # Uncut Gems S
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 20)" "Uncut Spirit Gem (Level 20)"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 80 70 55 255
+
+Show # Uncut Gems B
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Spirit Gem (Level 8)"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+  SetBackgroundColor 80 70 55 255
+
+Show # Uncut Gems C
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 1)"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+  SetBackgroundColor 80 70 55 255
+
+Show # Uncut Gems D
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Spirit Gem (Level 15)" "Uncut Spirit Gem (Level 19)" "Uncut Spirit Gem (Level 14)" "Uncut Spirit Gem (Level 16)" "Uncut Spirit Gem (Level 9)"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBorderColor 139 233 253 255
+  SetBackgroundColor 80 70 55 255
+
+Show # Uncut Gems E
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 19)" "Uncut Skill Gem (Level 5)" "Uncut Skill Gem (Level 7)" "Uncut Skill Gem (Level 8)" "Uncut Spirit Gem (Level 18)" "Uncut Spirit Gem (Level 4)" "Uncut Spirit Gem (Level 13)" "Uncut Spirit Gem (Level 17)" "Uncut Spirit Gem (Level 7)"
+  SetTextColor 248 248 242 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+  SetBackgroundColor 80 70 55 255
+
+Show # Uncut Gems F
+  Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"
+  BaseType == "Uncut Skill Gem (Level 12)" "Uncut Skill Gem (Level 14)" "Uncut Skill Gem (Level 15)" "Uncut Skill Gem (Level 17)" "Uncut Skill Gem (Level 6)" "Uncut Skill Gem (Level 9)" "Uncut Skill Gem (Level 10)" "Uncut Skill Gem (Level 11)" "Uncut Skill Gem (Level 13)" "Uncut Skill Gem (Level 16)" "Uncut Skill Gem (Level 18)" "Uncut Skill Gem (Level 2)" "Uncut Skill Gem (Level 3)" "Uncut Skill Gem (Level 4)" "Uncut Spirit Gem (Level 12)" "Uncut Spirit Gem (Level 5)" "Uncut Spirit Gem (Level 6)" "Uncut Spirit Gem (Level 10)" "Uncut Spirit Gem (Level 11)" "Uncut Support Gem (Level 1)" "Uncut Support Gem (Level 2)" "Uncut Support Gem (Level 3)" "Uncut Support Gem (Level 4)" "Uncut Support Gem (Level 5)"
+  SetTextColor 248 248 242 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+  SetBackgroundColor 80 70 55 255
+
+# --- Lineage Support Gems ---
+Show # Lineage Support Gems S
+  Class == "Support Gems"
+  BaseType == "Amanamu's Tithe" "Breachlord's Amalgam" "Breachlord's Rift" "Rigwald's Ferocity" "Xoph's Pyre" "Dialla's Desire" "Atziri's Communion" "Garukhan's Resolve" "Rakiata's Flow" "Seraph's Heart" "Uhtred's Exodus" "Uul-Netol's Embrace" "Esh's Radiance" "Her Declaration" "Khatal's Rejuvenation" "Olroth's Conviction" "Tul's Stillness" "Uhtred's Augury" "Uhtred's Omen" "Vorana's Siege"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 10 150 150 255
+
+Show # Lineage Support Gems A
+  Class == "Support Gems"
+  BaseType == "Catha's Brilliance" "Mórrigan's Insight"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 10 150 150 255
+
+Show # Lineage Support Gems B
+  Class == "Support Gems"
+  BaseType == "Esh's Prowess"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+  SetBackgroundColor 10 150 150 255
+
+Show # Lineage Support Gems D
+  Class == "Support Gems"
+  BaseType == "Arbiter's Ignition" "Atalui's Bloodletting" "Atziri's Allure" "Uhtred's Constellation"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBorderColor 139 233 253 255
+  SetBackgroundColor 10 150 150 255
+
+Show # Lineage Support Gems E
+  Class == "Support Gems"
+  BaseType == "Ahn's Citadel" "Ailith's Chimes" "Brutus' Brain" "Ixchel's Torment" "Medved's Felling" "Sione's Temper" "Uhtred's Rite" "Zarokh's Revolt" "Hayoxi's Fulmination" "Tecrod's Revenge" "Zarokh's Refrain"
+  SetTextColor 248 248 242 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+  SetBackgroundColor 10 150 150 255
+
+Show # Lineage Support Gems F
+  Class == "Support Gems"
+  BaseType == "Arbiter's Reach" "Arjun's Medal" "Atziri's Impatience" "Arakaali's Lust" "Bhatair's Vengeance" "Daresso's Passion" "Dominus' Grasp" "Guatelitzi's Ablation" "Kalisa's Crescendo" "Kulemak's Dominion" "Kurgal's Leash" "Morgana's Tempest" "Oisín's Oath" "Olroth's Hubris" "Paquate's Pact" "Prototype Seventeen" "Ratha's Assault" "Romira's Requital" "Tangmazu's Thurible" "Tasalio's Rhythm" "Vilenta's Propulsion" "Vruun's Aftermath" "Zerphi's Infamy" "Cirel's Cultivation" "Xibaqua's Rending" "Doedre's Undoing" "Einhar's Beastrite" "Eonyr's Thunder" "Varashta's Blessing" "Helbrym's Hide" "Kaom's Madness" "Tacati's Ire" "Tawhoa's Tending" "Trickster's Shard" "Tul's Avalanche" "Uruk's Smelting" "Vruun's Inevitability"
+  SetTextColor 248 248 242 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+  SetBackgroundColor 10 150 150 255
+
+# --- Uniques (price-tiered) ---
+Show # Unique S
+  Rarity == Unique
+  BaseType == "Shortsword" "Glass Shank" "Runemastered Runic Fork" "Runic Fork" "Grand Spear" "Silk Robe" "Runemastered Grand Regalia" "Ornate Gauntlets" "Runemastered Plumed Focus" "Runeforged Garment" "Runemastered Ornate Ringmail" "Runemastered Primal Markings" "Grand Regalia" "Sacred Focus" "Runemastered Grand Manchettes" "Runemastered Explorer Armour" "Runemastered Moulded Mitts" "Runemastered Enlightened Robe" "Runemastered Armoured Cap" "Wide Belt" "Utility Belt" "Heavy Belt" "Ring" "Unset Ring" "Prismatic Ring" "Golden Charm" "Sapphire" "Ruby" "Diamond" "Time-Lost Diamond" "Emerald" "Incense Relic" "Vase Relic"
+  PlayEffect Pink
+  MinimapIcon 1 Pink Circle
+  SetTextColor 255 121 198 255
+  SetBorderColor 255 121 198 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 175 96 37 240
+
+Show # Unique A
+  Rarity == Unique
+  BaseType == "Shrine Sceptre" "Runemastered Havoc Raiment" "Runemastered Corvus Mantle"
+  PlayEffect Purple
+  MinimapIcon 1 Purple Circle
+  SetTextColor 189 147 249 255
+  SetBorderColor 189 147 249 255
+  SetFontSize 37
+  CustomAlertSound "uwu.mp3" 300
+  SetBackgroundColor 175 96 37 240
+
+Show # Unique B
+  Rarity == Unique
+  BaseType == "Runeforged Barbed Spear" "Runemastered Tense Crossbow" "Runemastered Long Quarterstaff" "Runemastered Torment Club" "Runemastered Familial Talisman" "Runemastered Felled Greatclub" "Chain Tiara" "Runemastered Intricate Crest Shield" "Runemastered Smuggler Coat" "Runemastered Armoured Vest" "Ornate Ringmail" "Ultimate Life Flask"
+  PlayEffect Red
+  MinimapIcon 2 Red Circle
+  SetTextColor 255 85 85 255
+  SetBorderColor 255 85 85 255
+  SetFontSize 37
+  PlayAlertSound 2 200
+  SetBackgroundColor 175 96 37 240
+
+Show # Unique C
+  Rarity == Unique
+  BaseType == "Runeforged Morning Star" "Runemastered Oak Greathammer" "Runemastered Aberrant Sledge" "Runeforged Vicious Talisman" "Runemastered Nettle Talisman" "Runemastered Sacrificial Regalia" "Runemastered Ancient Leggings" "Runemastered Ancient Mail" "Runemastered Knight Armour" "Runemastered Leatherbound Hood" "Runemastered Vermeil Circlet" "Runeforged Conqueror Plate" "Runemastered Cinched Boots" "Runemastered Array Buckler" "Runemastered Death Mask" "Runemastered Ancient Visor" "Runemastered Tribal Mask" "Runemastered Viper Cap" "Runemastered Blacksteel Tower Shield" "Runemastered Exquisite Vest" "Sapphire Ring"
+  PlayEffect Yellow
+  MinimapIcon 2 Yellow Circle
+  SetTextColor 241 250 140 255
+  SetBorderColor 241 250 140 255
+  PlayAlertSound 2 200
+  SetBackgroundColor 175 96 37 240
+
+Show # Unique D
+  Rarity == Unique
+  BaseType == "Runemastered Gothic Quarterstaff" "Runeforged Composite Bow" "Runemastered Dyad Crossbow" "Runeforged Winged Spear" "Stoic Sceptre" "Runemastered Studded Greatclub" "Runemastered Wooden Club" "Aberrant Sledge" "Runemastered Ironhead Spear" "Runemastered Tenebrous Crown" "Garment" "Runemastered Fine Bracers" "Runemastered Scale Mail" "Primed Quiver" "Runeforged Champion Cuirass" "Runemastered Heroic Armour" "Runemastered Embroidered Gloves" "Runemastered Threaded Shoes" "Runemastered Spiral Wraps" "Runemastered Utility Wraps" "Armoured Cap" "Conqueror Plate" "Runemastered Spiritbone Crown" "Runemastered Decorated Helm" "Runemastered Vaal Tower Shield" "Tribal Mask" "Runemastered Heavy Belt" "Pearl Ring" "Two-Stone Ring" "Silver Charm" "Stone Charm" "Timeless Jewel"
+  PlayEffect White
+  MinimapIcon 2 White Circle
+  SetTextColor 139 233 253 255
+  SetBorderColor 139 233 253 255
+  SetBackgroundColor 175 96 37 240
+
+Show # Unique E
+  Rarity == Unique
+  BaseType == "Giant Maul" "Pronged Spear" "Reflecting Staff" "Siphoning Wand" "Winged Spear" "Runeforged Leaden Greathammer" "Trarthan Cannon" "Heartwood Shortbow" "Runemastered Warding Quarterstaff" "Runeforged Kalguuran Forgehammer" "Runeforged Pointed Maul" "Runeforged Spiked Club" "Runeforged Shortbow" "Array Buckler" "Brimmed Helm" "Decorated Helm" "Heavy Crown" "Moulded Mitts" "Runemastered Brimmed Helm" "Runemastered Cleric Vestments" "Runemastered Shaman Mantle" "Runemastered Crucible Tower Shield" "Runemastered Heavy Crown" "Runemastered Covert Hood" "Runemastered Furtive Wraps" "Runemastered Lattice Sandals" "Covert Hood" "Crucible Tower Shield" "Fine Bracers" "Grand Manchettes" "Iron Crown" "Knight Armour" "Sacrificial Regalia" "Spiral Wraps" "Glacial Fortress" "Engraved Bracers" "Primal Markings" "Runemastered Iron Crown" "Runemastered Velvet Cap" "Runemastered Heraldric Tower Shield" "Runemastered Revered Vestments" "Runemastered Silk Robe" "Runemastered Felt Cap" "Runemastered Trimmed Greaves" "Amethyst Ring" "Gold Ring" "Jade Amulet" "Stellar Amulet" "Veridical Chain" "Runemastered Veridical Chain" "Bloodstone Amulet" "Gargantuan Mana Flask" "Transcendent Mana Flask" "Thawing Charm"
+  SetTextColor 248 248 242 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 29
+  SetBackgroundColor 175 96 37 240
+
+Show # Unique F
+  Rarity == Unique
+  BaseType == "Barbed Spear" "Twisted Wand" "Ashbark Talisman" "Morning Star" "Runeforged Crescent Quarterstaff" "Helix Spear" "Runeforged Forked Spear" "Runeforged Crumbling Maul" "Perching Staff" "Runeforged Steelpoint Quarterstaff" "Runeforged Warden Bow" "Totemic Greatclub" "Permafrost Staff" "Spiked Club" "Runeforged Oak Greathammer" "Warding Quarterstaff" "Runeforged Studded Greatclub" "Runeforged Tense Crossbow" "Runeforged Marching Mace" "Desolate Crossbow" "Execratus Hammer" "Runeforged Long Quarterstaff" "Runeforged Hardwood Spear" "Heavy Bow" "Crumbling Maul" "Torment Club" "Shortbow" "Runeforged Recurve Bow" "Runeforged Zealot Bow" "Acrid Wand" "Ashen Staff" "Bone Wand" "Cultist Greathammer" "Felled Greatclub" "Forge Maul" "Temple Maul" "Withered Wand" "Wooden Club" "Wrapped Quarterstaff" "Wyrm Quarterstaff" "Composite Bow" "Fanatic Bow" "Attuned Wand" "Changeling Talisman" "Crescent Quarterstaff" "Leaden Greathammer" "Tense Crossbow" "Flanged Mace" "Runeforged Changeling Talisman" "Runeforged Dualstring Bow" "Runeforged Hunting Spear" "Runeforged War Spear" "Crude Bow" "Artillery Bow" "Chiming Staff" "Gothic Quarterstaff" "Omen Sceptre" "Slim Mace" "Steelpoint Quarterstaff" "Warpick" "Zealot Bow" "Oak Greathammer" "Marching Mace" "Dualstring Bow" "Dyad Crossbow" "Familial Talisman" "Forked Spear" "Gelid Staff" "Hardwood Spear" "Hunting Spear" "Ironhead Spear" "Long Quarterstaff" "Makeshift Crossbow" "Pointed Maul" "Pyrophyte Staff" "Rattling Sceptre" "Ravenous Staff" "Recurve Bow" "Studded Greatclub" "Vicious Talisman" "Volatile Wand" "Voltaic Staff" "War Spear" "Kalguuran Forgehammer" "Lumbering Talisman" "Nettle Talisman" "Runeforged Cultist Greathammer" "Runeforged Dyad Crossbow" "Runeforged Familial Talisman" "Runeforged Felled Greatclub" "Runeforged Forge Maul" "Runeforged Gothic Quarterstaff" "Runeforged Ironhead Spear" "Runeforged Makeshift Crossbow" "Runeforged Nettle Talisman" "Runeforged Temple Maul" "Warden Bow" "Runeforged Warpick" "Runeforged Wrapped Quarterstaff" "Runeforged Wooden Club" "Runeforged Crude Bow" "Runeforged Slim Mace" "Ancient Leggings" "Runemastered Layered Gauntlets" "Runemastered Martyr Crown" "Runemastered Spired Greathelm" "Runemastered Jade Tiara" "Runemastered Plated Raiment" "Runemastered Gilded Vestments" "Runemastered Riveted Mitts" "Runemastered Stocky Mitts" "Penetrating Quiver" "Armoured Vest" "Embroidered Gloves" "Enlightened Robe" "Felt Cap" "Intricate Crest Shield" "Spired Greathelm" "Runemastered Altar Robe" "Runemastered Pathfinder Coat" "Runemastered Tattered Robe" "Tattered Robe" "Threaded Shoes" "Runemastered Magus Tiara" "Stocky Mitts" "Runemastered Gauze Wraps" "Scale Mail" "Runemastered Serpentscale Coat" "Broadhead Quiver" "Wrapped Sandals" "Tethering Bands" "Cinched Boots" "Altar Robe" "Blacksteel Tower Shield" "Champion Cuirass" "Havoc Raiment" "Martyr Crown" "Lattice Sandals" "Shaman Mantle" "Runeforged Fur Plate" "Runemastered Wrapped Sandals" "Runemastered Ancestral Mail" "Runemastered Burnished Gauntlets" "Runemastered Feathered Sandals" "Runemastered Linen Wraps" "Runemastered Rope Cuffs" "Runemastered Antler Focus" "Runemastered Scalper's Jacket" "Corvus Mantle" "Runemastered Hunting Shoes" "Runemastered Venerable Defender" "Runemastered Vaal Cuirass" "Runemastered Corsair Cap" "Runemastered Sombre Gloves" "Fur Plate" "Grand Cuisses" "Pathfinder Coat" "Riveted Mitts" "Smuggler Coat" "Vermeil Circlet" "Viper Cap" "Runemastered Tempered Mitts" "Runemastered Ironclad Vestments" "Runemastered Spined Bracers" "Runemastered Emblem Crest Shield" "Explorer Armour" "Furtive Wraps" "Heroic Armour" "Omen Crest Shield" "Tempered Mitts" "Trimmed Greaves" "Runemastered Secured Leggings" "Runemastered Shrouded Vest" "Runemastered Marabout Garb" "Runemastered Pauascale Gloves" "Runemastered Doubled Gauntlets" "Runemastered Feathered Tiara" "Runemastered Titan Mitts" "Runemastered Fierce Greathelm" "Antler Focus" "Doubled Gauntlets" "Feathered Sandals" "Feathered Tiara" "Gauze Wraps" "Grand Visage" "Heraldric Tower Shield" "Layered Gauntlets" "Leatherbound Hood" "Marabout Garb" "Quilted Vest" "Rope Cuffs" "Secured Leggings" "Shrouded Vest" "Spined Bracers" "Suede Bracers" "Torn Gloves" "Utility Wraps" "Ancient Visor" "Runemastered Pilgrim Vestments" "Runemastered Torn Gloves" "Tenebrous Crown" "Runemastered Omen Crest Shield" "Runemastered Tonal Focus" "Runemastered Iron Buckler" "Barricade Tower Shield" "Bolstered Mitts" "Braced Tower Shield" "Cultist Crown" "Elite Greathelm" "Engraved Focus" "Hermit Garb" "Iron Greaves" "Laced Boots" "Mail Sabatons" "Plate Gauntlets" "Rampart Tower Shield" "Shabby Hood" "Tideseer Mantle" "Veiled Mask" "Velour Shoes" "Wayfarer Jacket" "Ancient Mail" "Runemastered Rhoahide Coat" "Pilgrim Vestments" "Velvet Cap" "Runemastered Tideseer Mantle" "Goldcast Cuffs" "Sombre Gloves" "Runemastered Anchorite Garb" "Aged Cuffs" "Blazon Crest Shield" "Blunt Quiver" "Bone Raiment" "Bronze Greaves" "Chain Mail" "Covered Sabatons" "Cowled Helm" "Crescent Targe" "Crystal Focus" "Elementalist Robe" "Embossed Boots" "Feathered Robe" "Fire Quiver" "Full Plate" "Guarded Helm" "Hardwood Targe" "Hewn Mask" "Hexer's Robe" "Horned Crown" "Hunter Hood" "Intricate Gloves" "Iron Cuirass" "Jewelled Gloves" "Keth Raiment" "Leather Vest" "Lizardscale Boots" "Mail Vestments" "Maraketh Cuirass" "Painted Tower Shield" "Plated Buckler" "Rhoahide Coat" "Ridged Buckler" "Rogue Armour" "Rough Greaves" "Rusted Cuirass" "Scout's Vest" "Shielded Helm" "Sigil Crest Shield" "Silk Slippers" "Soldier Greathelm" "Solid Mask" "Splintered Tower Shield" "Stacked Sabatons" "Steel Plate" "Studded Vest" "Titan Mitts" "Twig Focus" "Vagabond Armour" "Warrior Greathelm" "Waxed Jacket" "Wicker Tiara" "Wooden Buckler" "Wrapped Greathelm" "Kalguuran Cuffs" "Revered Vestments" "Runemastered Wrapped Greathelm" "Runemastered Bone Raiment" "Runemastered Bronze Greaves" "Runemastered Rogue Armour" "Ancestral Mail" "Anchorite Garb" "Assassin Garb" "Beaded Circlet" "Braced Sabatons" "Burnished Gauntlets" "Cleric Vestments" "Cloaked Mail" "Closed Helm" "Corsair Cap" "Death Mask" "Emblem Crest Shield" "Face Mask" "Fierce Greathelm" "Firm Bracers" "Gilded Vestments" "Gold Circlet" "Hooded Mask" "Hunting Shoes" "Iron Buckler" "Jade Tiara" "Jingling Crest Shield" "Lace Hood" "Leather Buckler" "Linen Wraps" "Magus Tiara" "Ornate Buckler" "Pauascale Gloves" "Plated Raiment" "Plated Vestments" "Ringmail Gauntlets" "Rusted Greathelm" "Sacral Quiver" "Sacrificial Mantle" "Scalper's Jacket" "Sectioned Bracers" "Serpentscale Coat" "Spiked Buckler" "Spiritbone Crown" "Stitched Gloves" "Stone Greaves" "Straw Sandals" "Strider Vest" "Tonal Focus" "Toxic Quiver" "Twig Circlet" "Vaal Cuirass" "Vaal Tower Shield" "Visceral Quiver" "Visored Helm" "Voodoo Focus" "Votive Raiment" "Woven Focus" "Exquisite Vest" "Runemastered Aged Cuffs" "Runemastered Barricade Tower Shield" "Runemastered Braced Sabatons" "Runemastered Braced Tower Shield" "Runemastered Cloaked Mail" "Runemastered Face Mask" "Runemastered Firm Bracers" "Runemastered Full Plate" "Runemastered Guarded Helm" "Runemastered Hardwood Targe" "Runemastered Hexer's Robe" "Runemastered Hooded Mask" "Runemastered Horned Crown" "Runemastered Hunter Hood" "Runemastered Iron Cuirass" "Runemastered Jingling Crest Shield" "Runemastered Lizardscale Boots" "Runemastered Mail Sabatons" "Runemastered Mail Vestments" "Runemastered Maraketh Cuirass" "Runemastered Plate Gauntlets" "Runemastered Quilted Vest" "Runemastered Ringmail Gauntlets" "Runemastered Rusted Cuirass" "Runemastered Rusted Greathelm" "Runemastered Sacrificial Mantle" "Runemastered Scout's Vest" "Runemastered Sectioned Bracers" "Runemastered Shabby Hood" "Runemastered Sigil Crest Shield" "Runemastered Silk Slippers" "Runemastered Soldier Greathelm" "Runemastered Steel Plate" "Runemastered Stitched Gloves" "Runemastered Stone Greaves" "Runemastered Straw Sandals" "Runemastered Studded Vest" "Runemastered Suede Bracers" "Runemastered Twig Focus" "Runemastered Veiled Mask" "Runemastered Verisium Cuffs" "Runemastered Waxed Jacket" "Runemastered Wayfarer Jacket" "Runemastered Wicker Tiara" "Runeforged Lace Hood" "Runemastered Beaded Circlet" "Runemastered Jewelled Gloves" "Runemastered Leather Buckler" "Runemastered Chain Mail" "Runemastered Votive Raiment" "Runemastered Bolstered Mitts" "Runemastered Cowled Helm" "Runemastered Crystal Focus" "Runemastered Cultist Crown" "Runemastered Elementalist Robe" "Runemastered Elite Greathelm" "Runemastered Embossed Boots" "Runemastered Engraved Focus" "Runemastered Feathered Robe" "Runemastered Goldcast Cuffs" "Runemastered Hermit Garb" "Runemastered Hewn Mask" "Runemastered Intricate Gloves" "Runemastered Iron Greaves" "Runemastered Keth Raiment" "Runemastered Laced Boots" "Runemastered Leather Vest" "Runemastered Ornate Buckler" "Runemastered Painted Tower Shield" "Runemastered Plated Buckler" "Runemastered Rampart Tower Shield" "Runemastered Ridged Buckler" "Runemastered Shielded Helm" "Runemastered Solid Mask" "Runemastered Spiked Buckler" "Runemastered Stacked Sabatons" "Runemastered Twig Circlet" "Runemastered Vagabond Armour" "Runemastered Visored Helm" "Runemastered Warrior Greathelm" "Runemastered Wooden Buckler" "Runemastered Woven Focus" "Venerable Defender" "Runemastered Crescent Targe" "Runemastered Gold Circlet" "Runemastered Rough Greaves" "Runemastered Blazon Crest Shield" "Runemastered Covered Sabatons" "Runemastered Splintered Tower Shield" "Runemastered Voodoo Focus" "Lazuli Ring" "Emerald Ring" "Fine Belt" "Gold Amulet" "Lapis Amulet" "Topaz Ring" "Amber Amulet" "Crimson Amulet" "Iron Ring" "Ornate Belt" "Rawhide Belt" "Solar Amulet" "Abyssal Signet" "Plate Belt" "Ruby Ring" "Azure Amulet" "Linen Belt" "Double Belt" "Long Belt" "Lunar Amulet" "Mail Belt" "Ultimate Mana Flask" "Gargantuan Life Flask" "Dousing Charm" "Amethyst Charm" "Grounding Charm" "Staunching Charm" "Sapphire Charm" "Topaz Charm" "Antidote Charm" "Ruby Charm" "Tapestry Relic" "Amphora Relic" "Seal Relic"
+  SetTextColor 248 248 242 255
+  SetBorderColor 248 248 242 255
+  SetFontSize 25
+  SetBackgroundColor 175 96 37 240

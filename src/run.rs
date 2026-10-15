@@ -15,8 +15,21 @@ use clap::Parser;
 use crate::cli::{Cli, Commands};
 use crate::compile::{self, FallbackReason, InputPaths, PriceSource, PriceSourcePolicy};
 use crate::dynamic;
+use crate::safe_write::WriteOutcome;
+use crate::{install, paths, sync};
 use std::path::{Path, PathBuf};
-use crate::{install, sync};
+
+/// `p` as given when absolute, else joined onto `root`. `apply` reads its inputs from the app
+/// root, so a relative `--tiers`/`--styles` override is relative to that same folder rather than
+/// the process working directory.
+fn under_root(root: &Path, p: &str) -> PathBuf {
+    let p = Path::new(p);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    }
+}
 
 /// Parse CLI args and dispatch to the matching subcommand.
 pub fn run() -> miette::Result<()> {
@@ -27,14 +40,27 @@ pub fn run() -> miette::Result<()> {
             output,
             early_game,
             tiers,
-        } => cmd_generate(&config, &output, early_game, tiers.as_deref())?,
+            styles,
+        } => cmd_generate(
+            &config,
+            &output,
+            early_game,
+            tiers.as_deref(),
+            styles.as_deref(),
+        )?,
         Commands::Apply {
-            store,
-            base,
-            dest,
-            reset,
+            filter,
+            add_economy,
+            remove_economy,
             tiers,
-        } => cmd_apply(&store, &base, dest, reset, tiers.as_deref())?,
+            styles,
+        } => cmd_apply(
+            filter.as_deref(),
+            add_economy,
+            remove_economy,
+            tiers.as_deref(),
+            styles.as_deref(),
+        )?,
         Commands::Sync {
             standard,
             hc,
@@ -51,6 +77,7 @@ fn cmd_generate(
     output: &str,
     early_game: bool,
     tiers: Option<&str>,
+    styles: Option<&str>,
 ) -> miette::Result<()> {
     // Bare relative names, resolved against the process working directory — exactly the paths
     // this function passed before the compile API existed. `conventional()` rather than
@@ -60,6 +87,10 @@ fn cmd_generate(
     if let Some(t) = tiers {
         eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
         paths = paths.with_tiers(t);
+    }
+    if let Some(s) = styles {
+        eprintln!("note: --styles {s} — using it instead of styles.json");
+        paths = paths.with_styles(s);
     }
 
     let policy = if early_game {
@@ -111,78 +142,107 @@ fn cmd_generate(
     Ok(())
 }
 
-/// `apply` — compile the dynamic store and write the result into the game folder.
+/// `apply` — refresh, add or remove the economy section of a filter file in place.
 ///
-/// The dynamic counterpart to `generate` + `install` in one step. All presentation lives here;
-/// `crate::dynamic` returns values and prints nothing.
+/// All presentation lives here; `crate::dynamic` returns values and prints nothing.
 fn cmd_apply(
-    store: &str,
-    base: &str,
-    dest: Option<String>,
-    reset: bool,
+    filter: Option<&str>,
+    add_economy: bool,
+    remove_economy: bool,
     tiers: Option<&str>,
+    styles: Option<&str>,
 ) -> miette::Result<()> {
-    let store_path = Path::new(store);
-    let base_path = Path::new(base);
-
-    if reset {
-        dynamic::reset_store(base_path, store_path).map_err(miette::Error::from)?;
-        println!("reset {store} from {base}");
-    } else {
-        match dynamic::ensure_store(base_path, store_path).map_err(miette::Error::from)? {
-            dynamic::StoreState::Seeded => println!("created {store} from {base}"),
-            dynamic::StoreState::Existing => println!("using existing {store}"),
-        }
-    }
-
-    let mut paths = InputPaths::conventional();
-    if let Some(t) = tiers {
-        eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
-        paths = paths.with_tiers(t);
-    }
-    let compiled = dynamic::compile_store(&paths, store_path).map_err(miette::Error::from)?;
-
-    // Same wording cmd_generate uses for the same conditions — one message per situation, not two
-    // spellings of it.
-    match compiled.price_source {
-        PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty) => {
-            eprintln!(
-                "warning: prices.json absent or empty — falling back to \
-                 prices-fallback.json + tiers-fallback.json"
-            );
-        }
-        PriceSource::Absent => {
-            eprintln!(
-                "warning: prices.json absent or empty — falling back to \
-                 prices-fallback.json + tiers-fallback.json"
-            );
-            eprintln!(
-                "warning: prices-fallback.json not found — \
-                 currency/category blocks will be omitted"
-            );
-        }
-        PriceSource::Live | PriceSource::Fallback(FallbackReason::Forced) => {}
-    }
-
-    let dest_dir = match dest {
-        Some(d) => PathBuf::from(d),
-        None => dynamic::default_destination().ok_or_else(|| {
+    let path: PathBuf = match filter {
+        Some(f) => PathBuf::from(f),
+        None => dynamic::default_filter_path().ok_or_else(|| {
             miette::miette!(
                 "Cannot resolve the default PoE2 config folder (USERPROFILE is not set). \
-                 Pass --dest <folder>."
+                 Pass --filter <path>."
             )
         })?,
     };
+    let shown = path.display().to_string();
+    let mut loaded = dynamic::LoadedFilter::load(&path).map_err(miette::Error::from)?;
 
-    let written = dynamic::write_filter(&dest_dir, &compiled.text).map_err(miette::Error::from)?;
+    // Pre-flight for a plain refresh, so a missing file or section is reported before any price
+    // loading happens.
+    if !add_economy && !remove_economy {
+        if !loaded.existed() {
+            return Err(dynamic::DynamicError::FilterNotFound { path: shown }.into());
+        }
+        if !loaded.has_section().map_err(miette::Error::from)? {
+            return Err(dynamic::DynamicError::NoEconomySection { path: shown }.into());
+        }
+    }
 
-    println!(
-        "wrote {} bytes to {}",
-        compiled.text.len(),
-        written.display()
-    );
-    // PoE2 never re-reads a filter on its own, and no external process can make it. Saying so is
-    // not a nicety: a tool that writes silently reads as broken when drops do not change.
+    let body = if remove_economy {
+        None
+    } else {
+        let root = paths::app_root().map_err(miette::Error::from)?;
+        let mut inputs = InputPaths::relative_to(&root);
+        // A relative override resolves against the app root, like the default input it replaces,
+        // so `apply --tiers tiers-fallback.json` works from any working directory.
+        if let Some(t) = tiers {
+            eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
+            inputs = inputs.with_tiers(under_root(&root, t));
+        }
+        if let Some(s) = styles {
+            eprintln!("note: --styles {s} — using it instead of styles.json");
+            inputs = inputs.with_styles(under_root(&root, s));
+        }
+        let (body, source) =
+            dynamic::economy_body(&inputs, PriceSourcePolicy::Auto).map_err(miette::Error::from)?;
+        match source {
+            PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty) => {
+                eprintln!(
+                    "warning: prices.json absent or empty — falling back to \
+                     prices-fallback.json + tiers-fallback.json"
+                );
+            }
+            // Absent is refused by economy_body (no price data); nothing to warn about here.
+            PriceSource::Absent
+            | PriceSource::Live
+            | PriceSource::Fallback(FallbackReason::Forced) => {}
+        }
+        Some(body)
+    };
+
+    let op = match (&body, add_economy) {
+        (None, _) => dynamic::ApplyOp::RemoveEconomy,
+        (Some(b), true) => dynamic::ApplyOp::AddEconomy(b),
+        (Some(b), false) => dynamic::ApplyOp::Refresh(b),
+    };
+
+    if loaded.migrated() {
+        println!(
+            "converting {shown} from the v0.4 layout: the economy section is wrapped in \
+             # ff:economy markers and rule names are kept as # ff:name lines"
+        );
+    }
+
+    let report = dynamic::apply_file(&mut loaded, op).map_err(miette::Error::from)?;
+    match report.outcome {
+        WriteOutcome::Unchanged => {
+            println!("{shown} is already up to date; nothing written");
+        }
+        WriteOutcome::Written { backup } => {
+            println!("wrote {} bytes to {shown}", report.bytes);
+            if let Some(b) = backup {
+                println!("kept the original as {}", b.display());
+            }
+            println!(
+                "{}",
+                if remove_economy {
+                    "removed the economy section"
+                } else if add_economy {
+                    "added the economy section"
+                } else {
+                    "refreshed the economy section"
+                }
+            );
+        }
+    }
+    // PoE2 never re-reads a filter on its own, and no external process can make it.
     println!("Reload it in-game: Options > Game > Item Filter > Refresh");
     Ok(())
 }

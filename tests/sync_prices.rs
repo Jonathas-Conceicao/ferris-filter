@@ -4,30 +4,25 @@
 // zero live network calls are made in any test here.
 // FakeClient only; the real HTTP client is never constructed or imported.
 
+use ferrisfilter::models::prices::{PriceItem, PricesFile};
 use ferrisfilter::sync::client::HttpClient;
 use ferrisfilter::sync::league::resolve_league;
 use ferrisfilter::sync::models::IndexState;
 use ferrisfilter::sync::prices::{build_prices, write_prices_atomic};
-use ferrisfilter::models::prices::{PriceItem, PricesFile};
 
 // ---------------------------------------------------------------------------
 // Fixture strings (loaded at compile-time from tests/fixtures/)
 // ---------------------------------------------------------------------------
 
-const FIXTURE_INDEX_STATE: &str =
-    include_str!("fixtures/index-state.json");
+const FIXTURE_INDEX_STATE: &str = include_str!("fixtures/index-state.json");
 
-const FIXTURE_CURRENCY: &str =
-    include_str!("fixtures/overview-currency.json");
+const FIXTURE_CURRENCY: &str = include_str!("fixtures/overview-currency.json");
 
-const FIXTURE_UNIQUES: &str =
-    include_str!("fixtures/overview-uniques.json");
+const FIXTURE_UNIQUES: &str = include_str!("fixtures/overview-uniques.json");
 
-const FIXTURE_UNCUTGEM: &str =
-    include_str!("fixtures/overview-uncutgem.json");
+const FIXTURE_UNCUTGEM: &str = include_str!("fixtures/overview-uncutgem.json");
 
-const FIXTURE_EMPTY: &str =
-    include_str!("fixtures/overview-empty.json");
+const FIXTURE_EMPTY: &str = include_str!("fixtures/overview-empty.json");
 
 // ---------------------------------------------------------------------------
 // FakeClient — implements HttpClient by matching on URL + `type` query param.
@@ -221,7 +216,10 @@ fn happy_path_anchors_first_and_correct_values() {
     let chaos_orb = &items[1];
     let chaos_val = chaos_orb.chaos.expect("Chaos Orb chaos must be Some");
     // Explicit override sets Chaos Orb chaos = 1.0
-    assert_eq!(chaos_val, 1.0, "Chaos Orb chaos must be 1.0 (explicit override)");
+    assert_eq!(
+        chaos_val, 1.0,
+        "Chaos Orb chaos must be 1.0 (explicit override)"
+    );
 
     let divine_orb = &items[2];
     let divine_chaos = divine_orb.chaos.expect("Divine Orb chaos must be Some");
@@ -239,7 +237,11 @@ fn happy_path_anchors_first_and_correct_values() {
             item.name
         );
         // Anchor orbs are Currency category
-        assert_eq!(item.category, "Currency", "anchor '{}' must be Currency", item.name);
+        assert_eq!(
+            item.category, "Currency",
+            "anchor '{}' must be Currency",
+            item.name
+        );
         assert_eq!(
             item.class, "Stackable Currency",
             "anchor '{}' must be Stackable Currency",
@@ -261,7 +263,10 @@ fn happy_path_anchors_first_and_correct_values() {
 
     // Uncut gems: all three levels survive as distinct PriceItems with (Level N) in base_type.
     // No minLevel floor; no dedup. Class is derived from the "Uncut Spirit Gem" prefix.
-    let gems: Vec<_> = items.iter().filter(|i| i.category == "Uncut Gems").collect();
+    let gems: Vec<_> = items
+        .iter()
+        .filter(|i| i.category == "Uncut Gems")
+        .collect();
     assert_eq!(
         gems.len(),
         3,
@@ -271,15 +276,18 @@ fn happy_path_anchors_first_and_correct_values() {
     );
     // Each level's (Level N) suffix is kept in the base_type.
     assert!(
-        gems.iter().any(|i| i.base_type == "Uncut Spirit Gem (Level 16)"),
+        gems.iter()
+            .any(|i| i.base_type == "Uncut Spirit Gem (Level 16)"),
         "level 16 must survive (no minLevel floor)"
     );
     assert!(
-        gems.iter().any(|i| i.base_type == "Uncut Spirit Gem (Level 18)"),
+        gems.iter()
+            .any(|i| i.base_type == "Uncut Spirit Gem (Level 18)"),
         "level 18 must be present"
     );
     assert!(
-        gems.iter().any(|i| i.base_type == "Uncut Spirit Gem (Level 20)"),
+        gems.iter()
+            .any(|i| i.base_type == "Uncut Spirit Gem (Level 20)"),
         "level 20 must be present"
     );
     // Class derived from prefix: "Uncut Spirit Gems"
@@ -313,8 +321,7 @@ fn happy_path_writes_schema_correct_prices_json() {
         ("UncutGems".to_string(), gem_overview),
     ];
 
-    let items = build_prices(&overviews, &mapping)
-        .expect("build_prices should succeed");
+    let items = build_prices(&overviews, &mapping).expect("build_prices should succeed");
 
     let prices = PricesFile {
         league: "Fate of the Vaal".to_string(),
@@ -331,8 +338,8 @@ fn happy_path_writes_schema_correct_prices_json() {
 
     // Load back via real PricesFile model
     let contents = std::fs::read_to_string(&path).expect("read back temp prices.json");
-    let loaded: PricesFile = serde_json::from_str(&contents)
-        .expect("written prices.json should parse as PricesFile");
+    let loaded: PricesFile =
+        serde_json::from_str(&contents).expect("written prices.json should parse as PricesFile");
 
     assert_eq!(loaded.league, "Fate of the Vaal");
     assert!(!loaded.fetched_at.is_empty());
@@ -349,38 +356,42 @@ fn happy_path_writes_schema_correct_prices_json() {
 /// All four flag combos of resolve_league against the index-state fixture.
 #[test]
 fn league_resolution_all_four_flag_combos() {
-    let state: IndexState = serde_json::from_str(FIXTURE_INDEX_STATE)
-        .expect("parse index-state fixture");
+    let state: IndexState =
+        serde_json::from_str(FIXTURE_INDEX_STATE).expect("parse index-state fixture");
 
     // (false, false) → softcore indexed: "Fate of the Vaal"
-    let sc = resolve_league(&state, false, false)
-        .expect("softcore should resolve");
-    assert_eq!(sc, "Fate of the Vaal", "(false,false) must resolve to Fate of the Vaal");
+    let sc = resolve_league(&state, false, false).expect("softcore should resolve");
+    assert_eq!(
+        sc, "Fate of the Vaal",
+        "(false,false) must resolve to Fate of the Vaal"
+    );
 
     // (false, true) → HC trade (hardcore, url != "hardcore"): "HC Fate of the Vaal"
-    let hc_trade = resolve_league(&state, false, true)
-        .expect("hc trade should resolve");
-    assert_eq!(hc_trade, "HC Fate of the Vaal", "(false,true) must resolve to HC Fate of the Vaal");
+    let hc_trade = resolve_league(&state, false, true).expect("hc trade should resolve");
+    assert_eq!(
+        hc_trade, "HC Fate of the Vaal",
+        "(false,true) must resolve to HC Fate of the Vaal"
+    );
 
     // (true, false) → standard by url: "Standard"
-    let standard = resolve_league(&state, true, false)
-        .expect("standard should resolve");
-    assert_eq!(standard, "Standard", "(true,false) must resolve to Standard");
+    let standard = resolve_league(&state, true, false).expect("standard should resolve");
+    assert_eq!(
+        standard, "Standard",
+        "(true,false) must resolve to Standard"
+    );
 
     // (true, true) → hardcore by url: "Hardcore"
-    let hardcore = resolve_league(&state, true, true)
-        .expect("hardcore should resolve");
+    let hardcore = resolve_league(&state, true, true).expect("hardcore should resolve");
     assert_eq!(hardcore, "Hardcore", "(true,true) must resolve to Hardcore");
 }
 
 /// The league name (not url slug) is recorded in the PricesFile output.
 #[test]
 fn league_name_recorded_in_prices_output() {
-    let state: IndexState = serde_json::from_str(FIXTURE_INDEX_STATE)
-        .expect("parse index-state fixture");
+    let state: IndexState =
+        serde_json::from_str(FIXTURE_INDEX_STATE).expect("parse index-state fixture");
 
-    let league_name = resolve_league(&state, false, false)
-        .expect("resolve softcore league");
+    let league_name = resolve_league(&state, false, false).expect("resolve softcore league");
     assert_eq!(league_name, "Fate of the Vaal");
 
     // Build a minimal PricesFile and assert league is recorded
@@ -389,11 +400,8 @@ fn league_name_recorded_in_prices_output() {
     let mapping: ferrisfilter::sync::mapping::Mapping =
         serde_json::from_str(minimal_mapping_str()).expect("parse minimal mapping");
 
-    let items = build_prices(
-        &[("Currency".to_string(), currency_overview)],
-        &mapping,
-    )
-    .expect("build_prices should succeed");
+    let items = build_prices(&[("Currency".to_string(), currency_overview)], &mapping)
+        .expect("build_prices should succeed");
 
     let prices = PricesFile {
         league: league_name.clone(),
@@ -403,7 +411,10 @@ fn league_name_recorded_in_prices_output() {
 
     // League name must be recorded, not empty, not a url slug
     assert_eq!(prices.league, "Fate of the Vaal");
-    assert_ne!(prices.league, "vaal", "league must be display name, not url slug");
+    assert_ne!(
+        prices.league, "vaal",
+        "league must be display name, not url slug"
+    );
     assert!(!prices.fetched_at.is_empty());
 }
 
@@ -433,11 +444,8 @@ fn gem_all_levels_survive_with_level_in_base_type() {
     let mapping: ferrisfilter::sync::mapping::Mapping =
         serde_json::from_str(mapping_src).expect("parse gem-only mapping");
 
-    let items = build_prices(
-        &[("UncutGems".to_string(), gem_overview)],
-        &mapping,
-    )
-    .expect("build_prices with gem filter should succeed");
+    let items = build_prices(&[("UncutGems".to_string(), gem_overview)], &mapping)
+        .expect("build_prices with gem filter should succeed");
 
     // All three levels survive (no minLevel floor); each is a distinct PriceItem.
     assert_eq!(
@@ -450,9 +458,18 @@ fn gem_all_levels_survive_with_level_in_base_type() {
 
     // The "(Level N)" suffix is KEPT in each base_type (not stripped).
     let base_types: Vec<&str> = items.iter().map(|i| i.base_type.as_str()).collect();
-    assert!(base_types.contains(&"Uncut Spirit Gem (Level 16)"), "level 16 must survive");
-    assert!(base_types.contains(&"Uncut Spirit Gem (Level 18)"), "level 18 must be present");
-    assert!(base_types.contains(&"Uncut Spirit Gem (Level 20)"), "level 20 must be present");
+    assert!(
+        base_types.contains(&"Uncut Spirit Gem (Level 16)"),
+        "level 16 must survive"
+    );
+    assert!(
+        base_types.contains(&"Uncut Spirit Gem (Level 18)"),
+        "level 18 must be present"
+    );
+    assert!(
+        base_types.contains(&"Uncut Spirit Gem (Level 20)"),
+        "level 20 must be present"
+    );
 
     // Each item's class is derived from the prefix: "Uncut Spirit Gems".
     for item in &items {
@@ -464,8 +481,14 @@ fn gem_all_levels_survive_with_level_in_base_type() {
     }
 
     // Individual prices kept per level (no highest-value collapse).
-    let l16 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 16)").unwrap();
-    let l20 = items.iter().find(|i| i.base_type == "Uncut Spirit Gem (Level 20)").unwrap();
+    let l16 = items
+        .iter()
+        .find(|i| i.base_type == "Uncut Spirit Gem (Level 16)")
+        .unwrap();
+    let l20 = items
+        .iter()
+        .find(|i| i.base_type == "Uncut Spirit Gem (Level 20)")
+        .unwrap();
     assert!(
         (l16.div.unwrap_or(0.0) - 0.05).abs() < 0.001,
         "level 16 keeps its own div price (0.05); got {:?}",
@@ -525,8 +548,7 @@ fn failure_safety_byte_equal_on_network_error() {
     let prices_path = tmp_dir.path().join("prices.json");
     let prices_path_str = prices_path.to_str().unwrap();
 
-    write_prices_atomic(prices_path_str, &known_good)
-        .expect("initial write should succeed");
+    write_prices_atomic(prices_path_str, &known_good).expect("initial write should succeed");
 
     // Snapshot the bytes before the (simulated) failed sync
     let bytes_before = std::fs::read(&prices_path).expect("read prices.json before");
@@ -538,11 +560,8 @@ fn failure_safety_byte_equal_on_network_error() {
         serde_json::from_str(minimal_mapping_str()).expect("parse mapping");
 
     // build_prices on all-empty overviews produces 0 items
-    let empty_items = build_prices(
-        &[("Currency".to_string(), empty_overview)],
-        &mapping,
-    )
-    .expect("build_prices should not error on empty data");
+    let empty_items = build_prices(&[("Currency".to_string(), empty_overview)], &mapping)
+        .expect("build_prices should not error on empty data");
 
     assert!(
         empty_items.is_empty() || empty_items.iter().all(|i| i.name == ""), // defensive
@@ -616,11 +635,8 @@ fn generate_loop_with_sync_produced_prices() {
     let mapping: ferrisfilter::sync::mapping::Mapping =
         serde_json::from_str(minimal_mapping_str()).expect("parse mapping");
 
-    let items = build_prices(
-        &[("Currency".to_string(), currency_overview)],
-        &mapping,
-    )
-    .expect("build_prices should succeed");
+    let items = build_prices(&[("Currency".to_string(), currency_overview)], &mapping)
+        .expect("build_prices should succeed");
 
     let prices = PricesFile {
         league: "Fate of the Vaal".to_string(),
@@ -636,9 +652,9 @@ fn generate_loop_with_sync_produced_prices() {
     write_prices_atomic(prices_path.to_str().unwrap(), &prices)
         .expect("write sync-produced prices.json");
 
-    // Copy config.json and tiers.json from repo root to temp dir
+    // Copy config.json and the default tiers/styles from repo root to temp dir (as the live names)
     let config_src = std::path::Path::new(manifest).join("config.json");
-    let tiers_src = std::path::Path::new(manifest).join("tiers.json");
+    let tiers_src = std::path::Path::new(manifest).join("tiers-default.json");
     let mapping_src = std::path::Path::new(manifest).join("mapping.json");
 
     if !config_src.exists() {
@@ -648,8 +664,12 @@ fn generate_loop_with_sync_produced_prices() {
 
     fs::copy(&config_src, tmp_dir.path().join("config.json"))
         .expect("copy config.json to temp dir");
-    fs::copy(&tiers_src, tmp_dir.path().join("tiers.json"))
-        .expect("copy tiers.json to temp dir");
+    fs::copy(
+        std::path::Path::new(manifest).join("styles-default.json"),
+        tmp_dir.path().join("styles.json"),
+    )
+    .expect("copy styles.json to temp dir");
+    fs::copy(&tiers_src, tmp_dir.path().join("tiers.json")).expect("copy tiers.json to temp dir");
     fs::copy(&mapping_src, tmp_dir.path().join("mapping.json"))
         .expect("copy mapping.json to temp dir");
 

@@ -18,9 +18,21 @@ desktop.ini
 /prices.json
 /universal.filter
 
-# Dynamic filter working state — `apply` seeds dynamic.json from the committed
-# dynamic_base.json template and writes dynamic.filter into the game folder.
-# dynamic_base.json IS committed (it is the template and the "reset to scratch"
-# source); these two are per-user state and are not.
-/dynamic.json
+# Dynamic filter: `apply` edits dynamic.filter in the game folder in place (the filter
+# is the store); a repo-root copy is per-user and never committed.
 /dynamic.filter
+
+# Obsolete v0.4 per-user store. Nothing reads dynamic.json since Phase 18 (the filter is the
+# store), but a leftover copy is personal state; ignored only so it is never committed.
+/dynamic.json
+
+# One-time backups `apply` keeps beside a filter it rewrites (`<name>.filter.ffbak`).
+*.ffbak
+
+# Per-user overlay settings (selected game-folder filter). Never committed.
+/ff-settings.json
+
+# Per-user live config. The overlay's Apply writes these; when absent, styles-default.json /
+# tiers-default.json (committed) are read instead. Delete one to reset it to the defaults.
+/styles.json
+/tiers.json

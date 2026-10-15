@@ -4,19 +4,28 @@
 //! thin view over it. If a bug can only be found by clicking, it is in the wrong
 //! layer — `app.rs` and friends should stay presentation-only, delegating to
 //! `ferrisfilter::dynamic` / `ferrisfilter::compile` for anything that touches
-//! `dynamic.json` or the filter compiler.
+//! the filter file or the filter compiler.
 
 pub mod app;
 pub mod apply;
+pub mod apply_all;
+pub mod body;
+pub mod chat;
+pub mod classes;
+pub mod conditions;
+pub mod config_state;
+pub mod config_view;
 pub mod economy;
-pub mod edit;
+pub mod grammar;
 pub mod hotkey;
+pub mod instance;
 pub mod layout;
-pub mod rule_editor;
-pub mod store;
+pub mod rule_list;
+pub mod rules;
+pub mod text_entry;
 pub mod theme;
 pub mod tray;
-pub mod view_model;
+pub mod virtual_list;
 pub mod visibility;
 pub mod widgets;
 pub mod win;
@@ -25,6 +34,19 @@ use hotkey::HotkeyStatus;
 
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
+    // INST-01 / Phase 22 -- a second `ff` signals the running one to show its stripe (or shows
+    // the not-responding message after `instance::STARTUP_TIMEOUT_MS` for a still-starting
+    // instance plus `instance::ACK_TIMEOUT_MS` for the answer) and exits here, before it
+    // registers a hotkey or builds a tray icon, so repeated launches never leave a second
+    // stripe, icon or hotkey registration. If the single-instance check itself fails, it also
+    // exits here (fail closed, with a message box naming the error). The guard lives in
+    // `OverlayApp` until tray Quit, which drops it at once so an immediate relaunch can start.
+    // Quit unregisters the hotkey and removes the tray icon first, so that relaunch can
+    // register `Ctrl+Shift+Z` itself.
+    let Some(instance_guard) = instance::acquire() else {
+        return Ok(());
+    };
+
     // Thread affinity (RESEARCH Pattern 3, the one hard constraint): both the
     // hotkey manager and the tray must be built on the thread that runs the
     // Win32 message loop. `launch()` runs on the main thread (called directly
@@ -37,7 +59,9 @@ pub fn launch() -> eframe::Result<()> {
     // tooltip and a disabled menu line name the combo and the reason, so the
     // failure is visible with no console open.
     let (tooltip, status_line) = match &hotkey_status {
-        HotkeyStatus::Registered { .. } => ("FerrisFilter — Ctrl+Shift+Z to toggle".to_string(), None),
+        HotkeyStatus::Registered { .. } => {
+            ("FerrisFilter — Ctrl+Shift+Z to toggle".to_string(), None)
+        }
         HotkeyStatus::Failed(err) => {
             let msg = format!("FerrisFilter — Ctrl+Shift+Z unavailable: {err}");
             (msg.clone(), Some(msg))
@@ -81,6 +105,7 @@ pub fn launch() -> eframe::Result<()> {
                 tray,
                 hotkey_manager,
                 hotkey_status,
+                instance_guard,
             )))
         }),
     )

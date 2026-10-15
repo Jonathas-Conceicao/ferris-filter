@@ -6,6 +6,7 @@
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
+- ✅ **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-28 (shipped 2026-10-15) — [archive](milestones/v0.5-ROADMAP.md)
 
 ## Phases
 
@@ -56,41 +57,32 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
+<details>
+<summary>✅ v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-28) — SHIPPED 2026-10-15</summary>
+
+- [x] Phase 16: Lossless Filter Parser (4/4 plans) — completed 2026-10-15
+- [x] Phase 17: Config-Driven Styles (4/4 plans) — completed 2026-10-13
+- [x] Phase 18: Filter as Store & Economy Section (7/7 plans) — completed 2026-10-15
+- [x] Phase 19: Overlay Rule List Over Parsed Blocks (7/7 plans) — completed 2026-10-13
+- [x] Phase 20: Full-Grammar Block Editing (9/9 plans) — completed 2026-10-15
+- [x] Phase 21: Overlay Configuration Tab (6/6 plans) — completed 2026-10-13
+- [x] Phase 22: Single-Instance Overlay (2/2 plans) — completed 2026-10-15
+- [x] Phase 23: Auto-Reload Filter in Game on Apply (4/4 plans) — completed 2026-10-15
+- [x] Phase 24: UAT Feedback Fixes (6/6 plans) — completed 2026-10-15
+- [x] Phase 25: UAT Feedback Fixes 2 (4/4 plans) — completed 2026-10-15
+- [x] Phase 26: UAT Feedback Fixes 3 (9/9 plans) — completed 2026-10-15
+- [x] Phase 27: UAT Feedback Fixes 4 (5/5 plans) — completed 2026-10-15
+- [x] Phase 28: Default config files (4/4 plans) — completed 2026-10-15
+
+Full detail: [milestones/v0.5-ROADMAP.md](milestones/v0.5-ROADMAP.md)
+
+</details>
 
 ## Backlog
 
-### Phase 999.1: Config-driven styles (no hardcoded vocabulary) (BACKLOG)
+### Phase 999.1: Config-driven styles — promoted to Phase 17 (v0.5)
 
-**Goal:** Any config should be able to define and use new named styles without a code change.
-Today the style vocabulary is hardcoded in the `Styles` struct (`src/models/config.rs`) and
-`emitter::resolve_style` (`src/emitter.rs`) — adding `craftable` (for `ssf_icewolf_config.json`)
-required editing both. Replace the named-field `Styles` struct with a name→`Style` map (or keep
-S–F/unchanged/hidden/unidentified as the known palette plus an open `extra` map), resolve styles
-by lookup instead of a `match`, and validate at load-time that every `rule.style` resolves.
-`FUTURE` comments already mark both code locations.
-**Requirements:** TBD
-**Plans:** 3/4 plans executed
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.2: Overlay single-instance guard (BACKLOG)
-
-**Goal:** Launching `ff` while it is already running should surface the existing stripe instead of
-opening a second one. Discovered by the author during Phase 13 wave-2 verification (2026-09-04):
-a second launch opens a second stripe window, and only the first instance owns the `Shift+Z`
-registration — the second correctly reports the conflict in its tray tooltip (D-10), so the
-failure is visible rather than silent, but two stripes and one working hotkey is not the intended
-shape for a tray app that gets double-clicked. Fix shape: acquire a named mutex at startup; if it
-is already held, signal the running instance to show itself and exit rather than creating a
-window. Small, self-contained, and touches only the overlay entry point.
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
+### Phase 999.2: Overlay single-instance guard — promoted to Phase 22 (v0.5)
 
 ### Phase 999.3: Filter load info message — online filters only (BACKLOG, deferred)
 
@@ -132,13 +124,16 @@ extension and are named by the online filter's id.
 
 **Spike results (2026-10-12, author-tested in-game).** The test filters were the current
 `dynamic.filter` with a FerrisFilter version of the online header and a correct body hash.
+
 - **The offline header is ignored.** `ff-header-test.filter`, `ff-badhash-test.filter` (wrong hash)
   and `ff-freetext-test.filter` (free text in `#name`/`#filterVersion`/`#errors`) all appeared in
   the dropdown and loaded with only the stock "Item Filter loaded successfully." message. An offline
   file cannot produce the load message, whatever its header says.
+
 - **`OnlineFilters/` is a cache, not a source.** Two hand-written files placed there (`ffTEST01`,
   `ffTEST02`) never appeared in the dropdown, and the game left them untouched. The online list
   comes from the account's filters on the server; the folder only holds downloaded copies.
+
 - **Local edits to a subscribed online filter are overwritten.** The header of the real FilterBlade
   copy (`OnlineFilters/pgWoKpuQ`) was rewritten with marker values (`#name`, `#filterVersion`,
   `#errors`, `#filterType`, a 2030 `#lastUpdate`), with the body and its hash left intact. When the
@@ -151,11 +146,13 @@ filters stored on the player's pathofexile.com account. Getting it means publish
 FerrisFilter output to the account instead of (or as well as) writing a local file.
 
 **Next spikes (unverified):**
+
 1. Cheap manual check: create an online filter on pathofexile.com by hand, paste a FerrisFilter
    output into it, subscribe in-game, and confirm the message shows. Also note which displayed
    fields map to which values entered on the site (name/version/last update), whether any can carry
    free text (that would let a future version echo 999.4's economy summary in-game), and whether the
    `CustomAlertSound "uwu.mp3"` still works from an online filter.
+
 2. Automated path: GGG's developer API appears to expose item-filter create/update endpoints under
    an OAuth scope (FilterBlade's auto-updater is believed to use this). Confirm the endpoints, the
    scope, and what app registration GGG requires. This would replace `install`/`apply`'s local copy
@@ -163,7 +160,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** TBD
+**Plans:** 6/6 plans complete
 
 Plans:
 
@@ -187,46 +184,9 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.5: Drop `dynamic.json`; styles move to `styles.json` (BACKLOG)
+### Phase 999.5: Drop `dynamic.json`; styles move to `styles.json` — promoted to Phases 17-18 (v0.5)
 
-**Goal:** Remove `dynamic.json` (and its `dynamic_base.json` template) as the dynamic filter's
-source of truth. The **filter file itself** holds the rules, and it is edited through 999.6's
-parse-and-edit support. The other inputs stay as separate files: economy cache `prices.json`, tier
-cutoffs `tiers.json`, the `prices-fallback.json`/`tiers-fallback.json` early-league pair, and
-`mapping.json` for sync. The named style definitions (the Dracula tier palette plus
-`unchanged`/`hidden`/`kite` and custom styles) move into a new **`styles.json` at the repo root**,
-so styles stay shared and editable without a rule store.
-
-**Intentional trade-off:** with no rule store, a filter can no longer be fully regenerated from
-config. It is edited in place instead. This is the point: it goes together with 999.6, where any
-filter (ours or not) can be loaded, edited and used. `config.json` → `universal.filter` (the static
-`generate` path and its byte-for-byte fixture) is out of scope unless we decide otherwise. Open
-questions: how economy-priced sections are found and refreshed inside an edited filter (markers or
-comments around generated blocks?), and whether `styles.json` is split out of `config.json` or
-copied from it (relates to 999.1).
-
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
-### Phase 999.6: Parse and edit arbitrary filters (full grammar) (BACKLOG)
-
-**Goal:** Load any working PoE2 filter, not just FerrisFilter output (e.g. FilterBlade or
-poe2filter.com exports, or hand-written ones), and edit it. The rule model has to cover the full
-filter grammar: every condition, operator, and action, plus `Continue`, `Import`, and
-`Minimal`. Anything the editor doesn't understand must still round-trip losslessly instead of
-being dropped. This is the foundation for 999.5 and 999.7 and is probably big enough to be its own
-milestone. The current `when` vocabulary and named-style model (see 999.1) would have to grow
-into, or sit beside, a general block representation.
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
+### Phase 999.6: Parse and edit arbitrary filters — promoted to Phases 16, 19-20 (v0.5)
 
 ### Phase 999.7: Unmaintained (locked) rules and layering over a base filter (BACKLOG)
 
@@ -245,14 +205,14 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.8: Overlay configuration tab (BACKLOG)
+### Phase 999.8: Overlay configuration tab — partially promoted (BACKLOG)
 
-**Goal:** Add a configuration tab to the overlay, separate from the rule editor, where users
-can configure (a) the load message (999.3, once online publishing exists) and the overlay economy summary (999.4), (b) the loot styles in `styles.json` (the tier
-palette and any custom styles; builds on 999.1/999.5 so styles are data rather than a hardcoded
-vocabulary), and (c) the economy tiering, meaning the tier cutoffs (`tiers.json`) and not the
-prices themselves. Edits should follow the overlay's existing model: held in memory, persisted
-only on Apply, and discardable with Revert.
+**Promoted to Phase 21 (v0.5):** the configuration tab itself, the loot styles in `styles.json`
+and the economy tier cutoffs (`tiers.json`).
+
+**Remaining goal:** configuration of the load message (999.3, once online publishing exists) and of
+the overlay economy summary (999.4). Edits should follow the overlay's existing model: held in
+memory, persisted only on Apply, and discardable with Revert.
 
 **Requirements:** TBD
 **Plans:** TBD
@@ -271,6 +231,78 @@ experiments already in the working tree are informal presets of this kind. Open 
 many questions before it becomes a chore, whether presets are full filters or layers over a base
 (see 999.7), and where the question flow lives (overlay first run, CLI, or both).
 
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.10: Raw-text block editing (BACKLOG)
+
+**Goal:** An "Edit as text" escape hatch on a rule in the overlay: edit the block's raw filter text
+directly, with the edit validated by the Phase 16 parser before it's accepted (an enabled block must
+always be valid grammar). Proposed during v0.5 discussion (Phase 20, 2026-10-12) and deferred by the
+author. v0.5 covers the full grammar with structured controls, so this is for power users and
+odd cases.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.11: Full overlay UI review — less "texty" (BACKLOG)
+
+**Goal:** A full visual and UX review of the overlay (RULES and CONFIG tabs, row headers, flags,
+status/outcome area, captions, confirmations). The author's main complaint after using v0.5
+(2026-10-13): parts of the UI read as a wall of text. Replace prose with visual affordances where
+possible: icons/chips instead of sentences, tooltips or on-demand help instead of standing captions,
+terser status lines, clearer visual hierarchy. Starting points: the per-phase UI reviews
+(19/20/21-UI-REVIEW.md, each 18/24, with Typography and Spacing the weakest pillars). Deferred by the
+author: v0.5 focuses on usability and minor fixes, not a visual redesign.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.12: Keyword table: verify remaining keywords in game (BACKLOG)
+
+**Goal:** The Phase 16 keyword-table sign-off was a partial pass (author's UAT, 2026-10-15): the
+keywords not yet exercised in game should be checked against the live game and corrected in
+`src/filter/keywords.rs`. Also unconfirmed in game: PoE1-only lines (e.g. `LinkedSockets`,
+`SocketGroup`, `HasInfluence`) loading as raw rows without blocking Apply was verified in tests
+only; the v0.5 UAT (2026-10-15) recorded it as partial.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.13: Guide rules away from conditions that cannot match (BACKLOG)
+
+**Goal:** Offer guidance (not blocking) when a rule combines conditions that can never match, e.g.
+Defences or Simple Defences on a rule without armour classes (noted in Phase 27: UAT4-03 has no class
+check).
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.14: Minimal support review for PoE2 (BACKLOG)
+
+**Goal:** A general review of `Minimal` blocks in PoE2: check in game whether `Minimal` is valid
+outside Ruthless and what it renders, then decide how far FerrisFilter supports it. Today a foreign
+`Minimal` block loads and is kept as is (shown as Minimal, Custom only), but a `styles.json` style
+with `"action": "Minimal"` fails to load, rejecting the whole file (Phase 24 review WR-02, against
+the UAT-04 spec "keep loading it"; deferred here 2026-10-15). If
+Minimal is valid in PoE2, allow it as a style action (loader, overlay switch, generator); if not,
+keep rejecting it with a clear message.
 **Requirements:** TBD
 **Plans:** TBD
 

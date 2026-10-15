@@ -1,13 +1,18 @@
-//! Integration coverage for the dynamic filter store (Phase 12).
+//! Integration coverage for filter-as-store `apply` (Phase 18).
 //!
 //! Every case runs the binary hermetically in a fresh temp dir seeded from committed files —
 //! never against the repo root, whose `prices.json` is git-ignored and reflects whatever the last
-//! `sync` fetched. That mistake cost time twice during v0.3.
+//! `sync` fetched. The only spawn point is [`apply`], which sets `FERRISFILTER_HOME` and
+//! `USERPROFILE` to the temp dir, so no test can reach the real PoE2 game folder even when
+//! `--filter` is omitted.
 
 use assert_cmd::Command;
 use predicates::str::contains;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+const BEGIN: &str = "# ff:economy-begin";
+const END: &str = "# ff:economy-end";
 
 /// Normalize CRLF to LF. The generator emits LF-only; the working tree is CRLF on Windows.
 fn normalize(s: &str) -> String {
@@ -18,7 +23,7 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// A fresh temp dir containing the inputs a dynamic compile needs.
+/// A fresh temp dir (the app root) with the inputs an economy compile needs, plus `game/`.
 fn workspace(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "ferrisfilter_dyn_{tag}_{:x}",
@@ -28,8 +33,11 @@ fn workspace(tag: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(dir.join("game")).expect("create temp dir");
-    for f in ["dynamic_base.json", "tiers.json", "config.json"] {
-        fs::copy(manifest().join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("tiers-default.json", "tiers.json"),
+        ("styles-default.json", "styles.json"),
+    ] {
+        fs::copy(manifest().join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
     fs::copy(
         manifest().join("tests/fixtures/seed-prices.json"),
@@ -39,286 +47,317 @@ fn workspace(tag: &str) -> PathBuf {
     dir
 }
 
-fn apply(dir: &Path) -> assert_cmd::assert::Assert {
+/// Like [`workspace`], but the app root holds the committed `styles-default.json` /
+/// `tiers-default.json` under their own names and no live `styles.json` / `tiers.json`.
+fn workspace_defaults(tag: &str) -> PathBuf {
+    let dir = workspace(tag);
+    fs::remove_file(dir.join("styles.json")).expect("remove live styles");
+    fs::remove_file(dir.join("tiers.json")).expect("remove live tiers");
+    for f in ["styles-default.json", "tiers-default.json"] {
+        fs::copy(manifest().join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+    dir
+}
+
+/// The single place `apply` is spawned.
+fn apply(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     Command::cargo_bin("ferrisfilter")
         .expect("binary")
         .current_dir(dir)
-        .args(["apply", "--dest", "game"])
+        .env("FERRISFILTER_HOME", dir)
+        .env("USERPROFILE", dir)
+        .arg("apply")
+        .args(args)
         .assert()
 }
 
-fn filter_text(dir: &Path) -> String {
-    normalize(&fs::read_to_string(dir.join("game").join("dynamic.filter")).expect("read filter"))
+fn gf(dir: &Path) -> PathBuf {
+    dir.join("game").join("dynamic.filter")
 }
 
-/// Read the store, mutate it as JSON, write it back.
-fn edit_store(dir: &Path, f: impl FnOnce(&mut serde_json::Value)) {
-    let path = dir.join("dynamic.json");
-    let mut v: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).expect("read store")).expect("parse store");
-    f(&mut v);
-    fs::write(&path, serde_json::to_string_pretty(&v).expect("serialize")).expect("write store");
+fn gfs(dir: &Path) -> String {
+    gf(dir).to_string_lossy().into_owned()
 }
 
-/// Only the policy blocks — everything before the first economy section banner.
-fn policy_section(filter: &str) -> String {
-    match filter.find("#============") {
-        Some(i) => filter[..i].to_string(),
-        None => filter.to_string(),
-    }
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).expect("read filter")
 }
 
-/// Only the economy sections — from the first banner to the end.
-fn economy_section(filter: &str) -> String {
-    match filter.find("#============") {
-        Some(i) => filter[i..].to_string(),
-        None => String::new(),
-    }
+/// Lines strictly between the marker lines.
+fn section_body(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let b = lines
+        .iter()
+        .position(|l| l.starts_with(BEGIN))
+        .expect("begin marker");
+    let e = lines
+        .iter()
+        .position(|l| l.starts_with(END))
+        .expect("end marker");
+    lines[b + 1..e].join("\n")
 }
 
-// ---------------------------------------------------------------------------
-// DYN-01 — the store parses, and malformation is reported with a field path
-// ---------------------------------------------------------------------------
+fn ffbak(dir: &Path) -> PathBuf {
+    dir.join("game").join("dynamic.filter.ffbak")
+}
 
 #[test]
-fn malformed_store_reports_the_field_path() {
-    let dir = workspace("malformed");
-    apply(&dir).success();
+fn add_economy_creates_a_new_filter_with_only_the_section() {
+    let dir = workspace("create");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    let text = read(&gf(&dir));
+    assert!(text.lines().next().unwrap().starts_with(BEGIN), "{text}");
+    assert!(text.contains(END));
+    assert!(!ffbak(&dir).exists());
+}
 
-    // `style` must be a string; make it a number.
-    edit_store(&dir, |v| {
-        v["rules"][0]["style"] = serde_json::json!(42);
-    });
-
-    Command::cargo_bin("ferrisfilter")
-        .expect("binary")
-        .current_dir(&dir)
-        .args(["apply", "--dest", "game"])
-        .assert()
+#[test]
+fn plain_apply_on_a_missing_filter_writes_nothing() {
+    let dir = workspace("missing");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f])
         .failure()
-        .stderr(contains("dynamic.json"))
-        .stderr(contains("rules[0].style"));
+        .stderr(contains("dynamic.filter"))
+        .stderr(contains("--add-economy"));
+    assert!(!gf(&dir).exists());
 }
 
-// ---------------------------------------------------------------------------
-// DYN-04 — every condition is independent; an absent one emits nothing
-// ---------------------------------------------------------------------------
-
 #[test]
-fn a_sockets_only_rule_emits_sockets_and_nothing_else() {
-    let dir = workspace("socketsonly");
-    apply(&dir).success();
-
-    edit_store(&dir, |v| {
-        v["rules"] = serde_json::json!([{
-            "style": "E",
-            "when": { "sockets": { "min": 3 } }
-        }]);
-    });
-    apply(&dir).success();
-
-    let policy = policy_section(&filter_text(&dir));
-    assert!(
-        policy.contains("Sockets >= 3"),
-        "expected the sockets condition, got:\n{policy}"
-    );
-    for absent in [
-        "Class",
-        "Rarity",
-        "BaseArmour",
-        "BaseEvasion",
-        "BaseEnergyShield",
-        "Quality",
-        "Corrupted",
-    ] {
-        assert!(
-            !policy.contains(absent),
-            "a rule that sets only `sockets` must not emit a `{absent}` line, got:\n{policy}"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DYN-02 — array order is the precedence
-// ---------------------------------------------------------------------------
-
-#[test]
-fn reordering_rules_reorders_their_blocks() {
-    let dir = workspace("reorder");
-    apply(&dir).success();
-
-    edit_store(&dir, |v| {
-        v["rules"] = serde_json::json!([
-            { "style": "E", "when": { "sockets": { "min": 3 } } },
-            { "style": "F", "when": { "quality": { "min": 7 } } }
-        ]);
-    });
-    apply(&dir).success();
-    let first = policy_section(&filter_text(&dir));
-    let sockets_first = first.find("Sockets >= 3").expect("sockets block");
-    let quality_first = first.find("Quality >= 7").expect("quality block");
-    assert!(sockets_first < quality_first, "authored order should hold");
-
-    edit_store(&dir, |v| {
-        let rules = v["rules"].as_array_mut().unwrap();
-        rules.swap(0, 1);
-    });
-    apply(&dir).success();
-    let second = policy_section(&filter_text(&dir));
-    let sockets_second = second.find("Sockets >= 3").expect("sockets block");
-    let quality_second = second.find("Quality >= 7").expect("quality block");
-    assert!(
-        quality_second < sockets_second,
-        "swapping the rules must swap their blocks — array order is the precedence"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// DYN-06 — dynamic.filter is a complete, playable filter
-// ---------------------------------------------------------------------------
-
-#[test]
-fn dynamic_filter_carries_the_same_economy_sections_as_universal() {
-    let dir = workspace("economy");
-    apply(&dir).success();
-    let dynamic_economy = economy_section(&filter_text(&dir));
-
-    // Same prices.json, same tiers.json, compiled through `generate` instead.
+fn economy_section_matches_generate() {
+    let dir = workspace("parity");
+    fs::copy(manifest().join("config.json"), dir.join("config.json")).expect("copy config");
     Command::cargo_bin("ferrisfilter")
         .expect("binary")
         .current_dir(&dir)
+        .env("FERRISFILTER_HOME", &dir)
+        .env("USERPROFILE", &dir)
         .args(["generate", "--output", "universal.filter"])
         .assert()
         .success();
-    let universal =
-        normalize(&fs::read_to_string(dir.join("universal.filter")).expect("read universal"));
-    let universal_economy = economy_section(&universal);
+    let generated = normalize(&read(&dir.join("universal.filter")));
+    let expected = &generated[generated.find("# ============").expect("banner")..];
 
-    assert!(
-        !dynamic_economy.is_empty(),
-        "dynamic.filter must have economy sections — without them, selecting it in-game \
-         silently loses every currency, gem and unique highlight"
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    let body = normalize(&section_body(&read(&gf(&dir))));
+    assert_eq!(body.trim_matches('\n'), expected.trim_matches('\n'));
+}
+
+#[test]
+fn reapply_is_a_no_op() {
+    let dir = workspace("noop");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    let before = fs::read(gf(&dir)).unwrap();
+    let mtime = fs::metadata(gf(&dir)).unwrap().modified().unwrap();
+    apply(&dir, &["--filter", &f])
+        .success()
+        .stdout(contains("already up to date"));
+    assert_eq!(before, fs::read(gf(&dir)).unwrap());
+    assert_eq!(mtime, fs::metadata(gf(&dir)).unwrap().modified().unwrap());
+}
+
+#[test]
+fn refresh_changes_nothing_outside_the_markers() {
+    let dir = workspace("outside");
+    let prefix = format!(
+        "Show # one\r\n  Class \"Rings\"\r\n\r\nShow # two\r\n  Rarity Rare\r\n\r\n{BEGIN} old\r\n"
     );
-    assert_eq!(
-        dynamic_economy, universal_economy,
-        "the economy half of dynamic.filter must match universal.filter's, priced from the same \
-         prices.json"
+    let suffix = format!("{END} old\r\n");
+    let original = format!("{prefix}\r\nShow # GARBAGE\r\n  Class \"Rings\"\r\n\r\n{suffix}");
+    fs::write(gf(&dir), &original).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f]).success();
+    let after = fs::read_to_string(gf(&dir)).unwrap();
+    assert!(after.starts_with(&prefix), "prefix changed");
+    assert!(after.ends_with(&suffix), "suffix changed");
+    assert!(!after.contains("GARBAGE"));
+    assert!(
+        !after.replace("\r\n", "").contains('\n'),
+        "bare LF in a CRLF file"
     );
 }
 
-// ---------------------------------------------------------------------------
-// DYN-05 — dynamic rules carry no area-level conditions
-// ---------------------------------------------------------------------------
+#[test]
+fn plain_apply_on_a_foreign_filter_without_a_section_refuses() {
+    let dir = workspace("foreign");
+    let original = "Show # mine\n  Class \"Rings\"\n";
+    fs::write(gf(&dir), original).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f])
+        .failure()
+        .stderr(contains("no economy section"));
+    assert_eq!(fs::read_to_string(gf(&dir)).unwrap(), original);
+    assert!(!ffbak(&dir).exists());
+}
 
 #[test]
-fn dynamic_emits_no_area_level_while_universal_still_does() {
-    let dir = workspace("arealevel");
-    apply(&dir).success();
-    let dynamic = filter_text(&dir);
+fn remove_economy_removes_the_section_and_keeps_the_rest() {
+    let dir = workspace("remove");
+    fs::write(gf(&dir), "Show # mine\n  Class \"Rings\"\n").unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    apply(&dir, &["--filter", &f, "--remove-economy"]).success();
+    let text = read(&gf(&dir));
+    assert!(!text.contains(BEGIN) && !text.contains(END));
+    assert!(text.contains("Show # mine"));
+}
 
+#[test]
+fn add_and_remove_conflict() {
+    let dir = workspace("conflict");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy", "--remove-economy"]).failure();
+    assert!(!gf(&dir).exists());
+}
+
+#[test]
+fn damaged_markers_are_a_hard_stop() {
+    let dir = workspace("damaged");
+    let original = format!("Show # a\n\n{BEGIN} x\nShow # b\n");
+    fs::write(gf(&dir), &original).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f])
+        .failure()
+        .stderr(contains("line 3"));
+    assert_eq!(read(&gf(&dir)), original);
+}
+
+#[test]
+fn v04_filter_is_converted_on_first_apply() {
+    let dir = workspace("v04");
+    let fixture = fs::read(manifest().join("tests/fixtures/v04-dynamic.filter")).unwrap();
+    fs::write(gf(&dir), &fixture).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f])
+        .success()
+        .stdout(contains("converting"));
+    let text = read(&gf(&dir));
+    assert!(text.contains(BEGIN) && text.contains(END));
+    assert!(text.contains("# ff:name Chance bases"));
+    assert!(!text.contains("ff:name rule 4"));
+    assert_eq!(fs::read(ffbak(&dir)).unwrap(), fixture);
+    apply(&dir, &["--filter", &f])
+        .success()
+        .stdout(contains("already up to date"));
+}
+
+#[test]
+fn no_price_data_refuses_and_keeps_the_section() {
+    let dir = workspace("noprices");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    let before = fs::read(gf(&dir)).unwrap();
+    fs::remove_file(dir.join("prices.json")).unwrap();
+    apply(&dir, &["--filter", &f])
+        .failure()
+        .stderr(contains("No price data"));
+    assert_eq!(before, fs::read(gf(&dir)).unwrap());
+}
+
+#[test]
+fn app_root_from_ferrisfilter_home_wins_over_cwd() {
+    let dir = workspace("root");
+    let other = workspace("rootcwd");
+    // The cwd copy differs in a value that reaches the output.
+    let styles = fs::read_to_string(other.join("styles.json")).unwrap();
+    assert!(styles.contains("\"font\": 37"));
+    fs::write(
+        other.join("styles.json"),
+        styles.replace("\"font\": 37", "\"font\": 44"),
+    )
+    .unwrap();
+
+    let f = gfs(&dir);
     Command::cargo_bin("ferrisfilter")
         .expect("binary")
-        .current_dir(&dir)
-        .args(["generate", "--output", "universal.filter"])
+        .current_dir(&other)
+        .env("FERRISFILTER_HOME", &dir)
+        .env("USERPROFILE", &dir)
+        .args(["apply", "--add-economy", "--filter", &f])
         .assert()
         .success();
-    let universal =
-        normalize(&fs::read_to_string(dir.join("universal.filter")).expect("read universal"));
-
-    assert!(
-        !dynamic.contains("AreaLevel"),
-        "the dynamic filter must emit no AreaLevel lines"
-    );
-    // Asserting only the dynamic half would pass even if AreaLevel emission were broken
-    // everywhere, so pin the other half too.
-    assert!(
-        universal.contains("AreaLevel"),
-        "config.json's area-level rules must still emit — otherwise this test proves nothing"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// DYN-03 — the store persists across runs
-// ---------------------------------------------------------------------------
-
-#[test]
-fn edits_to_the_store_survive_across_runs() {
-    let dir = workspace("persist");
-    apply(&dir).success().stdout(contains("created dynamic.json"));
-
-    // Disable the first rule, then run again.
-    edit_store(&dir, |v| {
-        v["rules"][0]["enabled"] = serde_json::json!(false);
-    });
-    apply(&dir)
-        .success()
-        .stdout(contains("using existing dynamic.json"));
-
-    let policy = policy_section(&filter_text(&dir));
-    assert!(
-        !policy.contains("# rule 0"),
-        "the second run must reflect the edit — the store was re-seeded instead of read back"
-    );
-    // And the edit is still on disk afterwards.
-    let store = fs::read_to_string(dir.join("dynamic.json")).expect("read store");
-    assert!(store.contains("\"enabled\""), "the edit must persist on disk");
+    let text = read(&gf(&dir));
+    assert!(text.contains("SetFontSize 37"), "workspace styles not used");
+    assert!(!text.contains("SetFontSize 44"), "cwd styles leaked in");
 }
 
 #[test]
-fn reset_restores_the_store_from_the_base() {
-    let dir = workspace("reset");
-    apply(&dir).success();
-    edit_store(&dir, |v| {
-        v["rules"] = serde_json::json!([]);
-    });
+fn apply_styles_flag_reads_alternate_path() {
+    let dir = workspace("stylesflag");
+    fs::rename(dir.join("styles.json"), dir.join("alt-styles.json")).expect("rename styles");
+    let f = gfs(&dir);
+    apply(
+        &dir,
+        &[
+            "--filter",
+            &f,
+            "--add-economy",
+            "--styles",
+            "alt-styles.json",
+        ],
+    )
+    .success();
+    assert!(gf(&dir).exists());
+}
 
+/// A relative `--styles`/`--tiers` resolves against the app root, not the working directory: run
+/// from the `game` subfolder, where neither file exists, the overrides are still found.
+#[test]
+fn apply_relative_overrides_resolve_against_the_app_root_not_the_cwd() {
+    let dir = workspace("overrideroot");
+    fs::rename(dir.join("styles.json"), dir.join("alt-styles.json")).expect("rename styles");
+    fs::copy(
+        manifest().join("tiers-fallback.json"),
+        dir.join("alt-tiers.json"),
+    )
+    .expect("copy tiers");
+    let f = gfs(&dir);
     Command::cargo_bin("ferrisfilter")
         .expect("binary")
-        .current_dir(&dir)
-        .args(["apply", "--dest", "game", "--reset"])
+        .current_dir(dir.join("game"))
+        .env("FERRISFILTER_HOME", &dir)
+        .env("USERPROFILE", &dir)
+        .args([
+            "apply",
+            "--filter",
+            &f,
+            "--add-economy",
+            "--styles",
+            "alt-styles.json",
+            "--tiers",
+            "alt-tiers.json",
+        ])
         .assert()
-        .success()
-        .stdout(contains("reset dynamic.json"));
-
-    let store: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(dir.join("dynamic.json")).expect("read"))
-            .expect("parse");
-    assert_eq!(
-        store["rules"].as_array().expect("rules").len(),
-        10,
-        "--reset must restore the base's full rule set"
-    );
+        .success();
+    assert!(gf(&dir).exists());
 }
 
-// ---------------------------------------------------------------------------
-// Disabled rules (12-01 integration)
-// ---------------------------------------------------------------------------
-
 #[test]
-fn a_disabled_rule_emits_nothing_and_leaves_later_labels_alone() {
-    let dir = workspace("disabled");
-    apply(&dir).success();
-    let before = policy_section(&filter_text(&dir));
-    assert!(before.contains("# rule 1"), "baseline: rule 1 emits");
-    assert!(before.contains("# rule 2"), "baseline: rule 2 emits");
+fn default_filter_path_uses_userprofile() {
+    let dir = workspace("default");
+    apply(&dir, &[])
+        .failure()
+        .stderr(contains("Path of Exile 2"))
+        .stderr(contains("dynamic.filter"));
+    assert!(!dir.join("OneDrive").exists());
+}
 
-    edit_store(&dir, |v| {
-        v["rules"][1]["enabled"] = serde_json::json!(false);
-    });
-    apply(&dir).success();
-    let after = policy_section(&filter_text(&dir));
+/// DEF-03: with no live files in the app root, apply reads the defaults, writes the same economy
+/// section as from live copies, and creates neither live file.
+#[test]
+fn apply_falls_back_to_default_files_and_creates_no_live_file() {
+    let dir = workspace_defaults("defaults");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    let from_defaults = read(&gf(&dir));
+    assert!(from_defaults.contains(END), "{from_defaults}");
+    assert!(!dir.join("styles.json").exists(), "styles.json was created");
+    assert!(!dir.join("tiers.json").exists(), "tiers.json was created");
 
-    assert!(
-        !after.contains("# rule 1"),
-        "a disabled rule must emit no block at all"
-    );
-    assert!(
-        after.contains("# rule 2"),
-        "the rule after a disabled one must keep its own index label, not shift down"
-    );
-    // The rule is still in the store — disabled, not deleted.
-    let store: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(dir.join("dynamic.json")).expect("read"))
-            .expect("parse");
-    assert_eq!(store["rules"].as_array().expect("rules").len(), 10);
+    let live = workspace("defaults_live");
+    let lf = gfs(&live);
+    apply(&live, &["--filter", &lf, "--add-economy"]).success();
+    assert_eq!(normalize(&from_defaults), normalize(&read(&gf(&live))));
 }

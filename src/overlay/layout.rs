@@ -97,8 +97,14 @@ mod work_area_tests {
         // The work area need not start at the origin; a left or top appbar offsets it.
         let work = egui::Rect::from_min_max(egui::pos2(80.0, 0.0), egui::pos2(1920.0, 1080.0));
         let docked = dock_rect_in(work, STRIPE_WIDTH);
-        assert!(docked.min.x >= work.min.x, "stripe starts left of the work area");
-        assert!(docked.max.x <= work.max.x, "stripe runs past the work area's right edge");
+        assert!(
+            docked.min.x >= work.min.x,
+            "stripe starts left of the work area"
+        );
+        assert!(
+            docked.max.x <= work.max.x,
+            "stripe runs past the work area's right edge"
+        );
     }
 }
 
@@ -111,10 +117,24 @@ mod tests {
         let monitor = egui::Vec2::new(1920.0, 1080.0);
         let rect = dock_rect(monitor, STRIPE_WIDTH);
 
-        assert!(rect.width() < monitor.x, "width must be strictly under the monitor width");
-        assert!(rect.height() < monitor.y, "height must be strictly under the monitor height");
-        assert_eq!(rect.width(), STRIPE_WIDTH, "460px fits comfortably, no clamping expected");
-        assert_eq!(rect.right(), monitor.x - EDGE_MARGIN, "flush to the right edge minus margin");
+        assert!(
+            rect.width() < monitor.x,
+            "width must be strictly under the monitor width"
+        );
+        assert!(
+            rect.height() < monitor.y,
+            "height must be strictly under the monitor height"
+        );
+        assert_eq!(
+            rect.width(),
+            STRIPE_WIDTH,
+            "460px fits comfortably, no clamping expected"
+        );
+        assert_eq!(
+            rect.right(),
+            monitor.x - EDGE_MARGIN,
+            "flush to the right edge minus margin"
+        );
     }
 
     #[test]
@@ -123,7 +143,10 @@ mod tests {
         let rect = dock_rect(monitor, STRIPE_WIDTH);
         let monitor_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, monitor);
 
-        assert!(monitor_rect.contains_rect(rect), "rect must stay fully inside the monitor");
+        assert!(
+            monitor_rect.contains_rect(rect),
+            "rect must stay fully inside the monitor"
+        );
         assert!(rect.width() < monitor.x);
         assert!(rect.height() < monitor.y);
     }

@@ -31,24 +31,26 @@ pub struct RepoeEntry {
 /// overwrite mapping.json. Returns Err without touching mapping.json on any failure.
 pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> {
     // 1. Fetch both RePoE endpoints.
-    let base_items_raw = client.get_json(REPOE_BASE_ITEMS_URL, &[]).await
+    let base_items_raw = client
+        .get_json(REPOE_BASE_ITEMS_URL, &[])
+        .await
         .map_err(|e| miette::miette!("Failed to fetch base_items.json from repoe-fork: {e}"))?;
-    let uniques_raw = client.get_json(REPOE_UNIQUES_URL, &[]).await
+    let uniques_raw = client
+        .get_json(REPOE_UNIQUES_URL, &[])
+        .await
         .map_err(|e| miette::miette!("Failed to fetch uniques.json from repoe-fork: {e}"))?;
 
     // 2. Deserialize leniently. Validate both are non-empty + parseable.
-    let base_items: HashMap<String, RepoeEntry> =
-        serde_json::from_str(&base_items_raw)
-            .map_err(|e| miette::miette!("Failed to parse base_items.json: {e}"))?;
+    let base_items: HashMap<String, RepoeEntry> = serde_json::from_str(&base_items_raw)
+        .map_err(|e| miette::miette!("Failed to parse base_items.json: {e}"))?;
     if base_items.is_empty() {
         return Err(miette::miette!(
             "base_items.json from repoe-fork is empty — refusing to overwrite mapping.json"
         ));
     }
 
-    let uniques: HashMap<String, RepoeEntry> =
-        serde_json::from_str(&uniques_raw)
-            .map_err(|e| miette::miette!("Failed to parse uniques.json: {e}"))?;
+    let uniques: HashMap<String, RepoeEntry> = serde_json::from_str(&uniques_raw)
+        .map_err(|e| miette::miette!("Failed to parse uniques.json: {e}"))?;
     if uniques.is_empty() {
         return Err(miette::miette!(
             "uniques.json from repoe-fork is empty — refusing to overwrite mapping.json"
@@ -137,7 +139,11 @@ pub async fn cmd_sync_metadata<C: HttpClient>(client: &C) -> miette::Result<()> 
          — rewrote mapping.json (content unchanged aside from re-serialization)",
         refreshed.overview_types.len(),
         confirmed_classes,
-        refreshed.overview_types.iter().filter(|ot| ot.class.is_some()).count(),
+        refreshed
+            .overview_types
+            .iter()
+            .filter(|ot| ot.class.is_some())
+            .count(),
         base_items.len(),
         uniques.len()
     );

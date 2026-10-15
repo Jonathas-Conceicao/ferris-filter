@@ -1,0 +1,123 @@
+{
+  "meta": { "name": "dynamic", "palette": "dracula", "background": [40, 42, 54] },
+
+  "build": {
+    "weapons": ["Staves", "Wands", "Foci"],
+    "armour":  ["Body Armours", "Helmets", "Gloves", "Boots"],
+    "armourTypes": {
+      "anyNonEvasion": ["BaseEvasion 0"],
+      "esHybrid":      ["BaseEnergyShield > 0", "BaseEvasion 0"],
+      "pureES":        ["BaseEnergyShield > 0", "BaseArmour 0", "BaseEvasion 0"]
+    }
+  },
+
+  "weaponClasses": [
+    "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Quarterstaves",
+    "Sceptres", "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands"
+  ],
+  "armourClasses": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
+  "flaskCharmClasses": ["Life Flasks", "Mana Flasks", "Charms"],
+  "jewelleryClasses": ["Rings", "Amulets", "Belts", "Jewels"],
+
+  "alwaysShow": {
+    "currency": { "style": "tiered S-F (base lists are curated data, kept outside this model)" },
+    "recycle":  { "match": "Sockets >= 1 AND Quality >= 1", "style": "Recycle" }
+  },
+
+  "classGroups": {
+    "buildWeapons": ["Staves", "Wands", "Foci"],
+    "buildArmour":  ["Body Armours", "Helmets", "Gloves", "Boots"],
+    "allArmour":    ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"],
+    "allGear": [
+      "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Quarterstaves",
+      "Sceptres", "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+      "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+    ],
+    "flaskCharm": ["Life Flasks", "Mana Flasks", "Charms"]
+  },
+
+  "rules": [
+    {
+      "style": "exceptional",
+      "when": {
+        "class": ["Body Armours", "Two Hand Maces", "Bows", "Crossbows", "Quarterstaves", "Staves"],
+        "sockets": { "min": 3 },
+        "corrupted": false
+      }
+    },
+    {
+      "style": "exceptional",
+      "when": {
+        "class": ["Helmets", "Gloves", "Boots", "Shields", "Bucklers", "Foci", "One Hand Maces", "Sceptres", "Wands", "Spears"],
+        "sockets": { "min": 2 },
+        "corrupted": false
+      }
+    },
+    {
+      "style": "exceptional",
+      "when": {
+        "class": ["Body Armours", "Two Hand Maces", "Bows", "Crossbows", "Quarterstaves", "Staves", "Helmets", "Gloves", "Boots", "Shields", "Bucklers", "Foci", "One Hand Maces", "Sceptres", "Wands", "Spears"],
+        "quality": { "min": 24 },
+        "corrupted": false
+      }
+    },
+    {
+      "style": "Recycle",
+      "when": {
+        "sockets": { "min": 1 },
+        "quality": { "min": 1 }
+      }
+    },
+    {
+      "style": "unchanged",
+      "when": {
+        "class": ["Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"]
+      }
+    },
+    {
+      "style": "unchanged",
+      "when": {
+        "class": ["Staves", "Wands", "Foci"]
+      }
+    },
+    {
+      "style": "unchanged",
+      "when": {
+        "class": ["Body Armours", "Helmets", "Gloves", "Boots"],
+        "baseEvasion": { "eq": 0 },
+        "rarity": ">=Magic"
+      }
+    },
+    {
+      "style": "kite",
+      "when": {
+        "class": [
+          "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Sceptres",
+          "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+          "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+        ],
+        "unidentifiedTier": { "min": 4 }
+      }
+    },
+    {
+      "style": "kite",
+      "when": {
+        "class": ["Rings", "Amulets", "Belts"],
+        "unidentifiedTier": { "min": 4 }
+      }
+    },
+    {
+      "style": "hidden",
+      "when": {
+        "class": [
+          "Bows", "Crossbows", "Foci", "One Hand Maces", "Quivers", "Quarterstaves",
+          "Sceptres", "Spears", "Talismans", "Staves", "Two Hand Maces", "Wands",
+          "Body Armours", "Helmets", "Gloves", "Boots", "Shields", "Bucklers"
+        ],
+        "rarity": "<=Rare"
+      }
+    }
+  ],
+
+  "fallthrough": "Anything not matched by a Hide or a styled Show is left to the game default (uniques, jewels, gems, jewellery, quest items, waystones, trials, unidentified, etc.)."
+}

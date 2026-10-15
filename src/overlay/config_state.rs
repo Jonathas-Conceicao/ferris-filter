@@ -96,8 +96,9 @@ pub struct ConfigState {
     /// changed-on-disk baselines (the guard never looks at the `-default.json` files).
     styles_live: Option<Vec<u8>>,
     tiers_live: Option<Vec<u8>>,
-    /// Ids were assigned at load (the file on disk lacks them): the next Apply writes styles.json
-    /// even with no CONFIG edit. Never counts as an edit.
+    /// Ids were assigned at load (the live file on disk lacks them): the next Apply writes
+    /// styles.json even with no CONFIG edit. Never counts as an edit. Always false while the
+    /// source is the `-default.json` (never written; its ids derive from the names anyway).
     ids_unpersisted: bool,
 }
 
@@ -157,7 +158,9 @@ impl ConfigState {
             read_effective(&paths.styles, || paths.styles_source())?;
         let mut styles: StyleSet = serde_json::from_slice(&styles_bytes)
             .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
-        let ids_unpersisted = styles.assign_missing_ids();
+        // Ids assigned to a default source are derived from the names, and the default is never
+        // written: persisting them would create a live styles.json nobody edited (WR-02).
+        let ids_unpersisted = styles.assign_missing_ids() && styles_live.is_some();
         styles
             .validate()
             .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
@@ -440,11 +443,16 @@ impl ConfigState {
             self.tiers_live = live;
         }
         if let Some((set, bytes, assigned)) = styles {
-            // The disk file is the new baseline, so the flag describes it alone.
-            self.ids_unpersisted = assigned;
+            // The disk file is the new baseline, so the flag describes it alone; a default
+            // source is never persisted (WR-02).
+            self.ids_unpersisted = assigned && self.styles_live.is_some();
             self.styles_applied = set.clone();
             self.styles = set;
             self.styles_bytes = bytes;
+        }
+        if self.styles_live.is_none() {
+            // Back on the default (live file deleted): nothing of it is ever written.
+            self.ids_unpersisted = false;
         }
         if let Some((entries, bytes)) = tiers {
             self.tiers_applied = entries.clone();
@@ -1342,6 +1350,53 @@ mod tests {
         let w = save(&mut s);
         assert!(w.styles_changed());
         assert!(!s.prepare_write().unwrap().styles_changed());
+    }
+
+    /// Strip every `"id"` from the styles file at `path`.
+    fn strip_ids(path: &Path) {
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        for (_, s) in v.as_object_mut().unwrap() {
+            s.as_object_mut().unwrap().remove("id");
+        }
+        fs::write(path, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+    }
+
+    /// WR-02: ids assigned to an id-less DEFAULT source are never persisted, so a clean Apply
+    /// does not create a live styles.json nobody edited. A real edit still does.
+    #[test]
+    fn idless_default_source_is_not_persisted_without_an_edit() {
+        let d = defaults_root();
+        strip_ids(&d.path().join("styles-default.json"));
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert_eq!(s.style_id("S"), Some("builtin:S"));
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed() && !w.tiers_changed());
+        assert_no_live(d.path());
+
+        // An id-less LIVE file is persisted; deleting it puts the default back and the flag off.
+        let live = d.path().join("styles.json");
+        fs::copy(d.path().join("styles-default.json"), &live).unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&live).unwrap()).unwrap();
+        v["S"]["font"] = serde_json::json!(36);
+        fs::write(&live, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+        assert_eq!(s.follow_disk(), Ok(true));
+        assert!(s.prepare_write().unwrap().styles_changed());
+        fs::remove_file(&live).unwrap();
+        assert_eq!(s.follow_disk(), Ok(true));
+        assert!(!s.prepare_write().unwrap().styles_changed());
+
+        assert!(s.edit_style("S", StyleEdit::Font(Some(41))));
+        assert!(s.prepare_write().unwrap().styles_changed());
+    }
+
+    /// The committed default carries every id, so loading it never assigns any.
+    #[test]
+    fn committed_styles_default_carries_every_id() {
+        let mut set: StyleSet = serde_json::from_slice(
+            &fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("styles-default.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(!set.assign_missing_ids());
     }
 
     #[test]

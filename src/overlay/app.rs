@@ -196,6 +196,16 @@ enum Tab {
 /// Seconds between `styles.json` modification-time polls while the stripe runs.
 const STYLES_POLL_SECS: f64 = 2.0;
 
+/// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
+/// hold exactly that set, so it is cheap to call every frame.
+fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> bool {
+    if working.style_set() == Some(config.pending_styles()) {
+        return false;
+    }
+    working.set_styles(Ok(config.pending_styles().clone()));
+    true
+}
+
 fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
     let path = InputPaths::relative_to(root).styles;
     loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
@@ -1819,6 +1829,11 @@ impl eframe::App for OverlayApp {
 
         // Computed once per frame; every button below is shown/enabled strictly from it.
         self.poll_styles(ui.ctx().input(|i| i.time));
+        // The RULES tab judges tags and offers styles from the CONFIG tab's in-memory set, so an
+        // added or renamed style is usable before Apply (UAT3-03).
+        if let (Ok(config), Some(working)) = (&self.config, self.working.as_mut()) {
+            sync_working_styles(config, working);
+        }
         let state = self.filter_state();
         // A changed styles.json makes the written filter stale even with no rule edited.
         let style_pending = self
@@ -2883,6 +2898,81 @@ mod tests {
         assert!(!rig.config.is_dirty() && !rig.working.is_dirty());
         assert_eq!(rig.working.style("S").unwrap().font, Some(41));
         assert!(!rig.working.style_rewrite_pending());
+    }
+
+    /// A rule tagged the way Apply writes tags: `<id> <name>`. A name-only (legacy) tag cannot
+    /// follow a rename, which is why Apply migrates tags to this form.
+    const KITE_RULE: &str = "# ff:style t5hw2k kite\nShow\n  Class \"Rings\"\n";
+
+    #[test]
+    fn an_added_style_reaches_the_rules_tab_before_apply() {
+        let mut rig = rig(S_RULE);
+        assert!(!super::sync_working_styles(&rig.config, &mut rig.working));
+        rig.config.add_style("Fresh").unwrap();
+        assert!(super::sync_working_styles(&rig.config, &mut rig.working));
+        let names = rig.working.style_names();
+        assert_eq!(names.last().map(String::as_str), Some("Fresh"));
+        assert_eq!(names, rig.config.style_names());
+        assert!(rig.config.is_dirty());
+    }
+
+    #[test]
+    fn sync_is_a_no_op_when_the_sets_match() {
+        let mut rig = rig(S_RULE);
+        rig.config.add_style("Fresh").unwrap();
+        assert!(super::sync_working_styles(&rig.config, &mut rig.working));
+        // false means set_styles (which bumps the styles revision) was not called.
+        assert!(!super::sync_working_styles(&rig.config, &mut rig.working));
+        assert!(!super::sync_working_styles(&rig.config, &mut rig.working));
+    }
+
+    #[test]
+    fn a_rename_keeps_the_tagged_rule_linked_and_writes_nothing() {
+        let mut rig = rig(KITE_RULE);
+        let styles = rig.read("styles.json");
+        let filter = std::fs::read(&rig.path).unwrap();
+        rig.config.rename_style("kite", "locator").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        assert_eq!(
+            rig.working.rows()[0].style,
+            crate::overlay::rules::StyleState::Known("locator".to_string())
+        );
+        assert!(rig.working.unknown_styles().is_empty());
+        assert!(rig.config.is_dirty());
+        assert_eq!(rig.read("styles.json"), styles);
+        assert_eq!(std::fs::read(&rig.path).unwrap(), filter);
+    }
+
+    #[test]
+    fn apply_after_a_rename_writes_the_new_name_under_the_same_id() {
+        let mut rig = rig(KITE_RULE);
+        let id = rig.config.style_id("kite").unwrap().to_string();
+        rig.config.rename_style("kite", "locator").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        let r = rig.apply(false);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        let styles = String::from_utf8(rig.read("styles.json")).unwrap();
+        assert!(styles.contains("\"locator\""), "{styles}");
+        assert!(!styles.contains("\"kite\""), "{styles}");
+        assert!(styles.contains(&id), "{styles}");
+        let filter = std::fs::read_to_string(&rig.path).unwrap();
+        assert!(filter.contains(&format!("{id} locator")), "{filter}");
+    }
+
+    #[test]
+    fn revert_brings_the_rules_tab_back_to_the_applied_set() {
+        let mut rig = rig(S_RULE);
+        let applied = rig.working.style_names();
+        rig.config.add_style("Fresh").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        assert_ne!(rig.working.style_names(), applied);
+        rig.config.revert();
+        assert!(super::sync_working_styles(&rig.config, &mut rig.working));
+        assert_eq!(rig.working.style_names(), applied);
     }
 
     #[test]

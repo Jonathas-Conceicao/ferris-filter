@@ -460,7 +460,9 @@ fn apply_everything(
                     report = Some(r);
                     Ok(text)
                 }
-                None => working.text_with_styles().map(|(text, r)| {
+                // No config part: styles.json is not written, so load-assigned ids must not reach
+                // the filter's tags (WR-06).
+                None => working.text_with_styles_keeping_tags().map(|(text, r)| {
                     report = Some(r);
                     text
                 }),

@@ -615,6 +615,18 @@ impl WorkingFilter {
     /// The text Apply should write: the document with every enabled styled rule rewritten from
     /// the current styles, produced on a clone so the user's edits are never touched.
     pub fn text_with_styles(&self) -> Result<(String, StyleReport), String> {
+        self.text_with_styles_retag(true)
+    }
+
+    /// [`Self::text_with_styles`] that never migrates tags. For an Apply that does not write
+    /// styles.json: ids assigned at load exist only in memory then, and a tag carrying one would
+    /// stop resolving as soon as styles.json changes by hand (WR-06). Legacy name tags still
+    /// resolve by name, so keeping them loses nothing.
+    pub fn text_with_styles_keeping_tags(&self) -> Result<(String, StyleReport), String> {
+        self.text_with_styles_retag(false)
+    }
+
+    fn text_with_styles_retag(&self, retag: bool) -> Result<(String, StyleReport), String> {
         let Some(set) = &self.styles else {
             if self
                 .rows
@@ -629,7 +641,7 @@ impl WorkingFilter {
             }
             return Ok((self.text(), StyleReport::default()));
         };
-        Ok(self.text_with_style_set(set))
+        Ok(self.text_with_style_set_retag(set, retag))
     }
 
     /// The text Apply should write when the styles are `set` (the pending CONFIG styles) rather
@@ -1684,6 +1696,15 @@ Show
         );
         // A migration, not a user edit (WR-04).
         assert!(!wf.is_dirty());
+    }
+
+    #[test]
+    fn apply_without_a_config_part_keeps_legacy_tags() {
+        let wf = styled_wf("#ff:style S\nShow\n  Class \"Rings\"\n");
+        let (t, rep) = wf.text_with_styles_keeping_tags().expect("ok");
+        assert!(t.starts_with("#ff:style S\nShow\n"), "{t}");
+        assert!(t.contains(S_FONT), "{t}");
+        assert_eq!((rep.retagged, rep.rewritten), (0, 1));
     }
 
     #[test]

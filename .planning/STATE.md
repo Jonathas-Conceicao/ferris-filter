@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
-stopped_at: Completed 28-01-PLAN.md
-last_updated: "2026-10-15T08:20:09.016Z"
+stopped_at: Completed 28-02-PLAN.md
+last_updated: "2026-10-15T08:31:32.573Z"
 last_activity: 2026-10-15
 progress:
   total_phases: 26
   completed_phases: 12
   total_plans: 71
-  completed_plans: 68
+  completed_plans: 69
   percent: 46
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 ## Current Position
 
 Phase: 28 (Default config files) — EXECUTING
-Plan: 2 of 4
-Status: Executing — 28-01 complete (defaults committed, tests read them)
-Last activity: 2026-10-15 -- 28-01 complete
+Plan: 3 of 4
+Status: Executing — 28-02 complete (default-file fallback, marker styles-default.json)
+Last activity: 2026-10-15
 
 Progress: [█████████░] 93%
 
@@ -76,6 +76,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 23 P02 | 15min | 2 tasks | 2 files |
 | Phase 23 P03 | 25min | 2 tasks | 3 files |
 | Phase 23 P04 | 10min | 2 tasks | 3 files |
+| Phase 28 P02 | 25min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -173,6 +174,7 @@ work (carried forward past the v0.3 close):
 - [Phase 21]: Config colour picker is opaque; show_sections owns its ScrollArea; Keep editing dismisses the outside-edit guard
 - [Phase 21]: CONFIG Apply marks filter out of date only when a file was written; RELOAD keeps config edits unless root changes
 - [Phase 23]: Reload toggle persists on change (settings::save) and never marks CONFIG dirty; interim reload line replaced only if still displayed
+- [Phase 28]: 28-02: reads go through InputPaths::styles_source/tiers_source (live, else -default.json); app-root marker is styles-default.json
 
 ### Pending Todos
 
@@ -312,8 +314,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-15T08:20:09.003Z
-Stopped at: Completed 28-01-PLAN.md
+Last session: 2026-10-15T08:31:28.398Z
+Stopped at: Completed 28-02-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

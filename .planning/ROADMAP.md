@@ -489,7 +489,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 28-02-PLAN.md — Read-source helper in InputPaths (live, else -default, else error naming both); generate/apply fallback; app-root marker styles-default.json
+- [x] 28-02-PLAN.md — Read-source helper in InputPaths (live, else -default, else error naming both); generate/apply fallback; app-root marker styles-default.json
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -515,7 +515,7 @@ Plans:
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
 | 27. UAT Feedback Fixes 4 | 5/5 | Human UAT pending | - |
-| 28. Default config files | 1/4 | In Progress|  |
+| 28. Default config files | 2/4 | In Progress|  |
 
 ## Backlog
 

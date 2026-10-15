@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::apply::{STYLE_REMOVED_STATUS, styles_unavailable_message};
 use crate::dynamic::{BlockingError, blocking_errors};
+use crate::filter::group::{self, GroupIndex};
 use crate::filter::keywords::{Keyword, Kind};
 use crate::filter::section::{self, SectionSpan};
 use crate::filter::tokenize::Operator;
@@ -142,6 +143,34 @@ pub enum RowAction {
         expect: String,
         text: String,
     },
+    /// Set the Simple Defences selection (a bit set over [`group::COMBOS`]; 0 = no defence
+    /// lines). The rule is rewritten as however many blocks that selection needs.
+    SetDefenceSelection {
+        id: BlockId,
+        mask: u8,
+    },
+}
+
+/// The rule an action is aimed at (`None` for `AddRule`).
+fn action_target(action: &RowAction) -> Option<BlockId> {
+    match action {
+        RowAction::SetEnabled(id, _)
+        | RowAction::Move(id, _)
+        | RowAction::Delete(id)
+        | RowAction::Duplicate(id)
+        | RowAction::SetKeyword(id, _)
+        | RowAction::SetContinue(id, _)
+        | RowAction::SetName(id, _)
+        | RowAction::ClearName(id)
+        | RowAction::ApplyStyle(id, _)
+        | RowAction::RemoveStyle(id)
+        | RowAction::EditLine { id, .. }
+        | RowAction::AddLine { id, .. }
+        | RowAction::RemoveLine { id, .. }
+        | RowAction::InsertLineAfter { id, .. }
+        | RowAction::SetDefenceSelection { id, .. } => Some(*id),
+        RowAction::AddRule => None,
+    }
 }
 
 /// Keep only the last `EditLine` per `(id, line, patch variant)`, at the position of the last;
@@ -217,6 +246,15 @@ pub struct RuleRow {
     pub can_move_down: bool,
     pub moved_across_continue: bool,
     pub conditions: Vec<String>,
+    /// Number of blocks the rule is written as (1 unless it is a `# ff:group` group).
+    pub group_size: usize,
+    /// The block carries a `# ff:group` line but its group is not valid, so it is an ordinary
+    /// rule of its own.
+    pub group_broken: bool,
+    /// The Simple Defences selection (bit set over `group::COMBOS`): the union over the group,
+    /// or what a single block's zero-based defence lines match. `None` without defence lines
+    /// (single block) or when a defence line is not zero based.
+    pub simple_mask: Option<u8>,
     /// Collapsed-row summary: the condition strings joined with `; `, capped at
     /// `SUMMARY_MAX_CHARS`; built at row rebuild, never per frame.
     pub summary: String,
@@ -248,6 +286,8 @@ pub struct WorkingFilter {
     pending: Option<Pending>,
     projected: EconomyView,
     blocking: Vec<BlockingError>,
+    /// Grouped rules (several blocks written as one rule), recomputed on every rebuild.
+    groups: GroupIndex,
     moved: HashSet<BlockId>,
     generation: u64,
     dirty: bool,
@@ -265,6 +305,18 @@ fn refused(msg: String) -> ActionOutcome {
     ActionOutcome {
         status: Some(msg),
         ..ActionOutcome::default()
+    }
+}
+
+/// A successful change (with the block to focus), or the refusal of a failed one.
+fn done_or(r: Result<(), crate::filter::EditError>, focus: Option<BlockId>) -> ActionOutcome {
+    match r {
+        Ok(()) => ActionOutcome {
+            changed: true,
+            focus,
+            ..ActionOutcome::default()
+        },
+        Err(e) => refused(e.to_string()),
     }
 }
 
@@ -301,7 +353,33 @@ fn unquote(s: &str) -> &str {
     s.trim_matches('"')
 }
 
+/// Collapsed-row text of a Simple Defences selection: `Defences: Full AR, AR/ES`.
+fn selection_summary(mask: u8) -> String {
+    let labels: Vec<&str> = group::COMBOS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| mask & (1 << i) != 0)
+        .map(|(_, (label, _, _))| *label)
+        .collect();
+    format!("Defences: {}", labels.join(", "))
+}
+
+/// [`extract`] of a group's leader: its own defence lines are only one part of the rule, so they
+/// are replaced by the whole selection.
+fn extract_group(doc: &Document, b: &Block, mask: Option<u8>) -> Extracted {
+    let mut x = extract_skipping(doc, b, &group::defence_lines(b));
+    if let Some(m) = mask {
+        x.conditions.push(selection_summary(m));
+    }
+    x
+}
+
 fn extract(doc: &Document, b: &Block) -> Extracted {
+    extract_skipping(doc, b, &[])
+}
+
+/// [`extract`] leaving out the body lines in `skip`.
+fn extract_skipping(doc: &Document, b: &Block, skip: &[usize]) -> Extracted {
     let mut out = Extracted {
         class: Vec::new(),
         base_type: Vec::new(),
@@ -312,7 +390,7 @@ fn extract(doc: &Document, b: &Block) -> Extracted {
         let (Some(kw), Some(tok)) = (bl.keyword, bl.tokens.as_ref()) else {
             continue;
         };
-        if kw.kind != Kind::Condition {
+        if kw.kind != Kind::Condition || skip.contains(&bl.line) {
             continue;
         }
         let Some(text) = doc.lines().get(bl.line).map(|l| l.text()) else {
@@ -407,6 +485,7 @@ impl WorkingFilter {
             pending: None,
             projected: EconomyView::Absent,
             blocking: Vec::new(),
+            groups: GroupIndex::default(),
             moved: HashSet::new(),
             generation: 0,
             dirty: false,
@@ -438,16 +517,29 @@ impl WorkingFilter {
             order.push((b, econ, side));
         }
         let econ_blocks = order.iter().filter(|(_, e, _)| *e).count();
+        let groups = group::analyze(&self.doc);
 
         let mut rows = Vec::new();
         let mut index = 0usize;
         for (pos, (b, econ, side)) in order.iter().enumerate() {
-            if *econ {
+            if *econ || groups.is_follower(b.id()) {
                 continue;
             }
             index += 1;
             let id = b.id();
-            let x = extract(&self.doc, b);
+            let members = groups.members(id);
+            let last_pos = pos + members.len() - 1;
+            let has_defences = !group::defence_lines(b).is_empty();
+            let simple_mask = if members.len() > 1 || has_defences {
+                group::selection(&self.doc, &members)
+            } else {
+                None
+            };
+            let x = if members.len() > 1 {
+                extract_group(&self.doc, b, simple_mask)
+            } else {
+                extract(&self.doc, b)
+            };
             let name = self.doc.meta_get(id, "name").map(str::to_string);
             let style = match self.doc.meta_get(id, "style") {
                 None => StyleState::None,
@@ -514,10 +606,13 @@ impl WorkingFilter {
                 warnings,
                 cannot_enable: !enabled && !b.can_enable(),
                 can_move_up: movable && same_side_rule(pos.checked_sub(1)),
-                can_move_down: movable && same_side_rule(Some(pos + 1)),
+                can_move_down: movable && same_side_rule(Some(last_pos + 1)),
                 moved_across_continue: self.moved.contains(&id),
                 summary: row_summary(&x.conditions),
                 conditions: x.conditions,
+                group_size: members.len(),
+                group_broken: groups.is_broken(id),
+                simple_mask,
             });
         }
 
@@ -529,6 +624,7 @@ impl WorkingFilter {
             _ => EconomyView::Absent,
         };
         self.rows = rows;
+        self.groups = groups;
         self.blocking = blocking_errors(&self.doc);
         self.generation += 1;
         self.search_cache = None;
@@ -858,7 +954,118 @@ impl WorkingFilter {
             .is_some_and(|l| l.text() == expect)
     }
 
+    /// Apply one row action. A grouped rule (several blocks, `# ff:group`) is one rule: every
+    /// action acts on all of its blocks and keeps them identical apart from their defence lines.
+    /// All or nothing: a refusal leaves the document as it was.
     pub fn apply_action(&mut self, action: RowAction) -> ActionOutcome {
+        let out = self.dispatch(action);
+        if out.changed {
+            self.rebuild();
+        }
+        out
+    }
+
+    fn dispatch(&mut self, action: RowAction) -> ActionOutcome {
+        match action {
+            RowAction::Move(id, dir) => return self.move_rule(id, dir),
+            RowAction::SetDefenceSelection { id, mask } => return self.set_selection(id, mask),
+            _ => {}
+        }
+        let members = action_target(&action)
+            .map(|id| self.groups.members(id))
+            .unwrap_or_default();
+        if members.len() < 2 {
+            return self.block_action(action);
+        }
+        let snapshot = self.doc.clone();
+        let out = match action {
+            RowAction::SetEnabled(id, on) => {
+                if on && self.row(id).is_some_and(|r| r.cannot_enable) {
+                    return refused(CANNOT_ENABLE_STATUS.to_string());
+                }
+                let r = members
+                    .iter()
+                    .try_for_each(|m| self.doc.set_enabled(*m, on));
+                done_or(r, None)
+            }
+            RowAction::Delete(id) => {
+                let r = members.iter().try_for_each(|m| self.doc.remove_block(*m));
+                if r.is_ok() {
+                    self.moved.remove(&id);
+                }
+                done_or(r, None)
+            }
+            RowAction::Duplicate(id) => {
+                let name = self.doc.meta_get(id, "name").map(|n| format!("{n} (copy)"));
+                match group::duplicate(&mut self.doc, &members, name.as_deref()) {
+                    Ok(copy) => done_or(Ok(()), copy.first().copied()),
+                    Err(e) => refused(e.to_string()),
+                }
+            }
+            other => {
+                let out = self.block_action(other);
+                if out.changed
+                    && let Err(e) = group::resync(&mut self.doc, &members)
+                {
+                    refused(e.to_string())
+                } else {
+                    out
+                }
+            }
+        };
+        if !out.changed {
+            self.doc = snapshot;
+        }
+        out
+    }
+
+    /// Move a rule past its neighbour rule. Either may be a group: a group moves as one unit.
+    fn move_rule(&mut self, id: BlockId, dir: Dir) -> ActionOutcome {
+        let up = dir == Dir::Up;
+        let a = self.groups.members(id);
+        let edge = if up { a[0] } else { a[a.len() - 1] };
+        let nb = match self.doc.move_neighbour(edge, up) {
+            Err(e) => return refused(e.to_string()),
+            Ok(None) => return refused("There is no rule to swap with in that direction.".into()),
+            Ok(Some(nb)) => self.groups.rule_of(nb),
+        };
+        let b = self.groups.members(nb);
+        let crossing = self.doc.block(id).is_some_and(Block::has_continue)
+            || self.doc.block(nb).is_some_and(Block::has_continue);
+        let r = match (a.len(), b.len(), up) {
+            (1, 1, _) => self.doc.move_block(id, up),
+            (_, _, true) => self.doc.swap_runs(&b, &a),
+            (_, _, false) => self.doc.swap_runs(&a, &b),
+        };
+        if r.is_ok() {
+            if crossing {
+                self.moved.insert(id);
+            } else {
+                self.moved.remove(&id);
+            }
+        }
+        done_or(r, Some(id))
+    }
+
+    /// Set the Simple Defences selection of a rule (a bit set over [`group::COMBOS`]): the rule is
+    /// rewritten as the minimum number of blocks matching exactly that selection.
+    fn set_selection(&mut self, id: BlockId, mask: u8) -> ActionOutcome {
+        if self.row(id).is_none() || !self.body_editable(id) {
+            return refused(NOT_EDITABLE_STATUS.to_string());
+        }
+        let members = self.groups.members(id);
+        let snapshot = self.doc.clone();
+        match group::set_selection(&mut self.doc, &members, mask) {
+            Ok(_) => done_or(Ok(()), None),
+            Err(e) => {
+                self.doc = snapshot;
+                refused(e.to_string())
+            }
+        }
+    }
+
+    /// One action on one block, without the row rebuild (the caller rebuilds once).
+    fn block_action(&mut self, action: RowAction) -> ActionOutcome {
         let mut focus = None;
         let mut line = None;
         let mut status = None;
@@ -898,31 +1105,18 @@ impl WorkingFilter {
                         {
                             status = Some(e.to_string());
                         }
+                        // A copy of a block whose group is broken must not join that group.
+                        if let Err(e) = self.doc.remove_meta(copy, group::GROUP_KEY) {
+                            status = Some(e.to_string());
+                        }
                         Ok(())
                     }
                     Err(e) => Err(e.to_string()),
                 }
             }
-            RowAction::Move(id, dir) => {
-                let up = dir == Dir::Up;
-                match self.doc.move_neighbour(id, up) {
-                    Err(e) => Err(e.to_string()),
-                    Ok(None) => Err("There is no rule to swap with in that direction.".to_string()),
-                    Ok(Some(nb)) => {
-                        let crossing = self.doc.block(id).is_some_and(Block::has_continue)
-                            || self.doc.block(nb).is_some_and(Block::has_continue);
-                        let r = self.doc.move_block(id, up).map_err(|e| e.to_string());
-                        if r.is_ok() {
-                            focus = Some(id);
-                            if crossing {
-                                self.moved.insert(id);
-                            } else {
-                                self.moved.remove(&id);
-                            }
-                        }
-                        r
-                    }
-                }
+            // Handled before a single block is chosen (see `dispatch`).
+            RowAction::Move(..) | RowAction::SetDefenceSelection { .. } => {
+                Err(NOT_EDITABLE_STATUS.to_string())
             }
             RowAction::SetKeyword(id, kw) => {
                 if let Some(msg) = self.style_lock(id) {
@@ -1096,15 +1290,12 @@ impl WorkingFilter {
             }
         };
         match result {
-            Ok(()) => {
-                self.rebuild();
-                ActionOutcome {
-                    changed: true,
-                    status,
-                    focus,
-                    line,
-                }
-            }
+            Ok(()) => ActionOutcome {
+                changed: true,
+                status,
+                focus,
+                line,
+            },
             Err(msg) => ActionOutcome {
                 changed: false,
                 status: Some(msg),
@@ -2176,5 +2367,265 @@ Show
         assert_eq!(out, vec![RowAction::SetEnabled(b, false), ed(1, "72")]);
         let out = coalesce_edits(vec![ed(1, "71"), ed(2, "72")]);
         assert_eq!(out, vec![ed(1, "71"), ed(2, "72")]);
+    }
+
+    // -- grouped rules (`# ff:group`) ------------------------------------------------------------
+
+    const PART1: &str = "# ff:name Pure\n# ff:group abc 1/2\nShow\n  Rarity Rare\n  BaseArmour > 0\n  BaseEvasion 0\n  BaseEnergyShield 0\n  SetFontSize 30\n";
+    const PART2: &str = "# ff:name Pure\n# ff:group abc 2/2\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion > 0\n  BaseEnergyShield 0\n  SetFontSize 30\n";
+
+    /// Rule 1 (single), rule 2 (a two-block group), rule 3 (single).
+    fn grouped() -> String {
+        format!("Show\n  Rarity Normal\n\n{PART1}\n{PART2}\nShow\n  Rarity Magic\n")
+    }
+
+    /// Every row's group is valid and its size matches the document.
+    fn assert_groups_intact(wf: &WorkingFilter) {
+        for r in wf.rows() {
+            assert!(!r.group_broken, "{}: {}", r.label, wf.text());
+            assert_eq!(wf.groups.members(r.id).len(), r.group_size);
+        }
+    }
+
+    fn group_row(wf: &WorkingFilter) -> &RuleRow {
+        wf.rows()
+            .iter()
+            .find(|r| r.group_size > 1)
+            .expect("a group row")
+    }
+
+    #[test]
+    fn a_group_is_one_row_and_stays_byte_identical() {
+        let src = grouped();
+        let mut wf = styled_wf(&src);
+        assert_eq!(wf.rows().len(), 3);
+        let r = &wf.rows()[1];
+        assert_eq!((r.index, r.group_size), (2, 2));
+        assert_eq!(r.label, "2  Show - Pure");
+        assert_eq!(r.simple_mask, Some(0b011));
+        assert_eq!(r.summary, "Rarity Rare; Defences: Full AR, Full EV");
+        assert_eq!(wf.rows()[2].index, 3);
+        assert_eq!(wf.matches("pure"), vec![1]);
+        assert!(wf.rows()[0].can_move_down && wf.rows()[2].can_move_up);
+        assert_eq!(wf.text(), src);
+        assert_eq!(wf.text_with_styles().unwrap().0, src);
+        assert!(!wf.style_rewrite_pending());
+        assert!(!wf.is_dirty());
+    }
+
+    #[test]
+    fn a_broken_group_is_separate_flagged_rules_and_is_not_rewritten() {
+        let src = grouped().replacen("SetFontSize 30", "SetFontSize 31", 1);
+        let wf = styled_wf(&src);
+        assert_eq!(wf.rows().len(), 4);
+        assert!(wf.rows()[1].group_broken && wf.rows()[2].group_broken);
+        assert_eq!(wf.rows()[1].group_size, 1);
+        assert!(wf.blocking().is_empty());
+        assert_eq!(wf.text_with_styles().unwrap().0, src);
+    }
+
+    #[test]
+    fn single_block_selection_reads_its_zero_based_lines() {
+        let wf = WorkingFilter::from_text("Show\n  BaseArmour > 0\n  BaseEvasion 0\n");
+        // Has AR, no EV: Full AR, AR/ES.
+        assert_eq!(wf.rows()[0].simple_mask, Some(0b001_0001));
+        let wf = WorkingFilter::from_text("Show\n  BaseArmour > 50\n");
+        assert_eq!(wf.rows()[0].simple_mask, None);
+        let wf = WorkingFilter::from_text("Show\n  Rarity Rare\n");
+        assert_eq!(wf.rows()[0].simple_mask, None);
+    }
+
+    #[test]
+    fn edits_on_a_group_keep_its_blocks_identical() {
+        let mut wf = styled_wf(&grouped());
+        let id = group_row(&wf).id;
+        let rarity = wf
+            .body_view(id)
+            .into_iter()
+            .find(|e| e.text.contains("Rarity"))
+            .unwrap();
+        let actions = vec![
+            RowAction::SetName(id, "Renamed".into()),
+            RowAction::SetKeyword(id, BlockKeyword::Hide),
+            RowAction::SetContinue(id, true),
+            edit(&wf, id, rarity.line, LinePatch::Values("Unique".into())),
+            RowAction::AddLine {
+                id,
+                kind: LineKind::Condition,
+                text: "ItemLevel >= 80".into(),
+            },
+            RowAction::AddLine {
+                id,
+                kind: LineKind::Action,
+                text: "SetFontSize 40".into(),
+            },
+            RowAction::ApplyStyle(id, "S".into()),
+            RowAction::RemoveStyle(id),
+        ];
+        for a in actions {
+            let out = wf.apply_action(a.clone());
+            assert!(out.changed, "{a:?}: {:?}", out.status);
+            assert_eq!(wf.rows().len(), 3, "{a:?}\n{}", wf.text());
+            assert_groups_intact(&wf);
+            assert_eq!(group_row(&wf).simple_mask, Some(0b011), "{a:?}");
+        }
+        let t = wf.text();
+        assert_eq!(t.matches("# ff:name Renamed").count(), 2, "{t}");
+        assert_eq!(t.matches("ItemLevel >= 80").count(), 2, "{t}");
+        assert_eq!(t.matches("Rarity Unique").count(), 2, "{t}");
+        // The second block kept its own defence lines.
+        assert!(t.contains("  BaseArmour 0\n  BaseEvasion > 0\n"), "{t}");
+    }
+
+    #[test]
+    fn enable_disable_delete_and_duplicate_act_on_the_whole_group() {
+        let mut wf = WorkingFilter::from_text(&grouped());
+        let id = group_row(&wf).id;
+        assert!(wf.apply_action(RowAction::SetEnabled(id, false)).changed);
+        assert_eq!(wf.rows().len(), 3);
+        assert!(!group_row(&wf).enabled);
+        assert_groups_intact(&wf);
+        assert!(wf.apply_action(RowAction::SetEnabled(id, true)).changed);
+        assert_eq!(wf.text(), grouped());
+
+        let out = wf.apply_action(RowAction::Duplicate(id));
+        assert!(out.changed);
+        assert_eq!(wf.rows().len(), 4);
+        assert_groups_intact(&wf);
+        let copy = out.focus.unwrap();
+        let r = wf.row(copy).unwrap();
+        assert_eq!((r.index, r.group_size), (3, 2));
+        assert_eq!(r.name.as_deref(), Some("Pure (copy)"));
+        assert!(
+            wf.text()
+                .starts_with(&format!("Show\n  Rarity Normal\n\n{PART1}\n{PART2}\n"))
+        );
+
+        assert!(wf.apply_action(RowAction::Delete(id)).changed);
+        assert_eq!(wf.rows().len(), 3);
+        assert!(!wf.text().contains("abc"));
+        assert_groups_intact(&wf);
+    }
+
+    #[test]
+    fn a_group_moves_as_one_unit() {
+        let src = grouped();
+        let mut wf = WorkingFilter::from_text(&src);
+        let id = group_row(&wf).id;
+        assert!(wf.apply_action(RowAction::Move(id, Dir::Up)).changed);
+        assert_eq!(group_row(&wf).index, 1);
+        assert_groups_intact(&wf);
+        assert!(!wf.rows()[0].can_move_up && wf.rows()[0].can_move_down);
+        assert!(wf.apply_action(RowAction::Move(id, Dir::Down)).changed);
+        assert_eq!(wf.text(), src);
+        // A single rule passes the whole group too, in either direction.
+        let last = wf.rows()[2].id;
+        assert!(wf.apply_action(RowAction::Move(last, Dir::Up)).changed);
+        assert_eq!(wf.rows()[1].id, last);
+        assert_eq!(wf.rows()[2].group_size, 2);
+        assert_groups_intact(&wf);
+        assert!(wf.apply_action(RowAction::Move(last, Dir::Down)).changed);
+        assert_eq!(wf.text(), src);
+    }
+
+    #[test]
+    fn moving_a_group_across_continue_is_flagged() {
+        let src = grouped().replace(
+            "Show\n  Rarity Normal\n",
+            "Show\n  Rarity Normal\n  Continue\n",
+        );
+        let mut wf = WorkingFilter::from_text(&src);
+        let id = group_row(&wf).id;
+        assert!(wf.apply_action(RowAction::Move(id, Dir::Up)).changed);
+        assert!(wf.row(id).unwrap().moved_across_continue);
+    }
+
+    #[test]
+    fn selection_changes_grow_and_collapse_the_rule() {
+        let mut wf = WorkingFilter::from_text("Show\n  Rarity Rare\n\nShow\n  Rarity Magic\n");
+        let id = wf.rows()[0].id;
+        let set = |wf: &mut WorkingFilter, mask: u8| {
+            let out = wf.apply_action(RowAction::SetDefenceSelection { id, mask });
+            assert!(out.changed, "{out:?}");
+        };
+        // The three pure bases: three blocks, one row.
+        set(&mut wf, 0b111);
+        assert_eq!(wf.rows().len(), 2);
+        assert_eq!(wf.rows()[0].group_size, 3);
+        assert_eq!(wf.rows()[0].simple_mask, Some(0b111));
+        assert_eq!(wf.rows()[1].index, 2);
+        assert_groups_intact(&wf);
+        // Plus the triple hybrid: four.
+        set(&mut wf, 0b100_0111);
+        assert_eq!(wf.rows()[0].group_size, 4);
+        assert_groups_intact(&wf);
+        // "No EV": one block, marker gone.
+        set(&mut wf, 0b001_0101);
+        assert_eq!(wf.rows()[0].group_size, 1);
+        assert_eq!(
+            wf.text(),
+            "Show\n  Rarity Rare\n  BaseEvasion 0\n\nShow\n  Rarity Magic\n"
+        );
+        // Empty selection (the card's X): no defence lines at all.
+        set(&mut wf, 0);
+        assert_eq!(wf.text(), "Show\n  Rarity Rare\n\nShow\n  Rarity Magic\n");
+    }
+
+    #[test]
+    fn a_group_on_a_disabled_rule_can_be_re_covered() {
+        let mut wf = WorkingFilter::from_text(&grouped());
+        let id = group_row(&wf).id;
+        assert!(wf.apply_action(RowAction::SetEnabled(id, false)).changed);
+        let out = wf.apply_action(RowAction::SetDefenceSelection { id, mask: 0b111 });
+        assert!(out.changed, "{out:?}");
+        assert_eq!(group_row(&wf).group_size, 3);
+        assert!(!group_row(&wf).enabled);
+        assert_groups_intact(&wf);
+    }
+
+    #[test]
+    fn styles_rewrite_every_block_and_count_the_rule_once() {
+        let src = grouped().replace("# ff:name Pure\n", "# ff:name Pure\n# ff:style S\n");
+        let wf = styled_wf(&src);
+        assert_eq!(group_row(&wf).style, StyleState::Known("S".into()));
+        assert_eq!(wf.style_users().get("S"), Some(&1));
+        let (text, report) = wf.text_with_styles_keeping_tags().unwrap();
+        assert_eq!(report.rewritten, 1);
+        assert_eq!(text.matches("SetFontSize 37").count(), 2, "{text}");
+        let applied = WorkingFilter::from_text(&text);
+        assert_eq!(applied.rows().len(), 3);
+        assert_eq!(group_row(&applied).group_size, 2);
+
+        let unknown =
+            styled_wf(&grouped().replace("# ff:name Pure\n", "# ff:name Pure\n# ff:style Nope\n"));
+        assert_eq!(unknown.unknown_styles().len(), 1);
+        let (text, report) = unknown.text_with_styles().unwrap();
+        assert_eq!(report.dropped, vec![(2, "Nope".to_string())]);
+        assert!(!text.contains("Nope"));
+        assert_eq!(group_row(&WorkingFilter::from_text(&text)).group_size, 2);
+    }
+
+    #[test]
+    fn grammar_errors_in_a_group_block_apply_once_by_rule_number() {
+        let src = grouped().replace("SetFontSize 30", "SetFontSize 30\n  Rarity Bogus");
+        let wf = WorkingFilter::from_text(&src);
+        assert_eq!(wf.rows().len(), 3);
+        assert_eq!(wf.blocking().len(), 1);
+        assert_eq!(wf.blocking()[0].rule_index, 2);
+    }
+
+    #[test]
+    fn follower_ids_are_not_rows_and_refuse_edits() {
+        let mut wf = WorkingFilter::from_text(&grouped());
+        let id = group_row(&wf).id;
+        let follower = wf.groups.members(id)[1];
+        assert!(wf.row(follower).is_none());
+        let out = wf.apply_action(RowAction::AddLine {
+            id: follower,
+            kind: LineKind::Condition,
+            text: "ItemLevel >= 1".into(),
+        });
+        assert!(!out.changed);
+        assert_eq!(wf.text(), grouped());
     }
 }

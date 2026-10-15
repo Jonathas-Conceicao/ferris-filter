@@ -16,6 +16,7 @@
 //! which keeps the pass idempotent.
 
 use crate::emitter::style_action_lines;
+use crate::filter::group;
 use crate::filter::keywords::Kind;
 use crate::filter::section::{self, SectionSpan};
 use crate::filter::tokenize::tokenize;
@@ -55,12 +56,14 @@ fn in_economy(span: Option<SectionSpan>, header: usize) -> bool {
     span.is_some_and(|s| header > s.begin && header < s.end)
 }
 
-/// 1-based index among non-economy blocks (same numbering as the overlay's rule rows).
+/// 1-based index among non-economy rules (same numbering as the overlay's rule rows: a grouped
+/// rule counts once).
 pub fn rule_index_of(doc: &Document, id: BlockId) -> Option<usize> {
     let span = economy_span(doc);
+    let followers = group::analyze(doc).followers();
     let mut index = 0usize;
     for b in doc.blocks() {
-        if in_economy(span, b.header_line()) {
+        if in_economy(span, b.header_line()) || followers.contains(&b.id()) {
             continue;
         }
         index += 1;
@@ -150,16 +153,23 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
         .blocks()
         .map(|b| (b.id(), b.is_enabled(), b.header_line()))
         .collect();
+    // Every block of a grouped rule is rewritten (they stay identical), but the rule is reported
+    // once, by its first block.
+    let followers = group::analyze(doc).followers();
     let mut report = StyleReport::default();
     for (id, enabled, header) in ids {
         if in_economy(span, header) {
             continue;
         }
+        let follower = followers.contains(&id);
         let Some(tag) = doc.meta_get(id, "style").map(str::to_string) else {
             continue;
         };
         let Some(m) = styles.resolve_tag(&tag) else {
-            if enabled && let Some(i) = rule_index_of(doc, id) {
+            if enabled
+                && !follower
+                && let Some(i) = rule_index_of(doc, id)
+            {
                 report.unknown.push((i, tag));
             }
             continue;
@@ -168,6 +178,7 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
             && !m.canonical
             && let Some(canon) = styles.tag_for(m.name)
             && doc.set_meta(id, "style", &canon).is_ok()
+            && !follower
         {
             report.retagged += 1;
         }
@@ -175,8 +186,9 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
             continue;
         }
         match rewrite_block(doc, id, m.style) {
-            Ok(true) => report.rewritten += 1,
-            Ok(false) => {}
+            Ok(true) if !follower => report.rewritten += 1,
+            Ok(_) => {}
+            Err(_) if follower => {}
             Err(e) => {
                 if let Some(i) = rule_index_of(doc, id) {
                     report.failed.push((i, e.to_string()));
@@ -198,12 +210,18 @@ pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(us
         .map(|b| (b.id(), b.header_line()))
         .filter(|&(_, header)| !in_economy(span, header))
         .collect();
+    let followers = group::analyze(doc).followers();
     let mut dropped = Vec::new();
     for (id, _) in ids {
         let Some(name) = doc.meta_get(id, "style").map(str::to_string) else {
             continue;
         };
         if styles.resolve_tag(&name).is_some() {
+            continue;
+        }
+        if followers.contains(&id) {
+            // A later block of a grouped rule: drop its tag too, report the rule once.
+            let _ = doc.remove_meta(id, "style");
             continue;
         }
         let Some(index) = rule_index_of(doc, id) else {

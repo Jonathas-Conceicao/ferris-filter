@@ -332,6 +332,9 @@ pub struct BlockingError {
 pub fn blocking_errors(doc: &crate::filter::Document) -> Vec<BlockingError> {
     use crate::filter::Severity;
     let span = crate::filter::section::find(doc).ok().flatten();
+    // A grouped rule is one rule: its later blocks are copies of the first (only their defence
+    // lines differ), so they neither count nor repeat its errors.
+    let followers = crate::filter::group::analyze(doc).followers();
     let mut out = Vec::new();
     let mut rule_index = 0usize;
     for b in doc.blocks() {
@@ -339,6 +342,9 @@ pub fn blocking_errors(doc: &crate::filter::Document) -> Vec<BlockingError> {
             && s.begin < b.header_line()
             && b.header_line() < s.end
         {
+            continue;
+        }
+        if followers.contains(&b.id()) {
             continue;
         }
         rule_index += 1;

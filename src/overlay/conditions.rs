@@ -1,6 +1,6 @@
 //! Pure logic behind the rule editor's condition cards (Phase 26: UAT3-05, UAT3-06).
 //!
-//! No egui types and no file IO. It answers four questions the body view would otherwise have to
+//! No egui types and no file IO. It answers five questions the body view would otherwise have to
 //! decide inline:
 //!
 //! * how a rule's condition lines group into cards ([`card_plan`]): the three defence keywords
@@ -9,7 +9,10 @@
 //! * which picker entries are already on the rule ([`present_entries`]);
 //! * which operator choices a numeric condition offers, Between included
 //!   ([`numeric_op_choices`]);
-//! * what switching a single-line condition to Between writes ([`between_switch`]).
+//! * what switching a single-line condition to Between writes ([`between_switch`]);
+//! * whether a rule's defence lines read as a Simple Defences card (Any | Has | No per type) or
+//!   the Defences card ([`defences_kind`]), what one segment change writes ([`seg_write`]), and
+//!   which of the seven combinations the settings allow ([`lit_combos`]) (Phase 27: UAT4-03).
 //!
 //! Grouping is display-only: no line is rewritten by it (PARSE-04).
 
@@ -305,6 +308,99 @@ pub fn bound_clamps(
     let lo_max = inclusive_hi(hi_op, hi).saturating_sub(inclusive_lo(lo_op, 0));
     let hi_min = inclusive_lo(lo_op, lo).saturating_sub(inclusive_hi(hi_op, 0));
     ((i64::MIN, lo_max), (hi_min, i64::MAX))
+}
+
+/// One row of the Simple Defences card: no line, a "has this defence" line, or a "has none of
+/// it" line (UAT4-03).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefenceSeg {
+    Any,
+    Has,
+    No,
+}
+
+/// The segment a zero-based defence line stands for, or `None` when the line is anything else.
+///
+/// Zero based: exactly one integer value, and `0` with no operator, `=` or `==` (No), or `> 0`,
+/// or `>= 1` (Has). Non-integer or multi-value lines are `None`, never a panic.
+pub fn zero_based(e: &BodyEntry) -> Option<DefenceSeg> {
+    let [v] = e.values.as_slice() else {
+        return None;
+    };
+    let v: i64 = v.parse().ok()?;
+    match (e.op, v) {
+        (None | Some(Operator::Eq | Operator::EqEq), 0) => Some(DefenceSeg::No),
+        (Some(Operator::Gt), 0) | (Some(Operator::Ge), 1) => Some(DefenceSeg::Has),
+        _ => None,
+    }
+}
+
+/// A rule's defence lines read as Simple Defences rows, in `DEFENCES` order. Each row holds the
+/// type's segment and the index (into the slice given to [`simple_defences`]) of its line, `None`
+/// for Any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimpleSet {
+    pub rows: [(DefenceSeg, Option<usize>); 3],
+}
+
+impl SimpleSet {
+    /// The three segments, in `DEFENCES` order.
+    pub fn settings(&self) -> [DefenceSeg; 3] {
+        self.rows.map(|(s, _)| s)
+    }
+}
+
+/// Read the rule's defence lines as a Simple Defences set. Only condition entries with a defence
+/// keyword count (case-insensitive); other lines are ignored. `None` when any defence line is not
+/// zero based or a type has more than one line (a Between pair included). A rule without defence
+/// lines gives all Any; callers decide whether a card shows.
+pub fn simple_defences(entries: &[&BodyEntry]) -> Option<SimpleSet> {
+    let mut rows = [(DefenceSeg::Any, None); 3];
+    for (i, e) in entries.iter().enumerate() {
+        if e.kind != EntryKind::Condition {
+            continue;
+        }
+        let Some(k) = e.keyword else { continue };
+        let Some(t) = DEFENCES
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(k.name))
+        else {
+            continue;
+        };
+        if rows[t].1.is_some() {
+            return None;
+        }
+        rows[t] = (zero_based(e)?, Some(i));
+    }
+    Some(SimpleSet { rows })
+}
+
+/// Which defence card a rule shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefencesKind {
+    Simple(SimpleSet),
+    /// The existing Defences card (per-type operator, slider, Between).
+    Advanced,
+}
+
+/// Which defence card the rule's lines load as; `None` when the rule has no defence line.
+///
+/// `advanced` is the per-rule marker the rule list keeps once a rule shows a Defences card
+/// (loaded or added from the picker): with it set the rule always stays Advanced, so an edit
+/// inside the Defences card that happens to write zero-based lines (`>= 1` from a toggle, `> 0`
+/// from a slider) never flips it to Simple mid-session. After a reload the marker is cleared and
+/// classification comes from the file again.
+pub fn defences_kind(entries: &[&BodyEntry], advanced: bool) -> Option<DefencesKind> {
+    let any = entries
+        .iter()
+        .any(|e| e.kind == EntryKind::Condition && e.keyword.is_some_and(|k| is_defence(k.name)));
+    if !any {
+        return None;
+    }
+    if advanced {
+        return Some(DefencesKind::Advanced);
+    }
+    Some(simple_defences(entries).map_or(DefencesKind::Advanced, DefencesKind::Simple))
 }
 
 #[cfg(test)]

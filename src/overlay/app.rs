@@ -584,7 +584,8 @@ fn apply_row_actions(
             RowAction::EditLine { id, .. }
             | RowAction::AddLine { id, .. }
             | RowAction::InsertLineAfter { id, .. }
-            | RowAction::RemoveLine { id, .. } => Some(*id),
+            | RowAction::RemoveLine { id, .. }
+            | RowAction::SetDefenceSelection { id, .. } => Some(*id),
             _ => None,
         };
         let added_in = match &action {
@@ -596,7 +597,8 @@ fn apply_row_actions(
         let shifts_ordinals = match &action {
             RowAction::RemoveLine { .. }
             | RowAction::AddLine { .. }
-            | RowAction::InsertLineAfter { .. } => true,
+            | RowAction::InsertLineAfter { .. }
+            | RowAction::SetDefenceSelection { .. } => true,
             RowAction::EditLine {
                 expect,
                 patch: LinePatch::Whole(text),

@@ -15,10 +15,10 @@ use egui::{Align, Layout, RichText, vec2};
 
 use crate::filter::keywords::{COLOURS, Keyword, Kind, RARITIES, SHAPES, ValueShape};
 use crate::filter::tokenize::Operator;
-use crate::filter::{BlockId, BlockKeyword, LinePatch};
+use crate::filter::{BlockId, BlockKeyword, LinePatch, group};
 
 use super::classes::ClassCatalog;
-use super::conditions::{self, CardPlan, DefenceSeg, DefencesKind, Part, SegWrite, SimpleSet};
+use super::conditions::{self, CardPlan, DefencesKind, Part};
 use super::grammar::{
     self, BoolOrName, ConditionEntry, Effect, EncodeError, Minimap, SoundRef, Value,
 };
@@ -429,10 +429,19 @@ pub fn conditions_group(
                 && e.keyword.is_some_and(|k| conditions::is_defence(k.name))
         })
         .collect();
-    let kind = conditions::defences_kind(&defence_lines, list.advanced_defences.contains(&id));
-    let pending_defences = list.pending_defences.contains(&id) && defence_lines.is_empty();
-    let pending_simple =
-        !pending_defences && list.pending_simple_defences.contains(&id) && defence_lines.is_empty();
+    // A grouped rule (several blocks, `# ff:group`) only ever shows the Simple Defences card.
+    let grouped = ctx.row.group_size > 1;
+    let kind = if grouped {
+        None
+    } else {
+        conditions::defences_kind(&defence_lines, list.advanced_defences.contains(&id))
+    };
+    let simple = grouped || matches!(kind, Some(DefencesKind::Simple(_)));
+    let pending_defences =
+        !grouped && list.pending_defences.contains(&id) && defence_lines.is_empty();
+    let pending_simple = !pending_defences
+        && (grouped || list.pending_simple_defences.contains(&id))
+        && defence_lines.is_empty();
     if lines.is_empty() && pending.is_empty() && !pending_defences && !pending_simple {
         ui.label(
             RichText::new(NO_CONDITIONS)
@@ -473,15 +482,12 @@ pub fn conditions_group(
                 }
             }
             CardPlan::Defences(_) => {
-                match kind {
-                    Some(DefencesKind::Simple(set)) => {
-                        simple_defences_card(ui, ctx, &defence_lines, set, idx, list, actions)
-                    }
-                    _ => {
-                        // Once shown, the rule keeps the Defences card until a reload (UAT4-03).
-                        list.advanced_defences.insert(id);
-                        defences_card(ui, ctx, &defence_lines, idx, list, actions);
-                    }
+                if simple {
+                    simple_defences_card(ui, ctx, true, idx, list, actions)
+                } else {
+                    // Once shown, the rule keeps the Defences card until a reload (UAT4-03).
+                    list.advanced_defences.insert(id);
+                    defences_card(ui, ctx, &defence_lines, idx, list, actions);
                 }
                 idx += 1;
             }
@@ -492,10 +498,7 @@ pub fn conditions_group(
         defences_card(ui, ctx, &[], idx, list, actions);
         idx += 1;
     } else if pending_simple {
-        let all_any = SimpleSet {
-            rows: [(DefenceSeg::Any, None); 3],
-        };
-        simple_defences_card(ui, ctx, &[], all_any, idx, list, actions);
+        simple_defences_card(ui, ctx, grouped, idx, list, actions);
         idx += 1;
     }
     for (i, p) in pending.iter().enumerate() {
@@ -650,123 +653,45 @@ fn probe_rect(ui: &egui::Ui, key: impl std::hash::Hash + std::fmt::Debug, rect: 
     ui.data_mut(|d| d.insert_temp(egui::Id::new(key), rect));
 }
 
-/// The writes one Simple Defences segment change produces for row `row` (in `DEFENCES` order):
-/// at most one action, on that type's line only (PARSE-04). `set` indexes into `defence_lines`.
-fn simple_seg_actions(
-    id: BlockId,
-    defence_lines: &[&BodyEntry],
-    set: &SimpleSet,
-    row: usize,
-    want: DefenceSeg,
-) -> Vec<RowAction> {
-    let (name, _) = conditions::DEFENCES[row];
-    let (current, at) = set.rows[row];
-    let entry = at.and_then(|i| defence_lines.get(i).copied());
-    match conditions::seg_write(name, Some(current), want) {
-        SegWrite::Nothing => Vec::new(),
-        SegWrite::Add(text) => vec![RowAction::AddLine {
-            id,
-            kind: LineKind::Condition,
-            text,
-        }],
-        // Has <-> No patches only the operator and value of the existing line (to the canonical
-        // `X > 0` / `X 0`), so the keyword's spelling and any trailing comment are kept and the
-        // commit is strict, like every other structured card edit (review WR-02).
-        SegWrite::Replace(_) => entry
-            .map(|e| {
-                let op = match want {
-                    DefenceSeg::Has => Some(Operator::Gt),
-                    _ => None,
-                };
-                edit(id, e, LinePatch::Both(op, "0".into()))
-            })
-            .into_iter()
-            .collect(),
-        SegWrite::Remove => entry.map(|e| remove(id, e)).into_iter().collect(),
+/// The Simple Defences selection the card shows: the rule's own (lines, or a group's union), else
+/// the pick that wrote no lines (none, or every combination).
+fn shown_selection(row: &RuleRow, list: &ListUi) -> u8 {
+    row.simple_mask
+        .unwrap_or(if list.simple_all.contains(&row.id) {
+            group::ALL_COMBOS
+        } else {
+            0
+        })
+}
+
+/// What clicking chip `chip` of a card showing `mask` does: the one write (the new selection),
+/// and the card bookkeeping. A selection that writes no defence line (none, or every combination)
+/// keeps the card open as a pending card and remembers which of the two it was.
+fn chip_click(id: BlockId, mask: u8, chip: usize, list: &mut ListUi) -> RowAction {
+    let new = mask ^ (1 << chip);
+    let no_lines = new == 0 || new == group::ALL_COMBOS;
+    if no_lines {
+        list.pending_simple_defences.insert(id);
+    } else {
+        list.pending_simple_defences.remove(&id);
     }
-}
-
-/// The strip chips in `DEFENCE_COMBOS` order, each with whether the settings match it.
-fn combo_chip_states(settings: [DefenceSeg; 3]) -> Vec<(&'static str, bool)> {
-    conditions::DEFENCE_COMBOS
-        .iter()
-        .zip(conditions::lit_combos(settings))
-        .map(|((label, _), lit)| (*label, lit))
-        .collect()
-}
-
-/// The compact `Any | Has | No` control. Returns the segment clicked when it differs from
-/// `current`, and the three segment responses (for focus).
-fn any_has_no(ui: &mut egui::Ui, current: DefenceSeg) -> (Option<DefenceSeg>, Vec<egui::Response>) {
-    let mut picked = None;
-    let mut out = Vec::with_capacity(3);
-    ui.spacing_mut().item_spacing.x = 2.0;
-    for (label, seg, tip) in [
-        ("Any", DefenceSeg::Any, "With or without"),
-        ("Has", DefenceSeg::Has, "More than 0"),
-        ("No", DefenceSeg::No, "Exactly 0"),
-    ] {
-        let mut sel = current == seg;
-        let r = widgets::toggle_chip(ui, label, &mut sel);
-        if r.changed() && seg != current {
-            picked = Some(seg);
-        }
-        out.push(r.on_hover_text(tip));
+    if new == group::ALL_COMBOS {
+        list.simple_all.insert(id);
+    } else {
+        list.simple_all.remove(&id);
     }
-    (picked, out)
+    RowAction::SetDefenceSelection { id, mask: new }
 }
 
-/// The non-clickable strip of the seven defence combinations, lit for the ones the settings
-/// match. Returns the strip's rect.
-fn combo_strip(ui: &mut egui::Ui, settings: [DefenceSeg; 3]) -> egui::Rect {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for (label, lit) in combo_chip_states(settings) {
-            let text_color = if lit {
-                theme::PANEL_GROUND
-            } else {
-                theme::DISABLED_TEXT
-            };
-            let galley = ui.painter().layout_no_wrap(
-                label.to_owned(),
-                egui::FontId::proportional(theme::ROW_SUMMARY_SIZE - 1.0),
-                text_color,
-            );
-            let size = vec2(galley.size().x + 10.0, 18.0);
-            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-            let painter = ui.painter();
-            if lit {
-                painter.rect_filled(rect, 2.0, theme::WARM_ACCENT_TEXT);
-            } else {
-                painter.rect_stroke(
-                    rect,
-                    2.0,
-                    egui::Stroke::new(1.0, theme::HEADER_PLATE),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            painter.galley(
-                egui::pos2(rect.left() + 5.0, rect.center().y - galley.size().y / 2.0),
-                galley,
-                text_color,
-            );
-        }
-    })
-    .response
-    .on_hover_text("Defence combinations these settings match")
-    .rect
-}
-
-/// The Simple Defences card of a rule (UAT4-03): an AR / EV / ES row each with `Any | Has | No`,
-/// and the combination strip below. A segment change writes only that type's line (`X > 0`,
-/// `X 0`, or removes it); loaded zero-based lines keep their bytes until their segment changes
-/// (PARSE-04). With no lines (`defence_lines` empty) this is the pending card, which writes
-/// nothing until a row is set to Has or No.
+/// The Simple Defences card of a rule: one wrapped line of seven chips, one per defence base
+/// type (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES). The selected chips are exactly
+/// what the rule matches; a click writes the new selection, which may need several blocks (a
+/// `# ff:group`). With nothing selected the card writes no line (`has_lines` false: the pending
+/// card), and the X removes every defence line.
 fn simple_defences_card(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
-    defence_lines: &[&BodyEntry],
-    set: SimpleSet,
+    has_lines: bool,
     idx: usize,
     list: &mut ListUi,
     actions: &mut Vec<RowAction>,
@@ -774,7 +699,8 @@ fn simple_defences_card(
     let id = ctx.row.id;
     #[cfg(test)]
     probe_card(ui, id, "simple");
-    let mut first_seg: Option<egui::Response> = None;
+    let mask = shown_selection(ctx.row, list);
+    let mut first_chip: Option<egui::Response> = None;
     let framed = ui.push_id((id, "simple-defences-card"), |ui| {
         card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -782,12 +708,12 @@ fn simple_defences_card(
             let x = condition_header(
                 ui,
                 "Simple Defences",
-                "Armour, Evasion and Energy Shield",
+                "Defence base types",
                 |_| {},
-                if defence_lines.is_empty() {
-                    "Discard this condition"
-                } else {
+                if has_lines {
                     "Remove all defence conditions"
+                } else {
+                    "Discard this condition"
                 },
             );
             #[cfg(test)]
@@ -795,63 +721,34 @@ fn simple_defences_card(
             if x.clicked() {
                 list.pending_simple_defences.remove(&id);
                 list.advanced_defences.remove(&id);
-                // Highest line first, so each removal leaves the indices of the rest valid.
-                let mut doomed: Vec<&BodyEntry> = defence_lines.to_vec();
-                doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
-                for e in doomed {
-                    actions.push(remove(id, e));
+                list.simple_all.remove(&id);
+                if has_lines {
+                    actions.push(RowAction::SetDefenceSelection { id, mask: 0 });
                 }
             }
-            for (row, ((_, long), short)) in conditions::DEFENCES
-                .iter()
-                .zip(conditions::DEFENCE_SHORT)
-                .enumerate()
-            {
-                let current = set.rows[row].0;
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [32.0, 24.0],
-                        egui::Label::new(RichText::new(short).size(14.0).color(theme::VALUE_TEXT)),
-                    )
-                    .on_hover_text(*long);
-                    let (picked, segs) = any_has_no(ui, current);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                for (chip, (label, tip, _)) in group::COMBOS.iter().enumerate() {
+                    let mut sel = mask & (1 << chip) != 0;
+                    let r = widgets::toggle_chip(ui, label, &mut sel).on_hover_text(*tip);
                     #[cfg(test)]
-                    for (s, r) in segs.iter().enumerate() {
-                        probe_rect(ui, ("simple-seg", id, row, s), r.rect);
+                    probe_rect(ui, ("simple-chip", id, chip), r.rect);
+                    if r.changed() {
+                        actions.push(chip_click(id, mask, chip, list));
                     }
-                    if let Some(want) = picked {
-                        let writes = simple_seg_actions(id, defence_lines, &set, row, want);
-                        if !writes.is_empty() {
-                            list.pending_simple_defences.remove(&id);
-                            // Setting the last row back to Any keeps the card open (pending).
-                            let rest_any = set
-                                .rows
-                                .iter()
-                                .enumerate()
-                                .all(|(r, (s, _))| r == row || *s == DefenceSeg::Any);
-                            if want == DefenceSeg::Any && rest_any {
-                                list.pending_simple_defences.insert(id);
-                            }
-                            actions.extend(writes);
-                        }
+                    if first_chip.is_none() {
+                        first_chip = Some(r);
                     }
-                    if first_seg.is_none() {
-                        first_seg = segs.into_iter().next();
-                    }
-                });
-            }
-            let strip = combo_strip(ui, set.settings());
-            #[cfg(test)]
-            probe_rect(ui, ("simple-strip", id), strip);
-            let _ = strip;
+                }
+            });
         })
     });
     let rect = framed.inner.response.rect;
     let focus = list.focus_card == Some((id, FocusTarget::Defences));
     if focus {
         framed.inner.response.scroll_to_me(Some(Align::Center));
-        if let Some(s) = first_seg {
-            s.request_focus();
+        if let Some(c) = first_chip {
+            c.request_focus();
         }
         list.focus_card = None;
     }
@@ -4120,6 +4017,11 @@ mod tests {
 
     const SIMPLE_SRC: &str = "Show\n  BaseArmour >= 1\n  BaseEvasion == 0\n";
 
+    /// Chip order: Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES.
+    const FULL_AR: usize = 0;
+    const FULL_EV: usize = 1;
+    const FULL_ES: usize = 2;
+
     fn simple_session(src: &str, pending: bool) -> (egui::Context, WorkingFilter, ListUi) {
         let (ctx, wf, mut list) = defences_session(src, false);
         if pending {
@@ -4151,35 +4053,30 @@ mod tests {
             .expect("control was drawn")
     }
 
-    fn seg_at(ctx: &egui::Context, id: BlockId, row: usize, seg: usize) -> Pos2 {
-        probed(ctx, ("simple-seg", id, row, seg)).center()
+    fn chip_at(ctx: &egui::Context, id: BlockId, chip: usize) -> Pos2 {
+        probed(ctx, ("simple-chip", id, chip)).center()
     }
 
-    /// Settle, then click segment `seg` (0 Any, 1 Has, 2 No) of row `row`.
-    fn click_seg(
-        src: &str,
-        pending: bool,
-        row: usize,
-        seg: usize,
-    ) -> (WorkingFilter, ListUi, Vec<RowAction>, egui::Context) {
-        let cat = committed_catalog();
-        let (ctx, mut wf, mut list) = simple_session(src, pending);
-        for _ in 0..3 {
-            click_step(&ctx, &mut wf, &mut list, &cat, None);
+    /// Click chip `chip` of the first rule's card (settled first); returns the frame's actions.
+    fn click_chip(
+        ctx: &egui::Context,
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        cat: &ClassCatalog,
+        chip: usize,
+    ) -> Vec<RowAction> {
+        for _ in 0..2 {
+            click_step(ctx, wf, list, cat, None);
         }
         let id = wf.rows()[0].id;
-        let at = seg_at(&ctx, id, row, seg);
-        let a = click_step(&ctx, &mut wf, &mut list, &cat, Some(at));
-        (wf, list, a, ctx)
+        let at = chip_at(ctx, id, chip);
+        let (a, kinds) = step_cards(ctx, wf, list, cat, Some(at));
+        assert_eq!(kinds, ["simple"]);
+        a
     }
 
-    fn simple_set_of(src: &str) -> (WorkingFilter, BlockId, Vec<BodyEntry>, SimpleSet) {
-        let (wf, id, e) = entries_of(src);
-        let refs: Vec<&BodyEntry> = e.iter().collect();
-        let Some(DefencesKind::Simple(set)) = conditions::defences_kind(&refs, false) else {
-            panic!("{src} is not simple");
-        };
-        (wf, id, e, set)
+    fn shown(wf: &WorkingFilter, list: &ListUi) -> u8 {
+        shown_selection(&wf.rows()[0], list)
     }
 
     #[test]
@@ -4193,121 +4090,58 @@ mod tests {
             assert_eq!(kinds, ["simple"]);
         }
         assert_eq!(wf.text(), before);
-        assert!(before.contains("BaseArmour >= 1") && before.contains("BaseEvasion == 0"));
-        let (_, _, _, set) = simple_set_of(SIMPLE_SRC);
-        assert_eq!(
-            set.settings(),
-            [DefenceSeg::Has, DefenceSeg::No, DefenceSeg::Any]
-        );
+        // Has AR, no EV: Full AR and AR/ES.
+        assert_eq!(shown(&wf, &list), 0b001_0001);
+        for chip in 0..7 {
+            probed(&ctx, ("simple-chip", wf.rows()[0].id, chip));
+        }
     }
 
     #[test]
-    fn simple_segment_writes_touch_only_their_own_line() {
-        let (_, id, e, set) = simple_set_of(SIMPLE_SRC);
-        let refs: Vec<&BodyEntry> = e.iter().collect();
-
-        let a = simple_seg_actions(id, &refs, &set, 2, DefenceSeg::Has);
+    fn clicking_a_chip_writes_the_new_selection() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = simple_session(SIMPLE_SRC, false);
+        let id = wf.rows()[0].id;
+        // Add Full ES: Full AR, Full ES, AR/ES = "no Evasion", one line.
+        let a = click_chip(&ctx, &mut wf, &mut list, &cat, FULL_ES);
         assert_eq!(
             a,
-            [RowAction::AddLine {
+            [RowAction::SetDefenceSelection {
                 id,
-                kind: LineKind::Condition,
-                text: "BaseEnergyShield > 0".into()
+                mask: 0b001_0101
             }]
         );
-        let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
-        assert_eq!(wf.rows()[0].id, id);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        let t = wf.text();
-        assert!(
-            t.contains("BaseArmour >= 1\n") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
-        );
-        assert!(t.contains("BaseEnergyShield > 0"), "{t}");
-
-        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::No);
-        assert_eq!(a.len(), 1);
-        assert!(matches!(
-            &a[0],
-            RowAction::EditLine { line, patch: LinePatch::Both(None, w), .. }
-                if *line == e[0].line && w == "0"
-        ));
-        let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
-        assert_eq!(wf.rows()[0].id, id);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        let t = wf.text();
-        assert!(
-            t.contains("  BaseArmour 0\n") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
-        );
-
-        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::Any);
-        assert!(matches!(&a[..], [RowAction::RemoveLine { line, .. }] if *line == e[0].line));
-        let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
-        assert_eq!(wf.rows()[0].id, id);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        let t = wf.text();
-        assert!(
-            !t.contains("BaseArmour") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
-        );
-
-        // Re-selecting the current segment writes nothing.
-        assert!(simple_seg_actions(id, &refs, &set, 0, DefenceSeg::Has).is_empty());
-        assert!(simple_seg_actions(id, &refs, &set, 1, DefenceSeg::No).is_empty());
-        assert!(simple_seg_actions(id, &refs, &set, 2, DefenceSeg::Any).is_empty());
-    }
-
-    /// Has <-> No patches the operator and value only: the trailing comment and the keyword's
-    /// spelling survive (review WR-02).
-    #[test]
-    fn simple_has_no_switch_keeps_trailing_comment_and_keyword_spelling() {
-        let src = "Show\n  BaseArmour >= 1 # keep\n  baseevasion == 0 # $tier->ev\n";
-        let (_, id, e, set) = simple_set_of(src);
-        assert_eq!(
-            set.settings(),
-            [DefenceSeg::Has, DefenceSeg::No, DefenceSeg::Any]
-        );
-        let refs: Vec<&BodyEntry> = e.iter().collect();
-
-        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::No);
-        assert_eq!(a.len(), 1, "{a:?}");
-        let mut wf = WorkingFilter::from_text(src);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        assert_eq!(
-            wf.text(),
-            "Show\n  BaseArmour 0 # keep\n  baseevasion == 0 # $tier->ev\n"
-        );
-
-        let a = simple_seg_actions(id, &refs, &set, 1, DefenceSeg::Has);
-        assert_eq!(a.len(), 1, "{a:?}");
-        let mut wf = WorkingFilter::from_text(src);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        assert_eq!(
-            wf.text(),
-            "Show\n  BaseArmour >= 1 # keep\n  baseevasion > 0 # $tier->ev\n"
-        );
+        assert_eq!(wf.text(), "Show\n  BaseEvasion 0\n");
+        assert_eq!(shown(&wf, &list), 0b001_0101);
     }
 
     #[test]
-    fn clicking_a_simple_segment_emits_one_write() {
-        // ES -> Has appends one line.
-        let (wf, _, a, _) = click_seg(SIMPLE_SRC, false, 2, 1);
-        assert_eq!(a.len(), 1, "{a:?}");
-        assert!(matches!(&a[0], RowAction::AddLine { text, .. } if text == "BaseEnergyShield > 0"));
-        let t = wf.text();
-        assert!(
-            t.contains("BaseArmour >= 1\n") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
+    fn a_selection_one_block_cannot_express_becomes_one_grouped_rule() {
+        let cat = committed_catalog();
+        let src = "Show\n  Rarity Rare\n";
+        let (ctx, mut wf, mut list) = simple_session(src, true);
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_AR);
+        assert_eq!(
+            wf.text(),
+            "Show\n  Rarity Rare\n  BaseEvasion 0\n  BaseEnergyShield 0\n"
         );
-        // AR -> No rewrites only the armour line.
-        let (wf, _, a, _) = click_seg(SIMPLE_SRC, false, 0, 2);
-        assert_eq!(a.len(), 1, "{a:?}");
-        assert!(wf.text().contains("  BaseArmour 0\n  BaseEvasion == 0\n"));
-        // Clicking the selected segment writes nothing.
-        let (wf, _, a, _) = click_seg(SIMPLE_SRC, false, 0, 1);
+        assert!(list.pending_simple_defences.is_empty());
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_EV);
+        assert_eq!(wf.rows().len(), 1);
+        assert_eq!(wf.rows()[0].group_size, 2);
+        assert_eq!(shown(&wf, &list), 0b011);
+        assert_eq!(wf.text().matches("# ff:group ").count(), 2);
+        // Still exactly one card, idle.
+        let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
         assert!(a.is_empty(), "{a:?}");
-        assert_eq!(wf.text(), SIMPLE_SRC);
+        assert_eq!(kinds, ["simple"]);
+        // Deselect Full AR: one block again, no group line.
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_AR);
+        assert_eq!(wf.rows()[0].group_size, 1);
+        assert_eq!(
+            wf.text(),
+            "Show\n  Rarity Rare\n  BaseArmour 0\n  BaseEnergyShield 0\n"
+        );
     }
 
     #[test]
@@ -4329,7 +4163,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_simple_card_writes_nothing_then_first_has_adds_one_line() {
+    fn pending_simple_card_writes_nothing_until_a_chip_is_picked() {
         let cat = committed_catalog();
         let src = "Show\n  Rarity Rare\n";
         let (ctx, mut wf, mut list) = simple_session(src, true);
@@ -4339,52 +4173,44 @@ mod tests {
             assert_eq!(kinds, ["simple"]);
         }
         assert_eq!(wf.text(), src);
-        assert_eq!(
-            combo_chip_states([DefenceSeg::Any; 3])
-                .iter()
-                .filter(|(_, lit)| *lit)
-                .count(),
-            7
-        );
-
-        let (wf, list, a, ctx) = click_seg(src, true, 0, 1);
-        assert_eq!(a.len(), 1, "{a:?}");
-        assert!(matches!(&a[0], RowAction::AddLine { text, .. } if text == "BaseArmour > 0"));
-        assert!(list.pending_simple_defences.is_empty());
-        let (mut wf, mut list) = (wf, list);
-        let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
-        assert!(a.is_empty());
-        assert_eq!(kinds, ["simple"]);
-        assert!(wf.text().contains("BaseArmour > 0"));
+        assert_eq!(shown(&wf, &list), 0);
     }
 
     #[test]
-    fn combination_strip_lights_matching_chips_and_is_not_clickable() {
-        let states = combo_chip_states([DefenceSeg::Any, DefenceSeg::No, DefenceSeg::Any]);
-        let labels: Vec<&str> = states.iter().map(|(l, _)| *l).collect();
-        assert_eq!(
-            labels,
-            ["AR", "EV", "ES", "AR+ES", "AR+EV", "EV+ES", "AR+EV+ES"]
-        );
-        let lit: Vec<&str> = states.iter().filter(|(_, b)| *b).map(|(l, _)| *l).collect();
-        assert_eq!(lit, ["AR", "ES", "AR+ES"]);
-
+    fn every_or_no_chip_writes_no_line_and_keeps_the_card() {
         let cat = committed_catalog();
-        let (ctx, mut wf, mut list) = simple_session(SIMPLE_SRC, false);
-        for _ in 0..3 {
-            click_step(&ctx, &mut wf, &mut list, &cat, None);
+        let (ctx, mut wf, mut list) = simple_session("Show\n  Rarity Rare\n", true);
+        let id = wf.rows()[0].id;
+        for chip in 0..7 {
+            click_chip(&ctx, &mut wf, &mut list, &cat, chip);
         }
-        let strip = probed(&ctx, ("simple-strip", wf.rows()[0].id));
-        let a = click_step(&ctx, &mut wf, &mut list, &cat, Some(strip.center()));
-        assert!(a.is_empty(), "{a:?}");
-        assert_eq!(wf.text(), SIMPLE_SRC);
+        // Every combination is no defence line at all, yet the card shows them all selected.
+        assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
+        assert!(list.pending_simple_defences.contains(&id));
+        assert_eq!(shown(&wf, &list), group::ALL_COMBOS);
+        // Deselect one again: lines come back.
+        click_chip(&ctx, &mut wf, &mut list, &cat, 6);
+        assert_eq!(shown(&wf, &list), 0b011_1111);
+        assert!(!list.pending_simple_defences.contains(&id));
+        // Down to the last chip, then off: no line, the card stays open and empty.
+        for chip in 1..6 {
+            click_chip(&ctx, &mut wf, &mut list, &cat, chip);
+        }
+        assert_eq!(shown(&wf, &list), 0b000_0001);
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_AR);
+        assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
+        assert!(list.pending_simple_defences.contains(&id));
+        assert_eq!(shown(&wf, &list), 0);
+        let (_, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
+        assert_eq!(kinds, ["simple"]);
     }
 
     #[test]
-    fn simple_card_x_removes_every_defence_line_and_clears_the_flags() {
+    fn simple_card_x_removes_every_defence_line_and_collapses_a_group() {
         let cat = committed_catalog();
-        let src = "Show\n  BaseArmour >= 1\n  Rarity Rare\n  BaseEvasion == 0\n";
+        let src = "# ff:group abc 1/2\nShow\n  BaseArmour > 0\n  Rarity Rare\n  BaseEvasion 0\n  BaseEnergyShield 0\n\n# ff:group abc 2/2\nShow\n  BaseArmour 0\n  Rarity Rare\n  BaseEvasion > 0\n  BaseEnergyShield 0\n";
         let (ctx, mut wf, mut list) = simple_session(src, false);
+        assert_eq!(wf.rows()[0].group_size, 2);
         for _ in 0..3 {
             click_step(&ctx, &mut wf, &mut list, &cat, None);
         }
@@ -4392,15 +4218,7 @@ mod tests {
         list.pending_simple_defences.insert(id);
         let x = probed(&ctx, ("simple-x", id)).center();
         let a = click_step(&ctx, &mut wf, &mut list, &cat, Some(x));
-        assert_eq!(a.len(), 2, "{a:?}");
-        let lines: Vec<usize> = a
-            .iter()
-            .map(|x| match x {
-                RowAction::RemoveLine { line, .. } => *line,
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert!(lines[0] > lines[1], "highest line first: {lines:?}");
+        assert_eq!(a, [RowAction::SetDefenceSelection { id, mask: 0 }]);
         assert!(list.pending_simple_defences.is_empty());
         assert!(list.advanced_defences.is_empty());
         assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
@@ -4420,17 +4238,23 @@ mod tests {
     }
 
     #[test]
-    fn setting_the_last_simple_row_to_any_keeps_the_card_open() {
-        let src = "Show\n  Rarity Rare\n  BaseEvasion 0\n";
-        let (mut wf, mut list, a, ctx) = click_seg(src, false, 1, 0);
-        assert!(matches!(&a[..], [RowAction::RemoveLine { .. }]), "{a:?}");
-        assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
-        let id = wf.rows()[0].id;
-        assert!(list.pending_simple_defences.contains(&id));
+    fn a_loaded_group_shows_one_card_with_the_union_and_stays_byte_identical() {
+        let src = "# ff:name Pure\n# ff:group abc 1/3\nShow\n  Rarity Rare\n  BaseEvasion 0\n  BaseEnergyShield 0\n\n# ff:name Pure\n# ff:group abc 2/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEnergyShield 0\n\n# ff:name Pure\n# ff:group abc 3/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion 0\n";
         let cat = committed_catalog();
-        let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
-        assert!(a.is_empty());
-        assert_eq!(kinds, ["simple"]);
+        let (ctx, mut wf, mut list) = simple_session(src, false);
+        assert_eq!(wf.rows().len(), 1);
+        for _ in 0..3 {
+            let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
+            assert!(a.is_empty(), "{a:?}");
+            assert_eq!(kinds, ["simple"]);
+        }
+        assert_eq!(shown(&wf, &list), 0b111);
+        assert_eq!(wf.text(), src);
+        // The picker offers no second defences card on a group.
+        let id = wf.rows()[0].id;
+        assert_eq!(pick_in(&wf, &mut list, ConditionEntry::Defences), None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert!(list.pending_defences.is_empty());
     }
 
     // -- card stability and exclusivity through the UI -------------------------------------------
@@ -4546,17 +4370,19 @@ mod tests {
         let (ctx, mut wf, mut list) = simple_session("Show\n  Rarity Rare\n", true);
         let id = wf.rows()[0].id;
         assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
-        // (row, segment): AR Has, EV No, AR No, ES Has, AR Any, EV Has.
-        for (row, seg) in [(0, 1), (1, 2), (0, 2), (2, 1), (0, 0), (1, 1)] {
-            let at = seg_at(&ctx, id, row, seg);
+        // + Full AR, + Full EV, + AR/EV, - Full AR, + AR/EV/ES, - Full EV.
+        for chip in [FULL_AR, FULL_EV, 3, FULL_AR, 6, FULL_EV] {
+            let at = chip_at(&ctx, id, chip);
             let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, Some(at));
-            assert_eq!(a.len(), 1, "({row}, {seg}): {a:?}");
+            assert_eq!(a.len(), 1, "{chip}: {a:?}");
             assert_eq!(kinds, ["simple"]);
             assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+            assert_eq!(wf.rows().len(), 1);
         }
+        // AR/EV and AR/EV/ES: has Armour and Evasion.
         assert_eq!(
             wf.text(),
-            "Show\n  Rarity Rare\n  BaseEvasion > 0\n  BaseEnergyShield > 0\n"
+            "Show\n  Rarity Rare\n  BaseArmour > 0\n  BaseEvasion > 0\n"
         );
         assert!(list.advanced_defences.is_empty());
     }
@@ -5212,6 +5038,7 @@ mod tests {
                 RowAction::AddLine { .. }
                     | RowAction::RemoveLine { .. }
                     | RowAction::InsertLineAfter { .. }
+                    | RowAction::SetDefenceSelection { .. }
             );
             let added_in = match &action {
                 RowAction::AddLine { id, .. } => Some(*id),

@@ -21,6 +21,7 @@ use super::theme;
 use super::virtual_list::{build_offsets, scroll_offset_for, visible_range};
 use super::widgets::{self, ArrowDirection};
 
+const GROUP_BROKEN_LONG: &str = "This block was written as part of one rule spread over several blocks (# ff:group), but those blocks no longer match, so each is shown as a rule of its own. It is left as written until you edit it.";
 const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so this rule cannot be turned on. You can still move or delete it.";
 
 /// Per-view UI state. Everything keyed by [`BlockId`] must be cleared when ids reset.
@@ -57,6 +58,9 @@ pub struct ListUi {
     /// Blocks whose Simple Defences card was picked from `+ condition` with every row on Any
     /// (nothing is written until a row is set to Has or No).
     pub pending_simple_defences: HashSet<BlockId>,
+    /// Pending Simple Defences cards whose pick was every combination (which, like no pick,
+    /// writes no defence line), so the card keeps showing every chip selected.
+    pub simple_all: HashSet<BlockId>,
     /// Blocks that show the Defences card (picked, or rendered once), so zero-based lines written
     /// by it (`BaseArmour >= 1`) never turn it into a Simple Defences card while editing. Carried
     /// across an Apply by row position ([`ListUi::rekey_after_apply`]); cleared by
@@ -103,6 +107,7 @@ impl Default for ListUi {
             row_epoch: 0,
             pending_defences: HashSet::new(),
             pending_simple_defences: HashSet::new(),
+            simple_all: HashSet::new(),
             advanced_defences: HashSet::new(),
             focus_card: None,
         }
@@ -121,6 +126,7 @@ impl ListUi {
         self.pending.clear();
         self.pending_defences.clear();
         self.pending_simple_defences.clear();
+        self.simple_all.clear();
         self.advanced_defences.clear();
         self.focus_card = None;
         self.focus_line = None;
@@ -300,6 +306,13 @@ fn flags_for(row: &RuleRow) -> Vec<Flag> {
             text: "grammar warning".to_string(),
             color: theme::LABEL_TAN,
             tip: diag_tip(&row.warnings),
+        });
+    }
+    if row.group_broken {
+        out.push(Flag {
+            text: "group broken".to_string(),
+            color: theme::WARM_ACCENT_TEXT,
+            tip: GROUP_BROKEN_LONG.to_string(),
         });
     }
     if row.moved_across_continue {
@@ -921,6 +934,25 @@ Show
         ))
         .unwrap()));
         wf
+    }
+
+    #[test]
+    fn broken_group_blocks_carry_the_flag() {
+        let wf = WorkingFilter::from_text(
+            "# ff:group abc 1/2\nShow\n  BaseArmour > 0\n\n# ff:group abc 2/2\nHide\n  BaseArmour 0\n\nShow\n",
+        );
+        assert_eq!(wf.rows().len(), 3);
+        for r in &wf.rows()[..2] {
+            let f = flags_for(r);
+            let g = f.iter().find(|f| f.text == "group broken").expect("flag");
+            assert_eq!(g.color, theme::WARM_ACCENT_TEXT);
+            assert!(g.tip.contains("# ff:group"));
+        }
+        assert!(
+            !flags_for(&wf.rows()[2])
+                .iter()
+                .any(|f| f.text == "group broken")
+        );
     }
 
     #[test]

@@ -10,9 +10,9 @@
 //! * which operator choices a numeric condition offers, Between included
 //!   ([`numeric_op_choices`]);
 //! * what switching a single-line condition to Between writes ([`between_switch`]);
-//! * whether a rule's defence lines read as a Simple Defences card (Any | Has | No per type) or
-//!   the Defences card ([`defences_kind`]), what one segment change writes ([`seg_write`]), and
-//!   which of the seven combinations the settings allow ([`lit_combos`]) (Phase 27: UAT4-03).
+//! * whether a rule's defence lines read as a Simple Defences card (zero-based lines) or the
+//!   Defences card ([`defences_kind`]) (Phase 27: UAT4-03). What the Simple Defences chips write
+//!   lives in [`crate::filter::group`].
 //!
 //! Grouping is display-only: no line is rewritten by it (PARSE-04).
 
@@ -319,29 +319,17 @@ pub fn bound_clamps(
     ((i64::MIN, lo_max), (hi_min, i64::MAX))
 }
 
-/// One row of the Simple Defences card: no line, a "has this defence" line, or a "has none of
-/// it" line (UAT4-03).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefenceSeg {
-    Any,
-    Has,
-    No,
-}
+/// One defence type's requirement: no line, a "has this defence" line, or a "has none of it"
+/// line (UAT4-03). Shared with the block-level group logic.
+pub use crate::filter::group::DefenceSeg;
 
 /// The segment a zero-based defence line stands for, or `None` when the line is anything else.
 ///
 /// Zero based: exactly one integer value, and `0` with no operator, `=` or `==` (No), or `> 0`,
 /// or `>= 1` (Has). Non-integer or multi-value lines are `None`, never a panic.
 pub fn zero_based(e: &BodyEntry) -> Option<DefenceSeg> {
-    let [v] = e.values.as_slice() else {
-        return None;
-    };
-    let v: i64 = v.parse().ok()?;
-    match (e.op, v) {
-        (None | Some(Operator::Eq | Operator::EqEq), 0) => Some(DefenceSeg::No),
-        (Some(Operator::Gt), 0) | (Some(Operator::Ge), 1) => Some(DefenceSeg::Has),
-        _ => None,
-    }
+    let values: Vec<&str> = e.values.iter().map(String::as_str).collect();
+    crate::filter::group::zero_based_seg(e.op, &values)
 }
 
 /// A rule's defence lines read as Simple Defences rows, in `DEFENCES` order. Each row holds the
@@ -410,73 +398,6 @@ pub fn defences_kind(entries: &[&BodyEntry], advanced: bool) -> Option<DefencesK
         return Some(DefencesKind::Advanced);
     }
     Some(simple_defences(entries).map_or(DefencesKind::Advanced, DefencesKind::Simple))
-}
-
-/// Short row labels of the Simple Defences card, in `DEFENCES` order.
-pub const DEFENCE_SHORT: [&str; 3] = ["AR", "EV", "ES"];
-
-/// The single write one Simple Defences segment change produces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SegWrite {
-    /// The segment did not change: nothing is written (PARSE-04).
-    Nothing,
-    /// Append this line (the type had no line).
-    Add(String),
-    /// Replace the type's line with this text. The card writes it as an operator + value patch,
-    /// so the keyword's spelling and a trailing comment are kept.
-    Replace(String),
-    /// Remove the type's line (Any).
-    Remove,
-}
-
-fn seg_line(kw_name: &str, seg: DefenceSeg) -> String {
-    match seg {
-        DefenceSeg::No => format!("{kw_name} 0"),
-        _ => format!("{kw_name} > 0"),
-    }
-}
-
-/// What picking `want` writes for the type whose loaded line reads as `current` (`None` or
-/// `Some(Any)` = no line). Has writes the canonical `kw_name > 0`, No the bare `kw_name 0` (the
-/// form `generate` emits for `eq: 0`), Any removes the line; re-selecting the current segment
-/// writes nothing, so a loaded line keeps its bytes until its segment changes. Callers pass the
-/// `DEFENCES` name as `kw_name`.
-pub fn seg_write(kw_name: &str, current: Option<DefenceSeg>, want: DefenceSeg) -> SegWrite {
-    let current = current.unwrap_or(DefenceSeg::Any);
-    if current == want {
-        return SegWrite::Nothing;
-    }
-    match (current, want) {
-        (_, DefenceSeg::Any) => SegWrite::Remove,
-        (DefenceSeg::Any, w) => SegWrite::Add(seg_line(kw_name, w)),
-        (_, w) => SegWrite::Replace(seg_line(kw_name, w)),
-    }
-}
-
-/// The seven defence combinations of the display strip, in strip order, each with its membership
-/// in `DEFENCES` order.
-pub const DEFENCE_COMBOS: [(&str, [bool; 3]); 7] = [
-    ("AR", [true, false, false]),
-    ("EV", [false, true, false]),
-    ("ES", [false, false, true]),
-    ("AR+ES", [true, false, true]),
-    ("AR+EV", [true, true, false]),
-    ("EV+ES", [false, true, true]),
-    ("AR+EV+ES", [true, true, true]),
-];
-
-/// A combination matches when it contains every Has type and none of the No types (Any is free).
-pub fn combo_matches(settings: [DefenceSeg; 3], combo: [bool; 3]) -> bool {
-    settings.iter().zip(combo).all(|(s, member)| match s {
-        DefenceSeg::Any => true,
-        DefenceSeg::Has => member,
-        DefenceSeg::No => !member,
-    })
-}
-
-/// Which chips of the strip are lit, in `DEFENCE_COMBOS` order.
-pub fn lit_combos(settings: [DefenceSeg; 3]) -> [bool; 7] {
-    DEFENCE_COMBOS.map(|(_, combo)| combo_matches(settings, combo))
 }
 
 #[cfg(test)]
@@ -844,118 +765,46 @@ mod tests {
         assert_eq!(kind_of("Show\n\tRarity Rare\n", true), None);
     }
 
-    // --- Simple Defences writes and the combination strip (UAT4-03) ---
+    // --- Simple Defences lines (written by `filter::group`) ---
 
     use DefenceSeg::{Any, Has, No};
 
     #[test]
-    fn seg_write_from_no_line() {
-        assert_eq!(seg_write("BaseArmour", None, Any), SegWrite::Nothing);
-        assert_eq!(
-            seg_write("BaseArmour", None, Has),
-            SegWrite::Add("BaseArmour > 0".into())
-        );
-        assert_eq!(
-            seg_write("BaseArmour", None, No),
-            SegWrite::Add("BaseArmour 0".into())
-        );
-    }
-
-    #[test]
-    fn seg_write_from_an_existing_line() {
-        assert_eq!(seg_write("BaseEvasion", Some(Has), Has), SegWrite::Nothing);
-        assert_eq!(seg_write("BaseEvasion", Some(No), No), SegWrite::Nothing);
-        assert_eq!(
-            seg_write("BaseEvasion", Some(Has), No),
-            SegWrite::Replace("BaseEvasion 0".into())
-        );
-        assert_eq!(
-            seg_write("BaseEnergyShield", Some(No), Has),
-            SegWrite::Replace("BaseEnergyShield > 0".into())
-        );
-        assert_eq!(seg_write("BaseEvasion", Some(Has), Any), SegWrite::Remove);
-        assert_eq!(seg_write("BaseEvasion", Some(No), Any), SegWrite::Remove);
-        // `Some(Any)` means no line too.
-        assert_eq!(seg_write("BaseEvasion", Some(Any), Any), SegWrite::Nothing);
-    }
-
-    #[test]
     fn written_lines_classify_back_to_their_segment() {
-        for (name, _) in DEFENCES {
+        for (t, (name, _)) in DEFENCES.iter().enumerate() {
             for want in [Has, No] {
-                let SegWrite::Add(line) = seg_write(name, None, want) else {
-                    panic!("expected Add");
-                };
-                assert_eq!(zb(&line), Some(want), "{line}");
+                let mut c = [Any; 3];
+                c[t] = want;
+                let lines = crate::filter::group::canonical_texts(c);
+                assert_eq!(lines.len(), 1);
+                assert!(lines[0].starts_with(name), "{}", lines[0]);
+                assert_eq!(zb(&lines[0]), Some(want), "{}", lines[0]);
             }
         }
     }
 
     #[test]
-    fn combo_labels_and_short_names() {
-        let labels: Vec<&str> = DEFENCE_COMBOS.iter().map(|(l, _)| *l).collect();
-        assert_eq!(
-            labels,
-            ["AR", "EV", "ES", "AR+ES", "AR+EV", "EV+ES", "AR+EV+ES"]
-        );
-        assert_eq!(DEFENCE_SHORT, ["AR", "EV", "ES"]);
-        // Each label spells out its membership.
-        for (label, members) in DEFENCE_COMBOS {
-            let parts: Vec<&str> = label.split('+').collect();
-            for (t, short) in DEFENCE_SHORT.iter().enumerate() {
-                assert_eq!(members[t], parts.contains(short), "{label}");
-            }
-        }
-    }
-
-    fn lit_labels(settings: [DefenceSeg; 3]) -> Vec<&'static str> {
-        let lit = lit_combos(settings);
-        DEFENCE_COMBOS
-            .iter()
-            .zip(lit)
-            .filter(|(_, on)| *on)
-            .map(|((l, _), _)| *l)
-            .collect()
-    }
-
-    #[test]
-    fn lit_combos_examples() {
-        assert_eq!(lit_combos([Any, Any, Any]), [true; 7]);
-        assert_eq!(lit_labels([Any, No, Any]), ["AR", "ES", "AR+ES"]);
-        assert_eq!(lit_combos([No, No, No]), [false; 7]);
-        assert_eq!(
-            lit_labels([Has, Any, Any]),
-            ["AR", "AR+ES", "AR+EV", "AR+EV+ES"]
-        );
-    }
-
-    #[test]
-    fn lit_combos_all_27_settings() {
+    fn combination_masks_for_all_27_settings() {
+        use crate::filter::group::{COMBOS, mask_of};
         let segs = [Any, Has, No];
-        let mut count = 0;
         for a in segs {
             for b in segs {
                 for c in segs {
                     let s = [a, b, c];
-                    let lit = lit_combos(s);
-                    for (k, (label, members)) in DEFENCE_COMBOS.iter().enumerate() {
+                    let m = mask_of(s);
+                    for (k, (label, _, members)) in COMBOS.iter().enumerate() {
                         // Independent formulation: every Has type is in the combo, no No type is.
-                        let mut expect = true;
-                        for t in 0..3 {
-                            if s[t] == Has && !members[t] {
-                                expect = false;
-                            }
-                            if s[t] == No && members[t] {
-                                expect = false;
-                            }
-                        }
-                        assert_eq!(lit[k], expect, "{s:?} {label}");
-                        assert_eq!(combo_matches(s, *members), expect);
+                        let expect = (0..3).all(|t| match s[t] {
+                            Any => true,
+                            Has => members[t],
+                            No => !members[t],
+                        });
+                        assert_eq!(m & (1 << k) != 0, expect, "{s:?} {label}");
                     }
-                    count += 1;
                 }
             }
         }
-        assert_eq!(count, 27);
+        assert_eq!(mask_of([Any, No, Any]), 0b001_0101);
+        assert_eq!(mask_of([No, No, No]), 0);
     }
 }

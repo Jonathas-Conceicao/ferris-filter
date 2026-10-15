@@ -426,8 +426,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 26-05-PLAN.md — Overlay models link by id: tag status, canonical tags on Apply, silent id persistence, ConfigState rename (UAT3-02, UAT3-03)
-- [ ] 26-06-PLAN.md — Picker greys present conditions and focuses them; one Defences card (UAT3-05, UAT3-06)
+- [x] 26-05-PLAN.md — Overlay models link by id: tag status, canonical tags on Apply, silent id persistence, ConfigState rename (UAT3-02, UAT3-03)
+- [x] 26-06-PLAN.md — Picker greys present conditions and focuses them; one Defences card (UAT3-05, UAT3-06)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -452,7 +452,7 @@ Plans:
 | 23. Auto-Reload Filter in Game on Apply | 4/4 | Human UAT pending | - |
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
-| 26. UAT Feedback Fixes 3 | 4/9 | In Progress|  |
+| 26. UAT Feedback Fixes 3 | 6/9 | In Progress|  |
 
 ## Backlog
 

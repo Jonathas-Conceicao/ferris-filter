@@ -24,20 +24,26 @@ use crate::filter::tokenize::Operator;
 /// Sentinel in `CONDITION_GROUPS` for the single Defences picker entry.
 const DEFENCES_MARKER: &str = "@Defences";
 
+/// Sentinel in `CONDITION_GROUPS` for the Simple Defences picker entry (right after Defences).
+const SIMPLE_DEFENCES_MARKER: &str = "@SimpleDefences";
+
 /// The three keywords the Defences entry stands for; reachable only through it.
 const DEFENCE_KEYWORDS: [&str; 3] = ["BaseArmour", "BaseEvasion", "BaseEnergyShield"];
 
-/// One entry of the condition picker: a keyword, or the combined Defences card.
+/// One entry of the condition picker: a keyword, the combined Defences card, or the Simple
+/// Defences card (Any | Has | No per defence type). A rule shows at most one of the two cards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionEntry {
     Keyword(&'static Keyword),
     Defences,
+    SimpleDefences,
 }
 
 impl ConditionEntry {
     pub fn label(&self) -> String {
         match self {
             ConditionEntry::Defences => "Defences".to_string(),
+            ConditionEntry::SimpleDefences => "Simple Defences".to_string(),
             ConditionEntry::Keyword(k) => display_name(k.name),
         }
     }
@@ -46,6 +52,9 @@ impl ConditionEntry {
     pub fn search_text(&self) -> String {
         match self {
             ConditionEntry::Defences => "defences armour evasion energy shield defence".to_string(),
+            ConditionEntry::SimpleDefences => {
+                "simple defences armour evasion energy shield defence ar ev es".to_string()
+            }
             ConditionEntry::Keyword(k) => {
                 format!("{} {}", display_name(k.name), k.name).to_lowercase()
             }
@@ -61,6 +70,7 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
             "BaseType",
             "Rarity",
             DEFENCES_MARKER,
+            SIMPLE_DEFENCES_MARKER,
             "ItemLevel",
             "DropLevel",
             "Quality",
@@ -151,6 +161,8 @@ pub fn condition_picker_groups() -> Vec<(&'static str, Vec<ConditionEntry>)> {
                 .filter_map(|n| {
                     if *n == DEFENCES_MARKER {
                         Some(ConditionEntry::Defences)
+                    } else if *n == SIMPLE_DEFENCES_MARKER {
+                        Some(ConditionEntry::SimpleDefences)
                     } else {
                         let k = keywords::lookup(n);
                         debug_assert!(k.is_some(), "grammar group names unknown keyword {n}");
@@ -177,7 +189,8 @@ pub fn condition_picker_groups() -> Vec<(&'static str, Vec<ConditionEntry>)> {
 }
 
 /// Legacy keyword-only projection of [`condition_picker_groups`]: the Defences entry expands in
-/// place to the three defence keywords.
+/// place to the three defence keywords; the Simple Defences entry expands to nothing, so each
+/// defence keyword is listed once.
 #[cfg(test)]
 pub fn condition_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
     condition_picker_groups()
@@ -188,6 +201,7 @@ pub fn condition_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
                 .flat_map(|e| match e {
                     ConditionEntry::Keyword(k) => vec![k],
                     ConditionEntry::Defences => resolve(&DEFENCE_KEYWORDS),
+                    ConditionEntry::SimpleDefences => Vec::new(),
                 })
                 .collect();
             (g, kws)
@@ -818,7 +832,10 @@ mod tests {
                 .count()
         );
         for (_, ns) in CONDITION_GROUPS.iter().chain(ACTION_GROUPS) {
-            for n in ns.iter().filter(|n| **n != DEFENCES_MARKER) {
+            for n in ns
+                .iter()
+                .filter(|n| **n != DEFENCES_MARKER && **n != SIMPLE_DEFENCES_MARKER)
+            {
                 assert!(lookup(n).is_some(), "group names unknown keyword {n}");
             }
         }
@@ -845,6 +862,7 @@ mod tests {
                 "BaseType",
                 "Rarity",
                 "Defences",
+                "Simple Defences",
                 "Item Level",
                 "Drop Level",
                 "Quality",
@@ -861,6 +879,11 @@ mod tests {
             }
         }
         assert!(ConditionEntry::Defences.search_text().contains("armour"));
+        let at = item.iter().position(|l| l == "Rarity").unwrap();
+        assert_eq!(item[at + 1], "Defences");
+        assert_eq!(item[at + 2], "Simple Defences");
+        let simple = ConditionEntry::SimpleDefences.search_text();
+        assert!(simple.contains("simple") && simple.contains("evasion"));
     }
 
     #[test]

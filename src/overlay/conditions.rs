@@ -140,7 +140,9 @@ pub fn card_plan(entries: &[&BodyEntry]) -> Vec<CardPlan> {
 }
 
 /// Picker entries already on the rule: lines of the rule, pending keyword rows, and a pending
-/// Defences card. Any defence line counts as `Defences`. No duplicates, first-seen order.
+/// defences card. `pending_defences` is true when either pending card (Defences or Simple
+/// Defences) is open. Any defence line or pending card counts as both `Defences` and
+/// `SimpleDefences`, so a rule never gets a second defences card. No duplicates, first-seen order.
 pub fn present_entries(
     entries: &[&BodyEntry],
     pending: &[&'static Keyword],
@@ -148,8 +150,15 @@ pub fn present_entries(
 ) -> Vec<ConditionEntry> {
     let mut out: Vec<ConditionEntry> = Vec::new();
     let mut push = |e: ConditionEntry| {
-        if !out.contains(&e) {
-            out.push(e);
+        let both: &[ConditionEntry] = if e == ConditionEntry::Defences {
+            &[ConditionEntry::Defences, ConditionEntry::SimpleDefences]
+        } else {
+            std::slice::from_ref(&e)
+        };
+        for e in both {
+            if !out.contains(e) {
+                out.push(*e);
+            }
         }
     };
     for e in entries {
@@ -597,14 +606,22 @@ mod tests {
         let present = present_entries(&refs, &[], false);
         assert!(present.contains(&ConditionEntry::Keyword(lookup("Class").unwrap())));
         assert!(present.contains(&ConditionEntry::Defences));
+        assert!(present.contains(&ConditionEntry::SimpleDefences));
         assert!(!present.contains(&ConditionEntry::Keyword(lookup("BaseEvasion").unwrap())));
         let none = present_entries(&[], &[lookup("Rarity").unwrap()], true);
         assert_eq!(
             none,
             [
                 ConditionEntry::Keyword(lookup("Rarity").unwrap()),
-                ConditionEntry::Defences
+                ConditionEntry::Defences,
+                ConditionEntry::SimpleDefences
             ]
+        );
+        let zero = [e(1, "BaseArmour", None, "0")];
+        let refs: Vec<&BodyEntry> = zero.iter().collect();
+        assert_eq!(
+            present_entries(&refs, &[], false),
+            [ConditionEntry::Defences, ConditionEntry::SimpleDefences]
         );
         assert!(present_entries(&[], &[], false).is_empty());
     }

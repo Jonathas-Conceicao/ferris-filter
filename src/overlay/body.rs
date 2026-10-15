@@ -284,10 +284,13 @@ fn is_condition_side(e: &BodyEntry) -> bool {
     matches!(e.kind, EntryKind::Condition | EntryKind::Opaque)
 }
 
-/// What clicking a picker entry does. An entry already on the rule (a line, a pending row or the
-/// Defences card) is never added twice: the existing card is focused instead and nothing is
-/// written (UAT3-06). An absent keyword behaves as `pick_condition`; an absent Defences becomes a
-/// pending card and writes nothing until a toggle is switched on (UAT3-05).
+/// What clicking a picker entry does. An entry already on the rule (a line, a pending row or a
+/// defences card) is never added twice: the existing card is focused instead and nothing is
+/// written (UAT3-06). Defences and Simple Defences are one slot: when either card is on the rule,
+/// both entries focus it (UAT4-03). An absent keyword behaves as `pick_condition`; an absent
+/// Defences or Simple Defences becomes a pending card and writes nothing until a toggle or
+/// segment is set (UAT3-05). Picking Defences marks the rule advanced so its card never turns
+/// into Simple Defences while editing; picking Simple Defences drops that mark.
 pub(crate) fn pick_entry(
     id: BlockId,
     entry: ConditionEntry,
@@ -297,7 +300,9 @@ pub(crate) fn pick_entry(
 ) -> Option<RowAction> {
     if present.contains(&entry) {
         match entry {
-            ConditionEntry::Defences => list.focus_card = Some((id, FocusTarget::Defences)),
+            ConditionEntry::Defences | ConditionEntry::SimpleDefences => {
+                list.focus_card = Some((id, FocusTarget::Defences))
+            }
             ConditionEntry::Keyword(kw) => {
                 let line = lines
                     .iter()
@@ -318,9 +323,20 @@ pub(crate) fn pick_entry(
         ConditionEntry::Keyword(kw) => pick_condition(id, kw, list),
         ConditionEntry::Defences => {
             list.pending_defences.insert(id);
+            list.advanced_defences.insert(id);
+            None
+        }
+        ConditionEntry::SimpleDefences => {
+            list.pending_simple_defences.insert(id);
+            list.advanced_defences.remove(&id);
             None
         }
     }
+}
+
+/// True when either pending defences card (Defences or Simple Defences) is open on the rule.
+fn any_pending_defences(list: &ListUi, id: BlockId) -> bool {
+    list.pending_defences.contains(&id) || list.pending_simple_defences.contains(&id)
 }
 
 /// How long a card focused from the picker keeps its accent outline.
@@ -368,8 +384,7 @@ pub fn conditions_group(
         .cloned()
         .collect();
     let pending_kws: Vec<&'static Keyword> = pending.iter().map(|p| p.keyword).collect();
-    let present =
-        conditions::present_entries(&lines, &pending_kws, list.pending_defences.contains(&id));
+    let present = conditions::present_entries(&lines, &pending_kws, any_pending_defences(list, id));
     let mut picked = None;
     ui.horizontal(|ui| {
         caption(ui, "CONDITIONS");
@@ -2312,7 +2327,7 @@ pub fn style_section(
                 );
                 let disabled = |e: &ConditionEntry| match e {
                     ConditionEntry::Keyword(k) => added.contains(&k.name).then_some("(added)"),
-                    ConditionEntry::Defences => None,
+                    ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
                 };
                 picked_action = picker_popup(
                     ui,
@@ -2324,7 +2339,7 @@ pub fn style_section(
                 )
                 .and_then(|e| match e {
                     ConditionEntry::Keyword(k) => Some(k),
-                    ConditionEntry::Defences => None,
+                    ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
                 });
             });
         }
@@ -3551,7 +3566,7 @@ mod tests {
             .map(|p| p.keyword)
             .collect();
         let present =
-            conditions::present_entries(&lines, &pending_kws, list.pending_defences.contains(&id));
+            conditions::present_entries(&lines, &pending_kws, any_pending_defences(list, id));
         let a = pick_entry(id, entry, &lines, &present, list);
         (id, entries.clone(), a)
     }
@@ -3610,6 +3625,86 @@ mod tests {
         assert_eq!(a, None);
         assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
         assert_eq!(list.pending_defences.len(), 1);
+    }
+
+    #[test]
+    fn picker_search_finds_simple_defences() {
+        for q in ["simple", "evasion", "armour"] {
+            assert!(
+                names_of(&picker_entries(q))
+                    .iter()
+                    .any(|n| n == "Simple Defences"),
+                "{q}"
+            );
+        }
+    }
+
+    #[test]
+    fn picking_absent_simple_defences_becomes_pending_and_drops_the_advanced_mark() {
+        let mut list = ListUi::default();
+        let (id, _, _) = pick_on("Show\n  Rarity Rare\n", &mut list, ConditionEntry::Defences);
+        assert!(list.advanced_defences.contains(&id));
+        // Discard the pending Defences card the way its X does, then pick Simple Defences.
+        list.pending_defences.remove(&id);
+        let (_, _, a) = pick_on(
+            "Show\n  Rarity Rare\n",
+            &mut list,
+            ConditionEntry::SimpleDefences,
+        );
+        assert_eq!(a, None);
+        assert!(list.pending_simple_defences.contains(&id));
+        assert!(!list.advanced_defences.contains(&id));
+        assert!(list.pending_defences.is_empty());
+    }
+
+    #[test]
+    fn picking_absent_defences_marks_the_rule_advanced() {
+        let mut list = ListUi::default();
+        let (id, _, a) = pick_on("Show\n  Rarity Rare\n", &mut list, ConditionEntry::Defences);
+        assert_eq!(a, None);
+        assert!(list.pending_defences.contains(&id));
+        assert!(list.advanced_defences.contains(&id));
+        assert!(list.pending_simple_defences.is_empty());
+    }
+
+    #[test]
+    fn either_defences_entry_focuses_a_loaded_defence_line() {
+        for entry in [ConditionEntry::Defences, ConditionEntry::SimpleDefences] {
+            let mut list = ListUi::default();
+            let (id, _, a) = pick_on("Show\n  BaseArmour > 0\n", &mut list, entry);
+            assert_eq!(a, None);
+            assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+            assert!(list.pending_defences.is_empty());
+            assert!(list.pending_simple_defences.is_empty());
+            assert!(list.advanced_defences.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_pending_defences_card_of_either_kind_blocks_the_other() {
+        let mut list = ListUi::default();
+        let (id, _, _) = pick_on(
+            "Show\n  Rarity Rare\n",
+            &mut list,
+            ConditionEntry::SimpleDefences,
+        );
+        let (_, _, a) = pick_on("Show\n  Rarity Rare\n", &mut list, ConditionEntry::Defences);
+        assert_eq!(a, None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert!(list.pending_defences.is_empty());
+        assert!(!list.advanced_defences.contains(&id));
+
+        let mut list = ListUi::default();
+        let (id, _, _) = pick_on("Show\n  Rarity Rare\n", &mut list, ConditionEntry::Defences);
+        let (_, _, a) = pick_on(
+            "Show\n  Rarity Rare\n",
+            &mut list,
+            ConditionEntry::SimpleDefences,
+        );
+        assert_eq!(a, None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert!(list.pending_simple_defences.is_empty());
+        assert!(list.advanced_defences.contains(&id));
     }
 
     #[test]

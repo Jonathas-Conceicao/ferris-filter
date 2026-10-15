@@ -54,6 +54,14 @@ pub struct ListUi {
     /// Blocks whose Defences card was picked from `+ condition` with nothing toggled yet
     /// (nothing is written until a toggle is switched on).
     pub pending_defences: HashSet<BlockId>,
+    /// Blocks whose Simple Defences card was picked from `+ condition` with every row on Any
+    /// (nothing is written until a row is set to Has or No).
+    pub pending_simple_defences: HashSet<BlockId>,
+    /// Blocks that show the Defences card (picked, or rendered once), so zero-based lines written
+    /// by it (`BaseArmour >= 1`) never turn it into a Simple Defences card while editing. Cleared
+    /// by [`ListUi::clear_ids`] (the file is classified again), by either card's remove and when
+    /// Simple Defences is picked.
+    pub advanced_defences: HashSet<BlockId>,
     /// A card to scroll to, focus and briefly highlight: set when a picker entry that is already
     /// on the rule is clicked (UAT3-06). Line-backed keyword cards use `focus_line` instead.
     pub focus_card: Option<(BlockId, FocusTarget)>,
@@ -93,6 +101,8 @@ impl Default for ListUi {
             epoch: 0,
             row_epoch: 0,
             pending_defences: HashSet::new(),
+            pending_simple_defences: HashSet::new(),
+            advanced_defences: HashSet::new(),
             focus_card: None,
         }
     }
@@ -108,6 +118,8 @@ impl ListUi {
         self.confirm_economy_remove = false;
         self.pending.clear();
         self.pending_defences.clear();
+        self.pending_simple_defences.clear();
+        self.advanced_defences.clear();
         self.focus_card = None;
         self.focus_line = None;
         self.last_expanded = None;
@@ -287,6 +299,7 @@ pub fn show_list(
         let keep = list.expanded;
         list.pending.retain(|p| Some(p.block) == keep);
         list.pending_defences.retain(|b| Some(*b) == keep);
+        list.pending_simple_defences.retain(|b| Some(*b) == keep);
         list.focus_card = None;
         list.line_error = None;
         egui::Popup::close_all(ui.ctx());
@@ -1117,6 +1130,9 @@ Show
         list.last_expanded = Some(id);
         list.line_error = Some((id, 1, "x".into()));
         list.name_drafts.insert(id, "x".into());
+        list.pending_defences.insert(id);
+        list.pending_simple_defences.insert(id);
+        list.advanced_defences.insert(id);
         let epoch = list.epoch;
         list.clear_ids();
         assert_ne!(
@@ -1132,6 +1148,9 @@ Show
         assert!(list.focus_line.is_none());
         assert!(list.last_expanded.is_none());
         assert!(list.line_error.is_none());
+        assert!(list.pending_defences.is_empty());
+        assert!(list.pending_simple_defences.is_empty());
+        assert!(list.advanced_defences.is_empty());
     }
 
     #[test]

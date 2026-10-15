@@ -130,8 +130,8 @@ impl InputPaths {
     /// chaos is expensive in a young economy, so measuring against it compresses the whole scale
     /// downward (observed 2026-09-06 in Forbidden Rites — Divine landed in A and Exalted in F).
     /// Pointing this at the exalt-denominated `tiers-fallback.json` while keeping live prices
-    /// restores sane placement without touching the committed `tiers.json` the test oracle
-    /// depends on.
+    /// restores sane placement without touching the live `tiers.json` (the test oracle reads
+    /// `tiers-default.json`).
     ///
     /// An explicit path has no default: if it is absent the read fails, it never falls back.
     pub fn with_tiers(mut self, path: impl Into<PathBuf>) -> Self {

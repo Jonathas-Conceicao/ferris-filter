@@ -711,7 +711,9 @@ Plans:
 
 **Goal:** The Phase 16 keyword-table sign-off was a partial pass (author's UAT, 2026-10-15): the
 keywords not yet exercised in game should be checked against the live game and corrected in
-`src/filter/keywords.rs`.
+`src/filter/keywords.rs`. Also unconfirmed in game: PoE1-only lines (e.g. `LinkedSockets`,
+`SocketGroup`, `HasInfluence`) loading as raw rows without blocking Apply was verified in tests
+only; the v0.5 UAT (2026-10-15) recorded it as partial.
 **Requirements:** TBD
 **Plans:** TBD
 
@@ -724,6 +726,22 @@ Plans:
 **Goal:** Offer guidance (not blocking) when a rule combines conditions that can never match, e.g.
 Defences or Simple Defences on a rule without armour classes (noted in Phase 27: UAT4-03 has no class
 check).
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.14: Minimal support review for PoE2 (BACKLOG)
+
+**Goal:** A general review of `Minimal` blocks in PoE2: check in game whether `Minimal` is valid
+outside Ruthless and what it renders, then decide how far FerrisFilter supports it. Today a foreign
+`Minimal` block loads and is kept as is (shown as Minimal, Custom only), but a `styles.json` style
+with `"action": "Minimal"` fails to load, rejecting the whole file (Phase 24 review WR-02, against
+the UAT-04 spec "keep loading it"; deferred here 2026-10-15). If
+Minimal is valid in PoE2, allow it as a style action (loader, overlay switch, generator); if not,
+keep rejecting it with a clear message.
 **Requirements:** TBD
 **Plans:** TBD
 

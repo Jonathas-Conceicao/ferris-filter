@@ -72,3 +72,12 @@ Full `cargo test` passes (498 unit tests plus integration tests), `cargo fmt --c
 _Fixed: 2026-10-12_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## Later resolution (v0.5 wrap-up, 2026-10-15)
+
+- **WR-05 resolved by Phase 20, no deletion needed.** Re-checked at the v0.5 wrap-up:
+  `parse_base_type_entry` is no longer dead. Phase 20 (commit 3681657, quoted-list add field)
+  imports it in `src/overlay/widgets.rs` to split pasted quoted lists, so `text_entry.rs` is live
+  code and was kept.
+- **Author decision (2026-10-15), WR-03:** every Apply repricing the economy section is accepted as
+  designed (it is how new prices reach the filter).

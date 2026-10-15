@@ -203,6 +203,8 @@ Deferred. Tracked but not in the v0.5 roadmap.
 - **Overlay economy change summary** (backlog 999.4).
 - **Locked base filter / `Import` layering** (backlog 999.7).
 - **Starting-point presets** (backlog 999.9).
+- **`Minimal` support review** (backlog 999.14): is `Minimal` valid in PoE2 outside Ruthless,
+  and allow a `styles.json` style with action `Minimal` (Phase 24 review WR-02).
 - **Per-block economy markers**, letting economy blocks be interleaved with general rules.
 - **Bulk restyle by NeverSink `$type`/`$tier` tags.**
 

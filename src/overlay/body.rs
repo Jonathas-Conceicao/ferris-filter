@@ -18,8 +18,11 @@ use crate::filter::tokenize::Operator;
 use crate::filter::{BlockId, BlockKeyword, LinePatch};
 
 use super::classes::ClassCatalog;
-use super::grammar::{self, BoolOrName, Effect, EncodeError, Minimap, SoundRef, Value};
-use super::rule_list::{ListUi, PendingRow};
+use super::conditions::{self, CardPlan, Part};
+use super::grammar::{
+    self, BoolOrName, ConditionEntry, Effect, EncodeError, Minimap, SoundRef, Value,
+};
+use super::rule_list::{FocusTarget, ListUi, PendingRow};
 use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
 use super::theme;
 use super::widgets;
@@ -280,6 +283,70 @@ fn is_condition_side(e: &BodyEntry) -> bool {
     matches!(e.kind, EntryKind::Condition | EntryKind::Opaque)
 }
 
+/// What clicking a picker entry does. An entry already on the rule (a line, a pending row or the
+/// Defences card) is never added twice: the existing card is focused instead and nothing is
+/// written (UAT3-06). An absent keyword behaves as `pick_condition`; an absent Defences becomes a
+/// pending card and writes nothing until a toggle is switched on (UAT3-05).
+pub(crate) fn pick_entry(
+    id: BlockId,
+    entry: ConditionEntry,
+    lines: &[&BodyEntry],
+    present: &[ConditionEntry],
+    list: &mut ListUi,
+) -> Option<RowAction> {
+    if present.contains(&entry) {
+        match entry {
+            ConditionEntry::Defences => list.focus_card = Some((id, FocusTarget::Defences)),
+            ConditionEntry::Keyword(kw) => {
+                let line = lines
+                    .iter()
+                    .find(|e| {
+                        e.kind == EntryKind::Condition
+                            && e.keyword.is_some_and(|k| k.name == kw.name)
+                    })
+                    .map(|e| e.line);
+                match line {
+                    Some(l) => list.focus_line = Some((id, l)),
+                    None => list.focus_card = Some((id, FocusTarget::Pending(kw.name))),
+                }
+            }
+        }
+        return None;
+    }
+    match entry {
+        ConditionEntry::Keyword(kw) => pick_condition(id, kw, list),
+        ConditionEntry::Defences => {
+            list.pending_defences.insert(id);
+            None
+        }
+    }
+}
+
+/// How long a card focused from the picker keeps its accent outline.
+const FLASH_SECS: f64 = 1.0;
+
+/// Accent outline around a card for about a second after `start`. The start time lives in egui
+/// temp data under `key`; no state is kept once the flash is over.
+fn focus_flash(ui: &egui::Ui, rect: egui::Rect, key: egui::Id, start: bool) {
+    let now = ui.input(|i| i.time);
+    if start {
+        ui.data_mut(|d| d.insert_temp(key, now));
+    }
+    if let Some(t0) = ui.data(|d| d.get_temp::<f64>(key)) {
+        if now - t0 < FLASH_SECS {
+            ui.painter().rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(2.0, theme::WARM_ACCENT_TEXT),
+                egui::StrokeKind::Inside,
+            );
+            ui.ctx().request_repaint();
+        } else {
+            ui.data_mut(|d| d.remove::<f64>(key));
+        }
+    }
+}
+
 /// The CONDITIONS section of an expanded row.
 pub fn conditions_group(
     ui: &mut egui::Ui,
@@ -288,24 +355,6 @@ pub fn conditions_group(
     actions: &mut Vec<RowAction>,
 ) {
     let id = ctx.row.id;
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        caption(ui, "CONDITIONS");
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = ui.add_enabled(
-                ctx.editable,
-                egui::Button::new(RichText::new("+ condition").size(theme::ROW_SUMMARY_SIZE)),
-            );
-            picked = picker_popup(ui, &btn, &picker_entries(""), true, &|_| None);
-        });
-    });
-    if let Some(kw) = picked
-        && let Some(a) = pick_condition(id, kw, list)
-    {
-        actions.push(a);
-    }
-    ui.spacing_mut().item_spacing.y = 4.0;
-
     let lines: Vec<&BodyEntry> = ctx
         .entries
         .iter()
@@ -317,6 +366,34 @@ pub fn conditions_group(
         .filter(|p| p.block == id)
         .cloned()
         .collect();
+    let pending_kws: Vec<&'static Keyword> = pending.iter().map(|p| p.keyword).collect();
+    let present =
+        conditions::present_entries(&lines, &pending_kws, list.pending_defences.contains(&id));
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        caption(ui, "CONDITIONS");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let btn = ui.add_enabled(
+                ctx.editable,
+                egui::Button::new(RichText::new("+ condition").size(theme::ROW_SUMMARY_SIZE)),
+            );
+            picked = picker_popup(
+                ui,
+                &btn,
+                &grammar::condition_picker_groups(),
+                true,
+                &|_| None,
+                &|e| present.contains(e),
+            );
+        });
+    });
+    if let Some(entry) = picked
+        && let Some(a) = pick_entry(id, entry, &lines, &present, list)
+    {
+        actions.push(a);
+    }
+    ui.spacing_mut().item_spacing.y = 4.0;
+
     if !ctx.editable {
         if lines.is_empty() {
             for line in &ctx.row.conditions {
@@ -328,15 +405,28 @@ pub fn conditions_group(
         }
         return;
     }
-    if lines.is_empty() && pending.is_empty() {
+    let defence_lines: Vec<&BodyEntry> = lines
+        .iter()
+        .copied()
+        .filter(|e| {
+            e.kind == EntryKind::Condition
+                && e.keyword.is_some_and(|k| conditions::is_defence(k.name))
+        })
+        .collect();
+    let pending_defences = list.pending_defences.contains(&id) && defence_lines.is_empty();
+    if lines.is_empty() && pending.is_empty() && !pending_defences {
         ui.label(
             RichText::new(NO_CONDITIONS)
                 .size(theme::ROW_SUMMARY_SIZE)
                 .color(theme::LABEL_TAN),
         );
     }
-    let real = lines.len();
-    for (idx, e) in lines.into_iter().enumerate() {
+    let single = |ui: &mut egui::Ui,
+                  i: usize,
+                  idx: usize,
+                  list: &mut ListUi,
+                  actions: &mut Vec<RowAction>| {
+        let e = lines[i];
         match (e.kind, e.keyword) {
             (EntryKind::Condition, Some(kw)) => condition_card(ui, ctx, e, kw, idx, list, actions),
             _ => {
@@ -346,52 +436,215 @@ pub fn conditions_group(
                 });
             }
         }
+    };
+    let mut idx = 0;
+    for card in conditions::card_plan(&lines) {
+        match card {
+            CardPlan::Part(Part::Single(i)) => {
+                single(ui, i, idx, list, actions);
+                idx += 1;
+            }
+            // Two single cards until the Between card exists.
+            CardPlan::Part(Part::Between { lower, upper }) => {
+                for i in [lower.min(upper), lower.max(upper)] {
+                    single(ui, i, idx, list, actions);
+                    idx += 1;
+                }
+            }
+            CardPlan::Defences(_) => {
+                defences_card(ui, ctx, &defence_lines, idx, list, actions);
+                idx += 1;
+            }
+        }
+    }
+    if pending_defences {
+        defences_card(ui, ctx, &[], idx, list, actions);
+        idx += 1;
     }
     for (i, p) in pending.iter().enumerate() {
-        pending_card(ui, ctx, p, real + i, list, actions);
+        pending_card(ui, ctx, p, idx + i, list, actions);
     }
+}
+
+/// The one Defences card of a rule: an Armour / Evasion / Energy Shield toggle each, and for every
+/// line of an on keyword its own operator dropdown and value control. A toggle only ever adds or
+/// removes its own keyword's lines; the other lines keep their bytes (PARSE-04). With no lines
+/// (`defence_lines` empty) this is the pending card, which writes nothing until a toggle is
+/// switched on.
+fn defences_card(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    defence_lines: &[&BodyEntry],
+    idx: usize,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let id = ctx.row.id;
+    let mut first_toggle: Option<egui::Response> = None;
+    let framed = ui.push_id((id, "defences-card"), |ui| {
+        card_frame(idx).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+            let x = condition_header(
+                ui,
+                "Defences",
+                "Armour, Evasion and Energy Shield",
+                |_| {},
+                if defence_lines.is_empty() {
+                    "Discard this condition"
+                } else {
+                    "Remove all defence conditions"
+                },
+            );
+            if x.clicked() {
+                list.pending_defences.remove(&id);
+                // Highest line first, so each removal leaves the indices of the rest valid.
+                let mut doomed: Vec<&BodyEntry> = defence_lines.to_vec();
+                doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
+                for e in doomed {
+                    actions.push(remove(id, e));
+                }
+            }
+            for (name, label) in conditions::DEFENCES {
+                let Some(kw) = crate::filter::keywords::lookup(name) else {
+                    continue;
+                };
+                let own: Vec<&BodyEntry> = defence_lines
+                    .iter()
+                    .copied()
+                    .filter(|e| e.keyword.is_some_and(|k| k.name == name))
+                    .collect();
+                let mut on = !own.is_empty();
+                ui.horizontal(|ui| {
+                    let t = widgets::circular_toggle(ui, &mut on);
+                    ui.label(RichText::new(label).size(14.0).color(theme::VALUE_TEXT));
+                    if t.changed() {
+                        if on {
+                            if let Some(text) = grammar::default_line(kw) {
+                                actions.push(RowAction::AddLine {
+                                    id,
+                                    kind: LineKind::Condition,
+                                    text,
+                                });
+                            }
+                            list.pending_defences.remove(&id);
+                        } else {
+                            let mut doomed = own.clone();
+                            doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
+                            for e in doomed {
+                                actions.push(remove(id, e));
+                            }
+                        }
+                    }
+                    if first_toggle.is_none() {
+                        first_toggle = Some(t);
+                    }
+                });
+                for e in &own {
+                    defence_line_controls(ui, ctx, e, kw, list, actions);
+                }
+            }
+        })
+    });
+    let rect = framed.inner.response.rect;
+    let focus = list.focus_card == Some((id, FocusTarget::Defences));
+    if focus {
+        framed.inner.response.scroll_to_me(Some(Align::Center));
+        if let Some(t) = first_toggle {
+            t.request_focus();
+        }
+        list.focus_card = None;
+    }
+    focus_flash(ui, rect, framed.response.id.with("flash"), focus);
+}
+
+/// Operator dropdown and value control of one defence line, indented under its toggle.
+fn defence_line_controls(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    entry: &BodyEntry,
+    kw: &'static Keyword,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let id = ctx.row.id;
+    ui.push_id((id, kw.name, entry.ordinal), |ui| {
+        let card = Card {
+            id,
+            entry,
+            kw,
+            bad_id: ui.make_persistent_id("bad-text"),
+            num_bad_id: ui.make_persistent_id("bad-int"),
+            classes: ctx.classes,
+        };
+        let tokens: Vec<&str> = entry.values.iter().map(String::as_str).collect();
+        let value = grammar::decode(kw, &tokens);
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            if let Some(op) = operator_combo(ui, &card, false)
+                && let Some(a) = op_edit(id, entry, op)
+            {
+                actions.push(a);
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            ui.vertical(|ui| {
+                value_controls(ui, &card, &value, list, actions);
+            });
+        });
+        if let Some(msg) = error_for(list, id, entry.line) {
+            hint(ui, msg);
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------------------------
 // Picker and pending rows
 // ---------------------------------------------------------------------------------------------
 
-type Groups = Vec<(&'static str, Vec<&'static Keyword>)>;
+type Groups = Vec<(&'static str, Vec<ConditionEntry>)>;
 
 /// The label a picker row shows: the display name.
+#[cfg(test)]
 pub(crate) fn picker_label(kw: &Keyword) -> String {
     grammar::display_name(kw.name)
 }
 
-/// Keep the keywords whose name or display name contains `query` (case-insensitive); empty
+/// Keep the entries whose name or display name contains `query` (case-insensitive); empty
 /// groups are dropped. An empty query keeps everything.
-pub(crate) fn filter_groups(
-    groups: &[(&'static str, Vec<&'static Keyword>)],
-    query: &str,
-) -> Groups {
+pub(crate) fn filter_groups(groups: &[(&'static str, Vec<ConditionEntry>)], query: &str) -> Groups {
     let q = query.trim().to_lowercase();
     groups
         .iter()
-        .map(|(g, ks)| {
-            let kept: Vec<&'static Keyword> = ks
+        .map(|(g, es)| {
+            let kept: Vec<ConditionEntry> = es
                 .iter()
-                .filter(|k| {
-                    q.is_empty()
-                        || k.name.to_lowercase().contains(&q)
-                        || grammar::display_name(k.name).to_lowercase().contains(&q)
-                })
+                .filter(|e| q.is_empty() || e.search_text().contains(&q))
                 .copied()
                 .collect();
             (*g, kept)
         })
-        .filter(|(_, ks)| !ks.is_empty())
+        .filter(|(_, es)| !es.is_empty())
         .collect()
 }
 
 /// The `+ condition` picker content for a search query.
+#[cfg(test)]
 pub(crate) fn picker_entries(query: &str) -> Groups {
-    filter_groups(&grammar::condition_groups(), query)
+    filter_groups(&grammar::condition_picker_groups(), query)
 }
+
+/// Keyword groups as picker entries (the action picker's input).
+fn keyword_entries(groups: Vec<(&'static str, Vec<&'static Keyword>)>) -> Groups {
+    groups
+        .into_iter()
+        .map(|(g, ks)| (g, ks.into_iter().map(ConditionEntry::Keyword).collect()))
+        .collect()
+}
+
+/// Tooltip on a picker entry that is already on the rule.
+const ALREADY_ON_RULE: &str = "Already on this rule";
 
 /// Picker sections start closed (UAT3-07); only a search opens the matching ones.
 const PICKER_SECTION_DEFAULT_OPEN: bool = false;
@@ -402,23 +655,25 @@ fn picker_section_override(searching: bool) -> Option<bool> {
     searching.then_some(true)
 }
 
-/// A searchable, grouped keyword picker anchored to `button` (shared with `+ style`). Returns
-/// the keyword the user picked this frame. Keywords for which `disabled` gives a reason are shown
-/// greyed with that reason as their tooltip.
+/// A searchable, grouped picker anchored to `button` (shared with `+ style`). Returns the entry
+/// the user picked this frame. Entries for which `disabled` gives a reason are shown greyed with
+/// that reason as their tooltip and cannot be clicked. Entries `present` on the rule are also
+/// greyed but stay clickable (the caller focuses the existing card instead of adding another).
 pub(crate) fn picker_popup(
     ui: &mut egui::Ui,
     button: &egui::Response,
-    groups: &[(&'static str, Vec<&'static Keyword>)],
+    groups: &[(&'static str, Vec<ConditionEntry>)],
     searchable: bool,
-    disabled: &dyn Fn(&Keyword) -> Option<&'static str>,
-) -> Option<&'static Keyword> {
+    disabled: &dyn Fn(&ConditionEntry) -> Option<&'static str>,
+    present: &dyn Fn(&ConditionEntry) -> bool,
+) -> Option<ConditionEntry> {
     let popup_id = egui::Popup::default_response_id(button);
     let query_id = popup_id.with("query");
     let focus_id = popup_id.with("focused");
     let width = (ui.clip_rect().width() - 16.0).clamp(240.0, 440.0);
     let ctx = ui.ctx().clone();
     let hint_text = match groups.first().and_then(|g| g.1.first()) {
-        Some(k) if k.kind == Kind::Action => "Find an action\u{2026}",
+        Some(ConditionEntry::Keyword(k)) if k.kind == Kind::Action => "Find an action\u{2026}",
         _ => "Find a condition\u{2026}",
     };
     let inner = egui::Popup::from_toggle_button_response(button)
@@ -442,7 +697,7 @@ pub(crate) fn picker_popup(
             ui.data_mut(|d| d.insert_temp(query_id, query.clone()));
             let filtered = filter_groups(groups, &query);
             let searching = !query.trim().is_empty();
-            let mut picked: Option<&'static Keyword> = None;
+            let mut picked: Option<ConditionEntry> = None;
             egui::ScrollArea::vertical()
                 .max_height(320.0)
                 .auto_shrink([false, true])
@@ -462,10 +717,11 @@ pub(crate) fn picker_popup(
                             header = header.open(Some(open));
                         }
                         header.show(ui, |ui| {
-                            for kw in kws {
-                                let reason = disabled(kw);
-                                let text = RichText::new(picker_label(kw)).size(14.0).color(
-                                    if reason.is_some() {
+                            for entry in kws {
+                                let reason = disabled(entry);
+                                let already = reason.is_none() && present(entry);
+                                let text = RichText::new(entry.label()).size(14.0).color(
+                                    if reason.is_some() || already {
                                         theme::DISABLED_TEXT
                                     } else {
                                         theme::VALUE_TEXT
@@ -480,8 +736,16 @@ pub(crate) fn picker_popup(
                                     Some(msg) => {
                                         r.on_disabled_hover_text(msg);
                                     }
-                                    None if r.clicked() => picked = Some(*kw),
-                                    None => {}
+                                    None => {
+                                        let r = if already {
+                                            r.on_hover_text(ALREADY_ON_RULE)
+                                        } else {
+                                            r
+                                        };
+                                        if r.clicked() {
+                                            picked = Some(*entry);
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -666,6 +930,12 @@ fn pending_card(
                 hint(ui, BAD_TEXT_HINT);
             }
         });
+        let focus = list.focus_card == Some((p.block, FocusTarget::Pending(p.keyword.name)));
+        if focus {
+            framed.response.scroll_to_me(Some(Align::Center));
+            list.focus_card = None;
+        }
+        focus_flash(ui, framed.response.rect, ui.id().with("flash"), focus);
         framed
             .response
             .on_hover_text("Add an entry to create this condition");
@@ -797,13 +1067,16 @@ fn condition_card(
                 hint(ui, msg);
             }
         });
-        if list.focus_line == Some((id, entry.line)) {
+        let focus = list.focus_line == Some((id, entry.line));
+        if focus {
             framed.response.scroll_to_me(Some(Align::Center));
             if let Some(p) = primary {
                 p.request_focus();
             }
             list.focus_line = None;
         }
+        // A card focused from the picker (or just added) gets a brief accent outline.
+        focus_flash(ui, framed.response.rect, ui.id().with("flash"), focus);
     });
 }
 
@@ -1741,8 +2014,22 @@ pub fn style_section(
                     ctx.editable,
                     egui::Button::new(RichText::new("+ style").size(theme::ROW_SUMMARY_SIZE)),
                 );
-                let disabled = |k: &Keyword| added.contains(&k.name).then_some("(added)");
-                picked_action = picker_popup(ui, &btn, &grammar::action_groups(), false, &disabled);
+                let disabled = |e: &ConditionEntry| match e {
+                    ConditionEntry::Keyword(k) => added.contains(&k.name).then_some("(added)"),
+                    ConditionEntry::Defences => None,
+                };
+                picked_action = picker_popup(
+                    ui,
+                    &btn,
+                    &keyword_entries(grammar::action_groups()),
+                    false,
+                    &disabled,
+                    &|_| false,
+                )
+                .and_then(|e| match e {
+                    ConditionEntry::Keyword(k) => Some(k),
+                    ConditionEntry::Defences => None,
+                });
             });
         }
     });
@@ -2890,37 +3177,318 @@ mod tests {
         );
     }
 
-    fn names_of(g: &Groups) -> Vec<&'static str> {
+    fn names_of(g: &Groups) -> Vec<String> {
         g.iter()
-            .flat_map(|(_, ks)| ks.iter().map(|k| k.name))
+            .flat_map(|(_, es)| es.iter().map(|e| e.label()))
             .collect()
     }
 
     #[test]
     fn picker_entries_filter_case_insensitively_and_drop_empty_groups() {
         let all = picker_entries("");
-        assert_eq!(all.len(), grammar::condition_groups().len());
+        assert_eq!(all.len(), grammar::condition_picker_groups().len());
         let level = picker_entries("LEVEL");
         let names = names_of(&level);
-        for n in ["ItemLevel", "DropLevel", "AreaLevel", "GemLevel"] {
-            assert!(names.contains(&n), "{n} missing from {names:?}");
+        for n in ["Item Level", "Drop Level", "Area Level", "Gem Level"] {
+            assert!(names.iter().any(|x| x == n), "{n} missing from {names:?}");
         }
-        assert!(level.iter().all(|(_, ks)| !ks.is_empty()));
-        assert!(!names.contains(&"Class"));
+        assert!(level.iter().all(|(_, es)| !es.is_empty()));
+        assert!(!names.iter().any(|x| x == "Class"));
         let spaced = picker_entries("item lev");
-        assert_eq!(names_of(&spaced), ["ItemLevel"]);
+        assert_eq!(names_of(&spaced), ["Item Level"]);
         assert!(picker_entries("zzzz").is_empty());
+    }
+
+    #[test]
+    fn picker_search_finds_defences_by_any_of_its_words() {
+        for q in ["armour", "energy", "evasion", "defences"] {
+            assert!(
+                names_of(&picker_entries(q)).iter().any(|n| n == "Defences"),
+                "{q}"
+            );
+        }
+        let names = names_of(&picker_entries(""));
+        for gone in ["Base Armour", "Base Evasion", "Base Energy Shield"] {
+            assert!(!names.iter().any(|n| n == gone), "{gone}");
+        }
     }
 
     #[test]
     fn removed_poe1_keywords_are_not_offered() {
         assert!(picker_entries("linked").is_empty());
         let mirage = picker_entries("mirage");
-        assert_eq!(names_of(&mirage), ["MirageMap"]);
+        assert_eq!(names_of(&mirage), ["Mirage Map"]);
         let kw = crate::filter::keywords::lookup("MirageMap").unwrap();
         assert_eq!(picker_label(kw), "Mirage Map");
         let item = crate::filter::keywords::lookup("ItemLevel").unwrap();
         assert_eq!(picker_label(item), "Item Level");
+    }
+
+    fn kw_entry(name: &str) -> ConditionEntry {
+        ConditionEntry::Keyword(crate::filter::keywords::lookup(name).unwrap())
+    }
+
+    /// Run `pick_entry` the way `conditions_group` does for a rule parsed from `src`.
+    fn pick_on(
+        src: &str,
+        list: &mut ListUi,
+        entry: ConditionEntry,
+    ) -> (BlockId, Vec<BodyEntry>, Option<RowAction>) {
+        let (_, id, entries) = entries_of(src);
+        let lines: Vec<&BodyEntry> = entries.iter().filter(|e| is_condition_side(e)).collect();
+        let pending_kws: Vec<&'static Keyword> = list
+            .pending
+            .iter()
+            .filter(|p| p.block == id)
+            .map(|p| p.keyword)
+            .collect();
+        let present =
+            conditions::present_entries(&lines, &pending_kws, list.pending_defences.contains(&id));
+        let a = pick_entry(id, entry, &lines, &present, list);
+        (id, entries.clone(), a)
+    }
+
+    #[test]
+    fn picking_a_present_class_focuses_it_and_emits_nothing() {
+        let mut list = ListUi::default();
+        let (id, entries, a) = pick_on(
+            "Show\n  ItemLevel >= 70\n  Class \"Rings\"\n",
+            &mut list,
+            kw_entry("Class"),
+        );
+        assert_eq!(a, None);
+        let class_line = entries
+            .iter()
+            .find(|e| e.keyword.is_some_and(|k| k.name == "Class"))
+            .unwrap()
+            .line;
+        assert_eq!(list.focus_line, Some((id, class_line)));
+        assert!(list.pending.is_empty());
+        assert!(list.pending_defences.is_empty());
+    }
+
+    #[test]
+    fn picking_a_pending_class_does_not_add_a_second_pending_row() {
+        let mut list = ListUi::default();
+        let (id, _, _) = pick_on("Show\n", &mut list, kw_entry("Class"));
+        assert_eq!(list.pending.len(), 1);
+        let (_, _, a) = pick_on("Show\n", &mut list, kw_entry("Class"));
+        assert_eq!(a, None);
+        assert_eq!(list.pending.len(), 1);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Pending("Class"))));
+    }
+
+    #[test]
+    fn defences_present_through_a_loaded_line_focuses_the_card() {
+        let mut list = ListUi::default();
+        let (id, _, a) = pick_on(
+            "Show\n  BaseEvasion > 5\n",
+            &mut list,
+            ConditionEntry::Defences,
+        );
+        assert_eq!(a, None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert!(list.pending_defences.is_empty());
+    }
+
+    #[test]
+    fn picking_absent_defences_writes_nothing_and_becomes_pending() {
+        let mut list = ListUi::default();
+        let (id, _, a) = pick_on("Show\n  Rarity Rare\n", &mut list, ConditionEntry::Defences);
+        assert_eq!(a, None);
+        assert!(list.pending_defences.contains(&id));
+        // Picking it again focuses the pending card instead of stacking another.
+        let (_, _, a) = pick_on("Show\n  Rarity Rare\n", &mut list, ConditionEntry::Defences);
+        assert_eq!(a, None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert_eq!(list.pending_defences.len(), 1);
+    }
+
+    #[test]
+    fn picker_is_greyed_but_clickable_for_present_entries() {
+        let production = include_str!("body.rs").split("mod tests {").next().unwrap();
+        assert!(production.contains("Already on this rule"));
+        // Present entries are only greyed: only a `disabled` reason blocks the click.
+        assert!(production.contains("add_enabled_ui(reason.is_none()"));
+    }
+
+    // -- the Defences card --------------------------------------------------------------------
+
+    const DEF_SRC: &str = "Show\n  BaseArmour >= 100\n  Rarity Rare\n  BaseEvasion > 5\n";
+
+    fn defences_session(src: &str, pending: bool) -> (egui::Context, WorkingFilter, ListUi) {
+        let wf = WorkingFilter::from_text(src);
+        let id = wf.rows()[0].id;
+        let mut list = ListUi::default();
+        list.expanded = Some(id);
+        if pending {
+            list.pending_defences.insert(id);
+        }
+        (headless_ctx(), wf, list)
+    }
+
+    /// Frames until the card settles, then one frame with a click at `at`.
+    fn click_after_settle(
+        cat: &ClassCatalog,
+        src: &str,
+        pending: bool,
+        at: Pos2,
+    ) -> (WorkingFilter, ListUi, Vec<RowAction>) {
+        let (ctx, mut wf, mut list) = defences_session(src, pending);
+        for _ in 0..3 {
+            click_step(&ctx, &mut wf, &mut list, cat, None);
+        }
+        let a = click_step(&ctx, &mut wf, &mut list, cat, Some(at));
+        (wf, list, a)
+    }
+
+    fn scan_clicks(src: &str, pending: bool) -> Vec<(Pos2, Vec<RowAction>, WorkingFilter)> {
+        scan_clicks_at(src, pending, &[30.0, 40.0, 52.0])
+    }
+
+    fn scan_clicks_at(
+        src: &str,
+        pending: bool,
+        xs: &[f32],
+    ) -> Vec<(Pos2, Vec<RowAction>, WorkingFilter)> {
+        let cat = committed_catalog();
+        let mut out = Vec::new();
+        for y in (100..420).step_by(4) {
+            for x in xs.iter().copied() {
+                let at = Pos2::new(x, y as f32);
+                let (wf, _, a) = click_after_settle(&cat, src, pending, at);
+                if !a.is_empty() {
+                    out.push((at, a, wf));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn loaded_defence_lines_are_byte_identical_after_idle_frames() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session(DEF_SRC, false);
+        let before = wf.text();
+        for _ in 0..4 {
+            assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        }
+        assert_eq!(wf.text(), before);
+        assert!(
+            before.contains("BaseEvasion > 5"),
+            "the `>` is not normalized"
+        );
+    }
+
+    #[test]
+    fn one_defences_card_at_the_first_defence_and_rarity_separate() {
+        let (_, _, e) = entries_of(DEF_SRC);
+        let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+        let plan = conditions::card_plan(&lines);
+        assert_eq!(plan.len(), 2);
+        assert!(matches!(&plan[0], CardPlan::Defences(s) if s.len() == 2));
+        assert!(matches!(plan[1], CardPlan::Part(Part::Single(1))));
+    }
+
+    #[test]
+    fn two_armour_lines_stay_in_one_defences_card() {
+        let src = "Show\n  BaseArmour >= 10\n  BaseArmour <= 90\n";
+        let (_, _, e) = entries_of(src);
+        let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+        let plan = conditions::card_plan(&lines);
+        assert_eq!(plan.len(), 1);
+        assert!(matches!(&plan[0], CardPlan::Defences(s) if s.len() == 1));
+        // Both lines survive idle frames untouched.
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session(src, false);
+        let before = wf.text();
+        assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        assert_eq!(wf.text(), before);
+    }
+
+    #[test]
+    fn no_defence_lines_and_no_pending_means_no_card() {
+        let (_, _, e) = entries_of("Show\n  Rarity Rare\n");
+        let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+        assert!(
+            !conditions::card_plan(&lines)
+                .iter()
+                .any(|c| matches!(c, CardPlan::Defences(_)))
+        );
+    }
+
+    #[test]
+    fn toggling_energy_shield_on_adds_only_its_default_line() {
+        let found = scan_clicks(DEF_SRC, false);
+        let hit = found.iter().find(|(_, a, _)| {
+            a.iter().any(
+                |x| matches!(x, RowAction::AddLine { text, .. } if text == "BaseEnergyShield >= 1"),
+            )
+        });
+        let (_, a, wf) = hit.expect("the Energy Shield toggle is clickable");
+        assert_eq!(a.len(), 1, "{a:?}");
+        let t = wf.text();
+        assert!(t.contains("BaseEnergyShield >= 1"));
+        assert!(t.contains("BaseArmour >= 100") && t.contains("BaseEvasion > 5"));
+    }
+
+    #[test]
+    fn toggling_armour_off_removes_only_the_armour_line() {
+        let found = scan_clicks(DEF_SRC, false);
+        let hit = found.iter().find(|(_, a, _)| {
+            a.iter().any(|x| {
+                matches!(x, RowAction::RemoveLine { expect, .. } if expect.contains("BaseArmour"))
+            })
+        });
+        let (_, a, wf) = hit.expect("the Armour toggle is clickable");
+        assert_eq!(a.len(), 1, "{a:?}");
+        let t = wf.text();
+        assert!(!t.contains("BaseArmour"));
+        assert!(t.contains("BaseEvasion > 5") && t.contains("Rarity Rare"));
+    }
+
+    #[test]
+    fn defence_edits_touch_only_their_own_line() {
+        // The card hands each control its own line's entry, so a slider or operator edit is an
+        // EditLine on that line alone; the sibling defence line keeps its bytes.
+        let src = "Show\n  BaseArmour >= 100\n  BaseEvasion > 5\n";
+        let (mut wf, id, e) = entries_of(src);
+        let armour = &e[0];
+        let value = int_edit(id, armour, 250).unwrap();
+        assert!(matches!(&value, RowAction::EditLine { line, .. } if *line == armour.line));
+        assert!(wf.apply_action(value).changed);
+        let op = op_edit(id, &wf.body_view(id)[0], Some(Operator::Le)).unwrap();
+        assert!(matches!(&op, RowAction::EditLine { line, .. } if *line == armour.line));
+        assert!(wf.apply_action(op).changed);
+        let t = wf.text();
+        assert!(t.contains("BaseArmour <= 250"), "{t}");
+        assert!(t.contains("BaseEvasion > 5"), "{t}");
+    }
+
+    #[test]
+    fn pending_defences_writes_nothing_and_clears_on_first_toggle() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session("Show\n  Rarity Rare\n", true);
+        let before = wf.text();
+        for _ in 0..4 {
+            assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        }
+        assert_eq!(wf.text(), before);
+        let id = wf.rows()[0].id;
+        assert!(list.pending_defences.contains(&id));
+
+        let found = scan_clicks("Show\n  Rarity Rare\n", true);
+        let (_, a, wf2) = found
+            .iter()
+            .find(|(_, a, _)| a.iter().any(|x| matches!(x, RowAction::AddLine { .. })))
+            .expect("a pending toggle is clickable");
+        assert_eq!(a.len(), 1);
+        let t = wf2.text();
+        assert!(
+            t.contains("BaseArmour >= 1")
+                || t.contains("BaseEvasion >= 1")
+                || t.contains("BaseEnergyShield >= 1")
+        );
     }
 
     #[test]

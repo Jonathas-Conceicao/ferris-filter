@@ -785,15 +785,17 @@ fn between_sliders(
     let (Some(lo), Some(hi)) = (single_int_value(lower), single_int_value(upper)) else {
         return;
     };
+    // Strict `>` / `<` bounds exclude their own value, so the clamps and the hint account for them.
+    let (lo_clamp, hi_clamp) = conditions::bound_clamps(lower.op, lo, upper.op, hi);
     ui.horizontal(|ui| {
         caption(ui, "min");
-        bound_control(ui, id, kw, lower, lo, (i64::MIN, hi), actions);
+        bound_control(ui, id, kw, lower, lo, lo_clamp, actions);
     });
     ui.horizontal(|ui| {
         caption(ui, "max");
-        bound_control(ui, id, kw, upper, hi, (lo, i64::MAX), actions);
+        bound_control(ui, id, kw, upper, hi, hi_clamp, actions);
     });
-    if !conditions::between_ok(lo, hi) {
+    if !conditions::between_ok(lower.op, lo, upper.op, hi) {
         hint(ui, MIN_GT_MAX_HINT);
     }
 }

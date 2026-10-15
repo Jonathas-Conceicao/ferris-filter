@@ -215,19 +215,19 @@ pub fn between_line(kw_name: &str, op: Operator, value: i64) -> String {
 }
 
 /// Minimal switch of `kw op value` to a Between pair. The inserted bound is the slider limit,
-/// clamped so the pair is always satisfiable.
+/// clamped so the pair is always satisfiable (a strict `>` / `<` bound excludes its own value).
 pub fn between_switch(kw: &Keyword, op: Option<Operator>, value: i64) -> BetweenSwitch {
     let (min, max, _) = grammar::slider_range(kw.name);
     if is_lower(op) {
         BetweenSwitch {
             new_op_for_existing: None,
-            insert_after: between_line(kw.name, Operator::Le, max.max(value)),
+            insert_after: between_line(kw.name, Operator::Le, max.max(inclusive_lo(op, value))),
             existing_is_lower: true,
         }
     } else if is_upper(op) {
         BetweenSwitch {
             new_op_for_existing: None,
-            insert_after: between_line(kw.name, Operator::Ge, min.min(value)),
+            insert_after: between_line(kw.name, Operator::Ge, min.min(inclusive_hi(op, value))),
             existing_is_lower: false,
         }
     } else {
@@ -239,9 +239,41 @@ pub fn between_switch(kw: &Keyword, op: Option<Operator>, value: i64) -> Between
     }
 }
 
-/// A Between pair is only valid when `min <= max`.
-pub fn between_ok(min: i64, max: i64) -> bool {
-    min <= max
+/// The smallest whole number a lower bound `op value` admits (`> v` admits `v + 1`).
+pub fn inclusive_lo(op: Option<Operator>, value: i64) -> i64 {
+    if op == Some(Operator::Gt) {
+        value.saturating_add(1)
+    } else {
+        value
+    }
+}
+
+/// The largest whole number an upper bound `op value` admits (`< v` admits `v - 1`).
+pub fn inclusive_hi(op: Option<Operator>, value: i64) -> i64 {
+    if op == Some(Operator::Lt) {
+        value.saturating_sub(1)
+    } else {
+        value
+    }
+}
+
+/// A Between pair matches something only when some whole number satisfies both bounds, with
+/// strict `>` / `<` bounds excluding their own value.
+pub fn between_ok(lo_op: Option<Operator>, lo: i64, hi_op: Option<Operator>, hi: i64) -> bool {
+    inclusive_lo(lo_op, lo) <= inclusive_hi(hi_op, hi)
+}
+
+/// The ranges each bound's value may take so the pair stays satisfiable: `(min range, max
+/// range)`, honouring strict operators on either side.
+pub fn bound_clamps(
+    lo_op: Option<Operator>,
+    lo: i64,
+    hi_op: Option<Operator>,
+    hi: i64,
+) -> ((i64, i64), (i64, i64)) {
+    let lo_max = inclusive_hi(hi_op, hi).saturating_sub(inclusive_lo(lo_op, 0));
+    let hi_min = inclusive_lo(lo_op, lo).saturating_sub(inclusive_hi(hi_op, 0));
+    ((i64::MIN, lo_max), (hi_min, i64::MAX))
 }
 
 #[cfg(test)]
@@ -439,10 +471,47 @@ mod tests {
     }
 
     #[test]
+    fn switch_from_a_strict_bound_never_proposes_an_empty_pair() {
+        let q = lookup("Quality").unwrap();
+        let (_, qmax, _) = grammar::slider_range("Quality");
+        let s = between_switch(q, GT, qmax);
+        assert_eq!(s.insert_after, format!("Quality <= {}", qmax + 1));
+        let il = lookup("ItemLevel").unwrap();
+        let (ilmin, _, _) = grammar::slider_range("ItemLevel");
+        let s = between_switch(il, LT, ilmin);
+        assert_eq!(s.insert_after, format!("ItemLevel >= {}", ilmin - 1));
+        // Strictness inside the range changes nothing.
+        assert_eq!(between_switch(il, GT, 60).insert_after, "ItemLevel <= 100");
+    }
+
+    #[test]
+    fn strict_bounds_are_exclusive_in_the_check_and_the_clamps() {
+        assert!(!between_ok(GT, 50, LE, 50));
+        assert!(!between_ok(GE, 50, LT, 50));
+        assert!(!between_ok(GT, 50, LT, 51));
+        assert!(between_ok(GT, 50, LT, 52));
+        assert!(between_ok(GT, 50, LE, 51));
+        // `> 50` / `<= 60`: max may go down to 51, min up to 59.
+        assert_eq!(
+            bound_clamps(GT, 50, LE, 60),
+            ((i64::MIN, 59), (51, i64::MAX))
+        );
+        // `>= 50` / `< 60`: max down to 51, min up to 59.
+        assert_eq!(
+            bound_clamps(GE, 50, LT, 60),
+            ((i64::MIN, 59), (51, i64::MAX))
+        );
+        assert_eq!(
+            bound_clamps(GE, 50, LE, 60),
+            ((i64::MIN, 60), (50, i64::MAX))
+        );
+    }
+
+    #[test]
     fn between_ok_rejects_min_above_max() {
-        assert!(between_ok(1, 1));
-        assert!(between_ok(1, 2));
-        assert!(!between_ok(3, 2));
+        assert!(between_ok(GE, 1, LE, 1));
+        assert!(between_ok(GE, 1, LE, 2));
+        assert!(!between_ok(GE, 3, LE, 2));
         assert_eq!(between_line("Quality", Operator::Ge, 5), "Quality >= 5");
     }
 }

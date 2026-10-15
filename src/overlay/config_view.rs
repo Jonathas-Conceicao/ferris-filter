@@ -127,6 +127,14 @@ impl ConfigUi {
         self.delete_armed = None;
         self.revert_armed = false;
     }
+
+    /// Called when the styles are replaced (CONFIG Revert, reload, Apply, an outside edit
+    /// followed): every confirm disarms and rename drafts go, so a name field never keeps showing
+    /// stale text instead of the real name (WR-05).
+    pub fn reset_for_new_styles(&mut self) {
+        self.disarm_all();
+        self.rename_drafts.clear();
+    }
 }
 
 /// What the view needs from the app each frame.
@@ -1402,6 +1410,20 @@ pub fn show_load_error(ui: &mut egui::Ui, message: &str) -> Option<ConfigAction>
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn new_styles_drop_rename_drafts_and_confirms() {
+        let mut cfg = ConfigUi {
+            delete_armed: Some("kite".to_string()),
+            revert_armed: true,
+            ..ConfigUi::default()
+        };
+        cfg.rename_drafts
+            .insert("t5hw2k".to_string(), "Recycle".to_string());
+        cfg.reset_for_new_styles();
+        assert!(cfg.rename_drafts.is_empty());
+        assert!(cfg.delete_armed.is_none() && !cfg.revert_armed);
+    }
 
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

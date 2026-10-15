@@ -930,8 +930,10 @@ impl OverlayApp {
         self.styles_checked = now;
         // Config files without pending edits follow outside edits. A file that does not load
         // right now is left as it is; the next Apply reports it.
-        if let Ok(c) = &mut self.config {
-            let _ = c.follow_disk();
+        if let Ok(c) = &mut self.config
+            && c.follow_disk() == Ok(true)
+        {
+            self.config_ui.reset_for_new_styles();
         }
         let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
             return;
@@ -1130,7 +1132,7 @@ impl OverlayApp {
         }
         self.apply_state = self.apply_state.on_apply_success();
         self.config_message = None;
-        self.config_ui.disarm_all();
+        self.config_ui.reset_for_new_styles();
         self.styles_mtime = styles_mtime_at(root);
         self.changed_on_disk.clear();
         self.applied_this_session = true;
@@ -1278,7 +1280,7 @@ impl OverlayApp {
             .iter()
             .any(|f| matches!(f, DiskFile::Styles | DiskFile::Tiers))
         {
-            self.config_ui.disarm_all();
+            self.config_ui.reset_for_new_styles();
             self.config_message = None;
             self.apply_message = None;
         }
@@ -1378,7 +1380,7 @@ impl OverlayApp {
                 ConfigAction::Revert => {
                     if let Ok(state) = &mut self.config {
                         state.revert();
-                        self.config_ui.disarm_all();
+                        self.config_ui.reset_for_new_styles();
                         self.config_message = Some(("Reverted config changes.".to_string(), false));
                     }
                     // Per tab: rule edits survive a CONFIG revert, so the state may stay stale.
@@ -1402,7 +1404,7 @@ impl OverlayApp {
                             // A pending filter refusal stays for the RULES tab to resolve.
                             self.changed_on_disk.retain(|f| *f == DiskFile::Filter);
                             self.config_message = None;
-                            self.config_ui.disarm_all();
+                            self.config_ui.reset_for_new_styles();
                         }
                         ConfigReload::Changed => self.reload_changed(),
                     }

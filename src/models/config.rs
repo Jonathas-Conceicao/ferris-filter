@@ -311,17 +311,24 @@ pub enum StyleError {
     /// A config/store still carries a pre-Phase-17 inline `styles` section that does not merely
     /// repeat the styles file (OD-1). `differing` lists the inline entries that are absent from,
     /// or differ from, the styles file; it is empty when the section could not be read as a
-    /// style map at all.
-    #[error("{}", inline_styles_message(.path, .styles_path, .differing))]
+    /// style map at all. `styles_path` is the file actually read (possibly the committed
+    /// `-default.json`); `live_styles_path` is where the user should move their styles.
+    #[error("{}", inline_styles_message(.path, .styles_path, .live_styles_path, .differing))]
     #[diagnostic(code(ferrisfilter::styles::inline_section))]
     InlineStylesSection {
         path: String,
         styles_path: String,
+        live_styles_path: String,
         differing: Vec<String>,
     },
 }
 
-fn inline_styles_message(path: &str, styles_path: &str, differing: &[String]) -> String {
+fn inline_styles_message(
+    path: &str,
+    styles_path: &str,
+    live_styles_path: &str,
+    differing: &[String],
+) -> String {
     let detail = if differing.is_empty() {
         String::new()
     } else {
@@ -330,6 +337,16 @@ fn inline_styles_message(path: &str, styles_path: &str, differing: &[String]) ->
             differing.join(", ")
         )
     };
+    if live_styles_path != styles_path {
+        // Read from the committed default (no live file yet): local edits go into the live file,
+        // never into the default.
+        return format!(
+            "{path} still has a `styles` section, but named styles now live in \
+             {live_styles_path}.{detail} Move any styles you changed or added into \
+             {live_styles_path} (create it from a copy of {styles_path}), then delete the \
+             `styles` section from {path}."
+        );
+    }
     format!(
         "{path} still has a `styles` section, but named styles now live in {styles_path}.{detail} \
          Move any styles you changed or added into {styles_path}, then delete the `styles` \

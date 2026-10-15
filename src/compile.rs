@@ -269,7 +269,8 @@ pub fn load_inputs(
         Err(_) if !paths.config.exists() => String::new(),
         Err(e) => return Err(e.into()),
     };
-    let config: Config = loader::load_config(&path_str(&paths.config), &styles)?;
+    let config: Config =
+        loader::load_config_with_live(&path_str(&paths.config), &styles, &path_str(&paths.styles))?;
     config
         .styles
         .check_rules(config.rules.as_deref().unwrap_or(&[]), &styles)
@@ -707,6 +708,60 @@ mod tests {
         )
         .expect("styles from the default");
         assert!(!dir.path().join("styles.json").exists());
+    }
+
+    /// WR-03: a differing inline `styles` section read against the committed default tells the
+    /// user to move their styles into the live `styles.json`, never into `styles-default.json`.
+    #[test]
+    fn inline_styles_advice_names_the_live_file_when_reading_the_default() {
+        let dir = defaults_only_root(true);
+        let cfg_p = dir.path().join("config.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&cfg_p).unwrap()).unwrap();
+        v["styles"] = serde_json::json!({ "S": { "font": 44, "action": "Show" } });
+        fs::write(&cfg_p, v.to_string()).unwrap();
+
+        let err = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        let live = path_str(&dir.path().join("styles.json"));
+        let default = path_str(&dir.path().join("styles-default.json"));
+        assert!(
+            msg.contains(&format!(
+                "Move any styles you changed or added into {live} "
+            )),
+            "{msg}"
+        );
+        assert!(
+            msg.contains(&format!("create it from a copy of {default}")),
+            "{msg}"
+        );
+        assert!(
+            !msg.contains(&format!("into {default}")),
+            "advice must not name the default: {msg}"
+        );
+        assert_no_live_files(dir.path());
+
+        // With a live file the advice is unchanged: it names the file that was read.
+        fs::copy(
+            dir.path().join("styles-default.json"),
+            dir.path().join("styles.json"),
+        )
+        .unwrap();
+        let msg = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            msg.contains(&format!(
+                "Move any styles you changed or added into {live}, then"
+            )),
+            "{msg}"
+        );
     }
 
     #[test]

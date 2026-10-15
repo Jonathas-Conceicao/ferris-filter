@@ -229,14 +229,18 @@ fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
 fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<String>), String> {
     let paths = InputPaths::relative_to(root);
     let styles = paths.styles_source().map_err(|e| e.to_string())?;
-    loader::load_config(&paths.config.to_string_lossy(), &styles.to_string_lossy())
-        .map(|config| {
-            (
-                ClassCatalog::from_config(&config),
-                config_state::config_style_refs(&config),
-            )
-        })
-        .map_err(|e| e.to_string())
+    loader::load_config_with_live(
+        &paths.config.to_string_lossy(),
+        &styles.to_string_lossy(),
+        &paths.styles.to_string_lossy(),
+    )
+    .map(|config| {
+        (
+            ClassCatalog::from_config(&config),
+            config_state::config_style_refs(&config),
+        )
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Draws the RULES | CONFIG strip and returns the tab the user picked this frame.

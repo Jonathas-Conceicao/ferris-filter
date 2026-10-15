@@ -139,10 +139,25 @@ pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
 /// `LoadError::Read`/`Parse` for either file, `LoadError::Styles` for an invalid styles file or a
 /// differing inline section.
 pub fn load_config(path: &str, styles_path: &str) -> Result<Config, LoadError> {
+    load_config_with_live(path, styles_path, styles_path)
+}
+
+/// [`load_config`] reading the styles from `styles_path` (possibly the committed
+/// `-default.json`), while a differing inline section's advice names `live_styles_path`: the file
+/// the user should move their styles into. The default file is never the place for local edits.
+///
+/// # Errors
+///
+/// As [`load_config`].
+pub fn load_config_with_live(
+    path: &str,
+    styles_path: &str,
+    live_styles_path: &str,
+) -> Result<Config, LoadError> {
     let mut config: Config = load_json(path)?;
     let styles = load_styles(styles_path)?;
     if let Some(legacy) = config.legacy_styles.take() {
-        check_legacy_styles(&legacy, &styles, path, styles_path)?;
+        check_legacy_styles(&legacy, &styles, path, styles_path, live_styles_path)?;
     }
     config.styles = styles;
     Ok(config)
@@ -154,10 +169,12 @@ fn check_legacy_styles(
     styles: &StyleSet,
     path: &str,
     styles_path: &str,
+    live_styles_path: &str,
 ) -> Result<(), StyleError> {
     let reject = |differing| StyleError::InlineStylesSection {
         path: path.to_string(),
         styles_path: styles_path.to_string(),
+        live_styles_path: live_styles_path.to_string(),
         differing,
     };
     let Some(entries) = legacy.as_object() else {

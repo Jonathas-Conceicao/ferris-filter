@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tiers-default.json`; `styles.json` / `tiers.json` are git-ignored per-user files that fall back to the
   defaults when absent (the first CONFIG Apply creates them; delete one to reset it). The app-root marker
   is `styles-default.json`, and the tests read the defaults.
+  **Upgrade note:** an existing install folder must now contain `styles-default.json` to be found as
+  the app root (copy it from the repo), or set `FERRISFILTER_HOME`.
 
 - **Phase 27 (UAT4-01..04).**
   - **Simple Defences** condition: AR / EV / ES rows of Any | Has | No (`X > 0` / `X 0`), a strip of

@@ -968,7 +968,7 @@ Show
             expanded: Some(wf.rows()[1].id),
             ..Default::default()
         };
-        let mut measure = |list: &mut ListUi, i: usize| -> (f32, f32) {
+        let measure = |list: &mut ListUi, i: usize| -> (f32, f32) {
             let mut out = (0.0, 0.0);
             ctx.run_ui(input(vec![]), |ui| {
                 assert!(ui.spacing().item_spacing.y > 0.0, "test needs real spacing");

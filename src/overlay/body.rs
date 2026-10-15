@@ -35,6 +35,7 @@ const OP_W: f32 = 104.0;
 const NO_CONDITIONS: &str = "No conditions: this rule matches every item.";
 const BAD_TEXT_HINT: &str = "Values cannot contain quotes or control characters";
 const WHOLE_NUMBER_HINT: &str = "Enter a whole number";
+const MIN_GT_MAX_HINT: &str = "min > max";
 
 /// Everything the body needs about the expanded row, borrowed for one frame.
 pub struct BodyCtx<'a> {
@@ -444,10 +445,9 @@ pub fn conditions_group(
                 single(ui, i, idx, list, actions);
                 idx += 1;
             }
-            // Two single cards until the Between card exists.
             CardPlan::Part(Part::Between { lower, upper }) => {
-                for i in [lower.min(upper), lower.max(upper)] {
-                    single(ui, i, idx, list, actions);
+                if let Some(kw) = lines[lower].keyword {
+                    between_card(ui, ctx, lines[lower], lines[upper], kw, idx, list, actions);
                     idx += 1;
                 }
             }
@@ -480,6 +480,13 @@ fn defences_card(
     actions: &mut Vec<RowAction>,
 ) {
     let id = ctx.row.id;
+    let subs: Vec<(&'static str, Vec<Part>)> = conditions::card_plan(defence_lines)
+        .into_iter()
+        .find_map(|c| match c {
+            CardPlan::Defences(s) => Some(s),
+            _ => None,
+        })
+        .unwrap_or_default();
     let mut first_toggle: Option<egui::Response> = None;
     let framed = ui.push_id((id, "defences-card"), |ui| {
         card_frame(idx).show(ui, |ui| {
@@ -540,8 +547,26 @@ fn defences_card(
                         first_toggle = Some(t);
                     }
                 });
-                for e in &own {
-                    defence_line_controls(ui, ctx, e, kw, list, actions);
+                let parts = subs
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, p)| p.as_slice())
+                    .unwrap_or(&[]);
+                for part in parts {
+                    match *part {
+                        Part::Single(i) => {
+                            defence_line_controls(ui, ctx, defence_lines[i], kw, list, actions)
+                        }
+                        Part::Between { lower, upper } => defence_between(
+                            ui,
+                            ctx,
+                            defence_lines[lower],
+                            defence_lines[upper],
+                            kw,
+                            list,
+                            actions,
+                        ),
+                    }
                 }
             }
         })
@@ -581,11 +606,7 @@ fn defence_line_controls(
         let value = grammar::decode(kw, &tokens);
         ui.horizontal(|ui| {
             ui.add_space(24.0);
-            if let Some(op) = operator_combo(ui, &card, false)
-                && let Some(a) = op_edit(id, entry, op)
-            {
-                actions.push(a);
-            }
+            op_controls(ui, &card, false, actions);
         });
         ui.horizontal(|ui| {
             ui.add_space(24.0);
@@ -595,6 +616,261 @@ fn defence_line_controls(
         });
         if let Some(msg) = error_for(list, id, entry.line) {
             hint(ui, msg);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Between (UAT3-06)
+// ---------------------------------------------------------------------------------------------
+
+fn single_int_value(entry: &BodyEntry) -> Option<i64> {
+    match entry.values.as_slice() {
+        [v] => v.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Actions for switching a single numeric line to Between: the other bound is inserted directly
+/// after the line (checked against the line's current text, so it goes first), then the existing
+/// line's operator is edited only when the switch needs it (`==` becomes `>=`).
+pub(crate) fn to_between_actions(id: BlockId, entry: &BodyEntry, kw: &Keyword) -> Vec<RowAction> {
+    let Some(value) = single_int_value(entry) else {
+        return Vec::new();
+    };
+    let sw = conditions::between_switch(kw, entry.op, value);
+    let mut out = vec![RowAction::InsertLineAfter {
+        id,
+        after: entry.line,
+        expect: entry.text.clone(),
+        text: sw.insert_after,
+    }];
+    if let Some(op) = sw.new_op_for_existing {
+        out.extend(op_edit(id, entry, Some(op)));
+    }
+    out
+}
+
+/// Actions for switching a Between pair to the single operator `pick`: the bound matching the
+/// picked direction is kept (edited only when its operator differs), the other line is removed.
+pub(crate) fn from_between_actions(
+    id: BlockId,
+    lower: &BodyEntry,
+    upper: &BodyEntry,
+    pick: Option<Operator>,
+) -> Vec<RowAction> {
+    let keep_upper = matches!(pick, Some(Operator::Le | Operator::Lt));
+    let (keep, drop) = if keep_upper {
+        (upper, lower)
+    } else {
+        (lower, upper)
+    };
+    let mut out: Vec<RowAction> = op_edit(id, keep, pick).into_iter().collect();
+    out.push(remove(id, drop));
+    out
+}
+
+/// Operator dropdown of a single numeric line: the usual operators plus Between.
+fn numeric_op_combo(ui: &mut egui::Ui, card: &Card) -> Option<conditions::NumericOp> {
+    use conditions::NumericOp;
+    let entry = card.entry;
+    let cur = NumericOp::Single(entry.op);
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(card.salt("op"))
+        .selected_text(grammar::operator_label(card.kw, entry.op, false))
+        .width(OP_W)
+        .show_ui(ui, |ui| {
+            for (c, label) in conditions::numeric_op_choices(card.kw, cur) {
+                let sel = c == cur;
+                if ui.selectable_label(sel, label).clicked() && !sel {
+                    picked = Some(c);
+                }
+            }
+        });
+    picked
+}
+
+/// The operator control of one condition line. Whole-number keywords offer Between; the rest keep
+/// the plain dropdown.
+fn op_controls(ui: &mut egui::Ui, card: &Card, list_form: bool, actions: &mut Vec<RowAction>) {
+    if card.kw.value == ValueShape::Int && single_int_value(card.entry).is_some() {
+        match numeric_op_combo(ui, card) {
+            Some(conditions::NumericOp::Single(op)) => {
+                actions.extend(op_edit(card.id, card.entry, op));
+            }
+            Some(conditions::NumericOp::Between) => {
+                actions.extend(to_between_actions(card.id, card.entry, card.kw));
+            }
+            None => {}
+        }
+    } else if let Some(op) = operator_combo(ui, card, list_form)
+        && let Some(a) = op_edit(card.id, card.entry, op)
+    {
+        actions.push(a);
+    }
+}
+
+/// The dropdown of a Between pair (reads "Between"); a single operator pick leaves Between.
+fn between_op_combo(
+    ui: &mut egui::Ui,
+    id: BlockId,
+    kw: &'static Keyword,
+    lower: &BodyEntry,
+    upper: &BodyEntry,
+    actions: &mut Vec<RowAction>,
+) {
+    use conditions::NumericOp;
+    let mut picked = None;
+    egui::ComboBox::from_id_salt((id, kw.name, lower.ordinal, "op"))
+        .selected_text("Between")
+        .width(OP_W)
+        .show_ui(ui, |ui| {
+            for (c, label) in conditions::numeric_op_choices(kw, NumericOp::Between) {
+                let sel = c == NumericOp::Between;
+                if ui.selectable_label(sel, label).clicked() && !sel {
+                    picked = Some(c);
+                }
+            }
+        });
+    if let Some(NumericOp::Single(op)) = picked {
+        actions.extend(from_between_actions(id, lower, upper, op));
+    }
+}
+
+/// One bound's slider and number field. The new value is clamped to `clamp` (the other bound), so
+/// an edit can never produce min > max; an untouched loaded pair is left alone.
+fn bound_control(
+    ui: &mut egui::Ui,
+    id: BlockId,
+    kw: &'static Keyword,
+    entry: &BodyEntry,
+    current: i64,
+    clamp: (i64, i64),
+    actions: &mut Vec<RowAction>,
+) {
+    let mut v = current;
+    let mut invalid = false;
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let (min, max, log) = grammar::slider_range(kw.name);
+        let s = widgets::themed_slider(ui, &mut v, min, max, log);
+        let n = widgets::number_field(ui, (id, kw.name, entry.ordinal, "num"), &mut v, 64.0);
+        invalid = n.invalid;
+        changed = s.changed() || n.response.changed();
+    });
+    if invalid {
+        hint(ui, WHOLE_NUMBER_HINT);
+    }
+    if changed && let Some(v) = clamped_bound(current, v, clamp) {
+        actions.extend(int_edit(id, entry, v));
+    }
+}
+
+/// The value to write for a bound edited from `current` to `new`, kept inside `clamp` (the other
+/// bound); `None` when nothing would change.
+pub(crate) fn clamped_bound(current: i64, new: i64, clamp: (i64, i64)) -> Option<i64> {
+    let v = new.clamp(clamp.0, clamp.1.max(clamp.0));
+    (v != current).then_some(v)
+}
+
+/// The min and max controls of a Between pair, each editing only its own line.
+fn between_sliders(
+    ui: &mut egui::Ui,
+    id: BlockId,
+    kw: &'static Keyword,
+    lower: &BodyEntry,
+    upper: &BodyEntry,
+    actions: &mut Vec<RowAction>,
+) {
+    let (Some(lo), Some(hi)) = (single_int_value(lower), single_int_value(upper)) else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        caption(ui, "min");
+        bound_control(ui, id, kw, lower, lo, (i64::MIN, hi), actions);
+    });
+    ui.horizontal(|ui| {
+        caption(ui, "max");
+        bound_control(ui, id, kw, upper, hi, (lo, i64::MAX), actions);
+    });
+    if !conditions::between_ok(lo, hi) {
+        hint(ui, MIN_GT_MAX_HINT);
+    }
+}
+
+/// One Between card: a lower and an upper bound line of the same keyword.
+#[allow(clippy::too_many_arguments)]
+fn between_card(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    lower: &BodyEntry,
+    upper: &BodyEntry,
+    kw: &'static Keyword,
+    idx: usize,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let id = ctx.row.id;
+    ui.push_id((id, kw.name, lower.ordinal, "between"), |ui| {
+        let framed = card_frame(idx).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+            let x = condition_header(
+                ui,
+                &grammar::display_name(kw.name),
+                kw.name,
+                |ui| between_op_combo(ui, id, kw, lower, upper, actions),
+                "Remove this condition",
+            );
+            if x.clicked() {
+                let mut both = [lower, upper];
+                both.sort_by_key(|e| std::cmp::Reverse(e.line));
+                for e in both {
+                    actions.push(remove(id, e));
+                }
+            }
+            between_sliders(ui, id, kw, lower, upper, actions);
+            for e in [lower, upper] {
+                if let Some(msg) = error_for(list, id, e.line) {
+                    hint(ui, msg);
+                }
+            }
+        });
+        let focus = [lower.line, upper.line]
+            .iter()
+            .any(|l| list.focus_line == Some((id, *l)));
+        if focus {
+            framed.response.scroll_to_me(Some(Align::Center));
+            list.focus_line = None;
+        }
+        focus_flash(ui, framed.response.rect, ui.id().with("flash"), focus);
+    });
+}
+
+/// A Between pair inside the Defences card, indented under its toggle.
+fn defence_between(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    lower: &BodyEntry,
+    upper: &BodyEntry,
+    kw: &'static Keyword,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+) {
+    let id = ctx.row.id;
+    ui.push_id((id, kw.name, lower.ordinal, "between"), |ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            between_op_combo(ui, id, kw, lower, upper, actions);
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(24.0);
+            ui.vertical(|ui| between_sliders(ui, id, kw, lower, upper, actions));
+        });
+        for e in [lower, upper] {
+            if let Some(msg) = error_for(list, id, e.line) {
+                hint(ui, msg);
+            }
         }
     });
 }
@@ -1043,10 +1319,8 @@ fn condition_card(
                         if let Some(want) = bool_yes_no(ui, eff) {
                             actions.extend(bool_edit(id, entry, want));
                         }
-                    } else if let Some(op) = operator_combo(ui, &card, list_form)
-                        && let Some(a) = op_edit(id, entry, op)
-                    {
-                        actions.push(a);
+                    } else {
+                        op_controls(ui, &card, list_form, actions);
                     }
                 },
                 "Remove this condition",
@@ -4072,7 +4346,9 @@ mod tests {
         for action in actions {
             let shifts = matches!(
                 action,
-                RowAction::AddLine { .. } | RowAction::RemoveLine { .. }
+                RowAction::AddLine { .. }
+                    | RowAction::RemoveLine { .. }
+                    | RowAction::InsertLineAfter { .. }
             );
             let added_in = match &action {
                 RowAction::AddLine { id, .. } => Some(*id),
@@ -4405,6 +4681,269 @@ mod tests {
         assert!(
             reopened,
             "the class group closed when the first class turned the pending row into a line"
+        );
+    }
+
+    // -- Between (UAT3-06) ----------------------------------------------------------------------
+
+    fn apply_all(wf: &mut WorkingFilter, actions: Vec<RowAction>) {
+        for a in actions {
+            let o = wf.apply_action(a);
+            assert!(o.changed, "refused: {:?}", o.status);
+        }
+    }
+
+    fn rendered_text(ctx: &egui::Context, wf: &WorkingFilter, list: &mut ListUi) -> String {
+        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let cat = committed_catalog();
+        let mut out = String::new();
+        let full = ctx.run_ui(input(vec![]), |ui| {
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0));
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            show_list(&mut child, wf, &visible, list, true, Some(&cat));
+        });
+        for clipped in &full.shapes {
+            if let egui::epaint::Shape::Text(t) = &clipped.shape {
+                out.push_str(t.galley.text());
+                out.push('\n');
+            }
+        }
+        full.drop_without_applying_deltas();
+        out
+    }
+
+    const PAIR: &str = "Show\n  ItemLevel > 60\n  ItemLevel <= 80\n";
+
+    #[test]
+    fn loaded_bound_pair_is_one_between_card_and_byte_identical() {
+        let (_, _, e) = entries_of(PAIR);
+        let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+        assert_eq!(
+            conditions::card_plan(&lines),
+            [CardPlan::Part(Part::Between { lower: 0, upper: 1 })]
+        );
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session(PAIR, false);
+        let before = wf.text();
+        for _ in 0..4 {
+            assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        }
+        assert_eq!(wf.text(), before);
+        assert!(before.contains("ItemLevel > 60") && before.contains("ItemLevel <= 80"));
+    }
+
+    #[test]
+    fn between_card_renders_between_and_no_impossible_flag_for_a_good_pair() {
+        let (ctx, wf, mut list) = defences_session(PAIR, false);
+        let mut seen = String::new();
+        for _ in 0..3 {
+            seen = rendered_text(&ctx, &wf, &mut list);
+        }
+        assert!(seen.contains("Between"), "{seen}");
+        assert!(!seen.contains("min > max"), "{seen}");
+    }
+
+    #[test]
+    fn loaded_impossible_pair_is_flagged_and_not_rewritten() {
+        let src = "Show\n  ItemLevel >= 80\n  ItemLevel <= 10\n";
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session(src, false);
+        let before = wf.text();
+        let mut seen = String::new();
+        for _ in 0..3 {
+            assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+            seen = rendered_text(&ctx, &wf, &mut list);
+        }
+        assert!(seen.contains("min > max"), "{seen}");
+        assert_eq!(wf.text(), before);
+    }
+
+    #[test]
+    fn editing_the_min_touches_only_the_min_line() {
+        let (mut wf, id, e) = entries_of(PAIR);
+        let a = int_edit(id, &e[0], 65).expect("changed");
+        apply_all(&mut wf, vec![a]);
+        assert_eq!(wf.text(), "Show\n  ItemLevel > 65\n  ItemLevel <= 80\n");
+        let e = wf.body_view(id);
+        let a = int_edit(id, &e[1], 90).expect("changed");
+        apply_all(&mut wf, vec![a]);
+        assert_eq!(wf.text(), "Show\n  ItemLevel > 65\n  ItemLevel <= 90\n");
+    }
+
+    #[test]
+    fn bounds_are_clamped_so_min_never_exceeds_max() {
+        // min slider dragged past a max of 80
+        assert_eq!(clamped_bound(60, 95, (i64::MIN, 80)), Some(80));
+        // max slider dragged below a min of 60
+        assert_eq!(clamped_bound(80, 10, (60, i64::MAX)), Some(60));
+        // already at the limit: nothing to write
+        assert_eq!(clamped_bound(80, 95, (i64::MIN, 80)), None);
+        // a loaded impossible pair is repaired only by an edit, to the other bound
+        assert_eq!(clamped_bound(80, 70, (i64::MIN, 10)), Some(10));
+    }
+
+    #[test]
+    fn other_duplicates_stay_separate_cards() {
+        for src in [
+            "Show\n  ItemLevel >= 60\n  ItemLevel >= 70\n",
+            "Show\n  ItemLevel == 60\n  ItemLevel >= 70\n",
+            "Show\n  ItemLevel >= 60\n  ItemLevel <= 70\n  ItemLevel <= 90\n",
+        ] {
+            let (_, _, e) = entries_of(src);
+            let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+            let plan = conditions::card_plan(&lines);
+            assert!(
+                plan.iter()
+                    .all(|c| matches!(c, CardPlan::Part(Part::Single(_)))),
+                "{src}"
+            );
+            let (ctx, wf, mut list) = defences_session(src, false);
+            let seen = rendered_text(&ctx, &wf, &mut list);
+            assert!(!seen.contains("Between"), "{src}: {seen}");
+        }
+    }
+
+    #[test]
+    fn only_whole_number_conditions_offer_between() {
+        use conditions::NumericOp;
+        for (name, offered) in [
+            ("ItemLevel", true),
+            ("BaseArmour", true),
+            ("Class", false),
+            ("Rarity", false),
+            ("Corrupted", false),
+        ] {
+            let kw = crate::filter::keywords::lookup(name).unwrap();
+            let has = conditions::numeric_op_choices(kw, NumericOp::Single(None))
+                .iter()
+                .any(|(c, _)| *c == NumericOp::Between);
+            assert_eq!(has, offered, "{name}");
+        }
+    }
+
+    fn switch_to_between(src: &str) -> (WorkingFilter, Vec<RowAction>) {
+        let (mut wf, id, e) = entries_of(src);
+        let kw = e[0].keyword.expect("keyword");
+        let actions = to_between_actions(id, &e[0], kw);
+        apply_all(&mut wf, actions.clone());
+        (wf, actions)
+    }
+
+    #[test]
+    fn switching_a_lower_bound_to_between_only_inserts_the_upper() {
+        let (wf, a) = switch_to_between("Show\n  ItemLevel >= 60\n  Rarity Rare\n");
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!(matches!(
+            &a[0],
+            RowAction::InsertLineAfter { after: 1, expect, text, .. }
+                if expect == "  ItemLevel >= 60" && text == "ItemLevel <= 100"
+        ));
+        assert_eq!(
+            wf.text(),
+            "Show\n  ItemLevel >= 60\n  ItemLevel <= 100\n  Rarity Rare\n"
+        );
+    }
+
+    #[test]
+    fn switching_an_upper_bound_to_between_inserts_the_lower_after_it() {
+        let (wf, a) = switch_to_between("Show\n  ItemLevel <= 80\n");
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!(matches!(
+            &a[0],
+            RowAction::InsertLineAfter { text, .. } if text == "ItemLevel >= 1"
+        ));
+        assert_eq!(wf.text(), "Show\n  ItemLevel <= 80\n  ItemLevel >= 1\n");
+    }
+
+    #[test]
+    fn switching_equals_to_between_makes_it_the_lower_bound() {
+        let (wf, a) = switch_to_between("Show\n  ItemLevel == 70\n");
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert!(
+            matches!(&a[0], RowAction::InsertLineAfter { text, .. } if text == "ItemLevel <= 70")
+        );
+        assert!(matches!(&a[1], RowAction::EditLine { .. }));
+        assert_eq!(wf.text(), "Show\n  ItemLevel >= 70\n  ItemLevel <= 70\n");
+    }
+
+    #[test]
+    fn the_next_frame_after_a_switch_is_a_between_card_and_the_rule_stays_open() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session("Show\n  ItemLevel >= 60\n", false);
+        let id = wf.rows()[0].id;
+        let e = wf.body_view(id);
+        let acts = to_between_actions(id, &e[0], e[0].keyword.unwrap());
+        mirror_apply(&mut wf, &mut list, acts);
+        for _ in 0..3 {
+            assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        }
+        assert_eq!(list.expanded, Some(id));
+        let seen = rendered_text(&ctx, &wf, &mut list);
+        assert!(seen.contains("Between"), "{seen}");
+    }
+
+    fn switch_away(src: &str, pick: Option<Operator>) -> (WorkingFilter, Vec<RowAction>) {
+        let (mut wf, id, e) = entries_of(src);
+        let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+        let Some(CardPlan::Part(Part::Between { lower, upper })) =
+            conditions::card_plan(&lines).into_iter().next()
+        else {
+            panic!("not a between pair");
+        };
+        let actions = from_between_actions(id, lines[lower], lines[upper], pick);
+        apply_all(&mut wf, actions.clone());
+        (wf, actions)
+    }
+
+    #[test]
+    fn leaving_between_keeps_the_matching_bound_and_removes_the_other() {
+        let (wf, a) = switch_away(PAIR, Some(Operator::Gt));
+        assert_eq!(a.len(), 1, "keeps `>` untouched: {a:?}");
+        assert_eq!(wf.text(), "Show\n  ItemLevel > 60\n");
+        let (wf, a) = switch_away(PAIR, Some(Operator::Ge));
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert_eq!(wf.text(), "Show\n  ItemLevel >= 60\n");
+        let (wf, a) = switch_away(PAIR, Some(Operator::Le));
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert_eq!(wf.text(), "Show\n  ItemLevel <= 80\n");
+        let (wf, _) = switch_away(
+            "Show\n  ItemLevel <= 80\n  ItemLevel >= 60\n",
+            Some(Operator::Ge),
+        );
+        assert_eq!(wf.text(), "Show\n  ItemLevel >= 60\n");
+        let (wf, _) = switch_away(PAIR, Some(Operator::EqEq));
+        assert_eq!(wf.text(), "Show\n  ItemLevel == 60\n");
+    }
+
+    #[test]
+    fn defences_show_a_between_pair_as_one_sub_row_and_stay_idle() {
+        let src = "Show\n  BaseArmour >= 100\n  BaseArmour <= 500\n  Rarity Rare\n";
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session(src, false);
+        let before = wf.text();
+        for _ in 0..3 {
+            assert!(click_step(&ctx, &mut wf, &mut list, &cat, None).is_empty());
+        }
+        assert_eq!(wf.text(), before);
+        let seen = rendered_text(&ctx, &wf, &mut list);
+        assert!(seen.contains("Between"), "{seen}");
+        let (_, _, e) = entries_of(src);
+        let lines: Vec<&BodyEntry> = e.iter().filter(|x| is_condition_side(x)).collect();
+        let plan = conditions::card_plan(&lines);
+        assert!(matches!(
+            &plan[0],
+            CardPlan::Defences(s) if s[0].1 == vec![Part::Between { lower: 0, upper: 1 }]
+        ));
+    }
+
+    #[test]
+    fn defences_switch_to_between_inserts_right_after_the_armour_line() {
+        let (mut wf, id, e) = entries_of("Show\n  BaseArmour >= 100\n  BaseEvasion > 5\n");
+        let a = to_between_actions(id, &e[0], e[0].keyword.unwrap());
+        apply_all(&mut wf, a);
+        assert_eq!(
+            wf.text(),
+            "Show\n  BaseArmour >= 100\n  BaseArmour <= 1000\n  BaseEvasion > 5\n"
         );
     }
 }

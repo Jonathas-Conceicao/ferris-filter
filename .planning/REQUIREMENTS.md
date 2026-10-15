@@ -184,6 +184,14 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [x] **UAT4-03**: A "Simple Defences" condition (one card per rule; AR / EV / ES rows each Any | Has | No; Has writes `X > 0`, No writes `X 0`, Any writes nothing) sits beside the existing "Defences" card, right after Rarity in the picker; a display-only strip of the 7 defence combinations is lit for those the settings match; the two cards are mutually exclusive (both greyed in the picker when either is present, clicking focuses the existing card); a rule whose defence lines are all zero-based (at most one per type) loads as Simple Defences with bytes preserved until a type is changed, otherwise as Defences; no armour-class check.
 - [x] **UAT4-04**: The author's UAT results are recorded in the Phase 16, 23, 24, 25 and 26 manual verification docs, and backlog items are added for verifying the remaining keywords in game and for guiding rules away from conditions that cannot match.
 
+### Default Config Files (DEF)
+
+- [ ] **DEF-01**: `styles-default.json` and `tiers-default.json` are committed at the repo root with exactly the HEAD content of `styles.json` / `tiers.json`; nothing in the app ever writes them.
+- [ ] **DEF-02**: `/styles.json` and `/tiers.json` are git-ignored and untracked; the author's local copies stay on disk byte-for-byte as the live config.
+- [ ] **DEF-03**: Wherever `styles.json` / `tiers.json` is read (overlay load + watcher, CONFIG tab, `apply`, `generate`, `sync`), an absent live file means the matching `-default.json` in the same directory is read instead; no launch or command creates the live file; the first overlay Apply with CONFIG edits writes it (a missing file does not trip the changed-on-disk guard); `--styles` / `--tiers` stay explicit paths with no fallback; neither file present is an error naming both; the watcher switches source when the live file is created or deleted.
+- [ ] **DEF-04**: The app-root resolver's marker is `styles-default.json` (FERRISFILTER_HOME, then walk up from the exe, then the working directory).
+- [ ] **DEF-05**: Every test that read the repo-root `styles.json` / `tiers.json` uses the `-default.json` files, so the suite passes with any local config present; `tests/fixtures/seed-universal.filter` stays byte-identical; CLAUDE.md and CHANGELOG.md describe the split (deleting a live file resets it to the defaults).
+
 ## Future Requirements
 
 Deferred. Tracked but not in the v0.5 roadmap.
@@ -296,13 +304,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT4-02 | Phase 27 | Complete (UAT pending) |
 | UAT4-03 | Phase 27 | Complete (UAT pending) |
 | UAT4-04 | Phase 27 | Complete |
+| DEF-01 | Phase 28 | Pending |
+| DEF-02 | Phase 28 | Pending |
+| DEF-03 | Phase 28 | Pending |
+| DEF-04 | Phase 28 | Pending |
+| DEF-05 | Phase 28 | Pending |
 
 **Coverage:**
 
-- v0.5 requirements: 68 total
-- Mapped to phases: 68
+- v0.5 requirements: 73 total
+- Mapped to phases: 73
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-15 after Phase 27 executed (UAT4-01..UAT4-04, human UAT pending)*
+*Last updated: 2026-10-15 after Phase 28 added (DEF-01..DEF-05)*

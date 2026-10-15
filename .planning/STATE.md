@@ -81,6 +81,10 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 
 ### Roadmap Evolution
 
+- Phase 28 added (2026-10-15): **Default config files** — committed `styles-default.json` /
+  `tiers-default.json`; live `styles.json` / `tiers.json` git-ignored and falling back to the
+  defaults when absent (DEF-01..DEF-05). Run autonomously.
+
 - Phase 27 added (2026-10-15): **UAT Feedback Fixes 4** — the author's fourth v0.5 UAT round
   (UAT4-01..UAT4-04): right-aligned Custom styles Order column, colour dropdown scroll bar fix,
   Simple Defences condition beside Defences, UAT results of Phases 16 and 23-26 recorded. Run

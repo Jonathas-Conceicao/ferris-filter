@@ -6,7 +6,7 @@
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
-- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-27 (in progress)
+- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-28 (in progress)
 
 ## Phases
 
@@ -57,7 +57,7 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
-## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-27)
+## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-28)
 
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
 output, with the style palette and economy tier cutoffs configurable from the overlay.
@@ -74,6 +74,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 26: UAT Feedback Fixes 3** - Apply the author's third v0.5 UAT round: grouped styles table with renamable id-linked custom styles, steadier rule editor (Defences card, Between, no duplicates), Quit asks before discarding edits (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 27: UAT Feedback Fixes 4** - Apply the author's fourth v0.5 UAT round: right-aligned styles Order column, colour dropdown scroll bar fix, Simple Defences condition, UAT results recorded (executed 2026-10-15; awaiting human UAT)
+- [ ] **Phase 28: Default config files** - Committed `styles-default.json` / `tiers-default.json`; live `styles.json` / `tiers.json` leave git and fall back to the defaults when absent
 
 ### Phase 16: Lossless Filter Parser
 
@@ -467,6 +468,21 @@ Plans:
 
 - [x] 27-05-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 27-MANUAL-VERIFICATION.md (UAT4-01..03)
 
+### Phase 28: Default config files
+
+**Goal**: The shipped defaults live in committed `styles-default.json` / `tiers-default.json`; the live `styles.json` / `tiers.json` are git-ignored per-user config that falls back to the defaults when absent, so the author's local config never shows as a diff and the test suite never depends on it
+**Depends on**: Phase 27
+**Requirements**: DEF-01, DEF-02, DEF-03, DEF-04, DEF-05
+**Success Criteria** (what must be TRUE):
+
+  1. `styles-default.json` / `tiers-default.json` are committed with the HEAD content of `styles.json` / `tiers.json`; nothing in the app writes them
+  2. `styles.json` / `tiers.json` are git-ignored and untracked; the author's local copies stay on disk byte-for-byte
+  3. Every reader (overlay load + watcher, CONFIG tab, `apply`, `generate`, `sync`) falls back to the `-default.json` file when the live one is absent; no command or app launch creates the live file; the first Apply with CONFIG edits writes it
+  4. The app-root marker is `styles-default.json`
+  5. All tests use the default files and pass with the author's local files present; `tests/fixtures/seed-universal.filter` is byte-identical
+
+**Plans**: TBD
+
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -483,6 +499,7 @@ Plans:
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
 | 27. UAT Feedback Fixes 4 | 5/5 | Human UAT pending | - |
+| 28. Default config files | 0/? | Not started | - |
 
 ## Backlog
 

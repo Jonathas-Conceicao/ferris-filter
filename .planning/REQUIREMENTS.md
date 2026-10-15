@@ -186,11 +186,11 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### Default Config Files (DEF)
 
-- [ ] **DEF-01**: `styles-default.json` and `tiers-default.json` are committed at the repo root with exactly the HEAD content of `styles.json` / `tiers.json`; nothing in the app ever writes them.
-- [ ] **DEF-02**: `/styles.json` and `/tiers.json` are git-ignored and untracked; the author's local copies stay on disk byte-for-byte as the live config.
+- [x] **DEF-01**: `styles-default.json` and `tiers-default.json` are committed at the repo root with exactly the HEAD content of `styles.json` / `tiers.json`; nothing in the app ever writes them.
+- [x] **DEF-02**: `/styles.json` and `/tiers.json` are git-ignored and untracked; the author's local copies stay on disk byte-for-byte as the live config.
 - [x] **DEF-03**: Wherever `styles.json` / `tiers.json` is read (overlay load + watcher, CONFIG tab, `apply`, `generate`, `sync`), an absent live file means the matching `-default.json` in the same directory is read instead; no launch or command creates the live file; the first overlay Apply with CONFIG edits writes it (a missing file does not trip the changed-on-disk guard); `--styles` / `--tiers` stay explicit paths with no fallback; neither file present is an error naming both; the watcher switches source when the live file is created or deleted.
 - [x] **DEF-04**: The app-root resolver's marker is `styles-default.json` (FERRISFILTER_HOME, then walk up from the exe, then the working directory).
-- [ ] **DEF-05**: Every test that read the repo-root `styles.json` / `tiers.json` uses the `-default.json` files, so the suite passes with any local config present; `tests/fixtures/seed-universal.filter` stays byte-identical; CLAUDE.md and CHANGELOG.md describe the split (deleting a live file resets it to the defaults).
+- [x] **DEF-05**: Every test that read the repo-root `styles.json` / `tiers.json` uses the `-default.json` files, so the suite passes with any local config present; `tests/fixtures/seed-universal.filter` stays byte-identical; CLAUDE.md and CHANGELOG.md describe the split (deleting a live file resets it to the defaults).
 
 ## Future Requirements
 
@@ -304,11 +304,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT4-02 | Phase 27 | Complete (UAT pending) |
 | UAT4-03 | Phase 27 | Complete (UAT pending) |
 | UAT4-04 | Phase 27 | Complete |
-| DEF-01 | Phase 28 | Pending |
-| DEF-02 | Phase 28 | Pending |
-| DEF-03 | Phase 28 | Complete |
-| DEF-04 | Phase 28 | Complete |
-| DEF-05 | Phase 28 | Pending |
+| DEF-01 | Phase 28 | Complete |
+| DEF-02 | Phase 28 | Complete |
+| DEF-03 | Phase 28 | Complete (UAT pending) |
+| DEF-04 | Phase 28 | Complete (UAT pending) |
+| DEF-05 | Phase 28 | Complete (UAT pending) |
 
 **Coverage:**
 

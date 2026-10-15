@@ -74,7 +74,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 26: UAT Feedback Fixes 3** - Apply the author's third v0.5 UAT round: grouped styles table with renamable id-linked custom styles, steadier rule editor (Defences card, Between, no duplicates), Quit asks before discarding edits (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 27: UAT Feedback Fixes 4** - Apply the author's fourth v0.5 UAT round: right-aligned styles Order column, colour dropdown scroll bar fix, Simple Defences condition, UAT results recorded (executed 2026-10-15; awaiting human UAT)
-- [ ] **Phase 28: Default config files** - Committed `styles-default.json` / `tiers-default.json`; live `styles.json` / `tiers.json` leave git and fall back to the defaults when absent
+- [ ] **Phase 28: Default config files** - Committed `styles-default.json` / `tiers-default.json`; live `styles.json` / `tiers.json` leave git and fall back to the defaults when absent (executed 2026-10-15; awaiting human UAT)
 
 ### Phase 16: Lossless Filter Parser
 
@@ -497,7 +497,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 28-04-PLAN.md — Untrack + git-ignore styles.json / tiers.json (own commit), CLAUDE.md, CHANGELOG, manual verification
+- [x] 28-04-PLAN.md — Untrack + git-ignore styles.json / tiers.json (own commit), CLAUDE.md, CHANGELOG, manual verification
 
 ### Progress
 
@@ -515,7 +515,7 @@ Plans:
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
 | 27. UAT Feedback Fixes 4 | 5/5 | Human UAT pending | - |
-| 28. Default config files | 3/4 | In Progress|  |
+| 28. Default config files | 4/4 | Human UAT pending | - |
 
 ## Backlog
 

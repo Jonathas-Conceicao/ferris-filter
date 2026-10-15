@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: executing
-stopped_at: Completed 28-03-PLAN.md
-last_updated: "2026-10-15T08:42:56.957Z"
+status: verifying
+stopped_at: Completed 28-04-PLAN.md
+last_updated: "2026-10-15T08:49:18.620Z"
 last_activity: 2026-10-15
 progress:
   total_phases: 26
-  completed_phases: 12
+  completed_phases: 13
   total_plans: 71
-  completed_plans: 70
-  percent: 46
+  completed_plans: 71
+  percent: 50
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-10-12)
 
 ## Current Position
 
-Phase: 28 (Default config files) — EXECUTING
+Phase: 28 (Default config files) — EXECUTED, human UAT pending
 Plan: 4 of 4
-Status: Executing — 28-03 complete (overlay readers follow the defaults, live-path guard)
+Status: Phase executed — 28-MANUAL-VERIFICATION.md (UAT5-01..07) pending
 Last activity: 2026-10-15
 
-Progress: [█████████░] 93%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -78,6 +78,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 23 P04 | 10min | 2 tasks | 3 files |
 | Phase 28 P02 | 25min | 2 tasks | 5 files |
 | Phase 28 P03 | 10min | 2 tasks | 5 files |
+| Phase 28 P04 | 6 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -177,6 +178,7 @@ work (carried forward past the v0.3 close):
 - [Phase 23]: Reload toggle persists on change (settings::save) and never marks CONFIG dirty; interim reload line replaced only if still displayed
 - [Phase 28]: 28-02: reads go through InputPaths::styles_source/tiers_source (live, else -default.json); app-root marker is styles-default.json
 - [Phase 28]: 28-03: overlay config files keep two baselines - content (source read) and live (live file bytes or None, the changed-on-disk guard)
+- [Phase 28]: 28-04: styles.json/tiers.json untracked (index only) and git-ignored; committed -default.json files hold the defaults
 
 ### Pending Todos
 
@@ -316,8 +318,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-15T08:42:40.182Z
-Stopped at: Completed 28-03-PLAN.md
+Last session: 2026-10-15T08:49:14.331Z
+Stopped at: Completed 28-04-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is

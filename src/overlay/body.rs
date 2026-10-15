@@ -2704,10 +2704,21 @@ pub(crate) fn colour_combo(
                 names.push("None");
             }
             for c in names {
+                // The popup's ScrollArea auto-shrinks to its content width and its floating scroll
+                // bar takes no room, painting over the content's right edge. A plain `horizontal`
+                // row is only as wide as its dot + label, so the area shrank to the longest name and
+                // the bar covered it. The label fills the rest of the row (justified, like the
+                // shape combo's rows), so the content spans the whole popup and the bar sits at
+                // the popup edge.
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     dot(ui, filter_colour(c));
-                    if ui.selectable_label(c == current, c).clicked() && c != current {
+                    let label = ui
+                        .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                            ui.selectable_label(c == current, c)
+                        })
+                        .inner;
+                    if label.clicked() && c != current {
                         picked = Some(c.to_string());
                     }
                 });
@@ -4968,5 +4979,178 @@ mod tests {
             wf.text(),
             "Show\n  BaseArmour >= 100\n  BaseArmour <= 1000\n  BaseEvasion > 5\n"
         );
+    }
+}
+
+/// UAT4-02: a colour dropdown leaves its scroll bar room like the shape dropdown. Driven headless
+/// with real fonts; the bar and the item names are read from the painted output.
+#[cfg(test)]
+mod colour_combo_tests {
+    use crate::filter::keywords::{COLOURS, SHAPES};
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, vec2};
+
+    const BUTTON: Pos2 = Pos2::new(72.0, 9.0);
+    const IN_POPUP: Pos2 = Pos2::new(60.0, 100.0);
+
+    fn raw(events: Vec<Event>) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0))),
+            events,
+            ..Default::default()
+        }
+    }
+
+    fn click(pos: Pos2) -> Vec<Event> {
+        let button = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::default(),
+        };
+        vec![Event::PointerMoved(pos), button(true), button(false)]
+    }
+
+    /// The reference: the minimap shape dropdown's rows (plain selectable labels), laid out the
+    /// same way as a colour dropdown (dot, then a 104px combo).
+    fn shape_combo(ui: &mut egui::Ui) {
+        super::dot(ui, egui::Color32::WHITE);
+        egui::ComboBox::from_id_salt("shape")
+            .selected_text("Circle")
+            .width(104.0)
+            .show_ui(ui, |ui| {
+                for s in SHAPES {
+                    let _ = ui.selectable_label(*s == "Circle", *s);
+                }
+            });
+    }
+
+    struct Popup {
+        /// The scroll bar's painted rect (background track), if one was drawn.
+        bar: Option<Rect>,
+        /// Painted item names and their rects, below the combo button.
+        items: Vec<(String, Rect)>,
+        bar_width: f32,
+        picked: Vec<Option<String>>,
+    }
+
+    /// Opens the dropdown drawn by `draw`, hovers the popup until the floating bar settles, and
+    /// returns what was painted. `then` events are sent on the last frame (e.g. a click).
+    fn open(
+        draw: &dyn Fn(&mut egui::Ui) -> Option<String>,
+        then: impl Fn(&Popup) -> Vec<Event>,
+    ) -> Popup {
+        let ctx = egui::Context::default();
+        crate::overlay::theme::install_fonts(&ctx);
+        let mut popup = Popup {
+            bar: None,
+            items: Vec::new(),
+            bar_width: 0.0,
+            picked: Vec::new(),
+        };
+        let frames = 16;
+        for frame in 0..frames {
+            let events = match frame {
+                1 => click(BUTTON),
+                f if f == frames - 1 => then(&popup),
+                f if f >= 2 => vec![Event::PointerMoved(IN_POPUP)],
+                _ => Vec::new(),
+            };
+            let mut raw = raw(events);
+            raw.time = Some(f64::from(frame) * 0.1);
+            let mut picked = None;
+            let mut out = ctx.run_ui(raw, |ui| {
+                popup.bar_width = ui.spacing().scroll.bar_width;
+                ui.horizontal(|ui| picked = draw(ui));
+            });
+            out.textures_delta.clear();
+            popup.picked.push(picked);
+            popup.bar = None;
+            popup.items.clear();
+            for cs in &out.shapes {
+                match &cs.shape {
+                    Shape::Rect(r)
+                        if r.rect.width() <= popup.bar_width + 0.5 && r.rect.height() > 100.0 =>
+                    {
+                        let bar = popup.bar.get_or_insert(r.rect);
+                        *bar = bar.union(r.rect);
+                    }
+                    Shape::Text(t) if t.pos.y > 20.0 => {
+                        let rect = t.galley.rect.translate(t.pos.to_vec2());
+                        popup.items.push((t.galley.text().to_string(), rect));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        popup
+    }
+
+    fn assert_bar_clears_items(p: &Popup, names: &[&str], what: &str) {
+        let bar = p
+            .bar
+            .unwrap_or_else(|| panic!("{what}: no scroll bar painted"));
+        // At full (hovered) width the bar spans bar_width left of its right edge.
+        let bar_left = bar.right() - p.bar_width;
+        let shown: Vec<_> = p
+            .items
+            .iter()
+            .filter(|(t, _)| names.contains(&t.as_str()))
+            .collect();
+        assert!(shown.len() >= 5, "{what}: items painted {:?}", p.items);
+        for (t, r) in shown {
+            assert!(
+                r.right() <= bar_left,
+                "{what}: {t:?} ends at {} under the bar {bar:?}",
+                r.right()
+            );
+        }
+    }
+
+    #[test]
+    fn colour_combo_rows_leave_scroll_bar_room_like_the_shape_combo() {
+        let shape = open(
+            &|ui| {
+                shape_combo(ui);
+                None
+            },
+            |_| Vec::new(),
+        );
+        assert_bar_clears_items(&shape, SHAPES, "shape combo");
+
+        let colour = open(&|ui| super::colour_combo(ui, "c", "Red", false), |_| {
+            Vec::new()
+        });
+        assert_bar_clears_items(&colour, COLOURS, "colour combo");
+    }
+
+    #[test]
+    fn colour_combo_picks_and_offers_none() {
+        let at = |name: &'static str| {
+            move |p: &Popup| {
+                let r = p
+                    .items
+                    .iter()
+                    .find(|(t, _)| t == name)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_else(|| panic!("{name} not painted"));
+                click(r.center())
+            }
+        };
+        let p = open(&|ui| super::colour_combo(ui, "c", "Red", false), at("Blue"));
+        assert_eq!(p.picked.last().unwrap().as_deref(), Some("Blue"));
+        let p = open(&|ui| super::colour_combo(ui, "c", "Red", false), at("Red"));
+        assert_eq!(p.picked.last().unwrap(), &None);
+        // A taller popup so the last entry is painted without scrolling.
+        let tall = |allow_none: bool| {
+            move |ui: &mut egui::Ui| {
+                ui.spacing_mut().combo_height = 600.0;
+                super::colour_combo(ui, "c", "Red", allow_none)
+            }
+        };
+        let p = open(&tall(true), |_| Vec::new());
+        assert_eq!(p.items.last().map(|(t, _)| t.as_str()), Some("None"));
+        let p = open(&tall(false), |_| Vec::new());
+        assert!(!p.items.iter().any(|(t, _)| t == "None"));
+        assert!(p.items.iter().any(|(t, _)| t == "Purple"));
     }
 }

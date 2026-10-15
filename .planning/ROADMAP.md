@@ -481,7 +481,23 @@ Plans:
   4. The app-root marker is `styles-default.json`
   5. All tests use the default files and pass with the author's local files present; `tests/fixtures/seed-universal.filter` is byte-identical
 
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+
+- [ ] 28-01-PLAN.md — Create styles-default.json / tiers-default.json from HEAD; every test reads the defaults
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 28-02-PLAN.md — Read-source helper in InputPaths (live, else -default, else error naming both); generate/apply fallback; app-root marker styles-default.json
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 28-03-PLAN.md — Overlay readers (CONFIG tab, combined Apply guard with absent baseline, styles poll) follow the effective source
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 28-04-PLAN.md — Untrack + git-ignore styles.json / tiers.json (own commit), CLAUDE.md, CHANGELOG, manual verification
 
 ### Progress
 

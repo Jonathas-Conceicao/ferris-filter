@@ -370,19 +370,110 @@ impl Document {
     /// Swap the block with its neighbour in place. Ids follow the blocks.
     pub fn move_block(&mut self, id: BlockId, up: bool) -> Result<(), EditError> {
         let nb = self.move_neighbour(id, up)?.ok_or(EditError::NoNeighbour)?;
+        if up {
+            self.swap_runs(&[nb], &[id])
+        } else {
+            self.swap_runs(&[id], &[nb])
+        }
+    }
+
+    /// Remove the blocks `old` (which must be the blocks directly after `anchor`, in order) and
+    /// insert one block per entry of `spans` (span texts, no terminators) after `anchor`, each
+    /// preceded by one blank line. The new blocks reuse the ids of `old` by position (fresh ids
+    /// for the rest) and their ids are returned. Lines between `anchor` and the end of the last
+    /// old block are replaced; everything else keeps its bytes.
+    pub fn replace_blocks_after(
+        &mut self,
+        anchor: BlockId,
+        old: &[BlockId],
+        spans: Vec<Vec<String>>,
+    ) -> Result<Vec<BlockId>, EditError> {
+        if spans.iter().flatten().any(|s| s.contains(['\n', '\r'])) {
+            return Err(EditError::EmbeddedNewline);
+        }
         let infos = self.infos();
-        let p1 = infos
+        let pos = infos
             .iter()
-            .position(|i| i.id == id)
+            .position(|i| i.id == anchor)
             .ok_or(EditError::UnknownBlock)?;
-        let p2 = infos
+        for (k, o) in old.iter().enumerate() {
+            if infos.get(pos + 1 + k).map(|i| i.id) != Some(*o) {
+                return Err(EditError::NotOneBlock);
+            }
+        }
+        if old.is_empty() && spans.is_empty() {
+            return Ok(Vec::new());
+        }
+        let a_end = infos[pos].span.end;
+        let region_end = match old.len() {
+            0 => a_end,
+            n => infos[pos + n].span.end,
+        };
+        let eol = self.fresh_eol(a_end - 1);
+        let mut new = self.lines[..a_end].to_vec();
+        if let Some(last) = new.last_mut()
+            && last.eol() == Eol::None
+        {
+            *last = Line::new(last.text().to_string(), eol);
+        }
+        for span in &spans {
+            new.push(Line::new(String::new(), eol));
+            for t in span {
+                new.push(Line::new(t.clone(), eol));
+            }
+        }
+        let rest = &self.lines[region_end..];
+        if rest.first().is_some_and(|l| !is_blank(l)) {
+            new.push(Line::new(String::new(), eol));
+        }
+        if rest.is_empty()
+            && self.lines.last().is_some_and(|l| l.eol() == Eol::None)
+            && let Some(l) = new.last_mut()
+            && !l.text().is_empty()
+        {
+            *l = Line::new(l.text().to_string(), Eol::None);
+        }
+        new.extend_from_slice(rest);
+
+        let mut ids: Vec<Option<BlockId>> = infos.iter().map(|i| Some(i.id)).collect();
+        let mut expected: Vec<Vec<String>> = infos
             .iter()
-            .position(|i| i.id == nb)
+            .map(|i| self.span_texts(i.span.clone()))
+            .collect();
+        let range = pos + 1..pos + 1 + old.len();
+        let n_new = spans.len();
+        ids.splice(range.clone(), (0..n_new).map(|k| old.get(k).copied()));
+        expected.splice(range, spans);
+        let out = self.commit_structural(new, ids, expected)?;
+        Ok(out[pos + 1..pos + 1 + n_new].to_vec())
+    }
+
+    /// Swap two adjacent runs of consecutive blocks: `a` directly followed by `b` (each in file
+    /// order) becomes `b` then `a`. A run moves with the blank lines after each of its blocks;
+    /// stray lines between the runs stay where they are. Ids follow the blocks. The caller checks
+    /// that the swap is allowed (see [`Document::move_neighbour`]).
+    pub fn swap_runs(&mut self, a: &[BlockId], b: &[BlockId]) -> Result<(), EditError> {
+        let infos = self.infos();
+        let (Some(a0), false) = (a.first(), b.is_empty()) else {
+            return Err(EditError::NoNeighbour);
+        };
+        let pa = infos
+            .iter()
+            .position(|i| i.id == *a0)
             .ok_or(EditError::UnknownBlock)?;
-        let (pa, pb) = (p1.min(p2), p1.max(p2));
-        let a_region = infos[pa].span.start..infos[pa].unit.end;
-        let strays = infos[pa].unit.end..infos[pb].span.start;
-        let b_region = infos[pb].span.start..infos[pb].unit.end;
+        let pb = pa + a.len();
+        let consecutive = a
+            .iter()
+            .chain(b)
+            .enumerate()
+            .all(|(k, id)| infos.get(pa + k).map(|i| i.id) == Some(*id));
+        if !consecutive {
+            return Err(EditError::NoNeighbour);
+        }
+        let (pa_last, pb_last) = (pb - 1, pb + b.len() - 1);
+        let a_region = infos[pa].span.start..infos[pa_last].unit.end;
+        let strays = infos[pa_last].unit.end..infos[pb].span.start;
+        let b_region = infos[pb].span.start..infos[pb_last].unit.end;
 
         let eol = self.last_eol();
         let mut old = self.lines.clone();
@@ -405,12 +496,12 @@ impl Document {
         }
 
         let mut ids: Vec<Option<BlockId>> = infos.iter().map(|i| Some(i.id)).collect();
-        ids.swap(pa, pb);
+        ids[pa..=pb_last].rotate_left(a.len());
         let mut expected: Vec<Vec<String>> = infos
             .iter()
             .map(|i| self.span_texts(i.span.clone()))
             .collect();
-        expected.swap(pa, pb);
+        expected[pa..=pb_last].rotate_left(a.len());
         self.commit_structural(new, ids, expected).map(|_| ())
     }
 }
@@ -833,5 +924,59 @@ Hide
 #	Rarity Rare
 "
         );
+    }
+
+    #[test]
+    fn swap_runs_moves_a_run_as_a_unit() {
+        let src = "Show # A\n\nShow # B1\n\nShow # B2\n\n# stray\n\nShow # C\n";
+        let mut d = p(src);
+        let i = ids(&d);
+        d.swap_runs(&[i[0]], &[i[1], i[2]]).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show # B1\n\nShow # B2\n\nShow # A\n\n# stray\n\nShow # C\n"
+        );
+        assert_eq!(ids(&d), vec![i[1], i[2], i[0], i[3]]);
+        // Its own inverse.
+        d.swap_runs(&[i[1], i[2]], &[i[0]]).unwrap();
+        assert_eq!(s(&d), src);
+        // Runs must be adjacent and in order.
+        assert!(d.swap_runs(&[i[0]], &[i[2]]).is_err());
+        assert!(d.swap_runs(&[i[1]], &[i[0]]).is_err());
+    }
+
+    #[test]
+    fn replace_blocks_after_inserts_replaces_and_removes() {
+        let src = "Show # A\n\nShow # B\n\nShow # C\n";
+        let mut d = p(src);
+        let i = ids(&d);
+        let new = d
+            .replace_blocks_after(i[0], &[], vec![v(&["# ff:x 1", "Show # N"])])
+            .unwrap();
+        assert_eq!(
+            s(&d),
+            "Show # A\n\n# ff:x 1\nShow # N\n\nShow # B\n\nShow # C\n"
+        );
+        assert!(!i.contains(&new[0]));
+        // Replace N and B with one block that keeps N's id.
+        let out = d
+            .replace_blocks_after(i[0], &[new[0], i[1]], vec![v(&["Hide"])])
+            .unwrap();
+        assert_eq!(out, vec![new[0]]);
+        assert_eq!(s(&d), "Show # A\n\nHide\n\nShow # C\n");
+        // Remove it again; the rest keeps its bytes.
+        d.replace_blocks_after(i[0], &[new[0]], Vec::new()).unwrap();
+        assert_eq!(s(&d), "Show # A\n\nShow # C\n");
+        // `old` must follow the anchor directly.
+        assert!(d.replace_blocks_after(i[2], &[i[0]], Vec::new()).is_err());
+    }
+
+    #[test]
+    fn replace_blocks_after_keeps_crlf_and_a_missing_final_newline() {
+        let mut d = p("Show # A\r\n  Rarity Rare");
+        let i = ids(&d);
+        d.replace_blocks_after(i[0], &[], vec![v(&["Show # N"])])
+            .unwrap();
+        assert_eq!(s(&d), "Show # A\r\n  Rarity Rare\r\n\r\nShow # N");
     }
 }

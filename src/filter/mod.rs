@@ -9,6 +9,7 @@ pub mod block;
 pub mod diag;
 mod disabled;
 mod edit;
+pub mod group;
 pub mod keywords;
 mod lineedit;
 pub mod lines;

@@ -759,4 +759,119 @@ mod tests {
         assert_eq!(kind_of("Show\n\tRarity Rare\n", false), None);
         assert_eq!(kind_of("Show\n\tRarity Rare\n", true), None);
     }
+
+    // --- Simple Defences writes and the combination strip (UAT4-03) ---
+
+    use DefenceSeg::{Any, Has, No};
+
+    #[test]
+    fn seg_write_from_no_line() {
+        assert_eq!(seg_write("BaseArmour", None, Any), SegWrite::Nothing);
+        assert_eq!(
+            seg_write("BaseArmour", None, Has),
+            SegWrite::Add("BaseArmour > 0".into())
+        );
+        assert_eq!(
+            seg_write("BaseArmour", None, No),
+            SegWrite::Add("BaseArmour 0".into())
+        );
+    }
+
+    #[test]
+    fn seg_write_from_an_existing_line() {
+        assert_eq!(seg_write("BaseEvasion", Some(Has), Has), SegWrite::Nothing);
+        assert_eq!(seg_write("BaseEvasion", Some(No), No), SegWrite::Nothing);
+        assert_eq!(
+            seg_write("BaseEvasion", Some(Has), No),
+            SegWrite::Replace("BaseEvasion 0".into())
+        );
+        assert_eq!(
+            seg_write("BaseEnergyShield", Some(No), Has),
+            SegWrite::Replace("BaseEnergyShield > 0".into())
+        );
+        assert_eq!(seg_write("BaseEvasion", Some(Has), Any), SegWrite::Remove);
+        assert_eq!(seg_write("BaseEvasion", Some(No), Any), SegWrite::Remove);
+        // `Some(Any)` means no line too.
+        assert_eq!(seg_write("BaseEvasion", Some(Any), Any), SegWrite::Nothing);
+    }
+
+    #[test]
+    fn written_lines_classify_back_to_their_segment() {
+        for (name, _) in DEFENCES {
+            for want in [Has, No] {
+                let SegWrite::Add(line) = seg_write(name, None, want) else {
+                    panic!("expected Add");
+                };
+                assert_eq!(zb(&line), Some(want), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn combo_labels_and_short_names() {
+        let labels: Vec<&str> = DEFENCE_COMBOS.iter().map(|(l, _)| *l).collect();
+        assert_eq!(
+            labels,
+            ["AR", "EV", "ES", "AR+ES", "AR+EV", "EV+ES", "AR+EV+ES"]
+        );
+        assert_eq!(DEFENCE_SHORT, ["AR", "EV", "ES"]);
+        // Each label spells out its membership.
+        for (label, members) in DEFENCE_COMBOS {
+            let parts: Vec<&str> = label.split('+').collect();
+            for (t, short) in DEFENCE_SHORT.iter().enumerate() {
+                assert_eq!(members[t], parts.contains(short), "{label}");
+            }
+        }
+    }
+
+    fn lit_labels(settings: [DefenceSeg; 3]) -> Vec<&'static str> {
+        let lit = lit_combos(settings);
+        DEFENCE_COMBOS
+            .iter()
+            .zip(lit)
+            .filter(|(_, on)| *on)
+            .map(|((l, _), _)| *l)
+            .collect()
+    }
+
+    #[test]
+    fn lit_combos_examples() {
+        assert_eq!(lit_combos([Any, Any, Any]), [true; 7]);
+        assert_eq!(lit_labels([Any, No, Any]), ["AR", "ES", "AR+ES"]);
+        assert_eq!(lit_combos([No, No, No]), [false; 7]);
+        assert_eq!(
+            lit_labels([Has, Any, Any]),
+            ["AR", "AR+ES", "AR+EV", "AR+EV+ES"]
+        );
+    }
+
+    #[test]
+    fn lit_combos_all_27_settings() {
+        let segs = [Any, Has, No];
+        let mut count = 0;
+        for a in segs {
+            for b in segs {
+                for c in segs {
+                    let s = [a, b, c];
+                    let lit = lit_combos(s);
+                    for (k, (label, members)) in DEFENCE_COMBOS.iter().enumerate() {
+                        // Independent formulation: every Has type is in the combo, no No type is.
+                        let mut expect = true;
+                        for t in 0..3 {
+                            if s[t] == Has && !members[t] {
+                                expect = false;
+                            }
+                            if s[t] == No && members[t] {
+                                expect = false;
+                            }
+                        }
+                        assert_eq!(lit[k], expect, "{s:?} {label}");
+                        assert_eq!(combo_matches(s, *members), expect);
+                    }
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(count, 27);
+    }
 }

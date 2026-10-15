@@ -1280,6 +1280,7 @@ impl OverlayApp {
                 ConfigAction::AddStyle(_)
                     | ConfigAction::EditStyle { .. }
                     | ConfigAction::DeleteStyle(_)
+                    | ConfigAction::RenameStyle { .. }
                     | ConfigAction::MoveStyle { .. }
                     | ConfigAction::TierText { .. }
             )
@@ -1317,6 +1318,26 @@ impl OverlayApp {
                         }
                         self.config_ui.delete_armed = None;
                         self.config_message = None;
+                    }
+                }
+                ConfigAction::RenameStyle { from, to } => {
+                    if let Ok(state) = &mut self.config {
+                        let id = state.style_id(&from).map(str::to_string);
+                        match state.rename_style(&from, &to) {
+                            Ok(()) => {
+                                if let Some(id) = id {
+                                    self.config_ui.rename_drafts.remove(&id);
+                                }
+                                if self.config_ui.expanded.as_deref() == Some(from.as_str()) {
+                                    self.config_ui.expanded = Some(to);
+                                }
+                                self.config_message = None;
+                                if self.apply_state == ApplyState::Applied {
+                                    self.apply_state = ApplyState::Unapplied;
+                                }
+                            }
+                            Err(err) => self.config_message = Some((err.to_string(), true)),
+                        }
                     }
                 }
                 ConfigAction::MoveStyle { name, up } => {

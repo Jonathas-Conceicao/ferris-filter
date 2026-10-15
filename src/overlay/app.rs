@@ -93,6 +93,9 @@ pub struct OverlayApp {
     /// Apply & quit succeeded; the shutdown runs once any in-game reload worker has finished.
     quit_after_apply: bool,
 
+    /// "Quit without applying" was chosen; the shutdown runs at the top of the next frame.
+    quit_next_frame: bool,
+
     /// The show/hide decision -- see `super::visibility` for why this is three states, not two.
     visibility: Visibility,
 
@@ -834,6 +837,7 @@ impl OverlayApp {
             toggle_requested: false,
             quit_confirm: false,
             quit_after_apply: false,
+            quit_next_frame: false,
             // The window created in `overlay::launch` starts visible
             // (`with_active(false)` only suppresses activation, not
             // visibility) and has never been focused -- `ShownUnfocused` is
@@ -1742,6 +1746,15 @@ impl eframe::App for OverlayApp {
             quit_requested = true;
             self.begin_shutdown();
         }
+        // "Quit without applying" was chosen in the confirm last frame. It runs here, before the
+        // show-request poll below, like every other quit path (WR-08).
+        if self.quit_next_frame {
+            self.quit_next_frame = false;
+            if !quit_requested {
+                quit_requested = true;
+                self.begin_shutdown();
+            }
+        }
 
         // INST-01 (CONTEXT "Behaviour"): a second launch is a reveal, never a toggle (same rule
         // as the tray's Show, D-17). It deliberately bypasses the hotkey's foreground gate
@@ -2259,9 +2272,11 @@ impl eframe::App for OverlayApp {
                 match apply::quit_step(dirty, true, apply::QuitEvent::Choice(choice)) {
                     apply::QuitStep::CloseConfirm => self.quit_confirm = false,
                     apply::QuitStep::QuitNow => {
+                        // Deferred to the top of the next frame so the Phase 22 order holds:
+                        // shutdown before that frame's instance show-request poll (WR-08).
                         self.quit_confirm = false;
-                        quit_requested = true;
-                        self.begin_shutdown();
+                        self.quit_next_frame = true;
+                        ui.ctx().request_repaint();
                     }
                     apply::QuitStep::RunApply => {
                         self.quit_confirm = false;

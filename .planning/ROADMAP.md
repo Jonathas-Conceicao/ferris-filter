@@ -493,7 +493,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 28-03-PLAN.md — Overlay readers (CONFIG tab, combined Apply guard with absent baseline, styles poll) follow the effective source
+- [x] 28-03-PLAN.md — Overlay readers (CONFIG tab, combined Apply guard with absent baseline, styles poll) follow the effective source
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -515,7 +515,7 @@ Plans:
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
 | 27. UAT Feedback Fixes 4 | 5/5 | Human UAT pending | - |
-| 28. Default config files | 2/4 | In Progress|  |
+| 28. Default config files | 3/4 | In Progress|  |
 
 ## Backlog
 

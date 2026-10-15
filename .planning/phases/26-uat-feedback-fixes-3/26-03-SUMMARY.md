@@ -1,6 +1,7 @@
 ---
 phase: 26-uat-feedback-fixes-3
 plan: 03
+requirements-completed: [UAT3-08, UAT3-06]
 subsystem: overlay
 tags: [overlay, tray, quit, row-action]
 requires: []

@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: executing
-stopped_at: Phase 28 executed; human UAT pending
-last_updated: "2026-10-15T08:49:18.620Z"
-last_activity: 2026-10-15 -- Phase 28 executed (4/4 plans, review fixed); human UAT pending
+status: verifying
+stopped_at: v0.5 wrap-up done; all phases 16-28 executed and UAT recorded; ready for /gsd-complete-milestone v0.5
+last_updated: "2026-10-15T12:00:00.000Z"
+last_activity: 2026-10-15 -- v0.5 wrap-up: UAT recorded for phases 16-28, review decisions recorded, audit refreshed (tech_debt, no gaps)
 progress:
   total_phases: 26
   completed_phases: 13
@@ -21,14 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 28 — Default config files
+**Current focus:** v0.5 milestone close (`/gsd-complete-milestone v0.5`)
 
 ## Current Position
 
-Phase: 28 (Default config files) — EXECUTED, human UAT pending
+Phase: 28 (Default config files, last v0.5 phase) — all v0.5 phases executed, UAT complete
 Plan: 4 of 4
-Status: Phase executed — 28-MANUAL-VERIFICATION.md (UAT5-01..07) pending
-Last activity: 2026-10-15 -- Phase 28 executed (4/4 plans, code review: 4 warnings + 1 info fixed in one pass, 4 info findings left open)
+Status: Ready to complete milestone v0.5. UAT recorded for Phases 16-28 (16 partial pass accepted,
+Phase 28 and some single checks accepted as assumed passes); audit refreshed: tech_debt, no gaps,
+no pending UAT (.planning/v0.5-MILESTONE-AUDIT.md)
+Last activity: 2026-10-15 -- v0.5 wrap-up bookkeeping (UAT results, review decisions, backlog 999.14, audit refresh)
 Progress: [██████████] 100%
 
 ## Performance Metrics
@@ -317,11 +319,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-15T08:49:14.331Z
-Stopped at: Completed 28-04-PLAN.md
+Last session: 2026-10-15
+Stopped at: v0.5 wrap-up bookkeeping complete
 Resume file: None
 
-**Next step:** `/gsd-plan-phase 16` (Lossless Filter Parser). Phase 17 (Config-Driven Styles) is
-independent and can run in parallel.
-
-**Planned Phase:** 16 (Lossless Filter Parser) — 4 plans — 2026-10-12T22:08:51.700Z
+**Next step:** `/gsd-complete-milestone v0.5`.

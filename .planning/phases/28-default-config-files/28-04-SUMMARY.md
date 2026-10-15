@@ -1,6 +1,7 @@
 ---
 phase: 28-default-config-files
 plan: 04
+requirements-completed: [DEF-02, DEF-05]
 subsystem: repo config / docs
 tags: [gitignore, config, docs]
 requires: [28-01, 28-02, 28-03]

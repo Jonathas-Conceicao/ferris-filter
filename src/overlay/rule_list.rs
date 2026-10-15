@@ -58,9 +58,10 @@ pub struct ListUi {
     /// (nothing is written until a row is set to Has or No).
     pub pending_simple_defences: HashSet<BlockId>,
     /// Blocks that show the Defences card (picked, or rendered once), so zero-based lines written
-    /// by it (`BaseArmour >= 1`) never turn it into a Simple Defences card while editing. Cleared
-    /// by [`ListUi::clear_ids`] (the file is classified again), by either card's remove and when
-    /// Simple Defences is picked.
+    /// by it (`BaseArmour >= 1`) never turn it into a Simple Defences card while editing. Carried
+    /// across an Apply by row position ([`ListUi::rekey_after_apply`]); cleared by
+    /// [`ListUi::clear_ids`] on Revert and RELOAD (the file is classified again), by either card's
+    /// remove and when Simple Defences is picked.
     pub advanced_defences: HashSet<BlockId>,
     /// A card to scroll to, focus and briefly highlight: set when a picker entry that is already
     /// on the rule is clicked (UAT3-06). Line-backed keyword cards use `focus_line` instead.
@@ -109,7 +110,8 @@ impl Default for ListUi {
 }
 
 impl ListUi {
-    /// Forget every id-keyed field; called after Revert, Apply re-parse and RELOAD.
+    /// Forget every id-keyed field; called after Revert and RELOAD, and by
+    /// [`ListUi::rekey_after_apply`] after the Apply re-parse.
     pub fn clear_ids(&mut self) {
         self.expanded = None;
         self.confirm_delete = None;
@@ -132,6 +134,49 @@ impl ListUi {
     pub fn forget_card_state(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
     }
+
+    /// The row positions that must survive an Apply re-parse (ids reset, positions do not):
+    /// the expanded row and the rows marked [`ListUi::advanced_defences`].
+    pub fn kept_positions(&self, working: &WorkingFilter) -> KeptPositions {
+        let index = |id: &BlockId| working.row(*id).map(|r| r.index);
+        let mut advanced_defences: Vec<usize> =
+            self.advanced_defences.iter().filter_map(index).collect();
+        advanced_defences.sort_unstable();
+        KeptPositions {
+            expanded: self.expanded.as_ref().and_then(index),
+            advanced_defences,
+        }
+    }
+
+    /// After a successful Apply: forget the old ids ([`ListUi::clear_ids`]), then re-key the
+    /// expanded row and the Defences markers to the re-parsed rows by position. Apply is not a
+    /// reload: the open row stays open and a Defences card does not turn into Simple Defences
+    /// under the user (only Revert, RELOAD or removing the card classify from the file again).
+    pub fn rekey_after_apply(&mut self, kept: KeptPositions, working: Option<&WorkingFilter>) {
+        self.clear_ids();
+        let Some(working) = working else {
+            return;
+        };
+        let id_at = |i: usize| {
+            i.checked_sub(1)
+                .and_then(|i| working.rows().get(i))
+                .map(|r| r.id)
+        };
+        self.expanded = kept.expanded.and_then(id_at);
+        self.advanced_defences = kept
+            .advanced_defences
+            .into_iter()
+            .filter_map(id_at)
+            .collect();
+    }
+}
+
+/// Row positions (1-based, [`RuleRow::index`]) carried across an Apply re-parse; see
+/// [`ListUi::kept_positions`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeptPositions {
+    pub expanded: Option<usize>,
+    pub advanced_defences: Vec<usize>,
 }
 
 /// What one frame of [`show_list`] produced.
@@ -1151,6 +1196,46 @@ Show
         assert!(list.pending_defences.is_empty());
         assert!(list.pending_simple_defences.is_empty());
         assert!(list.advanced_defences.is_empty());
+    }
+
+    #[test]
+    fn rekey_after_apply_carries_expanded_and_defences_markers_by_position() {
+        let text = "Show\n  Rarity Rare\n\nShow\n  BaseArmour >= 1\n\nShow\n  BaseEvasion 0\n";
+        let old = WorkingFilter::from_text(text);
+        let ids: Vec<BlockId> = old.rows().iter().map(|r| r.id).collect();
+        let mut list = ListUi::default();
+        list.expanded = Some(ids[1]);
+        list.advanced_defences.insert(ids[1]);
+        list.pending_defences.insert(ids[0]);
+        let kept = list.kept_positions(&old);
+        assert_eq!(
+            kept,
+            KeptPositions {
+                expanded: Some(2),
+                advanced_defences: vec![2],
+            }
+        );
+        let new = WorkingFilter::from_text(text);
+        let epoch = list.epoch;
+        list.rekey_after_apply(kept.clone(), Some(&new));
+        let new_ids: Vec<BlockId> = new.rows().iter().map(|r| r.id).collect();
+        assert_eq!(list.expanded, Some(new_ids[1]));
+        assert_eq!(list.advanced_defences, HashSet::from([new_ids[1]]));
+        // Everything else is still forgotten, as by clear_ids.
+        assert!(list.pending_defences.is_empty());
+        assert_ne!(list.epoch, epoch);
+
+        // A position past the end (or no document) keeps nothing.
+        list.rekey_after_apply(
+            KeptPositions {
+                expanded: Some(9),
+                advanced_defences: vec![9],
+            },
+            Some(&new),
+        );
+        assert!(list.expanded.is_none() && list.advanced_defences.is_empty());
+        list.rekey_after_apply(kept, None);
+        assert!(list.expanded.is_none() && list.advanced_defences.is_empty());
     }
 
     #[test]

@@ -4449,12 +4449,55 @@ mod tests {
         assert!(wf.text().contains("BaseArmour >= 1"));
         assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
 
-        // A reload (clear_ids; also run after Revert and the Apply re-parse) classifies from the
-        // file again: the same text now loads as Simple Defences.
+        // The Apply re-parse is not a reload: the open card stays Defences (review WR-01).
+        let id = reparse_as_apply(&mut wf, &mut list);
+        assert_eq!(list.expanded, Some(id));
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+
+        // A reload (clear_ids, run after Revert and RELOAD) classifies from the file again: the
+        // same text now loads as Simple Defences.
         list.clear_ids();
         list.expanded = Some(id);
         assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
         assert_eq!(wf.text(), "Show\n  BaseArmour >= 1\n");
+    }
+
+    /// What `run_apply` does to the list after a successful Apply: the document is re-parsed (ids
+    /// reset) and the list is re-keyed by row position. Returns the first row's new id.
+    fn reparse_as_apply(wf: &mut WorkingFilter, list: &mut ListUi) -> BlockId {
+        let kept = list.kept_positions(wf);
+        *wf = WorkingFilter::from_text(&wf.text());
+        list.rekey_after_apply(kept, Some(wf));
+        wf.rows()[0].id
+    }
+
+    #[test]
+    fn a_defences_card_toggled_on_stays_defences_after_apply() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session("Show\n  Rarity Rare\n", false);
+        let id = wf.rows()[0].id;
+        assert_eq!(pick_in(&wf, &mut list, ConditionEntry::Defences), None);
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+        let at = probed(&ctx, ("defences-toggle", id, "BaseArmour")).center();
+        let (a, _) = step_cards(&ctx, &mut wf, &mut list, &cat, Some(at));
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert_eq!(wf.text(), "Show\n  Rarity Rare\n  BaseArmour >= 1\n");
+
+        let id = reparse_as_apply(&mut wf, &mut list);
+        assert_eq!(list.expanded, Some(id));
+        assert!(list.advanced_defences.contains(&id));
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+    }
+
+    #[test]
+    fn a_simple_classified_rule_stays_simple_after_apply() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = simple_session("Show\n  BaseArmour > 0\n", false);
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+        let id = reparse_as_apply(&mut wf, &mut list);
+        assert!(list.advanced_defences.is_empty());
+        assert_eq!(list.expanded, Some(id));
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
     }
 
     #[test]

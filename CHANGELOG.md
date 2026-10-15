@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Simple Defences** condition: AR / EV / ES rows of Any | Has | No (`X > 0` / `X 0`), a strip of
     the 7 combinations, mutually exclusive with Defences in the picker. Zero-based defence lines load
     as Simple Defences with bytes kept; anything else stays Defences, and a Defences card does not
-    flip while editing.
+    flip while editing or on Apply.
   - The CONFIG Custom styles Order column and arrows are right-aligned.
   - Colour dropdowns no longer cover colour names with the scroll bar (the rows were shrink-wrapped, so
     the floating bar was painted over the longest name; they now fill the popup width).

@@ -100,7 +100,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > the settings match. A rule whose defence lines are all zero-based (`0`, `= 0`, `== 0`, `> 0`,
 > `>= 1`, at most one per type) loads as Simple Defences with its bytes kept until a type is changed;
 > any other defence line loads as Defences. A Defences card stays Defences while editing (even if its
-> lines become zero-based) until Apply, Revert, RELOAD or removal re-classifies from the file; a Simple
+> lines become zero-based) and Apply keeps it; only Revert, RELOAD or removing the card re-classify
+> from the file; a Simple
 > card whose last Has/No row returns to Any stays open, all Any. There is no armour-class check. Whole-number conditions (and each defence) offer a
 > **Between** operator: one card with two sliders writing `X >= min` and `X <= max`, clamped so min never
 > exceeds max; a loaded one-lower/one-upper pair shows as one card with its bytes kept until edited

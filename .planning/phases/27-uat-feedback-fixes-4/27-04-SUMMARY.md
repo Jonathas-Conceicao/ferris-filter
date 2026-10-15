@@ -24,7 +24,7 @@ key-files:
     - src/overlay/body.rs
 decisions:
   - "Defences and Simple Defences are one slot: any defence line or either pending card greys both picker entries; either click focuses the shown card (FocusTarget::Defences)"
-  - "advanced_defences is set when Defences is picked or the Defences card renders, cleared by clear_ids (Revert, RELOAD and the Apply re-parse count as a reload), either card's X, and a Simple Defences pick"
+  - "advanced_defences is set when Defences is picked or the Defences card renders, cleared by clear_ids (Revert and RELOAD count as a reload; review WR-01 later made the Apply re-parse carry the marker by row position), either card's X, and a Simple Defences pick"
   - "Setting the last non-Any row of a Simple card back to Any keeps the card open as a pending card instead of letting it vanish"
 metrics:
   duration: "~35 min"

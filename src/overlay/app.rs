@@ -1033,12 +1033,13 @@ impl OverlayApp {
         let Ok(root) = &self.root else {
             return false;
         };
-        // Ids reset on re-parse, so remember the expanded row by position instead.
-        let expanded_index = self
+        // Ids reset on re-parse, so remember the expanded row and the Defences markers by
+        // position instead (review WR-01: Apply must not flip a Defences card to Simple).
+        let kept = self
             .working
             .as_ref()
-            .and_then(|w| self.list.expanded.and_then(|id| w.row(id)))
-            .map(|r| r.index);
+            .map(|w| self.list.kept_positions(w))
+            .unwrap_or_default();
         // Without an in-memory CONFIG the styles are re-read at every Apply, so a styles.json
         // edited a moment ago counts.
         if self.config.is_err()
@@ -1139,12 +1140,7 @@ impl OverlayApp {
         self.changed_on_disk.clear();
         self.applied_this_session = true;
         self.list_status = None;
-        self.list.clear_ids();
-        self.list.expanded = expanded_index.and_then(|i| {
-            self.working
-                .as_ref()
-                .and_then(|w| w.rows().get(i - 1).map(|r| r.id))
-        });
+        self.list.rekey_after_apply(kept, self.working.as_ref());
         true
     }
 

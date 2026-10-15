@@ -1,5 +1,44 @@
 # Milestones
 
+## v0.5 — Generic Filter Editor & Initial App Configuration
+
+**Shipped:** 2026-10-15
+**Phases:** 16-28 (13) · **Plans:** 71 · **Commits:** 452 · **Tests:** 1142 green
+**Timeline:** 2026-10-12 → 2026-10-15 · **Code:** ~50,244 lines Rust (+46,456/-5,977 in src/tests)
+
+**Delivered:** FerrisFilter opens, edits and saves any working PoE2 filter, not just its own
+output, with the style palette, tier cutoffs and target filter configurable from the overlay.
+
+**Key accomplishments:**
+
+1. **A lossless filter parser** — any PoE2 filter round-trips byte-identical; edits patch only the
+   edited lines and are validated against the diagnostics they introduce.
+2. **Styles became data** — `styles.json` with stable ids, rules linked by `# ff:style <id> <name>`
+   and rewritten on Apply; committed `styles-default.json` / `tiers-default.json` defaults with
+   per-user, git-ignored live files.
+3. **The filter is the store** — `dynamic.json` is gone; `dynamic.filter` is edited in place with a
+   fenced, regenerable economy section and guarded writes (changed-on-disk refusal, atomic write,
+   one-time `.ffbak`).
+4. **A rule list and full-grammar editor over any filter** — virtualized, searchable list that
+   stays responsive on ~500-block foreign filters; every condition and action editable, including
+   Defences, Simple Defences and a Between operator.
+5. **A CONFIG tab with one Apply** — filter choice, styles and tier cutoffs, written all-or-none
+   together with the filter.
+6. **Overlay polish** — single running instance, and `/reloaditemfilter` sent to the game after a
+   successful Apply.
+
+**Audit:** `tech_debt` — requirements 73/73, phases 13/13, integration 20/20, E2E flows 15/15, no
+gaps, no pending UAT.
+
+**Known deferred items at close:** 2 (see STATE.md Deferred Items) — Phase 14 UAT file left
+`diagnosed`, Phase 16 UAT partial pass (rest in backlog 999.12).
+
+**Verification at close:** full suite green — 1142 tests including `artifact_guard` and
+`generate_snapshot`; `cargo fmt --check` clean. The only fixture change in the milestone is the
+deliberate `# ====` banner spelling.
+
+---
+
 ## v0.4 — Overlay Filter Editor Rework
 
 **Shipped:** 2026-09-17

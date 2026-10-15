@@ -2,51 +2,26 @@
 
 ## What This Is
 
-FerrisFilter is a Rust CLI tool that compiles a human-editable configuration into a working Path of Exile 2 loot filter. The author edits a compact policy file describing what they want shown, highlighted, or hidden; FerrisFilter deterministically generates the `.filter` the game consumes. It also fetches live item prices from poe.ninja so highlight tiers can be driven by real economy values rather than hand-curated lists.
+FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a human-editable configuration into a working `.filter` and fetches live item prices from poe.ninja so highlight tiers are driven by real economy values. Its overlay, `ff`, draws over the running game and edits any working PoE2 filter in place — its own output or a FilterBlade / NeverSink / hand-written one — losslessly, with named styles, tier cutoffs and a regenerable economy section configurable from the overlay.
 
 ## Core Value
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Current Milestone: v0.5 Generic Filter Editor & Initial App Configuration
+<details>
+<summary>✅ v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15</summary>
 
 **Goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own output,
 with the style palette and economy tier cutoffs configurable from the overlay.
 
-**Target features:**
+Delivered: lossless parser, `styles.json` with stable ids and committed defaults, the filter file as
+the store with a fenced economy section and guarded writes, a rule list + full-grammar editor, a
+CONFIG tab with one Apply, single-instance `ff`, in-game reload after Apply.
 
-- **Parse and edit any filter (backlog 999.6)** — load any working PoE2 filter (FilterBlade /
-  NeverSink, poe2filter.com, hand-written) and edit it. Full PoE2 grammar: every condition,
-  operator and action, plus `Continue`, `Import`, `Minimal`. Anything the editor does not
-  understand is saved back unchanged; a FilterBlade/NeverSink filter is byte-identical after
-  load and save.
-- **Drop `dynamic.json` (backlog 999.5)** — the filter file itself holds the rules.
-  `dynamic.json` and its `dynamic_base.json` template go away. Style definitions move to a new
-  repo-root **`styles.json`**. `prices.json`, `tiers.json`, the fallback pair and `mapping.json`
-  stay as they are. Giving up full regeneration of the dynamic filter is intentional.
-- **Config-driven styles (backlog 999.1)** — named styles are data looked up by name, not a
-  hardcoded `Styles` struct plus `emitter::resolve_style` match; unknown style names are caught
-  at load time.
-- **Overlay configuration tab, partial (backlog 999.8)** — a tab separate from the rule editor for
-  editing styles (`styles.json`) and tier cutoffs (`tiers.json`, not prices), following the
-  overlay's in-memory edit + Apply/Revert model. **No load message** (see below).
-- **Overlay single-instance guard (backlog 999.2)** — launching `ff` while it is running brings up
-  the existing stripe instead of opening a second one.
+**Audit:** `tech_debt` — 73/73 requirements, 13/13 phases, no gaps. Archives:
+[v0.5-ROADMAP.md](milestones/v0.5-ROADMAP.md) · [v0.5-REQUIREMENTS.md](milestones/v0.5-REQUIREMENTS.md) · [v0.5-MILESTONE-AUDIT.md](milestones/v0.5-MILESTONE-AUDIT.md)
 
-**Key context:**
-
-- **The in-game load message is online-only** (spike 2026-10-12, backlog 999.3): the game ignores
-  the online-filter header on local `.filter` files, `OnlineFilters/` is a cache synced from the
-  server, and edits there are overwritten on load. Deferred until account publishing exists.
-- **Out of scope:** economy change summary (999.4), locked rules / `Import` layering (999.7),
-  presets (999.9).
-- **`config.json` → `universal.filter`** (the static `generate` path, `seed-universal.filter`,
-  `artifact_guard`) is untouched unless explicitly decided otherwise.
-- **Grammar reference:** the official filter docs describe PoE1; the PoE2 condition/action list
-  must be assembled by research. The FilterBlade/NeverSink filter is the real-world test material
-  for load-and-save.
-- **Biggest open design question:** how the economy-priced sections are found and refreshed inside
-  a filter that has been edited by hand.
+</details>
 
 <details>
 <summary>✅ v0.4 Overlay Filter Editor Rework — SHIPPED 2026-09-17</summary>
@@ -75,7 +50,18 @@ See Current State below and [v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md).
 
 ## Current State
 
-**Shipped:** v0.4 Overlay Filter Editor Rework (2026-09-17) — `ff`, a GUI overlay that draws
+**Shipped:** v0.5 Generic Filter Editor & Initial App Configuration (2026-10-15) — `ff` now edits
+any working PoE2 filter, not just FerrisFilter's own output. A lossless parser round-trips foreign
+filters byte-for-byte; `dynamic.json` is gone and the game-folder `.filter` is the store, with a
+fenced economy section regenerated on Apply and guarded writes (changed-on-disk refusal, atomic
+write, one-time `.ffbak`). Every condition and action is editable; named styles live in
+`styles.json` (stable ids, `# ff:style` links rewritten on Apply) with committed
+`styles-default.json` / `tiers-default.json` defaults; a CONFIG tab edits styles, tier cutoffs and
+the target filter under one all-or-none Apply. `ff` runs as a single instance, launches from
+Explorer (app root resolved from the exe), and sends `/reloaditemfilter` after Apply. ~50,244 LOC
+Rust; 1142 tests green. This closes v0.4's "launch by double-click" gap.
+
+**Prior:** v0.4 Overlay Filter Editor Rework (2026-09-17) — `ff`, a GUI overlay that draws
 over a running Path of Exile 2 and edits filter rules in place. A rule expands into controls for
 style, classes, base types, rarity, defences, sockets, quality, corrupted and unidentified tier;
 Apply is the single writer, compiling `dynamic.json` into `dynamic.filter` straight into the game
@@ -94,18 +80,16 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** v0.5 Generic Filter Editor & Initial App Configuration (started 2026-10-12, see
-Current Milestone). Still-open candidate from the v0.4 close:
-**overlay robustness**, because v0.4 shipped a GUI whose failure modes were never designed: it can
-only be launched from the repo root, an unloadable store has no recovery from inside the window,
-and an existing `dynamic.json` never receives additive config fields. Longer-standing candidates
-remain: Tablets as a class-less priced category (ECONX-01), generate QoL (`--dry-run`, `--diff`,
-verbose rule logging), and the config-driven style vocabulary (backlog Phase 999.1).
+**Next milestone:** not yet defined (`/gsd-new-milestone`). Candidates: the open backlog
+(999.3 load message for online filters, 999.4 economy change summary, 999.7 locked rules / `Import`
+layering, 999.8 rest of the configuration tab, 999.9 presets, 999.10 raw-text block editing, 999.11
+UI review, 999.12 in-game keyword checks, 999.13 unmatchable-condition guidance, 999.14 `Minimal`),
+the v0.5 tech debt (integration warnings W1-W4 in the audit), and the longer-standing Deferred list
+below.
 
-**Open at close:** one user-facing blocker, deferred by decision — `ff` cannot be launched by
-double-clicking the exe (`store.rs` resolves paths from the process working directory, which for a
-GUI-subsystem binary started from Explorer is the exe's own folder). It does not affect launching
-from the repo root. Full suite green at tag `v0.4` — 368 tests, 0 failures, build warning-free.
+**Open at close:** no blockers. Tech debt accepted per the v0.5 audit; upgrade note: an existing
+install folder needs `styles-default.json` to be found as the app root. Full suite green at tag
+`v0.5` — 1142 tests, 0 failures, `cargo fmt --check` clean.
 
 ## Requirements
 
@@ -130,23 +114,25 @@ from the repo root. Full suite green at tag `v0.4` — 368 tests, 0 failures, bu
 - [x] **`corrupted` rule condition** — `when.corrupted` emits the bare boolean `Corrupted True`/`Corrupted False`, no operator. *(Validated in Phase 10 — EXC-01, v0.3)*
 - [x] **Exceptional gear highlight** — three rules ahead of recycle surface uncorrupted gear with extra sockets (>= 3 2h/body, >= 2 1h) or `Quality >= 24`, in the dedicated pink `exceptional` style. *(Validated in Phase 10 — EXC-02/03/04, v0.3)*
 
+- [x] **Lossless filter parsing and editing** — any PoE2 filter loads and saves byte-identical; every condition and action editable; unknown/PoE1-only lines kept as raw rows. *(Validated in Phases 16, 19-20, 24-27 — PARSE, EDIT, v0.5)*
+- [x] **Filter file as the store** — `dynamic.json` removed; fenced, regenerable economy section; guarded atomic writes with a one-time `.ffbak`. *(Validated in Phase 18 — STORE, ECON, v0.5)*
+- [x] **Config-driven styles** — `styles.json` with stable ids, resolved by name in `generate` and by id in `# ff:style` tags; committed `-default.json` fallbacks. *(Validated in Phases 17, 26, 28 — STYLE, DEF, v0.5)*
+- [x] **Overlay CONFIG tab** — filter choice, styles and tier cutoffs under one all-or-none Apply. *(Validated in Phases 21, 25 — CONF, v0.5)*
+- [x] **Single-instance `ff` and in-game reload after Apply.** *(Validated in Phases 22-23 — INST-01, RELOAD-01, v0.5)*
+- [x] **`ff` launchable from Explorer** — app root resolved via `FERRISFILTER_HOME` or by walking up from the exe (closes the v0.4 known gap). *(Validated in Phase 18 — STORE-05, v0.5)*
+
 ### Active
 
-v0.5 requirements are defined in `.planning/REQUIREMENTS.md` (REQ-IDs + traceability). Summary:
-
-- [ ] Parse, edit and save any PoE2 filter losslessly (999.6)
-- [ ] Filter file replaces `dynamic.json` as the rule store; styles live in `styles.json` (999.5)
-- [ ] Style vocabulary is data, resolved by name (999.1)
-- [ ] Overlay configuration tab for styles and tier cutoffs (999.8, partial)
-- [ ] Single-instance `ff` (999.2)
+None — next milestone requirements are defined by `/gsd-new-milestone`.
 
 ### Deferred (next-milestone candidates)
 
-- [ ] **Overlay robustness** (new at the v0.4 close, from the milestone audit and UAT):
-  - `ff` launchable by double-clicking the exe — anchor the store root somewhere other than the
-    process CWD, and give an unloadable store a recovery path from inside the window
-  - An existing `dynamic.json` should receive additive config fields without `--reset` discarding
-    every rule
+- [ ] **v0.5 tech debt** (audit W1-W4): CLI `sync`/`generate`/`install` resolve against the
+  working directory while `apply`/`ff` use the app root; CLI `apply` does not rewrite styled rules;
+  CONFIG tier edits have no effect while fallback prices are in use; class picker disabled when
+  `config.json`/`styles.json` is invalid.
+- [ ] **Overlay robustness** (carried from the v0.4 close; launch-by-double-click and the
+  `dynamic.json` items were resolved in v0.5):
   - Surface `price_source` in the stripe, so a fallback-priced Apply is not silent
   - A destination override in the GUI, matching the CLI's `--dest`
   - A league picker, replacing the pinned `sync::OVERLAY_LEAGUE`
@@ -210,6 +196,14 @@ v0.5 requirements are defined in `.planning/REQUIREMENTS.md` (REQ-IDs + traceabi
 | `exceptional` kept as its own style, separate from `S` (same pink today) | Lets the exceptional-gear color be retuned independently later | ✓ Good (v0.3) |
 | `exceptional` landed as `Option<Style>` rather than a required `Styles` field | Matches the `craftable` pattern so `--config` files without it keep parsing | ✓ Good (v0.3 — adjusted in code review) |
 | One consolidated fixture re-baseline at the last emitter-output phase | Avoided re-baselining the oracle three times across Phases 8-10 | ✓ Good (v0.3) |
+| Lossless parser; edits patch only the edited lines | A foreign filter must survive load/save byte-for-byte; no "unsupported block" class | ✓ Good (v0.5) |
+| The `.filter` file is the store; `dynamic.json` dropped | One source of truth; full regeneration of the dynamic filter given up deliberately | ✓ Good (v0.5) |
+| Economy blocks fenced by `# ff:economy-begin/end` markers, regenerated on Apply | Lets the economy refresh inside a hand-edited filter without touching anything else | ✓ Good (v0.5) |
+| Styles linked by stable id (`# ff:style <id> <name>`), not name | Custom styles can be renamed without orphaning rules; legacy name tags still resolve | ✓ Good (v0.5) |
+| One all-or-none Apply across RULES and CONFIG | Author's second UAT round (UAT2): one action, written all or none, no half-applied state | ✓ Good (v0.5) |
+| In-game reload via clipboard paste, no Ctrl+A | Same method as EE2 / Awakened PoE Trade; synthetic Ctrl+A fired another tool's hotkey | ✓ Good (v0.5) |
+| Committed `styles-default.json` / `tiers-default.json`; live files git-ignored | Per-user edits from the overlay must not dirty the repo or break `artifact_guard` | ✓ Good (v0.5) |
+| Overlay league pinned in `sync::OVERLAY_LEAGUE` | poe.ninja's `indexed` flag flips between leagues | ⚠️ Revisit (league picker) |
 
 ## Git Workflow
 
@@ -241,4 +235,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-12 at the start of milestone v0.5*
+*Last updated: 2026-10-15 after v0.5 milestone*

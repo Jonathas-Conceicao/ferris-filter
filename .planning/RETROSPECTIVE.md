@@ -127,6 +127,55 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
   existed. The cheapest phase in the project so far, and a direct dividend of the Phase 8
   decision to make `background_override` data-driven.
 
+## Milestone: v0.5 — Generic Filter Editor & Initial App Configuration
+
+**Shipped:** 2026-10-15
+**Phases:** 13 (16-28) | **Plans:** 71 | **Commits:** 452 | **Tests:** 1142
+
+### What Was Built
+
+- A lossless filter parser (`filter::Document`) and line-level edit operations that keep every
+  untouched byte.
+- `styles.json` as data, with stable style ids and committed `-default.json` fallbacks.
+- The `.filter` file as the only store, with a fenced, regenerable economy section and guarded writes.
+- A virtualized rule list and full-grammar editor in `ff`, a CONFIG tab, one all-or-none Apply,
+  single-instance launch and in-game reload after Apply.
+
+### What Worked
+
+- **Parser first, everything else on top.** Phase 16's byte-identical round trip made every later
+  editor feature safe to ship against foreign ~500-block filters.
+- **Hands-on UAT rounds as their own phases** (24-27). Each round of the author's feedback became a
+  small, autonomously executed phase with its own requirement IDs, so feedback never leaked into
+  half-finished work.
+- **The oracle held.** `artifact_guard` / `generate_snapshot` flagged the only fixture change
+  (the `# ====` banner spelling), which was deliberate.
+
+### What Was Inefficient
+
+- **Scope grew after the first audit.** Phases 23-28 (six of thirteen) were added after the
+  2026-10-13 audit, so the audit had to be refreshed and bookkeeping drift (unchecked roadmap
+  rows, missing `requirements-completed` frontmatter) fixed at wrap-up.
+- **Phase 28 skipped the verifier step** (review + UAT only), recorded as tech debt.
+
+### Patterns Established
+
+- Metadata lines are `# ff:...`; old `#ff:` spellings are read and normalized on the next Apply.
+- Rules link to styles by id; names are informational and refreshed on Apply.
+- Shipped defaults are committed `*-default.json`; per-user live files are git-ignored.
+- One Apply validates everything first, then writes all files or none.
+
+### Key Lessons
+
+- Treat the author's UAT as a planned stage of the milestone, not an afterthought: four rounds of
+  feedback were the bulk of the polish.
+- Run the verifier on every phase, even small ones, so the close audit does not have to reconstruct it.
+
+### Cost Observations
+
+- Model mix: `balanced` profile, `yolo` gate mode; UAT feedback phases run autonomously.
+- Notable: 13 phases and 452 commits in four calendar days (2026-10-12 → 2026-10-15).
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Commits | LOC (cumulative) | Span |
@@ -134,6 +183,8 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
 | v0.1 Initial Release | 4 | 14 | 127 | ~4,970 | 7 days |
 | v0.2 Declarative Rule Model | 3 | 7 | ~38 | — | 7 days |
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | ~7,534 | 15 days |
+| v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | ~16,093 | 14 days |
+| v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | ~50,244 | 4 days |
 
 **Trend — phases are getting smaller and cheaper.** Plans per phase fell from 3.5 (v0.1) to 2.3
 (v0.2) to 1.7 (v0.3) as the declarative rule model absorbed work that used to require code. v0.3's

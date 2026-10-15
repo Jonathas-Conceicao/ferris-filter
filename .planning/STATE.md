@@ -2,42 +2,39 @@
 gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
-status: verifying
-stopped_at: v0.5 wrap-up done; all phases 16-28 executed and UAT recorded; ready for /gsd-complete-milestone v0.5
-last_updated: "2026-10-15T12:00:00.000Z"
-last_activity: 2026-10-15 -- v0.5 wrap-up: UAT recorded for phases 16-28, review decisions recorded, audit refreshed (tech_debt, no gaps)
+status: completed
+stopped_at: v0.5 milestone completed, archived and tagged
+last_updated: "2026-10-15T18:00:00.000Z"
+last_activity: 2026-10-15 -- Milestone v0.5 completed, archived, squash-merged to main and tagged v0.5
 progress:
-  total_phases: 26
+  total_phases: 13
   completed_phases: 13
   total_plans: 71
   completed_plans: 71
-  percent: 50
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-12)
+See: .planning/PROJECT.md (updated 2026-10-15)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.5 milestone close (`/gsd-complete-milestone v0.5`)
+**Current focus:** Planning next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: 28 (Default config files, last v0.5 phase) — all v0.5 phases executed, UAT complete
-Plan: 4 of 4
-Status: Ready to complete milestone v0.5. UAT recorded for Phases 16-28 (16 partial pass accepted,
-Phase 28 and some single checks accepted as assumed passes); audit refreshed: tech_debt, no gaps,
-no pending UAT (.planning/v0.5-MILESTONE-AUDIT.md)
-Last activity: 2026-10-15 -- v0.5 wrap-up bookkeeping (UAT results, review decisions, backlog 999.14, audit refresh)
+Milestone v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15 (tag `v0.5`).
+Archives: .planning/milestones/v0.5-ROADMAP.md, v0.5-REQUIREMENTS.md, v0.5-MILESTONE-AUDIT.md.
+Status: Between milestones. Next: `/gsd-new-milestone`.
 Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 46 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16)
+- Total plans completed: 117 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
 
 **By Milestone:**
 
@@ -47,6 +44,7 @@ Progress: [██████████] 100%
 | v0.2 Declarative Rule Model | 3 | 7 | ~38 | 7 days |
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | 15 days |
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
+| v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -297,6 +295,14 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
 
 ## Deferred Items
 
+Items acknowledged and deferred at the **v0.5** close on 2026-10-15 (open-artifact audit):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Phase 14: 14-UAT.md | diagnosed, 0 pending scenarios (v0.4 artifact) |
+| uat | Phase 16: 16-HUMAN-UAT.md | partial pass accepted, 0 pending; rest in backlog 999.12 |
+| tech_debt | v0.5 audit W1-W4 and accepted review findings | See milestones/v0.5-MILESTONE-AUDIT.md |
+
 Items acknowledged and deferred at the **v0.3** close on 2026-06-27 (open-artifact audit was
 clear — these are scope/debt carries, not open GSD artifacts):
 
@@ -320,7 +326,7 @@ Items carried from the **v0.1** close on 2026-05-28:
 ## Session Continuity
 
 Last session: 2026-10-15
-Stopped at: v0.5 wrap-up bookkeeping complete
+Stopped at: v0.5 milestone complete
 Resume file: None
 
-**Next step:** `/gsd-complete-milestone v0.5`.
+**Next step:** `/gsd-new-milestone`.

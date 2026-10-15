@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-15
+
+**Generic Filter Editor & Initial App Configuration** — the overlay opens, edits and saves any
+working PoE2 filter losslessly (not just FerrisFilter's own output), the filter file becomes the
+store with a fenced economy section, styles and tier cutoffs move to data editable from a new CONFIG
+tab, and `ff` gains single-instance launch and an in-game reload after Apply. Tagged `v0.5`.
+
 ### Added
 
 - **Phase 28 (DEF-01..05).** Shipped defaults now live in committed `styles-default.json` /
@@ -418,7 +425,9 @@ Exile 2 loot filter and prices currency from poe.ninja. Tagged `v0.1`.
   --early-game` is passed. Cutoffs are exalt-denominated (`Unit::Exalt`) so currency tiers like
   the poe2filter.com export; cross-rates are derived from the anchor orbs (no stored rates).
 
-[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.3...HEAD
+[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.5...HEAD
+[0.5.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.4...v0.5
+[0.4.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.3...v0.4
 [0.3.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.2...v0.3
 [0.2.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.1...v0.2
 [0.1.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/releases/tag/v0.1

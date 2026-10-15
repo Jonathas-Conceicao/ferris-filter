@@ -455,13 +455,13 @@ Plans:
 
 **Wave 1**
 
-- [ ] 27-01-PLAN.md — Right-aligned Custom styles Order column; colour dropdown scroll bar root-cause fix (UAT4-01, UAT4-02)
-- [ ] 27-02-PLAN.md — Simple Defences pure logic: classification, segment writes, combination strip (UAT4-03)
-- [ ] 27-03-PLAN.md — Record UAT results (phases 16, 22-26), traceability, backlog 999.12/999.13 (UAT4-04)
+- [x] 27-01-PLAN.md — Right-aligned Custom styles Order column; colour dropdown scroll bar root-cause fix (UAT4-01, UAT4-02)
+- [x] 27-02-PLAN.md — Simple Defences pure logic: classification, segment writes, combination strip (UAT4-03)
+- [x] 27-03-PLAN.md — Record UAT results (phases 16, 22-26), traceability, backlog 999.12/999.13 (UAT4-04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 27-04-PLAN.md — Simple Defences card UI, picker exclusivity, card stability (UAT4-03)
+- [x] 27-04-PLAN.md — Simple Defences card UI, picker exclusivity, card stability (UAT4-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -482,7 +482,7 @@ Plans:
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
-| 27. UAT Feedback Fixes 4 | 0/? | Not started | - |
+| 27. UAT Feedback Fixes 4 | 4/5 | In progress | - |
 
 ## Backlog
 

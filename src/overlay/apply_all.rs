@@ -228,25 +228,32 @@ pub fn prepare(
     }
 
     // 3. Changed on disk: every participating file against its baseline. A config file without a
-    // pending change does not participate: it is neither guarded nor written (CR-01).
+    // pending change does not participate: it is neither guarded nor written (CR-01). The guard
+    // compares the LIVE file with its live baseline, `None` meaning it was absent at load (the
+    // config was read from the `-default.json`): still absent is no conflict and the write creates
+    // it; created or deleted since is a conflict (DEF-03). The default files are never guarded or
+    // written.
     let mut changed = Vec::new();
     let mut config_part = None;
     if let (Some(c), Some(write)) = (config, config_write) {
         let styles_path = c.styles_path();
         let tiers_path = c.tiers_path();
-        let (styles_base, tiers_base) = c.baselines();
+        let (styles_base, tiers_base) = c.live_baselines();
         let styles_now = read_now(&styles_path)?;
         let tiers_now = read_now(&tiers_path)?;
-        if write.styles_changed() && styles_now.as_deref() != Some(styles_base) {
+        if write.styles_changed() && styles_now.as_deref() != styles_base {
             changed.push(DiskFile::Styles);
         }
-        if write.tiers_changed() && tiers_now.as_deref() != Some(tiers_base) {
+        if write.tiers_changed() && tiers_now.as_deref() != tiers_base {
             changed.push(DiskFile::Tiers);
         }
         let (styles_guard, tiers_guard) = if overwrite {
             (styles_now, tiers_now)
         } else {
-            (Some(styles_base.to_vec()), Some(tiers_base.to_vec()))
+            (
+                styles_base.map(<[u8]>::to_vec),
+                tiers_base.map(<[u8]>::to_vec),
+            )
         };
         config_part = Some(ConfigPart {
             write,
@@ -409,6 +416,7 @@ mod tests {
     use super::*;
     use crate::filter::section;
     use crate::models::tiers::TierEntry;
+    use crate::overlay::config_state::StyleEdit;
 
     const RULES: &str = "Show # a\n\tRarity Rare\n";
 
@@ -425,12 +433,25 @@ mod tests {
     }
 
     impl Fixture {
+        /// The defaults copied in as the live `styles.json` / `tiers.json`.
         fn new() -> Fixture {
-            let root = tempfile::tempdir().unwrap();
-            for (src, dst) in [
+            Fixture::build(&[
                 ("styles-default.json", "styles.json"),
                 ("tiers-default.json", "tiers.json"),
-            ] {
+            ])
+        }
+
+        /// Only the committed defaults under their own names: no live file (DEF-03).
+        fn with_defaults() -> Fixture {
+            Fixture::build(&[
+                ("styles-default.json", "styles-default.json"),
+                ("tiers-default.json", "tiers-default.json"),
+            ])
+        }
+
+        fn build(files: &[(&str, &str)]) -> Fixture {
+            let root = tempfile::tempdir().unwrap();
+            for (src, dst) in files {
                 fs::copy(repo_file(src), root.path().join(dst)).unwrap();
             }
             fs::copy(
@@ -942,5 +963,133 @@ mod tests {
         .unwrap();
         let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();
         assert!(!done.styles_written);
+    }
+
+    // -- DEF-01 / DEF-03: defaults are read, never written; the guard watches the live path -----
+
+    fn live(fx: &Fixture, name: &str) -> PathBuf {
+        fx.root.path().join(name)
+    }
+
+    fn default_bytes(fx: &Fixture) -> [Vec<u8>; 2] {
+        [
+            fs::read(live(fx, "styles-default.json")).unwrap(),
+            fs::read(live(fx, "tiers-default.json")).unwrap(),
+        ]
+    }
+
+    fn assert_no_live(fx: &Fixture) {
+        assert!(!live(fx, "styles.json").exists(), "styles.json created");
+        assert!(!live(fx, "tiers.json").exists(), "tiers.json created");
+    }
+
+    fn edit_s(cfg: &mut ConfigState) {
+        assert!(cfg.edit_style("S", StyleEdit::Font(Some(41))));
+    }
+
+    #[test]
+    fn first_config_apply_from_defaults_creates_live_and_keeps_defaults() {
+        let fx = Fixture::with_defaults();
+        let defaults = default_bytes(&fx);
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        assert_no_live(&fx);
+        edit_s(&mut cfg);
+        let p = prepare(
+            fx.root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Refresh)),
+            false,
+        )
+        .unwrap();
+        assert_no_live(&fx);
+        let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(done.styles_written && !done.tiers_written);
+        let written = fs::read(live(&fx, "styles.json")).unwrap();
+        let set: crate::models::config::StyleSet = serde_json::from_slice(&written).unwrap();
+        assert_eq!(set.get("S").unwrap().font, Some(41));
+        assert!(
+            !live(&fx, "tiers.json").exists(),
+            "unedited tiers not created"
+        );
+        assert_eq!(default_bytes(&fx), defaults, "defaults never written");
+        assert_eq!(cfg.live_baselines(), (Some(&written[..]), None));
+
+        // The next edit guards against the file just created.
+        assert!(cfg.edit_style("S", StyleEdit::Font(Some(40))));
+        let p = prepare(fx.root.path(), Some(&cfg), None, false).unwrap();
+        commit(p, Some(&mut cfg), None).unwrap();
+        assert_eq!(default_bytes(&fx), defaults);
+    }
+
+    #[test]
+    fn unedited_config_from_defaults_writes_nothing() {
+        let fx = Fixture::with_defaults();
+        let defaults = default_bytes(&fx);
+        let mut cfg = fx.config();
+        let filter_before = fs::read(&fx.filter).unwrap();
+        let p = prepare(fx.root.path(), Some(&cfg), None, false).unwrap();
+        let done = commit(p, Some(&mut cfg), None).unwrap();
+        assert!(!done.styles_written && !done.tiers_written);
+        assert_no_live(&fx);
+        assert_eq!(default_bytes(&fx), defaults);
+        assert_eq!(fs::read(&fx.filter).unwrap(), filter_before);
+    }
+
+    #[test]
+    fn guard_live_absent_and_still_absent_is_no_conflict() {
+        let fx = Fixture::with_defaults();
+        let mut cfg = fx.config();
+        edit_s(&mut cfg);
+        cfg.set_tier_text("S", "35");
+        let p = prepare(fx.root.path(), Some(&cfg), None, false).unwrap();
+        let done = commit(p, Some(&mut cfg), None).unwrap();
+        assert!(done.styles_written && done.tiers_written);
+        assert!(live(&fx, "styles.json").exists() && live(&fx, "tiers.json").exists());
+    }
+
+    #[test]
+    fn guard_live_created_since_load_is_a_conflict_and_overwrite_writes() {
+        let fx = Fixture::with_defaults();
+        let defaults = default_bytes(&fx);
+        let mut cfg = fx.config();
+        edit_s(&mut cfg);
+        // Someone creates styles.json between load and Apply.
+        let outside = b"{ \"outside\": true }".to_vec();
+        fs::write(live(&fx, "styles.json"), &outside).unwrap();
+        let r = prepare(fx.root.path(), Some(&cfg), None, false);
+        assert_eq!(
+            r.err(),
+            Some(ApplyAllError::ChangedOnDisk(vec![DiskFile::Styles]))
+        );
+        assert_eq!(fs::read(live(&fx, "styles.json")).unwrap(), outside);
+
+        let p = prepare(fx.root.path(), Some(&cfg), None, true).unwrap();
+        let done = commit(p, Some(&mut cfg), None).unwrap();
+        assert!(done.styles_written);
+        let written = fs::read(live(&fx, "styles.json")).unwrap();
+        assert_ne!(written, outside);
+        assert_eq!(cfg.live_baselines().0, Some(&written[..]));
+        assert!(!live(&fx, "tiers.json").exists());
+        assert_eq!(default_bytes(&fx), defaults);
+    }
+
+    #[test]
+    fn guard_live_deleted_since_load_is_a_conflict() {
+        let fx = Fixture::with_defaults();
+        fs::copy(live(&fx, "styles-default.json"), live(&fx, "styles.json")).unwrap();
+        let mut cfg = fx.config();
+        assert!(cfg.live_baselines().0.is_some());
+        edit_s(&mut cfg);
+        fs::remove_file(live(&fx, "styles.json")).unwrap();
+        let r = prepare(fx.root.path(), Some(&cfg), None, false);
+        assert_eq!(
+            r.err(),
+            Some(ApplyAllError::ChangedOnDisk(vec![DiskFile::Styles]))
+        );
+        assert!(
+            !live(&fx, "styles.json").exists(),
+            "a refusal writes nothing"
+        );
     }
 }

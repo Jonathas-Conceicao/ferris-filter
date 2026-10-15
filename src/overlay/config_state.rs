@@ -3,15 +3,17 @@
 //!
 //! Layer rule (same as `overlay/apply.rs`): no GUI-framework types live here, so every CONF-02/03/04
 //! rule is provable with temp dirs -- `OverlayApp::new` needs a real tray and cannot be unit-tested.
-//! File paths come only from `InputPaths::relative_to(root)`. This module writes only `styles.json`
-//! and `tiers.json`; the committed early-league fallback pair is never
-//! touched.
+//! File paths come only from `InputPaths::relative_to(root)`. Reads go through
+//! `InputPaths::styles_source` / `tiers_source` (the live file, else the committed `-default.json`);
+//! this module only ever hands out the live `styles.json` / `tiers.json` as write targets, so the
+//! `-default.json` files and the early-league fallback pair are never touched.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::compile::InputPaths;
+use crate::loader::LoadError;
 use crate::models::config::{
     Beam, Config, Minimap, Sound, Style, StyleAction, StyleNameError, StyleSet,
 };
@@ -87,8 +89,13 @@ pub struct ConfigState {
     tiers_applied: Vec<TierEntry>,
     buffers: BTreeMap<String, String>,
     errors: TierErrors,
+    /// Bytes of the source actually read (live file or default): the content baselines.
     styles_bytes: Vec<u8>,
     tiers_bytes: Vec<u8>,
+    /// Bytes of the LIVE file at load / last follow / last write; `None` = it did not exist. The
+    /// changed-on-disk baselines (the guard never looks at the `-default.json` files).
+    styles_live: Option<Vec<u8>>,
+    tiers_live: Option<Vec<u8>>,
     /// Ids were assigned at load (the file on disk lacks them): the next Apply writes styles.json
     /// even with no CONFIG edit. Never counts as an edit.
     ids_unpersisted: bool,
@@ -100,6 +107,20 @@ fn file_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// Read `path`, `None` when it does not exist. Errors read `<file name>: <reason>`.
+fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", file_label(path))),
+    }
+}
+
+/// Map a read-source resolution error so it starts with the live file name.
+fn source(live: &Path, resolved: Result<PathBuf, LoadError>) -> Result<PathBuf, String> {
+    resolved.map_err(|e| format!("{}: {e}", file_label(live)))
+}
+
 fn tiers_equal(a: &[TierEntry], b: &[TierEntry]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -108,24 +129,29 @@ fn tiers_equal(a: &[TierEntry], b: &[TierEntry]) -> bool {
 }
 
 impl ConfigState {
-    /// Read `styles.json` and `tiers.json` under `root`. Errors read `<file name>: <reason>`.
+    /// Read `styles.json` and `tiers.json` under `root`, each falling back to its
+    /// `-default.json` when absent (DEF-03). Errors read `<file name>: <reason>`. Never writes.
     pub fn load(root: &Path) -> Result<ConfigState, String> {
         let paths = InputPaths::relative_to(root);
         let read = |p: &Path| fs::read(p).map_err(|e| format!("{}: {e}", file_label(p)));
 
-        let styles_bytes = read(&paths.styles)?;
+        let styles_src = source(&paths.styles, paths.styles_source())?;
+        let styles_bytes = read(&styles_src)?;
+        let styles_live = read_optional(&paths.styles)?;
         let mut styles: StyleSet = serde_json::from_slice(&styles_bytes)
-            .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+            .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
         let ids_unpersisted = styles.assign_missing_ids();
         styles
             .validate()
-            .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+            .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
 
-        let tiers_bytes = read(&paths.tiers)?;
+        let tiers_src = source(&paths.tiers, paths.tiers_source())?;
+        let tiers_bytes = read(&tiers_src)?;
+        let tiers_live = read_optional(&paths.tiers)?;
         let tiers: Vec<TierEntry> = serde_json::from_slice(&tiers_bytes)
-            .map_err(|e| format!("{}: {e}", file_label(&paths.tiers)))?;
+            .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
         ValidatedTiers::try_from(tiers.clone())
-            .map_err(|e| format!("{}: {e}", file_label(&paths.tiers)))?;
+            .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
 
         let mut state = ConfigState {
             root: root.to_path_buf(),
@@ -137,6 +163,8 @@ impl ConfigState {
             errors: TierErrors::default(),
             styles_bytes,
             tiers_bytes,
+            styles_live,
+            tiers_live,
             ids_unpersisted,
         };
         state.resync_buffers();
@@ -349,36 +377,57 @@ impl ConfigState {
     }
 
     /// Re-read every config file the user has not edited whose bytes on disk differ from its
-    /// baseline, so a clean file follows the disk instead of being guarded or written back. A file
-    /// with pending edits keeps its baseline (changed-on-disk refusal, OVERWRITE). On error (a
-    /// clean file that no longer loads) nothing changes. Returns whether anything was re-read.
+    /// baseline, so a clean file follows the disk instead of being guarded or written back. The
+    /// source switches with the live file: creating `styles.json` makes it the source, deleting it
+    /// falls back to `styles-default.json` (same for tiers). A file with pending edits keeps both
+    /// baselines (changed-on-disk refusal, OVERWRITE). On error (a clean file that no longer
+    /// loads) nothing changes. Never writes. Returns whether any content was re-read.
     pub fn follow_disk(&mut self) -> Result<bool, String> {
         let paths = InputPaths::relative_to(&self.root);
         let read = |p: &Path| fs::read(p).map_err(|e| format!("{}: {e}", file_label(p)));
         let mut styles = None;
+        let mut styles_live = None;
         if !self.styles_changed() {
-            let now = read(&paths.styles)?;
+            let src = source(&paths.styles, paths.styles_source())?;
+            let now = read(&src)?;
+            let live = read_optional(&paths.styles)?;
             if now != self.styles_bytes {
                 let mut set: StyleSet = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
                 let assigned = set.assign_missing_ids();
                 set.validate()
-                    .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
                 styles = Some((set, now, assigned));
+            }
+            if live != self.styles_live {
+                styles_live = Some(live);
             }
         }
         let mut tiers = None;
+        let mut tiers_live = None;
         if self.tiers_dirty_count() == 0 {
-            let now = read(&paths.tiers)?;
+            let src = source(&paths.tiers, paths.tiers_source())?;
+            let now = read(&src)?;
+            let live = read_optional(&paths.tiers)?;
             if now != self.tiers_bytes {
                 let entries: Vec<TierEntry> = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", file_label(&paths.tiers)))?;
+                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
                 ValidatedTiers::try_from(entries.clone())
-                    .map_err(|e| format!("{}: {e}", file_label(&paths.tiers)))?;
+                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
                 tiers = Some((entries, now));
+            }
+            if live != self.tiers_live {
+                tiers_live = Some(live);
             }
         }
         let changed = styles.is_some() || tiers.is_some();
+        // A source switch with identical content still moves the live (guard) baseline.
+        if let Some(live) = styles_live {
+            self.styles_live = live;
+        }
+        if let Some(live) = tiers_live {
+            self.tiers_live = live;
+        }
         if let Some((set, bytes, assigned)) = styles {
             // The disk file is the new baseline, so the flag describes it alone.
             self.ids_unpersisted = assigned;
@@ -437,17 +486,26 @@ impl ConfigState {
         &self.tiers
     }
 
+    /// The live `styles.json`: the write target. Reads may come from `styles-default.json`.
     pub fn styles_path(&self) -> PathBuf {
         InputPaths::relative_to(&self.root).styles
     }
 
+    /// The live `tiers.json`: the write target. Reads may come from `tiers-default.json`.
     pub fn tiers_path(&self) -> PathBuf {
         InputPaths::relative_to(&self.root).tiers
     }
 
-    /// The bytes read at load (or written by the last apply): the changed-on-disk baselines.
+    /// The content bytes read at load (or written by the last apply), from whichever source was
+    /// read: what an unedited file keeps.
     pub fn baselines(&self) -> (&[u8], &[u8]) {
         (&self.styles_bytes, &self.tiers_bytes)
+    }
+
+    /// The live files' bytes at load / last follow / last write, `None` when the live file did
+    /// not exist: the changed-on-disk guard baselines (DEF-03).
+    pub fn live_baselines(&self) -> (Option<&[u8]>, Option<&[u8]>) {
+        (self.styles_live.as_deref(), self.tiers_live.as_deref())
     }
 
     pub fn can_apply(&self) -> bool {
@@ -509,6 +567,10 @@ impl ConfigState {
     pub fn adopt(&mut self, w: ConfigWrite) {
         if w.styles_changed {
             self.ids_unpersisted = false;
+            self.styles_live = Some(w.styles_new.clone());
+        }
+        if w.tiers_changed {
+            self.tiers_live = Some(w.tiers_new.clone());
         }
         self.styles_applied = self.styles.clone();
         self.tiers_applied = self.tiers.clone();
@@ -663,6 +725,128 @@ mod tests {
         fs::remove_file(d.path().join("styles.json")).unwrap();
         let e = ConfigState::load(d.path()).err().unwrap();
         assert!(e.starts_with("styles.json:"), "{e}");
+    }
+
+    /// A temp root holding only the committed defaults under their own names (no live file).
+    fn defaults_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["styles-default.json", "tiers-default.json"] {
+            fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(f),
+                dir.path().join(f),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    fn assert_no_live(dir: &Path) {
+        assert!(!dir.join("styles.json").exists(), "styles.json created");
+        assert!(!dir.join("tiers.json").exists(), "tiers.json created");
+    }
+
+    #[test]
+    fn load_falls_back_to_defaults_and_creates_nothing() {
+        let d = defaults_root();
+        let s = ConfigState::load(d.path()).unwrap();
+        assert_eq!(s.style_names().len(), 12);
+        assert_eq!(
+            s.baselines().0,
+            &fs::read(d.path().join("styles-default.json")).unwrap()[..]
+        );
+        assert_eq!(
+            s.baselines().1,
+            &fs::read(d.path().join("tiers-default.json")).unwrap()[..]
+        );
+        assert_eq!(s.live_baselines(), (None, None));
+        assert_eq!(s.dirty_count(), 0);
+        // The defaults carry ids: nothing to persist, so a clean Apply writes nothing.
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed() && !w.tiers_changed());
+        assert_no_live(d.path());
+    }
+
+    #[test]
+    fn load_prefers_the_live_file() {
+        let d = defaults_root();
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&fs::read(d.path().join("styles-default.json")).unwrap())
+                .unwrap();
+        v["S"]["font"] = serde_json::json!(44);
+        let live = serde_json::to_vec_pretty(&v).unwrap();
+        fs::write(d.path().join("styles.json"), &live).unwrap();
+        let s = ConfigState::load(d.path()).unwrap();
+        assert_eq!(s.baselines().0, &live[..]);
+        assert_eq!(s.live_baselines().0, Some(&live[..]));
+        assert_eq!(s.live_baselines().1, None);
+        assert!(!d.path().join("tiers.json").exists());
+    }
+
+    #[test]
+    fn load_without_any_styles_file_names_both() {
+        let d = defaults_root();
+        fs::remove_file(d.path().join("styles-default.json")).unwrap();
+        let e = ConfigState::load(d.path()).err().unwrap();
+        assert!(e.starts_with("styles.json:"), "{e}");
+        assert!(e.contains("styles-default.json"), "{e}");
+
+        let d = defaults_root();
+        fs::remove_file(d.path().join("tiers-default.json")).unwrap();
+        let e = ConfigState::load(d.path()).err().unwrap();
+        assert!(e.starts_with("tiers.json:"), "{e}");
+        assert!(e.contains("tiers-default.json"), "{e}");
+    }
+
+    #[test]
+    fn follow_disk_switches_source_on_live_create_and_delete() {
+        let d = defaults_root();
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert_eq!(s.follow_disk(), Ok(false));
+        assert_no_live(d.path());
+
+        // Creating a live styles.json (different content) switches to it.
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&fs::read(d.path().join("styles-default.json")).unwrap())
+                .unwrap();
+        v["S"]["font"] = serde_json::json!(44);
+        let live = serde_json::to_vec_pretty(&v).unwrap();
+        fs::write(d.path().join("styles.json"), &live).unwrap();
+        assert_eq!(s.follow_disk(), Ok(true));
+        assert_eq!(s.style("S").unwrap().font, Some(44));
+        assert_eq!(s.baselines().0, &live[..]);
+        assert_eq!(s.live_baselines().0, Some(&live[..]));
+        assert_eq!(s.dirty_count(), 0);
+
+        // Deleting it switches back to the default.
+        fs::remove_file(d.path().join("styles.json")).unwrap();
+        assert_eq!(s.follow_disk(), Ok(true));
+        assert_ne!(s.style("S").unwrap().font, Some(44));
+        assert_eq!(s.live_baselines().0, None);
+        assert_no_live(d.path());
+
+        // A live tiers.json identical to the default: content unchanged, the guard baseline moves.
+        let same = fs::read(d.path().join("tiers-default.json")).unwrap();
+        fs::write(d.path().join("tiers.json"), &same).unwrap();
+        assert_eq!(s.follow_disk(), Ok(false));
+        assert_eq!(s.live_baselines().1, Some(&same[..]));
+        fs::remove_file(d.path().join("tiers.json")).unwrap();
+        assert_eq!(s.follow_disk(), Ok(false));
+        assert_eq!(s.live_baselines().1, None);
+        assert_no_live(d.path());
+    }
+
+    #[test]
+    fn follow_disk_keeps_live_baseline_of_an_edited_file() {
+        let d = defaults_root();
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert!(s.edit_style("S", StyleEdit::Font(Some(41))));
+        fs::copy(
+            d.path().join("styles-default.json"),
+            d.path().join("styles.json"),
+        )
+        .unwrap();
+        assert_eq!(s.follow_disk(), Ok(false));
+        assert_eq!(s.live_baselines().0, None, "dirty file keeps 'absent'");
     }
 
     #[test]

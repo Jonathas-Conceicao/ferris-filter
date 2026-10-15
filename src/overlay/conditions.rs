@@ -565,4 +565,102 @@ mod tests {
         assert!(!between_ok(GE, 3, LE, 2));
         assert_eq!(between_line("Quality", Operator::Ge, 5), "Quality >= 5");
     }
+
+    // --- Simple Defences classification (UAT4-03) ---
+
+    fn view_of(text: &str) -> Vec<BodyEntry> {
+        let wf = WorkingFilter::from_text(text);
+        let id = wf.rows()[0].id;
+        wf.body_view(id)
+    }
+
+    fn zb(line: &str) -> Option<DefenceSeg> {
+        let v = view_of(&format!("Show\n\t{line}\n"));
+        zero_based(&v[0])
+    }
+
+    #[test]
+    fn zero_based_recognises_no_and_has_forms() {
+        assert_eq!(zb("BaseArmour 0"), Some(DefenceSeg::No));
+        assert_eq!(zb("BaseArmour = 0"), Some(DefenceSeg::No));
+        assert_eq!(zb("BaseArmour == 0"), Some(DefenceSeg::No));
+        assert_eq!(zb("BaseArmour > 0"), Some(DefenceSeg::Has));
+        assert_eq!(zb("BaseArmour >= 1"), Some(DefenceSeg::Has));
+    }
+
+    #[test]
+    fn zero_based_rejects_everything_else() {
+        for line in [
+            "BaseArmour >= 0",
+            "BaseArmour != 0",
+            "BaseArmour < 5",
+            "BaseArmour 5",
+            "BaseArmour > 1",
+            "BaseArmour >= 2",
+            "BaseArmour 0 1",
+            "BaseArmour > abc",
+        ] {
+            assert_eq!(zb(line), None, "{line}");
+        }
+    }
+
+    fn simple_of(text: &str) -> Option<SimpleSet> {
+        let v = view_of(text);
+        let refs: Vec<&BodyEntry> = v.iter().collect();
+        simple_defences(&refs)
+    }
+
+    #[test]
+    fn simple_set_reads_each_type() {
+        let s = simple_of("Show\n\tRarity Rare\n\tBaseArmour > 0\n\tBaseEvasion 0\n").unwrap();
+        assert_eq!(s.rows[0], (DefenceSeg::Has, Some(1)));
+        assert_eq!(s.rows[1], (DefenceSeg::No, Some(2)));
+        assert_eq!(s.rows[2], (DefenceSeg::Any, None));
+        assert_eq!(
+            s.settings(),
+            [DefenceSeg::Has, DefenceSeg::No, DefenceSeg::Any]
+        );
+    }
+
+    #[test]
+    fn simple_set_keyword_match_is_case_insensitive() {
+        let s = simple_of("Show\n\tbaseenergyshield >= 1\n").unwrap();
+        assert_eq!(s.rows[2], (DefenceSeg::Has, Some(0)));
+    }
+
+    #[test]
+    fn simple_set_without_defence_lines_is_all_any() {
+        let s = simple_of("Show\n\tRarity Rare\n").unwrap();
+        assert_eq!(s.settings(), [DefenceSeg::Any; 3]);
+        assert!(s.rows.iter().all(|(_, i)| i.is_none()));
+    }
+
+    #[test]
+    fn mixed_duplicate_and_between_sets_are_not_simple() {
+        assert!(simple_of("Show\n\tBaseArmour > 0\n\tBaseEnergyShield >= 100\n").is_none());
+        assert!(simple_of("Show\n\tBaseArmour > 0\n\tBaseArmour >= 1\n").is_none());
+        assert!(simple_of("Show\n\tBaseArmour >= 100\n\tBaseArmour <= 500\n").is_none());
+    }
+
+    fn kind_of(text: &str, advanced: bool) -> Option<DefencesKind> {
+        let v = view_of(text);
+        let refs: Vec<&BodyEntry> = v.iter().collect();
+        defences_kind(&refs, advanced)
+    }
+
+    #[test]
+    fn defences_kind_classifies_and_honours_the_advanced_marker() {
+        let simple = "Show\n\tBaseArmour > 0\n\tBaseEvasion 0\n";
+        assert!(matches!(
+            kind_of(simple, false),
+            Some(DefencesKind::Simple(_))
+        ));
+        assert_eq!(kind_of(simple, true), Some(DefencesKind::Advanced));
+        assert_eq!(
+            kind_of("Show\n\tBaseArmour >= 100\n", false),
+            Some(DefencesKind::Advanced)
+        );
+        assert_eq!(kind_of("Show\n\tRarity Rare\n", false), None);
+        assert_eq!(kind_of("Show\n\tRarity Rare\n", true), None);
+    }
 }

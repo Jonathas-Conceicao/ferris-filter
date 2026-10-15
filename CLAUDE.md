@@ -92,7 +92,16 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > changed.
 > **Defences** is one condition (one card per rule) with Armour / Evasion / Energy Shield toggles, each
 > with its own operator and slider; `BaseDefencePercentile` is gone from the keyword table (a line using
-> it loads as a raw row; Ward is not supported yet). Whole-number conditions (and each defence) offer a
+> it loads as a raw row; Ward is not supported yet). **Simple Defences** is the alternative card (same
+> slot: both picker entries sit right after Rarity and are greyed when either is on the rule; clicking
+> focuses the shown card): AR / EV / ES rows, each **Any | Has | No**. Has writes `BaseArmour > 0` (and
+> `BaseEvasion` / `BaseEnergyShield`), No writes the bare `BaseEvasion 0`, Any writes no line. A
+> non-clickable strip of the 7 combinations (AR, EV, ES, AR+ES, AR+EV, EV+ES, AR+EV+ES) lights those
+> the settings match. A rule whose defence lines are all zero-based (`0`, `= 0`, `== 0`, `> 0`,
+> `>= 1`, at most one per type) loads as Simple Defences with its bytes kept until a type is changed;
+> any other defence line loads as Defences. A Defences card stays Defences while editing (even if its
+> lines become zero-based) until Apply, Revert, RELOAD or removal re-classifies from the file; a Simple
+> card whose last Has/No row returns to Any stays open, all Any. There is no armour-class check. Whole-number conditions (and each defence) offer a
 > **Between** operator: one card with two sliders writing `X >= min` and `X <= max`, clamped so min never
 > exceeds max; a loaded one-lower/one-upper pair shows as one card with its bytes kept until edited
 > (a loaded impossible pair is flagged and left as written), while other duplicates (two `>=`) stay
@@ -153,8 +162,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > filter while the RULES tab has unapplied edits asks first (`Switch and discard` / `Stay`). **STYLES**
 > is one table per group, each with its own header: **Built-in** (`Visibility | Name | Preview`; switch and
 > actions editable; no rename, move or delete), then the **Custom** heading, which carries the
-> **+ ADD STYLE** button and is shown even with no custom styles, with an extra **Order** column holding
-> the arrows. A custom style's name is an inline text field: renaming keeps its rules linked by id (rules
+> **+ ADD STYLE** button and is shown even with no custom styles, with an extra right-aligned **Order** column
+> holding the arrows (at the table's right edge, like the RULES arrows). A custom style's name is an inline text field: renaming keeps its rules linked by id (rules
 > still carrying a legacy name-only tag for it are moved to the new name in memory too) and is one
 > revertible edit. Caveat: `config.json` references styles by name, so renaming a custom style it uses
 > makes `generate` fail with the unknown-style error until `config.json` is updated. Custom styles can be

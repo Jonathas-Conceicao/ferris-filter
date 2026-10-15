@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 27 (UAT4-01..04).**
+  - **Simple Defences** condition: AR / EV / ES rows of Any | Has | No (`X > 0` / `X 0`), a strip of
+    the 7 combinations, mutually exclusive with Defences in the picker. Zero-based defence lines load
+    as Simple Defences with bytes kept; anything else stays Defences, and a Defences card does not
+    flip while editing.
+  - The CONFIG Custom styles Order column and arrows are right-aligned.
+  - Colour dropdowns no longer cover colour names with the scroll bar (the rows were shrink-wrapped, so
+    the floating bar was painted over the longest name; they now fill the popup width).
+  - UAT results of phases 16 and 22-26 recorded; two items moved to the backlog.
+
 - **Phase 26 (UAT3-01..08).**
   - Stable style ids: every `styles.json` style has an `id` (`builtin:<name>` for built-ins, a random
     6-8 character id for custom styles; id-less files get deterministic ids at load, persisted by the

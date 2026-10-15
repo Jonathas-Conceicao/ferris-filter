@@ -158,13 +158,21 @@ impl InputPaths {
 /// (an explicit `--styles` / `--tiers`) `live` is returned as is, so the caller's read reports the
 /// usual `Cannot read` error.
 ///
-/// Only checks existence: never creates, writes or touches either file.
+/// Only checks existence: never creates, writes or touches either file. An existence check that
+/// fails (permission denied, a sharing violation) is a [`LoadError::Read`] on that file, never
+/// "absent": an unreadable live file must not silently fall back to the defaults.
 pub fn read_source(live: &Path, default: Option<&Path>) -> Result<PathBuf, LoadError> {
-    if live.exists() {
+    let exists = |p: &Path| {
+        p.try_exists().map_err(|e| LoadError::Read {
+            path: path_str(p),
+            source: e,
+        })
+    };
+    if exists(live)? {
         return Ok(live.to_path_buf());
     }
     match default {
-        Some(d) if d.exists() => Ok(d.to_path_buf()),
+        Some(d) if exists(d)? => Ok(d.to_path_buf()),
         Some(d) => Err(LoadError::NoSource {
             path: path_str(live),
             default: path_str(d),
@@ -611,6 +619,20 @@ mod tests {
             msg.contains("styles.json") && msg.contains("styles-default.json"),
             "{msg}"
         );
+    }
+
+    /// A live file whose existence cannot be checked is an error naming it, not "absent": the
+    /// defaults must not silently replace a live file that is there but unreadable (WR-04). A NUL
+    /// byte in the name makes the check itself fail on every platform.
+    #[test]
+    fn read_source_failed_existence_check_is_an_error_not_a_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let default = dir.path().join("styles-default.json");
+        fs::write(&default, "{}").unwrap();
+        let live = dir.path().join("sty\0les.json");
+        let err = read_source(&live, Some(&default)).unwrap_err();
+        assert!(matches!(err, LoadError::Read { .. }), "got {err:?}");
+        assert!(err.to_string().starts_with("Cannot read `"), "{err}");
     }
 
     /// An explicit path never falls back, even with a default file beside it: the caller's read

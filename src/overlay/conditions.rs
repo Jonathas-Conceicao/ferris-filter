@@ -403,6 +403,72 @@ pub fn defences_kind(entries: &[&BodyEntry], advanced: bool) -> Option<DefencesK
     Some(simple_defences(entries).map_or(DefencesKind::Advanced, DefencesKind::Simple))
 }
 
+/// Short row labels of the Simple Defences card, in `DEFENCES` order.
+pub const DEFENCE_SHORT: [&str; 3] = ["AR", "EV", "ES"];
+
+/// The single write one Simple Defences segment change produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SegWrite {
+    /// The segment did not change: nothing is written (PARSE-04).
+    Nothing,
+    /// Append this line (the type had no line).
+    Add(String),
+    /// Replace the type's line with this text.
+    Replace(String),
+    /// Remove the type's line (Any).
+    Remove,
+}
+
+fn seg_line(kw_name: &str, seg: DefenceSeg) -> String {
+    match seg {
+        DefenceSeg::No => format!("{kw_name} 0"),
+        _ => format!("{kw_name} > 0"),
+    }
+}
+
+/// What picking `want` writes for the type whose loaded line reads as `current` (`None` or
+/// `Some(Any)` = no line). Has writes the canonical `kw_name > 0`, No the bare `kw_name 0` (the
+/// form `generate` emits for `eq: 0`), Any removes the line; re-selecting the current segment
+/// writes nothing, so a loaded line keeps its bytes until its segment changes. Callers pass the
+/// `DEFENCES` name as `kw_name`.
+pub fn seg_write(kw_name: &str, current: Option<DefenceSeg>, want: DefenceSeg) -> SegWrite {
+    let current = current.unwrap_or(DefenceSeg::Any);
+    if current == want {
+        return SegWrite::Nothing;
+    }
+    match (current, want) {
+        (_, DefenceSeg::Any) => SegWrite::Remove,
+        (DefenceSeg::Any, w) => SegWrite::Add(seg_line(kw_name, w)),
+        (_, w) => SegWrite::Replace(seg_line(kw_name, w)),
+    }
+}
+
+/// The seven defence combinations of the display strip, in strip order, each with its membership
+/// in `DEFENCES` order.
+pub const DEFENCE_COMBOS: [(&str, [bool; 3]); 7] = [
+    ("AR", [true, false, false]),
+    ("EV", [false, true, false]),
+    ("ES", [false, false, true]),
+    ("AR+ES", [true, false, true]),
+    ("AR+EV", [true, true, false]),
+    ("EV+ES", [false, true, true]),
+    ("AR+EV+ES", [true, true, true]),
+];
+
+/// A combination matches when it contains every Has type and none of the No types (Any is free).
+pub fn combo_matches(settings: [DefenceSeg; 3], combo: [bool; 3]) -> bool {
+    settings.iter().zip(combo).all(|(s, member)| match s {
+        DefenceSeg::Any => true,
+        DefenceSeg::Has => member,
+        DefenceSeg::No => !member,
+    })
+}
+
+/// Which chips of the strip are lit, in `DEFENCE_COMBOS` order.
+pub fn lit_combos(settings: [DefenceSeg; 3]) -> [bool; 7] {
+    DEFENCE_COMBOS.map(|(_, combo)| combo_matches(settings, combo))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

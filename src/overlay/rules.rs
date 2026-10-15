@@ -413,8 +413,10 @@ impl WorkingFilter {
             let style = match self.doc.meta_get(id, "style") {
                 None => StyleState::None,
                 Some(n) => match &self.styles {
-                    Some(set) if set.get(n).is_some() => StyleState::Known(n.to_string()),
-                    Some(_) => StyleState::Unknown(n.to_string()),
+                    Some(set) => match set.resolve_tag(n) {
+                        Some(m) => StyleState::Known(m.name.to_string()),
+                        None => StyleState::Unknown(n.to_string()),
+                    },
                     None => StyleState::Unchecked(n.to_string()),
                 },
             };
@@ -528,6 +530,11 @@ impl WorkingFilter {
             .unwrap_or_default()
     }
 
+    /// The style set tags are currently judged against, if any loaded.
+    pub fn style_set(&self) -> Option<&StyleSet> {
+        self.styles.as_ref()
+    }
+
     pub fn style(&self, name: &str) -> Option<&Style> {
         self.styles.as_ref().and_then(|s| s.get(name))
     }
@@ -559,8 +566,12 @@ impl WorkingFilter {
     /// The text Apply should write when the styles are `set` (the pending CONFIG styles) rather
     /// than the loaded ones: same rewrite, on a clone.
     pub fn text_with_style_set(&self, set: &StyleSet) -> (String, StyleReport) {
+        self.text_with_style_set_retag(set, true)
+    }
+
+    fn text_with_style_set_retag(&self, set: &StyleSet, retag: bool) -> (String, StyleReport) {
         let mut clone = self.doc.clone();
-        let mut report = styled::rewrite_styled(&mut clone, set);
+        let mut report = styled::rewrite_styled_with(&mut clone, set, retag);
         report.dropped = styled::drop_unknown_style_tags(&mut clone, set);
         (clone.serialize(), report)
     }
@@ -574,9 +585,10 @@ impl WorkingFilter {
         {
             return v;
         }
-        let v = match self.text_with_styles() {
-            Ok((t, _)) => t != self.text(),
-            Err(_) => false,
+        // retag = false: a pure tag migration must not count as an unapplied change.
+        let v = match &self.styles {
+            Some(set) => self.text_with_style_set_retag(set, false).0 != self.text(),
+            None => false,
         };
         self.pending_cache = Some((self.generation, self.styles_rev, v));
         v
@@ -850,14 +862,17 @@ impl WorkingFilter {
                         .unwrap_or("styles were not loaded");
                     return refused(styles_unavailable_message(err));
                 };
-                let style = match set.get(&name) {
-                    Some(st) if styled::style_name_ok(&name) => st,
+                // An id-less style (only possible in a hand-built set) falls back to its name.
+                let (style, tag) = match set.get(&name) {
+                    Some(st) if styled::style_name_ok(&name) => {
+                        (st, set.tag_for(&name).unwrap_or_else(|| name.clone()))
+                    }
                     _ => return refused(format!("There is no style named \"{name}\".")),
                 };
                 let mut clone = self.doc.clone();
                 let enabled = clone.block(id).is_some_and(Block::is_enabled);
                 let r = clone
-                    .set_meta(id, "style", &name)
+                    .set_meta(id, "style", &tag)
                     .and_then(|()| {
                         if enabled {
                             styled::rewrite_block(&mut clone, id, style).map(|_| ())
@@ -1308,7 +1323,7 @@ Show
         let o = wf.apply_action(RowAction::ApplyStyle(id, "S".into()));
         assert!(o.changed, "{o:?}");
         let t = wf.text();
-        assert!(t.starts_with("# ff:style S\nShow\n"), "{t}");
+        assert!(t.starts_with("# ff:style builtin:S S\nShow\n"), "{t}");
         assert!(t.contains(S_FONT) && !t.contains("SetFontSize 20"), "{t}");
         assert_eq!(wf.rows()[0].style, StyleState::Known("S".into()));
         // switching style rewrites the single tag
@@ -1316,7 +1331,10 @@ Show
         assert!(o.changed);
         let t = wf.text();
         assert_eq!(t.matches("ff:style").count(), 1, "{t}");
-        assert!(t.starts_with("# ff:style hidden\nHide\n"), "{t}");
+        assert!(
+            t.starts_with("# ff:style builtin:hidden hidden\nHide\n"),
+            "{t}"
+        );
     }
 
     #[test]
@@ -1343,7 +1361,7 @@ Show
         assert!(o.changed, "{o:?}");
         let t = wf.text();
         assert!(
-            t.contains("# ff:style S") && t.contains("#  SetFontSize 20"),
+            t.contains("# ff:style builtin:S S") && t.contains("#  SetFontSize 20"),
             "{t}"
         );
         assert!(!t.contains("SetFontSize 37"), "{t}");
@@ -1557,6 +1575,59 @@ Show
         plain.set_styles(Err("bad json".into()));
         let (t, rep) = plain.text_with_styles().expect("ok");
         assert_eq!((t, rep), ("Show\n".to_string(), StyleReport::default()));
+    }
+
+    #[test]
+    fn tag_status_resolves_through_the_style_id() {
+        let wf = styled_wf(
+            "#ff:style builtin:S S\nShow\n\n#ff:style kite\nShow\n\n#ff:style zzzzzz kite\nShow\n",
+        );
+        let st: Vec<_> = wf.rows().iter().map(|r| r.style.clone()).collect();
+        assert_eq!(
+            st,
+            vec![
+                StyleState::Known("S".into()),
+                StyleState::Known("kite".into()),
+                StyleState::Unknown("zzzzzz kite".into()),
+            ]
+        );
+        let mut un = WorkingFilter::from_text("#ff:style builtin:S S\nShow\n");
+        assert_eq!(
+            un.rows()[0].style,
+            StyleState::Unchecked("builtin:S S".into())
+        );
+        un.set_styles(Err("x".into()));
+        assert!(un.style_set().is_none());
+    }
+
+    #[test]
+    fn renamed_style_keeps_rules_linked_and_counted() {
+        let mut wf = styled_wf("#ff:style t5hw2k kite\nShow\n");
+        let mut set = test_styles();
+        let id = set.id_of("kite").expect("id").to_string();
+        assert_eq!(id, "t5hw2k");
+        set.rename_custom("kite", "locator").expect("rename");
+        wf.set_styles(Ok(set));
+        assert_eq!(wf.rows()[0].style, StyleState::Known("locator".into()));
+        assert_eq!(wf.style_users().get("locator"), Some(&1));
+        assert!(wf.style_set().is_some());
+        let (t, rep) = wf.text_with_styles().expect("ok");
+        assert!(t.starts_with("# ff:style t5hw2k locator\n"), "{t}");
+        assert_eq!(rep.retagged, 1);
+    }
+
+    #[test]
+    fn apply_text_migrates_legacy_tags_but_pending_ignores_a_pure_migration() {
+        let mut wf = styled_wf("#ff:style S\nShow\n  Class \"Rings\"\n");
+        let (t, _) = wf.text_with_styles().expect("ok");
+        // actions now match, only the tag is legacy
+        let mut migr = styled_wf(&t.replace("# ff:style builtin:S S", "#ff:style S"));
+        assert!(t.starts_with("# ff:style builtin:S S\n"), "{t}");
+        assert!(!migr.style_rewrite_pending());
+        let (t2, rep) = migr.text_with_styles().expect("ok");
+        assert_eq!(rep.retagged, 1);
+        assert!(t2.starts_with("# ff:style builtin:S S\n"), "{t2}");
+        assert!(wf.style_rewrite_pending());
     }
 
     // ---- actions ----

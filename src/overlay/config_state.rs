@@ -89,6 +89,9 @@ pub struct ConfigState {
     errors: TierErrors,
     styles_bytes: Vec<u8>,
     tiers_bytes: Vec<u8>,
+    /// Ids were assigned at load (the file on disk lacks them): the next Apply writes styles.json
+    /// even with no CONFIG edit. Never counts as an edit.
+    ids_unpersisted: bool,
 }
 
 fn file_label(path: &Path) -> String {
@@ -111,8 +114,9 @@ impl ConfigState {
         let read = |p: &Path| fs::read(p).map_err(|e| format!("{}: {e}", file_label(p)));
 
         let styles_bytes = read(&paths.styles)?;
-        let styles: StyleSet = serde_json::from_slice(&styles_bytes)
+        let mut styles: StyleSet = serde_json::from_slice(&styles_bytes)
             .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+        let ids_unpersisted = styles.assign_missing_ids();
         styles
             .validate()
             .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
@@ -133,6 +137,7 @@ impl ConfigState {
             errors: TierErrors::default(),
             styles_bytes,
             tiers_bytes,
+            ids_unpersisted,
         };
         state.resync_buffers();
         Ok(state)
@@ -286,22 +291,44 @@ impl ConfigState {
 
     /// Styles added + deleted + edited (by name, value compare) + tier rows that differ.
     pub fn dirty_count(&self) -> usize {
-        let added = self
-            .styles
-            .names()
-            .filter(|n| !self.styles_applied.contains(n))
-            .count();
-        let deleted = self
+        self.styles_dirty_count() + self.tiers_dirty_count()
+    }
+
+    /// Styles added + deleted + changed (matched by id, name for an id-less style, so a rename is
+    /// one edit) + one for a pure reorder.
+    fn styles_dirty_count(&self) -> usize {
+        let key = |n: &str, s: &Style| s.id.clone().unwrap_or_else(|| n.to_string());
+        let now: Vec<(String, &str, &Style)> =
+            self.styles.iter().map(|(n, s)| (key(n, s), n, s)).collect();
+        let was: Vec<(String, &str, &Style)> = self
             .styles_applied
-            .names()
-            .filter(|n| !self.styles.contains(n))
-            .count();
-        let edited = self
-            .styles
             .iter()
-            .filter(|(n, s)| matches!(self.styles_applied.get(n), Some(a) if a != *s))
+            .map(|(n, s)| (key(n, s), n, s))
+            .collect();
+        let added = now
+            .iter()
+            .filter(|(k, ..)| !was.iter().any(|(w, ..)| w == k))
             .count();
-        added + deleted + edited + self.tiers_dirty_count() + usize::from(self.reordered())
+        let deleted = was
+            .iter()
+            .filter(|(k, ..)| !now.iter().any(|(n, ..)| n == k))
+            .count();
+        let changed = now
+            .iter()
+            .filter(|(k, n, s)| {
+                was.iter()
+                    .find(|(w, ..)| w == k)
+                    .is_some_and(|(_, wn, ws)| wn != n || ws != s)
+            })
+            .count();
+        let common = |a: &[(String, &str, &Style)], b: &[(String, &str, &Style)]| -> Vec<String> {
+            a.iter()
+                .filter(|(k, ..)| b.iter().any(|(o, ..)| o == k))
+                .map(|(k, ..)| k.clone())
+                .collect()
+        };
+        let reordered = common(&now, &was) != common(&was, &now);
+        added + deleted + changed + usize::from(reordered)
     }
 
     /// Tier rows whose value or text differs from the applied snapshot.
@@ -332,11 +359,12 @@ impl ConfigState {
         if !self.styles_changed() {
             let now = read(&paths.styles)?;
             if now != self.styles_bytes {
-                let set: StyleSet = serde_json::from_slice(&now)
+                let mut set: StyleSet = serde_json::from_slice(&now)
                     .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
+                let assigned = set.assign_missing_ids();
                 set.validate()
                     .map_err(|e| format!("{}: {e}", file_label(&paths.styles)))?;
-                styles = Some((set, now));
+                styles = Some((set, now, assigned));
             }
         }
         let mut tiers = None;
@@ -351,7 +379,9 @@ impl ConfigState {
             }
         }
         let changed = styles.is_some() || tiers.is_some();
-        if let Some((set, bytes)) = styles {
+        if let Some((set, bytes, assigned)) = styles {
+            // The disk file is the new baseline, so the flag describes it alone.
+            self.ids_unpersisted = assigned;
             self.styles_applied = set.clone();
             self.styles = set;
             self.styles_bytes = bytes;
@@ -365,21 +395,20 @@ impl ConfigState {
         Ok(changed)
     }
 
-    /// `StyleSet` equality ignores order, so a pure reorder needs its own check: do the names
-    /// present in both snapshots appear in a different relative order?
-    fn reordered(&self) -> bool {
-        let common = |a: &StyleSet, b: &StyleSet| -> Vec<String> {
-            a.names()
-                .filter(|n| b.contains(n))
-                .map(str::to_string)
-                .collect()
-        };
-        common(&self.styles, &self.styles_applied) != common(&self.styles_applied, &self.styles)
+    /// The styles differ from the applied snapshot in value, name, membership or order.
+    fn styles_changed(&self) -> bool {
+        self.styles_dirty_count() > 0
     }
 
-    /// The styles differ from the applied snapshot in value, membership or order.
-    fn styles_changed(&self) -> bool {
-        self.styles != self.styles_applied || !self.styles.names().eq(self.styles_applied.names())
+    /// Rename a custom style in place (same position, same id): an in-memory edit like any other,
+    /// Revert-able. `new` is trimmed like [`Self::add_style`].
+    pub fn rename_style(&mut self, old: &str, new: &str) -> Result<(), StyleNameError> {
+        self.styles.rename_custom(old, new.trim())
+    }
+
+    /// The stable id of the style called `name`.
+    pub fn style_id(&self, name: &str) -> Option<&str> {
+        self.styles.id_of(name)
     }
 
     /// Any unapplied CONFIG edit (styles, tiers or style order).
@@ -450,7 +479,7 @@ impl ConfigState {
 
     fn prepare_write_inner(&self, force: bool) -> Result<ConfigWrite, ConfigApplyError> {
         self.validate()?;
-        let styles_changed = force || self.styles_changed();
+        let styles_changed = force || self.styles_changed() || self.ids_unpersisted;
         let tiers_changed = force || !tiers_equal(&self.tiers, &self.tiers_applied);
         let styles_new = if styles_changed {
             crate::loader::render_styles(&self.styles).into_bytes()
@@ -473,6 +502,9 @@ impl ConfigState {
     /// Adopt `w` as the new applied state after its bytes were written to both files by the
     /// caller: snapshots and baselines move, tier buffers are rebuilt.
     pub fn adopt(&mut self, w: ConfigWrite) {
+        if w.styles_changed {
+            self.ids_unpersisted = false;
+        }
         self.styles_applied = self.styles.clone();
         self.tiers_applied = self.tiers.clone();
         self.styles_bytes = w.styles_new;
@@ -1040,5 +1072,95 @@ mod tests {
         fs::write(dir.path().join("tiers.json"), b"not json").unwrap();
         assert!(s.follow_disk().unwrap_err().starts_with("tiers.json"));
         assert_eq!(s.baselines().1, &tiers_disk[..]);
+    }
+
+    /// A temp root whose styles.json has no ids at all.
+    fn idless_root() -> tempfile::TempDir {
+        let dir = temp_root();
+        let path = dir.path().join("styles.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for (_, s) in v.as_object_mut().unwrap() {
+            s.as_object_mut().unwrap().remove("id");
+        }
+        fs::write(&path, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+        dir
+    }
+
+    #[test]
+    fn load_assigned_ids_are_invisible_but_persisted_by_the_next_write() {
+        let dir = idless_root();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        assert!(s.style_names().iter().all(|n| s.style_id(n).is_some()));
+        assert_eq!(s.style_id("S"), Some("builtin:S"));
+        assert!(!s.is_dirty());
+        assert_eq!(s.dirty_count(), 0);
+        assert!(!s.can_apply());
+        let w = s.prepare_write().unwrap();
+        assert!(w.styles_changed() && !w.tiers_changed());
+        assert!(
+            String::from_utf8(w.styles_new.clone())
+                .unwrap()
+                .contains("\"id\":")
+        );
+        let w = save(&mut s);
+        assert!(w.styles_changed());
+        assert!(!s.prepare_write().unwrap().styles_changed());
+    }
+
+    #[test]
+    fn styles_with_ids_are_not_rerendered() {
+        let (_d, s) = loaded();
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed());
+        assert_eq!(w.styles_new, s.baselines().0);
+    }
+
+    #[test]
+    fn follow_disk_assigns_the_same_ids_as_load() {
+        let dir = idless_root();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        let before = s.style_id("kite").map(str::to_string);
+        // Disk changes to another id-less file; the clean state follows it.
+        let path = dir.path().join("styles.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["S"]["font"] = serde_json::json!(36);
+        fs::write(&path, serde_json::to_vec_pretty(&v).unwrap()).unwrap();
+        assert_eq!(s.follow_disk(), Ok(true));
+        assert_eq!(s.style_id("kite").map(str::to_string), before);
+        assert!(!s.is_dirty());
+        assert!(s.prepare_write().unwrap().styles_changed());
+    }
+
+    #[test]
+    fn rename_is_one_revertible_edit_keeping_id_and_position() {
+        let (_d, mut s) = loaded();
+        let id = s.style_id("kite").unwrap().to_string();
+        let pos = s.style_names().iter().position(|n| n == "kite").unwrap();
+        s.rename_style("kite", "locator").unwrap();
+        assert_eq!(s.style_id("locator"), Some(id.as_str()));
+        assert_eq!(
+            s.style_names().iter().position(|n| n == "locator"),
+            Some(pos)
+        );
+        assert_eq!(s.dirty_count(), 1);
+        assert!(s.is_dirty() && s.can_apply());
+        // renaming back clears the edit
+        s.rename_style("locator", "kite").unwrap();
+        assert!(!s.is_dirty());
+        s.rename_style("kite", "locator").unwrap();
+        s.revert();
+        assert!(s.style("kite").is_some() && s.style("locator").is_none());
+        assert_eq!(s.dirty_count(), 0);
+    }
+
+    #[test]
+    fn rename_refusals() {
+        let (_d, mut s) = loaded();
+        assert_eq!(s.rename_style("S", "X"), Err(StyleNameError::BuiltIn));
+        assert_eq!(s.rename_style("kite", ""), Err(StyleNameError::Empty));
+        assert_eq!(s.rename_style("kite", "S"), Err(StyleNameError::Duplicate));
+        assert_eq!(s.rename_style("kite", "a\tb"), Err(StyleNameError::Invalid));
+        assert_eq!(s.rename_style("nope", "x"), Err(StyleNameError::Unknown));
+        assert_eq!(s.dirty_count(), 0);
     }
 }

@@ -81,6 +81,11 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 
 ### Roadmap Evolution
 
+- Phase 27 added (2026-10-15): **UAT Feedback Fixes 4** — the author's fourth v0.5 UAT round
+  (UAT4-01..UAT4-04): right-aligned Custom styles Order column, colour dropdown scroll bar fix,
+  Simple Defences condition beside Defences, UAT results of Phases 16 and 23-26 recorded. Run
+  autonomously.
+
 - Phase 26 added (2026-10-14): **UAT Feedback Fixes 3** — the author's third v0.5 UAT round
   (UAT3-01..UAT3-08): grouped styles table, stable style ids + custom-style rename, in-memory style
   picker, no rule collapse, Defences card, Between + no duplicate conditions, collapsed picker,

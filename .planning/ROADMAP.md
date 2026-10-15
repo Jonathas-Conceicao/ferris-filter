@@ -6,7 +6,7 @@
 - ✅ **v0.2 Declarative Rule Model** — Phases 5-7 (shipped 2026-06-12) — [archive](milestones/v0.2-ROADMAP.md)
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
-- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-23 (in progress)
+- 🚧 **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-27 (in progress)
 
 ## Phases
 
@@ -57,7 +57,7 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 
 </details>
 
-## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-25)
+## v0.5 Generic Filter Editor & Initial App Configuration (Phases 16-27)
 
 **Milestone goal:** FerrisFilter can open, edit and save any working PoE2 filter, not just its own
 output, with the style palette and economy tier cutoffs configurable from the overlay.
@@ -73,6 +73,7 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 - [ ] **Phase 24: UAT Feedback Fixes** - Apply the author's v0.5 UAT feedback to the overlay (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 25: UAT Feedback Fixes 2** - Apply the author's second v0.5 UAT round: rule-body layout, Sockets slider, CONFIG styles table, one Apply for everything (executed 2026-10-14; awaiting human UAT)
 - [ ] **Phase 26: UAT Feedback Fixes 3** - Apply the author's third v0.5 UAT round: grouped styles table with renamable id-linked custom styles, steadier rule editor (Defences card, Between, no duplicates), Quit asks before discarding edits (executed 2026-10-14; awaiting human UAT)
+- [ ] **Phase 27: UAT Feedback Fixes 4** - Apply the author's fourth v0.5 UAT round: right-aligned styles Order column, colour dropdown scroll bar fix, Simple Defences condition, UAT results recorded
 
 ### Phase 16: Lossless Filter Parser
 
@@ -438,6 +439,20 @@ Plans:
 
 - [x] 26-09-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 26-MANUAL-VERIFICATION.md (UAT3-01..08)
 
+### Phase 27: UAT Feedback Fixes 4
+
+**Goal**: The author's fourth v0.5 UAT round is applied: the CONFIG Custom styles Order column is right-aligned like the RULES arrows, colour dropdowns leave room for their scroll bar, a Simple Defences condition (Any | Has | No per defence type, with a combination strip) sits beside the existing Defences card, and the UAT results of Phases 16 and 23-26 are recorded
+**Depends on**: Phase 26
+**Requirements**: UAT4-01, UAT4-02, UAT4-03, UAT4-04
+**Success Criteria** (what must be TRUE):
+
+  1. The Custom styles table's Order column (header and arrows) is right-aligned like the RULES tab's reorder arrows
+  2. Every colour dropdown (minimap colour, beam colour, CONFIG style editor) leaves room for its scroll bar, as the minimap shape dropdown does
+  3. A Simple Defences condition (one card, AR / EV / ES each Any | Has | No) writes `X > 0` for Has and `X 0` for No, shows a display-only strip of the 7 defence combinations lit for the ones matched, is mutually exclusive with Defences in the picker, and loads zero-based defence lines with their bytes preserved; other defence lines still load as the Defences card
+  4. The Phase 16, 23, 24, 25 and 26 manual verification docs record the author's results, and two backlog items are added (keyword-table verification, guiding rules away from conditions that cannot match)
+
+**Plans**: TBD
+
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -453,6 +468,7 @@ Plans:
 | 24. UAT Feedback Fixes | 6/6 | Human UAT pending | - |
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
+| 27. UAT Feedback Fixes 4 | 0/? | Not started | - |
 
 ## Backlog
 

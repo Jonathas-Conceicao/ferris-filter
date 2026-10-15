@@ -896,4 +896,48 @@ mod tests {
         assert!(!missing.exists());
         assert!(!cfg.is_dirty());
     }
+
+    #[test]
+    fn rule_only_apply_persists_load_assigned_ids() {
+        let fx = Fixture::new();
+        // An id-less styles.json: ids are assigned at load and written by the next Apply.
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&fs::read(fx.root.path().join("styles.json")).unwrap()).unwrap();
+        for (_, s) in v.as_object_mut().unwrap() {
+            s.as_object_mut().unwrap().remove("id");
+        }
+        fs::write(
+            fx.root.path().join("styles.json"),
+            serde_json::to_vec_pretty(&v).unwrap(),
+        )
+        .unwrap();
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        assert!(!cfg.is_dirty());
+        let p = prepare(
+            fx.root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Keep)),
+            false,
+        )
+        .unwrap();
+        let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(done.styles_written);
+        assert!(
+            String::from_utf8(fx.bytes()[0].clone())
+                .unwrap()
+                .contains("\"id\"")
+        );
+        assert!(!cfg.is_dirty());
+        // Persisted: the next Apply does not rewrite styles.json.
+        let p = prepare(
+            fx.root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Keep)),
+            false,
+        )
+        .unwrap();
+        let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(!done.styles_written);
+    }
 }

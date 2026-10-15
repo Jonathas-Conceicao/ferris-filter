@@ -178,6 +178,7 @@ pub fn condition_picker_groups() -> Vec<(&'static str, Vec<ConditionEntry>)> {
 
 /// Legacy keyword-only projection of [`condition_picker_groups`]: the Defences entry expands in
 /// place to the three defence keywords.
+#[cfg(test)]
 pub fn condition_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
     condition_picker_groups()
         .into_iter()

@@ -5,7 +5,7 @@
 //! `ScrollArea::show_viewport` over a cached offset table ([`super::virtual_list`]) because the
 //! single expanded row has a variable height (so `show_rows` does not fit).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use egui::{Align, Color32, Layout, RichText, Sense, UiBuilder, vec2};
 
@@ -51,6 +51,21 @@ pub struct ListUi {
     /// the first value click, which turns a pending row into a line and bumps `epoch`, does not
     /// close the group being used.
     pub row_epoch: u64,
+    /// Blocks whose Defences card was picked from `+ condition` with nothing toggled yet
+    /// (nothing is written until a toggle is switched on).
+    pub pending_defences: HashSet<BlockId>,
+    /// A card to scroll to, focus and briefly highlight: set when a picker entry that is already
+    /// on the rule is clicked (UAT3-06). Line-backed keyword cards use `focus_line` instead.
+    pub focus_card: Option<(BlockId, FocusTarget)>,
+}
+
+/// A card without a line of its own to point at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusTarget {
+    /// The pending row of a keyword (by keyword name).
+    Pending(&'static str),
+    /// The Defences card.
+    Defences,
 }
 
 /// A condition picked from `+ condition` that waits for its first entry (list shapes, Rarity).
@@ -77,6 +92,8 @@ impl Default for ListUi {
             line_error: None,
             epoch: 0,
             row_epoch: 0,
+            pending_defences: HashSet::new(),
+            focus_card: None,
         }
     }
 }
@@ -90,6 +107,8 @@ impl ListUi {
         self.pending_scroll = None;
         self.confirm_economy_remove = false;
         self.pending.clear();
+        self.pending_defences.clear();
+        self.focus_card = None;
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
@@ -267,6 +286,8 @@ pub fn show_list(
     if list.last_expanded != list.expanded {
         let keep = list.expanded;
         list.pending.retain(|p| Some(p.block) == keep);
+        list.pending_defences.retain(|b| Some(*b) == keep);
+        list.focus_card = None;
         list.line_error = None;
         egui::Popup::close_all(ui.ctx());
         list.last_expanded = list.expanded;

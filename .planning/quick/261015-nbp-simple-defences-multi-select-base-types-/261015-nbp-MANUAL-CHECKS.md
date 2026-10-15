@@ -26,3 +26,8 @@ copy of the game folder) so nothing real is overwritten.
    every defence line (a group collapses to one block).
 9. **In game.** Load the filter in PoE2 and check a grouped rule highlights exactly the picked base
    types (e.g. pure AR/EV/ES body armours, no hybrids).
+
+**Result (2026-10-15):** general usability tested by the author (chip clicks, multi-block rules,
+tooltips) and working; all checks accepted as pass without a full sweep. Open: review CR-01 (chips
+built only from "no X" lines also match items without defences unless the rule has a Class
+condition); the strict alternative was offered and not yet chosen.

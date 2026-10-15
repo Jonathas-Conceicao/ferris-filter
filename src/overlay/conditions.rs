@@ -422,7 +422,8 @@ pub enum SegWrite {
     Nothing,
     /// Append this line (the type had no line).
     Add(String),
-    /// Replace the type's line with this text.
+    /// Replace the type's line with this text. The card writes it as an operator + value patch,
+    /// so the keyword's spelling and a trailing comment are kept.
     Replace(String),
     /// Remove the type's line (Any).
     Remove,

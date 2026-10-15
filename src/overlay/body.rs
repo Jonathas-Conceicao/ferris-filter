@@ -669,8 +669,17 @@ fn simple_seg_actions(
             kind: LineKind::Condition,
             text,
         }],
-        SegWrite::Replace(text) => entry
-            .map(|e| edit(id, e, LinePatch::Whole(text)))
+        // Has <-> No patches only the operator and value of the existing line (to the canonical
+        // `X > 0` / `X 0`), so the keyword's spelling and any trailing comment are kept and the
+        // commit is strict, like every other structured card edit (review WR-02).
+        SegWrite::Replace(_) => entry
+            .map(|e| {
+                let op = match want {
+                    DefenceSeg::Has => Some(Operator::Gt),
+                    _ => None,
+                };
+                edit(id, e, LinePatch::Both(op, "0".into()))
+            })
             .into_iter()
             .collect(),
         SegWrite::Remove => entry.map(|e| remove(id, e)).into_iter().collect(),
@@ -4220,8 +4229,8 @@ mod tests {
         assert_eq!(a.len(), 1);
         assert!(matches!(
             &a[0],
-            RowAction::EditLine { line, patch: LinePatch::Whole(w), .. }
-                if *line == e[0].line && w == "BaseArmour 0"
+            RowAction::EditLine { line, patch: LinePatch::Both(None, w), .. }
+                if *line == e[0].line && w == "0"
         ));
         let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
         assert_eq!(wf.rows()[0].id, id);
@@ -4247,6 +4256,37 @@ mod tests {
         assert!(simple_seg_actions(id, &refs, &set, 0, DefenceSeg::Has).is_empty());
         assert!(simple_seg_actions(id, &refs, &set, 1, DefenceSeg::No).is_empty());
         assert!(simple_seg_actions(id, &refs, &set, 2, DefenceSeg::Any).is_empty());
+    }
+
+    /// Has <-> No patches the operator and value only: the trailing comment and the keyword's
+    /// spelling survive (review WR-02).
+    #[test]
+    fn simple_has_no_switch_keeps_trailing_comment_and_keyword_spelling() {
+        let src = "Show\n  BaseArmour >= 1 # keep\n  baseevasion == 0 # $tier->ev\n";
+        let (_, id, e, set) = simple_set_of(src);
+        assert_eq!(
+            set.settings(),
+            [DefenceSeg::Has, DefenceSeg::No, DefenceSeg::Any]
+        );
+        let refs: Vec<&BodyEntry> = e.iter().collect();
+
+        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::No);
+        assert_eq!(a.len(), 1, "{a:?}");
+        let mut wf = WorkingFilter::from_text(src);
+        assert!(wf.apply_action(a[0].clone()).changed);
+        assert_eq!(
+            wf.text(),
+            "Show\n  BaseArmour 0 # keep\n  baseevasion == 0 # $tier->ev\n"
+        );
+
+        let a = simple_seg_actions(id, &refs, &set, 1, DefenceSeg::Has);
+        assert_eq!(a.len(), 1, "{a:?}");
+        let mut wf = WorkingFilter::from_text(src);
+        assert!(wf.apply_action(a[0].clone()).changed);
+        assert_eq!(
+            wf.text(),
+            "Show\n  BaseArmour >= 1 # keep\n  baseevasion > 0 # $tier->ev\n"
+        );
     }
 
     #[test]

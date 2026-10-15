@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: executing
-stopped_at: Phase 26 executed; human UAT pending
-last_updated: "2026-10-14T23:59:00.000Z"
-last_activity: 2026-10-14 -- Phase 26 executed (9/9 plans, review fixed); human UAT pending
+stopped_at: Phase 27 executed; human UAT pending
+last_updated: "2026-10-15T12:00:00.000Z"
+last_activity: 2026-10-15 -- Phase 27 executed (5/5 plans, review fixed); human UAT pending
 progress:
-  total_phases: 21
+  total_phases: 22
   completed_phases: 9
-  total_plans: 62
-  completed_plans: 58
+  total_plans: 67
+  completed_plans: 63
   percent: 43
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-12)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 26 — UAT feedback fixes 3
+**Current focus:** Phase 27 — UAT feedback fixes 4
 
 ## Current Position
 
-Phase: 26 (UAT feedback fixes 3) — EXECUTED, human UAT pending
-Plan: 9 of 9
-Status: Phase 26 executed; run 26-MANUAL-VERIFICATION.md (25-MANUAL-VERIFICATION.md also pending)
-Last activity: 2026-10-14 -- Phase 26 executed (9/9 plans, code review: 2 critical + 7 warnings fixed in one pass, 1 warning skipped)
+Phase: 27 (UAT feedback fixes 4) — EXECUTED, human UAT pending
+Plan: 5 of 5
+Status: Phase 27 executed; run 27-MANUAL-VERIFICATION.md
+Last activity: 2026-10-15 -- Phase 27 executed (5/5 plans, code review: 2 warnings fixed in one pass, 5 info findings left open)
 
 Progress: [█████████░] 93%
 

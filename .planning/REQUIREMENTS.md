@@ -179,10 +179,10 @@ output, with the style palette and economy tier cutoffs configurable from the ov
 
 ### UAT Feedback Round 4 (UAT4)
 
-- [ ] **UAT4-01**: The CONFIG Custom styles table's Order column is right-aligned, its header aligned with the up/down arrows, like the RULES tab's reorder arrows.
-- [ ] **UAT4-02**: Every colour dropdown (minimap colour, beam colour, CONFIG style editor) leaves room for its scroll bar like the minimap shape dropdown; the scroll bar never draws over a colour name.
-- [ ] **UAT4-03**: A "Simple Defences" condition (one card per rule; AR / EV / ES rows each Any | Has | No; Has writes `X > 0`, No writes `X 0`, Any writes nothing) sits beside the existing "Defences" card, right after Rarity in the picker; a display-only strip of the 7 defence combinations is lit for those the settings match; the two cards are mutually exclusive (both greyed in the picker when either is present, clicking focuses the existing card); a rule whose defence lines are all zero-based (at most one per type) loads as Simple Defences with bytes preserved until a type is changed, otherwise as Defences; no armour-class check.
-- [ ] **UAT4-04**: The author's UAT results are recorded in the Phase 16, 23, 24, 25 and 26 manual verification docs, and backlog items are added for verifying the remaining keywords in game and for guiding rules away from conditions that cannot match.
+- [x] **UAT4-01**: The CONFIG Custom styles table's Order column is right-aligned, its header aligned with the up/down arrows, like the RULES tab's reorder arrows.
+- [x] **UAT4-02**: Every colour dropdown (minimap colour, beam colour, CONFIG style editor) leaves room for its scroll bar like the minimap shape dropdown; the scroll bar never draws over a colour name.
+- [x] **UAT4-03**: A "Simple Defences" condition (one card per rule; AR / EV / ES rows each Any | Has | No; Has writes `X > 0`, No writes `X 0`, Any writes nothing) sits beside the existing "Defences" card, right after Rarity in the picker; a display-only strip of the 7 defence combinations is lit for those the settings match; the two cards are mutually exclusive (both greyed in the picker when either is present, clicking focuses the existing card); a rule whose defence lines are all zero-based (at most one per type) loads as Simple Defences with bytes preserved until a type is changed, otherwise as Defences; no armour-class check.
+- [x] **UAT4-04**: The author's UAT results are recorded in the Phase 16, 23, 24, 25 and 26 manual verification docs, and backlog items are added for verifying the remaining keywords in game and for guiding rules away from conditions that cannot match.
 
 ## Future Requirements
 
@@ -292,10 +292,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UAT3-06 | Phase 26 | Complete (UAT verified) |
 | UAT3-07 | Phase 26 | Complete (UAT verified) |
 | UAT3-08 | Phase 26 | Complete (UAT verified) |
-| UAT4-01 | Phase 27 | Pending |
-| UAT4-02 | Phase 27 | Pending |
-| UAT4-03 | Phase 27 | Pending |
-| UAT4-04 | Phase 27 | Pending |
+| UAT4-01 | Phase 27 | Complete (UAT pending) |
+| UAT4-02 | Phase 27 | Complete (UAT pending) |
+| UAT4-03 | Phase 27 | Complete (UAT pending) |
+| UAT4-04 | Phase 27 | Complete |
 
 **Coverage:**
 
@@ -305,4 +305,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-15 after Phase 27 UAT results recorded (phases 24-26 UAT verified)*
+*Last updated: 2026-10-15 after Phase 27 executed (UAT4-01..UAT4-04, human UAT pending)*

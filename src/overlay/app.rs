@@ -1718,19 +1718,18 @@ impl eframe::App for OverlayApp {
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
                 Some(OverlayCommand::Quit) => {
                     let dirty = self.quit_dirty();
-                    match apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit) {
-                        apply::QuitStep::QuitNow => {
-                            quit_requested = true;
-                            self.begin_shutdown();
+                    let step =
+                        apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
+                    if step == apply::QuitStep::QuitNow {
+                        quit_requested = true;
+                        self.begin_shutdown();
+                    } else if apply::quit_step_shows_confirm(step) {
+                        self.quit_confirm = true;
+                        // Reveal the stripe the way tray Show does (also when the stripe was
+                        // hidden while the confirm was already up).
+                        if self.visibility == Visibility::Hidden {
+                            self.toggle_requested = true;
                         }
-                        apply::QuitStep::OpenConfirm => {
-                            self.quit_confirm = true;
-                            // Reveal the stripe the way tray Show does.
-                            if self.visibility == Visibility::Hidden {
-                                self.toggle_requested = true;
-                            }
-                        }
-                        _ => {}
                     }
                 }
                 None => {}

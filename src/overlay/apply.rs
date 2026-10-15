@@ -392,6 +392,12 @@ pub fn quit_step(dirty: bool, confirm_open: bool, event: QuitEvent) -> QuitStep 
     }
 }
 
+/// True when the step leaves the confirm open, so a hidden stripe must be revealed to show it.
+/// A second tray Quit counts too: the stripe may have been hidden while the confirm was up.
+pub fn quit_step_shows_confirm(step: QuitStep) -> bool {
+    matches!(step, QuitStep::OpenConfirm | QuitStep::KeepConfirm)
+}
+
 pub const QUIT_CONFIRM_TITLE: &str = "Unapplied changes";
 pub const QUIT_APPLY_LABEL: &str = "Apply & quit";
 pub const QUIT_DISCARD_LABEL: &str = "Quit without applying";
@@ -483,6 +489,28 @@ mod tests {
         ];
         for (dirty, open, ev, want) in cases {
             assert_eq!(quit_step(dirty, open, ev), want, "{dirty} {open} {ev:?}");
+        }
+    }
+
+    #[test]
+    fn a_second_tray_quit_reveals_the_confirm_too() {
+        assert!(quit_step_shows_confirm(quit_step(
+            true,
+            false,
+            QuitEvent::TrayQuit
+        )));
+        assert!(quit_step_shows_confirm(quit_step(
+            true,
+            true,
+            QuitEvent::TrayQuit
+        )));
+        for s in [
+            QuitStep::QuitNow,
+            QuitStep::CloseConfirm,
+            QuitStep::RunApply,
+            QuitStep::QuitWhenIdle,
+        ] {
+            assert!(!quit_step_shows_confirm(s), "{s:?}");
         }
     }
 

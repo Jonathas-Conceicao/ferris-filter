@@ -102,7 +102,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > minimum number of such blocks whose union is exactly the pick (fewer lines on ties): "no EV" (Full AR,
 > Full ES, AR/ES) is one block with `BaseEvasion 0`, the three Full chips are three blocks, those plus
 > AR/EV/ES are four (the most). No chip and all seven both write no defence line (the card stays open,
-> showing that pick until reload); the X removes every defence line. **Grouped rules:** a pick needing
+> showing that pick until reload); the X removes every defence line. The chips cover defence *base*
+> types only: an item with no defences at all (weapon, jewellery, currency) also passes a block whose
+> lines are only `... 0`, so pair the card with a Class condition. **Grouped rules:** a pick needing
 > n > 1 blocks is written as n consecutive blocks identical in everything (header, `# ff:name`,
 > `# ff:style`, other conditions, actions, Continue, enabled state, comments) except their defence
 > lines, each carrying `# ff:group <id> <k>/<n>` (`<id>` random 6-8 lowercase alphanumerics, unique in

@@ -9,7 +9,9 @@
 //! so the overlay can show the group as one rule.
 //!
 //! Pure document logic: no overlay types, no IO. Every mutation goes through the validated
-//! [`Document`] edit API, so an `Err` leaves the document as it was.
+//! [`Document`] edit API. [`set_selection`], [`resync`] and [`duplicate`] make several such edits,
+//! so on `Err` the document may be partly changed: callers that need all-or-nothing snapshot it
+//! first (the overlay's `WorkingFilter` does).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -360,14 +362,18 @@ fn group_lines(doc: &Document, b: &Block) -> Vec<usize> {
 
 /// The span text of a block with its group line(s) and defence lines left out: what every part of
 /// a group must share.
-fn skeleton<'a>(doc: &'a Document, b: &Block) -> Vec<&'a str> {
+fn skeleton(doc: &Document, b: &Block) -> Vec<String> {
     let skip: HashSet<usize> = group_lines(doc, b)
         .into_iter()
         .chain(defence_lines(b))
         .collect();
     b.span()
         .filter(|i| !skip.contains(i))
-        .map(|i| doc.lines()[i].text())
+        .map(|i| {
+            // The legacy `#ff:` spelling and `# ff:` are the same line (review IN-05).
+            let t = doc.lines()[i].text();
+            super::meta::normalize_ff_line(t).unwrap_or_else(|| t.to_string())
+        })
         .collect()
 }
 

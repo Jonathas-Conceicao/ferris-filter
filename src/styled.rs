@@ -16,6 +16,8 @@
 //! which keeps the pass idempotent.
 
 use crate::emitter::style_action_lines;
+use std::collections::HashMap;
+
 use crate::filter::group;
 use crate::filter::keywords::Kind;
 use crate::filter::section::{self, SectionSpan};
@@ -59,19 +61,28 @@ fn in_economy(span: Option<SectionSpan>, header: usize) -> bool {
 /// 1-based index among non-economy rules (same numbering as the overlay's rule rows: a grouped
 /// rule counts once).
 pub fn rule_index_of(doc: &Document, id: BlockId) -> Option<usize> {
+    rule_indices(doc).get(&id).copied()
+}
+
+/// [`rule_index_of`] for every non-economy block at once; a later block of a grouped rule maps to
+/// its rule's index. Passes that edit the document compute it first, so a group that is briefly
+/// out of step mid-pass never shifts the numbers (review WR-04).
+fn rule_indices(doc: &Document) -> HashMap<BlockId, usize> {
     let span = economy_span(doc);
-    let followers = group::analyze(doc).followers();
+    let groups = group::analyze(doc);
+    let mut out = HashMap::new();
     let mut index = 0usize;
     for b in doc.blocks() {
-        if in_economy(span, b.header_line()) || followers.contains(&b.id()) {
+        if in_economy(span, b.header_line()) {
             continue;
         }
-        index += 1;
-        if b.id() == id {
-            return Some(index);
+        if !groups.is_follower(b.id()) {
+            index += 1;
         }
+        // Blocks come in file order, so a follower's leader is already numbered: `index`.
+        out.insert(b.id(), index);
     }
-    None
+    out
 }
 
 /// `(lowercased keyword, value tokens joined by one space)` for an action line, else `None`.
@@ -156,6 +167,7 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
     // Every block of a grouped rule is rewritten (they stay identical), but the rule is reported
     // once, by its first block.
     let followers = group::analyze(doc).followers();
+    let indices = rule_indices(doc);
     let mut report = StyleReport::default();
     for (id, enabled, header) in ids {
         if in_economy(span, header) {
@@ -168,7 +180,7 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
         let Some(m) = styles.resolve_tag(&tag) else {
             if enabled
                 && !follower
-                && let Some(i) = rule_index_of(doc, id)
+                && let Some(&i) = indices.get(&id)
             {
                 report.unknown.push((i, tag));
             }
@@ -188,9 +200,11 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
         match rewrite_block(doc, id, m.style) {
             Ok(true) if !follower => report.rewritten += 1,
             Ok(_) => {}
-            Err(_) if follower => {}
             Err(e) => {
-                if let Some(i) = rule_index_of(doc, id) {
+                // A failed later block of a group is reported under its rule, once.
+                if let Some(&i) = indices.get(&id)
+                    && !report.failed.iter().any(|(f, _)| *f == i)
+                {
                     report.failed.push((i, e.to_string()));
                 }
             }
@@ -211,6 +225,7 @@ pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(us
         .filter(|&(_, header)| !in_economy(span, header))
         .collect();
     let followers = group::analyze(doc).followers();
+    let indices = rule_indices(doc);
     let mut dropped = Vec::new();
     for (id, _) in ids {
         let Some(name) = doc.meta_get(id, "style").map(str::to_string) else {
@@ -224,7 +239,7 @@ pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(us
             let _ = doc.remove_meta(id, "style");
             continue;
         }
-        let Some(index) = rule_index_of(doc, id) else {
+        let Some(&index) = indices.get(&id) else {
             continue;
         };
         if doc.remove_meta(id, "style").is_ok() {

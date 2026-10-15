@@ -27,6 +27,9 @@ use crate::styled::{self, StyleReport};
 /// Refusal copy for a line edit whose target line changed since the frame started.
 pub const STALE_LINE_STATUS: &str =
     "That line changed before the edit landed; nothing was changed.";
+/// Refusal of an edit that would change a grouped rule's defence lines outside the chips.
+pub const GROUP_DEFENCES_STATUS: &str =
+    "This rule spans several blocks; change its defences with the Simple Defences chips.";
 /// Refusal copy for line edits on a block whose lines the model cannot structure.
 pub const NOT_EDITABLE_STATUS: &str = "This rule's lines can't be edited here.";
 
@@ -966,6 +969,11 @@ impl WorkingFilter {
     }
 
     fn dispatch(&mut self, action: RowAction) -> ActionOutcome {
+        // A later block of a group is not a rule of its own: acting on it alone would break the
+        // group (review WR-02).
+        if action_target(&action).is_some_and(|id| self.groups.is_follower(id)) {
+            return refused(NOT_EDITABLE_STATUS.to_string());
+        }
         match action {
             RowAction::Move(id, dir) => return self.move_rule(id, dir),
             RowAction::SetDefenceSelection { id, mask } => return self.set_selection(id, mask),
@@ -1004,10 +1012,15 @@ impl WorkingFilter {
             }
             other => {
                 let out = self.block_action(other);
-                if out.changed
-                    && let Err(e) = group::resync(&mut self.doc, &members)
-                {
+                if !out.changed {
+                    out
+                } else if let Err(e) = group::resync(&mut self.doc, &members) {
                     refused(e.to_string())
+                } else if group::analyze(&self.doc).members(members[0]).len() != members.len() {
+                    // The edit changed the leader's defence lines in a way the copies cannot
+                    // follow (e.g. a raw defence line): refuse rather than break the group
+                    // (review WR-01).
+                    refused(GROUP_DEFENCES_STATUS.to_string())
                 } else {
                     out
                 }
@@ -2627,5 +2640,43 @@ Show
         });
         assert!(!out.changed);
         assert_eq!(wf.text(), grouped());
+    }
+
+    #[test]
+    fn edits_that_would_break_a_group_are_refused() {
+        let mut wf = WorkingFilter::from_text(&grouped());
+        let id = group_row(&wf).id;
+        let follower = wf.groups.members(id)[1];
+        // A raw defence line on the leader cannot be mirrored: refused, nothing changes.
+        let out = wf.apply_action(RowAction::AddLine {
+            id,
+            kind: LineKind::Condition,
+            text: "BaseArmour >= 100".into(),
+        });
+        assert!(!out.changed);
+        assert_eq!(out.status.as_deref(), Some(GROUP_DEFENCES_STATUS));
+        assert_eq!(wf.text(), grouped());
+        // A follower id is not a rule: no action acts on it alone.
+        for a in [
+            RowAction::Delete(follower),
+            RowAction::SetEnabled(follower, false),
+            RowAction::Duplicate(follower),
+            RowAction::Move(follower, Dir::Down),
+            RowAction::SetDefenceSelection {
+                id: follower,
+                mask: 1,
+            },
+        ] {
+            assert!(!wf.apply_action(a.clone()).changed, "{a:?}");
+            assert_eq!(wf.text(), grouped(), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn legacy_ff_spelling_does_not_break_a_group() {
+        let src = grouped().replacen("# ff:name Pure", "#ff:name Pure", 1);
+        let wf = WorkingFilter::from_text(&src);
+        assert_eq!(wf.rows().len(), 3);
+        assert_eq!(group_row(&wf).group_size, 2);
     }
 }

@@ -358,6 +358,7 @@ pub fn show_list(
         list.pending.retain(|p| Some(p.block) == keep);
         list.pending_defences.retain(|b| Some(*b) == keep);
         list.pending_simple_defences.retain(|b| Some(*b) == keep);
+        list.simple_all.retain(|b| Some(*b) == keep);
         list.focus_card = None;
         list.line_error = None;
         egui::Popup::close_all(ui.ctx());

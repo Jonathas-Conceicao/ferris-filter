@@ -29,6 +29,15 @@ pub enum LoadError {
         source: std::io::Error,
     },
 
+    /// Neither the live file nor its committed `-default.json` exists (DEF-03). Keeps the
+    /// ``Cannot read`` shape of [`LoadError::Read`] and names both files.
+    #[error("Cannot read `{path}` or `{default}`: neither file exists")]
+    #[diagnostic(
+        code(ferrisfilter::io::read_error),
+        help("Restore {default}, or create {path}.")
+    )]
+    NoSource { path: String, default: String },
+
     /// The file was read but is malformed or fails type validation. Carries the dotted field
     /// path and the highlighted source span.
     #[error(transparent)]

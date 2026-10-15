@@ -35,10 +35,14 @@ use crate::pricer::{self, PriceRateError, PricedData};
 const CONFIG_FILE: &str = "config.json";
 /// Conventional file name for the named styles.
 const STYLES_FILE: &str = "styles.json";
+/// Committed default read when the live `styles.json` is absent (DEF-03). Never written.
+const STYLES_DEFAULT_FILE: &str = "styles-default.json";
 /// Conventional file name for live synced prices.
 const PRICES_FILE: &str = "prices.json";
 /// Conventional file name for the tier cutoffs that pair with live prices.
 const TIERS_FILE: &str = "tiers.json";
+/// Committed default read when the live `tiers.json` is absent (DEF-03). Never written.
+const TIERS_DEFAULT_FILE: &str = "tiers-default.json";
 /// Conventional file name for the committed early-league price fallback.
 const PRICES_FALLBACK_FILE: &str = "prices-fallback.json";
 /// Conventional file name for the tier cutoffs calibrated to the fallback prices.
@@ -52,12 +56,22 @@ const TIERS_FALLBACK_FILE: &str = "tiers-fallback.json";
 /// passes whatever root it resolved for itself.
 ///
 /// This struct is the **only** place the conventional file names appear in the library.
+///
+/// `styles` / `tiers` are the **live** paths: every write targets them. Reads go through
+/// [`InputPaths::styles_source`] / [`InputPaths::tiers_source`], which fall back to the committed
+/// `-default.json` file when the live one is absent (DEF-03).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputPaths {
     pub config: PathBuf,
     pub styles: PathBuf,
+    /// The committed default read when the live `styles` file is absent; `None` for an explicit
+    /// override (`--styles`), which never falls back.
+    pub styles_default: Option<PathBuf>,
     pub prices: PathBuf,
     pub tiers: PathBuf,
+    /// The committed default read when the live `tiers` file is absent; `None` for an explicit
+    /// override (`--tiers`), which never falls back.
+    pub tiers_default: Option<PathBuf>,
     pub prices_fallback: PathBuf,
     pub tiers_fallback: PathBuf,
 }
@@ -82,8 +96,10 @@ impl InputPaths {
         InputPaths {
             config: root.join(CONFIG_FILE),
             styles: root.join(STYLES_FILE),
+            styles_default: Some(root.join(STYLES_DEFAULT_FILE)),
             prices: root.join(PRICES_FILE),
             tiers: root.join(TIERS_FILE),
+            tiers_default: Some(root.join(TIERS_DEFAULT_FILE)),
             prices_fallback: root.join(PRICES_FALLBACK_FILE),
             tiers_fallback: root.join(TIERS_FALLBACK_FILE),
         }
@@ -98,8 +114,11 @@ impl InputPaths {
 
     /// Override just the styles path, leaving the rest untouched. Lets generate/apply point
     /// at a non-default styles file, e.g. for an experimental config (OD-2).
+    ///
+    /// An explicit path has no default: if it is absent the read fails, it never falls back.
     pub fn with_styles(mut self, path: impl Into<PathBuf>) -> Self {
         self.styles = path.into();
+        self.styles_default = None;
         self
     }
 
@@ -113,9 +132,44 @@ impl InputPaths {
     /// Pointing this at the exalt-denominated `tiers-fallback.json` while keeping live prices
     /// restores sane placement without touching the committed `tiers.json` the test oracle
     /// depends on.
+    ///
+    /// An explicit path has no default: if it is absent the read fails, it never falls back.
     pub fn with_tiers(mut self, path: impl Into<PathBuf>) -> Self {
         self.tiers = path.into();
+        self.tiers_default = None;
         self
+    }
+
+    /// The file to read styles from: the live `styles` path if it exists, else the committed
+    /// default. Reads only; writes always target [`InputPaths::styles`].
+    pub fn styles_source(&self) -> Result<PathBuf, LoadError> {
+        read_source(&self.styles, self.styles_default.as_deref())
+    }
+
+    /// The file to read tier cutoffs from: the live `tiers` path if it exists, else the committed
+    /// default. Reads only; writes always target [`InputPaths::tiers`].
+    pub fn tiers_source(&self) -> Result<PathBuf, LoadError> {
+        read_source(&self.tiers, self.tiers_default.as_deref())
+    }
+}
+
+/// Decide which file a read uses (DEF-03): `live` if it exists; else `default` if it is given and
+/// exists; else, when a default was given, [`LoadError::NoSource`] naming both. With no default
+/// (an explicit `--styles` / `--tiers`) `live` is returned as is, so the caller's read reports the
+/// usual `Cannot read` error.
+///
+/// Only checks existence: never creates, writes or touches either file.
+pub fn read_source(live: &Path, default: Option<&Path>) -> Result<PathBuf, LoadError> {
+    if live.exists() {
+        return Ok(live.to_path_buf());
+    }
+    match default {
+        Some(d) if d.exists() => Ok(d.to_path_buf()),
+        Some(d) => Err(LoadError::NoSource {
+            path: path_str(live),
+            default: path_str(d),
+        }),
+        None => Ok(live.to_path_buf()),
     }
 }
 
@@ -200,13 +254,17 @@ pub fn load_inputs(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<CompileInputs, CompileError> {
-    let config: Config = loader::load_config(&path_str(&paths.config), &path_str(&paths.styles))?;
+    let styles = match paths.styles_source() {
+        Ok(p) => path_str(&p),
+        // Keep the historical order: a missing config.json is reported before the styles.
+        // `load_config` reads the config first and fails on it, so this styles path is never read.
+        Err(_) if !paths.config.exists() => String::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let config: Config = loader::load_config(&path_str(&paths.config), &styles)?;
     config
         .styles
-        .check_rules(
-            config.rules.as_deref().unwrap_or(&[]),
-            &path_str(&paths.styles),
-        )
+        .check_rules(config.rules.as_deref().unwrap_or(&[]), &styles)
         .map_err(LoadError::from)?;
 
     let (priced, price_source) = load_priced(paths, policy)?;
@@ -238,7 +296,7 @@ pub fn load_economy(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<EconomyInputs, CompileError> {
-    let styles = loader::load_styles(&path_str(&paths.styles))?;
+    let styles = loader::load_styles(&path_str(&paths.styles_source()?))?;
     let (priced, price_source) = load_priced(paths, policy)?;
     Ok(EconomyInputs {
         styles,
@@ -278,7 +336,7 @@ fn load_priced(
     load_priced_with(paths, policy, None)
 }
 
-/// [`load_priced`] where `Some(live_tiers)` replaces the reads of `paths.tiers`.
+/// [`load_priced`] where `Some(live_tiers)` replaces the read of the live tiers source.
 fn load_priced_with(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
@@ -287,7 +345,7 @@ fn load_priced_with(
     let live = |paths: &InputPaths| -> Result<ValidatedTiers, CompileError> {
         match live_tiers {
             Some(t) => Ok(ValidatedTiers::try_from(t.to_vec()).map_err(LoadError::from)?),
-            None => Ok(loader::load_tiers(&path_str(&paths.tiers))?),
+            None => Ok(loader::load_tiers(&path_str(&paths.tiers_source()?))?),
         }
     };
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
@@ -481,6 +539,216 @@ mod tests {
         assert_eq!(overridden.tiers, base.tiers);
         assert_eq!(overridden.prices_fallback, base.prices_fallback);
         assert_eq!(overridden.tiers_fallback, base.tiers_fallback);
+    }
+
+    #[test]
+    fn relative_to_sets_the_default_sources() {
+        let p = InputPaths::relative_to("/tmp/root");
+        assert_eq!(
+            p.styles_default.as_deref(),
+            Some(Path::new("/tmp/root").join("styles-default.json").as_path())
+        );
+        assert_eq!(
+            p.tiers_default.as_deref(),
+            Some(Path::new("/tmp/root").join("tiers-default.json").as_path())
+        );
+        let c = InputPaths::conventional();
+        assert_eq!(
+            c.styles_default.as_deref(),
+            Some(Path::new("styles-default.json"))
+        );
+        assert_eq!(
+            c.tiers_default.as_deref(),
+            Some(Path::new("tiers-default.json"))
+        );
+    }
+
+    /// An explicit `--styles` / `--tiers` keeps its meaning: no default to fall back to.
+    #[test]
+    fn with_styles_and_with_tiers_clear_only_their_own_default() {
+        let base = InputPaths::relative_to("/tmp/root");
+        let s = base.clone().with_styles("my-styles.json");
+        assert_eq!(s.styles_default, None);
+        assert_eq!(s.tiers_default, base.tiers_default);
+        let t = base.clone().with_tiers("my-tiers.json");
+        assert_eq!(t.tiers_default, None);
+        assert_eq!(t.styles_default, base.styles_default);
+    }
+
+    #[test]
+    fn read_source_prefers_the_live_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("styles.json");
+        let default = dir.path().join("styles-default.json");
+        fs::write(&live, "{}").unwrap();
+        fs::write(&default, "{}").unwrap();
+        assert_eq!(read_source(&live, Some(&default)).unwrap(), live);
+    }
+
+    #[test]
+    fn read_source_falls_back_to_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("styles.json");
+        let default = dir.path().join("styles-default.json");
+        fs::write(&default, "{}").unwrap();
+        assert_eq!(read_source(&live, Some(&default)).unwrap(), default);
+        assert!(
+            !live.exists(),
+            "read_source must never create the live file"
+        );
+    }
+
+    #[test]
+    fn read_source_with_neither_file_names_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("styles.json");
+        let default = dir.path().join("styles-default.json");
+        let err = read_source(&live, Some(&default)).unwrap_err();
+        assert!(matches!(err, LoadError::NoSource { .. }), "got {err:?}");
+        let msg = err.to_string();
+        assert!(msg.starts_with("Cannot read `"), "{msg}");
+        assert!(
+            msg.contains("styles.json") && msg.contains("styles-default.json"),
+            "{msg}"
+        );
+    }
+
+    /// An explicit path never falls back, even with a default file beside it: the caller's read
+    /// then fails with the unchanged `Cannot read` error.
+    #[test]
+    fn read_source_explicit_path_never_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("styles-default.json"), "{}").unwrap();
+        let live = dir.path().join("styles.json");
+        assert_eq!(read_source(&live, None).unwrap(), live);
+        let paths = InputPaths::relative_to(dir.path()).with_styles(&live);
+        assert_eq!(paths.styles_source().unwrap(), live);
+    }
+
+    /// A root holding only the committed defaults (no live styles.json / tiers.json).
+    fn defaults_only_root(with_config: bool) -> tempfile::TempDir {
+        let mut files: Vec<(&str, PathBuf)> = vec![
+            ("styles-default.json", repo_file("styles-default.json")),
+            ("tiers-default.json", repo_file("tiers-default.json")),
+            ("prices.json", fixture("seed-prices.json")),
+        ];
+        if with_config {
+            files.push(("config.json", repo_file("config.json")));
+        }
+        let refs: Vec<(&str, &Path)> = files.iter().map(|(n, p)| (*n, p.as_path())).collect();
+        temp_inputs(&refs)
+    }
+
+    fn assert_no_live_files(dir: &Path) {
+        assert!(!dir.join("styles.json").exists(), "styles.json was created");
+        assert!(!dir.join("tiers.json").exists(), "tiers.json was created");
+    }
+
+    #[test]
+    fn load_inputs_falls_back_to_both_defaults_and_creates_no_live_file() {
+        let dir = defaults_only_root(true);
+        let from_defaults = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load from defaults");
+        assert_no_live_files(dir.path());
+
+        let live = temp_inputs(&[
+            ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        let from_live = load_inputs(
+            &InputPaths::relative_to(live.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load from live names");
+        assert_eq!(
+            compile(&from_defaults).unwrap(),
+            compile(&from_live).unwrap()
+        );
+    }
+
+    #[test]
+    fn load_inputs_falls_back_to_default_styles_only() {
+        let dir = temp_inputs(&[
+            ("config.json", &repo_file("config.json")),
+            ("styles-default.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("styles from the default");
+        assert!(!dir.path().join("styles.json").exists());
+    }
+
+    #[test]
+    fn load_inputs_falls_back_to_default_tiers_only() {
+        let dir = temp_inputs(&[
+            ("config.json", &repo_file("config.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers-default.json", &repo_file("tiers-default.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        let inputs = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("tiers from the default");
+        assert_eq!(inputs.price_source, PriceSource::Live);
+        assert!(!dir.path().join("tiers.json").exists());
+    }
+
+    /// A present live file wins: a broken live styles.json is reported even though a valid
+    /// default sits beside it.
+    #[test]
+    fn load_inputs_prefers_the_live_styles_file() {
+        let dir = defaults_only_root(true);
+        fs::write(dir.path().join("styles.json"), "{ not json").unwrap();
+        let err = load_inputs(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect_err("the broken live file must be read, not the default");
+        assert!(
+            matches!(err, CompileError::Load(LoadError::Parse(_))),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn load_economy_falls_back_to_defaults_and_creates_no_live_file() {
+        let dir = defaults_only_root(false);
+        let inputs = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .expect("load_economy from defaults");
+        assert_eq!(inputs.price_source, PriceSource::Live);
+        assert_no_live_files(dir.path());
+    }
+
+    #[test]
+    fn load_economy_with_neither_tiers_file_names_both() {
+        let dir = temp_inputs(&[
+            ("styles-default.json", &repo_file("styles-default.json")),
+            ("prices.json", &fixture("seed-prices.json")),
+        ]);
+        let err = load_economy(
+            &InputPaths::relative_to(dir.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("tiers.json") && msg.contains("tiers-default.json"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -744,6 +1012,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.starts_with("Cannot read `"), "{msg}");
         assert!(msg.contains("styles.json"), "{msg}");
+        assert!(msg.contains("styles-default.json"), "{msg}");
     }
 
     #[test]

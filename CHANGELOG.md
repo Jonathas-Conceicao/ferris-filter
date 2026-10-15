@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 28 (DEF-01..05).** Shipped defaults now live in committed `styles-default.json` /
+  `tiers-default.json`; `styles.json` / `tiers.json` are git-ignored per-user files that fall back to the
+  defaults when absent (the first CONFIG Apply creates them; delete one to reset it). The app-root marker
+  is `styles-default.json`, and the tests read the defaults.
+
 - **Phase 27 (UAT4-01..04).**
   - **Simple Defences** condition: AR / EV / ES rows of Any | Has | No (`X > 0` / `X 0`), a strip of
     the 7 combinations, mutually exclusive with Defences in the picker. Zero-based defence lines load

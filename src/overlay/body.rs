@@ -542,6 +542,8 @@ fn defences_card(
                     "Remove all defence conditions"
                 },
             );
+            #[cfg(test)]
+            probe_rect(ui, ("defences-x", id), x.rect);
             if x.clicked() {
                 list.pending_defences.remove(&id);
                 list.advanced_defences.remove(&id);
@@ -564,6 +566,8 @@ fn defences_card(
                 let mut on = !own.is_empty();
                 ui.horizontal(|ui| {
                     let t = widgets::circular_toggle(ui, &mut on);
+                    #[cfg(test)]
+                    probe_rect(ui, ("defences-toggle", id, name), t.rect);
                     ui.label(RichText::new(label).size(14.0).color(theme::VALUE_TEXT));
                     if t.changed() {
                         if on {
@@ -4387,6 +4391,131 @@ mod tests {
         let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
         assert!(a.is_empty());
         assert_eq!(kinds, ["simple"]);
+    }
+
+    // -- card stability and exclusivity through the UI -------------------------------------------
+
+    /// `pick_entry` the way `conditions_group` runs it, on the session's current text.
+    fn pick_in(wf: &WorkingFilter, list: &mut ListUi, entry: ConditionEntry) -> Option<RowAction> {
+        let id = wf.rows()[0].id;
+        let entries = wf.body_view(id);
+        let lines: Vec<&BodyEntry> = entries.iter().filter(|e| is_condition_side(e)).collect();
+        let present = conditions::present_entries(&lines, &[], any_pending_defences(list, id));
+        pick_entry(id, entry, &lines, &present, list)
+    }
+
+    fn settle(
+        ctx: &egui::Context,
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        cat: &ClassCatalog,
+    ) -> Vec<&'static str> {
+        let mut kinds = Vec::new();
+        for _ in 0..2 {
+            let (a, k) = step_cards(ctx, wf, list, cat, None);
+            assert!(a.is_empty(), "idle frame emitted {a:?}");
+            kinds = k;
+        }
+        kinds
+    }
+
+    #[test]
+    fn defences_card_does_not_flip_to_simple_after_toggle() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session("Show\n  Rarity Rare\n", false);
+        let id = wf.rows()[0].id;
+        assert_eq!(pick_in(&wf, &mut list, ConditionEntry::Defences), None);
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+        let at = probed(&ctx, ("defences-toggle", id, "BaseArmour")).center();
+        let (a, _) = step_cards(&ctx, &mut wf, &mut list, &cat, Some(at));
+        assert!(
+            matches!(&a[..], [RowAction::AddLine { text, .. }] if text == "BaseArmour >= 1"),
+            "{a:?}"
+        );
+        assert!(wf.text().contains("BaseArmour >= 1"));
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+        assert!(list.advanced_defences.contains(&id));
+    }
+
+    #[test]
+    fn loaded_defences_card_edited_to_zero_based_stays_defences() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session("Show\n  BaseArmour >= 100\n", false);
+        let id = wf.rows()[0].id;
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+        let view = wf.body_view(id);
+        let a = int_edit(id, &view[0], 1).unwrap();
+        assert!(wf.apply_action(a).changed);
+        assert!(wf.text().contains("BaseArmour >= 1"));
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+
+        // A reload (clear_ids; also run after Revert and the Apply re-parse) classifies from the
+        // file again: the same text now loads as Simple Defences.
+        list.clear_ids();
+        list.expanded = Some(id);
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+        assert_eq!(wf.text(), "Show\n  BaseArmour >= 1\n");
+    }
+
+    #[test]
+    fn simple_card_edits_keep_the_rule_simple() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = simple_session("Show\n  Rarity Rare\n", true);
+        let id = wf.rows()[0].id;
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+        // (row, segment): AR Has, EV No, AR No, ES Has, AR Any, EV Has.
+        for (row, seg) in [(0, 1), (1, 2), (0, 2), (2, 1), (0, 0), (1, 1)] {
+            let at = seg_at(&ctx, id, row, seg);
+            let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, Some(at));
+            assert_eq!(a.len(), 1, "({row}, {seg}): {a:?}");
+            assert_eq!(kinds, ["simple"]);
+            assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+        }
+        assert_eq!(
+            wf.text(),
+            "Show\n  Rarity Rare\n  BaseEvasion > 0\n  BaseEnergyShield > 0\n"
+        );
+        assert!(list.advanced_defences.is_empty());
+    }
+
+    #[test]
+    fn removing_the_defences_card_clears_the_mark_for_a_simple_pick() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = defences_session("Show\n  BaseArmour >= 100\n", false);
+        let id = wf.rows()[0].id;
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+        assert!(list.advanced_defences.contains(&id));
+        let x = probed(&ctx, ("defences-x", id)).center();
+        let (a, _) = step_cards(&ctx, &mut wf, &mut list, &cat, Some(x));
+        assert!(matches!(&a[..], [RowAction::RemoveLine { .. }]), "{a:?}");
+        assert!(!list.advanced_defences.contains(&id));
+        assert_eq!(wf.text(), "Show\n");
+        assert_eq!(
+            pick_in(&wf, &mut list, ConditionEntry::SimpleDefences),
+            None
+        );
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+    }
+
+    #[test]
+    fn never_both_defences_cards() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = simple_session("Show\n  Rarity Rare\n", true);
+        let id = wf.rows()[0].id;
+        assert_eq!(pick_in(&wf, &mut list, ConditionEntry::Defences), None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert!(list.pending_defences.is_empty());
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+        assert_eq!(list.focus_card, None, "the Simple card took the focus");
+
+        let (ctx, mut wf, mut list) = defences_session("Show\n  Rarity Rare\n", true);
+        assert_eq!(
+            pick_in(&wf, &mut list, ConditionEntry::SimpleDefences),
+            None
+        );
+        assert!(list.pending_simple_defences.is_empty());
+        assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["defences"]);
+        assert_eq!(list.focus_card, None, "the Defences card took the focus");
     }
 
     #[test]

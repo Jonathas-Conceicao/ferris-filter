@@ -510,6 +510,7 @@ impl WorkingFilter {
     pub fn set_styles(&mut self, styles: Result<StyleSet, String>) {
         match styles {
             Ok(s) => {
+                self.retag_renamed_legacy(&s);
                 self.styles = Some(s);
                 self.styles_error = None;
             }
@@ -520,6 +521,33 @@ impl WorkingFilter {
         }
         self.styles_rev += 1;
         self.rebuild();
+    }
+
+    /// A legacy name-only tag (`# ff:style kite`) links by name, so renaming that style would
+    /// orphan it (and Apply would then drop the tag). Before `new` replaces the current set, move
+    /// every such tag whose style keeps its id in `new` but no longer resolves there to the
+    /// canonical `<id> <new name>` form. Only those tag lines change.
+    fn retag_renamed_legacy(&mut self, new: &StyleSet) {
+        let Some(old) = self.styles.as_ref() else {
+            return;
+        };
+        let moves: Vec<(BlockId, String)> = self
+            .doc
+            .blocks()
+            .filter_map(|b| {
+                let tag = self.doc.meta_get(b.id(), "style")?;
+                if new.resolve_tag(tag).is_some() {
+                    return None;
+                }
+                let m = old.resolve_tag(tag)?;
+                let id = m.style.id.as_deref()?;
+                let name = new.name_of_id(id)?;
+                Some((b.id(), new.tag_for(name)?))
+            })
+            .collect();
+        for (id, tag) in moves {
+            let _ = self.doc.set_meta(id, "style", &tag);
+        }
     }
 
     /// Style names in styles.json order; empty when unavailable.
@@ -1598,6 +1626,22 @@ Show
         );
         un.set_styles(Err("x".into()));
         assert!(un.style_set().is_none());
+    }
+
+    #[test]
+    fn renaming_a_style_retags_its_legacy_name_tags_instead_of_orphaning_them() {
+        let mut wf = styled_wf("#ff:style kite\nShow\n\n#ff:style S\nShow\n");
+        let mut set = test_styles();
+        set.rename_custom("kite", "locator").expect("rename");
+        wf.set_styles(Ok(set));
+        assert_eq!(wf.rows()[0].style, StyleState::Known("locator".into()));
+        let text = wf.doc.serialize();
+        assert!(text.contains("# ff:style t5hw2k locator\n"), "{text}");
+        assert!(
+            text.contains("#ff:style S\n"),
+            "untouched legacy tag kept: {text}"
+        );
+        assert!(wf.is_dirty());
     }
 
     #[test]

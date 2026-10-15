@@ -485,7 +485,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 28-01-PLAN.md — Create styles-default.json / tiers-default.json from HEAD; every test reads the defaults
+- [x] 28-01-PLAN.md — Create styles-default.json / tiers-default.json from HEAD; every test reads the defaults
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -515,7 +515,7 @@ Plans:
 | 25. UAT Feedback Fixes 2 | 4/4 | Human UAT pending | - |
 | 26. UAT Feedback Fixes 3 | 9/9 | Human UAT pending | - |
 | 27. UAT Feedback Fixes 4 | 5/5 | Human UAT pending | - |
-| 28. Default config files | 0/? | Not started | - |
+| 28. Default config files | 1/4 | In Progress|  |
 
 ## Backlog
 

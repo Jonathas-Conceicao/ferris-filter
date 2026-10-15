@@ -589,12 +589,32 @@ fn cell<R>(
     width: f32,
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> (egui::Rect, R) {
+    cell_with(ui, salt, width, Layout::left_to_right(Align::Center), add)
+}
+
+/// A fixed-width cell whose contents run right to left, so they hug the cell's right edge.
+fn cell_right<R>(
+    ui: &mut egui::Ui,
+    salt: &'static str,
+    width: f32,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::Rect, R) {
+    cell_with(ui, salt, width, Layout::right_to_left(Align::Center), add)
+}
+
+fn cell_with<R>(
+    ui: &mut egui::Ui,
+    salt: &'static str,
+    width: f32,
+    layout: Layout,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::Rect, R) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::hover());
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(salt)
             .max_rect(rect)
-            .layout(Layout::left_to_right(Align::Center)),
+            .layout(layout),
     );
     let out = add(&mut child);
     (rect, out)
@@ -620,7 +640,13 @@ fn styles_table_header(ui: &mut egui::Ui, with_order: bool) {
                     head(ui, "h-preview", COL_PREVIEW, "Preview"),
                 );
                 if with_order {
-                    probe("head-order", head(ui, "h-order", COL_ORDER, "Order"));
+                    // Right-aligned over the row arrows, which sit at the table's right edge.
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let (rect, _) = cell_right(ui, "h-order", COL_ORDER, |ui| {
+                            ui.label(caption_text("Order"));
+                        });
+                        probe("head-order", rect);
+                    });
                 }
             });
         });
@@ -813,26 +839,30 @@ fn style_row(
                     label.left()
                 });
                 if let Some((can_up, can_down)) = reorder {
-                    let (order, _) = cell(ui, "order", COL_ORDER, |ui| {
-                        let up = widgets::arrow_button(ui, ArrowDirection::Up, can_up);
-                        let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
-                        probe("row-up", up.rect);
-                        probe("row-down", down.rect);
-                        if down.clicked() {
-                            actions.push(ConfigAction::MoveStyle {
-                                name: name.to_string(),
-                                up: false,
-                            });
-                        }
-                        if up.clicked() {
-                            actions.push(ConfigAction::MoveStyle {
-                                name: name.to_string(),
-                                up: true,
-                            });
-                        }
+                    // The arrows hug the row's right edge like the RULES rows: right to left,
+                    // Down first (rightmost), so they read Up then Down.
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let (order, _) = cell_right(ui, "order", COL_ORDER, |ui| {
+                            let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
+                            let up = widgets::arrow_button(ui, ArrowDirection::Up, can_up);
+                            probe("row-up", up.rect);
+                            probe("row-down", down.rect);
+                            if down.clicked() {
+                                actions.push(ConfigAction::MoveStyle {
+                                    name: name.to_string(),
+                                    up: false,
+                                });
+                            }
+                            if up.clicked() {
+                                actions.push(ConfigAction::MoveStyle {
+                                    name: name.to_string(),
+                                    up: true,
+                                });
+                            }
+                        });
+                        probe("row-order", order);
+                        arrows_left = Some(order.left());
                     });
-                    probe("row-order", order);
-                    arrows_left = Some(order.left());
                 }
             });
             // The row's click target covers the name and preview columns only, so it never
@@ -1902,18 +1932,41 @@ mod tests {
                 );
             }
         }
-        // Only the custom group has an Order column, and its rows line up under it.
+        // Only the custom group has an Order column. It sits at the table's right edge (like the
+        // RULES arrows), and the header is right-aligned over the row arrows.
         let ho = of("head-order");
         assert_eq!(ho.len(), 1);
         assert!(hp[1].right() <= ho[0].left() + 1.0);
         let orders = of("row-order");
         assert_eq!(orders.len(), style_groups(&state).1.len());
-        for r in orders {
+        let previews = of("row-preview");
+        let n_builtin = style_groups(&state).0.len();
+        for (k, r) in orders.iter().enumerate() {
             assert!(
-                (r.left() - ho[0].left()).abs() <= 1.0,
+                (r.right() - ho[0].right()).abs() <= 1.0,
                 "{r:?} vs {:?}",
                 ho[0]
             );
+            assert!((r.right() - orders[0].right()).abs() <= 1.0);
+            assert!(previews[n_builtin + k].right() <= r.left());
+        }
+        // The right edge is the frames' content edge, well right of the shared columns.
+        assert!(
+            ho[0].left() > hp[1].right() + 20.0,
+            "{:?} {:?}",
+            ho[0],
+            hp[1]
+        );
+        // Up then Down, left to right, inside the order cell, Down at its right edge. An enabled
+        // arrow's probed rect is its 4px-padded click target, a disabled one's the 16px glyph.
+        let (ups, downs) = (of("row-up"), of("row-down"));
+        for ((u, d), o) in ups.iter().zip(&downs).zip(&orders) {
+            assert!(u.center().x < d.center().x);
+            assert!(
+                o.contains(u.center()) && o.contains(d.center()),
+                "{u:?} {d:?} {o:?}"
+            );
+            assert!((d.center().x + 8.0 - o.right()).abs() <= 1.0, "{d:?} {o:?}");
         }
     }
 

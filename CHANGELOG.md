@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 26 (UAT3-01..08).**
+  - Stable style ids: every `styles.json` style has an `id` (`builtin:<name>` for built-ins, a random
+    6-8 character id for custom styles; id-less files get deterministic ids at load, persisted by the
+    next Apply). Rules are tagged `# ff:style <id> <name>`; old `# ff:style <name>` tags still resolve
+    by name and are rewritten on the next Apply (a tag-only migration does not mark the filter
+    unapplied).
+  - Custom styles can be renamed inline in CONFIG; rules stay linked, including rules with a legacy
+    name-only tag. `config.json` still references styles by name, so `generate` fails until it is updated.
+  - CONFIG styles are one table per group (Built-in / Custom with an Order column); the RULES style
+    picker follows the unapplied CONFIG style set.
+  - One **Defences** condition (Armour / Evasion / Energy Shield toggles) per rule.
+  - **Between** operator for whole-number conditions: two sliders, min clamped never above max; a loaded
+    lower/upper pair shows as one card with its bytes kept.
+  - Already-present conditions are greyed in the picker and focus the existing card; pending conditions
+    show their operator before a value; picker sections start collapsed.
+  - Tray Quit with unapplied edits asks **Apply & quit** (waits for an in-game reload) / Quit without
+    applying / Cancel.
+
 - **OVERWRITE after a changed-on-disk refusal** (RULES tab). The refusal now reads `Filter changed on
   disk since it was loaded.` and offers OVERWRITE beside RELOAD (tooltips explain both): it replaces
   the outside change with the in-memory rules through the same guarded write (current disk bytes
@@ -184,6 +202,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged (the seed fixture is byte-identical). (The `dynamic.json` store, the overlay saving
   it, and `apply --reset` named here are superseded by the filter-as-store change above: no JSON
   store exists any more and Apply never writes a config.)
+
+### Removed
+
+- `BaseDefencePercentile` from the keyword table (Phase 26): a line using it loads as a raw row and
+  is kept byte for byte.
+
+### Fixed
+
+- The class group closing on the first value click in a new condition (Phase 26, UAT3-04). The open
+  class group's egui id changed when the pending row became a real line (an epoch bump on AddLine plus
+  different pending and real salts); its open state now lives under a row-epoch-keyed absolute id.
 
 ## [0.4.0] - 2026-09-17
 

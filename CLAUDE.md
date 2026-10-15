@@ -23,7 +23,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 | Path | Purpose |
 |------|---------|
 | `config.json` | **Source of truth.** Declarative policy model the filter is compiled from. Top-level sections: `build` (weapon/armour classes + defence-type taper), `weaponClasses`/`armourClasses`/`flaskCharmClasses` (complete class lists), `classGroups` (documentation aliases), the ordered `rules` array (the policy — first-match-wins), and `alwaysShow` (currency, recycle). Edit `rules` (and `styles.json` for how a style looks), then regenerate. A `styles` section here is rejected at load unless every entry in it equals the same-named `styles.json` entry (then it is dropped). |
-| `styles.json` | **Committed single source of named styles** (repo root): a map of style name to style object (text/border/background colours, font, minimap, beam, sound, `action` Show/Hide, `disableDropSound`). File order is the overlay picker order. `S`, `A`, `B`, `C`, `D`, `E`, `F`, `unchanged` and `hidden` are required; every other style is optional, and adding one needs no code change. Read by `generate` (beside the inputs) and by `apply`/the overlay (from the app root); `--styles <path>` on `generate` and `apply` overrides it. A config that still has an inline `styles` section loads only if every inline entry equals the same-named entry here (an untouched pre-v0.5 seed): the section is then dropped in memory (the file itself is not rewritten). Otherwise it is rejected with a message naming the file and the differing styles; move those here and delete the section. The overlay's Apply (either tab) rewrites this file when the CONFIG tab has edits (one style per line, file order kept, which includes a custom-style reorder); `tiers.json` is rewritten the same way (entry order kept) — and the `-fallback` pair is never touched. |
+| `styles.json` | **Committed single source of named styles** (repo root): a map of style name to style object (text/border/background colours, font, minimap, beam, sound, `action` Show/Hide, `disableDropSound`), each carrying an `"id"` written first: `builtin:<name>` for the nine built-ins, a random 6-8 character lowercase alphanumeric id for custom styles (+ ADD STYLE). A file without ids still loads (ids are assigned at load, deterministically from a hash of the name so they are stable across loads, and persisted by the next overlay Apply without showing as an edit); duplicate ids, a wrong built-in id or a custom id starting with `builtin:` are load errors. The generator and `config.json` ignore ids and keep using names. File order is the overlay picker order. `S`, `A`, `B`, `C`, `D`, `E`, `F`, `unchanged` and `hidden` are required; every other style is optional, and adding one needs no code change. Read by `generate` (beside the inputs) and by `apply`/the overlay (from the app root); `--styles <path>` on `generate` and `apply` overrides it. A config that still has an inline `styles` section loads only if every inline entry equals the same-named entry here (an untouched pre-v0.5 seed): the section is then dropped in memory (the file itself is not rewritten). Otherwise it is rejected with a message naming the file and the differing styles; move those here and delete the section. The overlay's Apply (either tab) rewrites this file when the CONFIG tab has edits (one style per line, file order kept, which includes a custom-style reorder); `tiers.json` is rewritten the same way (entry order kept) — and the `-fallback` pair is never touched. |
 | `universal.filter` (repo root) | **Generated** by `ferrisfilter generate` and **git-ignored** — regenerate on demand, do not commit or hand-edit. Each policy block is headed `Show # <rule name>` (from the `name` field in `config.json`). |
 | `prices.json` (repo root) | **Generated** by `ferrisfilter sync` from poe.ninja and **git-ignored** — your live economy data, regenerated per sync, never committed. `sync --league <name\|slug>` targets a specific poe.ninja league (useful during a league transition, when the automatic pick resolves to the outgoing league). |
 | `ff-settings.json` (app root) | **Per-user overlay settings, git-ignored.** Written by the overlay's CONFIG tab; holds the selected game-folder filter name (a bare `*.filter` file name, validated before it is ever joined onto the game folder), default `dynamic.filter` when absent or invalid. Unknown keys are preserved on save. Never committed. |
@@ -72,7 +72,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > NAME is a plain text box (no toggle): empty means no `# ff:name` line, clearing it removes the line,
 > typing adds or updates it. STYLE is one picker of **Custom** plus every `styles.json` preset. For
 > **Custom** only, Show / Hide sits on its own line below the picker, followed by the action rows
-> with **+ style**; a preset hides both, decides Show/Hide itself and writes `# ff:style <name>`.
+> with **+ style**; a preset hides both, decides Show/Hide itself and writes `# ff:style <id> <name>`.
 > Switching a preset back to Custom keeps the current actions and drops the tag. Only Show and Hide
 > are offered: a foreign `Minimal` block is shown as Minimal (Custom only) and left as is unless
 > changed. **Continue to later rules** is its own line, last in the body. No caption
@@ -90,6 +90,15 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > **Sockets** is a plain numeric condition (operator plus a 0-6 slider); the overlay never edits socket
 > colours, but a hand-written `Sockets >= 5GGG` still loads and keeps its letters when the count is
 > changed.
+> **Defences** is one condition (one card per rule) with Armour / Evasion / Energy Shield toggles, each
+> with its own operator and slider; `BaseDefencePercentile` is gone from the keyword table (a line using
+> it loads as a raw row; Ward is not supported yet). Whole-number conditions (and each defence) offer a
+> **Between** operator: one card with two sliders writing `X >= min` and `X <= max`, clamped so min never
+> exceeds max; a loaded one-lower/one-upper pair shows as one card with its bytes kept until edited
+> (a loaded impossible pair is flagged and left as written), while other duplicates (two `>=`) stay
+> separate cards. In the **+ condition** picker, sections start collapsed (a search opens matches), a
+> condition already on the rule is greyed (clicking it focuses the existing card instead of adding
+> another), and a pending condition shows its operator dropdown before the first value.
 > Lines with an unknown keyword show as raw rows (Enter commits; an edit that would add a grammar
 > Error shows an inline hint and changes nothing). PoE1-only conditions (e.g. `LinkedSockets`,
 > `SocketGroup`, `HasInfluence`, `MapTier`, `Exceptional`) are not in the keyword table or picker; a filter using
@@ -114,7 +123,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > whose result equals the file on disk is not rewritten but still counts as applied: same status,
 > same in-game reload. Opening the overlay never writes: a v0.4 filter is announced as
 > "will be converted on the next APPLY" and a `.ffbak` backup is kept by that first write. Picking a preset in the STYLE section writes
-> `# ff:style <name>` and sets the rule's actions from `styles.json`. On every Apply, styled rules are
+> `# ff:style <id> <name>` (the id links the rule to the style; the name is informational and refreshed on Apply; an old `# ff:style <name>` tag still resolves by name and is rewritten to the new form on the next Apply; that tag-only migration does not mark the filter unapplied or trigger the Quit confirm) and sets the rule's actions from `styles.json`. On every Apply, styled rules are
 > rewritten from the current `styles.json` (re-read at Apply, and watched while the overlay runs: a
 > change on disk marks the filter as having unapplied changes), and the outcome says
 > `Updated N styled rules.`. A preset's actions are not shown in the UI; a hand edit
@@ -142,9 +151,13 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > in `ff-settings.json` and is restored on the next launch (default `dynamic.filter`). FILTER also holds
 > the **Reload filter in game after Apply** toggle (saved on change). Picking another
 > filter while the RULES tab has unapplied edits asks first (`Switch and discard` / `Stay`). **STYLES**
-> is a table with a `Visibility | Name | Preview` header: built-in styles first (their switch and
-> actions are editable; no rename, move or delete), then a divider and the **Custom** heading, which
-> carries the **+ ADD STYLE** button and is shown even with no custom styles. Custom styles can be
+> is one table per group, each with its own header: **Built-in** (`Visibility | Name | Preview`; switch and
+> actions editable; no rename, move or delete), then the **Custom** heading, which carries the
+> **+ ADD STYLE** button and is shown even with no custom styles, with an extra **Order** column holding
+> the arrows. A custom style's name is an inline text field: renaming keeps its rules linked by id (rules
+> still carrying a legacy name-only tag for it are moved to the new name in memory too) and is one
+> revertible edit. Caveat: `config.json` references styles by name, so renaming a custom style it uses
+> makes `generate` fail with the unknown-style error until `config.json` is updated. Custom styles can be
 > deleted and reordered with up/down arrows (order = `styles.json` order, saved by Apply, undone by
 > Revert; a custom style never moves above the built-ins). There is no status line and no new/edited
 > tag. Each style has an on/off
@@ -163,6 +176,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > changed `styles.json`/`tiers.json` discards config edits) and **OVERWRITE** (writes everything over
 > them); nothing is overwritten silently. **Revert** stays per tab (RULES discards rule edits, CONFIG
 > discards config edits), and both tabs show the same unapplied state and the same Apply message.
+> The RULES style picker and tag checks follow the unapplied CONFIG style set. Tray **Quit** with anything
+> unapplied asks **Apply & quit** (quits only after a successful Apply, and waits for an in-game reload to
+> finish) / **Quit without applying** / **Cancel**; with nothing pending it exits at once.
 > After Apply the RULES tab sees the new styles at once. Rules whose
 > `# ff:style` names a deleted style lose that tag on that Apply and keep their actions.
 >

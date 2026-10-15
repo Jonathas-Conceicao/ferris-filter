@@ -45,7 +45,7 @@ Record Result as PASS / FAIL with a note for every step.
 
 7. **Debug beside release.** With a release `ff` running, run `cargo run --bin ff`.
    **Expected:** a second, debug stripe opens (separate name, by design) and its tray tooltip
-   reports Ctrl+Shift+Z unavailable; quit it from its tray. **Result:**
+   reports Ctrl+Shift+Z unavailable; quit it from its tray. **Result:** pass
 
 8. **Launch during startup.** With no `ff` running, launch it and immediately launch it again
    (before the first stripe appears).

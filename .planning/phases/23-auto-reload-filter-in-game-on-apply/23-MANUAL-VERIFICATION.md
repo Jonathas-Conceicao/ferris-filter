@@ -60,7 +60,7 @@ Record Result as PASS / FAIL with a note for every step.
    delivered). Nothing outside the game can see whether chat is open, so this is the reason for the
    "Close the chat box before pressing Apply" caption; no key can help because anything sent runs after the
    first Enter. Record anything else (for example the command arriving garbled). Also record
-   whether Ctrl+V does anything in the game world with chat closed. **Result:**
+   whether Ctrl+V does anything in the game world with chat closed. **Result:** accepted: reload not sent, no false "Reloaded" claim shown; left as is
 
 7b. **Chat pre-fill.** With chat closed, Apply after having last chatted in a party or guild
    channel (the game may pre-fill a channel prefix when chat opens).

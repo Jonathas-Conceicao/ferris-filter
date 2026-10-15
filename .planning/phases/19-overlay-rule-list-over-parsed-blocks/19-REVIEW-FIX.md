@@ -81,3 +81,5 @@ _Iteration: 1_
   code and was kept.
 - **Author decision (2026-10-15), WR-03:** every Apply repricing the economy section is accepted as
   designed (it is how new prices reach the filter).
+- **Author decision (2026-10-15):** remaining Info findings (19-REVIEW.md IN-01, iteration-1 IN-03) are
+  accepted as tech debt.

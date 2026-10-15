@@ -56,3 +56,9 @@ asserts `assert_ne!(dup, text, "splice must apply")`, so a splice that changes n
 _Fixed: 2026-10-13T00:26:22Z_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 2_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 17-REVIEW.md (IN-01, IN-03 to IN-08) are accepted as tech debt.

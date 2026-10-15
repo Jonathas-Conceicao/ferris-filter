@@ -98,3 +98,9 @@ created.
 _Fixed: 2026-10-15T09:04:14Z_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 28-REVIEW.md (IN-02 to IN-05) are accepted as tech debt. IN-04 (an existing install folder needs `styles-default.json` to be found as the app root) is covered by an upgrade note in CHANGELOG.md.

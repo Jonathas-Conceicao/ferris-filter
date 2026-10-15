@@ -165,3 +165,9 @@ The full report is in `23-REVIEW-FIX.iter1.md`.
 _Fixed: 2026-10-13_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 2_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 23-REVIEW.md (IN-01, IN-02, and earlier-iteration Info items not fixed) are accepted as tech debt.

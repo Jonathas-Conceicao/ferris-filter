@@ -98,3 +98,11 @@ The behaviour is the documented consequence of id-based links. Revisit it only i
 _Fixed: 2026-10-14_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+- **WR-07** (deleting and re-adding a same-named style drops its tags on Apply): accepted as the documented consequence of id-based links.
+- **WR-06 remaining gap** (picking a style while CONFIG failed to load writes a tag with an in-memory-only id): accepted.
+- Remaining Info findings in 26-REVIEW.md (IN-01 to IN-06) are accepted as tech debt.

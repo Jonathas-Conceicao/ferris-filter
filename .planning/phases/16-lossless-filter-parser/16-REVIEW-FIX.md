@@ -208,3 +208,9 @@ IN-01 to IN-07 are unchanged.
 _Fixed: 2026-10-12_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 3_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 16-REVIEW.md (IN-01 to IN-07) are accepted as tech debt.

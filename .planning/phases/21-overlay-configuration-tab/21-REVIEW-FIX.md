@@ -52,3 +52,10 @@ IN-01 is out of scope (info, not requested).
 
 ---
 _Fixer: Claude (gsd-code-fixer)_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+- **WR-03** (out-of-date notice can clear on a RULES Apply when the economy section is Damaged): accepted for now.
+- Remaining Info findings (21-REVIEW.md IN-01, IN-02; iteration-1 IN-01) are accepted as tech debt.

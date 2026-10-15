@@ -69,3 +69,9 @@ The first sequence leaves two rows on the old code.
 _Fixed: 2026-10-13T07:00:00Z_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 3_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 20-REVIEW.md (IN-03, IN-04, IN-06) are accepted as tech debt.

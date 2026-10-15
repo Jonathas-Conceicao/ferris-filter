@@ -58,3 +58,9 @@ part of the orchestrator's additions.
 _Fixed: 2026-10-12_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 2_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 18-REVIEW.md (IN-01 to IN-08) are accepted as tech debt.

@@ -114,3 +114,9 @@ None beyond the accepted residuals above.
 _Fixed: 2026-10-13_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 3_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info finding IN-01 (already accepted above) and the accepted residuals stay accepted as tech debt.

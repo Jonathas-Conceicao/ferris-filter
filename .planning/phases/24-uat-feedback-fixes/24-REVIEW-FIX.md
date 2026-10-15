@@ -83,3 +83,10 @@ empty.
 _Fixed: 2026-10-13_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+- **WR-02** (a style with `"action": "Minimal"` fails to load): deferred to backlog 999.14 (Minimal support review for PoE2).
+- Remaining Info findings in 24-REVIEW.md (IN-01 to IN-06) are accepted as tech debt.

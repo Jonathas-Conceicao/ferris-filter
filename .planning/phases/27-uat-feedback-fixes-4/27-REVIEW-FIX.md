@@ -59,3 +59,9 @@ Verification: `cargo fmt --check` is clean. `cargo test --offline --lib overlay:
 _Fixed: 2026-10-15_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 27-REVIEW.md (IN-01 to IN-05) are accepted as tech debt.

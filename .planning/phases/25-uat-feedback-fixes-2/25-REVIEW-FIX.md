@@ -139,3 +139,9 @@ checks substrings that are unchanged.
 _Fixed: 2026-10-14_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## Author decision (2026-10-15)
+
+Recorded at the v0.5 wrap-up.
+
+Remaining Info findings in 25-REVIEW.md (IN-01, IN-02, IN-04, IN-05) are accepted as tech debt.

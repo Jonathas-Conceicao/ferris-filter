@@ -181,6 +181,37 @@ pub enum NumericOp {
     Between,
 }
 
+/// True when `entries[i]` is the only condition line of its keyword in the rule. Between is only
+/// offered then: with other lines of the keyword present, the inserted bound would not group into
+/// a Between card (see [`card_plan`]) and could not be switched back in one step.
+pub fn sole_line(entries: &[&BodyEntry], i: usize) -> bool {
+    let Some(k) = entries.get(i).and_then(|e| e.keyword) else {
+        return false;
+    };
+    entries
+        .iter()
+        .filter(|e| {
+            e.kind == EntryKind::Condition
+                && e.keyword
+                    .is_some_and(|x| x.name.eq_ignore_ascii_case(k.name))
+        })
+        .count()
+        == 1
+}
+
+/// [`numeric_op_choices`] without Between unless `can_between` (see [`sole_line`]).
+pub fn numeric_op_choices_for(
+    kw: &Keyword,
+    current: NumericOp,
+    can_between: bool,
+) -> Vec<(NumericOp, &'static str)> {
+    let mut out = numeric_op_choices(kw, current);
+    if !can_between {
+        out.retain(|(c, _)| *c != NumericOp::Between);
+    }
+    out
+}
+
 /// Operator dropdown entries. `Int` keywords get a trailing "Between"; every other shape gets the
 /// existing choices only.
 pub fn numeric_op_choices(kw: &Keyword, current: NumericOp) -> Vec<(NumericOp, &'static str)> {
@@ -429,6 +460,26 @@ mod tests {
         assert!(ch.iter().all(|(o, _)| *o != NumericOp::Between));
         let ch = numeric_op_choices(il, NumericOp::Between);
         assert!(ch.iter().any(|(o, _)| *o == NumericOp::Between));
+    }
+
+    #[test]
+    fn between_needs_the_keywords_only_line() {
+        let es = [
+            e(1, "ItemLevel", GE, "60"),
+            e(2, "ItemLevel", Some(Operator::Ne), "70"),
+            e(3, "Quality", GE, "5"),
+        ];
+        let refs: Vec<&BodyEntry> = es.iter().collect();
+        assert!(!sole_line(&refs, 0));
+        assert!(!sole_line(&refs, 1));
+        assert!(sole_line(&refs, 2));
+        let il = lookup("ItemLevel").unwrap();
+        let cur = NumericOp::Single(GE);
+        let no = numeric_op_choices_for(il, cur, false);
+        assert!(no.iter().all(|(c, _)| *c != NumericOp::Between));
+        assert_eq!(no.len() + 1, numeric_op_choices(il, cur).len());
+        let yes = numeric_op_choices_for(il, cur, true);
+        assert!(yes.iter().any(|(c, _)| *c == NumericOp::Between));
     }
 
     #[test]

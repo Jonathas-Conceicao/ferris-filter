@@ -429,7 +429,10 @@ pub fn conditions_group(
                   actions: &mut Vec<RowAction>| {
         let e = lines[i];
         match (e.kind, e.keyword) {
-            (EntryKind::Condition, Some(kw)) => condition_card(ui, ctx, e, kw, idx, list, actions),
+            (EntryKind::Condition, Some(kw)) => {
+                let can_between = conditions::sole_line(&lines, i);
+                condition_card(ui, ctx, e, kw, idx, can_between, list, actions)
+            }
             _ => {
                 card_frame(idx).show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -555,7 +558,16 @@ fn defences_card(
                 for part in parts {
                     match *part {
                         Part::Single(i) => {
-                            defence_line_controls(ui, ctx, defence_lines[i], kw, list, actions)
+                            let can_between = conditions::sole_line(defence_lines, i);
+                            defence_line_controls(
+                                ui,
+                                ctx,
+                                defence_lines[i],
+                                kw,
+                                can_between,
+                                list,
+                                actions,
+                            )
                         }
                         Part::Between { lower, upper } => defence_between(
                             ui,
@@ -589,6 +601,7 @@ fn defence_line_controls(
     ctx: &BodyCtx,
     entry: &BodyEntry,
     kw: &'static Keyword,
+    can_between: bool,
     list: &mut ListUi,
     actions: &mut Vec<RowAction>,
 ) {
@@ -601,6 +614,7 @@ fn defence_line_controls(
             bad_id: ui.make_persistent_id("bad-text"),
             num_bad_id: ui.make_persistent_id("bad-int"),
             classes: ctx.classes,
+            can_between,
         };
         let tokens: Vec<&str> = entry.values.iter().map(String::as_str).collect();
         let value = grammar::decode(kw, &tokens);
@@ -680,7 +694,7 @@ fn numeric_op_combo(ui: &mut egui::Ui, card: &Card) -> Option<conditions::Numeri
         .selected_text(grammar::operator_label(card.kw, entry.op, false))
         .width(OP_W)
         .show_ui(ui, |ui| {
-            for (c, label) in conditions::numeric_op_choices(card.kw, cur) {
+            for (c, label) in conditions::numeric_op_choices_for(card.kw, cur, card.can_between) {
                 let sel = c == cur;
                 if ui.selectable_label(sel, label).clicked() && !sel {
                     picked = Some(c);
@@ -698,9 +712,10 @@ fn op_controls(ui: &mut egui::Ui, card: &Card, list_form: bool, actions: &mut Ve
             Some(conditions::NumericOp::Single(op)) => {
                 actions.extend(op_edit(card.id, card.entry, op));
             }
-            Some(conditions::NumericOp::Between) => {
+            Some(conditions::NumericOp::Between) if card.can_between => {
                 actions.extend(to_between_actions(card.id, card.entry, card.kw));
             }
+            Some(conditions::NumericOp::Between) => {}
             None => {}
         }
     } else if let Some(op) = operator_combo(ui, card, list_form)
@@ -1255,6 +1270,8 @@ struct Card<'a> {
     bad_id: egui::Id,
     num_bad_id: egui::Id,
     classes: Option<&'a ClassCatalog>,
+    /// The line is its keyword's only line, so the operator dropdown may offer Between (WR-03).
+    can_between: bool,
 }
 
 impl Card<'_> {
@@ -1282,12 +1299,14 @@ impl Card<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn condition_card(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
     entry: &BodyEntry,
     kw: &'static Keyword,
     idx: usize,
+    can_between: bool,
     list: &mut ListUi,
     actions: &mut Vec<RowAction>,
 ) {
@@ -1300,6 +1319,7 @@ fn condition_card(
             bad_id: ui.make_persistent_id("bad-text"),
             num_bad_id: ui.make_persistent_id("bad-int"),
             classes: ctx.classes,
+            can_between,
         };
         let tokens: Vec<&str> = entry.values.iter().map(String::as_str).collect();
         let value = grammar::decode(kw, &tokens);
@@ -2392,6 +2412,7 @@ fn action_card(
             bad_id: ui.make_persistent_id("bad-text"),
             num_bad_id: ui.make_persistent_id("bad-int"),
             classes: ctx.classes,
+            can_between: false,
         };
         let tokens: Vec<&str> = entry.values.iter().map(String::as_str).collect();
         let value = grammar::decode(kw, &tokens);

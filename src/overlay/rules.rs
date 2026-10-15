@@ -253,6 +253,9 @@ pub struct WorkingFilter {
     dirty: bool,
     search_cache: Option<(String, u64, Vec<usize>)>,
     styles: Option<StyleSet>,
+    /// The applied (on-disk) style set that legacy name-only tags were written against, so a
+    /// freshly parsed document (RELOAD, filter switch) still follows a pending rename.
+    legacy_base: Option<StyleSet>,
     styles_error: Option<String>,
     styles_rev: u64,
     pending_cache: Option<(u64, u64, bool)>,
@@ -359,6 +362,41 @@ fn extract(doc: &Document, b: &Block) -> Extracted {
     out
 }
 
+/// Rewrite every legacy (name-only) tag in `doc` whose style, as the first of `olds` that knows
+/// the tag resolves it, still exists in `new` under another name, to that style's canonical
+/// `<id> <name>` in `new`. A tag `new` resolves by id, or by name to that same style, is left
+/// alone; so is one whose style is gone. A same-named newcomer in `new` therefore cannot take
+/// over a renamed style's tags. True when a tag line changed.
+fn migrate_legacy_tags(doc: &mut Document, olds: &[&StyleSet], new: &StyleSet) -> bool {
+    let moves: Vec<(BlockId, String)> = doc
+        .blocks()
+        .filter_map(|b| {
+            let tag = doc.meta_get(b.id(), "style")?;
+            let first = tag.split_whitespace().next()?;
+            if new.name_of_id(first).is_some() {
+                return None;
+            }
+            let id = olds
+                .iter()
+                .find_map(|old| old.resolve_tag(tag))?
+                .style
+                .id
+                .as_deref()?;
+            let now = new.resolve_tag(tag).and_then(|m| m.style.id.as_deref());
+            if now == Some(id) {
+                return None;
+            }
+            let name = new.name_of_id(id)?;
+            Some((b.id(), new.tag_for(name)?))
+        })
+        .collect();
+    let mut changed = false;
+    for (id, tag) in moves {
+        changed |= doc.set_meta(id, "style", &tag).is_ok();
+    }
+    changed
+}
+
 impl WorkingFilter {
     pub fn from_text(text: &str) -> Self {
         let mut wf = WorkingFilter {
@@ -374,6 +412,7 @@ impl WorkingFilter {
             dirty: false,
             search_cache: None,
             styles: None,
+            legacy_base: None,
             styles_error: None,
             styles_rev: 0,
             pending_cache: None,
@@ -527,27 +566,29 @@ impl WorkingFilter {
     /// orphan it (and Apply would then drop the tag). Before `new` replaces the current set, move
     /// every such tag whose style keeps its id in `new` but no longer resolves there to the
     /// canonical `<id> <new name>` form. Only those tag lines change.
+    ///
+    /// The applied baseline gets the same migration: it is not a user edit, so it never makes the
+    /// rules dirty, and a RULES Revert (which re-parses the baseline) keeps it (CR-01, WR-04).
     fn retag_renamed_legacy(&mut self, new: &StyleSet) {
-        let Some(old) = self.styles.as_ref() else {
+        // The applied set first: legacy tags only ever come from disk.
+        let olds: Vec<&StyleSet> = self.legacy_base.iter().chain(self.styles.iter()).collect();
+        if olds.is_empty() {
             return;
-        };
-        let moves: Vec<(BlockId, String)> = self
-            .doc
-            .blocks()
-            .filter_map(|b| {
-                let tag = self.doc.meta_get(b.id(), "style")?;
-                if new.resolve_tag(tag).is_some() {
-                    return None;
-                }
-                let m = old.resolve_tag(tag)?;
-                let id = m.style.id.as_deref()?;
-                let name = new.name_of_id(id)?;
-                Some((b.id(), new.tag_for(name)?))
-            })
-            .collect();
-        for (id, tag) in moves {
-            let _ = self.doc.set_meta(id, "style", &tag);
         }
+        migrate_legacy_tags(&mut self.doc, &olds, new);
+        let mut base = parse_text(&self.applied_text);
+        if migrate_legacy_tags(&mut base, &olds, new) {
+            self.applied_text = base.serialize();
+        }
+    }
+
+    /// [`Self::set_styles`] with the CONFIG tab's pending set, remembering `base` (the applied
+    /// set) as the set legacy name-only tags were written against.
+    pub fn set_styles_over(&mut self, styles: StyleSet, base: &StyleSet) {
+        if self.legacy_base.as_ref() != Some(base) {
+            self.legacy_base = Some(base.clone());
+        }
+        self.set_styles(Ok(styles));
     }
 
     /// Style names in styles.json order; empty when unavailable.
@@ -1641,7 +1682,38 @@ Show
             text.contains("#ff:style S\n"),
             "untouched legacy tag kept: {text}"
         );
-        assert!(wf.is_dirty());
+        // A migration, not a user edit (WR-04).
+        assert!(!wf.is_dirty());
+    }
+
+    #[test]
+    fn a_rules_revert_after_a_rename_keeps_the_migrated_tag() {
+        let mut wf = styled_wf("#ff:style kite\nShow\n");
+        let mut set = test_styles();
+        set.rename_custom("kite", "locator").expect("rename");
+        wf.set_styles(Ok(set.clone()));
+        wf.revert();
+        assert_eq!(wf.rows()[0].style, StyleState::Known("locator".into()));
+        let (t, rep) = wf.text_with_style_set(&set);
+        assert!(t.starts_with("# ff:style t5hw2k locator\n"), "{t}");
+        assert!(rep.dropped.is_empty(), "{rep:?}");
+    }
+
+    #[test]
+    fn a_fresh_document_follows_a_pending_rename_through_the_applied_set() {
+        let disk = test_styles();
+        let mut pending = disk.clone();
+        pending.rename_custom("kite", "locator").expect("rename");
+        // A newcomer named like the old style must not take over its tags.
+        pending
+            .insert_new("kite", disk.get("S").unwrap().clone())
+            .expect("add");
+        let mut wf = WorkingFilter::from_text("#ff:style kite\nShow\n");
+        wf.set_styles_over(pending, &disk);
+        assert_eq!(wf.rows()[0].style, StyleState::Known("locator".into()));
+        assert!(!wf.is_dirty());
+        wf.revert();
+        assert_eq!(wf.rows()[0].style, StyleState::Known("locator".into()));
     }
 
     #[test]

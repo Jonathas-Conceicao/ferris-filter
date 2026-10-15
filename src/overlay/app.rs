@@ -202,7 +202,7 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     if working.style_set() == Some(config.pending_styles()) {
         return false;
     }
-    working.set_styles(Ok(config.pending_styles().clone()));
+    working.set_styles_over(config.pending_styles().clone(), config.applied_styles());
     true
 }
 
@@ -486,7 +486,7 @@ fn apply_everything(
             working.on_applied(loaded.text());
         }
         if let Some(c) = config.as_deref() {
-            working.set_styles(Ok(c.pending_styles().clone()));
+            working.set_styles_over(c.pending_styles().clone(), c.applied_styles());
         }
     }
 
@@ -2961,6 +2961,56 @@ mod tests {
         assert!(styles.contains(&id), "{styles}");
         let filter = std::fs::read_to_string(&rig.path).unwrap();
         assert!(filter.contains(&format!("{id} locator")), "{filter}");
+    }
+
+    /// CR-01: legacy tag -> rename -> sync -> RULES revert -> Apply keeps the link.
+    #[test]
+    fn a_rules_revert_after_a_rename_keeps_the_legacy_tag_linked() {
+        let mut rig = rig("# ff:style kite\nShow\n  Class \"Rings\"\n");
+        let id = rig.config.style_id("kite").unwrap().to_string();
+        rig.config.rename_style("kite", "locator").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        rig.working.revert();
+        assert!(!super::sync_working_styles(&rig.config, &mut rig.working));
+        assert!(rig.working.unknown_styles().is_empty());
+        let r = rig.apply(false);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        let filter = std::fs::read_to_string(&rig.path).unwrap();
+        assert!(
+            filter.contains(&format!("# ff:style {id} locator\n")),
+            "{filter}"
+        );
+    }
+
+    /// WR-04: a CONFIG revert after a rename leaves no phantom RULES edit.
+    #[test]
+    fn a_config_revert_after_a_rename_leaves_the_rules_clean() {
+        let mut rig = rig("# ff:style kite\nShow\n  Class \"Rings\"\n");
+        rig.config.rename_style("kite", "locator").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        assert!(!rig.working.is_dirty());
+        rig.config.revert();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        assert!(!rig.working.is_dirty());
+        assert!(rig.working.unknown_styles().is_empty());
+    }
+
+    /// A RELOAD while a rename is pending re-parses the disk text; it still follows the rename.
+    #[test]
+    fn a_reloaded_document_follows_a_pending_rename() {
+        let mut rig = rig("# ff:style kite\nShow\n");
+        rig.config.rename_style("kite", "locator").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        let mut fresh = WorkingFilter::from_text(rig.loaded.text());
+        assert!(super::sync_working_styles(&rig.config, &mut fresh));
+        assert_eq!(
+            fresh.rows()[0].style,
+            crate::overlay::rules::StyleState::Known("locator".to_string())
+        );
     }
 
     #[test]

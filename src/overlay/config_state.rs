@@ -427,6 +427,11 @@ impl ConfigState {
         &self.styles
     }
 
+    /// The styles as last loaded or applied (what is on disk).
+    pub fn applied_styles(&self) -> &StyleSet {
+        &self.styles_applied
+    }
+
     /// The working tier entries (file order), including edits not yet applied.
     pub fn pending_tiers(&self) -> &[TierEntry] {
         &self.tiers

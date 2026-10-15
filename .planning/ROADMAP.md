@@ -673,3 +673,27 @@ author: v0.5 focuses on usability and minor fixes, not a visual redesign.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.12: Keyword table: verify remaining keywords in game (BACKLOG)
+
+**Goal:** The Phase 16 keyword-table sign-off was a partial pass (author's UAT, 2026-10-15): the
+keywords not yet exercised in game should be checked against the live game and corrected in
+`src/filter/keywords.rs`.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.13: Guide rules away from conditions that cannot match (BACKLOG)
+
+**Goal:** Offer guidance (not blocking) when a rule combines conditions that can never match, e.g.
+Defences or Simple Defences on a rule without armour classes (noted in Phase 27: UAT4-03 has no class
+check).
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

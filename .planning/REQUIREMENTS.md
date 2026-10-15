@@ -261,37 +261,37 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONF-04 | Phase 21 | Complete (UAT pending) |
 | INST-01 | Phase 22 | Complete (UAT pending) |
 | RELOAD-01 | Phase 23 | Complete (UAT pending) |
-| UAT-01 | Phase 24 | Complete (UAT pending) |
-| UAT-02 | Phase 24 | Complete (UAT pending) |
-| UAT-03 | Phase 24 | Complete (UAT pending) |
-| UAT-04 | Phase 24 | Complete (UAT pending) |
-| UAT-05 | Phase 24 | Complete (UAT pending) |
-| UAT-06 | Phase 24 | Complete (UAT pending) |
-| UAT-07 | Phase 24 | Complete (UAT pending) |
-| UAT-08 | Phase 24 | Complete (UAT pending) |
-| UAT-09 | Phase 24 | Complete (UAT pending) |
-| UAT-10 | Phase 24 | Complete (UAT pending) |
-| UAT-11 | Phase 24 | Complete (UAT pending) |
-| UAT-12 | Phase 24 | Complete (UAT pending) |
-| UAT-13 | Phase 24 | Complete (UAT pending) |
-| UAT2-01 | Phase 25 | Complete (UAT pending) |
-| UAT2-02 | Phase 25 | Complete (UAT pending) |
-| UAT2-03 | Phase 25 | Complete (UAT pending) |
-| UAT2-04 | Phase 25 | Complete (UAT pending) |
-| UAT2-05 | Phase 25 | Complete (UAT pending) |
-| UAT2-06 | Phase 25 | Complete (UAT pending) |
-| UAT2-07 | Phase 25 | Complete (UAT pending) |
-| UAT2-08 | Phase 25 | Complete (UAT pending) |
-| UAT2-09 | Phase 25 | Complete (UAT pending) |
-| UAT2-10 | Phase 25 | Complete (UAT pending) |
-| UAT3-01 | Phase 26 | Complete (UAT pending) |
-| UAT3-02 | Phase 26 | Complete (UAT pending) |
-| UAT3-03 | Phase 26 | Complete (UAT pending) |
-| UAT3-04 | Phase 26 | Complete (UAT pending) |
-| UAT3-05 | Phase 26 | Complete (UAT pending) |
-| UAT3-06 | Phase 26 | Complete (UAT pending) |
-| UAT3-07 | Phase 26 | Complete (UAT pending) |
-| UAT3-08 | Phase 26 | Complete (UAT pending) |
+| UAT-01 | Phase 24 | Complete (UAT verified) |
+| UAT-02 | Phase 24 | Complete (UAT verified) |
+| UAT-03 | Phase 24 | Complete (UAT verified) |
+| UAT-04 | Phase 24 | Complete (UAT verified) |
+| UAT-05 | Phase 24 | Complete (UAT verified) |
+| UAT-06 | Phase 24 | Complete (UAT verified) |
+| UAT-07 | Phase 24 | Complete (UAT verified) |
+| UAT-08 | Phase 24 | Complete (UAT verified) |
+| UAT-09 | Phase 24 | Complete (UAT verified) |
+| UAT-10 | Phase 24 | Complete (UAT verified) |
+| UAT-11 | Phase 24 | Complete (UAT verified) |
+| UAT-12 | Phase 24 | Complete (UAT verified) |
+| UAT-13 | Phase 24 | Complete (UAT verified) |
+| UAT2-01 | Phase 25 | Complete (UAT verified) |
+| UAT2-02 | Phase 25 | Complete (UAT verified) |
+| UAT2-03 | Phase 25 | Complete (UAT verified) |
+| UAT2-04 | Phase 25 | Complete (UAT verified) |
+| UAT2-05 | Phase 25 | Complete (UAT verified) |
+| UAT2-06 | Phase 25 | Complete (UAT verified) |
+| UAT2-07 | Phase 25 | Complete (UAT verified) |
+| UAT2-08 | Phase 25 | Complete (UAT verified) |
+| UAT2-09 | Phase 25 | Complete (UAT verified) |
+| UAT2-10 | Phase 25 | Complete (UAT verified) |
+| UAT3-01 | Phase 26 | Complete (UAT verified) |
+| UAT3-02 | Phase 26 | Complete (UAT verified) |
+| UAT3-03 | Phase 26 | Complete (UAT verified) |
+| UAT3-04 | Phase 26 | Complete (UAT verified) |
+| UAT3-05 | Phase 26 | Complete (UAT verified) |
+| UAT3-06 | Phase 26 | Complete (UAT verified) |
+| UAT3-07 | Phase 26 | Complete (UAT verified) |
+| UAT3-08 | Phase 26 | Complete (UAT verified) |
 | UAT4-01 | Phase 27 | Pending |
 | UAT4-02 | Phase 27 | Pending |
 | UAT4-03 | Phase 27 | Pending |
@@ -305,4 +305,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-15 after Phase 27 added (UAT4-01..UAT4-04)*
+*Last updated: 2026-10-15 after Phase 27 UAT results recorded (phases 24-26 UAT verified)*

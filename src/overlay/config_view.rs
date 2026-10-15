@@ -32,7 +32,10 @@ const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
 const COL_VISIBILITY: f32 = 48.0;
 const COL_NAME: f32 = 104.0;
 const COL_PREVIEW: f32 = 120.0;
-const RENAME_TIP: &str = "Names can't be changed. Add a new style and delete this one.";
+/// The Order column (custom group only): the up/down arrows.
+const COL_ORDER: f32 = 64.0;
+const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
+const INVALID_RED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x55, 0x55);
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
 /// Label of the FILTER section toggle that sends `/reloaditemfilter` after an Apply.
 pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
@@ -59,6 +62,11 @@ pub enum ConfigAction {
         edit: StyleEdit,
     },
     DeleteStyle(String),
+    /// Rename a custom style (committed from the Name cell's text field).
+    RenameStyle {
+        from: String,
+        to: String,
+    },
     /// Move a custom style one place up or down among the customs.
     MoveStyle {
         name: String,
@@ -93,6 +101,8 @@ pub struct ConfigUi {
     pub scroll_to: Option<String>,
     /// A name draft was just opened; its text field takes focus once.
     pub focus_draft: bool,
+    /// In-progress rename text per custom style id, kept only while it differs from the name.
+    pub rename_drafts: HashMap<String, String>,
 }
 
 impl ConfigUi {
@@ -173,6 +183,16 @@ pub fn style_name_hint(state: &ConfigState, draft: &str) -> Option<String> {
         );
     }
     None
+}
+
+/// Why `draft` cannot be committed as the new name of custom style `from` right now.
+pub fn rename_hint(state: &ConfigState, from: &str, draft: &str) -> Option<String> {
+    state
+        .pending_styles()
+        .clone()
+        .rename_custom(from, draft.trim())
+        .err()
+        .map(|e| e.to_string())
 }
 
 /// Why `draft` cannot be created as a new filter file right now.
@@ -572,8 +592,8 @@ fn cell<R>(
     (rect, out)
 }
 
-/// The Visibility | Name | Preview header, drawn once above the groups.
-fn styles_table_header(ui: &mut egui::Ui) {
+/// The Visibility | Name | Preview (| Order) header of one group.
+fn styles_table_header(ui: &mut egui::Ui, with_order: bool) {
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(8, 0))
         .show(ui, |ui| {
@@ -591,6 +611,9 @@ fn styles_table_header(ui: &mut egui::Ui) {
                     "head-preview",
                     head(ui, "h-preview", COL_PREVIEW, "Preview"),
                 );
+                if with_order {
+                    probe("head-order", head(ui, "h-order", COL_ORDER, "Order"));
+                }
             });
         });
 }
@@ -609,9 +632,10 @@ fn show_styles(
         helper(ui, "No styles loaded. Revert to reload styles.json.");
         return;
     }
-    styles_table_header(ui);
     if !builtin.is_empty() {
-        ui.label(caption_text("Built-in"));
+        let heading = ui.label(caption_text("Built-in"));
+        probe("builtin-heading", heading.rect);
+        styles_table_header(ui, false);
         for (i, name) in builtin.iter().enumerate() {
             style_row(ui, state, cfg, ctx, i, name, None, actions);
         }
@@ -632,6 +656,10 @@ fn show_styles(
             }
         });
     });
+    // With no custom styles there is nothing for a header to label.
+    if !custom.is_empty() {
+        styles_table_header(ui, true);
+    }
     if let Some(draft) = cfg.style_draft.clone() {
         style_draft_row(ui, state, cfg, draft, actions);
     }
@@ -647,6 +675,59 @@ fn show_styles(
             Some((i > 0, i < last)),
             actions,
         );
+    }
+}
+
+/// The Name cell of a custom row: an inline text field committing on Enter or focus-out.
+fn rename_field(
+    ui: &mut egui::Ui,
+    state: &ConfigState,
+    cfg: &mut ConfigUi,
+    ctx: &ConfigViewCtx,
+    name: &str,
+    actions: &mut Vec<ConfigAction>,
+) {
+    let key = state.style_id(name).unwrap_or(name).to_string();
+    let mut text = cfg
+        .rename_drafts
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| name.to_string());
+    let hint = rename_hint(state, name, &text);
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .id_salt("rename")
+            .desired_width(COL_NAME - 4.0),
+    );
+    if hint.is_some() {
+        ui.painter().rect_stroke(
+            resp.rect,
+            2.0,
+            egui::Stroke::new(1.0, INVALID_RED),
+            egui::StrokeKind::Outside,
+        );
+    }
+    let tip = match &hint {
+        Some(h) => Some(h.clone()),
+        None => ctx.config_refs.contains(name).then(|| config_warning(name)),
+    };
+    let resp = match tip {
+        Some(t) => resp.on_hover_text(t),
+        None => resp,
+    };
+    let escaped = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+    if escaped {
+        text = name.to_string();
+    } else if resp.lost_focus() && hint.is_none() && text.trim() != name {
+        actions.push(ConfigAction::RenameStyle {
+            from: name.to_string(),
+            to: text.trim().to_string(),
+        });
+    }
+    if text == name {
+        cfg.rename_drafts.remove(&key);
+    } else {
+        cfg.rename_drafts.insert(key, text);
     }
 }
 
@@ -697,27 +778,38 @@ fn style_row(
                 });
                 probe("row-vis", vis);
                 let (label, _) = cell(ui, "name", COL_NAME, |ui| {
-                    ui.add_sized(
-                        vec2(COL_NAME, 20.0),
-                        egui::Label::new(RichText::new(name).size(14.0).color(theme::VALUE_TEXT))
+                    if reorder.is_some() {
+                        rename_field(ui, state, cfg, ctx, name, actions);
+                    } else {
+                        ui.add_sized(
+                            vec2(COL_NAME, 20.0),
+                            egui::Label::new(
+                                RichText::new(name).size(14.0).color(theme::VALUE_TEXT),
+                            )
                             .truncate()
                             .sense(egui::Sense::hover()),
-                    )
-                    .on_hover_text(name);
+                        )
+                        .on_hover_text(name);
+                    }
                 });
                 probe("row-name", label);
-                name_left = Some(label.left());
                 let (chip, _) = cell(ui, "preview", COL_PREVIEW, |ui| {
                     widgets::style_preview_chip(ui, name, style);
                 });
                 probe("row-preview", chip);
+                // A custom row's Name cell is a text field, so its click target starts at the
+                // preview column; a built-in row's covers the name too.
+                name_left = Some(if reorder.is_some() {
+                    chip.left()
+                } else {
+                    label.left()
+                });
                 if let Some((can_up, can_down)) = reorder {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
+                    let (order, _) = cell(ui, "order", COL_ORDER, |ui| {
                         let up = widgets::arrow_button(ui, ArrowDirection::Up, can_up);
+                        let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
                         probe("row-up", up.rect);
                         probe("row-down", down.rect);
-                        arrows_left = Some(up.rect.left() - 4.0);
                         if down.clicked() {
                             actions.push(ConfigAction::MoveStyle {
                                 name: name.to_string(),
@@ -731,6 +823,8 @@ fn style_row(
                             });
                         }
                     });
+                    probe("row-order", order);
+                    arrows_left = Some(order.left());
                 }
             });
             // The row's click target covers the name and preview columns only, so it never
@@ -1764,9 +1858,13 @@ mod tests {
                 .map(|(_, r)| *r)
                 .collect()
         };
+        // One header per group; the shared columns align across both headers and every row.
         let (hv, hn, hp) = (of("head-vis"), of("head-name"), of("head-preview"));
-        assert_eq!((hv.len(), hn.len(), hp.len()), (1, 1, 1));
+        assert_eq!((hv.len(), hn.len(), hp.len()), (2, 2, 2));
         assert!(hv[0].left() < hn[0].left() && hn[0].left() < hp[0].left());
+        for (a, b) in [(hv[0], hv[1]), (hn[0], hn[1]), (hp[0], hp[1])] {
+            assert!((a.left() - b.left()).abs() <= 1.0, "{a:?} vs {b:?}");
+        }
         let total = state.style_names().len();
         for (tag, head) in [
             ("row-vis", hv[0]),
@@ -1782,6 +1880,258 @@ mod tests {
                 );
             }
         }
+        // Only the custom group has an Order column, and its rows line up under it.
+        let ho = of("head-order");
+        assert_eq!(ho.len(), 1);
+        assert!(hp[1].right() <= ho[0].left() + 1.0);
+        let orders = of("row-order");
+        assert_eq!(orders.len(), style_groups(&state).1.len());
+        for r in orders {
+            assert!(
+                (r.left() - ho[0].left()).abs() <= 1.0,
+                "{r:?} vs {:?}",
+                ho[0]
+            );
+        }
+    }
+
+    #[test]
+    fn styles_layout_runs_heading_then_header_then_rows_per_group() {
+        let (_d, mut state) = loaded();
+        state.add_style("k1").unwrap();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        let ys = |tag: &str| -> Vec<f32> {
+            probes
+                .iter()
+                .filter(|(t, _)| *t == tag)
+                .map(|(_, r)| r.top())
+                .collect()
+        };
+        let builtin_heading = ys("builtin-heading")[0];
+        let heads = ys("head-vis");
+        let rows = ys("row-vis");
+        let custom_heading = ys("custom-heading")[0];
+        let n_builtin = style_groups(&state).0.len();
+        assert!(builtin_heading < heads[0]);
+        assert!(heads[0] < rows[0]);
+        assert!(rows[n_builtin - 1] < custom_heading);
+        assert!(custom_heading < heads[1]);
+        assert!(heads[1] < rows[n_builtin]);
+    }
+
+    #[test]
+    fn with_no_custom_styles_the_custom_header_is_omitted() {
+        let (_d, mut state) = loaded();
+        for name in style_groups(&state).1 {
+            assert!(state.delete_style(&name));
+        }
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        let count = |tag: &str| probes.iter().filter(|(t, _)| *t == tag).count();
+        assert_eq!(count("custom-heading"), 1);
+        assert_eq!(count("add-style"), 1);
+        assert_eq!(count("head-vis"), 1, "only the built-in header");
+        assert_eq!(count("head-order"), 0);
+    }
+
+    #[test]
+    fn rename_hints_follow_the_add_rules() {
+        let (_d, mut state) = loaded();
+        state.add_style("k1").unwrap();
+        state.add_style("k2").unwrap();
+        assert_eq!(rename_hint(&state, "k1", "k1"), None);
+        assert_eq!(rename_hint(&state, "k1", "locator"), None);
+        assert_eq!(
+            rename_hint(&state, "k1", "").as_deref(),
+            Some("Enter a style name")
+        );
+        assert_eq!(
+            rename_hint(&state, "k1", "k2").as_deref(),
+            Some("A style with this name already exists")
+        );
+        assert_eq!(
+            rename_hint(&state, "k1", "HIDDEN").as_deref(),
+            Some("That name is reserved for the built-in style hidden")
+        );
+        assert!(rename_hint(&state, "k1", "a\tb").is_some());
+    }
+
+    /// Drives the first custom row's Name field: click into it, type, then press a key.
+    fn type_into_first_custom(
+        state: &ConfigState,
+        cfg: &mut ConfigUi,
+        typed: &str,
+        finish: egui::Key,
+    ) -> Vec<ConfigAction> {
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, state, cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let n_builtin = style_groups(state).0.len();
+        let names: Vec<_> = drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == "row-name")
+            .map(|(_, r)| r)
+            .collect();
+        let target = names[n_builtin].center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut frame = |events: Vec<egui::Event>, actions: &mut Vec<ConfigAction>| {
+            let mut input = tall_input();
+            input.events = events;
+            ctx.run_ui(input, |ui| {
+                show_styles(ui, state, cfg, &vctx, actions);
+            })
+            .drop_without_applying_deltas();
+        };
+        frame(vec![egui::Event::PointerMoved(target)], &mut actions);
+        frame(vec![button(true), button(false)], &mut actions);
+        frame(vec![egui::Event::Text(typed.to_string())], &mut actions);
+        assert!(actions.is_empty(), "typing must not emit an action");
+        frame(
+            vec![egui::Event::Key {
+                key: finish,
+                physical_key: Some(finish),
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            &mut actions,
+        );
+        frame(vec![], &mut actions);
+        actions
+    }
+
+    fn renames(actions: &[ConfigAction]) -> Vec<&ConfigAction> {
+        actions
+            .iter()
+            .filter(|a| matches!(a, ConfigAction::RenameStyle { .. }))
+            .collect()
+    }
+
+    #[test]
+    fn enter_commits_a_valid_rename_and_the_draft_survives_typing() {
+        let (_d, mut state) = loaded();
+        state.add_style("k1").unwrap();
+        let mut cfg = ConfigUi::default();
+        let actions = type_into_first_custom(&state, &mut cfg, "x", egui::Key::Enter);
+        let first = style_groups(&state).1[0].clone();
+        // The test never applies the action, so a still-pending draft may be re-offered on the
+        // next frame; the app applies it after the first, which makes the second a no-op.
+        let expected = ConfigAction::RenameStyle {
+            from: first.clone(),
+            to: format!("{first}x"),
+        };
+        let got = renames(&actions);
+        assert!(
+            !got.is_empty() && got.iter().all(|a| **a == expected),
+            "{got:?}"
+        );
+        assert_eq!(
+            cfg.expanded, None,
+            "the field click must not expand the row"
+        );
+        let id = state.style_id(&first).unwrap();
+        assert_eq!(
+            cfg.rename_drafts.get(id).map(String::as_str),
+            Some(format!("{first}x").as_str()),
+            "the draft is kept, keyed by id, until the app applies the rename"
+        );
+    }
+
+    #[test]
+    fn an_invalid_rename_is_not_emitted_and_the_draft_is_kept() {
+        let (_d, mut state) = loaded();
+        state.add_style("k1").unwrap();
+        let first = style_groups(&state).1[0].clone();
+        // Typing a control character makes the draft invalid.
+        let mut cfg = ConfigUi::default();
+        let actions = type_into_first_custom(&state, &mut cfg, "\u{1}", egui::Key::Enter);
+        assert!(renames(&actions).is_empty());
+        let _ = first;
+    }
+
+    #[test]
+    fn escape_restores_the_name() {
+        let (_d, mut state) = loaded();
+        state.add_style("k1").unwrap();
+        let mut cfg = ConfigUi::default();
+        let actions = type_into_first_custom(&state, &mut cfg, "zz", egui::Key::Escape);
+        assert!(renames(&actions).is_empty());
+        assert!(cfg.rename_drafts.is_empty(), "{:?}", cfg.rename_drafts);
+    }
+
+    #[test]
+    fn built_in_names_are_not_editable() {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let first = drain_probes()
+            .into_iter()
+            .find(|(t, _)| *t == "row-name")
+            .unwrap()
+            .1;
+        let target = first.center();
+        let click = |pressed| egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(target)],
+            vec![click(true), click(false)],
+            vec![egui::Event::Text("x".to_string())],
+        ] {
+            let mut input = tall_input();
+            input.events = events;
+            ctx.run_ui(input, |ui| {
+                show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+            })
+            .drop_without_applying_deltas();
+        }
+        assert!(renames(&actions).is_empty());
+        assert!(cfg.rename_drafts.is_empty());
     }
 
     /// Clicks `target` on a fresh frame after one settling frame.

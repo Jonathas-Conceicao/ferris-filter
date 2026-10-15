@@ -5,7 +5,7 @@ milestone_name: Generic Filter Editor & Initial App Configuration
 status: completed
 stopped_at: v0.5 milestone completed, archived and tagged
 last_updated: "2026-10-15T18:00:00.000Z"
-last_activity: 2026-10-15 -- Milestone v0.5 completed, archived, squash-merged to main and tagged v0.5
+last_activity: 2026-10-15 -- Completed quick task 261015-nbp: Simple Defences multi-select base types, written as grouped blocks
 progress:
   total_phases: 13
   completed_phases: 13
@@ -198,6 +198,12 @@ work (carried forward past the v0.3 close):
 ### Blockers/Concerns
 
 None open.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 261015-nbp | Simple Defences: multi-select base types, written as grouped blocks | 2026-10-15 | 52ff64e | [261015-nbp-simple-defences-multi-select-base-types-](./quick/261015-nbp-simple-defences-multi-select-base-types-/) |
 
 ## Phase 15 Source Material — the author's two requests
 

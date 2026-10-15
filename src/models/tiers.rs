@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn load_real_tiers_json_parses_and_validates() {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-default.json"));
         let entries: Vec<TierEntry> = serde_json::from_str(src).expect("parse tiers.json");
         let validated = ValidatedTiers::try_from(entries).expect("validate tiers.json");
         assert_eq!(validated.0.len(), 7);

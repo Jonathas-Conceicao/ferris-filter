@@ -45,8 +45,11 @@ mod tests {
 
     fn committed() -> Config {
         let dir = env!("CARGO_MANIFEST_DIR");
-        crate::loader::load_config(&format!("{dir}/config.json"), &format!("{dir}/styles.json"))
-            .unwrap()
+        crate::loader::load_config(
+            &format!("{dir}/config.json"),
+            &format!("{dir}/styles-default.json"),
+        )
+        .unwrap()
     }
 
     #[test]

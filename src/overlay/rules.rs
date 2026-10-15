@@ -1385,7 +1385,7 @@ Show
     }
 
     fn test_styles() -> StyleSet {
-        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"))
+        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
             .expect("styles.json")
     }
 

@@ -1,0 +1,9 @@
+[
+  { "tier": "F", "min": 0.1,  "unit": "chaos" },
+  { "tier": "E", "min": 0.5,  "unit": "chaos" },
+  { "tier": "D", "min": 2.0,  "unit": "chaos" },
+  { "tier": "C", "min": 8.0,  "unit": "chaos" },
+  { "tier": "B", "min": 12.0, "unit": "chaos" },
+  { "tier": "A", "min": 20.0, "unit": "chaos" },
+  { "tier": "S", "min": 30.0, "unit": "chaos" }
+]

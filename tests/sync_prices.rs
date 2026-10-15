@@ -652,9 +652,9 @@ fn generate_loop_with_sync_produced_prices() {
     write_prices_atomic(prices_path.to_str().unwrap(), &prices)
         .expect("write sync-produced prices.json");
 
-    // Copy config.json and tiers.json from repo root to temp dir
+    // Copy config.json and the default tiers/styles from repo root to temp dir (as the live names)
     let config_src = std::path::Path::new(manifest).join("config.json");
-    let tiers_src = std::path::Path::new(manifest).join("tiers.json");
+    let tiers_src = std::path::Path::new(manifest).join("tiers-default.json");
     let mapping_src = std::path::Path::new(manifest).join("mapping.json");
 
     if !config_src.exists() {
@@ -665,7 +665,7 @@ fn generate_loop_with_sync_produced_prices() {
     fs::copy(&config_src, tmp_dir.path().join("config.json"))
         .expect("copy config.json to temp dir");
     fs::copy(
-        std::path::Path::new(manifest).join("styles.json"),
+        std::path::Path::new(manifest).join("styles-default.json"),
         tmp_dir.path().join("styles.json"),
     )
     .expect("copy styles.json to temp dir");

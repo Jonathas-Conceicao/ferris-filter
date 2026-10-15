@@ -30,17 +30,17 @@ fn valid_config() -> String {
         .expect("read repo config.json")
 }
 
-/// The repo's real, valid `tiers.json`. Used as the passing tiers fixture in tests that
+/// The committed default `tiers-default.json` (valid). Used as the passing tiers fixture in tests that
 /// intend to exercise *config* validation.
 fn valid_tiers() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"))
-        .expect("read repo tiers.json")
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-default.json"))
+        .expect("read tiers-default.json")
 }
 
-/// The repo's real, valid `styles.json`.
+/// The committed default `styles-default.json` (valid).
 fn valid_styles() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"))
-        .expect("read repo styles.json")
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
+        .expect("read styles-default.json")
 }
 
 /// A missing `config.json` (cwd has no config.json) must produce a non-zero exit

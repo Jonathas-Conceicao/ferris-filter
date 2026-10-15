@@ -486,8 +486,8 @@ mod tests {
     #[test]
     fn load_economy_needs_no_config_json() {
         let dir = temp_inputs(&[
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
         let inputs = load_economy(
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn load_economy_falls_back_to_the_committed_pair() {
         let dir = temp_inputs(&[
-            ("styles.json", &repo_file("styles.json")),
+            ("styles.json", &repo_file("styles-default.json")),
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
         ]);
@@ -520,8 +520,8 @@ mod tests {
     #[test]
     fn load_economy_reports_absent_as_a_value() {
         let dir = temp_inputs(&[
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
         ]);
         let inputs = load_economy(
             &InputPaths::relative_to(dir.path()),
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn load_economy_force_fallback_errors_when_fallback_missing() {
-        let dir = temp_inputs(&[("styles.json", &repo_file("styles.json"))]);
+        let dir = temp_inputs(&[("styles.json", &repo_file("styles-default.json"))]);
         let err = load_economy(
             &InputPaths::relative_to(dir.path()),
             PriceSourcePolicy::ForceFallback,
@@ -563,8 +563,8 @@ mod tests {
     #[test]
     fn compile_economy_matches_generate_economy() {
         let dir = temp_inputs(&[
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
         let inputs = load_economy(
@@ -581,8 +581,8 @@ mod tests {
     fn load_inputs_reports_live_when_prices_present() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
         let inputs = load_inputs(
@@ -598,8 +598,8 @@ mod tests {
     fn load_inputs_falls_back_when_live_prices_absent() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
         ]);
@@ -618,8 +618,8 @@ mod tests {
     fn load_inputs_reports_absent_when_no_prices_anywhere() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
         ]);
         let inputs = load_inputs(
             &InputPaths::relative_to(dir.path()),
@@ -635,7 +635,7 @@ mod tests {
     fn force_fallback_reports_forced() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("styles.json", &repo_file("styles.json")),
+            ("styles.json", &repo_file("styles-default.json")),
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
             // A live prices.json is present and must be ignored under ForceFallback.
@@ -656,8 +656,8 @@ mod tests {
     fn force_fallback_errors_when_fallback_prices_missing() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
         ]);
         let err = load_inputs(
             &InputPaths::relative_to(dir.path()),
@@ -674,8 +674,8 @@ mod tests {
     /// Temp dir with the committed styles/tiers/prices and a caller-supplied config text.
     fn inputs_with_config(config_text: &str) -> tempfile::TempDir {
         let dir = temp_inputs(&[
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
         fs::write(dir.path().join("config.json"), config_text).unwrap();
@@ -733,7 +733,7 @@ mod tests {
     fn load_inputs_without_styles_json_is_a_read_error_naming_it() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
         let err = load_inputs(
@@ -752,7 +752,8 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
         // `E` differs from styles.json (font 30, not 29), so dropping the section would lose it.
         let styles: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(repo_file("styles.json")).unwrap()).unwrap();
+            serde_json::from_str(&fs::read_to_string(repo_file("styles-default.json")).unwrap())
+                .unwrap();
         let mut e = styles["E"].clone();
         e["font"] = serde_json::json!(30);
         v["styles"] = serde_json::json!({ "S": styles["S"].clone(), "E": e });
@@ -780,7 +781,8 @@ mod tests {
         let mut v: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(repo_file("config.json")).unwrap()).unwrap();
         let styles: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(repo_file("styles.json")).unwrap()).unwrap();
+            serde_json::from_str(&fs::read_to_string(repo_file("styles-default.json")).unwrap())
+                .unwrap();
         for inline in [
             serde_json::json!({}),
             serde_json::json!({ "hidden": styles["hidden"].clone() }),
@@ -798,7 +800,7 @@ mod tests {
 
     #[test]
     fn missing_config_surfaces_as_a_load_read_error() {
-        let dir = temp_inputs(&[("tiers.json", &repo_file("tiers.json"))]);
+        let dir = temp_inputs(&[("tiers.json", &repo_file("tiers-default.json"))]);
         let err = load_inputs(
             &InputPaths::relative_to(dir.path()),
             PriceSourcePolicy::Auto,
@@ -815,8 +817,8 @@ mod tests {
     fn compile_produces_filter_text_from_loaded_inputs() {
         let dir = temp_inputs(&[
             ("config.json", &repo_file("config.json")),
-            ("styles.json", &repo_file("styles.json")),
-            ("tiers.json", &repo_file("tiers.json")),
+            ("styles.json", &repo_file("styles-default.json")),
+            ("tiers.json", &repo_file("tiers-default.json")),
             ("prices.json", &fixture("seed-prices.json")),
         ]);
         let inputs = load_inputs(

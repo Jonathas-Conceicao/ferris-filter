@@ -440,8 +440,16 @@ mod tests {
 
     fn seed_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        fs::copy(repo_file("tiers.json"), dir.path().join("tiers.json")).unwrap();
-        fs::copy(repo_file("styles.json"), dir.path().join("styles.json")).unwrap();
+        fs::copy(
+            repo_file("tiers-default.json"),
+            dir.path().join("tiers.json"),
+        )
+        .unwrap();
+        fs::copy(
+            repo_file("styles-default.json"),
+            dir.path().join("styles.json"),
+        )
+        .unwrap();
         fs::copy(fixture("seed-prices.json"), dir.path().join("prices.json")).unwrap();
         dir
     }
@@ -544,8 +552,16 @@ mod tests {
         assert_eq!(src, PriceSource::Live);
         assert!(!text.is_empty());
         let empty = tempfile::tempdir().unwrap();
-        fs::copy(repo_file("tiers.json"), empty.path().join("tiers.json")).unwrap();
-        fs::copy(repo_file("styles.json"), empty.path().join("styles.json")).unwrap();
+        fs::copy(
+            repo_file("tiers-default.json"),
+            empty.path().join("tiers.json"),
+        )
+        .unwrap();
+        fs::copy(
+            repo_file("styles-default.json"),
+            empty.path().join("styles.json"),
+        )
+        .unwrap();
         let err = economy_body(
             &InputPaths::relative_to(empty.path()),
             PriceSourcePolicy::Auto,
@@ -582,8 +598,16 @@ mod tests {
 
         // Without live prices the fallback pair is used whatever tiers are passed.
         let empty = tempfile::tempdir().unwrap();
-        fs::copy(repo_file("tiers.json"), empty.path().join("tiers.json")).unwrap();
-        fs::copy(repo_file("styles.json"), empty.path().join("styles.json")).unwrap();
+        fs::copy(
+            repo_file("tiers-default.json"),
+            empty.path().join("tiers.json"),
+        )
+        .unwrap();
+        fs::copy(
+            repo_file("styles-default.json"),
+            empty.path().join("styles.json"),
+        )
+        .unwrap();
         fs::copy(
             repo_file("prices-fallback.json"),
             empty.path().join("prices-fallback.json"),

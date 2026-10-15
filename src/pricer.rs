@@ -463,7 +463,7 @@ mod tests {
 
     /// Load the real tiers.json from disk and validate it.
     fn load_real_tiers() -> ValidatedTiers {
-        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-default.json"));
         let entries: Vec<TierEntry> = serde_json::from_str(src).expect("parse tiers.json");
         ValidatedTiers::try_from(entries).expect("validate tiers.json")
     }

@@ -917,7 +917,7 @@ Show
         let mut wf = WorkingFilter::from_text(&src);
         wf.set_styles(Ok(crate::loader::load_styles(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles.json"
+            "/styles-default.json"
         ))
         .unwrap()));
         wf
@@ -1355,7 +1355,7 @@ Show
             let mut wf = WorkingFilter::from_text(src);
             wf.set_styles(Ok(crate::loader::load_styles(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/styles.json"
+                "/styles-default.json"
             ))
             .unwrap()));
             let ctx = headless_ctx();

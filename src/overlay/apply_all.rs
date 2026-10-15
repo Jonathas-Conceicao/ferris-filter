@@ -427,8 +427,11 @@ mod tests {
     impl Fixture {
         fn new() -> Fixture {
             let root = tempfile::tempdir().unwrap();
-            for f in ["styles.json", "tiers.json"] {
-                fs::copy(repo_file(f), root.path().join(f)).unwrap();
+            for (src, dst) in [
+                ("styles-default.json", "styles.json"),
+                ("tiers-default.json", "tiers.json"),
+            ] {
+                fs::copy(repo_file(src), root.path().join(dst)).unwrap();
             }
             fs::copy(
                 repo_file("tests/fixtures/seed-prices.json"),

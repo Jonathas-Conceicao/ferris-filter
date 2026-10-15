@@ -614,10 +614,13 @@ mod tests {
 
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["styles.json", "tiers.json"] {
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
             fs::copy(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join(f),
-                dir.path().join(f),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
             )
             .unwrap();
         }

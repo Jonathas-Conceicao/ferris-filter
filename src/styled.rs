@@ -222,7 +222,8 @@ mod tests {
     use crate::filter::parse;
 
     fn styles() -> StyleSet {
-        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json")).unwrap()
+        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
+            .unwrap()
     }
 
     fn run(src: &str) -> (String, StyleReport) {

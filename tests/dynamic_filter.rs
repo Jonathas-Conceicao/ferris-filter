@@ -33,8 +33,11 @@ fn workspace(tag: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(dir.join("game")).expect("create temp dir");
-    for f in ["tiers.json", "styles.json"] {
-        fs::copy(manifest().join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("tiers-default.json", "tiers.json"),
+        ("styles-default.json", "styles.json"),
+    ] {
+        fs::copy(manifest().join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
     fs::copy(
         manifest().join("tests/fixtures/seed-prices.json"),

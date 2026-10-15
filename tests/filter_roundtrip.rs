@@ -168,8 +168,11 @@ fn corpus_generated_dynamic() {
     use ferrisfilter::{compile, dynamic};
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    for f in ["tiers.json", "styles.json"] {
-        fs::copy(manifest().join(f), dir.join(f)).unwrap();
+    for (src, dst) in [
+        ("tiers-default.json", "tiers.json"),
+        ("styles-default.json", "styles.json"),
+    ] {
+        fs::copy(manifest().join(src), dir.join(dst)).unwrap();
     }
     fs::copy(
         manifest().join("tests/fixtures/seed-prices.json"),

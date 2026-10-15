@@ -254,7 +254,7 @@ pub fn render_tiers(entries: &[TierEntry]) -> String {
 mod tests {
     use super::*;
 
-    const TIERS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
+    const TIERS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-default.json"));
 
     #[test]
     fn render_styles_shape_and_round_trip() {
@@ -313,7 +313,7 @@ mod tests {
         ValidatedTiers::try_from(back).unwrap();
     }
 
-    const STYLES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json"));
+    const STYLES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
 
     fn load_text(text: &str) -> Result<StyleSet, LoadError> {
         let dir = tempfile::tempdir().unwrap();

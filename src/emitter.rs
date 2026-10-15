@@ -659,7 +659,8 @@ mod tests {
     use super::*;
 
     fn committed_styles() -> StyleSet {
-        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles.json")).unwrap()
+        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
+            .unwrap()
     }
 
     #[test]
@@ -709,7 +710,7 @@ mod tests {
         let prices: PricesFile =
             serde_json::from_str(prices_src).expect("prices.json parse failed");
 
-        let tiers_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers.json"));
+        let tiers_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-default.json"));
         let tier_entries: Vec<TierEntry> =
             serde_json::from_str(tiers_src).expect("tiers.json parse failed");
         let tiers = ValidatedTiers::try_from(tier_entries).expect("tiers.json validation failed");

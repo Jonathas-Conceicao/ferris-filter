@@ -2841,13 +2841,16 @@ mod tests {
     use crate::overlay::apply_all::DiskFile;
     use crate::overlay::config_state::{ConfigState, StyleEdit};
 
-    /// A temp app root holding copies of the committed styles.json and tiers.json.
+    /// A temp app root holding styles-default.json / tiers-default.json as the live styles.json / tiers.json.
     fn config_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["styles.json", "tiers.json"] {
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
             std::fs::copy(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(f),
-                dir.path().join(f),
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
             )
             .unwrap();
         }
@@ -3437,7 +3440,7 @@ mod tests {
     fn styles_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("styles.json"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("styles-default.json"),
             dir.path().join("styles.json"),
         )
         .unwrap();

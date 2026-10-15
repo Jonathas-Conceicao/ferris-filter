@@ -199,7 +199,12 @@ const STYLES_POLL_SECS: f64 = 2.0;
 /// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
 /// hold exactly that set, so it is cheap to call every frame.
 fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> bool {
-    if working.style_set() == Some(config.pending_styles()) {
+    // `IndexMap` equality ignores order, so a pure reorder needs the name order compared too.
+    let pending = config.pending_styles();
+    if working
+        .style_set()
+        .is_some_and(|w| w == pending && w.names().eq(pending.names()))
+    {
         return false;
     }
     working.set_styles_over(config.pending_styles().clone(), config.applied_styles());
@@ -2914,6 +2919,17 @@ mod tests {
         assert_eq!(names.last().map(String::as_str), Some("Fresh"));
         assert_eq!(names, rig.config.style_names());
         assert!(rig.config.is_dirty());
+    }
+
+    #[test]
+    fn a_reorder_reaches_the_rules_tab_before_apply() {
+        let mut rig = rig(S_RULE);
+        rig.config.add_style("Fresh").unwrap();
+        super::sync_working_styles(&rig.config, &mut rig.working);
+        assert!(rig.config.move_style("Fresh", true));
+        assert!(super::sync_working_styles(&rig.config, &mut rig.working));
+        assert_eq!(rig.working.style_names(), rig.config.style_names());
+        assert!(!super::sync_working_styles(&rig.config, &mut rig.working));
     }
 
     #[test]

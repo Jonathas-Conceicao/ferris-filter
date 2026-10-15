@@ -711,7 +711,8 @@ fn generate_styles_flag_reads_alternate_path() {
         "alt styles file must match the default run"
     );
 
-    // Same directory without the flag: styles.json is absent, so it must fail naming it.
+    // Same directory without the flag: neither styles.json nor styles-default.json exists, so it
+    // must fail naming both.
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .current_dir(&dir)
@@ -723,5 +724,113 @@ fn generate_styles_flag_reads_alternate_path() {
         ])
         .assert()
         .failure()
+        .stderr(contains("styles.json"))
+        .stderr(contains("styles-default.json"));
+}
+
+/// Fresh temp dir with config.json, the committed `styles-default.json` / `tiers-default.json`
+/// under their own names (no live `styles.json` / `tiers.json`) and the seed prices.
+fn seed_dir_with_defaults(tag: &str) -> std::path::PathBuf {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!(
+        "ferrisfilter_defaults_{tag}_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    for f in ["config.json", "styles-default.json", "tiers-default.json"] {
+        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+    fs::copy(
+        manifest.join("tests/fixtures/seed-prices.json"),
+        dir.join("prices.json"),
+    )
+    .expect("copy seed-prices.json fixture");
+    dir
+}
+
+/// DEF-03: with no live files, `generate` reads the defaults, reproduces the seed oracle and
+/// creates neither live file.
+#[test]
+fn generate_falls_back_to_default_files() {
+    let dir = seed_dir_with_defaults("fallback");
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+    let generated = normalize(&fs::read_to_string(&out_path).unwrap());
+    let oracle = normalize(
+        &fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-universal.filter"
+        ))
+        .unwrap(),
+    );
+    assert_eq!(generated, oracle);
+    assert!(!dir.join("styles.json").exists(), "styles.json was created");
+    assert!(!dir.join("tiers.json").exists(), "tiers.json was created");
+}
+
+/// DEF-03: a present live styles.json wins over the default beside it.
+#[test]
+fn generate_prefers_live_styles_over_default() {
+    let dir = seed_dir_with_defaults("live_wins");
+    let default = fs::read_to_string(dir.join("styles-default.json")).unwrap();
+    let live = default.replace("\"font\": 37", "\"font\": 44");
+    assert_ne!(live, default, "the edit must change the text");
+    fs::write(dir.join("styles.json"), live).unwrap();
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .success();
+    let generated = fs::read_to_string(&out_path).unwrap();
+    assert!(generated.contains("SetFontSize 44"), "live styles not used");
+    assert!(!generated.contains("SetFontSize 37"), "default styles used");
+}
+
+/// DEF-03: an explicit `--styles` path is never swapped for the default.
+#[test]
+fn generate_explicit_styles_flag_never_falls_back() {
+    let dir = seed_dir_with_defaults("explicit");
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args([
+            "generate",
+            "--styles",
+            "styles.json",
+            "--output",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("Cannot read"))
         .stderr(contains("styles.json"));
+    assert!(!out_path.exists());
+    assert!(!dir.join("styles.json").exists());
+}
+
+/// DEF-03: neither styles file present -> the error names both.
+#[test]
+fn generate_without_any_styles_file_names_both() {
+    let dir = seed_dir_with_defaults("neither");
+    fs::remove_file(dir.join("styles-default.json")).unwrap();
+    let out_path = dir.join("out.filter");
+    Command::cargo_bin("ferrisfilter")
+        .unwrap()
+        .current_dir(&dir)
+        .args(["generate", "--output", out_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("styles.json"))
+        .stderr(contains("styles-default.json"));
 }

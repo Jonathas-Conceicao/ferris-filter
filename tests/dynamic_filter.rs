@@ -47,6 +47,18 @@ fn workspace(tag: &str) -> PathBuf {
     dir
 }
 
+/// Like [`workspace`], but the app root holds the committed `styles-default.json` /
+/// `tiers-default.json` under their own names and no live `styles.json` / `tiers.json`.
+fn workspace_defaults(tag: &str) -> PathBuf {
+    let dir = workspace(tag);
+    fs::remove_file(dir.join("styles.json")).expect("remove live styles");
+    fs::remove_file(dir.join("tiers.json")).expect("remove live tiers");
+    for f in ["styles-default.json", "tiers-default.json"] {
+        fs::copy(manifest().join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    }
+    dir
+}
+
 /// The single place `apply` is spawned.
 fn apply(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     Command::cargo_bin("ferrisfilter")
@@ -330,4 +342,22 @@ fn default_filter_path_uses_userprofile() {
         .stderr(contains("Path of Exile 2"))
         .stderr(contains("dynamic.filter"));
     assert!(!dir.join("OneDrive").exists());
+}
+
+/// DEF-03: with no live files in the app root, apply reads the defaults, writes the same economy
+/// section as from live copies, and creates neither live file.
+#[test]
+fn apply_falls_back_to_default_files_and_creates_no_live_file() {
+    let dir = workspace_defaults("defaults");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"]).success();
+    let from_defaults = read(&gf(&dir));
+    assert!(from_defaults.contains(END), "{from_defaults}");
+    assert!(!dir.join("styles.json").exists(), "styles.json was created");
+    assert!(!dir.join("tiers.json").exists(), "tiers.json was created");
+
+    let live = workspace("defaults_live");
+    let lf = gfs(&live);
+    apply(&live, &["--filter", &lf, "--add-economy"]).success();
+    assert_eq!(normalize(&from_defaults), normalize(&read(&gf(&live))));
 }

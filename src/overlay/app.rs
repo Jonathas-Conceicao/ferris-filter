@@ -154,8 +154,10 @@ pub struct OverlayApp {
     /// to the generic chip list; it never blocks editing.
     classes: Result<ClassCatalog, String>,
 
-    /// Modification time of `styles.json` when it was last read; a change reloads the styles.
-    styles_mtime: Option<std::time::SystemTime>,
+    /// The styles source (`styles.json`, or `styles-default.json` when it is absent) and its
+    /// modification time when last read; a change of either reloads the styles, so creating or
+    /// deleting the live file switches the source.
+    styles_stamp: Option<(std::path::PathBuf, std::time::SystemTime)>,
 
     /// `ctx.input(|i| i.time)` of the last `styles.json` poll.
     styles_checked: f64,
@@ -214,25 +216,27 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     true
 }
 
+/// The styles under `root`: `styles.json`, else `styles-default.json` (DEF-03). Never writes.
 fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
-    let path = InputPaths::relative_to(root).styles;
+    let path = InputPaths::relative_to(root)
+        .styles_source()
+        .map_err(|e| e.to_string())?;
     loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
 }
 
-/// The class catalogue and the styles `config.json` references, from one load of `config.json`.
+/// The class catalogue and the styles `config.json` references, from one load of `config.json`
+/// (styles from the effective source, as in [`load_styles_at`]).
 fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<String>), String> {
     let paths = InputPaths::relative_to(root);
-    loader::load_config(
-        &paths.config.to_string_lossy(),
-        &paths.styles.to_string_lossy(),
-    )
-    .map(|config| {
-        (
-            ClassCatalog::from_config(&config),
-            config_state::config_style_refs(&config),
-        )
-    })
-    .map_err(|e| e.to_string())
+    let styles = paths.styles_source().map_err(|e| e.to_string())?;
+    loader::load_config(&paths.config.to_string_lossy(), &styles.to_string_lossy())
+        .map(|config| {
+            (
+                ClassCatalog::from_config(&config),
+                config_state::config_style_refs(&config),
+            )
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Draws the RULES | CONFIG strip and returns the tab the user picked this frame.
@@ -311,10 +315,12 @@ fn tab_strip(
     picked
 }
 
-fn styles_mtime_at(root: &std::path::Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(InputPaths::relative_to(root).styles)
-        .and_then(|m| m.modified())
-        .ok()
+/// The effective styles source under `root` and its modification time; `None` when neither
+/// `styles.json` nor `styles-default.json` can be stat'ed. Never creates a file.
+fn styles_stamp_at(root: &std::path::Path) -> Option<(std::path::PathBuf, std::time::SystemTime)> {
+    let path = InputPaths::relative_to(root).styles_source().ok()?;
+    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+    Some((path, mtime))
 }
 
 /// Builds the working document from a loaded filter (the migrated text, never the raw bytes).
@@ -863,7 +869,7 @@ impl OverlayApp {
             list_status: None,
             applied_this_session: false,
             classes: Err("not loaded".to_string()),
-            styles_mtime: None,
+            styles_stamp: None,
             styles_checked: 0.0,
             tab: Tab::Rules,
             config,
@@ -896,7 +902,7 @@ impl OverlayApp {
         match &self.root {
             Ok(root) => {
                 let root = root.clone();
-                self.styles_mtime = styles_mtime_at(&root);
+                self.styles_stamp = styles_stamp_at(&root);
                 if let Some(working) = &mut self.working {
                     working.set_styles(load_styles_at(&root));
                 }
@@ -914,7 +920,7 @@ impl OverlayApp {
                 }
             }
             Err(message) => {
-                self.styles_mtime = None;
+                self.styles_stamp = None;
                 if let Some(working) = &mut self.working {
                     working.set_styles(Err(message.clone()));
                 }
@@ -923,8 +929,9 @@ impl OverlayApp {
         }
     }
 
-    /// Reloads the styles when `styles.json` changed on disk (polled, not watched), and lets clean
-    /// config files follow the disk.
+    /// Reloads the styles when `styles.json`, or `styles-default.json` when it is absent, changed
+    /// on disk (polled, not watched; creating or deleting the live file counts as a change), and
+    /// lets clean config files follow the disk.
     fn poll_styles(&mut self, now: f64) {
         if now - self.styles_checked < STYLES_POLL_SECS {
             return;
@@ -940,9 +947,9 @@ impl OverlayApp {
         let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
             return;
         };
-        let mtime = styles_mtime_at(root);
-        if mtime != self.styles_mtime {
-            self.styles_mtime = mtime;
+        let stamp = styles_stamp_at(root);
+        if stamp != self.styles_stamp {
+            self.styles_stamp = stamp;
             working.set_styles(load_styles_at(root));
         }
     }
@@ -1045,7 +1052,7 @@ impl OverlayApp {
         if self.config.is_err()
             && let Some(working) = &mut self.working
         {
-            self.styles_mtime = styles_mtime_at(root);
+            self.styles_stamp = styles_stamp_at(root);
             working.set_styles(load_styles_at(root));
         }
         let filter_part = match (&mut self.filter, &mut self.working) {
@@ -1136,7 +1143,7 @@ impl OverlayApp {
         self.apply_state = self.apply_state.on_apply_success();
         self.config_message = None;
         self.config_ui.reset_for_new_styles();
-        self.styles_mtime = styles_mtime_at(root);
+        self.styles_stamp = styles_stamp_at(root);
         self.changed_on_disk.clear();
         self.applied_this_session = true;
         self.list_status = None;
@@ -1282,7 +1289,7 @@ impl OverlayApp {
             self.config_message = None;
             self.apply_message = None;
         }
-        self.styles_mtime = styles_mtime_at(&root);
+        self.styles_stamp = styles_stamp_at(&root);
         // The tab whose edits were kept may still hold unapplied changes.
         let kept_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty())
             || self.working.as_ref().is_some_and(|w| w.is_dirty());
@@ -2868,7 +2875,10 @@ mod tests {
     }
 
     fn rig(filter_text: &str) -> Rig {
-        let root = config_root();
+        rig_at(config_root(), filter_text)
+    }
+
+    fn rig_at(root: tempfile::TempDir, filter_text: &str) -> Rig {
         let game = tempfile::tempdir().unwrap();
         let (path, loaded) = loaded_in(&game, filter_text);
         let mut working = WorkingFilter::from_text(loaded.text());
@@ -2920,6 +2930,102 @@ mod tests {
         assert!(!rig.config.is_dirty() && !rig.working.is_dirty());
         assert_eq!(rig.working.style("S").unwrap().font, Some(41));
         assert!(!rig.working.style_rewrite_pending());
+    }
+
+    // ---- defaults when the live files are absent (Phase 28, DEF-01 / DEF-03) ----
+
+    /// A temp app root holding only the committed defaults under their own names (plus
+    /// `config.json` for the class catalogue): no live `styles.json` / `tiers.json`.
+    fn defaults_only_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["styles-default.json", "tiers-default.json", "config.json"] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(f),
+                dir.path().join(f),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    fn assert_no_live(root: &std::path::Path) {
+        assert!(!root.join("styles.json").exists(), "styles.json created");
+        assert!(!root.join("tiers.json").exists(), "tiers.json created");
+    }
+
+    #[test]
+    fn defaults_only_root_loads_styles_and_classes_and_creates_nothing() {
+        let root = defaults_only_root();
+        let styles = super::load_styles_at(root.path()).unwrap();
+        assert!(styles.get("S").is_some());
+        assert!(super::load_classes_at(root.path()).is_ok());
+        assert!(super::styles_stamp_at(root.path()).is_some());
+        assert_no_live(root.path());
+    }
+
+    #[test]
+    fn no_styles_file_at_all_names_both() {
+        let root = defaults_only_root();
+        std::fs::remove_file(root.path().join("styles-default.json")).unwrap();
+        let err = super::load_styles_at(root.path()).unwrap_err();
+        assert!(
+            err.contains("styles.json") && err.contains("styles-default.json"),
+            "{err}"
+        );
+        assert!(super::load_classes_at(root.path()).is_err());
+        assert!(super::styles_stamp_at(root.path()).is_none());
+        assert_no_live(root.path());
+    }
+
+    #[test]
+    fn styles_stamp_switches_on_live_create_and_delete() {
+        let root = defaults_only_root();
+        let default = root.path().join("styles-default.json");
+        let live = root.path().join("styles.json");
+        let first = super::styles_stamp_at(root.path()).unwrap();
+        assert_eq!(first.0, default);
+
+        std::fs::copy(&default, &live).unwrap();
+        let created = super::styles_stamp_at(root.path()).unwrap();
+        assert_eq!(created.0, live);
+        assert_ne!(created, first, "creating the live file is a change");
+
+        std::fs::remove_file(&live).unwrap();
+        let back = super::styles_stamp_at(root.path()).unwrap();
+        assert_eq!(back, first, "deleting it returns to the default stamp");
+        assert_ne!(back, created);
+    }
+
+    #[test]
+    fn combined_apply_from_defaults_creates_live_styles_and_keeps_defaults() {
+        let mut rig = rig_at(defaults_only_root(), S_RULE);
+        let defaults = (
+            rig.read("styles-default.json"),
+            rig.read("tiers-default.json"),
+        );
+        assert_no_live(rig.root.path());
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        let r = rig.apply(false);
+        assert_eq!(
+            r.outcome,
+            AllOutcome::Applied {
+                filter: Some(rig.path.clone())
+            }
+        );
+        assert!(r.styles_written && !r.tiers_written);
+        let styles = String::from_utf8(rig.read("styles.json")).unwrap();
+        assert!(styles.contains("\"font\":41"), "{styles}");
+        assert!(!rig.root.path().join("tiers.json").exists());
+        let filter = std::fs::read_to_string(&rig.path).unwrap();
+        assert!(filter.contains("SetFontSize 41"), "{filter}");
+        assert_eq!(
+            (
+                rig.read("styles-default.json"),
+                rig.read("tiers-default.json")
+            ),
+            defaults,
+            "the -default.json files are never written"
+        );
     }
 
     /// A rule tagged the way Apply writes tags: `<id> <name>`. A name-only (legacy) tag cannot
@@ -3529,7 +3635,8 @@ mod tests {
         let (outcome, _, reload) = apply_working(root.path(), &mut loaded, &mut working);
         match outcome {
             ApplyOutcome::Failed(m) => assert!(
-                m.starts_with("styles.json could not be read, so styled rules"),
+                m.starts_with("The styles could not be read, so styled rules")
+                    && m.contains("styles.json"),
                 "{m}"
             ),
             other => panic!("{other:?}"),

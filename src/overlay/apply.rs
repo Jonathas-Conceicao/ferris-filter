@@ -334,9 +334,10 @@ pub fn failed_styles_message(count: usize, first_rule: usize, err: &str) -> Stri
     }
 }
 
-/// Apply refusal when styled rules depend on a `styles.json` that cannot be read.
+/// Apply refusal when styled rules depend on styles that cannot be read (`styles.json`, or
+/// `styles-default.json` when it is absent; `err` names the file).
 pub fn styles_unavailable_message(err: &str) -> String {
-    format!("styles.json could not be read, so styled rules cannot be updated: {err}")
+    format!("The styles could not be read, so styled rules cannot be updated: {err}")
 }
 
 /// Whether anything is waiting for the next Apply: rule edits (or a staged economy op), a style

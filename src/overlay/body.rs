@@ -2506,7 +2506,7 @@ pub(crate) fn shows_action_rows(state: &StyleState) -> bool {
 
 const STYLE_UNKNOWN_TIP: &str = "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.";
 const STYLE_UNCHECKED_TIP: &str =
-    "styles.json could not be read; this style is not applied until it loads.";
+    "The styles could not be read; this style is not applied until they load.";
 const STYLE_KNOWN_TIP: &str = "Actions come from this style; Apply rewrites them.";
 
 /// The picker: Custom first, then every preset with a swatch of its text colour.

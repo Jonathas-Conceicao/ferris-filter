@@ -451,7 +451,21 @@ Plans:
   3. A Simple Defences condition (one card, AR / EV / ES each Any | Has | No) writes `X > 0` for Has and `X 0` for No, shows a display-only strip of the 7 defence combinations lit for the ones matched, is mutually exclusive with Defences in the picker, and loads zero-based defence lines with their bytes preserved; other defence lines still load as the Defences card
   4. The Phase 16, 23, 24, 25 and 26 manual verification docs record the author's results, and two backlog items are added (keyword-table verification, guiding rules away from conditions that cannot match)
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+**Wave 1**
+
+- [ ] 27-01-PLAN.md — Right-aligned Custom styles Order column; colour dropdown scroll bar root-cause fix (UAT4-01, UAT4-02)
+- [ ] 27-02-PLAN.md — Simple Defences pure logic: classification, segment writes, combination strip (UAT4-03)
+- [ ] 27-03-PLAN.md — Record UAT results (phases 16, 22-26), traceability, backlog 999.12/999.13 (UAT4-04)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 27-04-PLAN.md — Simple Defences card UI, picker exclusivity, card stability (UAT4-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 27-05-PLAN.md — CLAUDE.md, CHANGELOG [Unreleased], 27-MANUAL-VERIFICATION.md (UAT4-01..03)
 
 ### Progress
 

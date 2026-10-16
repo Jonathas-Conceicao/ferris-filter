@@ -57,10 +57,10 @@ impl Document {
         let at_end = ins >= self.lines.len();
         let unterminated_end = at_end && self.lines.last().is_some_and(|l| l.eol() == Eol::None);
         let mut new: Vec<Line> = self.lines[..ins].to_vec();
-        if let Some(last) = new.last_mut() {
-            if last.eol() == Eol::None {
-                *last = Line::new(last.text().to_string(), eol);
-            }
+        if let Some(last) = new.last_mut()
+            && last.eol() == Eol::None
+        {
+            *last = Line::new(last.text().to_string(), eol);
         }
         if new.last().is_some_and(|l| !is_blank(l)) {
             new.push(Line::new(String::new(), eol));
@@ -69,10 +69,8 @@ impl Document {
         for text in [section::RULE_LINE, middle.as_str(), section::RULE_LINE] {
             new.push(Line::new(text.to_string(), eol));
         }
-        if unterminated_end {
-            if let Some(l) = new.last_mut() {
-                *l = Line::new(l.text().to_string(), Eol::None);
-            }
+        if unterminated_end && let Some(l) = new.last_mut() {
+            *l = Line::new(l.text().to_string(), Eol::None);
         }
         if self.lines.get(ins).is_some_and(|l| !is_blank(l)) {
             new.push(Line::new(String::new(), eol));
@@ -148,12 +146,179 @@ impl Document {
         let unterminated = ends_file && self.lines.last().is_some_and(|l| l.eol() == Eol::None);
         let mut new = self.lines[..from].to_vec();
         new.extend_from_slice(&self.lines[to..]);
-        if unterminated {
-            if let Some(l) = new.last_mut() {
-                *l = Line::new(l.text().to_string(), Eol::None);
-            }
+        if unterminated && let Some(l) = new.last_mut() {
+            *l = Line::new(l.text().to_string(), Eol::None);
         }
         self.commit_unchanged(new)
+    }
+}
+
+/// What a rule does when it is moved one step: swap with a neighbouring rule, hop a divider, or
+/// stay put.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleStep {
+    /// Swap with this neighbouring block (the caller resolves its group).
+    Swap(BlockId),
+    /// A divider (by ordinal) lies in that direction: the caller performs the step as
+    /// `move_section(ordinal, !up)`, which hops the rule across the divider.
+    CrossBanner(usize),
+    /// Nothing to step over (file edge, economy section).
+    Blocked,
+}
+
+/// The rule unit a divider would hop: its blocks (a whole `# ff:group` run) and line region.
+struct Hop {
+    banner: std::ops::Range<usize>,
+    rule: std::ops::Range<usize>,
+}
+
+impl Document {
+    fn in_economy(&self, header: usize) -> Result<bool, EditError> {
+        let sec = section::find(self).map_err(|e| EditError::EconomyDamaged(e.to_string()))?;
+        Ok(sec.is_some_and(|s| header > s.begin && header < s.end))
+    }
+
+    /// The banner unit (three lines plus the blank lines after it) and the line region of the
+    /// rule unit nearest to it in direction `up`, or `None` when that neighbour is not a user
+    /// rule (file edge, another banner, the economy section).
+    fn hop(&self, ordinal: usize, up: bool) -> Result<Option<Hop>, EditError> {
+        let start = self.user_banner(ordinal)?;
+        let banners = section::banners(self);
+        let mut be = start + 3;
+        while self.lines.get(be).is_some_and(is_blank) {
+            be += 1;
+        }
+        let infos = self.infos();
+        let nearest = if up {
+            let blk = infos.iter().rev().find(|i| i.span.end <= start);
+            let prev_banner_end = ordinal.checked_sub(1).map(|k| banners[k].start + 3);
+            match (blk, prev_banner_end) {
+                (Some(b), Some(pe)) if pe > b.span.end => None,
+                (Some(b), _) => Some(b),
+                (None, _) => None,
+            }
+        } else {
+            let blk = infos.iter().find(|i| i.span.start >= start + 3);
+            let next_banner = banners.get(ordinal + 1).map(|b| b.start);
+            match (blk, next_banner) {
+                (Some(b), Some(nb)) if nb < b.span.start => None,
+                (Some(b), _) => Some(b),
+                (None, _) => None,
+            }
+        };
+        let Some(near) = nearest else {
+            return Ok(None);
+        };
+        if self.in_economy(near.header)? {
+            return Ok(None);
+        }
+        let g = group::analyze(self);
+        let members = g.members(g.rule_of(near.id));
+        let pos = |id: BlockId| {
+            infos
+                .iter()
+                .find(|i| i.id == id)
+                .map(|i| i.span.start..i.unit.end)
+        };
+        let (Some(first), Some(last)) = (
+            members.first().and_then(|&m| pos(m)),
+            members.last().and_then(|&m| pos(m)),
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(Hop {
+            banner: start..be,
+            rule: first.start..last.end,
+        }))
+    }
+
+    /// Whether the divider can move one rule (or one whole group run) in direction `up`. Always
+    /// false for the economy banner.
+    pub fn section_can_move(&self, ordinal: usize, up: bool) -> bool {
+        matches!(self.hop(ordinal, up), Ok(Some(_)))
+    }
+
+    /// Move the divider past the nearest rule unit. Lines between the two units stay where they
+    /// are, so a move down followed by a move up restores the original bytes.
+    pub fn move_section(&mut self, ordinal: usize, up: bool) -> Result<(), EditError> {
+        let hop = self.hop(ordinal, up)?.ok_or(EditError::NoNeighbour)?;
+        let eol = self.last_eol();
+        let mut old = self.lines.clone();
+        let last = old.len() - 1;
+        let was_unterminated = old[last].eol() == Eol::None;
+        if was_unterminated {
+            old[last] = Line::new(old[last].text().to_string(), eol);
+        }
+        let (b, r) = (hop.banner, hop.rule);
+        let mut new;
+        if up {
+            // rule, strays, banner  ->  banner, strays, rule
+            new = old[..r.start].to_vec();
+            new.extend_from_slice(&old[b.clone()]);
+            new.extend_from_slice(&old[r.end..b.start]);
+            new.extend_from_slice(&old[r]);
+            new.extend_from_slice(&old[b.end..]);
+        } else {
+            // banner, strays, rule  ->  rule, strays, banner
+            new = old[..b.start].to_vec();
+            new.extend_from_slice(&old[r.clone()]);
+            new.extend_from_slice(&old[b.end..r.start]);
+            new.extend_from_slice(&old[b]);
+            new.extend_from_slice(&old[r.end..]);
+        }
+        if was_unterminated
+            && let Some(l) = new.last_mut()
+            && !l.text().is_empty()
+        {
+            *l = Line::new(l.text().to_string(), Eol::None);
+        }
+        self.commit_unchanged(new)
+    }
+
+    /// What moving the unit whose edge block is `edge` one step in direction `up` would do. `edge`
+    /// is the unit's first block when `up`, its last when moving down. Never mutates.
+    pub fn rule_step(&self, edge: BlockId, up: bool) -> Result<RuleStep, EditError> {
+        let infos = self.infos();
+        let pos = infos
+            .iter()
+            .position(|i| i.id == edge)
+            .ok_or(EditError::UnknownBlock)?;
+        if self.in_economy(infos[pos].header)? {
+            return Ok(RuleStep::Blocked);
+        }
+        let neighbour = if up {
+            pos.checked_sub(1).map(|p| &infos[p])
+        } else {
+            infos.get(pos + 1)
+        };
+        let banners = section::banners(self);
+        let me = &infos[pos].span;
+        // The banner nearest to the edge in that direction, and whether it lies before the
+        // neighbouring block (so nothing but blanks and strays separates it from the edge).
+        let banner = if up {
+            banners
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, b)| b.start + 3 <= me.start)
+        } else {
+            banners.iter().enumerate().find(|(_, b)| b.start >= me.end)
+        };
+        let between = banner.filter(|(_, b)| match neighbour {
+            None => true,
+            Some(n) if up => b.start >= n.span.end,
+            Some(n) => b.start + 3 <= n.span.start,
+        });
+        if let Some((k, b)) = between {
+            return Ok(match b.kind {
+                BannerKind::Economy => RuleStep::Blocked,
+                BannerKind::Section => RuleStep::CrossBanner(k),
+            });
+        }
+        match neighbour {
+            Some(n) if !self.in_economy(n.header)? => Ok(RuleStep::Swap(n.id)),
+            _ => Ok(RuleStep::Blocked),
+        }
     }
 }
 

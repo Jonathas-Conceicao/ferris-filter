@@ -23,6 +23,7 @@ pub mod tokenize;
 pub use block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
 pub use diag::{FilterDiagnostic, LoadError, Severity};
 pub use disabled::{DISABLE_PREFIX, commented_inner};
+pub use divider::RuleStep;
 pub use edit::EditError;
 pub use lineedit::LinePatch;
 pub use lines::{Eol, Line};

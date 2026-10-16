@@ -2191,15 +2191,13 @@ impl OverlayApp {
         actions
     }
 
-    /// Draws the RULES tab: the search row, the rule list (or its notice) and the pinned economy
-    /// footer row at the bottom of the content.
+    /// Draws the RULES tab: the search row and the rule list (or its notice).
     fn rules_content(
         &mut self,
         ui: &mut egui::Ui,
         skin: &Skin,
         actions: apply::FooterActions,
         row_actions: &mut Vec<RowAction>,
-        economy_action: &mut Option<rule_list::EconomyFooterAction>,
     ) {
         if let Some(working) = &self.working {
             let total = working.rows().len();
@@ -2211,21 +2209,7 @@ impl OverlayApp {
             ui.add_space(8.0);
         }
         let avail = ui.available_rect_before_wrap();
-        // The economy section is a header in the list; the footer slot is only for an absent or
-        // damaged one.
-        let footer_needed = self
-            .working
-            .as_ref()
-            .is_some_and(|w| !matches!(w.economy(), EconomyView::Present { .. }));
-        let footer_h = if footer_needed {
-            rule_list::ECONOMY_ROW_HEIGHT + 4.0
-        } else {
-            0.0
-        };
-        let list_rect = Rect::from_min_max(
-            avail.min,
-            pos2(avail.max.x, (avail.max.y - footer_h).max(avail.min.y)),
-        );
+        let list_rect = avail;
         let mut lui = ui.new_child(
             UiBuilder::new()
                 .max_rect(list_rect)
@@ -2233,7 +2217,6 @@ impl OverlayApp {
         );
         lui.set_clip_rect(list_rect.intersect(ui.clip_rect()));
         let filter_name = self.settings.filter_name().to_string();
-        let can_edit_economy = self.root.is_ok() && self.changed_on_disk.is_empty();
         let mut toggled: Vec<(String, bool, bool)> = Vec::new();
         match (&mut self.working, &self.filter) {
             (Some(working), _) => {
@@ -2269,7 +2252,6 @@ impl OverlayApp {
                                 &mut self.list,
                                 true,
                                 self.classes.as_ref().ok(),
-                                can_edit_economy,
                             )
                         })
                         .inner;
@@ -2286,7 +2268,6 @@ impl OverlayApp {
                         &mut self.list,
                         !searching,
                         self.classes.as_ref().ok(),
-                        can_edit_economy,
                     );
                     row_actions.extend(frame.actions);
                     toggled = frame.toggled;
@@ -2299,24 +2280,6 @@ impl OverlayApp {
         }
         for (name, economy, collapsed) in toggled {
             self.set_section_collapsed(&name, economy, collapsed);
-        }
-        if footer_needed && let Some(working) = &self.working {
-            let footer_rect = Rect::from_min_max(
-                pos2(avail.min.x, avail.max.y - rule_list::ECONOMY_ROW_HEIGHT),
-                avail.max,
-            );
-            let mut fui = ui.new_child(
-                UiBuilder::new()
-                    .max_rect(footer_rect)
-                    .layout(Layout::top_down(Align::Min)),
-            );
-            *economy_action = rule_list::economy_footer(
-                &mut fui,
-                skin,
-                working.economy(),
-                &mut self.list,
-                can_edit_economy,
-            );
         }
     }
 }
@@ -2671,11 +2634,10 @@ impl eframe::App for OverlayApp {
         // Everything the panels want to change is collected here and applied once, after both have
         // rendered (deferred-action rule): row operations, the economy footer and the jump.
         let mut row_actions: Vec<RowAction> = Vec::new();
-        let mut economy_action: Option<rule_list::EconomyFooterAction> = None;
         let mut jump_to: Option<BlockId> = None;
         let mut config_actions: Vec<ConfigAction> = Vec::new();
         let mut picked_tab: Option<ShellTab> = None;
-        let mut sync_clicked = false;
+        let mut economy_clicks = shell::EconomyClicks::default();
 
         // ---- The shell: background, frame, header, tabs, content, bottom bar ----
         let skin = self.skin.clone();
@@ -2743,26 +2705,43 @@ impl eframe::App for OverlayApp {
         );
         cui.set_clip_rect(shell_frame.content);
         match self.tab {
-            ShellTab::Rules => self.rules_content(
-                &mut cui,
-                &skin,
-                actions,
-                &mut row_actions,
-                &mut economy_action,
-            ),
+            ShellTab::Rules => self.rules_content(&mut cui, &skin, actions, &mut row_actions),
             ShellTab::Config => {
                 config_actions = self.config_body(&mut cui, &skin, config_footer);
             }
             ShellTab::Economy => {
-                let syncing = self.economy.is_running();
-                sync_clicked = shell::economy_tab(
-                    &mut cui,
-                    &skin,
-                    crate::sync::OVERLAY_LEAGUE,
-                    &shell::last_sync_text(self.economy_info.mtime_secs, win::utc_offset_minutes()),
-                    syncing,
-                    actions.sync,
-                );
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                let inputs = shell::EconomyTabInputs {
+                    league: crate::sync::OVERLAY_LEAGUE,
+                    mtime_secs: self.economy_info.mtime_secs,
+                    now_secs,
+                    utc_offset_minutes: win::utc_offset_minutes(),
+                    priced_items: self.economy_info.priced_items,
+                    live: self.economy_info.live,
+                    syncing: self.economy.is_running(),
+                    sync_enabled: actions.sync,
+                    sync_disabled_tip: self.root.as_ref().err().map(String::as_str),
+                    section: shell::section_button(
+                        self.working.as_ref().map(|w| w.economy()),
+                        self.root.is_ok(),
+                        !self.changed_on_disk.is_empty(),
+                    ),
+                };
+                let mut tier_actions: Vec<ConfigAction> = Vec::new();
+                economy_clicks =
+                    shell::economy_tab(&mut cui, &skin, &inputs, |ui| match &self.config {
+                        Ok(state) => {
+                            tier_actions = config_view::show_tiers_section(ui, &skin, state);
+                        }
+                        Err(message) => {
+                            tier_actions.extend(config_view::show_load_error(ui, message));
+                        }
+                    });
+                config_actions.extend(tier_actions);
+                cui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(60));
             }
             ShellTab::About => shell::about_tab(&mut cui, &skin),
         }
@@ -2883,7 +2862,9 @@ impl eframe::App for OverlayApp {
                 self.run_apply(&egui_ctx, false);
             }
         }
-        if sync_clicked && let Ok(root) = &self.root {
+        if economy_clicks.sync
+            && let Ok(root) = &self.root
+        {
             // The app root, not the process working directory: the overlay can be launched from
             // anywhere, and prices.json must land where Apply will read it from. A sync is not
             // part of Apply (dozens of network round trips that can fail); it only refreshes
@@ -2929,8 +2910,11 @@ impl eframe::App for OverlayApp {
         if !row_actions.is_empty() {
             self.run_row_actions(row_actions);
         }
-        if let Some(rule_list::EconomyFooterAction::Add) = economy_action {
+        if economy_clicks.add {
             self.stage_add_economy();
+        }
+        if economy_clicks.remove {
+            self.list.confirm_economy_remove = true;
         }
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
@@ -3268,8 +3252,7 @@ mod tests {
                 );
                 cui.set_clip_rect(frame.content);
                 drawn =
-                    rule_list::show_list(&mut cui, &working, &visible, &mut list, true, None, true)
-                        .drawn;
+                    rule_list::show_list(&mut cui, &working, &visible, &mut list, true, None).drawn;
                 rects = super::bottom_bar(ui, &skin, frame.button_bar, &bar_state, &status).rects;
             })
             .drop_without_applying_deltas();
@@ -4930,6 +4913,49 @@ Hide
         let c = app.config.as_ref().unwrap();
         assert!(!c.styles_dirty(), "style edit reverted");
         assert!(c.tiers_dirty(), "tier edit kept");
+    }
+
+    #[test]
+    fn economy_add_click_stages_in_memory_and_writes_nothing() {
+        use crate::overlay::rules::EconomyView;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.filter");
+        std::fs::write(&path, RULES).unwrap();
+        let (mut app, _ctx) = popup_app(RULES);
+        // The repo root is read-only input here (styles, tiers, fallback prices).
+        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        assert_eq!(
+            *app.working.as_ref().unwrap().economy(),
+            EconomyView::Absent
+        );
+        app.stage_add_economy();
+        let w = app.working.as_ref().unwrap();
+        assert!(matches!(w.economy(), EconomyView::Present { .. }));
+        assert!(w.economy_staged());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), RULES);
+    }
+
+    #[test]
+    fn economy_remove_click_asks_and_the_popup_stages_the_removal() {
+        use crate::overlay::rules::EconomyView;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        app.stage_add_economy();
+        // Keep: nothing changes.
+        app.list.confirm_economy_remove = true;
+        app.dispatch_popup(&ctx, Popup::RemoveEconomy, 1);
+        assert!(matches!(
+            app.working.as_ref().unwrap().economy(),
+            EconomyView::Present { .. }
+        ));
+        // Remove: staged (the add is undone, so the section is absent again).
+        app.list.confirm_economy_remove = true;
+        app.dispatch_popup(&ctx, Popup::RemoveEconomy, 0);
+        assert_eq!(
+            *app.working.as_ref().unwrap().economy(),
+            EconomyView::Absent
+        );
     }
 
     #[test]

@@ -439,7 +439,6 @@ pub(crate) fn last_sync_text(mtime_unix_secs: Option<u64>, utc_offset_minutes: i
 
 /// "Last sync" as a relative age: `Never`, `Just now`, `N min ago`, `N h ago`, `N d ago`, and the
 /// local `YYYY-MM-DD` date from 14 days on. A modified time in the future counts as `Just now`.
-#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
 pub(crate) fn relative_sync_text(
     mtime_unix_secs: Option<u64>,
     now_unix_secs: u64,
@@ -465,7 +464,6 @@ pub(crate) fn relative_sync_text(
 }
 
 /// A count with comma thousands separators (`1,284`).
-#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
 pub(crate) fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
@@ -479,19 +477,16 @@ pub(crate) fn thousands(n: usize) -> String {
 }
 
 /// Tooltip of the economy section button when it is unavailable.
-#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
 pub(crate) const FIX_FILTER_FIRST: &str = "Fix the filter first.";
 
 /// The Add / Remove economy section button of the ECONOMY tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
 pub(crate) struct SectionButton {
     pub add: bool,
     pub enabled: bool,
     pub blocks: Option<usize>,
 }
 
-#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
 impl SectionButton {
     pub(crate) fn label(&self) -> &'static str {
         if self.add {
@@ -511,7 +506,6 @@ impl SectionButton {
 }
 
 /// The section button for the working filter's economy view (None: no filter loaded).
-#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
 pub(crate) fn section_button(
     view: Option<&EconomyView>,
     root_ok: bool,
@@ -537,44 +531,150 @@ pub(crate) fn section_button(
     }
 }
 
-/// The ECONOMY tab: league, last sync and the one Sync economy button. Returns true when the
-/// button was clicked. While `syncing` it reads `Syncing…` and is disabled.
+/// What the clicks on the ECONOMY tab asked for; the app performs them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EconomyClicks {
+    pub sync: bool,
+    pub add: bool,
+    pub remove: bool,
+}
+
+/// Everything the ECONOMY tab shows.
+pub(crate) struct EconomyTabInputs<'a> {
+    pub league: &'a str,
+    pub mtime_secs: Option<u64>,
+    pub now_secs: u64,
+    pub utc_offset_minutes: i32,
+    pub priced_items: usize,
+    pub live: bool,
+    pub syncing: bool,
+    pub sync_enabled: bool,
+    pub sync_disabled_tip: Option<&'a str>,
+    pub section: SectionButton,
+}
+
+/// The ECONOMY tab: league, last sync, price source, the Sync economy button, the economy
+/// section button and (through `tiers`) the tier cutoffs editor. Draws only; returns the clicks.
 pub(crate) fn economy_tab(
     ui: &mut egui::Ui,
     skin: &Skin,
-    league: &str,
-    last_sync: &str,
-    syncing: bool,
-    enabled: bool,
-) -> bool {
-    let mut clicked = false;
+    inputs: &EconomyTabInputs,
+    tiers: impl FnOnce(&mut egui::Ui),
+) -> EconomyClicks {
+    use egui::{Align, Layout, Sense, UiBuilder, vec2};
+    let mut clicks = EconomyClicks::default();
     w::ff_scroll_area(ui, skin, "economy", |ui| {
         w::ff_section(ui, skin, "Economy");
-        for (i, (label, value)) in [("League", league), ("Last sync", last_sync)]
-            .into_iter()
-            .enumerate()
-        {
-            w::ff_row(ui, i, label, |ui| {
-                ui.label(
-                    egui::RichText::new(value)
-                        .font(fonts::regular(15.0))
-                        .color(pal::VALUE),
+        let value = |ui: &mut egui::Ui, text: &str, color: egui::Color32| {
+            ui.label(
+                egui::RichText::new(text)
+                    .font(fonts::regular(15.0))
+                    .color(color),
+            )
+        };
+        w::ff_row(ui, 0, "League", |ui| {
+            value(ui, inputs.league, pal::VALUE).on_hover_text("Pinned in this build.");
+        });
+        w::ff_row(ui, 1, "Last sync", |ui| {
+            let r = value(
+                ui,
+                &relative_sync_text(
+                    inputs.mtime_secs,
+                    inputs.now_secs,
+                    inputs.utc_offset_minutes,
+                ),
+                pal::VALUE,
+            );
+            if inputs.mtime_secs.is_some() {
+                r.on_hover_text(last_sync_text(inputs.mtime_secs, inputs.utc_offset_minutes));
+            }
+        });
+        w::ff_row(ui, 2, "Priced items", |ui| {
+            value(ui, &thousands(inputs.priced_items), pal::VALUE);
+        });
+        w::ff_row(ui, 3, "Price source", |ui| {
+            if inputs.live {
+                value(ui, "Live prices", pal::VALUE)
+                    .on_hover_text("prices.json from the last sync.");
+            } else {
+                value(ui, "Fallback prices", pal::WARN).on_hover_text(
+                    "No prices.json yet. Using the built-in early-league prices. Sync to get live ones.",
                 );
-            });
-        }
-        ui.add_space(14.0);
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            let label = if syncing {
+            }
+        });
+        ui.add_space(16.0);
+        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+            let label = if inputs.syncing {
                 "Syncing…"
             } else {
                 "Sync economy"
             };
-            if w::ff_button_ex(ui, skin, label, 180.0, enabled && !syncing, false).clicked() {
-                clicked = true;
+            let enabled = inputs.sync_enabled && !inputs.syncing;
+            let mut r = w::ff_button_ex(ui, skin, label, 180.0, enabled, false);
+            if !enabled
+                && !inputs.syncing
+                && let Some(tip) = inputs.sync_disabled_tip
+            {
+                r = r.on_hover_text(tip);
+            }
+            if r.clicked() {
+                clicks.sync = true;
             }
         });
+        ui.add_space(16.0);
+        w::ff_section(ui, skin, "Economy section");
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), w::ROW_HEIGHT), Sense::hover());
+        w::row_background(ui, 0, rect);
+        let inner = rect.shrink2(vec2(w::ROW_PAD, 0.0));
+        let mut left = ui.new_child(
+            UiBuilder::new()
+                .max_rect(inner)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        left.label(
+            egui::RichText::new("Filter section")
+                .font(fonts::small_caps(17.0))
+                .color(pal::LABEL),
+        )
+        .on_hover_text(
+            "The economy blocks FerrisFilter writes at the end of the filter. Added and removed by Apply.",
+        );
+        let mut right = ui.new_child(
+            UiBuilder::new()
+                .max_rect(inner)
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        let section = inputs.section;
+        let mut r = w::ff_button_ex(
+            &mut right,
+            skin,
+            section.label(),
+            188.0,
+            section.enabled,
+            section.danger(),
+        );
+        if let Some(tip) = section.tip() {
+            r = r.on_hover_text(tip);
+        }
+        if r.clicked() {
+            if section.add {
+                clicks.add = true;
+            } else {
+                clicks.remove = true;
+            }
+        }
+        if let Some(n) = section.blocks
+            && !section.add
+        {
+            value(&mut right, &format!("{n} locked blocks"), pal::MUTED)
+                .on_hover_text("Rules inside the section cannot be edited.");
+        }
+        ui.add_space(16.0);
+        w::ff_section(ui, skin, "Tiers");
+        tiers(ui);
     });
-    clicked
+    clicks
 }
 
 /// The ABOUT tab: identity, credits and the not-affiliated disclaimer pinned to the bottom.
@@ -862,6 +962,86 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn draw(inputs: &EconomyTabInputs) -> (EconomyClicks, u32) {
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::textures::load_light(&ctx);
+        let mut ran = 0;
+        let mut clicks = EconomyClicks::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(535.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            clicks = economy_tab(ui, &skin, inputs, |_| ran += 1);
+        })
+        .drop_without_applying_deltas();
+        (clicks, ran)
+    }
+
+    fn inputs(section: SectionButton) -> EconomyTabInputs<'static> {
+        EconomyTabInputs {
+            league: "Test League",
+            mtime_secs: None,
+            now_secs: 1_700_000_000,
+            utc_offset_minutes: 0,
+            priced_items: 1284,
+            live: false,
+            syncing: false,
+            sync_enabled: true,
+            sync_disabled_tip: None,
+            section,
+        }
+    }
+
+    const ADD: SectionButton = SectionButton {
+        add: true,
+        enabled: true,
+        blocks: None,
+    };
+
+    #[test]
+    fn economy_clicks_default_is_all_false() {
+        assert_eq!(
+            EconomyClicks::default(),
+            EconomyClicks {
+                sync: false,
+                add: false,
+                remove: false
+            }
+        );
+    }
+
+    #[test]
+    fn economy_tab_renders_every_state_and_runs_tiers_once() {
+        let mut live = inputs(ADD);
+        live.mtime_secs = Some(1_699_999_000);
+        live.live = true;
+        let mut syncing = inputs(SectionButton {
+            add: false,
+            enabled: true,
+            blocks: Some(7),
+        });
+        syncing.syncing = true;
+        let mut disabled = inputs(SectionButton {
+            add: true,
+            enabled: false,
+            blocks: None,
+        });
+        disabled.sync_enabled = false;
+        disabled.sync_disabled_tip = Some("No app root");
+        for i in [inputs(ADD), live, syncing, disabled] {
+            let (clicks, ran) = draw(&i);
+            assert_eq!(ran, 1);
+            assert_eq!(clicks, EconomyClicks::default());
+        }
+    }
+
     #[test]
     fn last_sync_text_formats_local_time() {
         assert_eq!(super::last_sync_text(Some(0), 0), "1970-01-01 00:00");
@@ -882,8 +1062,6 @@ mod tests {
         // A negative offset before the epoch clamps instead of wrapping.
         assert_eq!(super::last_sync_text(Some(0), -60), "1970-01-01 00:00");
     }
-
-    use super::*;
 
     fn id() -> BlockId {
         BlockId(1)

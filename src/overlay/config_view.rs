@@ -276,17 +276,6 @@ fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) {
     }
 }
 
-fn helper(ui: &mut egui::Ui, text: &str) {
-    ui.add(
-        egui::Label::new(
-            RichText::new(text)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::TAB_ACTIVE),
-        )
-        .wrap(),
-    );
-}
-
 fn small_button(text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.to_string()).size(theme::ROW_SUMMARY_SIZE))
 }
@@ -295,7 +284,7 @@ fn small_button(text: &str) -> egui::Button<'static> {
 // Sections
 // ---------------------------------------------------------------------------------------------
 
-/// FILTER, STYLES and TIERS. The app wraps this in the shell's game-art scroll area; Apply,
+/// FILTER and STYLES. The app wraps this in the shell's game-art scroll area; Apply,
 /// Revert and Reload live in the shared bottom bar.
 pub fn show_sections(
     ui: &mut egui::Ui,
@@ -308,9 +297,6 @@ pub fn show_sections(
     show_filter(ui, cfg, ctx, &mut actions);
     ui.add_space(16.0);
     show_styles(ui, state, cfg, ctx, &mut actions);
-    ui.add_space(16.0);
-    section_title(ui, ctx, "Tiers");
-    show_tiers(ui, state, &mut actions);
     actions
 }
 
@@ -454,87 +440,51 @@ fn filter_draft_row(
     }
 }
 
-fn show_tiers(ui: &mut egui::Ui, state: &ConfigState, actions: &mut Vec<ConfigAction>) {
-    helper(
-        ui,
-        "Minimum price for each tier. Items worth at least this much get the tier.",
-    );
-    ui.horizontal(|ui| {
-        // Same 8px inset as the zebra rows below, so captions sit over their columns.
-        ui.add_space(8.0);
-        ui.add_sized(vec2(24.0, 14.0), egui::Label::new(caption_text("TIER")));
-        ui.add_sized(
-            vec2(112.0, 14.0),
-            egui::Label::new(caption_text("MIN VALUE")),
-        );
-        ui.add_sized(vec2(64.0, 14.0), egui::Label::new(caption_text("UNIT")));
-    });
+/// The tier cutoffs editor, drawn on the ECONOMY tab under its Tiers heading.
+pub fn show_tiers_section(
+    ui: &mut egui::Ui,
+    skin: &crate::skin::Skin,
+    state: &ConfigState,
+) -> Vec<ConfigAction> {
+    let _ = skin;
+    let mut actions = Vec::new();
+    let tip = "Minimum price for each tier. Items worth at least this much get the tier.";
     for (i, row) in state.tier_rows().iter().enumerate() {
-        let mut stroke_rect = None;
-        widgets::zebra_row(ui, i, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(24.0);
-                ui.add_sized(
-                    vec2(24.0, 24.0),
-                    egui::Label::new(RichText::new(&row.tier).size(14.0).color(theme::VALUE_TEXT)),
-                );
-                let id = ui.make_persistent_id(("cfg-tier", &row.tier));
-                let mut buf = row.buffer.clone();
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .id(id)
-                        .desired_width(112.0),
-                );
-                if edit.changed() {
-                    actions.push(ConfigAction::TierText {
-                        tier: row.tier.clone(),
-                        text: buf,
-                    });
-                }
-                ui.add_sized(
-                    vec2(64.0, 24.0),
-                    egui::Label::new(
-                        RichText::new(row.unit)
-                            .size(theme::ROW_SUMMARY_SIZE)
-                            .color(theme::DISABLED_TEXT),
-                    )
-                    .sense(egui::Sense::hover()),
-                )
-                .on_hover_text(UNIT_TIP);
-            });
+        let inner = crate::skin::widgets::ff_field_row(ui, i, &row.tier, Some(tip), |ui| {
+            let id = ui.make_persistent_id(("cfg-tier", &row.tier));
+            let mut buf = row.buffer.clone();
+            let edit = crate::skin::widgets::ff_text_field_id(ui, id, &mut buf, "", 112.0);
+            if edit.changed() {
+                actions.push(ConfigAction::TierText {
+                    tier: row.tier.clone(),
+                    text: buf,
+                });
+            }
             if let Some(err) = &row.error {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(err)
-                            .size(theme::ROW_SUMMARY_SIZE)
-                            .color(theme::WARM_ACCENT_TEXT),
-                    )
-                    .wrap(),
+                ui.painter().rect_stroke(
+                    edit.rect,
+                    2.0,
+                    egui::Stroke::new(1.0, INVALID_RED),
+                    egui::StrokeKind::Inside,
                 );
+                edit.on_hover_text(err);
             }
-            if row.edge {
-                stroke_rect = Some(ui.min_rect());
-            }
+            ui.label(
+                RichText::new(row.unit)
+                    .font(crate::skin::fonts::regular(14.0))
+                    .color(crate::skin::palette::MUTED),
+            )
+            .on_hover_text(format!(
+                "{UNIT_TIP} Only your live tiers.json is edited; the built-in early-league fallback is never changed."
+            ));
         });
-        if let Some(r) = stroke_rect {
-            let bar = egui::Rect::from_min_max(
-                egui::pos2(r.left() - 8.0, r.top() - 4.0),
-                egui::pos2(r.left() - 4.0, r.bottom() + 4.0),
-            );
-            // The tier-error marker shares the error text's colour; `WARM_ACCENT` is now the
-            // near-black button fill and would be invisible here (review WR-06).
-            ui.painter().rect_filled(bar, 0.0, theme::WARM_ACCENT_TEXT);
+        if row.edge {
+            let r = inner.response.rect;
+            let bar = egui::Rect::from_min_size(r.left_top(), vec2(4.0, r.height()));
+            ui.painter().rect_filled(bar, 0.0, INVALID_RED);
         }
     }
-    ui.add_space(4.0);
-    helper(
-        ui,
-        "Only your live tiers.json is edited. The built-in early-league fallback is never changed.",
-    );
-}
-
-fn caption_text(text: &str) -> RichText {
-    RichText::new(text).small().color(theme::LABEL_TAN)
+    actions
 }
 
 /// Gap between two columns of the styles table.
@@ -1898,6 +1848,28 @@ mod tests {
         assert_eq!(actions, Some(vec![]));
         assert_eq!(cfg.style_draft.as_deref(), Some("Gold"));
         assert_eq!(cfg.filter_draft.as_deref(), Some("ssf"));
+    }
+
+    #[test]
+    fn tiers_section_draws_every_tier_and_an_unchanged_frame_acts_on_nothing() {
+        let (_d, state) = loaded();
+        assert_eq!(state.tier_rows().len(), 7);
+        let (ctx, input) = headless();
+        let skin = crate::skin::textures::load_light(&ctx);
+        let mut actions = None;
+        ctx.run_ui(input, |ui| {
+            actions = Some(show_tiers_section(ui, &skin, &state));
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(actions, Some(vec![]));
+    }
+
+    #[test]
+    fn config_sections_no_longer_draw_tiers() {
+        let src = include_str!("config_view.rs");
+        let body = &src[src.find("pub fn show_sections(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(!body.contains("show_tiers") && !body.contains("\"Tiers\""));
     }
 
     #[test]

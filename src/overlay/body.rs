@@ -3257,7 +3257,7 @@ mod tests {
         ctx.run_ui(raw, |ui| {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-            actions = show_list(&mut child, wf, &visible, list, true, classes, true).actions;
+            actions = show_list(&mut child, wf, &visible, list, true, classes).actions;
         })
         .drop_without_applying_deltas();
         actions
@@ -5800,7 +5800,7 @@ mod tests {
         let full = ctx.run_ui(input(vec![]), |ui| {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-            show_list(&mut child, wf, &visible, list, true, Some(&cat), true);
+            show_list(&mut child, wf, &visible, list, true, Some(&cat));
         });
         for clipped in &full.shapes {
             if let egui::epaint::Shape::Text(t) = &clipped.shape {

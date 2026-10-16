@@ -1357,7 +1357,7 @@ mod tests {
 
     fn headless() -> (egui::Context, egui::RawInput) {
         let ctx = egui::Context::default();
-        theme::install_fonts(&ctx);
+        crate::skin::fonts::install(&ctx);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,

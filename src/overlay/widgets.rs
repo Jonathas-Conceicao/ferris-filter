@@ -275,49 +275,7 @@ fn paint_x(ui: &egui::Ui, rect: egui::Rect, hovered: bool) {
 /// A 24px-high selectable chip (rarity-style toggle). Flips `*selected` and marks the response
 /// changed on click; callers write only on `.changed()`.
 pub fn toggle_chip(ui: &mut egui::Ui, label: &str, selected: &mut bool) -> egui::Response {
-    let text_color = if *selected {
-        theme::SECTION_CREAM
-    } else {
-        theme::LABEL_TAN
-    };
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        egui::FontId::proportional(theme::ROW_SUMMARY_SIZE),
-        text_color,
-    );
-    let size = egui::vec2(galley.size().x + 16.0, 24.0);
-    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
-    if response.clicked() {
-        *selected = !*selected;
-        response.mark_changed();
-    }
-    let fill = if *selected {
-        theme::HEADER_PLATE
-    } else {
-        theme::INPUT_FILL
-    };
-    let stroke_color = if response.hovered() {
-        theme::SECTION_CREAM
-    } else {
-        theme::CONTROL_GLYPH
-    };
-    let painter = ui.painter();
-    painter.rect(
-        rect,
-        2.0,
-        fill,
-        egui::Stroke::new(1.0, stroke_color),
-        egui::StrokeKind::Inside,
-    );
-    painter.galley(
-        egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        text_color,
-    );
-    let state = *selected;
-    response
-        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, state, label));
-    response
+    crate::skin::editor::ff_chip(ui, label, selected)
 }
 
 /// A small outlined text badge (for example `from style`) with a hover tooltip. Not clickable.
@@ -828,7 +786,7 @@ mod tests {
 
     fn headless_ctx() -> egui::Context {
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty()); // no font atlas needed for this smoke test
+        crate::skin::fonts::install(&ctx);
         ctx
     }
 

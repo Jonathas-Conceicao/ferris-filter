@@ -5163,7 +5163,7 @@ mod tests {
         // The operator dropdown is on the pending card: some click opens a popup, and the popup
         // offers "Not" (other popups, such as the style picker, do not).
         let mut found = None;
-        'a: for y in (164..200).step_by(4) {
+        'a: for y in (194..230).step_by(4) {
             for x in (150..440).step_by(10) {
                 let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
                 let p = Pos2::new(x as f32, y as f32);
@@ -5199,7 +5199,7 @@ mod tests {
 
         // The first class then lands with that operator.
         let mut text = None;
-        'c: for hy in (188..212).step_by(4) {
+        'c: for hy in (218..242).step_by(4) {
             for (cx, cy) in [36.0f32, 90.0, 130.0]
                 .into_iter()
                 .flat_map(|x| ((hy + 16)..(hy + 120)).step_by(4).map(move |y| (x, y)))
@@ -5324,7 +5324,7 @@ mod tests {
         // Find a group header y and a checkbox position below it whose click writes the first
         // class.
         let mut found = None;
-        'scan: for hy in (188..212).step_by(4) {
+        'scan: for hy in (218..242).step_by(4) {
             for cx in [36.0f32, 60.0, 90.0, 130.0] {
                 for cy in ((hy + 16)..(hy + 120)).step_by(4) {
                     let at = Pos2::new(cx, cy as f32);

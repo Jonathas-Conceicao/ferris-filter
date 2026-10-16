@@ -1911,7 +1911,7 @@ impl OverlayApp {
             if rule_list::search_row(ui, skin, &mut self.query, actions.add_rule, total) {
                 row_actions.push(RowAction::AddRule);
             }
-            ui.add_space(6.0);
+            ui.add_space(8.0);
         }
         let avail = ui.available_rect_before_wrap();
         let footer_h = if self.working.is_some() {

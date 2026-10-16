@@ -1145,10 +1145,10 @@ impl OverlayApp {
         };
         shot.frames += 1;
         ctx.request_repaint();
-        if let Some(tag) = &shot.args.picker {
-            if (3..=5).contains(&shot.frames) {
-                crate::skin::colour_picker::request_open(ctx, tag);
-            }
+        if let Some(tag) = &shot.args.picker
+            && (3..=5).contains(&shot.frames)
+        {
+            crate::skin::colour_picker::request_open(ctx, tag);
         }
         let image = ctx.input(|i| {
             i.raw.events.iter().find_map(|e| match e {

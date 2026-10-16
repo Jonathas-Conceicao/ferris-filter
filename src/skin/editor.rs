@@ -2,8 +2,8 @@
 //! colour swatches and the Text / Border / Background cards, the item-label preview, minimap
 //! icons and the framed cards that group them.
 //!
-//! There is deliberately no colour picker here yet: the swatches and cards only show a colour
-//! (or "none") and report clicks.
+//! The swatches and cards only show a colour (or "none") and report clicks; the picker they open
+//! lives in `skin::colour_picker`.
 
 use egui::{
     Align2, Color32, CornerRadius, InnerResponse, Painter, Pos2, Rect, Response, Sense, Stroke,
@@ -166,6 +166,18 @@ pub fn on_color(bg: Color32) -> Color32 {
 /// One of the Text / Border / Background cards: a box filled with the colour, its name on it
 /// ("Text", or "Text (none)" on the dark "none" ground). `width` of 0 fills the width.
 pub fn ff_colour_card(ui: &mut Ui, label: &str, color: Option<Color32>, width: f32) -> Response {
+    ff_colour_card_ex(ui, label, color, width, false)
+}
+
+/// [`ff_colour_card`] that draws the 2pt `pal::HEADING` ring (as a selected swatch does) while its
+/// colour picker is `open`.
+pub fn ff_colour_card_ex(
+    ui: &mut Ui,
+    label: &str,
+    color: Option<Color32>,
+    width: f32,
+    open: bool,
+) -> Response {
     let width = if width > 0.0 {
         width
     } else {
@@ -189,19 +201,14 @@ pub fn ff_colour_card(ui: &mut Ui, label: &str, color: Option<Color32>, width: f
             (format!("{label} (none)"), pal::DISABLED)
         }
     };
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(1),
-        Stroke::new(
-            1.0,
-            if resp.hovered() {
-                pal::INPUT_BORDER_HOT
-            } else {
-                pal::INPUT_BORDER
-            },
-        ),
-        StrokeKind::Inside,
-    );
+    let stroke = if open {
+        Stroke::new(2.0, pal::HEADING)
+    } else if resp.hovered() {
+        Stroke::new(1.0, pal::INPUT_BORDER_HOT)
+    } else {
+        Stroke::new(1.0, pal::INPUT_BORDER)
+    };
+    painter.rect_stroke(rect, CornerRadius::same(1), stroke, StrokeKind::Inside);
     painter.with_clip_rect(rect.shrink(2.0)).text(
         pos2(rect.min.x + 10.0, rect.center().y + 1.0),
         Align2::LEFT_CENTER,
@@ -442,6 +449,34 @@ mod tests {
             Color32::from_rgb(0x1A, 0x16, 0x10)
         );
         assert_eq!(on_color(Color32::from_rgb(40, 42, 54)), pal::VALUE);
+    }
+
+    /// The painted stroke colours and widths of the card rectangle.
+    fn card_strokes(open: bool) -> Vec<(f32, Color32)> {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let full = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ff_colour_card_ex(ui, "Text", Some(Color32::from_rgb(1, 2, 3)), 110.0, open);
+        });
+        let mut out = Vec::new();
+        fn walk(s: &egui::Shape, out: &mut Vec<(f32, Color32)>) {
+            match s {
+                egui::Shape::Rect(r) => out.push((r.stroke.width, r.stroke.color)),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        for c in &full.shapes {
+            walk(&c.shape, &mut out);
+        }
+        full.drop_without_applying_deltas();
+        out
+    }
+
+    #[test]
+    fn an_open_colour_card_shows_the_heading_ring() {
+        assert!(card_strokes(true).contains(&(2.0, pal::HEADING)));
+        assert!(!card_strokes(false).contains(&(2.0, pal::HEADING)));
     }
 
     #[test]

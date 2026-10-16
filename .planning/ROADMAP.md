@@ -282,16 +282,16 @@ Plans:
 
 **Wave 1**
 
-- [ ] 34-01-PLAN.md — Orange ABOUT Ferris (ff-art colour render, ferris-about.png), skin texture, shared REPO_URL, about_view page module
-- [ ] 34-02-PLAN.md — Tier edits owned by ECONOMY (markers, scoped Revert, Apply gate), economy unstage, relative time / count / section-button decisions, prices.json info cache
+- [x] 34-01-PLAN.md — Orange ABOUT Ferris (ff-art colour render, ferris-about.png), skin texture, shared REPO_URL, about_view page module
+- [x] 34-02-PLAN.md — Tier edits owned by ECONOMY (markers, scoped Revert, Apply gate), economy unstage, relative time / count / section-button decisions, prices.json info cache
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 34-03-PLAN.md — ECONOMY tab view (rows, Sync, Add/Remove economy section, tiers editor moved from CONFIG); RULES economy divider display-only
+- [x] 34-03-PLAN.md — ECONOMY tab view (rows, Sync, Add/Remove economy section, tiers editor moved from CONFIG); RULES economy divider display-only
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 34-04-PLAN.md — ABOUT wired, --tier-text shot flag, verification shots, CLAUDE.md / CHANGELOG
+- [x] 34-04-PLAN.md — ABOUT wired, --tier-text shot flag, verification shots, CLAUDE.md / CHANGELOG
 
 **UI hint**: yes
 

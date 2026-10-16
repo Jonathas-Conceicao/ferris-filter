@@ -2119,11 +2119,11 @@ pub(crate) fn ints_edit(id: BlockId, entry: &BodyEntry, xs: &[i64]) -> Option<Ro
 
 fn chip_hint(kw: &Keyword) -> &'static str {
     if kw.name == "BaseType" {
-        "Add a base type\u{2026}"
+        "Type a base type, press Enter"
     } else if kw.name.contains("Mod") {
-        "Add a mod\u{2026}"
+        "Type a mod, press Enter"
     } else {
-        "Add an entry\u{2026}"
+        "Type a name, press Enter"
     }
 }
 
@@ -2249,7 +2249,7 @@ fn ints_control(ui: &mut egui::Ui, card: &Card, xs: &[i64], actions: &mut Vec<Ro
         ui,
         card.salt("ints"),
         &items,
-        "Add a whole number\u{2026}",
+        "Type a whole number, press Enter",
         160.0,
     );
     let mut next = xs.to_vec();

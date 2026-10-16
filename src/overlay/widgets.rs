@@ -698,7 +698,7 @@ pub fn string_list(
 
 /// The shared add field: draft in temp memory under `id`, Enter / + ADD commits, a quoted paste
 /// is split, stray quotes and control characters are refused visibly with the draft kept.
-fn add_field(ui: &mut egui::Ui, id: egui::Id, _hint: &str) -> (Vec<String>, Option<String>) {
+fn add_field(ui: &mut egui::Ui, id: egui::Id, hint: &str) -> (Vec<String>, Option<String>) {
     let skin = crate::skin::of(ui.ctx());
     let field_id = id.with("field");
     let mut added = Vec::new();
@@ -711,13 +711,8 @@ fn add_field(ui: &mut egui::Ui, id: egui::Id, _hint: &str) -> (Vec<String>, Opti
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let width = (ui.available_width() - 84.0 - 8.0).max(60.0);
-        let response = crate::skin::widgets::ff_text_field_id(
-            ui,
-            field_id,
-            &mut draft,
-            "Type a name, press Enter",
-            width,
-        );
+        let response =
+            crate::skin::widgets::ff_text_field_id(ui, field_id, &mut draft, hint, width);
         enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if crate::skin::widgets::ff_button(ui, &skin, "+ Add", 84.0).clicked() {
             commit = true;
@@ -1242,6 +1237,30 @@ mod tests {
             assert_eq!(out, ChipListOutcome::default());
         })
         .drop_without_applying_deltas();
+    }
+
+    /// WR-07: the add field shows the caller's hint, not a fixed one.
+    #[test]
+    fn add_field_shows_the_callers_hint() {
+        let ctx = headless_ctx();
+        let items = chip_items();
+        let hint = "Type a whole number, press Enter";
+        let mut full = ctx.run_ui(RawInput::default(), |ui| {
+            chip_list(ui, "chips", &items, hint, 160.0);
+            string_list(ui, "list", &items, "Type a mod, press Enter", 7);
+        });
+        full.textures_delta.clear();
+        let texts: Vec<String> = full
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::epaint::Shape::Text(t) => Some(t.galley.text().to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t == hint), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "Type a mod, press Enter"));
+        assert!(!texts.iter().any(|t| t == "Type a name, press Enter"));
     }
 
     #[test]

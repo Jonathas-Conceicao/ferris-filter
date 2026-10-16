@@ -6,8 +6,8 @@
 //! renders the static Ferris background (`assets/ui/ferris-bg.png`) from the committed SVG, which
 //! needs no game install.
 //!
-//! This crate is its own workspace and is never a dependency of the `ff` overlay; the overlay
-//! embeds the committed PNGs with `include_bytes!`.
+//! This crate is a non-default member of the repo-root workspace and is never a dependency of the
+//! `ff` overlay; the overlay embeds the committed PNGs with `include_bytes!`.
 
 use std::path::{Path, PathBuf};
 

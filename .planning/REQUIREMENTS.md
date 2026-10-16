@@ -27,7 +27,7 @@ retired. Every v0.5 editor capability survives the move.
   to the left edge at full work-area height, borderless, with the static Ferris background behind
   scrolling content.
 
-- [ ] **SHELL-02**: The window docks on the monitor the game window is on (the primary monitor
+- [x] **SHELL-02**: The window docks on the monitor the game window is on (the primary monitor
   when the game is not running) and is sized correctly at any Windows display scale (100-200%).
 
 - [ ] **SHELL-03**: The header shows the game-art title plate with "FerrisFilter" in a slot that can
@@ -36,17 +36,17 @@ retired. Every v0.5 editor capability survives the move.
 - [ ] **SHELL-04**: The tabs RULES / CONFIG / ECONOMY / ABOUT sit like the game's Options tabs; a tab
   with unapplied edits on another tab keeps today's ` *` marker behaviour.
 
-- [ ] **SHELL-05**: The bottom bar holds REVERT / RELOAD / APPLY and one status line: one line, cut
+- [x] **SHELL-05**: The bottom bar holds REVERT / RELOAD / APPLY and one status line: one line, cut
   with "…" when too long, full text on hover, coloured by kind (ok / warning / error). Every message
   that today lands in the outcome area uses it.
 
 - [ ] **SHELL-06**: Hotkey (`Ctrl+Shift+Z`), tray icon and Quit, single-instance behaviour and the
   in-game reload after Apply work exactly as in v0.5.
 
-- [ ] **SHELL-07**: Every confirmation and choice the overlay asks (changed-on-disk RELOAD /
+- [x] **SHELL-07**: Every confirmation and choice the overlay asks (changed-on-disk RELOAD /
   OVERWRITE, switch filter and discard, Quit with unapplied edits, deletes) uses the skinned popup.
 
-- [ ] **SHELL-08**: The UI reads less as text (backlog 999.11): standing captions replaced by
+- [x] **SHELL-08**: The UI reads less as text (backlog 999.11): standing captions replaced by
   controls, icons, tooltips or the status line; no wall-of-text panels.
 
 ### Rules Tab (RULES)
@@ -172,13 +172,13 @@ retired. Every v0.5 editor capability survives the move.
 | WS-01 | Phase 29 | Complete |
 | WS-02 | Phase 29 | Complete |
 | SHELL-01 | Phase 30 | Pending |
-| SHELL-02 | Phase 30 | Pending |
+| SHELL-02 | Phase 30 | Complete |
 | SHELL-03 | Phase 30 | Pending |
 | SHELL-04 | Phase 30 | Pending |
-| SHELL-05 | Phase 30 | Pending |
+| SHELL-05 | Phase 30 | Complete |
 | SHELL-06 | Phase 30 | Pending |
-| SHELL-07 | Phase 30 | Pending |
-| SHELL-08 | Phase 30 | Pending |
+| SHELL-07 | Phase 30 | Complete |
+| SHELL-08 | Phase 30 | Complete |
 | RULES-01 | Phase 31 | Pending |
 | RULES-02 | Phase 31 | Pending |
 | RULES-03 | Phase 31 | Pending |

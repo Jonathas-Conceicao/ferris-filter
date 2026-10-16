@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
 status: executing
-stopped_at: Phase 30 UI-SPEC approved
-last_updated: "2026-10-16T06:42:06.326Z"
-last_activity: 2026-10-16 -- Phase 30 planning complete
+stopped_at: Completed 30-01-PLAN.md
+last_updated: "2026-10-16T06:56:41.077Z"
+last_activity: 2026-10-16
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 6
-  completed_plans: 1
+  completed_plans: 2
   percent: 14
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-16)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.6 New PoE2-based Tool UI — Phase 29: Workspace & Asset Tool from the Root
+**Current focus:** Phase 30 — Skinned Overlay Shell
 
 ## Current Position
 
-Phase: 30 of 35 (Skinned Overlay Shell) — v0.6 spans Phases 29-35
-Plan: Not started
+Phase: 30 (Skinned Overlay Shell) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-10-16 -- Phase 30 planning complete
+Last activity: 2026-10-16
 
 Progress (v0.6): [█░░░░░░░░░] 14%
 
@@ -80,6 +80,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 28 P02 | 25min | 2 tasks | 5 files |
 | Phase 28 P03 | 10min | 2 tasks | 5 files |
 | Phase 28 P04 | 6 min | 2 tasks | 4 files |
+| Phase 30 P01 | 40min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -340,8 +341,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T06:24:54.372Z
-Stopped at: Phase 30 UI-SPEC approved
-Resume file: .planning/phases/30-skinned-overlay-shell/30-UI-SPEC.md
+Last session: 2026-10-16T06:56:41.069Z
+Stopped at: Completed 30-01-PLAN.md
+Resume file: None
 
 **Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

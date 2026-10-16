@@ -208,7 +208,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > and the **File changed on disk** popup offers **Reload** (re-reads the changed files; a changed filter discards rule edits, a
 > changed `styles.json`/`tiers.json` discards config edits), **Overwrite** (writes everything over
 > them) and **Keep editing**; nothing is overwritten silently. **Revert** stays per tab (Rules discards rule edits, Config
-> discards style edits, Economy discards tier edits and a staged economy add/remove, the config ones after a **Discard config changes?** popup), and every tab shows the same unapplied state and the same status message.
+> discards style edits, Economy discards tier edits and a staged economy add/remove (with tier edits the popup comes first and the staged op is dropped only when confirmed), the config ones after a **Discard config changes?** popup), and every tab shows the same unapplied state and the same status message.
 > The explanatory captions of the Filter section (saved-on-this-computer, the reload-toggle paragraph, the custom-sound file hint, empty-draft hints) are tooltips on their control.
 > The RULES style picker and tag checks follow the unapplied CONFIG style set. Tray **Quit** with anything
 > unapplied opens the **Unapplied changes** popup: **Apply & quit** (quits only after a successful Apply, and waits for an in-game reload to

@@ -1701,12 +1701,18 @@ impl OverlayApp {
                 shell::popup_spec(PopupData::DeleteStyle { prompt })
             }
             Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
-            Popup::DiscardConfig => shell::popup_spec(PopupData::DiscardConfig {
-                count: self
-                    .config
-                    .as_ref()
-                    .map_or(0, |c| c.scope_dirty_count(self.config_ui.revert_scope)),
-            }),
+            Popup::DiscardConfig => {
+                let scope = self.config_ui.revert_scope;
+                let staged = scope == RevertScope::Tiers
+                    && self.working.as_ref().is_some_and(|w| w.economy_staged());
+                shell::popup_spec(PopupData::DiscardConfig {
+                    count: self
+                        .config
+                        .as_ref()
+                        .map_or(0, |c| c.scope_dirty_count(scope))
+                        + usize::from(staged),
+                })
+            }
         }
     }
 
@@ -1790,6 +1796,10 @@ impl OverlayApp {
                 if choice == 0 {
                     let scope = self.config_ui.revert_scope;
                     self.handle_config_actions(ctx, vec![ConfigAction::RevertScoped(scope)]);
+                    // The ECONOMY Revert owns a staged economy op too; it goes with the tiers.
+                    if scope == RevertScope::Tiers {
+                        self.unstage_economy_pressed();
+                    }
                 }
             }
         }
@@ -1836,6 +1846,20 @@ impl OverlayApp {
         // Per tab: CONFIG edits survive a RULES revert, so the state may stay out of date.
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         self.apply_state = apply::state_after_revert(self.applied_this_session, config_dirty);
+    }
+
+    /// The ECONOMY bar Revert. With tier edits it only opens the Discard popup (a staged economy
+    /// op is dropped together with them when the user confirms); without, a staged op is dropped
+    /// at once.
+    fn economy_revert_pressed(&mut self) {
+        let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
+        let economy_staged = self.working.as_ref().is_some_and(|w| w.economy_staged());
+        if tiers_dirty {
+            self.config_ui.revert_scope = RevertScope::Tiers;
+            self.config_ui.revert_armed = true;
+        } else if economy_staged {
+            self.unstage_economy_pressed();
+        }
     }
 
     /// ECONOMY Revert, staged part: drops a staged economy add/remove only.
@@ -2846,15 +2870,7 @@ impl eframe::App for OverlayApp {
                     self.config_ui.revert_scope = RevertScope::Styles;
                     self.config_ui.revert_armed = true;
                 }
-                ShellTab::Economy => {
-                    if economy_staged {
-                        self.unstage_economy_pressed();
-                    }
-                    if tiers_dirty {
-                        self.config_ui.revert_scope = RevertScope::Tiers;
-                        self.config_ui.revert_armed = true;
-                    }
-                }
+                ShellTab::Economy => self.economy_revert_pressed(),
                 ShellTab::About => {}
             }
         }
@@ -4967,6 +4983,44 @@ Hide
             *app.working.as_ref().unwrap().economy(),
             EconomyView::Absent
         );
+    }
+
+    #[test]
+    fn economy_revert_with_tier_edits_keeps_the_staged_op_until_confirmed() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::TierText {
+                tier: "S".to_string(),
+                text: "31".to_string(),
+            }],
+        );
+        app.working.as_mut().unwrap().stage_add_economy(3);
+        // Revert opens the popup and drops nothing yet.
+        app.economy_revert_pressed();
+        assert!(app.config_ui.revert_armed);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        // Keep editing: both edits survive.
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        assert!(app.config.as_ref().unwrap().tiers_dirty());
+        // Discard: tiers and the staged op go together.
+        app.economy_revert_pressed();
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        assert!(!app.working.as_ref().unwrap().economy_staged());
+        assert!(!app.config.as_ref().unwrap().tiers_dirty());
+    }
+
+    #[test]
+    fn economy_revert_without_tier_edits_drops_the_staged_op_at_once() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.working.as_mut().unwrap().stage_add_economy(3);
+        app.economy_revert_pressed();
+        assert!(!app.config_ui.revert_armed);
+        assert!(!app.working.as_ref().unwrap().economy_staged());
     }
 
     #[test]

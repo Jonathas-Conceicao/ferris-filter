@@ -154,7 +154,7 @@ retired. Every v0.5 editor capability survives the move.
 - Moving a rule more than a few positions at once (drag, move-to-top/bottom, move to a section) —
   backlog; v0.6 keeps the arrows.
 
-- Custom header art (the author will draw it); v0.6 ships the game title plate in the slot.
+- ~~Custom header art~~ — done 2026-10-16: the author's header (`assets/custom/titlebar.png`) is in the slot.
 
 ## Out of Scope
 

@@ -67,6 +67,9 @@ pub struct ThreeSlice {
 pub struct Skin {
     /// The Options window's ornate header (angels, hooded figure, gold title plate).
     pub title_bar: TextureHandle,
+    /// FerrisFilter's own header (`assets/custom/titlebar.png`): the game title bar redrawn with
+    /// Ferris, same size and plate position. The overlay shows this one.
+    pub header: TextureHandle,
     /// The Options page: stone frame, thin gold inner border, recessed button bar. Its middle
     /// (the game's gear drawing) is transparent.
     pub pages_frame: TextureHandle,
@@ -116,6 +119,7 @@ impl Skin {
         };
         Self {
             title_bar: tex!(ctx, "poe2/options/titlebar.png"),
+            header: tex!(ctx, "custom/titlebar.png"),
             pages_frame: tex!(ctx, "poe2/options/pages_frame.png"),
             tab: three(
                 tex!(ctx, "poe2/options/tab_left.png"),
@@ -188,6 +192,8 @@ mod tests {
         let skin = Skin::load(&ctx);
         assert_eq!(skin.pages_frame.size(), [1310, 1582]);
         assert!(skin.title_bar.size()[0] > skin.title_bar.size()[1]);
+        // The custom header is a drop-in for the game one: same size, same plate position.
+        assert_eq!(skin.header.size(), skin.title_bar.size());
         // 12 shapes x 11 colours of 64px cells.
         assert_eq!(skin.minimap_icons.size(), [12 * 64, 11 * 64]);
         assert_eq!(skin.ferris_about.size()[0], 336);

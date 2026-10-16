@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   undone by Revert) and the tiers editor. ABOUT is a page with the name, description, an orange Ferris
   (`assets/ui/ferris-about.png`, rendered by `ff-art ferris`), version, GitHub link, and the GGG
   disclaimer and credits at the bottom. The debug screenshot mode gains `--tier-text TIER=TEXT`.
+- **Custom header art.** The window header is now FerrisFilter's own art (the game title bar redrawn
+  with three Ferris crabs), kept in the new `assets/custom/` folder for hand-made art with its
+  Aseprite sources (`titlebar.ase`, `base-palette.ase`) beside the PNG.
 
 ### Changed
 

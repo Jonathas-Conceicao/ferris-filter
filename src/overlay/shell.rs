@@ -418,9 +418,9 @@ pub(crate) fn bar_state(
 // ---------------------------------------------------------------------------------------------
 
 /// The header picture: the ONE switch for FerrisFilter's own header art. `None` paints the
-/// placeholder plate; today it is the game's Options title bar.
+/// placeholder plate; today it is the custom header from `assets/custom/`.
 pub(crate) fn header_art(skin: &Skin) -> Option<&TextureHandle> {
-    Some(&skin.title_bar)
+    Some(&skin.header)
 }
 
 /// "Last sync" as local `YYYY-MM-DD HH:MM` from the `prices.json` modified time (Unix seconds)

@@ -112,6 +112,7 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
     ),
 ];
 
+#[cfg(test)]
 fn resolve(names: &[&str]) -> Vec<&'static Keyword> {
     names
         .iter()

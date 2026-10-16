@@ -36,6 +36,35 @@ use crate::skin::widgets as widgets_skin;
 const CARD_LEFT: f32 = widgets_skin::ROW_PAD + widgets_skin::LABEL_COL_W + widgets_skin::LABEL_GAP;
 const OP_W: f32 = 104.0;
 
+/// A skin dropdown over `(value, label)` choices. Returns `Some(value)` only when the user picks a
+/// different entry than `current`. A current value that is not among the choices is appended as an
+/// extra option with its own label, so what is shown is exact and nothing is normalised.
+fn pick_dropdown<T: PartialEq + Clone>(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &T,
+    current_label: &str,
+    choices: &[(T, String)],
+    width: f32,
+) -> Option<T> {
+    let skin = crate::skin::of(ui.ctx());
+    let mut labels: Vec<&str> = choices.iter().map(|(_, l)| l.as_str()).collect();
+    let start = match choices.iter().position(|(v, _)| v == current) {
+        Some(i) => i,
+        None => {
+            labels.push(current_label);
+            labels.len() - 1
+        }
+    };
+    let mut sel = start;
+    let r = widgets_skin::ff_dropdown(ui, &skin, salt, &mut sel, &labels, width);
+    if r.changed() && sel != start {
+        choices.get(sel).map(|(v, _)| v.clone())
+    } else {
+        None
+    }
+}
+
 const NO_CONDITIONS: &str = "No conditions: this rule matches every item.";
 const BAD_TEXT_HINT: &str = "Values cannot contain quotes or control characters";
 const WHOLE_NUMBER_HINT: &str = "Enter a whole number";
@@ -894,19 +923,19 @@ fn numeric_op_combo(ui: &mut egui::Ui, card: &Card) -> Option<conditions::Numeri
     use conditions::NumericOp;
     let entry = card.entry;
     let cur = NumericOp::Single(entry.op);
-    let mut picked = None;
-    egui::ComboBox::from_id_salt(card.salt("op"))
-        .selected_text(grammar::operator_label(card.kw, entry.op, false))
-        .width(OP_W)
-        .show_ui(ui, |ui| {
-            for (c, label) in conditions::numeric_op_choices_for(card.kw, cur, card.can_between) {
-                let sel = c == cur;
-                if ui.selectable_label(sel, label).clicked() && !sel {
-                    picked = Some(c);
-                }
-            }
-        });
-    picked
+    let choices: Vec<(conditions::NumericOp, String)> =
+        conditions::numeric_op_choices_for(card.kw, cur, card.can_between)
+            .into_iter()
+            .map(|(c, l)| (c, l.to_string()))
+            .collect();
+    pick_dropdown(
+        ui,
+        card.salt("op"),
+        &cur,
+        grammar::operator_label(card.kw, entry.op, false),
+        &choices,
+        OP_W,
+    )
 }
 
 /// The operator control of one condition line. Whole-number keywords offer Between; the rest keep
@@ -940,18 +969,18 @@ fn between_op_combo(
     actions: &mut Vec<RowAction>,
 ) {
     use conditions::NumericOp;
-    let mut picked = None;
-    egui::ComboBox::from_id_salt((id, kw.name, lower.ordinal, "op"))
-        .selected_text("Between")
-        .width(OP_W)
-        .show_ui(ui, |ui| {
-            for (c, label) in conditions::numeric_op_choices(kw, NumericOp::Between) {
-                let sel = c == NumericOp::Between;
-                if ui.selectable_label(sel, label).clicked() && !sel {
-                    picked = Some(c);
-                }
-            }
-        });
+    let choices: Vec<(NumericOp, String)> = conditions::numeric_op_choices(kw, NumericOp::Between)
+        .into_iter()
+        .map(|(c, l)| (c, l.to_string()))
+        .collect();
+    let picked = pick_dropdown(
+        ui,
+        (id, kw.name, lower.ordinal, "op"),
+        &NumericOp::Between,
+        "Between",
+        &choices,
+        OP_W,
+    );
     if let Some(NumericOp::Single(op)) = picked {
         actions.extend(from_between_actions(id, lower, upper, op));
     }
@@ -1405,18 +1434,20 @@ fn pending_card(
                     // the author can pick it before any value exists.
                     let choices = grammar::operator_choices(p.keyword, p.op, false);
                     if !choices.is_empty() {
-                        egui::ComboBox::from_id_salt((p.block, p.keyword.name, "pending-op"))
-                            .selected_text(grammar::operator_label(p.keyword, p.op, false))
-                            .width(OP_W)
-                            .show_ui(ui, |ui| {
-                                for c in &choices {
-                                    if ui.selectable_label(c.op == p.op, c.label).clicked()
-                                        && c.op != p.op
-                                    {
-                                        picked_op = Some(c.op);
-                                    }
-                                }
-                            });
+                        let opts: Vec<(Option<Operator>, String)> = choices
+                            .iter()
+                            .map(|c| (c.op, c.label.to_string()))
+                            .collect();
+                        if let Some(op) = pick_dropdown(
+                            ui,
+                            (p.block, p.keyword.name, "pending-op"),
+                            &p.op,
+                            grammar::operator_label(p.keyword, p.op, false),
+                            &opts,
+                            OP_W,
+                        ) {
+                            picked_op = Some(op);
+                        }
                     }
                 },
                 "Discard this condition",
@@ -1693,18 +1724,11 @@ fn operator_combo(ui: &mut egui::Ui, card: &Card, list_form: bool) -> Option<Opt
     let entry = card.entry;
     let choices = grammar::operator_choices(card.kw, entry.op, list_form);
     let current = grammar::operator_label(card.kw, entry.op, list_form);
-    let mut picked = None;
-    egui::ComboBox::from_id_salt(card.salt("op"))
-        .selected_text(current)
-        .width(OP_W)
-        .show_ui(ui, |ui| {
-            for c in &choices {
-                if ui.selectable_label(c.op == entry.op, c.label).clicked() && c.op != entry.op {
-                    picked = Some(c.op);
-                }
-            }
-        });
-    picked
+    let opts: Vec<(Option<Operator>, String)> = choices
+        .iter()
+        .map(|c| (c.op, c.label.to_string()))
+        .collect();
+    pick_dropdown(ui, card.salt("op"), &entry.op, current, &opts, OP_W)
 }
 
 /// Dispatch on the decoded value. Returns the primary control, for focus-after-add.
@@ -1787,19 +1811,12 @@ fn enum_control(ui: &mut egui::Ui, card: &Card, current: &[String], actions: &mu
         return;
     };
     if let [only] = current {
-        let mut picked: Option<&str> = None;
-        egui::ComboBox::from_id_salt(card.salt("enum"))
-            .selected_text(only.as_str())
-            .width(160.0)
-            .show_ui(ui, |ui| {
-                for o in options {
-                    if ui.selectable_label(*o == only, *o).clicked() && *o != only {
-                        picked = Some(o);
-                    }
-                }
-            });
-        if let Some(p) = picked {
-            let res = values_edit(card.id, card.entry, &Value::Enum(vec![p.to_string()]));
+        let opts: Vec<(String, String)> = options
+            .iter()
+            .map(|o| (o.to_string(), o.to_string()))
+            .collect();
+        if let Some(p) = pick_dropdown(ui, card.salt("enum"), only, only.as_str(), &opts, 160.0) {
+            let res = values_edit(card.id, card.entry, &Value::Enum(vec![p]));
             card.commit(ui, res, actions);
         }
         return;
@@ -2505,43 +2522,48 @@ fn style_picker(ui: &mut egui::Ui, ctx: &BodyCtx) -> Option<StylePick> {
     let id = ctx.row.id;
     let state = &ctx.row.style;
     let tag = style_tag(state);
-    let (shown, colour, tip) = match state {
-        StyleState::None => ("Custom".to_string(), theme::VALUE_TEXT, None),
-        StyleState::Known(n) => (n.clone(), theme::VALUE_TEXT, Some(STYLE_KNOWN_TIP)),
-        StyleState::Unknown(n) => (n.clone(), theme::WARM_ACCENT_TEXT, Some(STYLE_UNKNOWN_TIP)),
-        StyleState::Unchecked(n) => (
-            n.clone(),
-            theme::WARM_ACCENT_TEXT,
-            Some(STYLE_UNCHECKED_TIP),
-        ),
+    let (colour, tip) = match state {
+        StyleState::None => (None, None),
+        StyleState::Known(_) => (None, Some(STYLE_KNOWN_TIP)),
+        StyleState::Unknown(_) => (Some(pal::WARN), Some(STYLE_UNKNOWN_TIP)),
+        StyleState::Unchecked(_) => (Some(pal::WARN), Some(STYLE_UNCHECKED_TIP)),
     };
-    let mut picked = None;
-    let combo = egui::ComboBox::from_id_salt((id, "style-pick"))
-        .selected_text(RichText::new(shown).color(colour))
-        .width(140.0)
-        .show_ui(ui, |ui| {
-            if ui.selectable_label(tag.is_none(), "Custom").clicked() {
-                picked = Some(StylePick::Custom);
+    let names = ctx.working.style_names();
+    let mut labels: Vec<&str> = vec!["Custom"];
+    labels.extend(names.iter().map(String::as_str));
+    let start = match tag {
+        None => 0,
+        Some(t) => match names.iter().position(|n| n == t) {
+            Some(i) => i + 1,
+            None => {
+                labels.push(t);
+                labels.len() - 1
             }
-            for name in ctx.working.style_names() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    if let Some(t) = ctx.working.style(&name).and_then(|s| s.text) {
-                        dot(ui, egui::Color32::from_rgb(t[0], t[1], t[2]));
-                    }
-                    if ui
-                        .selectable_label(tag == Some(name.as_str()), &name)
-                        .clicked()
-                    {
-                        picked = Some(StylePick::Preset(name.clone()));
-                    }
-                });
-            }
-        });
-    if let Some(t) = tip {
-        combo.response.on_hover_text(t);
+        },
+    };
+    let mut sel = start;
+    let skin = crate::skin::of(ui.ctx());
+    let r = widgets_skin::ff_dropdown_ex(
+        ui,
+        &skin,
+        (id, "style-pick"),
+        &mut sel,
+        &labels,
+        180.0,
+        colour,
+    );
+    let r = if let Some(t) = tip {
+        r.on_hover_text(t)
+    } else {
+        r
+    };
+    if r.changed() && sel != start {
+        if sel == 0 {
+            return Some(StylePick::Custom);
+        }
+        return names.get(sel - 1).map(|n| StylePick::Preset(n.clone()));
     }
-    picked
+    None
 }
 
 /// The STYLE section, last in the rule body: the Custom/preset picker, then (Custom only)
@@ -2944,38 +2966,13 @@ pub(crate) fn colour_combo(
     current: &str,
     allow_none: bool,
 ) -> Option<String> {
-    let mut picked = None;
     dot(ui, filter_colour(current));
-    egui::ComboBox::from_id_salt(salt)
-        .selected_text(current)
-        .width(104.0)
-        .show_ui(ui, |ui| {
-            let mut names: Vec<&str> = COLOURS.to_vec();
-            if allow_none {
-                names.push("None");
-            }
-            for c in names {
-                // The popup's ScrollArea auto-shrinks to its content width and its floating scroll
-                // bar takes no room, painting over the content's right edge. A plain `horizontal`
-                // row is only as wide as its dot + label, so the area shrank to the longest name and
-                // the bar covered it. The label fills the rest of the row (justified, like the
-                // shape combo's rows), so the content spans the whole popup and the bar sits at
-                // the popup edge.
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    dot(ui, filter_colour(c));
-                    let label = ui
-                        .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                            ui.selectable_label(c == current, c)
-                        })
-                        .inner;
-                    if label.clicked() && c != current {
-                        picked = Some(c.to_string());
-                    }
-                });
-            }
-        });
-    picked
+    let mut names: Vec<String> = COLOURS.iter().map(|c| c.to_string()).collect();
+    if allow_none {
+        names.push("None".to_string());
+    }
+    let opts: Vec<(String, String)> = names.into_iter().map(|n| (n.clone(), n)).collect();
+    pick_dropdown(ui, salt, &current.to_string(), current, &opts, 120.0)
 }
 
 fn minimap_control(ui: &mut egui::Ui, card: &Card, m: &Minimap, actions: &mut Vec<RowAction>) {
@@ -3000,36 +2997,31 @@ fn minimap_control(ui: &mut egui::Ui, card: &Card, m: &Minimap, actions: &mut Ve
             .iter()
             .find(|(_, v)| *v == size)
             .map_or_else(|| size.to_string(), |(l, _)| (*l).to_string());
-        egui::ComboBox::from_id_salt(card.salt("msize"))
-            .selected_text(label)
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for (l, v) in SIZE_CHOICES {
-                    if ui.selectable_label(v == size, l).clicked() && v != size {
-                        next = Some(if v == -1 {
-                            Minimap::Hidden(vec!["-1".to_string()])
-                        } else {
-                            icon(v, &colour, &shape)
-                        });
-                    }
-                }
+        let size_opts: Vec<(i64, String)> = SIZE_CHOICES
+            .iter()
+            .map(|(l, v)| (*v, (*l).to_string()))
+            .collect();
+        if let Some(v) = pick_dropdown(ui, card.salt("msize"), &size, &label, &size_opts, 120.0) {
+            next = Some(if v == -1 {
+                Minimap::Hidden(vec!["-1".to_string()])
+            } else {
+                icon(v, &colour, &shape)
             });
+        }
         if hidden {
             return;
         }
         if let Some(c) = colour_combo(ui, card.salt("mcol"), &colour, false) {
             next = Some(icon(size, &c, &shape));
         }
-        egui::ComboBox::from_id_salt(card.salt("mshape"))
-            .selected_text(shape.as_str())
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for s in SHAPES {
-                    if ui.selectable_label(*s == shape, *s).clicked() && *s != shape {
-                        next = Some(icon(size, &colour, s));
-                    }
-                }
-            });
+        let shape_opts: Vec<(String, String)> = SHAPES
+            .iter()
+            .map(|s| (s.to_string(), s.to_string()))
+            .collect();
+        if let Some(sh) = pick_dropdown(ui, card.salt("mshape"), &shape, &shape, &shape_opts, 120.0)
+        {
+            next = Some(icon(size, &colour, &sh));
+        }
     });
     if let Some(n) = next
         && let Some(a) = minimap_edit(card.id, card.entry, n)
@@ -5060,6 +5052,76 @@ mod tests {
         assert!(frame_of(&ctx, input(vec![]), &wf, &mut list, None).is_empty());
     }
 
+    /// Runs `draw` for a few frames, clicking at `click_at` on frame 1, and returns the texts
+    /// painted below y = 34 (the open popup's rows) from the last frame, in paint order.
+    fn popup_texts(click_at: Pos2, draw: &dyn Fn(&mut egui::Ui)) -> Vec<String> {
+        let ctx = headless_ctx();
+        let mut texts = Vec::new();
+        for frame in 0..6 {
+            let events = if frame == 1 {
+                click_events(click_at)
+            } else {
+                vec![]
+            };
+            let mut raw = input(events);
+            raw.time = Some(f64::from(frame) * 0.1);
+            let mut out = ctx.run_ui(raw, |ui| draw(ui));
+            out.textures_delta.clear();
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|cs| match &cs.shape {
+                    egui::Shape::Text(t) if t.pos.y > 34.0 => Some(t.galley.text().to_string()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    #[test]
+    fn foreign_operator_is_shown_and_not_normalised() {
+        // `=` is not among the offered choices: it is appended, shown, and nothing is emitted.
+        let choices = vec![
+            (Some(Operator::EqEq), "is exactly".to_string()),
+            (Some(Operator::Ne), "is not".to_string()),
+        ];
+        let cur = Some(Operator::Eq);
+        let texts = popup_texts(Pos2::new(50.0, 16.0), &|ui| {
+            assert_eq!(
+                pick_dropdown(ui, "op", &cur, "equals", &choices, 104.0),
+                None
+            );
+        });
+        assert_eq!(texts, vec!["is exactly", "is not", "equals"]);
+    }
+
+    #[test]
+    fn style_picker_lists_custom_then_presets_in_file_order() {
+        let wf = styled(
+            "Show
+    Class \"Rings\"
+",
+        );
+        let id = wf.rows()[0].id;
+        let entries = wf.body_view(id);
+        let names = wf.style_names();
+        assert!(!names.is_empty());
+        let texts = popup_texts(Pos2::new(50.0, 16.0), &|ui| {
+            let bctx = BodyCtx {
+                row: &wf.rows()[0],
+                entries: &entries,
+                editable: true,
+                classes: None,
+                working: &wf,
+            };
+            assert_eq!(style_picker(ui, &bctx), None);
+        });
+        let mut want = vec!["Custom".to_string()];
+        want.extend(names);
+        assert_eq!(texts, want);
+    }
+
     #[test]
     fn style_pick_action_maps_custom_and_presets() {
         let id = BlockId(1);
@@ -5826,15 +5888,13 @@ mod tests {
     }
 }
 
-/// UAT4-02: a colour dropdown leaves its scroll bar room like the shape dropdown. Driven headless
-/// with real fonts; the bar and the item names are read from the painted output.
+/// The colour dropdown is a skin dropdown (Phase 31): it picks, offers None on request, and leaves
+/// the current colour alone. Driven headless; the item names are read from the painted output.
 #[cfg(test)]
 mod colour_combo_tests {
-    use crate::filter::keywords::{COLOURS, SHAPES};
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, vec2};
 
-    const BUTTON: Pos2 = Pos2::new(72.0, 9.0);
-    const IN_POPUP: Pos2 = Pos2::new(60.0, 100.0);
+    const BUTTON: Pos2 = Pos2::new(72.0, 20.0);
 
     fn raw(events: Vec<Event>) -> RawInput {
         RawInput {
@@ -5854,117 +5914,50 @@ mod colour_combo_tests {
         vec![Event::PointerMoved(pos), button(true), button(false)]
     }
 
-    /// The reference: the minimap shape dropdown's rows (plain selectable labels), laid out the
-    /// same way as a colour dropdown (dot, then a 104px combo).
-    fn shape_combo(ui: &mut egui::Ui) {
-        super::dot(ui, egui::Color32::WHITE);
-        egui::ComboBox::from_id_salt("shape")
-            .selected_text("Circle")
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for s in SHAPES {
-                    let _ = ui.selectable_label(*s == "Circle", *s);
-                }
-            });
-    }
-
     struct Popup {
-        /// The scroll bar's painted rect (background track), if one was drawn.
-        bar: Option<Rect>,
-        /// Painted item names and their rects, below the combo button.
+        /// Painted item names and their rects, below the dropdown box.
         items: Vec<(String, Rect)>,
-        bar_width: f32,
         picked: Vec<Option<String>>,
     }
 
-    /// Opens the dropdown drawn by `draw`, hovers the popup until the floating bar settles, and
-    /// returns what was painted. `then` events are sent on the last frame (e.g. a click).
+    /// Opens the dropdown drawn by `draw` and returns what was painted. `then` events are sent on
+    /// the last frame (e.g. a click on an entry).
     fn open(
         draw: &dyn Fn(&mut egui::Ui) -> Option<String>,
         then: impl Fn(&Popup) -> Vec<Event>,
     ) -> Popup {
         let ctx = egui::Context::default();
-        crate::overlay::theme::install_fonts(&ctx);
+        crate::skin::fonts::install(&ctx);
         let mut popup = Popup {
-            bar: None,
             items: Vec::new(),
-            bar_width: 0.0,
             picked: Vec::new(),
         };
-        let frames = 16;
+        let frames = 8;
         for frame in 0..frames {
             let events = match frame {
                 1 => click(BUTTON),
                 f if f == frames - 1 => then(&popup),
-                f if f >= 2 => vec![Event::PointerMoved(IN_POPUP)],
                 _ => Vec::new(),
             };
             let mut raw = raw(events);
             raw.time = Some(f64::from(frame) * 0.1);
             let mut picked = None;
             let mut out = ctx.run_ui(raw, |ui| {
-                popup.bar_width = ui.spacing().scroll.bar_width;
                 ui.horizontal(|ui| picked = draw(ui));
             });
             out.textures_delta.clear();
             popup.picked.push(picked);
-            popup.bar = None;
             popup.items.clear();
             for cs in &out.shapes {
-                match &cs.shape {
-                    Shape::Rect(r)
-                        if r.rect.width() <= popup.bar_width + 0.5 && r.rect.height() > 100.0 =>
-                    {
-                        let bar = popup.bar.get_or_insert(r.rect);
-                        *bar = bar.union(r.rect);
-                    }
-                    Shape::Text(t) if t.pos.y > 20.0 => {
-                        let rect = t.galley.rect.translate(t.pos.to_vec2());
-                        popup.items.push((t.galley.text().to_string(), rect));
-                    }
-                    _ => {}
+                if let Shape::Text(t) = &cs.shape
+                    && t.pos.y > 34.0
+                {
+                    let rect = t.galley.rect.translate(t.pos.to_vec2());
+                    popup.items.push((t.galley.text().to_string(), rect));
                 }
             }
         }
         popup
-    }
-
-    fn assert_bar_clears_items(p: &Popup, names: &[&str], what: &str) {
-        let bar = p
-            .bar
-            .unwrap_or_else(|| panic!("{what}: no scroll bar painted"));
-        // At full (hovered) width the bar spans bar_width left of its right edge.
-        let bar_left = bar.right() - p.bar_width;
-        let shown: Vec<_> = p
-            .items
-            .iter()
-            .filter(|(t, _)| names.contains(&t.as_str()))
-            .collect();
-        assert!(shown.len() >= 5, "{what}: items painted {:?}", p.items);
-        for (t, r) in shown {
-            assert!(
-                r.right() <= bar_left,
-                "{what}: {t:?} ends at {} under the bar {bar:?}",
-                r.right()
-            );
-        }
-    }
-
-    #[test]
-    fn colour_combo_rows_leave_scroll_bar_room_like_the_shape_combo() {
-        let shape = open(
-            &|ui| {
-                shape_combo(ui);
-                None
-            },
-            |_| Vec::new(),
-        );
-        assert_bar_clears_items(&shape, SHAPES, "shape combo");
-
-        let colour = open(&|ui| super::colour_combo(ui, "c", "Red", false), |_| {
-            Vec::new()
-        });
-        assert_bar_clears_items(&colour, COLOURS, "colour combo");
     }
 
     #[test]
@@ -5984,16 +5977,13 @@ mod colour_combo_tests {
         assert_eq!(p.picked.last().unwrap().as_deref(), Some("Blue"));
         let p = open(&|ui| super::colour_combo(ui, "c", "Red", false), at("Red"));
         assert_eq!(p.picked.last().unwrap(), &None);
-        // A taller popup so the last entry is painted without scrolling.
-        let tall = |allow_none: bool| {
-            move |ui: &mut egui::Ui| {
-                ui.spacing_mut().combo_height = 600.0;
-                super::colour_combo(ui, "c", "Red", allow_none)
-            }
-        };
-        let p = open(&tall(true), |_| Vec::new());
+        let p = open(&|ui| super::colour_combo(ui, "c", "Red", true), |_| {
+            Vec::new()
+        });
         assert_eq!(p.items.last().map(|(t, _)| t.as_str()), Some("None"));
-        let p = open(&tall(false), |_| Vec::new());
+        let p = open(&|ui| super::colour_combo(ui, "c", "Red", false), |_| {
+            Vec::new()
+        });
         assert!(!p.items.iter().any(|(t, _)| t == "None"));
         assert!(p.items.iter().any(|(t, _)| t == "Purple"));
     }

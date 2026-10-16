@@ -1421,6 +1421,33 @@ fn beam_line(
     });
 }
 
+/// The sound a dropdown choice stands for. `base` is the style's current sound, or the last one
+/// it had before it was switched to None; it supplies the volume (default 100) and the file.
+fn sound_for_choice(choice: usize, base: Option<&Sound>) -> Option<Sound> {
+    let vol = base.map_or(100, |s| s.vol);
+    match choice {
+        0 => None,
+        SOUND_CUSTOM => Some(Sound {
+            id: None,
+            custom: Some(
+                base.and_then(|s| s.custom.clone())
+                    .unwrap_or_else(|| SOUND_FILE_DEFAULT.to_string()),
+            ),
+            vol,
+        }),
+        k => Some(Sound {
+            id: u8::try_from(k).ok(),
+            custom: None,
+            vol,
+        }),
+    }
+}
+
+/// A custom sound file name that is safe to write into `CustomAlertSound "<name>"`.
+fn safe_file_name(name: &str) -> bool {
+    !name.chars().any(|c| c == '"' || c.is_control())
+}
+
 fn sound_lines(
     ui: &mut egui::Ui,
     skin: &crate::skin::Skin,
@@ -1445,29 +1472,16 @@ fn sound_lines(
                 .sound
                 .clone()
                 .or_else(|| recall::<Sound>(ui, name, "sound", epoch));
-            let vol = base.as_ref().map_or(100, |s| s.vol);
-            let next = match sel {
-                0 => {
-                    if let Some(s) = &style.sound {
-                        remember(ui, name, "sound", epoch, s);
-                    }
-                    None
-                }
-                SOUND_CUSTOM => Some(Sound {
-                    id: None,
-                    custom: Some(
-                        base.and_then(|s| s.custom)
-                            .unwrap_or_else(|| SOUND_FILE_DEFAULT.to_string()),
-                    ),
-                    vol,
-                }),
-                k => Some(Sound {
-                    id: u8::try_from(k).ok(),
-                    custom: None,
-                    vol,
-                }),
-            };
-            edit(actions, name, StyleEdit::Sound(next));
+            if sel == 0
+                && let Some(s) = &style.sound
+            {
+                remember(ui, name, "sound", epoch, s);
+            }
+            edit(
+                actions,
+                name,
+                StyleEdit::Sound(sound_for_choice(sel, base.as_ref())),
+            );
         }
         if let Some(sound) = &style.sound
             && let Some(file) = &sound.custom
@@ -1484,7 +1498,7 @@ fn sound_lines(
                 150.0,
             );
             probe("ed-sound-file", resp.rect);
-            let bad = buf.chars().any(|c| c == '"' || c.is_control());
+            let bad = !safe_file_name(&buf);
             if resp.changed() {
                 ui.data_mut(|d| d.insert_temp(draft_id, buf.clone()));
                 if !bad && !buf.trim().is_empty() {
@@ -2627,6 +2641,201 @@ mod tests {
         }
         assert!(!texts.iter().any(|t| t == "NAME" || t.contains("Not set")));
     }
+
+    fn mm(size: u8, color: FilterColor, shape: MinimapShape) -> StyleEdit {
+        StyleEdit::Minimap(Some(Minimap { size, color, shape }))
+    }
+
+    /// Click offset (from the segmented control's centre) onto segment `i` of `n`.
+    fn segment_dx(rect: egui::Rect, i: usize, n: usize) -> f32 {
+        rect.width() * ((i as f32 + 0.5) / n as f32 - 0.5)
+    }
+
+    fn colour_index(name: &str) -> usize {
+        minimap::index_of(&minimap::COLOURS, name).unwrap()
+    }
+
+    #[test]
+    fn minimap_large_from_none_seeds_white_circle() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("E");
+        assert!(render_probes(&state, &mut cfg, "ed-mm-colour").is_empty());
+        assert!(render_probes(&state, &mut cfg, "ed-mm-shape").is_empty());
+        let r = render_probes(&state, &mut cfg, "ed-minimap")[0];
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 1, 4), 0.0),
+        );
+        assert_eq!(
+            edits_of(&acts),
+            [mm(0, FilterColor::White, MinimapShape::Circle)]
+        );
+    }
+
+    #[test]
+    fn minimap_none_then_back_restores_the_last_values() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let r = render_probes(&state, &mut cfg, "ed-minimap")[0];
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 0, 4), 0.0),
+        );
+        assert_eq!(edits_of(&acts), [StyleEdit::Minimap(None)]);
+        assert!(state.edit_style("kite", StyleEdit::Minimap(None)));
+        assert!(render_probes(&state, &mut cfg, "ed-mm-colour").is_empty());
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 1, 4), 0.0),
+        );
+        assert_eq!(
+            edits_of(&acts),
+            [mm(0, FilterColor::Orange, MinimapShape::Kite)]
+        );
+    }
+
+    #[test]
+    fn minimap_colour_and_shape_keep_the_other_fields() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let colours = render_probes(&state, &mut cfg, "ed-mm-colour");
+        let shapes = render_probes(&state, &mut cfg, "ed-mm-shape");
+        assert_eq!((colours.len(), shapes.len()), (11, 12));
+        assert!(shapes.iter().all(|r| r.min.y == shapes[0].min.y), "one row");
+        assert!(
+            colours.iter().all(|r| r.min.y == colours[0].min.y),
+            "one row"
+        );
+        let pink = colour_index("Pink");
+        let acts = click_styles(&ctx, &state, &mut cfg, colours[pink].center());
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Pink, MinimapShape::Kite)]
+        );
+        let mut cfg = expanded("exceptional");
+        let kite = minimap::index_of(&minimap::SHAPES, "Kite").unwrap();
+        let shapes = render_probes(&state, &mut cfg, "ed-mm-shape");
+        let acts = click_styles(&ctx, &state, &mut cfg, shapes[kite].center());
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Pink, MinimapShape::Kite)]
+        );
+    }
+
+    #[test]
+    fn beam_none_colour_and_temp() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-none", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Beam(None)]);
+        let pink = colour_index("Pink");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-colour", pink, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Beam(Some(Beam {
+                color: FilterColor::Pink,
+                temp: false
+            }))]
+        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Beam(Some(Beam {
+                color: FilterColor::Orange,
+                temp: true
+            }))]
+        );
+    }
+
+    #[test]
+    fn beam_temp_is_disabled_without_a_beam_and_a_colour_seeds_one() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("E");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let acts = click_probe(
+            &ctx,
+            &state,
+            &mut cfg,
+            "ed-beam-colour",
+            colour_index("Pink"),
+            0.0,
+        );
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Beam(Some(Beam {
+                color: FilterColor::Pink,
+                temp: false
+            }))]
+        );
+    }
+
+    #[test]
+    fn sound_choices_keep_the_volume_and_default_to_100() {
+        let kite = Sound {
+            id: Some(2),
+            custom: None,
+            vol: 200,
+        };
+        assert_eq!(sound_for_choice(0, Some(&kite)), None);
+        assert_eq!(
+            sound_for_choice(3, Some(&kite)),
+            Some(Sound {
+                id: Some(3),
+                custom: None,
+                vol: 200
+            })
+        );
+        assert_eq!(
+            sound_for_choice(3, None),
+            Some(Sound {
+                id: Some(3),
+                custom: None,
+                vol: 100
+            })
+        );
+        assert_eq!(
+            sound_for_choice(SOUND_CUSTOM, None),
+            Some(Sound {
+                id: None,
+                custom: Some("uwu.mp3".to_string()),
+                vol: 100
+            })
+        );
+        assert_eq!(SOUND_OPTIONS[SOUND_CUSTOM], "Custom file");
+        assert_eq!(SOUND_OPTIONS[16], "Alert 16");
+    }
+
+    #[test]
+    fn custom_sound_file_names_are_checked() {
+        assert!(safe_file_name("uwu.mp3"));
+        assert!(!safe_file_name("a\"b.mp3"));
+        assert!(!safe_file_name("a\nb.mp3"));
+    }
+
+    #[test]
+    fn volume_and_file_lines_follow_the_sound() {
+        let (_d, state) = loaded();
+        let mut cfg = expanded("E");
+        assert!(render_probes(&state, &mut cfg, "ed-volume").is_empty());
+        let mut cfg = expanded("kite");
+        assert_eq!(render_probes(&state, &mut cfg, "ed-volume").len(), 1);
+        assert!(render_probes(&state, &mut cfg, "ed-sound-file").is_empty());
+        let mut cfg = expanded("S");
+        assert_eq!(render_probes(&state, &mut cfg, "ed-sound-file").len(), 1);
+    }
+
     #[test]
     fn load_error_view_renders() {
         let (ctx, input) = headless();

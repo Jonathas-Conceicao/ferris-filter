@@ -1111,7 +1111,10 @@ mod tests {
     #[test]
     fn themed_slider_log_arrow_keeps_out_of_range_value() {
         let ctx = headless_ctx();
-        for (start, key) in [(1500_i64, egui::Key::ArrowRight), (-5, egui::Key::ArrowLeft)] {
+        for (start, key) in [
+            (1500_i64, egui::Key::ArrowRight),
+            (-5, egui::Key::ArrowLeft),
+        ] {
             let mut v = start;
             let mut id = egui::Id::NULL;
             ctx.run_ui(RawInput::default(), |ui| {

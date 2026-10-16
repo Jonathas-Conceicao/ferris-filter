@@ -22,6 +22,8 @@ pub mod instance;
 pub mod layout;
 pub mod rule_list;
 pub mod rules;
+#[cfg(debug_assertions)]
+pub(crate) mod screenshot;
 pub(crate) mod shell;
 pub mod text_entry;
 pub mod theme;
@@ -35,6 +37,18 @@ use hotkey::HotkeyStatus;
 
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
+    // Debug builds only: `ff --screenshot <png> ...` renders the shell from a temp home and
+    // exits, with no instance guard, hotkey or tray (see `screenshot`).
+    #[cfg(debug_assertions)]
+    match screenshot::parse(std::env::args().skip(1)) {
+        Ok(Some(shot)) => return run_screenshot(shot),
+        Ok(None) => {}
+        Err(message) => {
+            eprintln!("ff: {message}");
+            return Ok(());
+        }
+    }
+
     // INST-01 / Phase 22 -- a second `ff` signals the running one to show its stripe (or shows
     // the not-responding message after `instance::STARTUP_TIMEOUT_MS` for a still-starting
     // instance plus `instance::ACK_TIMEOUT_MS` for the answer) and exits here, before it
@@ -71,26 +85,7 @@ pub fn launch() -> eframe::Result<()> {
 
     let tray = tray::build(&tooltip, status_line.as_deref())
         .expect("failed to build the system tray icon");
-    // The stripe: opaque, undecorated, always-on-top, never screen-sized.
-    //
-    // Deliberately NOT configured (D-13, dodging documented egui/eframe Windows
-    // overlay defects by omission — see 13-RESEARCH.md "Anti-Patterns to Avoid"):
-    //   - transparency        — egui #4451 / #4446
-    //   - mouse click-through — egui #2537
-    //   - exclusive fullscreen — egui #4091
-    let viewport = egui::ViewportBuilder::default()
-        .with_title("FerrisFilter")
-        .with_always_on_top()
-        .with_decorations(false)
-        .with_inner_size([shell::WIDTH, 1000.0])
-        .with_resizable(false)
-        .with_taskbar(false)
-        .with_active(false);
-
-    let options = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
+    let options = native_options();
 
     eframe::run_native(
         "ferrisfilter",
@@ -107,6 +102,48 @@ pub fn launch() -> eframe::Result<()> {
                 instance_guard,
                 skin,
             )))
+        }),
+    )
+}
+
+/// The window: opaque, undecorated, always-on-top, fixed at the shell width (660pt) and docked
+/// by `win::dock_left` once its handle exists.
+///
+/// Deliberately NOT configured (D-13, dodging documented egui/eframe Windows overlay defects by
+/// omission -- see 13-RESEARCH.md "Anti-Patterns to Avoid"):
+///   - transparency        -- egui #4451 / #4446
+///   - mouse click-through -- egui #2537
+///   - exclusive fullscreen -- egui #4091
+fn native_options() -> eframe::NativeOptions {
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("FerrisFilter")
+        .with_always_on_top()
+        .with_decorations(false)
+        .with_inner_size([shell::WIDTH, 1000.0])
+        .with_resizable(false)
+        .with_taskbar(false)
+        .with_active(false);
+    eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    }
+}
+
+/// The debug screenshot mode: refuses unless the environment is a temp copy, then runs the shell
+/// with an inert tray and no instance guard or hotkey until the frame is saved.
+#[cfg(debug_assertions)]
+fn run_screenshot(shot: screenshot::ShotArgs) -> eframe::Result<()> {
+    let prepared = screenshot::guard_env().and_then(|()| screenshot::stage_filter(&shot));
+    if let Err(message) = prepared {
+        eprintln!("ff: {message}");
+        return Ok(());
+    }
+    eframe::run_native(
+        "ferrisfilter-screenshot",
+        native_options(),
+        Box::new(move |cc| {
+            let skin = crate::skin::install(&cc.egui_ctx);
+            Ok(Box::new(app::OverlayApp::new_screenshot(skin, shot)))
         }),
     )
 }

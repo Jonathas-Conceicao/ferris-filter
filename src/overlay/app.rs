@@ -73,6 +73,10 @@ pub struct OverlayApp {
     /// The PoE2 skin: every texture, uploaded once at startup.
     skin: Skin,
 
+    /// The debug screenshot state (`None` in a normal run; absent from release builds).
+    #[cfg(debug_assertions)]
+    shot: Option<ShotState>,
+
     /// The ECONOMY tab's "Last sync" text, read when the tab opens and when a sync finishes.
     last_sync: String,
 
@@ -202,6 +206,14 @@ pub struct OverlayApp {
 
     /// A filter picked while the rules have unapplied edits, awaiting confirmation.
     pending_switch: Option<String>,
+}
+
+/// Progress of the debug screenshot run.
+#[cfg(debug_assertions)]
+struct ShotState {
+    args: super::screenshot::ShotArgs,
+    frames: u32,
+    requested: bool,
 }
 
 /// Seconds between `styles.json` modification-time polls while the stripe runs.
@@ -760,6 +772,52 @@ impl OverlayApp {
         instance: instance::Guard,
         skin: Skin,
     ) -> Self {
+        Self::build(tray, hotkey_manager, hotkey_status, Some(instance), skin)
+    }
+
+    /// The debug screenshot app: an inert tray, no hotkey, no instance guard, the requested tab
+    /// shown and the window kept visible until the frame is saved.
+    #[cfg(debug_assertions)]
+    pub(crate) fn new_screenshot(skin: Skin, shot: super::screenshot::ShotArgs) -> Self {
+        let mut app = Self::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("screenshot mode".to_string()),
+            None,
+            skin,
+        );
+        app.tab = shot.tab;
+        app.visibility = Visibility::ShownFocused;
+        if shot.tab == ShellTab::Config {
+            app.refresh_filters();
+        }
+        app.shot = Some(ShotState {
+            args: shot,
+            frames: 0,
+            requested: false,
+        });
+        app
+    }
+
+    /// True in the debug screenshot mode (never in release builds).
+    fn is_shot(&self) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            self.shot.is_some()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            false
+        }
+    }
+
+    fn build(
+        tray: TrayHandles,
+        hotkey_manager: Option<GlobalHotKeyManager>,
+        hotkey_status: HotkeyStatus,
+        instance: Option<instance::Guard>,
+        skin: Skin,
+    ) -> Self {
         let root = crate::paths::app_root().map_err(|e| e.to_string());
         let game_dir = dynamic::default_destination();
         // Settings: the remembered filter. Without a root nothing is read and nothing is saved.
@@ -783,7 +841,9 @@ impl OverlayApp {
             tray,
             hotkey_manager,
             hotkey_status,
-            instance: Some(instance),
+            instance,
+            #[cfg(debug_assertions)]
+            shot: None,
             toggle_requested: false,
             quit_confirm: false,
             quit_after_apply: false,
@@ -829,6 +889,38 @@ impl OverlayApp {
             app.list_status = settings_warning;
         }
         app
+    }
+
+    /// One frame of the screenshot run. Returns true when the process should leave.
+    #[cfg(debug_assertions)]
+    fn shot_step(&mut self, ctx: &egui::Context) -> bool {
+        let docked = self.docked;
+        let Some(shot) = self.shot.as_mut() else {
+            return false;
+        };
+        shot.frames += 1;
+        ctx.request_repaint();
+        let image = ctx.input(|i| {
+            i.raw.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            match super::screenshot::save_png(&image, &shot.args.png) {
+                Ok(()) => eprintln!("ff: saved {}", shot.args.png.display()),
+                Err(message) => eprintln!("ff: {message}"),
+            }
+            return true;
+        }
+        if docked && shot.frames >= 20 && !shot.requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            shot.requested = true;
+        } else if shot.frames > 600 {
+            eprintln!("ff: no screenshot arrived; exiting");
+            return true;
+        }
+        false
     }
 
     /// Re-reads the `prices.json` modified time for the ECONOMY tab's "Last sync" row.
@@ -1753,7 +1845,12 @@ impl eframe::App for OverlayApp {
         // call to translate the transition into the single effect to
         // perform. No branching of our own.
         let focused = ui.ctx().input(|i| i.viewport().focused).unwrap_or(false);
-        let next = visibility::advance(self.visibility, focused, self.toggle_requested);
+        // The screenshot mode keeps the window shown: nothing may hide it before the frame is saved.
+        let next = if self.is_shot() {
+            Visibility::ShownFocused
+        } else {
+            visibility::advance(self.visibility, focused, self.toggle_requested)
+        };
         if let Some(effect) = visibility::effect_for(self.visibility, next) {
             if let Some(window) = &self.window {
                 match effect {
@@ -1814,6 +1911,13 @@ impl eframe::App for OverlayApp {
         // does not starve this loop — this just makes the interval
         // explicit in our own code.
         ui.ctx().request_repaint_after(Duration::from_millis(50));
+
+        // Debug screenshot mode: wait for the dock and a few frames, ask for one capture, save it,
+        // then leave through the one Close send site below.
+        #[cfg(debug_assertions)]
+        if self.shot.is_some() && self.shot_step(ui.ctx()) {
+            quit_requested = true;
+        }
 
         // Computed once per frame; every button below is shown/enabled strictly from it.
         self.poll_styles(ui.ctx().input(|i| i.time));
@@ -1997,6 +2101,11 @@ impl eframe::App for OverlayApp {
             sync_outcome,
             self.list_status.clone(),
         );
+        #[cfg(debug_assertions)]
+        let event = match self.shot.as_ref().and_then(|s| s.args.status.clone()) {
+            Some(text) => Some((text, w::StatusKind::Warning)),
+            None => event,
+        };
         let filter_error = match (&self.filter, state) {
             (Err(message), _) => Some(shell::load_failed_status(message)),
             (Ok(loaded), FilterState::Damaged) => Some(match loaded.has_section() {

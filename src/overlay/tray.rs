@@ -102,6 +102,16 @@ pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tr
 }
 
 impl TrayHandles {
+    /// A tray with no OS icon and fresh menu ids, for the debug screenshot mode.
+    #[cfg(debug_assertions)]
+    pub(crate) fn inert() -> Self {
+        Self {
+            tray_icon: None,
+            show_id: MenuId::new("screenshot-show"),
+            quit_id: MenuId::new("screenshot-quit"),
+        }
+    }
+
     /// Removes the icon from the notification area now, rather than when the app is dropped.
     ///
     /// Tray Quit calls this before it releases the single-instance name, so a relaunch never

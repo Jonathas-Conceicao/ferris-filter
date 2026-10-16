@@ -4,8 +4,8 @@ milestone: v0.5
 milestone_name: Generic Filter Editor & Initial App Configuration
 status: completed
 stopped_at: v0.5 milestone completed, archived and tagged
-last_updated: "2026-10-15T18:00:00.000Z"
-last_activity: 2026-10-15 -- Completed quick task 261015-nbp: Simple Defences multi-select base types, written as grouped blocks
+last_updated: "2026-10-16T04:30:00.000Z"
+last_activity: 2026-10-16 -- Completed quick task 261016-1de: PoE2 prototype round 2 (tabs, style editor, ABOUT, status line, minimap atlas)
 progress:
   total_phases: 13
   completed_phases: 13
@@ -205,6 +205,7 @@ None open.
 |---|-------------|------|--------|-----------|
 | 261015-nbp | Simple Defences: multi-select base types, written as grouped blocks | 2026-10-15 | 52ff64e | [261015-nbp-simple-defences-multi-select-base-types-](./quick/261015-nbp-simple-defences-multi-select-base-types-/) |
 | 261015-tz2 | PoE2-style UI prototype: ff-art asset tool, skin module, ff-proto binary | 2026-10-16 | 206c6bb | [261015-tz2-poe2-style-ui-prototype-ff-art-asset-too](./quick/261015-tz2-poe2-style-ui-prototype-ff-art-asset-too/) |
+| 261016-1de | PoE2 prototype round 2: game-like tabs, style editor, ABOUT tab, one-line status, trimmed minimap atlas | 2026-10-16 | f64cd42 | [261016-1de-poe2-prototype-tab-layout-style-editor-a](./quick/261016-1de-poe2-prototype-tab-layout-style-editor-a/) |
 
 ## Phase 15 Source Material — the author's two requests
 

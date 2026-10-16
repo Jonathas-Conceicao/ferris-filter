@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   art and Fontin fonts in `assets/poe2/` come from the game via the new `tools/ff-art` dev tool
   (own workspace, reads the install read-only, manifest in `assets/poe2/manifest.toml`). README
   gains a credits section with the Grinding Gear Games disclaimer.
+- **Prototype round 2 (quick 261016-1de).** `ff-proto` tabs now sit like the game's (captions
+  centred on the stone's flat top, even spacing, overlapping tails) and there are four: RULES /
+  CONFIG / ECONOMY / ABOUT. CONFIG styles open in place into a style editor (Show/Hide, live label
+  preview, Text/Border/Background swatch cards, font size, minimap size / colour / the 12 real game
+  shapes, beam, sound and volume; custom styles get name, reorder and delete, plus `+ Add style`),
+  all on fake data in memory. ABOUT shows the version, repo, credits and the GGG disclaimer. The
+  status line stays one row, cut with an ellipsis, full text on hover, coloured by ok / warning /
+  error. The 4.7 MB minimap sheet is replaced by a 0.5 MB atlas of just the filter icons.
 
 ### Changed
 

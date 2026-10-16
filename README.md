@@ -23,7 +23,9 @@ in `src/skin/` (fake data; nothing is read or written):
 
 ```bash
 cargo run --bin ff-proto                    # left-docked, 660 px wide, full height; the X closes it
-cargo run --bin ff-proto -- --tab config    # start on the CONFIG (or `economy`) tab
+cargo run --bin ff-proto -- --tab config    # start on CONFIG (or `economy`, `about`)
+cargo run --bin ff-proto -- --tab config --expand-style kite   # open a style's editor
+cargo run --bin ff-proto -- --status warning   # start with a long status line (ok/warning/error)
 cargo run --bin ff-proto -- --screenshot shot.png   # render, save one frame, exit
 ```
 
@@ -40,6 +42,7 @@ cargo run --release                                  # extract everything in the
 cargo run --release -- --game "D:\Games\Path of Exile 2"   # non-default install folder
 cargo run --release -- list optionsmenu              # find virtual paths
 cargo run --release -- dump "uiimages/common/" <scratch-dir>   # convert matches to PNG to look at
+cargo run --release -- dump minimap/player <scratch-dir>      # the whole minimap icon sheet
 cargo run --release -- ferris                        # only re-render the Ferris background
 ```
 

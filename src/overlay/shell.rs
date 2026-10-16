@@ -184,28 +184,31 @@ pub(crate) fn indicator_kind(state: ApplyState) -> StatusKind {
     }
 }
 
+/// The colour class of a successful Apply's message: Ok, or Warning when it carries the in-game
+/// Refresh instruction (the reload did not happen). A failed Apply is always
+/// [`StatusKind::Error`]; the kind is decided when the message is produced, never inferred later
+/// from the apply state (review CR-02).
+pub(crate) fn apply_success_kind(text: &str) -> StatusKind {
+    if text.contains(apply::RELOAD_INSTRUCTION) {
+        StatusKind::Warning
+    } else {
+        StatusKind::Ok
+    }
+}
+
 /// The event message, if any: the Apply outcome wins over a CONFIG message, then a finished sync,
 /// then the list status.
 ///
-/// `apply_ok_state` is true when the apply state is `Applied` and no file changed on disk; the
-/// message is then Ok, or Warning when it carries the in-game reload instruction. Otherwise it is
-/// an Error. A CONFIG message is `(text, is_problem)`. A sync outcome is `(text, is_failure)`.
+/// The Apply message carries the kind it was produced with (see [`apply_success_kind`]). A CONFIG
+/// message is `(text, is_problem)`. A sync outcome is `(text, is_failure)`.
 pub(crate) fn event_from(
-    apply_message: Option<String>,
-    apply_ok_state: bool,
+    apply_message: Option<(String, StatusKind)>,
     config_message: Option<(String, bool)>,
     sync: Option<(String, bool)>,
     list_status: Option<String>,
 ) -> Option<(String, StatusKind)> {
-    if let Some(text) = apply_message {
-        let kind = if !apply_ok_state {
-            StatusKind::Error
-        } else if text.contains(apply::RELOAD_INSTRUCTION) {
-            StatusKind::Warning
-        } else {
-            StatusKind::Ok
-        };
-        return Some((text, kind));
+    if let Some(message) = apply_message {
+        return Some(message);
     }
     if let Some((text, problem)) = config_message {
         let kind = if problem {
@@ -807,41 +810,35 @@ mod tests {
     #[test]
     fn event_precedence_and_kinds() {
         let e = event_from(
-            Some("a".into()),
-            true,
+            Some(("a".into(), StatusKind::Ok)),
             Some(("c".into(), true)),
             Some(("s".into(), true)),
             Some("l".into()),
         );
         assert_eq!(e, Some(("a".into(), StatusKind::Ok)));
-        let e = event_from(Some("a".into()), false, None, None, None);
+        // The stored kind passes through unchanged: a failure stays an Error whatever the
+        // apply state is (CR-02).
+        let e = event_from(Some(("a".into(), StatusKind::Error)), None, None, None);
         assert_eq!(e, Some(("a".into(), StatusKind::Error)));
         let text = format!("Wrote x. {}", apply::RELOAD_INSTRUCTION);
-        let e = event_from(Some(text.clone()), true, None, None, None);
-        assert_eq!(e, Some((text, StatusKind::Warning)));
+        assert_eq!(apply_success_kind(&text), StatusKind::Warning);
+        assert_eq!(apply_success_kind("Wrote x."), StatusKind::Ok);
         let e = event_from(
             None,
-            true,
             Some(("c".into(), true)),
             Some(("s".into(), true)),
             None,
         );
         assert_eq!(e, Some(("c".into(), StatusKind::Error)));
-        let e = event_from(None, true, Some(("c".into(), false)), None, None);
+        let e = event_from(None, Some(("c".into(), false)), None, None);
         assert_eq!(e, Some(("c".into(), StatusKind::Info)));
-        let e = event_from(None, true, None, Some(("s".into(), true)), Some("l".into()));
+        let e = event_from(None, None, Some(("s".into(), true)), Some("l".into()));
         assert_eq!(e, Some(("s".into(), StatusKind::Error)));
-        let e = event_from(
-            None,
-            true,
-            None,
-            Some(("s".into(), false)),
-            Some("l".into()),
-        );
+        let e = event_from(None, None, Some(("s".into(), false)), Some("l".into()));
         assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
-        let e = event_from(None, true, None, None, Some("l".into()));
+        let e = event_from(None, None, None, Some("l".into()));
         assert_eq!(e, Some(("l".into(), StatusKind::Info)));
-        assert_eq!(event_from(None, true, None, None, None), None);
+        assert_eq!(event_from(None, None, None, None), None);
     }
 
     #[test]

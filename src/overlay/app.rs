@@ -142,8 +142,9 @@ pub struct OverlayApp {
     apply_state: ApplyState,
 
     /// The most recent Apply outcome's rendered text -- a success message naming the reload path,
-    /// or an error's display string.
-    apply_message: Option<String>,
+    /// or an error's display string -- with the colour class it was produced with: a failure is
+    /// always `Error`, whatever the apply state (review CR-02).
+    apply_message: Option<(String, w::StatusKind)>,
 
     /// The economy-sync affordance: a `prices.json` refresh run on a worker thread so a stripe
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
@@ -766,6 +767,12 @@ fn landed_reload_message(
     ))
 }
 
+/// A successful Apply's status line, with its colour class decided now (review CR-02).
+fn applied_message(text: String) -> Option<(String, w::StatusKind)> {
+    let kind = shell::apply_success_kind(&text);
+    Some((text, kind))
+}
+
 /// The status line when no reload was sent: the success line, the reason and the Refresh reminder.
 fn skipped_reload_message(path: &Path, extras: &str, reason: chat::SkipReason) -> String {
     // Game not running: the game reads the filter at start, so only the written path is shown.
@@ -1175,7 +1182,7 @@ impl OverlayApp {
         } = result;
         let applied_path = match outcome {
             AllOutcome::Failed(message) => {
-                self.apply_message = Some(message);
+                self.apply_message = Some((message, w::StatusKind::Error));
                 self.apply_state = self.apply_state.on_apply_failure();
                 if !changed.is_empty() {
                     self.changed_on_disk = changed;
@@ -1204,7 +1211,7 @@ impl OverlayApp {
                     Some(chat::Decision::Send((game, owner))) => {
                         let interim =
                             format!("{prefix}{}{extras}", apply::reloading_message(&path));
-                        self.apply_message = Some(interim.clone());
+                        self.apply_message = applied_message(interim.clone());
                         let repaint = ctx.clone();
                         let started = self.reload.start(
                             move || {
@@ -1221,27 +1228,29 @@ impl OverlayApp {
                                 interim,
                             });
                         } else {
-                            self.apply_message = Some(format!(
+                            self.apply_message = applied_message(format!(
                                 "{prefix}{}",
                                 skipped_reload_message(&path, &extras, chat::SkipReason::Busy)
                             ));
                         }
                     }
                     Some(chat::Decision::Skip(reason)) => {
-                        self.apply_message = Some(format!(
+                        self.apply_message = applied_message(format!(
                             "{prefix}{}",
                             skipped_reload_message(&path, &extras, reason)
                         ));
                     }
                     None => {
-                        self.apply_message =
-                            Some(format!("{prefix}{}{extras}", apply::success_message(&path)));
+                        self.apply_message = applied_message(format!(
+                            "{prefix}{}{extras}",
+                            apply::success_message(&path)
+                        ));
                     }
                 }
             }
             // No filter part: the config files alone, nothing to reload in game.
             None => {
-                self.apply_message = Some(format!(
+                self.apply_message = applied_message(format!(
                     "{}{extras}",
                     apply::config_only_message(styles_written, tiers_written)
                 ));
@@ -2117,10 +2126,10 @@ impl eframe::App for OverlayApp {
             visibility::effect_for(self.visibility, next),
             Some(visibility::Effect::Conceal)
         ) {
-            self.apply_message = apply_message_after_conceal(
-                self.apply_message.take(),
-                self.reload_pending.as_ref(),
-            );
+            self.apply_message = self.apply_message.take().and_then(|(text, kind)| {
+                apply_message_after_conceal(Some(text), self.reload_pending.as_ref())
+                    .map(|text| (text, kind))
+            });
             self.economy.clear_message();
         }
 
@@ -2133,9 +2142,13 @@ impl eframe::App for OverlayApp {
         // shown on the next reveal.
         if let Some(result) = self.reload.poll() {
             if let Some(p) = self.reload_pending.take()
-                && let Some(msg) = landed_reload_message(self.apply_message.as_deref(), &p, &result)
+                && let Some(msg) = landed_reload_message(
+                    self.apply_message.as_ref().map(|(text, _)| text.as_str()),
+                    &p,
+                    &result,
+                )
             {
-                self.apply_message = Some(msg);
+                self.apply_message = applied_message(msg);
             }
             ui.ctx().request_repaint();
         }
@@ -2332,7 +2345,6 @@ impl eframe::App for OverlayApp {
         };
         let event = shell::event_from(
             self.apply_message.clone(),
-            self.apply_state == ApplyState::Applied && self.changed_on_disk.is_empty(),
             self.config_message.clone(),
             sync_outcome,
             self.list_status.clone(),
@@ -3821,6 +3833,41 @@ mod tests {
         assert_eq!(app.working.as_ref().unwrap().rows().len(), 1);
         assert!(app.list.confirm_delete.is_none());
         assert!(app.working.as_ref().unwrap().is_dirty());
+    }
+
+    /// CR-02: a failed Apply while the state is still `Applied` (from an earlier success) is
+    /// shown as an Error, never in the success colour.
+    #[test]
+    fn apply_failure_after_a_success_is_an_error() {
+        use crate::overlay::apply::ApplyState;
+        use crate::skin::widgets::StatusKind;
+        let (mut app, ctx) = popup_app(RULES);
+        let Rig {
+            root,
+            _game,
+            path,
+            loaded,
+            working,
+            config,
+        } = rig(S_RULE);
+        app.root = Ok(root.path().to_path_buf());
+        app.config = Ok(config);
+        app.filter = Ok(loaded);
+        app.working = Some(working);
+        app.apply_state = ApplyState::Applied;
+        // Someone else changes the filter: the Apply is refused.
+        std::fs::write(&path, "Show\n").unwrap();
+        assert!(!app.run_apply(&ctx, false));
+        assert_eq!(
+            app.apply_state,
+            ApplyState::Applied,
+            "a failure keeps the state"
+        );
+        let (text, kind) = app.apply_message.clone().unwrap();
+        assert_eq!(kind, StatusKind::Error, "{text}");
+        let event = crate::overlay::shell::event_from(app.apply_message.clone(), None, None, None);
+        assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
     }
 
     #[test]

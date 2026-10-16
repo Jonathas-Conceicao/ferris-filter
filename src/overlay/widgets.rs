@@ -238,38 +238,25 @@ pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool)
 /// A 16px painted X inside a 24x24 click target, with a tooltip and accessible name `label`
 /// (for example "Remove this condition"). Painted, not a glyph: Cinzel has no coverage.
 pub fn remove_x_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let id = ui.next_auto_id().with("hit");
-    remove_x_button_with_id(ui, id, label)
+    crate::skin::widgets::ff_x_button(ui, label)
 }
 
-/// Like [`remove_x_button`] but with an explicit widget id (used by lists that need to look a
-/// specific control up again).
+/// Like [`remove_x_button`] but scoped under an explicit widget id (used by lists that need to
+/// look a specific control up again).
 fn remove_x_button_with_id(ui: &mut egui::Ui, id: egui::Id, label: &str) -> egui::Response {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
-    let response = ui.interact(rect, id, egui::Sense::click());
-    paint_x(ui, rect, response.hovered());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    response.on_hover_text(label)
+    let response = ui
+        .push_id(id, |ui| crate::skin::widgets::ff_x_button(ui, label))
+        .inner;
+    #[cfg(test)]
+    X_RECTS.with(|m| m.borrow_mut().insert(id, response.rect));
+    response
 }
 
-fn paint_x(ui: &egui::Ui, rect: egui::Rect, hovered: bool) {
-    let color = if hovered {
-        theme::SECTION_CREAM
-    } else {
-        theme::LABEL_TAN
-    };
-    let stroke = egui::Stroke::new(1.5, color);
-    let half = 4.0; // 8px cross inside the 16px paint box
-    let c = rect.center();
-    let painter = ui.painter();
-    painter.line_segment(
-        [c + egui::vec2(-half, -half), c + egui::vec2(half, half)],
-        stroke,
-    );
-    painter.line_segment(
-        [c + egui::vec2(half, -half), c + egui::vec2(-half, half)],
-        stroke,
-    );
+// Test support: where each explicit-id remove button was last laid out.
+#[cfg(test)]
+thread_local! {
+    static X_RECTS: std::cell::RefCell<std::collections::HashMap<egui::Id, egui::Rect>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// A 24px-high selectable chip (rarity-style toggle). Flips `*selected` and marks the response
@@ -1149,10 +1136,7 @@ mod tests {
             chip_list(ui, "chips", &items, "hint", 160.0);
         })
         .drop_without_applying_deltas();
-        let rect = ctx
-            .read_response(x_id)
-            .map(|r| r.rect)
-            .unwrap_or(Rect::NOTHING);
+        let rect = X_RECTS.with(|m| m.borrow().get(&x_id).copied().unwrap_or(Rect::NOTHING));
         assert_eq!(rect.size(), egui::vec2(24.0, 24.0));
         let mut out = ChipListOutcome::default();
         ctx.run_ui(click_at(rect.center()), |ui| {
@@ -1268,10 +1252,7 @@ mod tests {
             string_list(ui, "list", &items, "hint", 7);
         })
         .drop_without_applying_deltas();
-        let rect = ctx
-            .read_response(x_id)
-            .map(|r| r.rect)
-            .unwrap_or(Rect::NOTHING);
+        let rect = X_RECTS.with(|m| m.borrow().get(&x_id).copied().unwrap_or(Rect::NOTHING));
         assert_eq!(rect.size(), egui::vec2(24.0, 24.0));
         let mut out = ChipListOutcome::default();
         ctx.run_ui(click_at(rect.center()), |ui| {

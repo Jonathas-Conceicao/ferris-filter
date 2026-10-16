@@ -97,85 +97,109 @@ fixtures stay byte-identical; the only file-format change is the divider / econo
 ## Phase Details
 
 ### Phase 29: Workspace & Asset Tool from the Root
+
 **Goal**: The repo is one Cargo workspace in which `ff` builds, runs and tests exactly as before, and the asset tool runs from the repo root
 **Depends on**: Nothing (first phase of v0.6; independent of the UI work)
 **Requirements**: WS-01, WS-02
 **Success Criteria** (what must be TRUE):
+
   1. `cargo build`, `cargo run` and `cargo test` at the repo root build / launch / test `ff` as in v0.5 and do not compile `ff-art` or its nightly-only dependencies
   2. `cargo run -p ff-art -- <cmd>` and the short `cargo ff-art <cmd>` alias both work from the repo root without changing directory
   3. `ff-art extract` run from any working directory writes into the repo's `assets/poe2/` (output paths resolve against the repo root), leaving the committed assets byte-identical when the game files are unchanged
-**Plans**: TBD
+
+**Plans**: 1 plan
+Plans:
+
+- [ ] 29-01-PLAN.md — Root Cargo workspace (ff default member), committed lock, nightly pin, `cargo ff-art` alias, repo-root paths, docs
 
 ### Phase 30: Skinned Overlay Shell
+
 **Goal**: Launching `ff` opens the new game-styled window instead of the stripe, with the existing RULES and CONFIG content working inside it and every v0.5 overlay behaviour (hotkey, tray, single instance, in-game reload) intact
 **Depends on**: Phase 29
 **Requirements**: SHELL-01, SHELL-02, SHELL-03, SHELL-04, SHELL-05, SHELL-06, SHELL-07, SHELL-08
 **Success Criteria** (what must be TRUE):
+
   1. `ff` opens a borderless 660pt-wide window docked to the left edge at full work-area height of the monitor the game is on (primary monitor without the game), correctly sized at 100-200% display scale, with the Ferris background behind scrolling content and the game-art header showing "FerrisFilter"; its close button hides it
   2. The RULES / CONFIG / ECONOMY / ABOUT tabs sit like the game's Options tabs and switch content; the v0.5 RULES and CONFIG editors work inside the new window, and a tab label shows ` *` when another tab has unapplied edits
   3. REVERT / RELOAD / APPLY sit in the bottom bar beside one status line that is cut with "…" when too long, shows the full text on hover, and is coloured ok / warning / error; every message from the old outcome area appears there
   4. Every confirmation (changed-on-disk RELOAD / OVERWRITE, switch filter and discard, Quit with unapplied edits, deletes) appears as a skinned popup, and standing captions / wall-of-text panels are replaced by controls, icons, tooltips or the status line
   5. `Ctrl+Shift+Z`, the tray icon and Quit, single-instance relaunch and `/reloaditemfilter` after Apply behave exactly as in v0.5
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 31: RULES Tab on the Skin
+
 **Goal**: The rule list and the expanded rule editor are drawn entirely with the skin, keep every v0.5 editing capability, and new rules land at the top of the file
 **Depends on**: Phase 30
 **Requirements**: RULES-01, RULES-02, RULES-03
 **Success Criteria** (what must be TRUE):
+
   1. Rule rows (round enable check, Show/Hide, name, condition summary, flags, reorder arrows), search and + Add rule are drawn with skin widgets, and scrolling / searching the ~500-block NeverSink/FilterBlade sample stays responsive
   2. Every v0.5 editing path still works through skin controls: all conditions and actions, operators, Between, Defences / Simple Defences, grouped rules, raw rows, the style picker, Continue, duplicate and delete; an untouched filter still round-trips byte-for-byte
   3. + Add rule inserts the new empty rule as the first block of the file (ahead of any divider), not before the economy section
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 32: Rule Dividers & Economy Banner
+
 **Goal**: Users can organise a filter into named, collapsible sections written as readable `#` banners, and the economy section shows as a locked last divider using the same banner format
 **Depends on**: Phase 31
 **Requirements**: SECT-01, SECT-02, SECT-03, SECT-04, SECT-05
 **Success Criteria** (what must be TRUE):
+
   1. A filter containing the three-line `# ff:section <name>` banner (80 `#` per rule line) loads with each banner as a named section header; rules above the first banner have no header, and foreign comment banners stay ordinary comments
   2. User can add, rename, move and delete a divider (deleting keeps its rules); each change is written only by Apply and undone by Revert, and bytes outside the edited lines are unchanged
   3. User can collapse and expand a section; the state survives a restart (stored per filter in `ff-settings.json`, never in the filter); search still finds matches inside collapsed sections, and reordering and grouped rules work across section boundaries
   4. The economy section shows as a locked "Economy" divider at the end of the list (collapsed by default, read-only rows, collapse/expand only) instead of the `+ N locked rule blocks` footer; `ff-cli apply --add-economy` / `--remove-economy` append / remove a begin-only economy banner at the end of the file (the section runs to the next banner or EOF), Apply regenerates the blocks under it, and old one-line `# ff:economy-begin/end` markers are no longer recognised. (Between this phase and Phase 34 the overlay has no add/remove control; it arrives on the ECONOMY tab.)
   5. `generate` output and the committed fixtures (`seed-universal.filter`, `artifact_guard`, `generate_snapshot`) are unchanged
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 33: Style Table & Line-by-Line Style Editor
+
 **Goal**: Users can read and edit styles on the CONFIG tab through an aligned table and an inline, line-by-line editor with a game-styled colour picker, under the v0.5 Apply / Revert model
 **Depends on**: Phase 30 (and Phase 31 for the colour picker on rule colour actions)
 **Requirements**: STY-01, STY-02, STY-03, STY-04, STY-05
 **Success Criteria** (what must be TRUE):
+
   1. The Built-in and Custom style tables have a column header row (Visibility / Name / Icon / Preview / Order), built-in rows show greyed Order arrows so columns line up, and no textual Show/Hide caption remains before the icon
   2. Clicking a style expands a line-by-line editor without boxed panels: `Visibility <Show><Hide>` on one line, the label preview with Text / Border / Background swatches, font size, minimap (size, colour, game-icon shape), beam (colour, Temp), sound and volume
   3. Clicking any colour swatch, in the style editor or on a rule's colour action, opens a skinned colour-picker popup with a hue/saturation gradient, exact RGB/hex input and alpha where the target supports it
   4. Custom styles can still be renamed, reordered and deleted; Delete sits at the bottom of the expanded editor and confirms in a popup showing how many rules use the style
   5. Every style and tier edit stays in memory until the one Apply, is written all or none with the filter, and is undone by Revert
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 34: ECONOMY & ABOUT Tabs
+
 **Goal**: The ECONOMY tab is the home for everything economy (sync, the economy section, tier cutoffs) and the ABOUT tab tells users what the app is and who owns the art
 **Depends on**: Phase 32 (economy banner markers), Phase 33 (tiers editor leaves CONFIG)
 **Requirements**: ECO-01, ECO-02, ABOUT-01
 **Success Criteria** (what must be TRUE):
+
   1. The ECONOMY tab shows the pinned league, the last sync time and the number of priced items; SYNC ECONOMY lives there (gone from the RULES footer), runs without freezing the window and writes only `prices.json`
   2. The ECONOMY tab's Add economy section / Remove economy section control adds or removes the Phase 32 banner-format markers in the loaded filter as an in-memory edit, written by the shared Apply and undone by Revert
   3. The tier cutoffs editor sits on the ECONOMY tab (no longer on CONFIG) with inline validation, applied by the shared Apply
   4. The ABOUT tab shows, top to bottom, the app name, one-line description, a small happy orange Ferris, the Cargo version, the GitHub link, a divider, empty space, then the GGG non-affiliation / ownership disclaimer and the smaller third-party credits (GGG art and fonts, Fontin by exljbris, Ferris by Karen Rustad Tölva)
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 35: Prototype Retirement & Docs
+
 **Goal**: The skin is the only overlay look, the prototype is gone, and the docs describe what v0.6 ships
 **Depends on**: Phase 34
 **Requirements**: CLEAN-01, CLEAN-02
 **Success Criteria** (what must be TRUE):
+
   1. `ff-proto` and the old `overlay::theme` stripe styling no longer exist, the build and full test suite stay green, and `ff-art` plus the committed `assets/` remain
   2. README, CLAUDE.md and CHANGELOG describe the new window and tabs, dividers and the economy banner, the workspace and running the asset tool from the root
   3. The Cargo version reads `0.6.0` when the milestone is tagged
+
 **Plans**: TBD
 
 ## Progress

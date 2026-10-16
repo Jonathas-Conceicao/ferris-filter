@@ -2311,6 +2311,10 @@ pub(crate) fn bottom_bar(
         status.kind,
         status.jump.is_some(),
     );
+    let line = match status.tip {
+        Some(tip) => line.on_hover_text(tip),
+        None => line,
+    };
     BarClicks {
         revert: state.revert && revert.clicked(),
         reload: state.reload && reload.clicked(),
@@ -3149,6 +3153,7 @@ mod tests {
             text: "a very long status message ".repeat(20),
             kind: w::StatusKind::Warning,
             jump: None,
+            tip: None,
         };
         let mut drawn = 0usize;
         let mut button_bar = Rect::NOTHING;

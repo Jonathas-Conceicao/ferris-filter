@@ -118,6 +118,8 @@ pub(crate) struct StatusLine {
     pub kind: StatusKind,
     /// The rule a click on the line jumps to.
     pub jump: Option<BlockId>,
+    /// A hover explanation for a short standing message (the unapplied indicator).
+    pub tip: Option<&'static str>,
 }
 
 /// Everything the priority table looks at.
@@ -140,6 +142,7 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
         text,
         kind,
         jump: None,
+        tip: None,
     };
     if let Some(text) = inputs.root_error {
         return plain(text, StatusKind::Error);
@@ -152,6 +155,7 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
             text,
             kind: StatusKind::Error,
             jump: Some(id),
+            tip: None,
         };
     }
     if let Some(text) = inputs.filter_error {
@@ -165,6 +169,7 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
             text,
             kind: StatusKind::Warning,
             jump: Some(id),
+            tip: None,
         };
     }
     if inputs.migrated {
@@ -173,7 +178,10 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
     if inputs.absent {
         return plain(ABSENT_STATUS.to_string(), StatusKind::Info);
     }
-    plain(inputs.indicator.0.to_string(), inputs.indicator.1)
+    StatusLine {
+        tip: apply::indicator_tip(inputs.indicator.0),
+        ..plain(inputs.indicator.0.to_string(), inputs.indicator.1)
+    }
 }
 
 /// The colour class of the default indicator line.
@@ -890,6 +898,7 @@ mod tests {
             i.indicator = (apply::indicator(state), indicator_kind(state));
             let s = status_for(i);
             assert_eq!(s.text, apply::indicator(state));
+            assert_eq!(s.tip.is_some(), state != ApplyState::Applied);
             assert_eq!(s.kind, kind);
         }
     }

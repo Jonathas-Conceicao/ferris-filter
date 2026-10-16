@@ -278,13 +278,25 @@ pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
 /// written filter does not match these rules" — and `Applied` reads differently in wording, not
 /// just colour, so the signal survives a colourblind or monochrome render (a colour-only signal
 /// is not an indicator).
+/// Short enough to fit the status line at 660pt; [`indicator_tip`] carries the explanation.
 pub fn indicator(state: ApplyState) -> &'static str {
     match state {
-        ApplyState::NeverApplied | ApplyState::Unapplied => {
-            "Filter out of date — press Apply, then reload in-game"
-        }
+        ApplyState::NeverApplied | ApplyState::Unapplied => UNAPPLIED_INDICATOR,
         ApplyState::Applied => "Filter matches saved rules",
     }
+}
+
+/// The unapplied indicator's text.
+pub const UNAPPLIED_INDICATOR: &str = "Unapplied changes";
+
+/// Hover text of the unapplied indicator: what the short message means and what to do.
+pub const UNAPPLIED_INDICATOR_TIP: &str = "The filter on disk does not match these edits yet. \
+     Press Apply to write it; it is then reloaded in game (or use Options > Game > Item Filter > \
+     Refresh).";
+
+/// The hover explanation for an indicator text, if it has one.
+pub fn indicator_tip(text: &str) -> Option<&'static str> {
+    (text == UNAPPLIED_INDICATOR).then_some(UNAPPLIED_INDICATOR_TIP)
 }
 
 /// Status after REMOVE STYLE: the rule keeps its actions.
@@ -647,6 +659,23 @@ mod tests {
             indicator(ApplyState::NeverApplied),
             indicator(ApplyState::Unapplied)
         );
+    }
+
+    #[test]
+    fn indicator_is_short_and_explained_on_hover() {
+        // The status slot left of Revert / Reload / Apply holds ~30 characters at 660pt.
+        for state in [ApplyState::Unapplied, ApplyState::Applied] {
+            assert!(
+                indicator(state).chars().count() <= 26,
+                "{}",
+                indicator(state)
+            );
+        }
+        assert_eq!(
+            indicator_tip(indicator(ApplyState::Unapplied)),
+            Some(UNAPPLIED_INDICATOR_TIP)
+        );
+        assert_eq!(indicator_tip(indicator(ApplyState::Applied)), None);
     }
 
     #[test]

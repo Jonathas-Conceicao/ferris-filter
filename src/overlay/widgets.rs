@@ -113,36 +113,8 @@ pub fn zebra_row(ui: &mut egui::Ui, index: usize, add: impl FnOnce(&mut egui::Ui
 /// "widget function over a `&mut` reference" shape `egui::Checkbox`'s own `Widget` impl uses
 /// internally — callers branch on `.changed()` exactly as they would for `ui.checkbox(...)`.
 pub fn circular_toggle(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
-    let size = 16.0;
-    // Layout stays 16x16; the click target is padded to 24x24 (UI-SPEC carry-over).
-    let auto_id = ui.next_auto_id();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    let mut response = ui.interact(rect.expand(4.0), auto_id.with("hit"), egui::Sense::click());
-    let state = *checked;
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, state, "Enabled")
-    });
-
-    if response.clicked() {
-        *checked = !*checked;
-        response.mark_changed();
-    }
-
-    let stroke_color = if response.hovered() {
-        theme::SECTION_CREAM
-    } else {
-        theme::CONTROL_GLYPH
-    };
-
-    let painter = ui.painter();
-    let center = rect.center();
-    let radius = size / 2.0 - 1.0;
-    painter.circle_stroke(center, radius, egui::Stroke::new(1.5, stroke_color));
-    if *checked {
-        painter.circle_filled(center, radius - 3.0, theme::CONTROL_GLYPH);
-    }
-
-    response
+    let skin = crate::skin::of(ui.ctx());
+    crate::skin::widgets::ff_check(ui, &skin, checked, "Enabled")
 }
 
 /// A modern on/off slide switch: a fixed 32x16 pill whose knob sits right when on, left when off.
@@ -979,33 +951,26 @@ mod tests {
     }
 
     #[test]
-    fn circular_toggle_target_is_padded_but_layout_stays_16px() {
+    fn circular_toggle_is_a_22_square_check_that_flips_on_click() {
         let ctx = headless_ctx();
         let mut checked = false;
         let mut rect = egui::Rect::NOTHING;
         ctx.run_ui(RawInput::default(), |ui| {
-            let before = ui.cursor().min;
-            let r = circular_toggle(ui, &mut checked);
-            let after = ui.min_rect();
-            assert!(after.width() <= 16.0 + 0.01, "layout width must stay 16");
-            rect = egui::Rect::from_min_size(before, egui::vec2(16.0, 16.0));
-            drop(r);
+            rect = circular_toggle(ui, &mut checked).rect;
         })
         .drop_without_applying_deltas();
-        // 3px outside the painted circle edge flips it.
-        let pos = rect.right_center() + egui::vec2(3.0, 0.0);
-        ctx.run_ui(click_at(pos), |ui| {
+        assert_eq!(rect.size(), egui::vec2(22.0, 22.0));
+        ctx.run_ui(click_at(rect.center()), |ui| {
             circular_toggle(ui, &mut checked);
         })
         .drop_without_applying_deltas();
-        assert!(checked, "click inside the padded target must flip");
-        // Well outside (past the padded target and egui interact radius) does not.
+        assert!(checked, "click on the check must flip");
         let pos = rect.right_center() + egui::vec2(14.0, 0.0);
         ctx.run_ui(click_at(pos), |ui| {
             circular_toggle(ui, &mut checked);
         })
         .drop_without_applying_deltas();
-        assert!(checked, "click outside the padded target must not flip");
+        assert!(checked, "click outside the check must not flip");
     }
 
     #[test]

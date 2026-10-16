@@ -23,7 +23,29 @@ pub fn decode_png(name: &str, bytes: &[u8]) -> ColorImage {
 }
 
 fn load(ctx: &Context, name: &str, bytes: &[u8]) -> TextureHandle {
+    #[cfg(test)]
+    if LIGHT.with(|l| l.get()) {
+        // A 2x2 stand-in: enough for layout and hit tests that never look at pixels.
+        let img = ColorImage::new([2, 2], vec![egui::Color32::WHITE; 4]);
+        return ctx.load_texture(format!("skin/{name}"), img, OPTIONS);
+    }
     ctx.load_texture(format!("skin/{name}"), decode_png(name, bytes), OPTIONS)
+}
+
+#[cfg(test)]
+thread_local! {
+    static LIGHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test helper: [`Skin::load`] with 2x2 placeholder textures instead of decoding every PNG.
+/// Tests that build a fresh `Context` per frame (the click scans) would otherwise spend minutes
+/// decoding the 4K art.
+#[cfg(test)]
+pub fn load_light(ctx: &Context) -> Skin {
+    LIGHT.with(|l| l.set(true));
+    let skin = Skin::load(ctx);
+    LIGHT.with(|l| l.set(false));
+    skin
 }
 
 macro_rules! tex {

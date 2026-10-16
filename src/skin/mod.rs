@@ -58,6 +58,9 @@ pub fn of(ctx: &egui::Context) -> Skin {
     if let Some(s) = ctx.data(|d| d.get_temp::<Skin>(egui::Id::new("ff-skin"))) {
         return s;
     }
+    #[cfg(test)]
+    let skin = textures::load_light(ctx);
+    #[cfg(not(test))]
     let skin = Skin::load(ctx);
     remember(ctx, &skin);
     skin

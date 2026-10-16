@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 
 use super::shell::ShellTab;
 
+/// The popups `--popup` can open.
+pub(crate) const POPUPS: [&str; 7] = [
+    "changed",
+    "switch",
+    "quit",
+    "delete-rule",
+    "delete-style",
+    "remove-economy",
+    "discard-config",
+];
+
 /// The parsed command line of the screenshot mode.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ShotArgs {
@@ -18,8 +29,7 @@ pub(crate) struct ShotArgs {
     pub png: PathBuf,
     /// The tab to show.
     pub tab: ShellTab,
-    /// A popup to open (rendered by later plans; stored here).
-    #[allow(dead_code)]
+    /// A popup to open before the first frame (one of [`POPUPS`]).
     pub popup: Option<String>,
     /// A status line text to show in place of the computed one (to see truncation).
     pub status: Option<String>,
@@ -45,7 +55,13 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                 tab = ShellTab::from_arg(&t)
                     .ok_or_else(|| format!("unknown tab `{t}` (rules|config|economy|about)"))?;
             }
-            "--popup" => popup = Some(value("--popup")?),
+            "--popup" => {
+                let p = value("--popup")?;
+                if !POPUPS.contains(&p.as_str()) {
+                    return Err(format!("unknown popup `{p}` ({})", POPUPS.join("|")));
+                }
+                popup = Some(p);
+            }
             "--status" => status = Some(value("--status")?),
             "--filter" => filter = Some(PathBuf::from(value("--filter")?)),
             other => return Err(format!("unknown argument `{other}`")),
@@ -199,6 +215,7 @@ mod tests {
         assert!(p(&["--nope"]).is_err());
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--tab", "x"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--popup", "nope"]).is_err());
     }
 
     #[test]

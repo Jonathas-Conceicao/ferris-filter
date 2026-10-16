@@ -57,7 +57,7 @@ pub fn ff_modal(
         return None;
     }
     let mut choice = None;
-    let width = 520.0_f32.min(ctx.content_rect().width() - 80.0).max(200.0);
+    let width = 580.0_f32.min(ctx.content_rect().width() - 80.0).max(200.0);
     let modal = egui::Modal::new(id)
         .backdrop_color(BACKDROP)
         .frame(egui::Frame::NONE.inner_margin(Margin::same(PAD as i8)))

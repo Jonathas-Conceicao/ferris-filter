@@ -50,7 +50,7 @@ use super::hotkey::{self, HotkeyStatus};
 use super::instance;
 use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
-use super::shell::{self, ConfigBarInputs, ShellTab, StatusInputs, StatusLine};
+use super::shell::{self, ConfigBarInputs, Popup, PopupData, ShellTab, StatusInputs, StatusLine};
 use super::tray::{self, OverlayCommand, TrayHandles};
 use super::visibility::{self, Visibility};
 use super::win::{self, OverlayWindow};
@@ -131,6 +131,11 @@ pub struct OverlayApp {
     /// The files found changed on disk (since they were loaded) by the last refused Apply;
     /// RELOAD or a successful OVERWRITE clears it.
     changed_on_disk: Vec<DiskFile>,
+
+    /// The changed-on-disk popup is open. `changed_on_disk` stays non-empty until a reload or an
+    /// overwrite, so "Keep editing" closes the popup through this flag alone; the bottom-bar
+    /// Overwrite slot opens it again.
+    changed_popup: bool,
 
     /// Whether the filter on disk matches what the last Apply wrote, as far as this session
     /// knows. A failed Apply leaves it exactly as it was.
@@ -791,12 +796,53 @@ impl OverlayApp {
         if shot.tab == ShellTab::Config {
             app.refresh_filters();
         }
+        app.open_shot_popup(shot.popup.as_deref());
         app.shot = Some(ShotState {
             args: shot,
             frames: 0,
             requested: false,
         });
         app
+    }
+
+    /// Opens the popup named by `--popup` with harmless sample data. Choices are never
+    /// dispatched in screenshot mode (no input arrives).
+    #[cfg(debug_assertions)]
+    fn open_shot_popup(&mut self, name: Option<&str>) {
+        match name {
+            Some("changed") => {
+                self.changed_on_disk = vec![DiskFile::Filter];
+                self.changed_popup = true;
+            }
+            Some("switch") => self.pending_switch = Some("other.filter".to_string()),
+            Some("quit") => self.quit_confirm = true,
+            Some("delete-rule") => {
+                // The row is expanded too: the list drops a pending delete of a collapsed row.
+                let id = self
+                    .working
+                    .as_ref()
+                    .and_then(|w| w.rows().first().map(|r| r.id));
+                self.list.confirm_delete = id;
+                self.list.expanded = id;
+            }
+            Some("delete-style") => {
+                let name = self.config.as_ref().ok().and_then(|c| {
+                    c.style_names()
+                        .into_iter()
+                        .find(|n| !c.badges(n).builtin)
+                        .map(|n| n.to_string())
+                });
+                self.config_ui.delete_armed = Some(name.unwrap_or_else(|| "kite".to_string()));
+            }
+            Some("remove-economy") => self.list.confirm_economy_remove = true,
+            Some("discard-config") => {
+                if let Ok(state) = &mut self.config {
+                    state.edit_style("S", config_state::StyleEdit::Font(Some(41)));
+                }
+                self.config_ui.revert_armed = true;
+            }
+            _ => {}
+        }
     }
 
     /// True in the debug screenshot mode (never in release builds).
@@ -860,6 +906,7 @@ impl OverlayApp {
             root,
             filter,
             changed_on_disk: Vec::new(),
+            changed_popup: false,
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
@@ -1121,6 +1168,7 @@ impl OverlayApp {
                 self.apply_state = self.apply_state.on_apply_failure();
                 if !changed.is_empty() {
                     self.changed_on_disk = changed;
+                    self.changed_popup = true;
                 }
                 return false;
             }
@@ -1201,6 +1249,185 @@ impl OverlayApp {
 
     /// Anything waiting for an Apply, judged with the same inputs as the per-frame indicator:
     /// rule edits (a staged economy op is part of `is_dirty`), a pending style rewrite, CONFIG edits.
+    /// Applies deferred row operations to the working filter and updates the status the way a
+    /// list click does.
+    fn run_row_actions(&mut self, row_actions: Vec<RowAction>) {
+        if let Some(working) = &mut self.working {
+            let (changed, status) =
+                apply_row_actions(working, &mut self.list, &self.query, row_actions);
+            if changed {
+                // An action can report `changed` without altering the bytes (clearing an
+                // absent name, moving a rule and back); only a real difference from the
+                // applied text makes the indicator stale.
+                if working.is_dirty() {
+                    self.apply_state = ApplyState::Unapplied;
+                }
+                self.apply_message = None;
+                self.list_status = None;
+            }
+            if status.is_some() {
+                self.list_status = status;
+            }
+        }
+    }
+
+    /// Which popups want to be open this frame.
+    fn popup_flags(&self, quit_requested: bool) -> shell::PopupFlags {
+        shell::PopupFlags {
+            quit: self.quit_confirm && !quit_requested,
+            changed: self.changed_popup && !self.changed_on_disk.is_empty(),
+            switch: self.pending_switch.is_some(),
+            delete_rule: self.list.confirm_delete.is_some(),
+            delete_style: self.config_ui.delete_armed.is_some(),
+            remove_economy: self.list.confirm_economy_remove,
+            discard_config: self.config_ui.revert_armed
+                && self.config.as_ref().is_ok_and(|c| c.dirty_count() > 0),
+        }
+    }
+
+    /// The text and buttons of an open popup, from the current state.
+    fn popup_spec_for(&self, popup: Popup) -> shell::PopupSpec {
+        match popup {
+            Popup::Quit => shell::popup_spec(PopupData::Quit),
+            Popup::ChangedOnDisk => {
+                let fallback = Path::new("the filter");
+                let path = self.filter.as_ref().ok().map_or(fallback, |l| l.path());
+                let files: Vec<String> =
+                    self.changed_on_disk.iter().map(|f| f.label(path)).collect();
+                shell::popup_spec(PopupData::ChangedOnDisk { files: &files })
+            }
+            Popup::SwitchFilter => shell::popup_spec(PopupData::SwitchFilter {
+                target: self.pending_switch.as_deref().unwrap_or(""),
+            }),
+            Popup::DeleteRule => {
+                let row = self
+                    .list
+                    .confirm_delete
+                    .and_then(|id| self.working.as_ref().and_then(|w| w.row(id)));
+                match row {
+                    Some(row) => {
+                        let label = row.name.clone().unwrap_or_else(|| {
+                            row.label
+                                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ')
+                                .to_string()
+                        });
+                        shell::popup_spec(PopupData::DeleteRule {
+                            index: row.index,
+                            label: &label,
+                            blocks: row.group_size,
+                        })
+                    }
+                    None => shell::popup_spec(PopupData::DeleteRule {
+                        index: 0,
+                        label: "",
+                        blocks: 1,
+                    }),
+                }
+            }
+            Popup::DeleteStyle => {
+                let name = self.config_ui.delete_armed.as_deref().unwrap_or("");
+                let users = self
+                    .working
+                    .as_ref()
+                    .and_then(|w| w.style_users().get(name).copied())
+                    .unwrap_or(0);
+                let mut prompt = config_state::delete_confirm_text(name, users);
+                if self.config_refs.contains(name) {
+                    prompt.push('\n');
+                    prompt.push_str(&config_state::config_warning(name));
+                }
+                shell::popup_spec(PopupData::DeleteStyle { prompt })
+            }
+            Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
+            Popup::DiscardConfig => shell::popup_spec(PopupData::DiscardConfig {
+                count: self.config.as_ref().map_or(0, |c| c.dirty_count()),
+            }),
+        }
+    }
+
+    /// Acts on a popup button (its index in the spec). Every popup closes on any choice; only
+    /// the explicit destructive or confirming button runs the v0.5 handler.
+    fn dispatch_popup(&mut self, ctx: &egui::Context, popup: Popup, choice: usize) {
+        let on_config = self.tab == ShellTab::Config;
+        match popup {
+            Popup::Quit => {
+                let quit_choice = match choice {
+                    0 => apply::QuitChoice::ApplyAndQuit,
+                    1 => apply::QuitChoice::QuitWithoutApplying,
+                    _ => apply::QuitChoice::Cancel,
+                };
+                let dirty = self.quit_dirty();
+                match apply::quit_step(dirty, true, apply::QuitEvent::Choice(quit_choice)) {
+                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
+                    apply::QuitStep::QuitNow => {
+                        // Deferred to the top of the next frame so the Phase 22 order holds:
+                        // shutdown before that frame's instance show-request poll (WR-08).
+                        self.quit_confirm = false;
+                        self.quit_next_frame = true;
+                        ctx.request_repaint();
+                    }
+                    apply::QuitStep::RunApply => {
+                        self.quit_confirm = false;
+                        let ok = self.run_apply(ctx, false);
+                        // A refusal leaves the stripe open showing it (Overwrite/Reload as today).
+                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
+                            == apply::QuitStep::QuitWhenIdle
+                        {
+                            self.quit_after_apply = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Popup::ChangedOnDisk => {
+                self.changed_popup = false;
+                match (choice, on_config) {
+                    (0, true) => self.handle_config_actions(ctx, vec![ConfigAction::Reload]),
+                    (0, false) => self.reload_pressed(),
+                    (1, true) => self.handle_config_actions(ctx, vec![ConfigAction::Overwrite]),
+                    (1, false) => {
+                        self.run_apply(ctx, true);
+                    }
+                    _ => {}
+                }
+            }
+            Popup::SwitchFilter => {
+                let action = if choice == 0 {
+                    ConfigAction::ConfirmSwitch
+                } else {
+                    ConfigAction::CancelSwitch
+                };
+                self.handle_config_actions(ctx, vec![action]);
+            }
+            Popup::DeleteRule => {
+                if let Some(id) = self.list.confirm_delete.take()
+                    && choice == 0
+                {
+                    self.run_row_actions(vec![RowAction::Delete(id)]);
+                }
+            }
+            Popup::DeleteStyle => {
+                if let Some(name) = self.config_ui.delete_armed.take()
+                    && choice == 0
+                {
+                    self.handle_config_actions(ctx, vec![ConfigAction::DeleteStyle(name)]);
+                }
+            }
+            Popup::RemoveEconomy => {
+                self.list.confirm_economy_remove = false;
+                if choice == 0 {
+                    self.stage_remove_economy();
+                }
+            }
+            Popup::DiscardConfig => {
+                self.config_ui.revert_armed = false;
+                if choice == 0 {
+                    self.handle_config_actions(ctx, vec![ConfigAction::Revert]);
+                }
+            }
+        }
+    }
+
     fn quit_dirty(&mut self) -> bool {
         let style_pending = self
             .working
@@ -2163,8 +2390,13 @@ impl eframe::App for OverlayApp {
             }
         }
         if clicks.apply {
-            // The Apply slot reads Overwrite while a file changed on disk.
-            self.run_apply(&egui_ctx, bar_state.apply.overwrite);
+            // The Apply slot reads Overwrite while a file changed on disk; it re-opens the
+            // popup, whose Overwrite button runs the guarded write.
+            if bar_state.apply.overwrite {
+                self.changed_popup = true;
+            } else {
+                self.run_apply(&egui_ctx, false);
+            }
         }
         if sync_clicked && let Ok(root) = &self.root {
             // The app root, not the process working directory: the overlay can be launched from
@@ -2175,38 +2407,6 @@ impl eframe::App for OverlayApp {
             self.economy.start(move || {
                 crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
             });
-        }
-
-        // Revert on CONFIG asks first; the popup is a skinned modal.
-        if self.config_ui.revert_armed {
-            let n = self.config.as_ref().map_or(0, |c| c.dirty_count());
-            if n == 0 {
-                self.config_ui.revert_armed = false;
-            } else {
-                let choice = crate::skin::popup::ff_modal(
-                    &egui_ctx,
-                    &skin,
-                    egui::Id::new("discard-config"),
-                    "Discard config changes?",
-                    &config_view::revert_prompt(n),
-                    &[
-                        crate::skin::popup::PopupButton {
-                            label: "Discard",
-                            danger: true,
-                            tip: None,
-                        },
-                        crate::skin::popup::PopupButton::new("Keep editing"),
-                    ],
-                );
-                match choice {
-                    Some(0) => {
-                        self.config_ui.revert_armed = false;
-                        config_actions.push(ConfigAction::Revert);
-                    }
-                    Some(_) => self.config_ui.revert_armed = false,
-                    None => {}
-                }
-            }
         }
 
         // Tab switch and CONFIG actions come first. Switching never applies or discards anything.
@@ -2236,77 +2436,40 @@ impl eframe::App for OverlayApp {
             self.list.pending_scroll = Some(target);
         }
         if !row_actions.is_empty() {
-            if let Some(working) = &mut self.working {
-                let (changed, status) =
-                    apply_row_actions(working, &mut self.list, &self.query, row_actions);
-                if changed {
-                    // An action can report `changed` without altering the bytes (clearing an
-                    // absent name, moving a rule and back); only a real difference from the
-                    // applied text makes the indicator stale.
-                    if working.is_dirty() {
-                        self.apply_state = ApplyState::Unapplied;
-                    }
-                    self.apply_message = None;
-                    self.list_status = None;
-                }
-                if status.is_some() {
-                    self.list_status = status;
-                }
-            }
+            self.run_row_actions(row_actions);
         }
-        match economy_action {
-            Some(rule_list::EconomyFooterAction::Add) => self.stage_add_economy(),
-            None => {}
+        if let Some(rule_list::EconomyFooterAction::Add) = economy_action {
+            self.stage_add_economy();
         }
 
-        if self.quit_confirm && !quit_requested {
-            let mut choice = None;
-            let modal = egui::Modal::new(egui::Id::new("quit_confirm")).show(ui.ctx(), |ui| {
-                ui.heading(apply::QUIT_CONFIRM_TITLE);
-                ui.horizontal(|ui| {
-                    if ui.button(apply::QUIT_APPLY_LABEL).clicked() {
-                        choice = Some(apply::QuitChoice::ApplyAndQuit);
-                    }
-                    if ui
-                        .button(apply::QUIT_DISCARD_LABEL)
-                        .on_hover_text(apply::QUIT_DISCARD_TIP)
-                        .clicked()
-                    {
-                        choice = Some(apply::QuitChoice::QuitWithoutApplying);
-                    }
-                    if ui.button(apply::QUIT_CANCEL_LABEL).clicked() {
-                        choice = Some(apply::QuitChoice::Cancel);
-                    }
-                });
-            });
-            // Escape or a click outside counts as Cancel.
-            if choice.is_none() && modal.should_close() {
-                choice = Some(apply::QuitChoice::Cancel);
-            }
+        // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
+        // survive hiding and re-summoning the stripe, so an open popup is still there.
+        if self.config_ui.revert_armed && self.config.as_ref().map_or(0, |c| c.dirty_count()) == 0 {
+            self.config_ui.revert_armed = false;
+        }
+        if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
+            let spec = self.popup_spec_for(popup);
+            let buttons: Vec<crate::skin::popup::PopupButton> = spec
+                .buttons
+                .iter()
+                .map(|(label, danger, tip)| crate::skin::popup::PopupButton {
+                    label,
+                    danger: *danger,
+                    tip: *tip,
+                })
+                .collect();
+            let choice = crate::skin::popup::ff_modal(
+                ui.ctx(),
+                &skin,
+                egui::Id::new(("ff-popup", format!("{popup:?}"))),
+                &spec.title,
+                &spec.body,
+                &buttons,
+            );
             if let Some(choice) = choice {
-                let dirty = self.quit_dirty();
-                match apply::quit_step(dirty, true, apply::QuitEvent::Choice(choice)) {
-                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
-                    apply::QuitStep::QuitNow => {
-                        // Deferred to the top of the next frame so the Phase 22 order holds:
-                        // shutdown before that frame's instance show-request poll (WR-08).
-                        self.quit_confirm = false;
-                        self.quit_next_frame = true;
-                        ui.ctx().request_repaint();
-                    }
-                    apply::QuitStep::RunApply => {
-                        self.quit_confirm = false;
-                        let egui_ctx = ui.ctx().clone();
-                        let ok = self.run_apply(&egui_ctx, false);
-                        // A refusal leaves the stripe open showing it (OVERWRITE/RELOAD as today).
-                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
-                            == apply::QuitStep::QuitWhenIdle
-                        {
-                            self.quit_after_apply = true;
-                        }
-                    }
-                    _ => {}
-                }
+                let egui_ctx = ui.ctx().clone();
+                self.dispatch_popup(&egui_ctx, popup, choice);
+                egui_ctx.request_repaint();
             }
         }
 
@@ -3586,5 +3749,106 @@ mod tests {
         assert!(apply_row_actions(&mut working, &mut list, "", vec![insert]).0);
         assert_ne!(list.epoch, epoch, "an inserted line can shift ordinals");
         assert_eq!(list.focus_line.map(|(_, l)| l), Some(2));
+    }
+
+    // ---- popups (Phase 30-03) ----
+
+    /// An app on temp-free in-memory state: built only to drive `dispatch_popup`, which touches
+    /// nothing on disk for the choices tested here.
+    fn popup_app(filter_text: &str) -> (super::OverlayApp, egui::Context) {
+        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        let skin = crate::skin::install(&ctx);
+        let mut app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("test".to_string()),
+            None,
+            skin,
+        );
+        app.working = Some(WorkingFilter::from_text(filter_text));
+        (app, ctx)
+    }
+
+    #[test]
+    fn delete_popup_choice_deletes_the_rule_and_keep_does_not() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let id = app.working.as_ref().unwrap().rows()[0].id;
+        app.list.confirm_delete = Some(id);
+        assert_eq!(
+            crate::overlay::shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DeleteRule)
+        );
+        app.dispatch_popup(&ctx, Popup::DeleteRule, 1);
+        assert_eq!(app.working.as_ref().unwrap().rows().len(), 2);
+        assert!(app.list.confirm_delete.is_none());
+
+        app.list.confirm_delete = Some(id);
+        app.dispatch_popup(&ctx, Popup::DeleteRule, 0);
+        assert_eq!(app.working.as_ref().unwrap().rows().len(), 1);
+        assert!(app.list.confirm_delete.is_none());
+        assert!(app.working.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn changed_on_disk_popup_keep_editing_closes_but_overwrite_slot_reopens() {
+        use crate::overlay::shell::{Popup, active_popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.changed_on_disk = vec![DiskFile::Filter];
+        app.changed_popup = true;
+        assert_eq!(
+            active_popup(app.popup_flags(false)),
+            Some(Popup::ChangedOnDisk)
+        );
+        // Quit outranks it.
+        app.quit_confirm = true;
+        assert_eq!(active_popup(app.popup_flags(false)), Some(Popup::Quit));
+        app.quit_confirm = false;
+        // Keep editing: the popup closes, the refusal stays.
+        app.dispatch_popup(&ctx, Popup::ChangedOnDisk, 2);
+        assert_eq!(active_popup(app.popup_flags(false)), None);
+        assert_eq!(app.changed_on_disk, vec![DiskFile::Filter]);
+        // The bottom-bar Overwrite slot sets the flag again.
+        app.changed_popup = true;
+        assert_eq!(
+            active_popup(app.popup_flags(false)),
+            Some(Popup::ChangedOnDisk)
+        );
+    }
+
+    #[test]
+    fn quit_popup_cancel_keeps_running_and_discard_defers_one_frame() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 2);
+        assert!(!app.quit_confirm && !app.quit_next_frame);
+
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(!app.quit_confirm);
+        assert!(app.quit_next_frame, "shutdown waits for the next frame");
+        assert!(!app.quit_after_apply);
+    }
+
+    #[test]
+    fn remaining_popups_close_on_the_safe_choice_without_acting() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        app.pending_switch = Some("other.filter".to_string());
+        app.dispatch_popup(&ctx, Popup::SwitchFilter, 1);
+        assert!(app.pending_switch.is_none());
+        app.list.confirm_economy_remove = true;
+        app.dispatch_popup(&ctx, Popup::RemoveEconomy, 1);
+        assert!(!app.list.confirm_economy_remove);
+        app.config_ui.delete_armed = Some("kite".to_string());
+        app.dispatch_popup(&ctx, Popup::DeleteStyle, 1);
+        assert!(app.config_ui.delete_armed.is_none());
+        app.config_ui.revert_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
+        assert!(!app.config_ui.revert_armed);
     }
 }

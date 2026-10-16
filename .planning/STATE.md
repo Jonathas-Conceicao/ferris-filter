@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
 status: executing
-stopped_at: Completed 33-01-PLAN.md
-last_updated: "2026-10-16T16:54:11.732Z"
+stopped_at: Completed 33-02-PLAN.md
+last_updated: "2026-10-16T17:04:07.757Z"
 last_activity: 2026-10-16
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 24
-  completed_plans: 20
+  completed_plans: 21
   percent: 17
 ---
 
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-10-16)
 
 ## Current Position
 
-Phase: 32 (rule-dividers-economy-banner) — COMPLETE, awaiting verification
-Plan: 6 of 6 (complete)
-Status: Ready to execute (Phase 33, plan 1 of 5 complete)
+Phase: 33 (style-table-line-by-line-style-editor) — in progress
+Plan: 2 of 5 (Phase 33)
+Status: Executing Phase 33 (plan 2 of 5 complete)
 Last activity: 2026-10-16
 
 Progress (v0.6): [█░░░░░░░░░] 14%
@@ -85,6 +85,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 30 P03 | 60min | 2 tasks | 6 files |
 | Phase 31 P07 | 40min | 3 tasks | 8 files |
 | Phase 33 P01 | 40min | 2 tasks | 5 files |
+| Phase 33 P02 | 50min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -192,6 +193,7 @@ work (carried forward past the v0.3 close):
 - [Phase 28]: 28-04: styles.json/tiers.json untracked (index only) and git-ignored; committed -default.json files hold the defaults
 - [Phase 30]: Config Revert uses an interim ff_modal Discard confirm until the popup plan
 - [Phase 33]: 33-01: colour picker edits gamma HSV behind the linear Hsva interface; Hex field 72pt without caption to fit one line
+- [Phase 33]: 33-02: Preview column yields below the 110pt Name minimum so all columns end by width-10
 
 ### Pending Todos
 
@@ -347,8 +349,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T16:54:11.724Z
-Stopped at: Completed 33-01-PLAN.md
+Last session: 2026-10-16T17:04:07.746Z
+Stopped at: Completed 33-02-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

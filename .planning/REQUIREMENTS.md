@@ -101,7 +101,7 @@ retired. Every v0.5 editor capability survives the move.
 
 ### Styles (STY)
 
-- [ ] **STY-01**: The CONFIG style tables have a column header row (Visibility / Name / Icon /
+- [x] **STY-01**: The CONFIG style tables have a column header row (Visibility / Name / Icon /
   Preview / Order); built-in styles show the Order arrows greyed out so the columns line up; the
   textual Show/Hide caption before the icon is gone (the visibility switch says it).
 
@@ -187,7 +187,7 @@ retired. Every v0.5 editor capability survives the move.
 | SECT-03 | Phase 32 | Complete |
 | SECT-04 | Phase 32 | Complete |
 | SECT-05 | Phase 32 | Complete |
-| STY-01 | Phase 33 | Pending |
+| STY-01 | Phase 33 | Complete |
 | STY-02 | Phase 33 | Pending |
 | STY-03 | Phase 33 | Complete |
 | STY-04 | Phase 33 | Pending |

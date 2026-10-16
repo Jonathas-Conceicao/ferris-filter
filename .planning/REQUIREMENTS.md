@@ -110,7 +110,7 @@ retired. Every v0.5 editor capability survives the move.
   swatches, font size, minimap (size, colour, game-icon shape), beam (colour, Temp), sound and
   volume.
 
-- [ ] **STY-03**: Clicking a colour swatch opens a colour-picker popup (hue/saturation gradient plus
+- [x] **STY-03**: Clicking a colour swatch opens a colour-picker popup (hue/saturation gradient plus
   exact RGB/hex input, alpha where the target supports it) whose frame and controls use the game
   art; the same picker serves rule colour actions.
 
@@ -189,7 +189,7 @@ retired. Every v0.5 editor capability survives the move.
 | SECT-05 | Phase 32 | Complete |
 | STY-01 | Phase 33 | Pending |
 | STY-02 | Phase 33 | Pending |
-| STY-03 | Phase 33 | Pending |
+| STY-03 | Phase 33 | Complete |
 | STY-04 | Phase 33 | Pending |
 | STY-05 | Phase 33 | Pending |
 | ECO-01 | Phase 34 | Pending |

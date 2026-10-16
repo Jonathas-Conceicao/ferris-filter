@@ -248,7 +248,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 33-01-PLAN.md — Skinned colour picker widget (skin::colour_picker), Dracula quick picks, shared paint_box_behind
+- [x] 33-01-PLAN.md — Skinned colour picker widget (skin::colour_picker), Dracula quick picks, shared paint_box_behind
 - [ ] 33-02-PLAN.md — Style table: Visibility / Name / Icon / Preview / Order header, icon column, greyed built-in arrows
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -303,7 +303,7 @@ Plans:
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
 | 32. Rule Dividers & Economy Banner | v0.6 | 6/6 | Complete   | 2026-10-16 |
-| 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
+| 33. Style Table & Line-by-Line Style Editor | v0.6 | 1/5 | In Progress|  |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |
 
@@ -389,7 +389,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 5/5 plans complete
+**Plans:** 1/5 plans executed
 
 Plans:
 

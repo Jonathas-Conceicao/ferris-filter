@@ -4156,6 +4156,7 @@ mod tests {
             rules: 1,
             can_move_up: false,
             can_move_down: false,
+            can_remove: !economy,
         };
         let all = [sec(0, "A", false), sec(1, "B", false), sec(2, "Eco", true)];
         assert_eq!(super::nth_user_section(&all, 1).unwrap().name, "A");

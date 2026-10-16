@@ -458,3 +458,22 @@ fn nothing_crosses_the_economy_banner() {
         src.as_bytes(),
     );
 }
+
+#[test]
+fn divider_below_economy_stays_put() {
+    let src = format!(
+        "Show\n\n{RULE}\n{}\n{RULE}\n\nShow\n\tClass \"Rings\"\n\n{}\nHide\n",
+        section::BEGIN_LINE,
+        banner("After")
+    );
+    let mut d = parse(src.as_bytes()).unwrap();
+    // ordinals: 0 = Economy, 1 = After
+    assert!(!d.section_can_move(1, false));
+    assert!(!d.section_can_remove(1));
+    assert!(d.move_section(1, false).is_err());
+    assert!(matches!(
+        d.remove_section(1),
+        Err(ferrisfilter::filter::EditError::SectionLocked)
+    ));
+    assert_bytes_eq("untouched", d.serialize().as_bytes(), src.as_bytes());
+}

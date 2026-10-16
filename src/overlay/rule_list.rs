@@ -659,7 +659,7 @@ fn draw_section_header(
             ECONOMY_TIP,
         );
     } else {
-        if ff_x_button(&mut right, "Remove section (its rules stay)").clicked() {
+        if sec.can_remove && ff_x_button(&mut right, "Remove section (its rules stay)").clicked() {
             frame.actions.push(RowAction::RemoveSection(sec.ordinal));
             list.editing_section = None;
         }

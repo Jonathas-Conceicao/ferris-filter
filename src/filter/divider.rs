@@ -131,10 +131,28 @@ impl Document {
         self.commit_unchanged(new)
     }
 
+    /// Whether the banner at `ordinal` directly follows the economy banner. The economy section
+    /// runs to the next banner, so that divider is what keeps the user rules after it out of it.
+    fn follows_economy(&self, ordinal: usize) -> bool {
+        ordinal > 0
+            && section::banners(self)
+                .get(ordinal - 1)
+                .is_some_and(|b| b.kind == BannerKind::Economy)
+    }
+
+    /// Whether the divider at `ordinal` can be removed: a user divider that does not directly
+    /// follow the economy section (removing it would pull its rules into that section).
+    pub fn section_can_remove(&self, ordinal: usize) -> bool {
+        self.user_banner(ordinal).is_ok() && !self.follows_economy(ordinal)
+    }
+
     /// Delete the banner (its rules stay) and one adjacent blank line: the one below if present,
     /// else the one above.
     pub fn remove_section(&mut self, ordinal: usize) -> Result<(), EditError> {
         let start = self.user_banner(ordinal)?;
+        if self.follows_economy(ordinal) {
+            return Err(EditError::SectionLocked);
+        }
         let mut from = start;
         let mut to = start + 3;
         if self.lines.get(to).is_some_and(is_blank) {
@@ -183,6 +201,10 @@ impl Document {
     /// rule (file edge, another banner, the economy section).
     fn hop(&self, ordinal: usize, up: bool) -> Result<Option<Hop>, EditError> {
         let start = self.user_banner(ordinal)?;
+        // Moving down would put the rule above the divider, into the economy section.
+        if !up && self.follows_economy(ordinal) {
+            return Ok(None);
+        }
         let banners = section::banners(self);
         let mut be = start + 3;
         while self.lines.get(be).is_some_and(is_blank) {
@@ -457,6 +479,40 @@ mod tests {
         ));
         assert!(matches!(
             d.remove_section(0).unwrap_err(),
+            EditError::SectionLocked
+        ));
+        assert_eq!(d.serialize(), src);
+    }
+
+    #[test]
+    fn divider_below_economy_cannot_move_down_or_be_removed() {
+        let src = format!(
+            "Show
+
+{R}
+{}
+{R}
+
+Show
+	Class \"Rings\"
+
+{R}
+# ff:section After
+{R}
+
+Hide
+",
+            section::BEGIN_LINE
+        );
+        let mut d = p(&src);
+        assert!(!d.section_can_move(1, false));
+        assert!(!d.section_can_remove(1));
+        assert!(matches!(
+            d.move_section(1, false).unwrap_err(),
+            EditError::NoNeighbour
+        ));
+        assert!(matches!(
+            d.remove_section(1).unwrap_err(),
             EditError::SectionLocked
         ));
         assert_eq!(d.serialize(), src);

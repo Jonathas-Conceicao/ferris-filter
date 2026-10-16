@@ -248,6 +248,8 @@ pub struct SectionRow {
     pub rules: usize,
     pub can_move_up: bool,
     pub can_move_down: bool,
+    /// False for the economy header and for the divider right below the economy section.
+    pub can_remove: bool,
 }
 
 /// One line of the displayed list, in file order.
@@ -822,6 +824,7 @@ impl WorkingFilter {
                     rules: if economy { econ_blocks } else { tally[k] },
                     can_move_up: !economy && self.doc.section_can_move(k, true),
                     can_move_down: !economy && self.doc.section_can_move(k, false),
+                    can_remove: self.doc.section_can_remove(k),
                 }
             })
             .collect();
@@ -872,6 +875,7 @@ impl WorkingFilter {
                 rules: blocks,
                 can_move_up: false,
                 can_move_down: false,
+                can_remove: false,
             }),
             None => {}
         }

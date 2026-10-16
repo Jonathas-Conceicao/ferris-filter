@@ -1,0 +1,23 @@
+[package]
+name = "ff-art"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Dev tool: extracts Path of Exile 2 UI art into FerrisFilter's assets/ (never a dependency of ff)"
+
+# Its own workspace root, so this crate and its heavy dependencies never join the FerrisFilter
+# build: `cargo build` / `cargo test` at the repo root do not see it, and `ff`'s dependency tree
+# is unchanged. Build it from this folder (see README.md -> "ff-art").
+[workspace]
+
+[dependencies]
+# Reads the game's Bundles2 index read-only. Needs a nightly toolchain (the crate uses
+# `#![feature]`), which is this machine's default; see README.md.
+poe_data_tools = "4.0.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+image-extras = { version = "0.1", features = ["dds"] }
+resvg = "0.45"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+anyhow = "1.0"

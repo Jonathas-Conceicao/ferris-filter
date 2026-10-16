@@ -1,0 +1,248 @@
+# ff-art manifest: which Path of Exile 2 files are extracted into assets/poe2/.
+#
+# Run `cargo run --release` in tools/ff-art (see README.md -> "ff-art") after a game patch to
+# refresh every file listed here. The art belongs to Grinding Gear Games; see README.md.
+#
+# [[image]] fields:
+#   path       game virtual path of the base-resolution .dds (case does not matter)
+#   out        output PNG, relative to assets/poe2/
+#   prefer_4k  use the `4K/` sibling when the game has one (crisper on high-DPI screens)
+#   trim       drop the transparent right/bottom gutter the game's textures carry
+#   crop       [x, y, w, h] in the pixels of the image actually used (after trim)
+#   clear      [[x, y, w, h], ...] regions made transparent after cropping
+#
+# Find more paths with `ff-art list <pattern>`, eyeball them with `ff-art dump` + `ff-art sheet`.
+
+# --- Options window (Art/Textures/Interface/2D/2DArt/UIImages/InGame/OptionsMenu, "Options Menu")
+
+# The ornate header (angels, hooded figure, gold title plate). No 4K variant exists.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/titlebar.dds"
+out = "options/titlebar.png"
+trim = true
+
+# The whole Options page: stone frame, thin gold inner border, recessed button bar at the
+# bottom. The gear drawing in the middle is cleared; FerrisFilter draws its own background.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionspagesframe.dds"
+out = "options/pages_frame.png"
+prefer_4k = true
+trim = true
+clear = [[104, 150, 1106, 1232]]
+
+# Tabs: a tab is left + centre (stretched) + right; the tab bar strip runs under them.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutableft.dds"
+out = "options/tab_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutabcenter.dds"
+out = "options/tab_center.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutabright.dds"
+out = "options/tab_right.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutexture.dds"
+out = "options/tab_bar.png"
+prefer_4k = true
+trim = true
+
+# The lighter, stone-coloured tab shape (older "Options Menu" art) used for the selected tab.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/left.dds"
+out = "options/tab_sel_left.png"
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/centre.dds"
+out = "options/tab_sel_center.png"
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/right.dds"
+out = "options/tab_sel_right.png"
+trim = true
+
+# Slider: track (bg) and gold fill as left cap + stretched middle + right cap, diamond thumb.
+# Cropped to the same 28px-high box so the fill stays vertically centred on the track.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderbgleft.dds"
+out = "options/slider_bg_left.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderbgmiddle.dds"
+out = "options/slider_bg_middle.png"
+prefer_4k = true
+crop = [0, 0, 481, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderbgright.dds"
+out = "options/slider_bg_right.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderfillleft.dds"
+out = "options/slider_fill_left.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderfillmiddle.dds"
+out = "options/slider_fill_middle.png"
+prefer_4k = true
+crop = [0, 0, 486, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderfillright.dds"
+out = "options/slider_fill_right.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderthumb.dds"
+out = "options/slider_thumb.png"
+prefer_4k = true
+trim = true
+
+# Gold-edged dark square, nine-sliced for dropdown popups and boxes.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/9slicemenu.dds"
+out = "options/box_9slice.png"
+trim = true
+
+# Scrollbar: thin track line and the gold thumb (top cap + stretched centre + bottom cap).
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/scrollbararea.dds"
+out = "options/scroll_track.png"
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/top.dds"
+out = "options/scroll_thumb_top.png"
+crop = [0, 0, 20, 10]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/centre.dds"
+out = "options/scroll_thumb_center.png"
+crop = [0, 0, 20, 12]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/bottom.dds"
+out = "options/scroll_thumb_bottom.png"
+crop = [0, 0, 20, 10]
+
+# Thin gold rule under section titles.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/underliningfortitles.dds"
+out = "options/title_underline.png"
+trim = true
+
+# --- Common controls (Art/Textures/Interface/2D/2DArt/UIImages/Common)
+
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/checkboxchecked.dds"
+out = "common/check_on.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/checkboxunchecked.dds"
+out = "common/check_off.png"
+prefer_4k = true
+trim = true
+
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonclosenormal.dds"
+out = "common/close_normal.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonclosehover.dds"
+out = "common/close_hover.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonclosedown.dds"
+out = "common/close_down.png"
+prefer_4k = true
+trim = true
+
+# The gold dropdown triangle.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncomboboxnormal.dds"
+out = "common/combo_arrow.png"
+prefer_4k = true
+crop = [0, 0, 46, 46]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncomboboxhover.dds"
+out = "common/combo_arrow_hover.png"
+prefer_4k = true
+crop = [0, 0, 46, 46]
+
+# Generic button, 3-slice (left cap + stretched middle + right cap), three states.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericnormalleft.dds"
+out = "common/button_normal_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericnormalmiddle.dds"
+out = "common/button_normal_middle.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericnormalright.dds"
+out = "common/button_normal_right.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenerichoverleft.dds"
+out = "common/button_hover_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenerichovermiddle.dds"
+out = "common/button_hover_middle.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenerichoverright.dds"
+out = "common/button_hover_right.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericpressedleft.dds"
+out = "common/button_pressed_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericpressedmiddle.dds"
+out = "common/button_pressed_middle.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericpressedright.dds"
+out = "common/button_pressed_right.png"
+prefer_4k = true
+trim = true
+
+# --- Minimap icon sheet (not used by the prototype; kept for the item-filter icon previews).
+[[image]]
+path = "art/2dart/minimap/player.dds"
+out = "minimap/player.png"
+
+# --- Fonts (by exljbris / Jos Buivenga, shipped with the game).
+[[font]]
+path = "art/2dart/fonts/fontin-smallcaps.ttf"
+out = "fonts/Fontin-SmallCaps.ttf"
+[[font]]
+path = "art/2dart/fonts/fontin-regular.ttf"
+out = "fonts/Fontin-Regular.ttf"
+
+# --- Ferris background (rendered from the committed SVG; no game install needed).
+# A pale white line drawing for a 660px-wide, full-height window, at 2x for crispness.
+[ferris]
+svg = "assets/ferris/rustacean-flat-happy.svg"
+out = "assets/ui/ferris-bg.png"
+width = 1200
+height = 2000
+crab_fraction = 0.92
+crab_center_y = 0.5
+line_alpha = 34
+line_radius = 2

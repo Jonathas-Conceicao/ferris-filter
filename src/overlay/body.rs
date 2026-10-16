@@ -30,7 +30,6 @@ use super::widgets;
 use crate::models::config::Style;
 use crate::skin::fonts::{regular, small_caps};
 use crate::skin::palette as pal;
-use crate::skin::slice::{self, Margins};
 use crate::skin::widgets as widgets_skin;
 
 /// Left inset of a condition / action card: its value controls start in the control column.
@@ -1282,23 +1281,6 @@ fn pick_row(ui: &mut egui::Ui, text: &str, greyed: bool, clickable: bool) -> egu
     r
 }
 
-/// Paints the game's box art behind everything a popup drew so far (the shape `bg` was reserved
-/// first), the same way `ff_dropdown` frames its list.
-fn paint_box_behind(ui: &mut egui::Ui, skin: &crate::skin::Skin, bg: egui::layers::ShapeIdx) {
-    let frame_rect = ui.min_rect().expand(6.0);
-    let mut mesh = egui::Mesh::with_texture(skin.box_9slice.id());
-    for p in slice::nine_slice(
-        frame_rect,
-        skin.box_9slice.size(),
-        Margins::new(8.0, 8.0, 8.0, 8.0),
-        1.0,
-        ui.painter().pixels_per_point(),
-    ) {
-        mesh.add_rect_with_uv(p.dest, p.uv, egui::Color32::WHITE);
-    }
-    ui.painter().set(bg, egui::Shape::mesh(mesh));
-}
-
 /// A searchable, grouped picker anchored to `button` (shared with `+ style`). Returns the entry
 /// the user picked this frame. Entries for which `disabled` gives a reason are shown greyed with
 /// that reason as their tooltip and cannot be clicked. Entries `present` on the rule are also
@@ -1413,7 +1395,7 @@ pub(crate) fn picker_popup(
             if picked.is_some() {
                 egui::Popup::close_id(ui.ctx(), popup_id);
             }
-            paint_box_behind(ui, &skin, bg);
+            crate::skin::popup::paint_box_behind(ui, &skin, bg);
             picked
         });
     if !egui::Popup::is_id_open(&ctx, popup_id) {

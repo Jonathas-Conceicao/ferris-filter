@@ -104,6 +104,23 @@ pub fn ff_modal(
     choice
 }
 
+/// Paints the game's box art behind everything a popup drew so far (the shape `bg` was reserved
+/// first), the same way `ff_dropdown` frames its list.
+pub fn paint_box_behind(ui: &mut Ui, skin: &Skin, bg: egui::layers::ShapeIdx) {
+    let frame_rect = ui.min_rect().expand(6.0);
+    let mut mesh = egui::Mesh::with_texture(skin.box_9slice.id());
+    for p in slice::nine_slice(
+        frame_rect,
+        skin.box_9slice.size(),
+        Margins::new(8.0, 8.0, 8.0, 8.0),
+        1.0,
+        ui.painter().pixels_per_point(),
+    ) {
+        mesh.add_rect_with_uv(p.dest, p.uv, Color32::WHITE);
+    }
+    ui.painter().set(bg, Shape::mesh(mesh));
+}
+
 /// The title in small caps over the faint gold rule.
 fn title_block(ui: &mut Ui, skin: &Skin, title: &str) {
     let galley = ui

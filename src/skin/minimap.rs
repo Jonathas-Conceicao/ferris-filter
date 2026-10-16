@@ -46,6 +46,19 @@ pub const SWATCHES: [Color32; 11] = [
     Color32::from_rgb(0x9C, 0x2C, 0xD8), // Purple
 ];
 
+/// The quick picks of the colour picker: the Dracula palette (see CLAUDE.md), name and colour.
+pub const DRACULA: [(&str, Color32); 9] = [
+    ("Background", Color32::from_rgb(40, 42, 54)),
+    ("Foreground", Color32::from_rgb(248, 248, 242)),
+    ("Cyan", Color32::from_rgb(139, 233, 253)),
+    ("Green", Color32::from_rgb(80, 250, 123)),
+    ("Orange", Color32::from_rgb(255, 184, 108)),
+    ("Pink", Color32::from_rgb(255, 121, 198)),
+    ("Purple", Color32::from_rgb(189, 147, 249)),
+    ("Red", Color32::from_rgb(255, 85, 85)),
+    ("Yellow", Color32::from_rgb(241, 250, 140)),
+];
+
 /// The on-screen size, in points, of an icon of `size` (0 = Large) drawn at `large` points.
 pub fn icon_points(size: usize, large: f32) -> f32 {
     match size {
@@ -92,6 +105,26 @@ mod tests {
         assert!(last.max.y < 1.0 && last.min.y > 10.0 / 11.0);
         // Out of range clamps to the last cell instead of sampling outside the atlas.
         assert_eq!(icon_uv(99, 99, [768, 704]), last);
+    }
+
+    #[test]
+    fn dracula_quick_picks_are_the_palette() {
+        let rgb: Vec<[u8; 3]> = DRACULA.iter().map(|(_, c)| [c.r(), c.g(), c.b()]).collect();
+        assert_eq!(
+            rgb,
+            vec![
+                [40, 42, 54],
+                [248, 248, 242],
+                [139, 233, 253],
+                [80, 250, 123],
+                [255, 184, 108],
+                [255, 121, 198],
+                [189, 147, 249],
+                [255, 85, 85],
+                [241, 250, 140],
+            ]
+        );
+        assert_eq!(DRACULA[5].0, "Pink");
     }
 
     #[test]

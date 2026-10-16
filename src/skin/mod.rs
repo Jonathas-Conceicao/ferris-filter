@@ -15,6 +15,7 @@
 //!   `ff_status`).
 //! - [`editor`]: the style-editor pieces (segmented switch, colour swatches and cards, item-label
 //!   preview, minimap icons, cards).
+//! - [`colour_picker`]: the skinned colour picker popup shared by the style table and the rules.
 //! - [`popup`]: the skinned modal (dimmed window, game box, game buttons).
 //! - [`icons`]: painted flag icons for rule rows.
 //! - [`minimap`]: the item-filter minimap shapes / colours and their atlas lookup.
@@ -23,6 +24,7 @@
 //! The PNGs come from `tools/ff-art` (see `assets/poe2/manifest.toml`); the art belongs to
 //! Grinding Gear Games (see README.md).
 
+pub mod colour_picker;
 pub mod editor;
 pub mod fonts;
 pub mod icons;

@@ -207,7 +207,7 @@ Plans:
 **Plans**: 6 plansPlans:
 **Wave 1**
 
-- [ ] 32-01-PLAN.md — Filter model: three-line `# ff:section` / begin-only economy banners, parser fences, old markers dropped, v0.4 conversion retargeted, tests migrated
+- [x] 32-01-PLAN.md — Filter model: three-line `# ff:section` / begin-only economy banners, parser fences, old markers dropped, v0.4 conversion retargeted, tests migrated
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -281,7 +281,7 @@ Plans:
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
-| 32. Rule Dividers & Economy Banner | v0.6 | 0/TBD | Not started | - |
+| 32. Rule Dividers & Economy Banner | v0.6 | 1/6 | In Progress|  |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |

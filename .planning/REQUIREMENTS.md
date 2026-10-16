@@ -65,7 +65,7 @@ retired. Every v0.5 editor capability survives the move.
 
 ### Rule Dividers (SECT)
 
-- [ ] **SECT-01**: A divider is written in the filter as an explicit three-line banner readable in
+- [x] **SECT-01**: A divider is written in the filter as an explicit three-line banner readable in
   raw text:
   ```
   ################################################################################
@@ -84,7 +84,7 @@ retired. Every v0.5 editor capability survives the move.
 - [ ] **SECT-03**: User can collapse and expand a section, hiding every rule up to the next divider;
   the collapsed state is remembered per filter in `ff-settings.json`, never written into the filter.
 
-- [ ] **SECT-04**: The economy section is shown as the last divider, a locked "Economy" section
+- [x] **SECT-04**: The economy section is shown as the last divider, a locked "Economy" section
   (collapsed by default, read-only rows), replacing the `+ N locked rule blocks` footer row. The
   divider is display-only: it can be collapsed and expanded, but adding or removing the economy
   section is done from the ECONOMY tab (ECO-01), not from the rule list. It has a begin banner only
@@ -182,10 +182,10 @@ retired. Every v0.5 editor capability survives the move.
 | RULES-01 | Phase 31 | Complete |
 | RULES-02 | Phase 31 | Complete |
 | RULES-03 | Phase 31 | Complete |
-| SECT-01 | Phase 32 | Pending |
+| SECT-01 | Phase 32 | Complete |
 | SECT-02 | Phase 32 | Pending |
 | SECT-03 | Phase 32 | Pending |
-| SECT-04 | Phase 32 | Pending |
+| SECT-04 | Phase 32 | Complete |
 | SECT-05 | Phase 32 | Pending |
 | STY-01 | Phase 33 | Pending |
 | STY-02 | Phase 33 | Pending |

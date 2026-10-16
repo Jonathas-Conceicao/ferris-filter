@@ -188,7 +188,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > Clicking a row expands a **line-by-line editor** without frames: Visibility Show/Hide, Label preview, Text / Border / Background colour cards,
 > Font size (check + slider 1-45), Minimap (None / Large / Medium / Small, 11 colours, the 12 game shapes), Beam (none + 11 colours, Temp),
 > Sound (None / Alert 1-16 / Custom file) and Volume, Drop sound, and for custom styles **Delete style** at the bottom (the Delete style? popup);
-> switching Minimap / Beam / Sound back from None restores the last values of this session. Edits stay in memory until Apply. A custom style's name is an inline text field: renaming keeps its rules linked by id (rules
+> switching Minimap / Beam / Sound back from None, or turning Font size back on, restores the last values of this session (a custom sound file is kept even through an Alert). Edits stay in memory until Apply. A custom style's name is an inline text field: renaming keeps its rules linked by id (rules
 > still carrying a legacy name-only tag for it are moved to the new name in memory too) and is one
 > revertible edit. Caveat: `config.json` references styles by name, so renaming a custom style it uses
 > makes `generate` fail with the unknown-style error until `config.json` is updated. Custom styles can be

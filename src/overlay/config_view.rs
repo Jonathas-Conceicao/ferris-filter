@@ -1211,7 +1211,16 @@ fn style_editor(
         let check = crate::skin::widgets::ff_check(ui, &skin, &mut on, "Font size");
         probe("ed-font-check", check.rect);
         if check.changed() {
-            edit(actions, name, StyleEdit::Font(on.then_some(32)));
+            // WR-03: turning it back on restores the size it had before it was turned off.
+            let next = if on {
+                Some(recall::<u8>(ui, name, "font", epoch).map_or(32, i64::from))
+            } else {
+                if let Some(f) = style.font {
+                    remember(ui, name, "font", epoch, &f);
+                }
+                None
+            };
+            edit(actions, name, StyleEdit::Font(next));
         }
         if let Some(font) = style.font {
             let mut v = f64::from(font);
@@ -2635,6 +2644,20 @@ mod tests {
         let mut cfg = expanded("kite");
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
         assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(32))]);
+    }
+
+    /// WR-03: off then on again restores the style's own size, not 32.
+    #[test]
+    fn font_off_then_on_restores_the_last_size() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        assert_eq!(state.style("S").unwrap().font, Some(37));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(None)]);
+        assert!(state.edit_style("S", StyleEdit::Font(None)));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(37))]);
     }
 
     #[test]

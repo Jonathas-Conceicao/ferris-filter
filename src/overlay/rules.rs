@@ -1433,6 +1433,15 @@ impl WorkingFilter {
             RowAction::MoveSection(ordinal, _) if locked(self, ordinal) => {
                 refused(ECONOMY_LOCKED_STATUS.to_string())
             }
+            // Committing a name box unchanged (the new section's default name, or a click away)
+            // is not an edit: it must not clear the event message the add just posted.
+            RowAction::RenameSection { ordinal, name }
+                if self.sections.iter().any(|s| {
+                    s.ordinal == ordinal && s.name == crate::filter::section::sanitize_name(&name)
+                }) =>
+            {
+                ActionOutcome::default()
+            }
             RowAction::RenameSection { ordinal, name } => {
                 plain(self.doc.rename_section(ordinal, &name), None)
             }

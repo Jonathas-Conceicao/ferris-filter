@@ -4540,6 +4540,54 @@ Hide
         assert!(spec.buttons.iter().all(|b| b.0 != "Overwrite"));
     }
 
+    /// 32 UI review: a fresh list event (`Section added…`) wins over the standing out-of-date
+    /// indicator until the next real edit; committing the new section's name box unchanged is
+    /// not an edit.
+    #[test]
+    fn a_section_added_message_beats_the_out_of_date_indicator() {
+        use crate::overlay::shell::{self, StatusInputs};
+        let (mut app, _ctx) = popup_app(RULES);
+        app.run_row_actions(vec![RowAction::AddSection]);
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+        let added = "Section added at the top. Press Apply to save it.";
+        assert_eq!(app.list_status.as_deref(), Some(added));
+        // The name box commits its default name on Enter or a click away.
+        app.run_row_actions(vec![RowAction::RenameSection {
+            ordinal: 0,
+            name: "Section".into(),
+        }]);
+        assert_eq!(app.list_status.as_deref(), Some(added), "not an edit");
+        let status = shell::status_for(StatusInputs {
+            root_error: None,
+            event: shell::event_from(
+                app.apply_message.clone(),
+                app.config_message.clone(),
+                None,
+                app.list_status.clone(),
+            ),
+            grammar_gate: None,
+            filter_error: None,
+            syncing: false,
+            unknown: None,
+            migrated: false,
+            absent: false,
+            indicator: (
+                crate::overlay::apply::indicator(app.apply_state),
+                shell::indicator_kind(app.apply_state),
+            ),
+        });
+        assert_eq!(status.text, added);
+        // A real rename is the next edit: the event gives way to the indicator.
+        app.run_row_actions(vec![RowAction::RenameSection {
+            ordinal: 0,
+            name: "Gear".into(),
+        }]);
+        assert_eq!(app.list_status, None);
+    }
+
     /// WR-01: hiding clears the CONFIG message and the list status too, so neither hides the
     /// grammar gate, the load error or the out-of-date indicator indefinitely; a rule edit clears
     /// the CONFIG message.

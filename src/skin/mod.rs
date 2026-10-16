@@ -1,8 +1,8 @@
 //! A Path of Exile 2 look for egui, built from the game's own Options-window art.
 //!
 //! This module is the shared skin for the UI redo: the `ff-proto` binary shows every piece of
-//! it, and the `ff` overlay can adopt it later. The overlay does **not** use it yet; its look
-//! still comes from `overlay::theme`.
+//! it, and the `ff` overlay is built on it (Phase 30). `overlay::theme` survives only until
+//! Phase 35 and now points at the skin palette.
 //!
 //! - [`palette`]: PoE2 golds, browns and near-blacks.
 //! - [`fonts`]: Fontin SmallCaps (headings, labels -- the face the game uses) and Fontin Regular
@@ -15,6 +15,8 @@
 //!   `ff_status`).
 //! - [`editor`]: the style-editor pieces (segmented switch, colour swatches and cards, item-label
 //!   preview, minimap icons, cards).
+//! - [`popup`]: the skinned modal (dimmed window, game box, game buttons).
+//! - [`icons`]: painted flag icons for rule rows.
 //! - [`minimap`]: the item-filter minimap shapes / colours and their atlas lookup.
 //! - [`window`]: DPI-correct docking geometry.
 //!
@@ -23,8 +25,10 @@
 
 pub mod editor;
 pub mod fonts;
+pub mod icons;
 pub mod minimap;
 pub mod palette;
+pub mod popup;
 pub mod slice;
 pub mod textures;
 pub mod widgets;

@@ -231,6 +231,39 @@ pub fn save(root: &Path, settings: &Settings) -> io::Result<()> {
     Ok(())
 }
 
+/// Persist only the `collapsed_sections` key (a fold click), leaving every other key of the file
+/// on disk exactly as it is, even one that is wrongly typed. A missing file is created with the
+/// whole of `settings`. A file that cannot be used at all (unreadable, or not a JSON object) is
+/// left alone and `Ok(false)` is returned, so a hand-edited file is never replaced by fallback
+/// defaults. `Ok(true)` means the key was written.
+pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> {
+    let text = match fs::read_to_string(path(root)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            save(root, settings)?;
+            return Ok(true);
+        }
+        Err(_) => return Ok(false),
+    };
+    let Ok(mut map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
+    else {
+        return Ok(false);
+    };
+    if settings.collapsed_sections.is_empty() {
+        map.remove("collapsed_sections");
+    } else {
+        let value = serde_json::to_value(&settings.collapsed_sections).map_err(io::Error::other)?;
+        map.insert("collapsed_sections".to_string(), value);
+    }
+    let mut out = serde_json::to_string_pretty(&map).map_err(io::Error::other)?;
+    out.push('\n');
+    let mut t = tempfile::NamedTempFile::new_in(root)?;
+    t.write_all(out.as_bytes())?;
+    t.as_file().sync_all()?;
+    t.persist(path(root)).map_err(|e| e.error)?;
+    Ok(true)
+}
+
 /// Why a file name was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameProblem {
@@ -652,5 +685,46 @@ mod tests {
         assert!(!s.reload_after_apply());
         assert!(w.contains("using dynamic.filter"), "{w}");
         assert!(!w.contains("reload_after_apply"), "{w}");
+    }
+
+    #[test]
+    fn a_fold_save_writes_only_its_own_key() {
+        let t = tempfile::tempdir().unwrap();
+        // One wrongly typed key: the file is still a JSON object, so a fold click is saved and the
+        // bad key is kept byte-for-byte (not replaced by the in-memory fallback).
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","reload_after_apply":"yes","future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        assert!(w.is_some());
+        let next = s.set_section_collapsed("ssf.filter", "Gear", true);
+        assert!(save_section_state(t.path(), &next).unwrap());
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path(t.path())).unwrap()).unwrap();
+        assert_eq!(v["reload_after_apply"], "yes");
+        assert_eq!(v["future"], 1);
+        assert_eq!(v["collapsed_sections"]["ssf.filter"]["Gear"], true);
+        let (again, _) = load(t.path());
+        assert!(again.section_collapsed("ssf.filter", "Gear", false));
+    }
+
+    #[test]
+    fn a_fold_save_never_overwrites_an_unusable_file() {
+        let t = tempfile::tempdir().unwrap();
+        let bad = "{ \"filter\": \"x.filter\", }";
+        fs::write(path(t.path()), bad).unwrap();
+        let next = Settings::default().set_section_collapsed("dynamic.filter", "Gear", true);
+        assert!(!save_section_state(t.path(), &next).unwrap());
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), bad);
+        // A missing file is created.
+        let fresh = tempfile::tempdir().unwrap();
+        assert!(save_section_state(fresh.path(), &next).unwrap());
+        assert!(
+            load(fresh.path())
+                .0
+                .section_collapsed("dynamic.filter", "Gear", false)
+        );
     }
 }

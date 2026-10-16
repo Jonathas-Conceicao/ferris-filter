@@ -159,11 +159,11 @@ Plans:
   2. Every v0.5 editing path still works through skin controls: all conditions and actions, operators, Between, Defences / Simple Defences, grouped rules, raw rows, the style picker, Continue, duplicate and delete; an untouched filter still round-trips byte-for-byte
   3. + Add rule inserts the new empty rule as the first block of the file (ahead of any divider), not before the economy section
 
-**Plans:** 7 plans
+**Plans:** 1/7 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 31-02-PLAN.md — Skin additions: skin::of, icon fixes, viewport scroll area, two-column field row, chip, X button, id text field, coloured dropdown
+- [x] 31-02-PLAN.md — Skin additions: skin::of, icon fixes, viewport scroll area, two-column field row, chip, X button, id text field, coloured dropdown
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -259,7 +259,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
-| 31. RULES Tab on the Skin | v0.6 | 0/TBD | Not started | - |
+| 31. RULES Tab on the Skin | v0.6 | 1/7 | In Progress|  |
 | 32. Rule Dividers & Economy Banner | v0.6 | 0/TBD | Not started | - |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |

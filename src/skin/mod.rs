@@ -11,13 +11,19 @@
 //!   (LINEAR filtering with mipmaps, so the 4K art scales down cleanly).
 //! - [`slice`]: pixel-snapped nine-slice / three-slice painting with a half-texel UV inset.
 //! - [`widgets`]: the controls (`ff_frame`, `ff_header`, `ff_tabs`, `ff_section`, `ff_row`,
-//!   `ff_check`, `ff_slider`, `ff_dropdown`, `ff_button`, `ff_close`, `ff_scroll_area`).
+//!   `ff_check`, `ff_slider`, `ff_dropdown`, `ff_button`, `ff_close`, `ff_scroll_area`,
+//!   `ff_status`).
+//! - [`editor`]: the style-editor pieces (segmented switch, colour swatches and cards, item-label
+//!   preview, minimap icons, cards).
+//! - [`minimap`]: the item-filter minimap shapes / colours and their atlas lookup.
 //! - [`window`]: DPI-correct docking geometry.
 //!
 //! The PNGs come from `tools/ff-art` (see `assets/poe2/manifest.toml`); the art belongs to
 //! Grinding Gear Games (see README.md).
 
+pub mod editor;
 pub mod fonts;
+pub mod minimap;
 pub mod palette;
 pub mod slice;
 pub mod textures;

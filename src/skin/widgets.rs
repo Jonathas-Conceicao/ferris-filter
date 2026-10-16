@@ -168,9 +168,63 @@ pub fn ff_close(ui: &mut Ui, skin: &Skin, center: egui::Pos2, size: f32) -> Resp
     resp
 }
 
-/// A row of tabs centred in `rect`, the game's stone tab shape behind each label. The selected
-/// tab is drawn at full brightness with pale gold text; the others are dimmed. Returns the union
-/// of the tab responses, marked changed when the selection changed.
+/// Where one tab of a [`tab_layout`] goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabGeom {
+    /// The whole stone, slanted tail included.
+    pub rect: Rect,
+    /// Where the caption is centred: the middle of the stone's flat top, not of `rect` (the
+    /// tail on the right is not label space).
+    pub label_x: f32,
+}
+
+/// Lays out a row of game tabs `h` points high, centred on `center_x`, for captions
+/// `label_widths` points wide. `left` / `right` are the cap textures' sizes in texels.
+///
+/// Like the game's Options tabs, each stone is left cap + flat middle (caption plus padding) +
+/// right cap, whose long slanted tail runs under the next stone's rounded left edge; tabs
+/// overlap by a fixed amount, so the gaps between captions only depend on caption widths. The
+/// caption is centred on the flat top: from the middle of the left curve to just past the start
+/// of the tail.
+pub fn tab_layout(
+    center_x: f32,
+    top: f32,
+    h: f32,
+    label_widths: &[f32],
+    left: [usize; 2],
+    right: [usize; 2],
+) -> Vec<TabGeom> {
+    let lw = left[0] as f32 * h / left[1].max(1) as f32;
+    let rw = right[0] as f32 * h / right[1].max(1) as f32;
+    let pad = h * 0.4;
+    let overlap = rw * TAB_OVERLAP;
+    let mids: Vec<f32> = label_widths
+        .iter()
+        .map(|w| (w + 2.0 * pad).max(h * 1.6))
+        .collect();
+    let total: f32 = mids.iter().map(|m| lw + m + rw).sum::<f32>()
+        - overlap * label_widths.len().saturating_sub(1) as f32;
+    let mut x = center_x - total / 2.0;
+    mids.iter()
+        .map(|m| {
+            let rect = Rect::from_min_size(pos2(x, top), vec2(lw + m + rw, h));
+            let body_l = x + lw * 0.5;
+            let body_r = x + lw + m + rw * 0.2;
+            x += lw + m + rw - overlap;
+            TabGeom {
+                rect,
+                label_x: (body_l + body_r) / 2.0,
+            }
+        })
+        .collect()
+}
+
+/// How much of the right cap's width runs under the next tab.
+pub const TAB_OVERLAP: f32 = 0.3;
+
+/// A row of game tabs centred in `rect` (see [`tab_layout`]). The selected tab is drawn last
+/// (on top of its neighbours' tails) at full brightness with pale gold text; the others are
+/// dimmed. Returns the union of the tab responses, marked changed when the selection changed.
 pub fn ff_tabs(
     ui: &mut Ui,
     skin: &Skin,
@@ -181,8 +235,6 @@ pub fn ff_tabs(
     let painter = ui.painter().clone();
     let h = rect.height();
     let font = small_caps((h * 0.58).clamp(12.0, 22.0));
-    let pad = h * 0.75;
-    let gap = 3.0;
     let widths: Vec<f32> = labels
         .iter()
         .map(|l| {
@@ -190,27 +242,48 @@ pub fn ff_tabs(
                 .layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE)
                 .size()
                 .x
-                + 2.0 * pad
         })
         .collect();
-    let total: f32 = widths.iter().sum::<f32>() + gap * (labels.len().saturating_sub(1)) as f32;
-    let mut x = rect.center().x - total / 2.0;
-    let mut union: Option<Response> = None;
+    let art = &skin.tab;
+    let geoms = tab_layout(
+        rect.center().x,
+        rect.min.y,
+        h,
+        &widths,
+        art.left.size(),
+        art.right.size(),
+    );
+    // Interact first, on the flat bodies only (they never overlap, so a neighbour's tail never
+    // steals a click), then paint with the selected stone last.
+    let mut resps: Vec<Option<Response>> = vec![None; labels.len()];
     let mut changed = false;
-    for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
-        let tab = Rect::from_min_size(pos2(x, rect.min.y), vec2(*w, h));
-        x += w + gap;
-        let resp = ui.interact(tab, ui.id().with(("ff_tab", i)), Sense::click());
+    for (i, g) in geoms.iter().enumerate() {
+        let hit = Rect::from_min_max(
+            pos2(g.rect.min.x + h * 0.3, g.rect.min.y),
+            pos2(
+                g.rect.max.x
+                    - art.right.size()[0] as f32 * h / art.right.size()[1].max(1) as f32 * 0.6,
+                g.rect.max.y,
+            ),
+        );
+        let resp = ui.interact(hit, ui.id().with(("ff_tab", i)), Sense::click());
         let is_sel = *selected == i;
-        resp.widget_info(|| {
-            WidgetInfo::selected(WidgetType::SelectableLabel, true, is_sel, *label)
-        });
+        let label = labels[i];
+        resp.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, is_sel, label));
         if resp.clicked() && !is_sel {
             *selected = i;
             changed = true;
         }
+        resps[i] = Some(resp);
+    }
+    let order: Vec<usize> = (0..labels.len())
+        .filter(|i| *i != *selected)
+        .chain((*selected < labels.len()).then_some(*selected))
+        .collect();
+    for i in order {
+        let g = geoms[i];
+        let resp = resps[i].as_ref().expect("every tab has a response");
         let is_sel = *selected == i;
-        let art = &skin.tab;
         let tint = if is_sel {
             Color32::WHITE
         } else if resp.hovered() {
@@ -219,7 +292,7 @@ pub fn ff_tabs(
             Color32::from_gray(150)
         };
         let rects = slice::three_h_rects(
-            tab,
+            g.rect,
             art.left.size(),
             art.right.size(),
             painter.pixels_per_point(),
@@ -233,22 +306,27 @@ pub fn ff_tabs(
             pal::MUTED
         };
         // Cream letters with a dark drop shadow, as the game draws its tab captions.
-        let center = pos2(tab.center().x, tab.center().y + h * 0.06);
+        let center = pos2(g.label_x, g.rect.center().y + h * 0.06);
         painter.text(
             center + vec2(1.0, 1.0),
             Align2::CENTER_CENTER,
-            *label,
+            labels[i],
             font.clone(),
             Color32::from_black_alpha(220),
         );
-        painter.text(center, Align2::CENTER_CENTER, *label, font.clone(), color);
-        union = Some(match union {
-            Some(u) => u | resp,
-            None => resp,
-        });
+        painter.text(
+            center,
+            Align2::CENTER_CENTER,
+            labels[i],
+            font.clone(),
+            color,
+        );
     }
-    let mut resp =
-        union.unwrap_or_else(|| ui.interact(rect, ui.id().with("ff_tabs"), Sense::hover()));
+    let mut resp = resps
+        .into_iter()
+        .flatten()
+        .reduce(|a, b| a | b)
+        .unwrap_or_else(|| ui.interact(rect, ui.id().with("ff_tabs"), Sense::hover()));
     if changed {
         resp.mark_changed();
     }
@@ -753,6 +831,79 @@ pub fn ff_text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> 
 }
 
 // ---------------------------------------------------------------------------------------------
+// Status line
+
+/// What a status message reports; decides its colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusKind {
+    /// Neutral information.
+    Info,
+    /// Something succeeded.
+    Ok,
+    /// It worked, but something needs a look.
+    Warning,
+    /// Nothing happened because of an error.
+    Error,
+}
+
+impl StatusKind {
+    /// The palette colour for this kind.
+    pub fn color(self) -> Color32 {
+        match self {
+            Self::Info => pal::MUTED,
+            Self::Ok => pal::OK,
+            Self::Warning => pal::WARN,
+            Self::Error => pal::ERROR,
+        }
+    }
+}
+
+/// The layout of a status message: one row of Fontin Regular in the kind's colour, line
+/// breaks flattened to spaces, cut with "…" past `width`.
+pub fn status_job(text: &str, kind: StatusKind, width: f32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.replace(['\n', '\r'], " "),
+        egui::TextFormat::simple(regular(15.0), kind.color()),
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: width.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    job
+}
+
+/// A one-line status message in `rect`: coloured by `kind`, cut with "…" when it does not
+/// fit, and shown whole in a tooltip while hovered (only when it was cut).
+pub fn ff_status(ui: &mut Ui, rect: Rect, text: &str, kind: StatusKind) -> Response {
+    let resp = ui.interact(rect, ui.id().with("ff_status"), Sense::hover());
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    let galley = ui
+        .painter()
+        .layout_job(status_job(text, kind, rect.width()));
+    let elided = galley.elided;
+    ui.painter().with_clip_rect(rect).galley(
+        pos2(rect.min.x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        kind.color(),
+    );
+    if elided {
+        let full = text.to_owned();
+        resp.on_hover_ui(|ui| {
+            ui.set_max_width(420.0);
+            ui.label(
+                egui::RichText::new(full)
+                    .font(regular(15.0))
+                    .color(kind.color()),
+            );
+        })
+    } else {
+        resp
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Scrolling
 
 /// Width reserved on the right of [`ff_scroll_area`] for the game-art scrollbar.
@@ -947,6 +1098,56 @@ mod tests {
             v > 85.0,
             "clicking near the right end must move the value there, got {v}"
         );
+    }
+
+    #[test]
+    fn tabs_are_centred_evenly_spaced_and_captions_sit_on_the_flat_body() {
+        // The game's caps: 26x37 left, 42x37 right; drawn 37 high, so 1 point per texel.
+        let g = tab_layout(
+            300.0,
+            0.0,
+            37.0,
+            &[40.0, 60.0, 80.0, 40.0],
+            [26, 37],
+            [42, 37],
+        );
+        assert_eq!(g.len(), 4);
+        let overlap = 42.0 * TAB_OVERLAP;
+        for w in g.windows(2) {
+            // Constant overlap: the next stone starts under the previous tail.
+            assert!((w[0].rect.max.x - overlap - w[1].rect.min.x).abs() < 1e-3);
+        }
+        // The row is centred.
+        let (l, r) = (g[0].rect.min.x, g[3].rect.max.x);
+        assert!(((l + r) / 2.0 - 300.0).abs() < 1e-3);
+        for t in &g {
+            // Every caption sits left of the stone's centre (the tail is not label space) and
+            // clear of the tail.
+            assert!(t.label_x < t.rect.center().x);
+            assert!(t.label_x > t.rect.min.x + 26.0);
+        }
+        // Equal captions get equal stones, so the spacing is even.
+        assert!((g[0].rect.width() - g[3].rect.width()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn long_status_is_cut_to_one_row_and_short_status_is_whole() {
+        let (ctx, _skin) = setup();
+        ctx.run_ui(RawInput::default(), |ui| {
+            let long = "word ".repeat(80);
+            let g = ui
+                .painter()
+                .layout_job(status_job(&long, StatusKind::Warning, 200.0));
+            assert!(g.elided, "a long message must be cut");
+            assert_eq!(g.rows.len(), 1);
+            assert!(g.size().x <= 200.5);
+            let g = ui
+                .painter()
+                .layout_job(status_job("Wrote it.\nDone.", StatusKind::Ok, 400.0));
+            assert!(!g.elided);
+            assert_eq!(g.rows.len(), 1, "line breaks are flattened");
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]

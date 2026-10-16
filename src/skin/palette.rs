@@ -25,6 +25,13 @@ pub const ON_GOLD: Color32 = Color32::from_rgb(0x3A, 0x28, 0x10);
 /// Button captions.
 pub const BUTTON_TEXT: Color32 = Color32::from_rgb(0xE2, 0xDA, 0xC6);
 
+/// Status text: a success ("Wrote dynamic.filter.").
+pub const OK: Color32 = Color32::from_rgb(0x9C, 0xC0, 0x78);
+/// Status text: a warning (applied, but something needs a look).
+pub const WARN: Color32 = Color32::from_rgb(0xE8, 0xB0, 0x52);
+/// Status text: an error (nothing was written).
+pub const ERROR: Color32 = Color32::from_rgb(0xE0, 0x62, 0x52);
+
 /// Alternating row grounds: translucent, so the static background shows faintly through.
 pub const ROW_EVEN: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 96);
 /// See [`ROW_EVEN`].
@@ -47,7 +54,7 @@ mod tests {
     fn text_colours_are_brighter_than_the_grounds() {
         // A cheap legibility floor: every text colour must sit far above the panel ground.
         let lum = |c: Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
-        for c in [HEADING, LABEL, VALUE, MUTED, BUTTON_TEXT] {
+        for c in [HEADING, LABEL, VALUE, MUTED, BUTTON_TEXT, OK, WARN, ERROR] {
             assert!(lum(c) > lum(PANEL) + 300, "{c:?} is too dark to read");
         }
     }

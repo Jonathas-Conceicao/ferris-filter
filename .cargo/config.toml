@@ -1,0 +1,2 @@
+[alias]
+ff-art = "run -p ff-art --release --"

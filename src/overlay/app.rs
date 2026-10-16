@@ -1284,11 +1284,27 @@ impl OverlayApp {
                 }
                 self.apply_message = None;
                 self.list_status = None;
+                // An event is cleared by the next edit, a CONFIG message included (WR-01).
+                self.config_message = None;
             }
             if status.is_some() {
                 self.list_status = status;
             }
         }
+    }
+
+    /// Hiding the stripe clears every event message (the Apply outcome, the CONFIG message, the
+    /// list status, a finished sync), so a stale report never outlives its question or hides the
+    /// standing lines behind it (grammar gate, load error, the out-of-date indicator; review
+    /// WR-01). The one exception is a reload's interim line ([`apply_message_after_conceal`]).
+    fn clear_events_on_conceal(&mut self) {
+        self.apply_message = self.apply_message.take().and_then(|(text, kind)| {
+            apply_message_after_conceal(Some(text), self.reload_pending.as_ref())
+                .map(|text| (text, kind))
+        });
+        self.config_message = None;
+        self.list_status = None;
+        self.economy.clear_message();
     }
 
     /// Which popups want to be open this frame.
@@ -2108,7 +2124,7 @@ impl eframe::App for OverlayApp {
                 }
             }
         }
-        // Concealing the stripe clears both status lines, so the next reveal starts clean.
+        // Concealing the stripe clears every event message, so the next reveal starts clean.
         //
         // They are reports on an action the player has already seen the result of: "Wrote
         // <path>…" and "Economy prices refreshed from <league>" answer a question asked minutes
@@ -2126,11 +2142,7 @@ impl eframe::App for OverlayApp {
             visibility::effect_for(self.visibility, next),
             Some(visibility::Effect::Conceal)
         ) {
-            self.apply_message = self.apply_message.take().and_then(|(text, kind)| {
-                apply_message_after_conceal(Some(text), self.reload_pending.as_ref())
-                    .map(|text| (text, kind))
-            });
-            self.economy.clear_message();
+            self.clear_events_on_conceal();
         }
 
         self.visibility = next;
@@ -3868,6 +3880,23 @@ mod tests {
         let event = crate::overlay::shell::event_from(app.apply_message.clone(), None, None, None);
         assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
+    }
+
+    /// WR-01: hiding clears the CONFIG message and the list status too, so neither hides the
+    /// grammar gate, the load error or the out-of-date indicator indefinitely; a rule edit clears
+    /// the CONFIG message.
+    #[test]
+    fn conceal_and_rule_edits_clear_stale_event_messages() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.config_message = Some(("Reverted config changes.".to_string(), false));
+        app.list_status = Some("Class groups unavailable (config.json): x".to_string());
+        app.clear_events_on_conceal();
+        assert_eq!(app.config_message, None);
+        assert_eq!(app.list_status, None);
+
+        app.config_message = Some(("Reverted config changes.".to_string(), false));
+        app.run_row_actions(vec![RowAction::AddRule]);
+        assert_eq!(app.config_message, None);
     }
 
     #[test]

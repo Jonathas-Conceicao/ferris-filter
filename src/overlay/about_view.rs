@@ -40,6 +40,25 @@ fn footer_label(ui: &mut egui::Ui, s: &str, size: f32, colour: Color32) {
     );
 }
 
+/// A horizontal gold rule over `rect`, transparent at both ends and strongest at the centre.
+fn divider_mesh(rect: Rect) -> egui::Shape {
+    let gold = pal::GOLD.gamma_multiply(0.7);
+    let clear = Color32::TRANSPARENT;
+    let mut mesh = egui::Mesh::default();
+    let xs = [rect.min.x, rect.center().x, rect.max.x];
+    let cols = [clear, gold, clear];
+    for (x, c) in xs.into_iter().zip(cols) {
+        mesh.colored_vertex(pos2(x, rect.min.y), c);
+        mesh.colored_vertex(pos2(x, rect.max.y), c);
+    }
+    for i in 0..2u32 {
+        let b = i * 2;
+        mesh.add_triangle(b, b + 1, b + 2);
+        mesh.add_triangle(b + 1, b + 3, b + 2);
+    }
+    egui::Shape::mesh(mesh)
+}
+
 /// Draws the ABOUT page into the available rect. Not scrollable; no sections or rows.
 pub fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
     let area = ui.available_rect_before_wrap();
@@ -76,12 +95,12 @@ pub fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
     .on_hover_text("Open the repository in your browser.");
     col.add_space(16.0);
     let (strip, _) = col.allocate_exact_size(vec2(area.width(), 3.0), Sense::hover());
-    crate::skin::slice::paint_image(
-        col.painter(),
-        &skin.title_underline,
-        Rect::from_center_size(strip.center(), vec2(strip.width() * 0.8, 3.0)),
-        Color32::from_white_alpha(110),
-    );
+    // The game's title underline art fades out to one side only, so the divider is a symmetric
+    // gold rule instead: brightest in the middle, fading to nothing at both ends.
+    col.painter().add(divider_mesh(Rect::from_center_size(
+        strip.center(),
+        vec2(strip.width() * 0.8, 1.0),
+    )));
 
     // Footer: a 480pt column centred in the page, stacked upward from 16pt above the bottom, so
     // it stays pinned however tall the window is.

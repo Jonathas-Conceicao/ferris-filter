@@ -75,13 +75,13 @@ retired. Every v0.5 editor capability survives the move.
   (80 `#` per rule line). Loading a filter shows each banner as a named section header in the rule
   list; rules above the first divider have no header. Foreign comment banners are not dividers.
 
-- [ ] **SECT-02**: User can add a divider (a toolbar **+ Add section** inserts one at the top with its
+- [x] **SECT-02**: User can add a divider (a toolbar **+ Add section** inserts one at the top with its
   name field open; **Section above** in an expanded rule inserts one directly above that rule),
   rename it inline, move the divider line up/down one rule at a time, and delete it (its rules stay
   and join the section above); each is an in-memory edit written by Apply and undone by Revert.
   Each section header shows a collapse arrow, the name, its rule count, rename, arrows and remove.
 
-- [ ] **SECT-03**: User can collapse and expand a section, hiding every rule up to the next divider;
+- [x] **SECT-03**: User can collapse and expand a section, hiding every rule up to the next divider;
   the collapsed state is remembered per filter in `ff-settings.json`, never written into the filter.
 
 - [x] **SECT-04**: The economy section is shown as the last divider, a locked "Economy" section
@@ -96,7 +96,7 @@ retired. Every v0.5 editor capability survives the move.
   longer recognised: no migration (the app is not publicly released; the author converts their own
   `dynamic.filter` by hand).
 
-- [ ] **SECT-05**: Search shows matches inside collapsed sections; reordering and grouped rules keep
+- [x] **SECT-05**: Search shows matches inside collapsed sections; reordering and grouped rules keep
   working across section boundaries, and a filter's bytes outside edited lines are unchanged.
 
 ### Styles (STY)
@@ -183,10 +183,10 @@ retired. Every v0.5 editor capability survives the move.
 | RULES-02 | Phase 31 | Complete |
 | RULES-03 | Phase 31 | Complete |
 | SECT-01 | Phase 32 | Complete |
-| SECT-02 | Phase 32 | Pending |
-| SECT-03 | Phase 32 | Pending |
+| SECT-02 | Phase 32 | Complete |
+| SECT-03 | Phase 32 | Complete |
 | SECT-04 | Phase 32 | Complete |
-| SECT-05 | Phase 32 | Pending |
+| SECT-05 | Phase 32 | Complete |
 | STY-01 | Phase 33 | Pending |
 | STY-02 | Phase 33 | Pending |
 | STY-03 | Phase 33 | Pending |

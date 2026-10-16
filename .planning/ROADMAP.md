@@ -220,7 +220,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 32-05-PLAN.md — RULES tab UI: section headers, locked Economy section, + Add section, Section above, collapse persistence
+- [x] 32-05-PLAN.md — RULES tab UI: section headers, locked Economy section, + Add section, Section above, collapse persistence
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -281,7 +281,7 @@ Plans:
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
-| 32. Rule Dividers & Economy Banner | v0.6 | 4/6 | In Progress|  |
+| 32. Rule Dividers & Economy Banner | v0.6 | 5/6 | In Progress|  |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |

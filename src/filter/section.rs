@@ -107,17 +107,17 @@ pub fn is_rule_line(text: &str) -> bool {
 }
 
 /// A user-typed section name made safe to write into the banner line: every control character
-/// (CR, LF, tab, ...) becomes a space, the result is trimmed, and an empty name becomes `Section`.
+/// (CR, LF, tab, ...) becomes a space, runs of whitespace collapse to one space, the result is trimmed, and an empty name becomes `Section`.
 pub fn sanitize_name(raw: &str) -> String {
     let s: String = raw
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
-    let s = s.trim();
+    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if s.is_empty() {
         "Section".to_string()
     } else {
-        s.to_string()
+        s
     }
 }
 

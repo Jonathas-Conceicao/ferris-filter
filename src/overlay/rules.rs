@@ -18,8 +18,8 @@ use crate::filter::keywords::{Keyword, Kind};
 use crate::filter::section::{self, SectionSpan};
 use crate::filter::tokenize::Operator;
 use crate::filter::{
-    Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, Severity,
-    parse as parse_filter,
+    Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, RuleStep,
+    Severity, parse as parse_filter,
 };
 use crate::models::config::{Style, StyleSet};
 use crate::styled::{self, StyleReport};
@@ -398,6 +398,14 @@ fn done_or(r: Result<(), crate::filter::EditError>, focus: Option<BlockId>) -> A
             ..ActionOutcome::default()
         },
         Err(e) => refused(e.to_string()),
+    }
+}
+
+/// Refusal text of a failed section edit.
+fn section_refusal(e: &crate::filter::EditError) -> String {
+    match e {
+        crate::filter::EditError::SectionLocked => ECONOMY_LOCKED_STATUS.to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -1303,7 +1311,19 @@ impl WorkingFilter {
         if action_target(&action).is_some_and(|id| self.groups.is_follower(id)) {
             return refused(NOT_EDITABLE_STATUS.to_string());
         }
+        // Economy blocks are not rows: no rule action may reach them (T-32-13).
+        if let Some(id) = action_target(&action)
+            && self.row(id).is_none()
+            && self.doc.block(id).is_some()
+        {
+            return refused(ECONOMY_LOCKED_STATUS.to_string());
+        }
         match action {
+            RowAction::AddSection
+            | RowAction::AddSectionAbove(_)
+            | RowAction::RenameSection { .. }
+            | RowAction::RemoveSection(_)
+            | RowAction::MoveSection(..) => return self.section_action(action),
             RowAction::Move(id, dir) => return self.move_rule(id, dir),
             RowAction::SetDefenceSelection { id, mask } => return self.set_selection(id, mask),
             _ => {}
@@ -1361,15 +1381,85 @@ impl WorkingFilter {
         out
     }
 
-    /// Move a rule past its neighbour rule. Either may be a group: a group moves as one unit.
+    /// A section edit. Anything aimed at the economy section is refused.
+    fn section_action(&mut self, action: RowAction) -> ActionOutcome {
+        let created = |ordinal: usize, status: String| ActionOutcome {
+            changed: true,
+            status: Some(status),
+            section: Some(ordinal),
+            ..ActionOutcome::default()
+        };
+        let plain = |r: Result<(), crate::filter::EditError>, status: Option<&str>| match r {
+            Ok(()) => ActionOutcome {
+                changed: true,
+                status: status.map(str::to_string),
+                ..ActionOutcome::default()
+            },
+            Err(e) => refused(section_refusal(&e)),
+        };
+        // The synthetic staged economy row has an ordinal past the document's banners.
+        let locked = |wf: &Self, ordinal: usize| {
+            wf.sections
+                .iter()
+                .any(|s| s.ordinal == ordinal && s.economy)
+        };
+        match action {
+            RowAction::AddSection => match self.doc.insert_section_at_top(DEFAULT_SECTION_NAME) {
+                Ok(o) => created(o, SECTION_ADDED_TOP_STATUS.to_string()),
+                Err(e) => refused(section_refusal(&e)),
+            },
+            RowAction::AddSectionAbove(id) => {
+                let index = self.row(id).map_or(0, |r| r.index);
+                match self.doc.insert_section_above(id, DEFAULT_SECTION_NAME) {
+                    Ok(o) => created(
+                        o,
+                        format!("Section added above rule {index}. Press Apply to save it."),
+                    ),
+                    Err(e) => refused(section_refusal(&e)),
+                }
+            }
+            RowAction::RenameSection { ordinal, .. } | RowAction::RemoveSection(ordinal)
+                if locked(self, ordinal) =>
+            {
+                refused(ECONOMY_LOCKED_STATUS.to_string())
+            }
+            RowAction::MoveSection(ordinal, _) if locked(self, ordinal) => {
+                refused(ECONOMY_LOCKED_STATUS.to_string())
+            }
+            RowAction::RenameSection { ordinal, name } => {
+                plain(self.doc.rename_section(ordinal, &name), None)
+            }
+            RowAction::RemoveSection(ordinal) => plain(
+                self.doc.remove_section(ordinal),
+                Some(SECTION_REMOVED_STATUS),
+            ),
+            RowAction::MoveSection(ordinal, dir) => {
+                let up = dir == Dir::Up;
+                if !self.doc.section_can_move(ordinal, up) {
+                    return refused(SECTION_CANT_MOVE_STATUS.to_string());
+                }
+                plain(self.doc.move_section(ordinal, up), None)
+            }
+            _ => refused(NOT_EDITABLE_STATUS.to_string()),
+        }
+    }
+
+    /// Move a rule one step: swap with its neighbour rule (either may be a group, which moves as
+    /// one unit) or hop the divider in that direction. Never crosses the economy section.
     fn move_rule(&mut self, id: BlockId, dir: Dir) -> ActionOutcome {
         let up = dir == Dir::Up;
         let a = self.groups.members(id);
         let edge = if up { a[0] } else { a[a.len() - 1] };
-        let nb = match self.doc.move_neighbour(edge, up) {
+        let nb = match self.doc.rule_step(edge, up) {
             Err(e) => return refused(e.to_string()),
-            Ok(None) => return refused("There is no rule to swap with in that direction.".into()),
-            Ok(Some(nb)) => self.groups.rule_of(nb),
+            Ok(RuleStep::Blocked) => {
+                return refused("There is no rule to swap with in that direction.".into());
+            }
+            // The divider hops the rule; the rule order is unchanged, so no Continue flag.
+            Ok(RuleStep::CrossBanner(k)) => {
+                return done_or(self.doc.move_section(k, !up), Some(id));
+            }
+            Ok(RuleStep::Swap(nb)) => self.groups.rule_of(nb),
         };
         let b = self.groups.members(nb);
         let crossing = self.doc.block(id).is_some_and(Block::has_continue)
@@ -3220,5 +3310,149 @@ Show
         let t = format!("Show\n\n{RULE_LINE}\n{BEGIN_LINE}\n{RULE_LINE}\nShow\n");
         let wf = WorkingFilter::from_text(&t);
         assert!(wf.shadowing().is_empty(), "economy rows never shadow");
+    }
+
+    // -- section actions -------------------------------------------------------------------------
+
+    #[test]
+    fn add_section_at_the_top_is_a_revertible_edit() {
+        let mut wf = WorkingFilter::from_text(THREE);
+        let out = wf.apply_action(RowAction::AddSection);
+        assert!(out.changed);
+        assert_eq!(out.section, Some(0));
+        assert_eq!(
+            out.status.as_deref(),
+            Some("Section added at the top. Press Apply to save it.")
+        );
+        assert!(wf.is_dirty());
+        assert_eq!(wf.sections()[0].name, "Section");
+        wf.revert();
+        assert_eq!(wf.text(), THREE);
+        assert!(wf.sections().is_empty());
+    }
+
+    #[test]
+    fn add_section_above_a_rule_keeps_its_id() {
+        let mut wf = WorkingFilter::from_text(THREE);
+        let id = wf.rows()[2].id;
+        let out = wf.apply_action(RowAction::AddSectionAbove(id));
+        assert_eq!(
+            out.status.as_deref(),
+            Some("Section added above rule 3. Press Apply to save it.")
+        );
+        assert_eq!(out.section, Some(0));
+        assert_eq!(wf.rows()[2].id, id);
+        assert_eq!(wf.rows()[2].section, Some(0));
+        assert_eq!(wf.rows()[1].section, None);
+    }
+
+    #[test]
+    fn rename_sanitises_and_remove_keeps_the_rules() {
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let out = wf.apply_action(RowAction::RenameSection {
+            ordinal: 0,
+            name: " New \n name ".into(),
+        });
+        assert!(out.changed);
+        assert_eq!(wf.sections()[0].name, "New name");
+        assert!(wf.is_dirty());
+        let out = wf.apply_action(RowAction::RemoveSection(0));
+        assert_eq!(
+            out.status.as_deref(),
+            Some("Section removed. Its rules joined the section above.")
+        );
+        assert_eq!(wf.rows().iter().map(|r| r.id).collect::<Vec<_>>(), ids);
+        assert_eq!(wf.sections().len(), 2);
+        assert_eq!(wf.rows()[1].section, None);
+    }
+
+    #[test]
+    fn move_section_changes_only_the_banner_position() {
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        assert!(wf.sections()[0].can_move_up);
+        let out = wf.apply_action(RowAction::MoveSection(0, Dir::Up));
+        assert!(out.changed);
+        assert_eq!(wf.rows().iter().map(|r| r.id).collect::<Vec<_>>(), ids);
+        assert_eq!(
+            wf.rows()[0].section,
+            Some(0),
+            "the first rule joined Leveling"
+        );
+        let before = wf.text();
+        let out = wf.apply_action(RowAction::MoveSection(0, Dir::Up));
+        assert!(!out.changed && out.status.is_some());
+        assert_eq!(wf.text(), before);
+    }
+
+    #[test]
+    fn economy_targets_are_refused_and_nothing_changes() {
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let before = wf.text();
+        let econ = wf.sections().iter().position(|s| s.economy).unwrap();
+        let ord = wf.sections()[econ].ordinal;
+        let eid = wf.economy_rows()[0].id;
+        let actions = [
+            RowAction::RenameSection {
+                ordinal: ord,
+                name: "x".into(),
+            },
+            RowAction::RemoveSection(ord),
+            RowAction::MoveSection(ord, Dir::Up),
+            RowAction::MoveSection(ord, Dir::Down),
+            RowAction::AddSectionAbove(eid),
+            RowAction::SetEnabled(eid, false),
+            RowAction::Delete(eid),
+            RowAction::Duplicate(eid),
+            RowAction::Move(eid, Dir::Up),
+            RowAction::Move(eid, Dir::Down),
+            RowAction::SetContinue(eid, true),
+            RowAction::EditLine {
+                id: eid,
+                line: 0,
+                expect: String::new(),
+                patch: LinePatch::Whole("Show".into()),
+            },
+        ];
+        for a in actions {
+            let out = wf.apply_action(a.clone());
+            assert!(!out.changed, "{a:?}");
+            assert_eq!(
+                out.status.as_deref(),
+                Some(
+                    "The economy section is generated by FerrisFilter and cannot be changed here."
+                ),
+                "{a:?}"
+            );
+            assert_eq!(wf.text(), before, "{a:?}");
+        }
+    }
+
+    #[test]
+    fn rules_hop_dividers_without_reordering() {
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        // Rule 4 is the only rule of Endgame; down is the economy banner (blocked).
+        let last = ids[3];
+        let out = wf.apply_action(RowAction::Move(last, Dir::Down));
+        assert!(!out.changed);
+        // The group (rule 3) is the last of Leveling; moving down hops the Endgame divider.
+        let grp = ids[2];
+        assert_eq!(wf.rows()[2].section, Some(0));
+        let out = wf.apply_action(RowAction::Move(grp, Dir::Down));
+        assert!(out.changed, "{:?}", out.status);
+        assert_eq!(wf.rows().iter().map(|r| r.id).collect::<Vec<_>>(), ids);
+        assert_eq!(wf.rows()[2].section, Some(1));
+        assert_eq!(wf.rows()[2].group_size, 2, "the run moved as one");
+        assert!(!wf.rows()[2].moved_across_continue);
+        // And back up.
+        wf.apply_action(RowAction::Move(grp, Dir::Up));
+        assert_eq!(wf.rows()[2].section, Some(0));
+        assert_eq!(wf.text(), sectioned());
+        // The rule right below the economy-following divider cannot hop up into the economy.
+        let mut wf = WorkingFilter::from_text(&with_economy());
+        let after = wf.rows()[1].id;
+        assert!(!wf.apply_action(RowAction::Move(after, Dir::Up)).changed);
     }
 }

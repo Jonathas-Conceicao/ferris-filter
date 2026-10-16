@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-10-16)
 
 Phase: 34 (economy-about-tabs) — COMPLETE, awaiting verification
 Plan: 4 of 4 (Phase 34)
-Status: Phase complete — human verification pending (34-HUMAN-UAT.md)
+Last activity: 2026-10-16 - Completed quick task 261016-qi7: custom rule styling uses the style editor lines, minimap-icon style chip, Revert confirm on every tab
 Last activity: 2026-10-16
 
 Progress (v0.6): [█░░░░░░░░░] 14%
@@ -224,6 +224,7 @@ None open.
 | 261015-nbp | Simple Defences: multi-select base types, written as grouped blocks | 2026-10-15 | 52ff64e | [261015-nbp-simple-defences-multi-select-base-types-](./quick/261015-nbp-simple-defences-multi-select-base-types-/) |
 | 261015-tz2 | PoE2-style UI prototype: ff-art asset tool, skin module, ff-proto binary | 2026-10-16 | 206c6bb | [261015-tz2-poe2-style-ui-prototype-ff-art-asset-too](./quick/261015-tz2-poe2-style-ui-prototype-ff-art-asset-too/) |
 | 261016-1de | PoE2 prototype round 2: game-like tabs, style editor, ABOUT tab, one-line status, trimmed minimap atlas | 2026-10-16 | f64cd42 | [261016-1de-poe2-prototype-tab-layout-style-editor-a](./quick/261016-1de-poe2-prototype-tab-layout-style-editor-a/) |
+| 261016-qi7 | Custom rule styling uses the style editor lines, minimap-icon style chip, Revert confirm on every tab | 2026-10-16 | 890673d | [261016-qi7-custom-rule-styling-uses-the-style-edito](./quick/261016-qi7-custom-rule-styling-uses-the-style-edito/) |
 
 ## Phase 15 Source Material — the author's two requests
 

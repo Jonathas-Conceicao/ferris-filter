@@ -310,8 +310,12 @@ impl Document {
             Some(n) => b.start + 3 <= n.span.start,
         });
         if let Some((k, b)) = between {
+            // Hopping up over the divider that follows the economy section would drop the rule
+            // into that section (it runs to the next banner), where Apply regenerates it away.
+            let below_economy = up && k > 0 && banners[k - 1].kind == BannerKind::Economy;
             return Ok(match b.kind {
                 BannerKind::Economy => RuleStep::Blocked,
+                BannerKind::Section if below_economy => RuleStep::Blocked,
                 BannerKind::Section => RuleStep::CrossBanner(k),
             });
         }

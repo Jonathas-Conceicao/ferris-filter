@@ -85,6 +85,9 @@ pub struct ConfigUi {
     /// Salt of every style row's id scope; bumped when the expanded row changes so per-row egui
     /// state (drafts, combo popups) never leaks to another row.
     pub epoch: u64,
+    /// Salt of the remembered None-values (font, minimap, beam, sound): bumped only when the
+    /// styles are replaced (Revert, Reload, Apply), so folding a row keeps them.
+    pub memo_epoch: u64,
     /// Open `+ ADD STYLE` name draft.
     pub style_draft: Option<String>,
     /// Open `New empty filter...` name draft.
@@ -137,8 +140,10 @@ impl ConfigUi {
     pub fn reset_for_new_styles(&mut self) {
         self.disarm_all();
         self.rename_drafts.clear();
-        // Open pickers and the remembered None-values sit under ids salted with the epoch.
+        // Open pickers sit under ids salted with the epoch, the remembered None-values under
+        // the memo epoch.
         self.epoch = self.epoch.wrapping_add(1);
+        self.memo_epoch = self.memo_epoch.wrapping_add(1);
     }
 }
 
@@ -1111,7 +1116,8 @@ fn ff_field_row_line(
 }
 
 /// The value a field had before it was switched to None, kept for the session (until the next
-/// Revert / Reload, which bumps the epoch) so switching back restores it.
+/// Revert / Reload / Apply, which bumps the memo epoch; folding a row does not) so switching
+/// back restores it.
 fn memo_id(name: &str, field: &'static str, epoch: u64) -> egui::Id {
     egui::Id::new(("cfg-style-last", name, field, epoch))
 }
@@ -1144,7 +1150,8 @@ fn style_editor(
     actions: &mut Vec<ConfigAction>,
 ) {
     let skin = crate::skin::of(ui.ctx());
-    let epoch = cfg.epoch;
+    // The remembered None-values outlive a fold (only Revert / Reload / Apply clear them).
+    let epoch = cfg.memo_epoch;
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
     let mut n = 0usize;
 
@@ -1537,7 +1544,8 @@ fn sound_lines(
         if let Some(sound) = &style.sound
             && let Some(file) = &sound.custom
         {
-            let draft_id = egui::Id::new(("cfg-style-file-draft", name, epoch));
+            // The draft belongs to the open row (its scope carries `cfg.epoch`), unlike the memo.
+            let draft_id = ui.id().with(("cfg-style-file-draft", name));
             let had: Option<String> = ui.data(|d| d.get_temp(draft_id));
             let mut buf = had.clone().unwrap_or_else(|| file.clone());
             let field_id = ui.id().with("file");
@@ -2658,6 +2666,28 @@ mod tests {
         assert!(state.edit_style("S", StyleEdit::Font(None)));
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
         assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(37))]);
+    }
+
+    /// Review iteration 2, WR-02: folding the row and opening it again keeps the remembered
+    /// size; only replacing the styles (Revert / Reload / Apply) forgets it.
+    #[test]
+    fn the_remembered_font_size_survives_a_fold() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(None)]);
+        assert!(state.edit_style("S", StyleEdit::Font(None)));
+        cfg.set_expanded("S");
+        cfg.set_expanded("S");
+        assert_eq!(cfg.expanded.as_deref(), Some("S"));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(37))]);
+        // Replacing the styles forgets it.
+        assert!(state.edit_style("S", StyleEdit::Font(None)));
+        cfg.reset_for_new_styles();
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(32))]);
     }
 
     #[test]

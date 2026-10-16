@@ -229,14 +229,14 @@ struct ShotState {
 /// Seconds between `styles.json` modification-time polls while the stripe runs.
 const STYLES_POLL_SECS: f64 = 2.0;
 
-/// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
-/// hold exactly that set, so it is cheap to call every frame.
 /// The id of the `n`-th row (1-based), for the debug screenshot `--expand`.
 #[cfg(debug_assertions)]
 fn nth_row_id(rows: &[rules::RuleRow], n: usize) -> Option<BlockId> {
     n.checked_sub(1).and_then(|i| rows.get(i)).map(|r| r.id)
 }
 
+/// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
+/// hold exactly that set, so it is cheap to call every frame.
 fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> bool {
     // `IndexMap` equality ignores order, so a pure reorder needs the name order compared too.
     let pending = config.pending_styles();
@@ -3947,6 +3947,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn expand_seeds_the_nth_row() {
         let (app, _ctx) = popup_app(RULES);
         let rows = app.working.as_ref().unwrap().rows();

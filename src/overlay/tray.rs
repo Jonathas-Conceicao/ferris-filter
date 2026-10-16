@@ -103,7 +103,7 @@ pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tr
 
 impl TrayHandles {
     /// A tray with no OS icon and fresh menu ids, for the debug screenshot mode.
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn inert() -> Self {
         Self {
             tray_icon: None,

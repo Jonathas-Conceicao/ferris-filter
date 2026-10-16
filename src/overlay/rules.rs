@@ -238,7 +238,7 @@ pub const ECONOMY_LOCKED_STATUS: &str =
 const SECTION_ADDED_TOP_STATUS: &str = "Section added at the top. Press Apply to save it.";
 const SECTION_REMOVED_STATUS: &str = "Section removed. Its rules joined the section above.";
 const SECTION_CANT_MOVE_STATUS: &str = "That section can't move further in that direction.";
-const DEFAULT_SECTION_NAME: &str = "Section";
+pub const DEFAULT_SECTION_NAME: &str = "Section";
 
 /// One section divider as the list shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]

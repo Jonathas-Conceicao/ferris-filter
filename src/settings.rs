@@ -41,6 +41,19 @@ pub struct Settings {
 /// a user section that happens to be named "Economy" from sharing its state.
 pub const ECONOMY_SECTION_KEY: &str = "ff:economy";
 
+/// The key a section is stored under: the reserved economy key, or the user section name. A name
+/// that starts with `ff:` or `user:` gets a `user:` prefix so it can never equal the reserved key
+/// (or another section's escaped key).
+pub fn section_key(name: &str, economy: bool) -> String {
+    if economy {
+        ECONOMY_SECTION_KEY.to_string()
+    } else if name.starts_with("ff:") || name.starts_with("user:") {
+        format!("user:{name}")
+    } else {
+        name.to_string()
+    }
+}
+
 impl Settings {
     /// Whether the section `name` of `filter` is collapsed: the stored value, else `economy`
     /// (the economy section starts collapsed, user sections expanded). Pass
@@ -60,6 +73,15 @@ impl Settings {
             .entry(filter.to_string())
             .or_default()
             .insert(name.to_string(), collapsed);
+        next
+    }
+
+    /// A copy with the stored flag of section `key` dropped (it falls back to the default).
+    pub fn forget_section_state(&self, filter: &str, key: &str) -> Settings {
+        let mut next = self.clone();
+        if let Some(m) = next.collapsed_sections.get_mut(filter) {
+            m.remove(key);
+        }
         next
     }
 
@@ -537,6 +559,31 @@ mod tests {
         let s = s.set_section_collapsed("a.filter", ECONOMY_SECTION_KEY, false);
         assert!(!s.section_collapsed("a.filter", ECONOMY_SECTION_KEY, true));
         assert!(s.section_collapsed("b.filter", ECONOMY_SECTION_KEY, true));
+    }
+
+    #[test]
+    fn section_key_never_equals_the_economy_key() {
+        assert_eq!(section_key("Gear", false), "Gear");
+        assert_eq!(section_key("x", true), ECONOMY_SECTION_KEY);
+        assert_ne!(section_key(ECONOMY_SECTION_KEY, false), ECONOMY_SECTION_KEY);
+        assert_ne!(
+            section_key("user:ff:economy", false),
+            section_key("ff:economy", false)
+        );
+        let s = Settings::default().set_section_collapsed(
+            "a.filter",
+            &section_key(ECONOMY_SECTION_KEY, false),
+            false,
+        );
+        assert!(s.section_collapsed("a.filter", ECONOMY_SECTION_KEY, true));
+    }
+
+    #[test]
+    fn forget_section_state_drops_the_flag() {
+        let s = Settings::default().set_section_collapsed("a.filter", "Old", true);
+        let n = s.forget_section_state("a.filter", "Old");
+        assert!(!n.section_collapsed("a.filter", "Old", false));
+        assert_eq!(n.forget_section_state("b.filter", "Old"), n);
     }
 
     #[test]

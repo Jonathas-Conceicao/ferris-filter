@@ -554,6 +554,69 @@ fn line_keyword(text: &str) -> String {
 
 /// Applies the frame's collected row actions once, after the list rendered. Returns whether the
 /// document changed and the last status worth showing.
+/// The settings after the section actions of one batch: a rename moves the folded flag to the new
+/// name, a removed section's flag is dropped, and a new section starts expanded. A flag is only
+/// touched when no other section shares its name (duplicate names share one flag).
+fn section_state_after(
+    working: &WorkingFilter,
+    settings: &Settings,
+    actions: &[RowAction],
+) -> Settings {
+    let filter = settings.filter_name().to_string();
+    let mut next = settings.clone();
+    let shared = |name: &str, except: Option<usize>| {
+        working
+            .sections()
+            .iter()
+            .any(|s| !s.economy && s.name == name && Some(s.ordinal) != except)
+    };
+    let user = |ordinal: usize| {
+        working
+            .sections()
+            .iter()
+            .find(|s| s.ordinal == ordinal && !s.economy)
+    };
+    for action in actions {
+        match action {
+            RowAction::RenameSection { ordinal, name } => {
+                let Some(sec) = user(*ordinal) else { continue };
+                let to = crate::filter::section::sanitize_name(name);
+                if to == sec.name {
+                    continue;
+                }
+                let (from_key, to_key) = (
+                    settings::section_key(&sec.name, false),
+                    settings::section_key(&to, false),
+                );
+                if !shared(&to, Some(*ordinal)) {
+                    next = next
+                        .forget_section_state(&filter, &to_key)
+                        .copy_section_state(&filter, &from_key, &to_key);
+                }
+                if !shared(&sec.name, Some(*ordinal)) {
+                    next = next.forget_section_state(&filter, &from_key);
+                }
+            }
+            RowAction::RemoveSection(ordinal) => {
+                if let Some(sec) = user(*ordinal)
+                    && !shared(&sec.name, Some(*ordinal))
+                {
+                    next = next
+                        .forget_section_state(&filter, &settings::section_key(&sec.name, false));
+                }
+            }
+            RowAction::AddSection | RowAction::AddSectionAbove(_) => {
+                let name = crate::overlay::rules::DEFAULT_SECTION_NAME;
+                if !shared(name, None) {
+                    next = next.forget_section_state(&filter, &settings::section_key(name, false));
+                }
+            }
+            _ => {}
+        }
+    }
+    next
+}
+
 /// Saves a view preference (a fold click). An unusable `ff-settings.json` is left alone so the
 /// user's hand-edited file is not replaced by fallback defaults (WR-03).
 fn save_view_settings(
@@ -575,7 +638,11 @@ fn section_to_reveal(working: &WorkingFilter, settings: &Settings, id: BlockId) 
         .iter()
         .find(|s| s.ordinal == ordinal && !s.economy)?;
     settings
-        .section_collapsed(settings.filter_name(), &sec.name, false)
+        .section_collapsed(
+            settings.filter_name(),
+            &settings::section_key(&sec.name, false),
+            false,
+        )
         .then(|| sec.name.clone())
 }
 
@@ -1224,14 +1291,10 @@ impl OverlayApp {
     /// Remember that a section of the active filter is folded or open. A view preference: it
     /// never touches the loaded filter, the dirty flag or the CONFIG pending state.
     fn set_section_collapsed(&mut self, name: &str, economy: bool, collapsed: bool) {
-        let key = if economy {
-            settings::ECONOMY_SECTION_KEY
-        } else {
-            name
-        };
-        let next = self
-            .settings
-            .set_section_collapsed(self.settings.filter_name(), key, collapsed);
+        let key = settings::section_key(name, economy);
+        let next =
+            self.settings
+                .set_section_collapsed(self.settings.filter_name(), &key, collapsed);
         self.store_settings(next);
     }
 
@@ -1247,27 +1310,12 @@ impl OverlayApp {
         }
     }
 
-    /// A renamed section keeps its folded state: copy the stored flag from the old name to the
-    /// new one before the rename is applied (the old entry stays, so a Revert still finds it).
+    /// Keeps the stored folded state in step with the section actions of a batch (WR-04).
     fn carry_section_state(&mut self, actions: &[RowAction]) {
         let Some(working) = &self.working else {
             return;
         };
-        let filter = self.settings.filter_name().to_string();
-        let mut next = self.settings.clone();
-        for action in actions {
-            if let RowAction::RenameSection { ordinal, name } = action
-                && let Some(sec) = working
-                    .sections()
-                    .iter()
-                    .find(|s| s.ordinal == *ordinal && !s.economy)
-            {
-                let to = crate::filter::section::sanitize_name(name);
-                if to != sec.name {
-                    next = next.copy_section_state(&filter, &sec.name, &to);
-                }
-            }
-        }
+        let next = section_state_after(working, &self.settings, actions);
         if next != self.settings {
             self.store_settings(next);
         }
@@ -2108,12 +2156,8 @@ impl OverlayApp {
             (Some(working), _) => {
                 let settings = &self.settings;
                 let entries = working.entries(&self.query, |sec| {
-                    let key = if sec.economy {
-                        settings::ECONOMY_SECTION_KEY
-                    } else {
-                        sec.name.as_str()
-                    };
-                    settings.section_collapsed(&filter_name, key, sec.economy)
+                    let key = settings::section_key(&sec.name, sec.economy);
+                    settings.section_collapsed(&filter_name, &key, sec.economy)
                 });
                 let searching = !self.query.trim().is_empty();
                 let has_rules = entries.iter().any(|e| {
@@ -4058,6 +4102,46 @@ mod tests {
             std::fs::read_to_string(crate::settings::path(dir.path())).unwrap(),
             bad
         );
+    }
+
+    #[test]
+    fn section_state_follows_rename_remove_and_add() {
+        let r = crate::filter::section::RULE_LINE;
+        let working = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section Old
+{r}
+
+Show
+
+{r}
+# ff:section ff:economy
+{r}
+
+Hide
+"
+        ));
+        let f = "dynamic.filter";
+        let base = crate::settings::Settings::default()
+            .set_section_collapsed(f, "Old", true)
+            .set_section_collapsed(f, "Section", true);
+        let rename = RowAction::RenameSection {
+            ordinal: 0,
+            name: "New".into(),
+        };
+        let n = super::section_state_after(&working, &base, &[rename]);
+        assert!(n.section_collapsed(f, "New", false));
+        assert!(!n.section_collapsed(f, "Old", false), "no stale flag left");
+        let n = super::section_state_after(&working, &base, &[RowAction::RemoveSection(0)]);
+        assert!(!n.section_collapsed(f, "Old", false));
+        let n = super::section_state_after(&working, &base, &[RowAction::AddSection]);
+        assert!(
+            !n.section_collapsed(f, "Section", false),
+            "new starts expanded"
+        );
+        // A user section named like the economy key does not share its state.
+        let key = crate::settings::section_key(&working.sections()[1].name, false);
+        assert_ne!(key, crate::settings::ECONOMY_SECTION_KEY);
     }
 
     #[test]

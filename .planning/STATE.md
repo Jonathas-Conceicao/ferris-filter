@@ -204,6 +204,7 @@ None open.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 261015-nbp | Simple Defences: multi-select base types, written as grouped blocks | 2026-10-15 | 52ff64e | [261015-nbp-simple-defences-multi-select-base-types-](./quick/261015-nbp-simple-defences-multi-select-base-types-/) |
+| 261015-tz2 | PoE2-style UI prototype: ff-art asset tool, skin module, ff-proto binary | 2026-10-16 | 206c6bb | [261015-tz2-poe2-style-ui-prototype-ff-art-asset-too](./quick/261015-tz2-poe2-style-ui-prototype-ff-art-asset-too/) |
 
 ## Phase 15 Source Material — the author's two requests
 

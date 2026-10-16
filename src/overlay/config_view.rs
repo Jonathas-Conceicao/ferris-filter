@@ -21,20 +21,13 @@ use super::config_state::{
     ColourSlot, ConfigState, StyleEdit, config_warning, delete_confirm_text,
 };
 use super::theme;
-use super::widgets::{self, ArrowDirection};
-use crate::skin::fonts::regular;
+use super::widgets;
+use crate::skin::fonts::{regular, small_caps};
 use crate::skin::palette as pal;
 
 const WHOLE_NUMBER: &str = "Enter a whole number";
 const NOT_SET: &str = "Not set (game default)";
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
-/// Fixed widths of the styles table columns (Visibility | Name | Preview), shared by the header
-/// and every row so they stay aligned across the Built-in and Custom groups.
-const COL_VISIBILITY: f32 = 80.0;
-const COL_NAME: f32 = 104.0;
-const COL_PREVIEW: f32 = 120.0;
-/// The Order column (custom group only): the up/down arrows.
-const COL_ORDER: f32 = 64.0;
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
 const INVALID_RED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x55, 0x55);
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
@@ -537,6 +530,82 @@ fn caption_text(text: &str) -> RichText {
     RichText::new(text).small().color(theme::LABEL_TAN)
 }
 
+/// Gap between two columns of the styles table.
+const COL_GAP: f32 = 8.0;
+/// Height of the table's column header strip.
+const HEADER_HEIGHT: f32 = 24.0;
+
+/// One column of the styles table: `x` from the row's left edge, and its width.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Col {
+    x: f32,
+    w: f32,
+}
+
+impl Col {
+    /// This column's rect inside `row`.
+    fn rect(self, row: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_size(
+            egui::pos2(row.left() + self.x, row.top()),
+            vec2(self.w, row.height()),
+        )
+    }
+}
+
+/// The five columns of the styles table (Visibility | Name | Icon | Preview | Order), shared by
+/// the header and every row so they line up across the Built-in and Custom groups.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TableColumns {
+    vis: Col,
+    name: Col,
+    icon: Col,
+    preview: Col,
+    order: Col,
+}
+
+/// Lays the columns out across `width`: `ROW_PAD` on both sides, `COL_GAP` between columns, the
+/// Name column flexible with a 110pt minimum (the Preview column gives way below that).
+fn table_columns(width: f32) -> TableColumns {
+    const VIS: f32 = 64.0;
+    const ICON: f32 = 32.0;
+    const PREVIEW: f32 = 160.0;
+    const ORDER: f32 = 56.0;
+    const NAME_MIN: f32 = 110.0;
+    const PREVIEW_MIN: f32 = 100.0;
+    let pad = crate::skin::widgets::ROW_PAD;
+    let fixed = 2.0 * pad + VIS + ICON + ORDER + 4.0 * COL_GAP;
+    let mut preview = PREVIEW;
+    let mut name = width - fixed - preview;
+    if name < NAME_MIN {
+        preview = (preview - (NAME_MIN - name)).max(PREVIEW_MIN);
+        name = NAME_MIN;
+    }
+    let vis = Col { x: pad, w: VIS };
+    let name = Col {
+        x: vis.x + vis.w + COL_GAP,
+        w: name,
+    };
+    let icon = Col {
+        x: name.x + name.w + COL_GAP,
+        w: ICON,
+    };
+    let preview = Col {
+        x: icon.x + icon.w + COL_GAP,
+        w: preview,
+    };
+    let order = Col {
+        x: preview.x + preview.w + COL_GAP,
+        w: ORDER,
+    };
+    TableColumns {
+        vis,
+        name,
+        icon,
+        preview,
+        order,
+    }
+}
+
 // Layout probe for tests: records where a named element was drawn. A no-op outside tests.
 #[cfg(test)]
 thread_local! {
@@ -552,74 +621,62 @@ fn probe(tag: &'static str, rect: egui::Rect) {
 #[cfg(not(test))]
 fn probe(_tag: &'static str, _rect: egui::Rect) {}
 
-/// One fixed-width table cell. Header and rows both go through here so their columns line up.
-fn cell<R>(
+/// One table cell: a child ui over `rect` with `layout`.
+fn cell_at<R>(
     ui: &mut egui::Ui,
     salt: &'static str,
-    width: f32,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> (egui::Rect, R) {
-    cell_with(ui, salt, width, Layout::left_to_right(Align::Center), add)
-}
-
-/// A fixed-width cell whose contents run right to left, so they hug the cell's right edge.
-fn cell_right<R>(
-    ui: &mut egui::Ui,
-    salt: &'static str,
-    width: f32,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> (egui::Rect, R) {
-    cell_with(ui, salt, width, Layout::right_to_left(Align::Center), add)
-}
-
-fn cell_with<R>(
-    ui: &mut egui::Ui,
-    salt: &'static str,
-    width: f32,
+    rect: egui::Rect,
     layout: Layout,
     add: impl FnOnce(&mut egui::Ui) -> R,
-) -> (egui::Rect, R) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::hover());
+) -> R {
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(salt)
             .max_rect(rect)
             .layout(layout),
     );
-    let out = add(&mut child);
-    (rect, out)
+    add(&mut child)
 }
 
-/// The Visibility | Name | Preview (| Order) header of one group.
-fn styles_table_header(ui: &mut egui::Ui, with_order: bool) {
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(8, 0))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let head = |ui: &mut egui::Ui, salt: &'static str, width: f32, text: &str| {
-                    let (rect, _) = cell(ui, salt, width, |ui| {
-                        ui.label(caption_text(text));
-                    });
-                    rect
-                };
-                probe("head-vis", head(ui, "h-vis", COL_VISIBILITY, "Visibility"));
-                probe("head-name", head(ui, "h-name", COL_NAME, "Name"));
-                probe(
-                    "head-preview",
-                    head(ui, "h-preview", COL_PREVIEW, "Preview"),
-                );
-                if with_order {
-                    // Right-aligned over the row arrows, which sit at the table's right edge.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let (rect, _) = cell_right(ui, "h-order", COL_ORDER, |ui| {
-                            ui.label(caption_text("Order"));
-                        });
-                        probe("head-order", rect);
-                    });
-                }
-            });
-        });
+/// The Visibility | Name | Icon | Preview | Order header of one group.
+fn styles_table_header(ui: &mut egui::Ui) {
+    let width = ui.available_width();
+    let cols = table_columns(width);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, HEADER_HEIGHT), egui::Sense::hover());
+    let painter = ui.painter();
+    for (tag, text, col, right) in [
+        ("head-vis", "Visibility", cols.vis, false),
+        ("head-name", "Name", cols.name, false),
+        ("head-icon", "Icon", cols.icon, false),
+        ("head-preview", "Preview", cols.preview, false),
+        // Right-aligned over the arrows, which hug the table's right edge.
+        ("head-order", "Order", cols.order, true),
+    ] {
+        let cell = col.rect(rect);
+        let galley = painter.layout_no_wrap(text.to_owned(), regular(14.0), pal::MUTED);
+        let x = if right {
+            cell.right() - galley.size().x
+        } else {
+            cell.left()
+        };
+        let y = rect.center().y - galley.size().y / 2.0;
+        painter.galley(egui::pos2(x, y), galley, pal::MUTED);
+        probe(tag, cell);
+    }
+    painter.hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        egui::Stroke::new(1.0, pal::INPUT_BORDER),
+    );
+}
+
+/// A group heading ("Built-in" / "Custom") in the skin's small caps.
+fn group_heading(ui: &mut egui::Ui, title: &str) -> egui::Response {
+    ui.label(
+        RichText::new(title)
+            .font(small_caps(15.0))
+            .color(pal::LABEL),
+    )
 }
 
 fn show_styles(
@@ -641,10 +698,11 @@ fn show_styles(
         .on_hover_text("Revert to reload styles.json.");
         return;
     }
+    let skin = crate::skin::of(ui.ctx());
     if !builtin.is_empty() {
-        let heading = ui.label(caption_text("Built-in"));
+        let heading = group_heading(ui, "Built-in");
         probe("builtin-heading", heading.rect);
-        styles_table_header(ui, false);
+        styles_table_header(ui);
         for (i, name) in builtin.iter().enumerate() {
             style_row(ui, state, cfg, ctx, i, name, None, actions);
         }
@@ -654,10 +712,10 @@ fn show_styles(
     }
     // Always drawn, so Add style is reachable before the first custom style exists.
     ui.horizontal(|ui| {
-        let heading = ui.label(caption_text("Custom"));
+        let heading = group_heading(ui, "Custom");
         probe("custom-heading", heading.rect);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let add = ui.add(small_button("+ ADD STYLE"));
+            let add = crate::skin::widgets::ff_button(ui, &skin, "+ Add style", 124.0);
             probe("add-style", add.rect);
             if add.clicked() && cfg.style_draft.is_none() {
                 cfg.style_draft = Some(String::new());
@@ -666,8 +724,8 @@ fn show_styles(
         });
     });
     // With no custom styles there is nothing for a header to label.
-    if !custom.is_empty() {
-        styles_table_header(ui, true);
+    if !custom.is_empty() || cfg.style_draft.is_some() {
+        styles_table_header(ui);
     }
     if let Some(draft) = cfg.style_draft.clone() {
         style_draft_row(ui, state, cfg, draft, actions);
@@ -694,6 +752,7 @@ fn rename_field(
     cfg: &mut ConfigUi,
     ctx: &ConfigViewCtx,
     name: &str,
+    width: f32,
     actions: &mut Vec<ConfigAction>,
 ) {
     let key = state.style_id(name).unwrap_or(name).to_string();
@@ -703,10 +762,12 @@ fn rename_field(
         .cloned()
         .unwrap_or_else(|| name.to_string());
     let hint = rename_hint(state, name, &text);
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut text)
-            .id_salt("rename")
-            .desired_width(COL_NAME - 4.0),
+    let resp = crate::skin::widgets::ff_text_field_id(
+        ui,
+        ui.id().with("rename"),
+        &mut text,
+        "Style name",
+        width,
     );
     if hint.is_some() {
         ui.painter().rect_stroke(
@@ -749,7 +810,7 @@ pub fn style_groups(state: &ConfigState) -> (Vec<String>, Vec<String>) {
 }
 
 /// One styles-table row. `reorder` is `Some((can_move_up, can_move_down))` for custom styles and
-/// `None` for built-ins, which draw no arrows.
+/// `None` for built-ins.
 #[allow(clippy::too_many_arguments)]
 fn style_row(
     ui: &mut egui::Ui,
@@ -766,123 +827,128 @@ fn style_row(
     };
     let epoch = cfg.epoch;
     ui.push_id(("style", name, epoch), |ui| {
-        widgets::zebra_row(ui, i, |ui| {
-            let is_expanded = cfg.expanded.as_deref() == Some(name);
-            let mut name_left = None;
-            let mut arrows_left = None;
-            let header = ui.horizontal(|ui| {
-                ui.set_min_height(24.0);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let (vis, _) = cell(ui, "vis", COL_VISIBILITY, |ui| {
-                    let mut on = style.action == StyleAction::Show;
-                    let resp = widgets::slide_switch(ui, &mut on).on_hover_text(SWITCH_TIP);
-                    if resp.changed() {
-                        let action = if on {
-                            StyleAction::Show
-                        } else {
-                            StyleAction::Hide
-                        };
-                        edit(actions, name, StyleEdit::Action(action));
-                    }
-                });
-                probe("row-vis", vis);
-                let (label, _) = cell(ui, "name", COL_NAME, |ui| {
-                    if reorder.is_some() {
-                        rename_field(ui, state, cfg, ctx, name, actions);
-                    } else {
-                        ui.add_sized(
-                            vec2(COL_NAME, 20.0),
-                            egui::Label::new(
-                                RichText::new(name).size(14.0).color(theme::VALUE_TEXT),
-                            )
-                            .truncate()
-                            .sense(egui::Sense::hover()),
-                        )
-                        .on_hover_text(name);
-                    }
-                });
-                probe("row-name", label);
-                let (chip, _) = cell(ui, "preview", COL_PREVIEW, |ui| {
-                    widgets::style_preview_chip(ui, name, style);
-                });
-                probe("row-preview", chip);
-                // A custom row's Name cell is a text field, so its click target starts at the
-                // preview column; a built-in row's covers the name too.
-                name_left = Some(if reorder.is_some() {
-                    chip.left()
+        let width = ui.available_width();
+        let cols = table_columns(width);
+        let is_expanded = cfg.expanded.as_deref() == Some(name);
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(width, crate::skin::widgets::ROW_HEIGHT),
+            egui::Sense::hover(),
+        );
+        crate::skin::widgets::row_background(ui, i, rect);
+
+        // The row's click target covers the name (built-in) or icon (custom: the Name cell is a
+        // text field) through the preview column, so it never overlaps the switch or the arrows.
+        let first = if reorder.is_some() {
+            cols.icon
+        } else {
+            cols.name
+        };
+        let click_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + first.x, rect.top()),
+            egui::pos2(
+                (rect.left() + cols.order.x - 2.0).max(rect.left() + first.x),
+                rect.bottom(),
+            ),
+        );
+        let row = ui
+            .interact(
+                click_rect,
+                ui.id().with(("style-row", name)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        row.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, is_expanded, name)
+        });
+
+        let left_to_right = Layout::left_to_right(Align::Center);
+        let vis = cols.vis.rect(rect);
+        cell_at(ui, "vis", vis, left_to_right, |ui| {
+            let mut on = style.action == StyleAction::Show;
+            let resp = widgets::slide_switch(ui, &mut on).on_hover_text(SWITCH_TIP);
+            if resp.changed() {
+                let action = if on {
+                    StyleAction::Show
                 } else {
-                    label.left()
-                });
-                if let Some((can_up, can_down)) = reorder {
-                    // The arrows hug the row's right edge like the RULES rows: right to left,
-                    // Down first (rightmost), so they read Up then Down.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let (order, _) = cell_right(ui, "order", COL_ORDER, |ui| {
-                            let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
-                            let up = widgets::arrow_button(ui, ArrowDirection::Up, can_up);
-                            probe("row-up", up.rect);
-                            probe("row-down", down.rect);
-                            if down.clicked() {
-                                actions.push(ConfigAction::MoveStyle {
-                                    name: name.to_string(),
-                                    up: false,
-                                });
-                            }
-                            if up.clicked() {
-                                actions.push(ConfigAction::MoveStyle {
-                                    name: name.to_string(),
-                                    up: true,
-                                });
-                            }
-                        });
-                        probe("row-order", order);
-                        arrows_left = Some(order.left());
-                    });
-                }
-            });
-            // The row's click target covers the name and preview columns only, so it never
-            // overlaps the switch or the arrows.
-            let mut row_rect = header.response.rect;
-            if let Some(left) = name_left {
-                row_rect.min.x = left;
-            }
-            if let Some(left) = arrows_left {
-                row_rect.max.x = (left - 2.0).max(row_rect.min.x);
-            }
-            let row = ui
-                .interact(
-                    row_rect,
-                    ui.id().with(("style-row", name)),
-                    egui::Sense::click(),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            row.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::CollapsingHeader,
-                    true,
-                    is_expanded,
-                    name,
-                )
-            });
-            if cfg.scroll_to.as_deref() == Some(name) {
-                row.scroll_to_me(Some(Align::Center));
-                cfg.scroll_to = None;
-            }
-            if row.clicked() {
-                cfg.set_expanded(name);
-                egui::Popup::close_all(ui.ctx());
-            }
-            if is_expanded {
-                ui.add_space(4.0);
-                egui::Frame::new()
-                    .fill(theme::ROW_BASE)
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        style_editor(ui, state, cfg, name, style, actions);
-                    });
+                    StyleAction::Hide
+                };
+                edit(actions, name, StyleEdit::Action(action));
             }
         });
+        probe("row-vis", vis);
+
+        let name_cell = cols.name.rect(rect);
+        cell_at(ui, "name", name_cell, left_to_right, |ui| {
+            if reorder.is_some() {
+                rename_field(ui, state, cfg, ctx, name, name_cell.width(), actions);
+            } else {
+                ui.add_sized(
+                    vec2(name_cell.width(), 20.0),
+                    egui::Label::new(RichText::new(name).font(small_caps(17.0)).color(pal::VALUE))
+                        .truncate()
+                        .sense(egui::Sense::hover()),
+                )
+                .on_hover_text(RENAME_TIP);
+            }
+        });
+        probe("row-name", name_cell);
+
+        let icon = cols.icon.rect(rect);
+        probe("row-icon", icon);
+
+        let preview = cols.preview.rect(rect);
+        cell_at(ui, "preview", preview, left_to_right, |ui| {
+            widgets::style_preview_chip(ui, name, style);
+        });
+        probe("row-preview", preview);
+
+        let order = cols.order.rect(rect);
+        cell_at(
+            ui,
+            "order",
+            order,
+            Layout::right_to_left(Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if let Some((can_up, can_down)) = reorder {
+                    let down = widgets::arrow_button(ui, widgets::ArrowDirection::Down, can_down);
+                    let up = widgets::arrow_button(ui, widgets::ArrowDirection::Up, can_up);
+                    probe("row-up", up.rect);
+                    probe("row-down", down.rect);
+                    if down.clicked() {
+                        actions.push(ConfigAction::MoveStyle {
+                            name: name.to_string(),
+                            up: false,
+                        });
+                    }
+                    if up.clicked() {
+                        actions.push(ConfigAction::MoveStyle {
+                            name: name.to_string(),
+                            up: true,
+                        });
+                    }
+                }
+            },
+        );
+        probe("row-order", order);
+
+        if cfg.scroll_to.as_deref() == Some(name) {
+            row.scroll_to_me(Some(Align::Center));
+            cfg.scroll_to = None;
+        }
+        if row.clicked() {
+            cfg.set_expanded(name);
+            egui::Popup::close_all(ui.ctx());
+        }
+        if is_expanded {
+            egui::Frame::new()
+                .fill(theme::ROW_BASE)
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    style_editor(ui, state, cfg, name, style, actions);
+                });
+        }
     });
 }
 
@@ -893,53 +959,50 @@ fn style_draft_row(
     mut draft: String,
     actions: &mut Vec<ConfigAction>,
 ) {
+    use crate::skin::widgets::{ROW_HEIGHT, ROW_PAD, ff_button, ff_button_ex, ff_text_field_id};
+
     let hint = style_name_hint(state, &draft);
+    let skin = crate::skin::of(ui.ctx());
     let mut commit = false;
     let mut discard = false;
-    egui::Frame::new()
-        .fill(theme::ROW_BASE)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 4.0;
-            let mut edit = ui.add(
-                egui::TextEdit::singleline(&mut draft)
-                    .id_salt("cfg-style-draft")
-                    .hint_text("Style name")
-                    .desired_width(ui.available_width() - 8.0),
-            );
-            if draft.trim().is_empty()
-                && let Some(msg) = &hint
-            {
-                edit = edit.on_hover_text(msg.as_str());
-            }
-            if std::mem::take(&mut cfg.focus_draft) {
-                edit.request_focus();
-            }
-            if edit.lost_focus() {
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    commit = hint.is_none();
-                } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    discard = true;
-                }
-            }
-            if let Some(msg) = &hint
-                && !draft.trim().is_empty()
-            {
-                body::hint(ui, msg);
-            }
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(hint.is_none(), small_button("Add style"))
-                    .clicked()
-                {
-                    commit = true;
-                }
-                if ui.add(small_button("Discard new style")).clicked() {
-                    discard = true;
-                }
-            });
-        });
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::hover());
+    crate::skin::widgets::row_background(ui, 0, rect);
+    let mut row = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("cfg-style-draft-row")
+            .max_rect(rect.shrink2(vec2(ROW_PAD, 0.0)))
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    if ff_button(&mut row, &skin, "Discard new style", 168.0).clicked() {
+        discard = true;
+    }
+    if ff_button_ex(&mut row, &skin, "Add style", 112.0, hint.is_none(), false).clicked() {
+        commit = true;
+    }
+    let width = (row.available_width() - 8.0).max(80.0);
+    let id = row.id().with("cfg-style-draft");
+    let mut edit = ff_text_field_id(&mut row, id, &mut draft, "Style name", width);
+    if draft.trim().is_empty()
+        && let Some(msg) = &hint
+    {
+        edit = edit.on_hover_text(msg.as_str());
+    }
+    if std::mem::take(&mut cfg.focus_draft) {
+        edit.request_focus();
+    }
+    if edit.lost_focus() {
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            commit = hint.is_none();
+        } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            discard = true;
+        }
+    }
+    if let Some(msg) = &hint
+        && !draft.trim().is_empty()
+    {
+        body::hint(ui, msg);
+    }
     if commit && hint.is_none() {
         let name = draft.trim().to_string();
         actions.push(ConfigAction::AddStyle(name.clone()));
@@ -1735,6 +1798,33 @@ mod tests {
     }
 
     #[test]
+    fn table_columns_follow_the_spec() {
+        let c = table_columns(517.0);
+        assert_eq!((c.vis.x, c.vis.w), (10.0, 64.0));
+        assert_eq!((c.name.x, c.name.w), (82.0, 153.0));
+        assert_eq!((c.icon.x, c.icon.w), (243.0, 32.0));
+        assert_eq!((c.preview.x, c.preview.w), (283.0, 160.0));
+        assert_eq!((c.order.x, c.order.w), (451.0, 56.0));
+        assert_eq!(c.order.x + c.order.w, 517.0 - 10.0);
+        for width in [440.0, 460.0, 480.0, 517.0, 660.0] {
+            let c = table_columns(width);
+            assert!(c.name.w >= 110.0, "{width}: {c:?}");
+            assert!(
+                c.order.x + c.order.w <= width - 10.0 + 0.01,
+                "{width}: {c:?}"
+            );
+            for pair in [
+                (c.vis, c.name),
+                (c.name, c.icon),
+                (c.icon, c.preview),
+                (c.preview, c.order),
+            ] {
+                assert!((pair.1.x - (pair.0.x + pair.0.w) - COL_GAP).abs() < 0.01);
+            }
+        }
+    }
+
+    #[test]
     fn styles_table_header_and_columns() {
         let (_d, mut state) = loaded();
         state.add_style("k1").unwrap();
@@ -1757,57 +1847,37 @@ mod tests {
                 .map(|(_, r)| *r)
                 .collect()
         };
-        // One header per group; the shared columns align across both headers and every row.
-        let (hv, hn, hp) = (of("head-vis"), of("head-name"), of("head-preview"));
-        assert_eq!((hv.len(), hn.len(), hp.len()), (2, 2, 2));
-        assert!(hv[0].left() < hn[0].left() && hn[0].left() < hp[0].left());
-        for (a, b) in [(hv[0], hv[1]), (hn[0], hn[1]), (hp[0], hp[1])] {
-            assert!((a.left() - b.left()).abs() <= 1.0, "{a:?} vs {b:?}");
-        }
         let total = state.style_names().len();
-        for (tag, head) in [
-            ("row-vis", hv[0]),
-            ("row-name", hn[0]),
-            ("row-preview", hp[0]),
-        ] {
-            let rows = of(tag);
-            assert_eq!(rows.len(), total, "{tag}");
-            for r in rows {
+        let n_builtin = style_groups(&state).0.len();
+        // One header per group with all five columns; each lines up with the same column of every
+        // row below it (both groups).
+        for col in ["vis", "name", "icon", "preview", "order"] {
+            let heads = of(&format!("head-{col}"));
+            let rows = of(&format!("row-{col}"));
+            assert_eq!(heads.len(), 2, "head-{col}");
+            assert_eq!(rows.len(), total, "row-{col}");
+            assert!(
+                (heads[0].left() - heads[1].left()).abs() <= 0.5,
+                "head-{col} differs between groups"
+            );
+            for (k, r) in rows.iter().enumerate() {
+                let head = if k < n_builtin { heads[0] } else { heads[1] };
                 assert!(
-                    (r.left() - head.left()).abs() <= 1.0,
-                    "{tag} {r:?} vs header {head:?}"
+                    (r.left() - head.left()).abs() <= 0.5
+                        && (r.right() - head.right()).abs() <= 0.5,
+                    "row-{col} {r:?} vs header {head:?}"
                 );
             }
         }
-        // Only the custom group has an Order column. It sits at the table's right edge (like the
-        // RULES arrows), and the header is right-aligned over the row arrows.
-        let ho = of("head-order");
-        assert_eq!(ho.len(), 1);
-        assert!(hp[1].right() <= ho[0].left() + 1.0);
-        let orders = of("row-order");
-        assert_eq!(orders.len(), style_groups(&state).1.len());
-        let previews = of("row-preview");
-        let n_builtin = style_groups(&state).0.len();
-        for (k, r) in orders.iter().enumerate() {
-            assert!(
-                (r.right() - ho[0].right()).abs() <= 1.0,
-                "{r:?} vs {:?}",
-                ho[0]
-            );
-            assert!((r.right() - orders[0].right()).abs() <= 1.0);
-            assert!(previews[n_builtin + k].right() <= r.left());
-        }
-        // The right edge is the frames' content edge, well right of the shared columns.
-        assert!(
-            ho[0].left() > hp[1].right() + 20.0,
-            "{:?} {:?}",
-            ho[0],
-            hp[1]
-        );
-        // Up then Down, left to right, inside the order cell, Down at its right edge. An enabled
-        // arrow's probed rect is its 4px-padded click target, a disabled one's the 16px glyph.
-        let (ups, downs) = (of("row-up"), of("row-down"));
-        for ((u, d), o) in ups.iter().zip(&downs).zip(&orders) {
+        let h = |c: &str| of(&format!("head-{c}"))[0];
+        assert!(h("vis").right() <= h("name").left());
+        assert!(h("name").right() <= h("icon").left());
+        assert!(h("icon").right() <= h("preview").left());
+        assert!(h("preview").right() <= h("order").left());
+        // The custom arrows sit inside the Order cell, Up then Down, Down at its right edge.
+        let (orders, ups, downs) = (of("row-order"), of("row-up"), of("row-down"));
+        for ((u, d), k) in ups.iter().zip(&downs).zip(n_builtin..) {
+            let o = orders[k];
             assert!(u.center().x < d.center().x);
             assert!(
                 o.contains(u.center()) && o.contains(d.center()),
@@ -1874,7 +1944,7 @@ mod tests {
         assert_eq!(count("custom-heading"), 1);
         assert_eq!(count("add-style"), 1);
         assert_eq!(count("head-vis"), 1, "only the built-in header");
-        assert_eq!(count("head-order"), 0);
+        assert_eq!(count("head-order"), 1, "Built-in also has an Order column");
     }
 
     #[test]
@@ -1922,7 +1992,8 @@ mod tests {
             .filter(|(t, _)| *t == "row-name")
             .map(|(_, r)| r)
             .collect();
-        let target = names[n_builtin].center();
+        // Click near the right end so the caret lands after the text.
+        let target = egui::pos2(names[n_builtin].right() - 14.0, names[n_builtin].center().y);
         let button = |pressed| egui::Event::PointerButton {
             pos: target,
             button: egui::PointerButton::Primary,
@@ -2178,15 +2249,24 @@ mod tests {
     fn styles_header_captions_fit_their_columns() {
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
+        let cols = table_columns(460.0);
         let out = ctx.run_ui(egui::RawInput::default(), |ui| {
             for (text, col) in [
-                ("Visibility", COL_VISIBILITY),
-                ("Name", COL_NAME),
-                ("Preview", COL_PREVIEW),
-                ("Order", COL_ORDER),
+                ("Visibility", cols.vis),
+                ("Name", cols.name),
+                ("Icon", cols.icon),
+                ("Preview", cols.preview),
+                ("Order", cols.order),
             ] {
-                let w = ui.label(caption_text(text)).rect.width();
-                assert!(w <= col, "{text} is {w}pt wide, its column is {col}pt");
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(text.to_owned(), regular(14.0), pal::MUTED);
+                let w = galley.size().x;
+                assert!(
+                    w <= col.w,
+                    "{text} is {w}pt wide, its column is {}pt",
+                    col.w
+                );
             }
         });
         out.drop_without_applying_deltas();

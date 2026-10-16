@@ -307,6 +307,21 @@ pub fn themed_slider(
             *value = new;
         }
     }
+    // A log slider has no even step in slider space (step 0 above), so Left/Right step the whole
+    // number by one here instead (WR-04).
+    if log && resp.has_focus() {
+        let delta = ui.input(|i| {
+            i64::from(i.key_pressed(egui::Key::ArrowRight))
+                - i64::from(i.key_pressed(egui::Key::ArrowLeft))
+        });
+        if delta != 0 {
+            let new = ((*value).clamp(min, max.max(min)) + delta).clamp(min, max.max(min));
+            if new != *value {
+                *value = new;
+                resp.mark_changed();
+            }
+        }
+    }
     resp
 }
 
@@ -1033,6 +1048,36 @@ mod tests {
             (50..=100).contains(&v),
             "log midpoint should be near sqrt(5000), got {v}"
         );
+    }
+
+    #[test]
+    fn themed_slider_log_steps_by_one_on_arrow_keys() {
+        let ctx = headless_ctx();
+        let mut v = 1_i64;
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(key_input(egui::Key::Home), |ui| {
+            rect = themed_slider(ui, &mut v, 1, 5000, true).rect;
+        })
+        .drop_without_applying_deltas();
+        // Click focuses the slider (and sets a value), then the arrows step by one.
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            themed_slider(ui, &mut v, 1, 5000, true);
+        })
+        .drop_without_applying_deltas();
+        let start = v;
+        let mut changed = false;
+        ctx.run_ui(key_input(egui::Key::ArrowRight), |ui| {
+            changed = themed_slider(ui, &mut v, 1, 5000, true).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(changed);
+        assert_eq!(v, start + 1);
+        ctx.run_ui(key_input(egui::Key::ArrowLeft), |ui| {
+            changed = themed_slider(ui, &mut v, 1, 5000, true).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(changed);
+        assert_eq!(v, start);
     }
 
     #[test]

@@ -314,8 +314,12 @@ pub fn themed_slider(
             i64::from(i.key_pressed(egui::Key::ArrowRight))
                 - i64::from(i.key_pressed(egui::Key::ArrowLeft))
         });
-        if delta != 0 {
-            let new = ((*value).clamp(min, max.max(min)) + delta).clamp(min, max.max(min));
+        // A key only steps toward or within the range: a hand-written value outside it is never
+        // pulled to the far end by a key pointing away from it.
+        let hi = max.max(min);
+        let blocked = (delta > 0 && *value >= hi) || (delta < 0 && *value <= min);
+        if delta != 0 && !blocked {
+            let new = ((*value).clamp(min, hi) + delta).clamp(min, hi);
             if new != *value {
                 *value = new;
                 resp.mark_changed();
@@ -1102,6 +1106,32 @@ mod tests {
         .drop_without_applying_deltas();
         assert!(changed);
         assert_eq!(v, start);
+    }
+
+    #[test]
+    fn themed_slider_log_arrow_keeps_out_of_range_value() {
+        let ctx = headless_ctx();
+        for (start, key) in [(1500_i64, egui::Key::ArrowRight), (-5, egui::Key::ArrowLeft)] {
+            let mut v = start;
+            let mut id = egui::Id::NULL;
+            ctx.run_ui(RawInput::default(), |ui| {
+                id = themed_slider(ui, &mut v, 0, 1000, true).id;
+            })
+            .drop_without_applying_deltas();
+            ctx.memory_mut(|m| m.request_focus(id));
+            ctx.run_ui(RawInput::default(), |ui| {
+                themed_slider(ui, &mut v, 0, 1000, true);
+            })
+            .drop_without_applying_deltas();
+            assert!(ctx.memory(|m| m.has_focus(id)), "the slider has focus");
+            let mut changed = true;
+            ctx.run_ui(key_input(key), |ui| {
+                changed = themed_slider(ui, &mut v, 0, 1000, true).changed();
+            })
+            .drop_without_applying_deltas();
+            assert!(!changed, "{key:?} on {start} must not edit");
+            assert_eq!(v, start);
+        }
     }
 
     #[test]

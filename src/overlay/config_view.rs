@@ -3,23 +3,22 @@
 //! Layer rule (same as `rule_list.rs`): all model mutations are returned as [`ConfigAction`]s and
 //! applied by the app after the frame; this module never mutates [`ConfigState`] and never touches
 //! the filesystem (the filter list and the style-use counts arrive through [`ConfigViewCtx`]).
-//! The style editor deliberately reuses the Phase 20 action widgets in `body.rs`
-//! (`colour_combo`, `slider_pair`, `SIZE_CHOICES`) so the vocabulary is learnt once.
+//! The style editor's lines are the shared `style_lines` component (also drawn for a Custom
+//! rule's STYLE section); this view maps their intents onto `StyleEdit`s.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use egui::{Align, Layout, RichText, vec2};
 
-use crate::models::config::{
-    Beam, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction, StyleNameError, StyleSet,
-};
+use crate::models::config::{Style, StyleAction, StyleNameError, StyleSet};
 use crate::settings;
 
 use super::body;
 use super::config_state::{
-    ColourSlot, ConfigState, RevertScope, StyleEdit, config_warning, delete_confirm_text,
+    ConfigState, RevertScope, StyleEdit, config_warning, delete_confirm_text,
 };
+use super::style_lines::{self, StyleIntent, StyleView, Vis, probe};
 use super::theme;
 use super::widgets;
 use crate::skin::editor as ed;
@@ -563,21 +562,6 @@ fn table_columns(width: f32) -> TableColumns {
     }
 }
 
-// Layout probe for tests: records where a named element was drawn. A no-op outside tests.
-#[cfg(test)]
-thread_local! {
-    static PROBE: std::cell::RefCell<Vec<(&'static str, egui::Rect)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-#[cfg(test)]
-fn probe(tag: &'static str, rect: egui::Rect) {
-    PROBE.with(|p| p.borrow_mut().push((tag, rect)));
-}
-
-#[cfg(not(test))]
-fn probe(_tag: &'static str, _rect: egui::Rect) {}
-
 /// One table cell: a child ui over `rect` with `layout`.
 /// Where the text starts inside a custom style's name field; built-in names start there too.
 const NAME_TEXT_INSET: f32 = 9.0;
@@ -940,18 +924,7 @@ fn style_row(
 /// How a style's item-label preview looks. `with_font` carries the style's font size; the table
 /// previews leave it off so every row is the same height.
 fn label_look(style: &Style, with_font: bool) -> ed::LabelLook {
-    let rgb = |c: [u8; 3]| egui::Color32::from_rgb(c[0], c[1], c[2]);
-    ed::LabelLook {
-        text: style.text.map(rgb),
-        border: style.border.map(rgb),
-        background: style.background.map(rgb),
-        font_size: if with_font {
-            style.font.map(f32::from)
-        } else {
-            None
-        },
-        hidden: style.action == StyleAction::Hide,
-    }
+    style_lines::label_look(&StyleView::from_style(style), with_font)
 }
 
 fn style_draft_row(
@@ -1026,80 +999,21 @@ fn edit(actions: &mut Vec<ConfigAction>, name: &str, edit: StyleEdit) {
     });
 }
 
-const FONT_TIP: &str = "Font size override; off uses the game default";
-/// Hover text of the Font size check and its dimmed slider while the override is off.
-const FONT_OFF_TIP: &str = "Off: the game's default size. Tick to set a size.";
-/// Hover text of the Font size check while the override is on.
-const FONT_ON_TIP: &str = "On: this size. Untick for the game's default size.";
-/// The value text of the dimmed Font size slider while the override is off.
-const FONT_OFF_VALUE: &str = "Default";
-const DROP_TIP: &str = "Silence the default drop sound";
-const FILE_TIP: &str = "The file must be in the game folder.";
-const BAD_FILE_TIP: &str = "File names cannot contain quotes or control characters";
-const SOUND_OPTIONS: [&str; 18] = [
-    "None",
-    "Alert 1",
-    "Alert 2",
-    "Alert 3",
-    "Alert 4",
-    "Alert 5",
-    "Alert 6",
-    "Alert 7",
-    "Alert 8",
-    "Alert 9",
-    "Alert 10",
-    "Alert 11",
-    "Alert 12",
-    "Alert 13",
-    "Alert 14",
-    "Alert 15",
-    "Alert 16",
-    "Custom file",
-];
-/// Index of `Custom file` in [`SOUND_OPTIONS`].
-const SOUND_CUSTOM: usize = 17;
-const SOUND_FILE_DEFAULT: &str = "uwu.mp3";
-
-/// One editor line: zebra-striped, label in the 128pt column, control after it. Each line is its
-/// own id scope so widgets of different lines never share an auto id.
-fn ff_field_row_line(
-    ui: &mut egui::Ui,
-    n: &mut usize,
-    label: &str,
-    tip: Option<&str>,
-    add: impl FnOnce(&mut egui::Ui),
-) {
-    let i = *n;
-    *n += 1;
-    ui.push_id(("ed-line", i), |ui| {
-        crate::skin::widgets::ff_field_row(ui, i, label, tip, add);
-    });
-}
-
-/// The value a field had before it was switched to None, kept for the session (until the next
-/// Revert / Reload / Apply, which bumps the memo epoch; folding a row does not) so switching
-/// back restores it.
-fn memo_id(name: &str, field: &'static str, epoch: u64) -> egui::Id {
-    egui::Id::new(("cfg-style-last", name, field, epoch))
-}
-
-fn remember<T: Clone + Send + Sync + 'static>(
-    ui: &egui::Ui,
-    name: &str,
-    field: &'static str,
-    epoch: u64,
-    value: &T,
-) {
-    ui.data_mut(|d| d.insert_temp(memo_id(name, field, epoch), value.clone()));
-}
-
-fn recall<T: Clone + Send + Sync + 'static>(
-    ui: &egui::Ui,
-    name: &str,
-    field: &'static str,
-    epoch: u64,
-) -> Option<T> {
-    ui.data(|d| d.get_temp(memo_id(name, field, epoch)))
+/// The `StyleEdit` a shared style line's intent stands for (styles are opaque: alpha dropped).
+fn style_edit_for(intent: StyleIntent) -> StyleEdit {
+    match intent {
+        StyleIntent::Visibility(Vis::Hide) => StyleEdit::Action(StyleAction::Hide),
+        StyleIntent::Visibility(_) => StyleEdit::Action(StyleAction::Show),
+        StyleIntent::Colour { slot, value, .. } => StyleEdit::Colour {
+            slot,
+            value: value.map(|c| [c[0], c[1], c[2]]),
+        },
+        StyleIntent::Font(f) => StyleEdit::Font(f),
+        StyleIntent::Minimap(m) => StyleEdit::Minimap(m),
+        StyleIntent::Beam(b) => StyleEdit::Beam(b),
+        StyleIntent::Sound(s) => StyleEdit::Sound(s),
+        StyleIntent::DisableDropSound(on) => StyleEdit::DisableDropSound(on),
+    }
 }
 
 fn style_editor(
@@ -1111,152 +1025,14 @@ fn style_editor(
     actions: &mut Vec<ConfigAction>,
 ) {
     let skin = crate::skin::of(ui.ctx());
-    // The remembered None-values outlive a fold (only Revert / Reload / Apply clear them).
-    let epoch = cfg.memo_epoch;
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
     let mut n = 0usize;
-
-    ff_field_row_line(ui, &mut n, "Visibility", None, |ui| {
-        let mut sel = usize::from(style.action == StyleAction::Hide);
-        let r = ed::ff_segmented(ui, &skin, &mut sel, &["Show", "Hide"], 128.0);
-        probe("ed-visibility", r.rect);
-        if r.changed() {
-            let action = if sel == 0 {
-                StyleAction::Show
-            } else {
-                StyleAction::Hide
-            };
-            edit(actions, name, StyleEdit::Action(action));
-        }
-    });
-
-    ff_field_row_line(ui, &mut n, "Label", None, |ui| {
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), 44.0), egui::Sense::hover());
-        ed::ff_item_label(ui.painter(), rect, "Item Name", label_look(style, true));
-    });
-
-    ff_field_row_line(ui, &mut n, "", None, |ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let width = ((ui.available_width() - 16.0) / 3.0)
-            .floor()
-            .clamp(60.0, 110.0);
-        for (tag, label, slot, current, seed) in [
-            (
-                "text",
-                "Text",
-                ColourSlot::Text,
-                style.text,
-                [248, 248, 242],
-            ),
-            (
-                "border",
-                "Border",
-                ColourSlot::Border,
-                style.border,
-                [248, 248, 242],
-            ),
-            (
-                "background",
-                "Background",
-                ColourSlot::Background,
-                style.background,
-                [40, 42, 54],
-            ),
-        ] {
-            let value = match widgets::colour_slot(ui, tag, label, current, seed, width) {
-                widgets::SlotResult::Unchanged => continue,
-                widgets::SlotResult::Set(rgb) => Some(rgb),
-                widgets::SlotResult::Cleared => None,
-            };
-            edit(actions, name, StyleEdit::Colour { slot, value });
-        }
-    });
-
-    ff_field_row_line(ui, &mut n, "Font size", Some(FONT_TIP), |ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let mut on = style.font.is_some();
-        let check = crate::skin::widgets::ff_check(ui, &skin, &mut on, "Font size");
-        probe("ed-font-check", check.rect);
-        let check = check.on_hover_text(if style.font.is_some() {
-            FONT_ON_TIP
-        } else {
-            FONT_OFF_TIP
-        });
-        if check.changed() {
-            // WR-03: turning it back on restores the size it had before it was turned off.
-            let next = if on {
-                Some(recall::<u8>(ui, name, "font", epoch).map_or(32, i64::from))
-            } else {
-                if let Some(f) = style.font {
-                    remember(ui, name, "font", epoch, &f);
-                }
-                None
-            };
-            edit(actions, name, StyleEdit::Font(next));
-        }
-        if let Some(font) = style.font {
-            let mut v = f64::from(font);
-            // The slider takes the rest of the row after the check.
-            let rest = (ui.max_rect().right() - ui.next_widget_position().x).max(120.0);
-            let r = ui
-                .allocate_ui(vec2(rest, 28.0), |ui| {
-                    crate::skin::widgets::ff_slider(
-                        ui,
-                        &skin,
-                        &mut v,
-                        1.0..=45.0,
-                        1.0,
-                        "Font size",
-                        |v| format!("{v:.0}"),
-                    )
-                })
-                .inner;
-            probe("ed-font-slider", r.rect);
-            if r.changed() {
-                edit(actions, name, StyleEdit::Font(Some(v.round() as i64)));
-            }
-            if let Some(msg) = body::font_hint(i64::from(font)) {
-                r.on_hover_text(msg);
-            }
-        } else {
-            // Off keeps the line's shape: the slider stays, dimmed and inert, reading "Default"
-            // at the size a tick would bring back, so the line never shows a lone circle.
-            let mut v = recall::<u8>(ui, name, "font", epoch).map_or(32.0, f64::from);
-            let rest = (ui.max_rect().right() - ui.next_widget_position().x).max(120.0);
-            let r = ui
-                .allocate_ui(vec2(rest, 28.0), |ui| {
-                    ui.add_enabled_ui(false, |ui| {
-                        crate::skin::widgets::ff_slider(
-                            ui,
-                            &skin,
-                            &mut v,
-                            1.0..=45.0,
-                            1.0,
-                            "Font size (game default)",
-                            |_| FONT_OFF_VALUE.to_string(),
-                        )
-                    })
-                    .inner
-                })
-                .inner;
-            probe("ed-font-slider-off", r.rect);
-            r.on_disabled_hover_text(FONT_OFF_TIP);
-        }
-    });
-
-    minimap_lines(ui, &skin, name, style, epoch, &mut n, actions);
-    beam_line(ui, &skin, name, style, epoch, &mut n, actions);
-    sound_lines(ui, &skin, name, style, epoch, &mut n, actions);
-
-    ff_field_row_line(ui, &mut n, "Drop sound", Some(DROP_TIP), |ui| {
-        let mut on = style.disable_drop_sound;
-        let r = crate::skin::widgets::ff_check(ui, &skin, &mut on, "Drop sound");
-        probe("ed-drop-check", r.rect);
-        if r.changed() {
-            edit(actions, name, StyleEdit::DisableDropSound(on));
-        }
-    });
+    // The remembered None-values outlive a fold (only Revert / Reload / Apply clear them).
+    let memo = egui::Id::new(("cfg-style-last", name, cfg.memo_epoch));
+    let view = StyleView::from_style(style);
+    for intent in style_lines::show(ui, &view, memo, &mut n) {
+        edit(actions, name, style_edit_for(intent));
+    }
 
     if let Some(err) = state.styles_error() {
         ui.add(egui::Label::new(RichText::new(err).font(regular(15.0)).color(pal::WARN)).wrap());
@@ -1274,332 +1050,6 @@ fn style_editor(
             }
         });
     }
-}
-
-/// A row of `count` equal tiles of at most 24pt that fits `reserved` less than the free width.
-fn tile_size(ui: &egui::Ui, count: f32, reserved: f32) -> f32 {
-    ((ui.available_width() - 4.0 * (count - 1.0) - reserved - 2.0) / count)
-        .floor()
-        .clamp(14.0, 24.0)
-}
-
-fn minimap_lines(
-    ui: &mut egui::Ui,
-    skin: &crate::skin::Skin,
-    name: &str,
-    style: &Style,
-    epoch: u64,
-    n: &mut usize,
-    actions: &mut Vec<ConfigAction>,
-) {
-    ff_field_row_line(ui, n, "Minimap", None, |ui| {
-        let mut sel = style
-            .minimap
-            .as_ref()
-            .map_or(0, |m| usize::from(m.size) + 1);
-        let width = 288.0f32.min(ui.available_width());
-        let r = ed::ff_segmented(
-            ui,
-            skin,
-            &mut sel,
-            &["None", "Large", "Medium", "Small"],
-            width,
-        );
-        probe("ed-minimap", r.rect);
-        if r.changed() {
-            let next = if sel == 0 {
-                if let Some(m) = &style.minimap {
-                    remember(ui, name, "minimap", epoch, m);
-                }
-                None
-            } else {
-                let mut m = style
-                    .minimap
-                    .clone()
-                    .or_else(|| recall(ui, name, "minimap", epoch))
-                    .unwrap_or(Minimap {
-                        size: 0,
-                        color: FilterColor::White,
-                        shape: MinimapShape::Circle,
-                    });
-                m.size = u8::try_from(sel - 1).unwrap_or(0);
-                Some(m)
-            };
-            edit(actions, name, StyleEdit::Minimap(next));
-        }
-    });
-    let Some(m) = &style.minimap else {
-        return;
-    };
-    let colour = minimap::index_of(&minimap::COLOURS, m.color.as_str()).unwrap_or(0);
-    let shape = minimap::index_of(&minimap::SHAPES, m.shape.as_str()).unwrap_or(0);
-    ff_field_row_line(ui, n, "", None, |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let tile = tile_size(ui, 11.0, 0.0);
-        for (i, label) in minimap::COLOURS.iter().enumerate() {
-            let r = ed::ff_swatch(
-                ui,
-                Some(minimap::SWATCHES[i]),
-                i == colour,
-                vec2(tile, 24.0),
-                label,
-            )
-            .on_hover_text(*label);
-            probe("ed-mm-colour", r.rect);
-            if r.clicked()
-                && i != colour
-                && let Some(color) = FilterColor::from_name(label)
-            {
-                let mut next = m.clone();
-                next.color = color;
-                edit(actions, name, StyleEdit::Minimap(Some(next)));
-            }
-        }
-    });
-    ff_field_row_line(ui, n, "", None, |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let tile = tile_size(ui, 12.0, 0.0);
-        for (i, label) in minimap::SHAPES.iter().enumerate() {
-            let r = ed::ff_icon_button(ui, skin, i, colour, i == shape, tile).on_hover_text(*label);
-            probe("ed-mm-shape", r.rect);
-            if r.clicked()
-                && i != shape
-                && let Some(s) = MinimapShape::from_name(label)
-            {
-                let mut next = m.clone();
-                next.shape = s;
-                edit(actions, name, StyleEdit::Minimap(Some(next)));
-            }
-        }
-    });
-}
-
-fn beam_line(
-    ui: &mut egui::Ui,
-    skin: &crate::skin::Skin,
-    name: &str,
-    style: &Style,
-    epoch: u64,
-    n: &mut usize,
-    actions: &mut Vec<ConfigAction>,
-) {
-    let _ = skin;
-    ff_field_row_line(ui, n, "Beam", None, |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        // Room for the Temp chip after the 12 tiles.
-        let tile = tile_size(ui, 12.0, 62.0);
-        let none = ed::ff_swatch(ui, None, style.beam.is_none(), vec2(tile, 24.0), "No beam")
-            .on_hover_text("None");
-        probe("ed-beam-none", none.rect);
-        if none.clicked()
-            && let Some(b) = &style.beam
-        {
-            remember(ui, name, "beam", epoch, b);
-            edit(actions, name, StyleEdit::Beam(None));
-        }
-        let current = style
-            .beam
-            .as_ref()
-            .and_then(|b| minimap::index_of(&minimap::COLOURS, b.color.as_str()));
-        for (i, label) in minimap::COLOURS.iter().enumerate() {
-            let r = ed::ff_swatch(
-                ui,
-                Some(minimap::SWATCHES[i]),
-                current == Some(i),
-                vec2(tile, 24.0),
-                label,
-            )
-            .on_hover_text(*label);
-            probe("ed-beam-colour", r.rect);
-            if r.clicked()
-                && current != Some(i)
-                && let Some(color) = FilterColor::from_name(label)
-            {
-                let mut next = style
-                    .beam
-                    .clone()
-                    .or_else(|| recall(ui, name, "beam", epoch))
-                    .unwrap_or(Beam {
-                        color: FilterColor::White,
-                        temp: false,
-                    });
-                next.color = color;
-                edit(actions, name, StyleEdit::Beam(Some(next)));
-            }
-        }
-        let mut temp = style.beam.as_ref().is_some_and(|b| b.temp);
-        ui.add_enabled_ui(style.beam.is_some(), |ui| {
-            let r = ed::ff_chip(ui, "Temp", &mut temp);
-            probe("ed-beam-temp", r.rect);
-            if r.changed()
-                && let Some(b) = &style.beam
-            {
-                let mut next = b.clone();
-                next.temp = temp;
-                edit(actions, name, StyleEdit::Beam(Some(next)));
-            }
-        });
-    });
-}
-
-/// The sound a dropdown choice stands for. `base` is the style's current sound, or the last one
-/// it had before it was switched to None; it supplies the volume (default 100) and the file.
-/// `last_file` is the custom file the style had before it was switched away from Custom, used
-/// when `base` has none.
-fn sound_for_choice(choice: usize, base: Option<&Sound>, last_file: Option<&str>) -> Option<Sound> {
-    let vol = base.map_or(100, |s| s.vol);
-    match choice {
-        0 => None,
-        SOUND_CUSTOM => Some(Sound {
-            id: None,
-            custom: Some(
-                base.and_then(|s| s.custom.clone())
-                    .or_else(|| last_file.map(str::to_string))
-                    .unwrap_or_else(|| SOUND_FILE_DEFAULT.to_string()),
-            ),
-            vol,
-        }),
-        k => Some(Sound {
-            id: u8::try_from(k).ok(),
-            custom: None,
-            vol,
-        }),
-    }
-}
-
-/// The sound dropdown's switch-back memory: the sound before a switch to None, and the custom
-/// file before a switch away from Custom (WR-02: through an Alert the file used to be lost).
-#[derive(Debug, Default, PartialEq)]
-struct SoundMemo {
-    last: Option<Sound>,
-    file: Option<String>,
-}
-
-/// What switching the sound dropdown to `choice` writes, given the style's `current` sound;
-/// updates `memo` with what the switch replaces.
-fn switch_sound(choice: usize, current: Option<&Sound>, memo: &mut SoundMemo) -> Option<Sound> {
-    let base = current.cloned().or_else(|| memo.last.clone());
-    if choice == 0
-        && let Some(s) = current
-    {
-        memo.last = Some(s.clone());
-    }
-    if choice != SOUND_CUSTOM
-        && let Some(file) = current.and_then(|s| s.custom.as_ref())
-    {
-        memo.file = Some(file.clone());
-    }
-    sound_for_choice(choice, base.as_ref(), memo.file.as_deref())
-}
-
-/// A custom sound file name that is safe to write into `CustomAlertSound "<name>"`.
-fn safe_file_name(name: &str) -> bool {
-    !name.chars().any(|c| c == '"' || c.is_control())
-}
-
-fn sound_lines(
-    ui: &mut egui::Ui,
-    skin: &crate::skin::Skin,
-    name: &str,
-    style: &Style,
-    epoch: u64,
-    n: &mut usize,
-    actions: &mut Vec<ConfigAction>,
-) {
-    ff_field_row_line(ui, n, "Sound", None, |ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let mut sel = match &style.sound {
-            None => 0,
-            Some(s) if s.custom.is_some() => SOUND_CUSTOM,
-            Some(s) => usize::from(s.id.unwrap_or(1)).clamp(1, 16),
-        };
-        let r =
-            crate::skin::widgets::ff_dropdown(ui, skin, "sound", &mut sel, &SOUND_OPTIONS, 150.0);
-        probe("ed-sound", r.rect);
-        if r.changed() {
-            let mut memo = SoundMemo {
-                last: recall::<Sound>(ui, name, "sound", epoch),
-                file: recall::<String>(ui, name, "sound-file", epoch),
-            };
-            let next = switch_sound(sel, style.sound.as_ref(), &mut memo);
-            if let Some(s) = &memo.last {
-                remember(ui, name, "sound", epoch, s);
-            }
-            if let Some(f) = &memo.file {
-                remember(ui, name, "sound-file", epoch, f);
-            }
-            edit(actions, name, StyleEdit::Sound(next));
-        }
-        if let Some(sound) = &style.sound
-            && let Some(file) = &sound.custom
-        {
-            // The draft belongs to the open row (its scope carries `cfg.epoch`), unlike the memo.
-            let draft_id = ui.id().with(("cfg-style-file-draft", name));
-            let had: Option<String> = ui.data(|d| d.get_temp(draft_id));
-            let mut buf = had.clone().unwrap_or_else(|| file.clone());
-            let field_id = ui.id().with("file");
-            let resp = crate::skin::widgets::ff_text_field_id(
-                ui,
-                field_id,
-                &mut buf,
-                SOUND_FILE_DEFAULT,
-                150.0,
-            );
-            probe("ed-sound-file", resp.rect);
-            let bad = !safe_file_name(&buf);
-            if resp.changed() {
-                ui.data_mut(|d| d.insert_temp(draft_id, buf.clone()));
-                if !bad && !buf.trim().is_empty() {
-                    edit(
-                        actions,
-                        name,
-                        StyleEdit::Sound(Some(Sound {
-                            id: None,
-                            custom: Some(buf.trim().to_string()),
-                            vol: sound.vol,
-                        })),
-                    );
-                }
-            } else if !resp.has_focus() && had.is_some() {
-                ui.data_mut(|d| d.remove_temp::<String>(draft_id));
-            }
-            if bad {
-                ui.painter().rect_stroke(
-                    resp.rect,
-                    2.0,
-                    egui::Stroke::new(1.0, INVALID_RED),
-                    egui::StrokeKind::Inside,
-                );
-                resp.on_hover_text(BAD_FILE_TIP);
-            } else {
-                resp.on_hover_text(FILE_TIP);
-            }
-        }
-    });
-    let Some(sound) = &style.sound else {
-        return;
-    };
-    ff_field_row_line(ui, n, "Volume", None, |ui| {
-        let mut v = f64::from(sound.vol);
-        let r =
-            crate::skin::widgets::ff_slider(ui, skin, &mut v, 0.0..=300.0, 1.0, "Volume", |v| {
-                format!("{v:.0}")
-            });
-        probe("ed-volume", r.rect);
-        if r.changed()
-            && let Ok(vol) = u16::try_from(v.round() as i64)
-        {
-            edit(
-                actions,
-                name,
-                StyleEdit::Sound(Some(Sound {
-                    id: sound.id,
-                    custom: sound.custom.clone(),
-                    vol,
-                })),
-            );
-        }
-    });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1624,6 +1074,11 @@ pub fn show_load_error(ui: &mut egui::Ui, message: &str) -> Option<ConfigAction>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::config::{Beam, FilterColor, Minimap, MinimapShape, Sound};
+    use crate::overlay::style_lines::{
+        SOUND_CUSTOM, SOUND_FILE_DEFAULT, SOUND_OPTIONS, SoundMemo, safe_file_name,
+        sound_for_choice, switch_sound,
+    };
     use std::fs;
 
     #[test]
@@ -2025,7 +1480,7 @@ mod tests {
     }
 
     fn drain_probes() -> Vec<(&'static str, egui::Rect)> {
-        PROBE.with(|p| std::mem::take(&mut *p.borrow_mut()))
+        style_lines::drain_probes()
     }
 
     fn shape_texts(shape: &egui::Shape, out: &mut Vec<String>) {

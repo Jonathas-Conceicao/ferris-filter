@@ -493,6 +493,61 @@ pub fn colour_slot(
     }
 }
 
+/// What a translucent (rule) colour slot did this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotRgba {
+    Unchanged,
+    /// The new colour and whether the line had 4 tokens when the picker opened (CR-02).
+    Set([u8; 4], bool),
+    Cleared,
+}
+
+/// [`colour_slot`] over the picker with an Alpha slider (a rule's colour lines can be
+/// translucent). `had_alpha` is the line's current form (4 tokens); the form it had when the
+/// picker opened is kept while the picker stays open, so Escape restores a 3-token line byte for
+/// byte. Returns `Set` only when the colour differs from `current`.
+pub fn colour_slot_rgba(
+    ui: &mut egui::Ui,
+    tag: &str,
+    label: &str,
+    current: Option<[u8; 4]>,
+    had_alpha: bool,
+    seed: [u8; 4],
+    width: f32,
+) -> SlotRgba {
+    let open_id = ui.id().with(("ff-colour-slot-open", tag));
+    let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    let card = ff_colour_card_ex(
+        ui,
+        label,
+        current.map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])),
+        width,
+        open,
+    );
+    let name = format!("{label} colour");
+    card.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+    let popup_id = egui::Popup::default_response_id(&card);
+    let form_id = popup_id.with("had-alpha");
+    if !egui::Popup::is_id_open(ui.ctx(), popup_id) {
+        ui.data_mut(|d| d.insert_temp(form_id, had_alpha));
+    }
+    let mode = PickerMode {
+        alpha: true,
+        allow_none: true,
+    };
+    let out = colour_popup(ui, &card, tag, current, seed, mode);
+    let opened_had_alpha = ui
+        .data(|d| d.get_temp::<bool>(form_id))
+        .unwrap_or(had_alpha);
+    let now_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+    ui.data_mut(|d| d.insert_temp(open_id, now_open));
+    match out {
+        Some(PickerEdit::Set(c)) if Some(c) != current => SlotRgba::Set(c, opened_had_alpha),
+        Some(PickerEdit::Clear) if current.is_some() => SlotRgba::Cleared,
+        _ => SlotRgba::Unchanged,
+    }
+}
+
 /// `R {r} G {g} B {b}` -- the opaque swatch caption and tooltip.
 pub fn rgb_caption(rgb: [u8; 3]) -> String {
     format!("R {} G {} B {}", rgb[0], rgb[1], rgb[2])
@@ -1215,6 +1270,22 @@ mod tests {
             for _ in 0..2 {
                 ctx.run_ui(RawInput::default(), |ui| {
                     assert_eq!(colour_swatch(ui, rgba, rgba[3] != 255), None);
+                })
+                .drop_without_applying_deltas();
+            }
+        }
+    }
+
+    #[test]
+    fn colour_slot_rgba_idle_frames_are_unchanged() {
+        let ctx = headless_ctx();
+        for current in [None, Some([40, 42, 54, 255]), Some([255, 121, 198, 128])] {
+            for _ in 0..2 {
+                ctx.run_ui(RawInput::default(), |ui| {
+                    let had = current.is_some_and(|c: [u8; 4]| c[3] != 255);
+                    let out =
+                        colour_slot_rgba(ui, "text", "Text", current, had, [1, 2, 3, 255], 100.0);
+                    assert_eq!(out, SlotRgba::Unchanged);
                 })
                 .drop_without_applying_deltas();
             }

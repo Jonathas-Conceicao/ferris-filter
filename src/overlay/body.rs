@@ -19,15 +19,18 @@ use crate::filter::{BlockId, BlockKeyword, LinePatch, group};
 
 use super::classes::ClassCatalog;
 use super::conditions::{self, CardPlan, DefencesKind, Part};
+use super::config_state::ColourSlot;
 use super::grammar::{
     self, BoolOrName, ConditionEntry, Effect, EncodeError, Minimap, SoundRef, Value,
 };
 use super::rule_list::{FocusTarget, ListUi, PendingRow};
 use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
+use super::style_lines::{self, Rgba, StyleIntent, StyleView, Vis};
 use super::theme;
 use super::widgets;
 #[cfg(test)]
 use crate::models::config::Style;
+use crate::models::config::{self as mc, Beam, FilterColor, MinimapShape, Sound};
 use crate::skin::fonts::{regular, small_caps};
 use crate::skin::palette as pal;
 use crate::skin::widgets as widgets_skin;
@@ -1196,14 +1199,6 @@ pub(crate) fn picker_entries(query: &str) -> Groups {
     filter_groups(&grammar::condition_picker_groups(), query)
 }
 
-/// Keyword groups as picker entries (the action picker's input).
-fn keyword_entries(groups: Vec<(&'static str, Vec<&'static Keyword>)>) -> Groups {
-    groups
-        .into_iter()
-        .map(|(g, ks)| (g, ks.into_iter().map(ConditionEntry::Keyword).collect()))
-        .collect()
-}
-
 /// Tooltip on a picker entry that is already on the rule.
 const ALREADY_ON_RULE: &str = "Already on this rule";
 
@@ -1281,7 +1276,7 @@ fn pick_row(ui: &mut egui::Ui, text: &str, greyed: bool, clickable: bool) -> egu
     r
 }
 
-/// A searchable, grouped picker anchored to `button` (shared with `+ style`). Returns the entry
+/// A searchable, grouped picker anchored to `button` (the `+ condition` picker). Returns the entry
 /// the user picked this frame. Entries for which `disabled` gives a reason are shown greyed with
 /// that reason as their tooltip and cannot be clicked. Entries `present` on the rule are also
 /// greyed but stay clickable (the caller focuses the existing card instead of adding another).
@@ -2493,34 +2488,428 @@ pub(crate) fn style_owned(style: &Style, keyword: &str) -> bool {
         .any(|l| l.split_whitespace().next() == Some(keyword))
 }
 
-/// The action keywords already present in the block (each is single-instance).
-pub(crate) fn added_actions(entries: &[BodyEntry]) -> Vec<&'static str> {
-    entries
-        .iter()
-        .filter(|e| e.kind == EntryKind::Action)
-        .filter_map(|e| e.keyword.map(|k| k.name))
-        .collect()
-}
-
 /// The hint under a font size outside the range the game renders readably.
 pub(crate) fn font_hint(size: i64) -> Option<&'static str> {
     (!(18..=45).contains(&size)).then_some("Readable in game: 18-45")
 }
 
-/// What picking an action does: it is added at once with its default value.
-pub(crate) fn pick_action(id: BlockId, kw: &'static Keyword) -> Option<RowAction> {
-    grammar::default_line(kw).map(|text| RowAction::AddLine {
+// ---------------------------------------------------------------------------------------------
+// The Custom STYLE lines: the rule backend of `style_lines`
+// ---------------------------------------------------------------------------------------------
+//
+// A Custom rule's STYLE section draws the same lines as the CONFIG style editor
+// (`style_lines::show`), over the rule's own action lines, losslessly:
+//
+// * Binding. Each style line (Text, Border, Background, Font size, Minimap, Beam, Sound, Drop
+//   sound) is bound to the FIRST action line in file order that it can represent exactly:
+//   `SetTextColor` / `SetBorderColor` / `SetBackgroundColor` decoding as a colour; `SetFontSize`
+//   within 1-45; `MinimapIcon` with size 0-2 and a known colour and shape; `PlayEffect` with a
+//   known colour; for Sound, the first of `PlayAlertSound` 1-16 or `CustomAlertSound` (volume
+//   absent or 0-300); `DisableDropSound` (bare, `True` or `False`, the last reading as off).
+// * Leftovers. Every other action line (`PlayAlertSoundPositional`, `CustomAlertSoundOptional`,
+//   `EnableDropSound`, `MinimapIcon -1`, `PlayEffect None`, named sounds, raw values, and every
+//   later line of an already bound slot) is kept as written and shown under the lines as the
+//   usual action card (or a read-only raw row).
+// * Edits. An intent rewrites only its bound line (`EditLine` with the line's text as `expect`),
+//   inserts one line after the last action line when the slot is absent, or removes the bound
+//   line when it is cleared. A 3-value colour stays 3-value while its alpha is 255; a volume the
+//   line did not write is only written when it is changed; a sound kind switch rewrites the
+//   bound line in place. Rendering with no input emits nothing, so an untouched rule is byte-
+//   identical on Apply.
+
+/// The action line each style line edits (`None` = the slot is absent).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StyleBinding {
+    pub keyword: BlockKeyword,
+    pub text: Option<BodyEntry>,
+    pub border: Option<BodyEntry>,
+    pub background: Option<BodyEntry>,
+    pub font: Option<BodyEntry>,
+    pub minimap: Option<BodyEntry>,
+    pub beam: Option<BodyEntry>,
+    pub sound: Option<BodyEntry>,
+    pub drop: Option<BodyEntry>,
+    /// The bound sound line's written volume (`None` when the line has none).
+    pub sound_volume: Option<i64>,
+    /// The volume the Volume line shows (the written one, or the game default for the kind).
+    pub sound_shown: u16,
+}
+
+impl StyleBinding {
+    fn slots(&self) -> [&Option<BodyEntry>; 8] {
+        [
+            &self.text,
+            &self.border,
+            &self.background,
+            &self.font,
+            &self.minimap,
+            &self.beam,
+            &self.sound,
+            &self.drop,
+        ]
+    }
+
+    /// Whether document line `line` is bound to a style line.
+    pub(crate) fn binds(&self, line: usize) -> bool {
+        self.slots()
+            .iter()
+            .any(|s| s.as_ref().is_some_and(|e| e.line == line))
+    }
+
+    fn colour(&self, slot: ColourSlot) -> &Option<BodyEntry> {
+        match slot {
+            ColourSlot::Text => &self.text,
+            ColourSlot::Border => &self.border,
+            ColourSlot::Background => &self.background,
+        }
+    }
+}
+
+/// Game default volumes of a sound line written without one.
+const ALERT_DEFAULT_VOLUME: u16 = 50;
+const CUSTOM_DEFAULT_VOLUME: u16 = 100;
+
+fn volume_ok(volume: Option<i64>) -> bool {
+    volume.is_none_or(|v| (grammar::VOLUME_RANGE.0..=grammar::VOLUME_RANGE.1).contains(&v))
+}
+
+/// The style view of a rule's action lines and the line each style line is bound to.
+pub(crate) fn rule_style_view(
+    entries: &[BodyEntry],
+    keyword: BlockKeyword,
+) -> (StyleView, StyleBinding) {
+    let mut view = StyleView {
+        visibility: match keyword {
+            BlockKeyword::Show => Vis::Show,
+            BlockKeyword::Hide => Vis::Hide,
+            BlockKeyword::Minimal => Vis::Minimal,
+        },
+        text: None,
+        border: None,
+        background: None,
+        font: None,
+        minimap: None,
+        beam: None,
+        sound: None,
+        sound_volume_written: false,
+        disable_drop_sound: false,
+        alpha: true,
+    };
+    let mut b = StyleBinding {
+        keyword,
+        text: None,
+        border: None,
+        background: None,
+        font: None,
+        minimap: None,
+        beam: None,
+        sound: None,
+        drop: None,
+        sound_volume: None,
+        sound_shown: ALERT_DEFAULT_VOLUME,
+    };
+    for e in entries.iter().filter(|e| e.kind == EntryKind::Action) {
+        let Some(kw) = e.keyword else {
+            continue;
+        };
+        let tokens: Vec<&str> = e.values.iter().map(String::as_str).collect();
+        match (kw.name, grammar::decode(kw, &tokens)) {
+            (name, Value::Rgba { rgba, had_alpha }) => {
+                let (slot, shown) = match name {
+                    "SetTextColor" => (&mut b.text, &mut view.text),
+                    "SetBorderColor" => (&mut b.border, &mut view.border),
+                    "SetBackgroundColor" => (&mut b.background, &mut view.background),
+                    _ => continue,
+                };
+                if slot.is_none() {
+                    *slot = Some(e.clone());
+                    *shown = Some(Rgba { rgba, had_alpha });
+                }
+            }
+            ("SetFontSize", Value::FontSize(n))
+                if b.font.is_none()
+                    && (grammar::FONT_SIZE_RANGE.0..=grammar::FONT_SIZE_RANGE.1).contains(&n) =>
+            {
+                b.font = Some(e.clone());
+                view.font = Some(n);
+            }
+            (
+                "MinimapIcon",
+                Value::Minimap(Minimap::Icon {
+                    size,
+                    colour,
+                    shape,
+                }),
+            ) if b.minimap.is_none() => {
+                if let (Ok(size @ 0..=2), Some(color), Some(shape)) = (
+                    u8::try_from(size),
+                    FilterColor::from_name(&colour),
+                    MinimapShape::from_name(&shape),
+                ) {
+                    b.minimap = Some(e.clone());
+                    view.minimap = Some(mc::Minimap { size, color, shape });
+                }
+            }
+            ("PlayEffect", Value::Effect(Effect::Colour { colour, temp })) if b.beam.is_none() => {
+                if let Some(color) = FilterColor::from_name(&colour) {
+                    b.beam = Some(e.clone());
+                    view.beam = Some(Beam { color, temp });
+                }
+            }
+            (
+                "PlayAlertSound",
+                Value::Sound {
+                    id: SoundRef::Id(k),
+                    volume,
+                },
+            ) if b.sound.is_none() && volume_ok(volume) => {
+                if let Ok(k @ 1..=16) = u8::try_from(k) {
+                    let vol = volume.map_or(ALERT_DEFAULT_VOLUME, |v| v as u16);
+                    b.sound = Some(e.clone());
+                    b.sound_volume = volume;
+                    b.sound_shown = vol;
+                    view.sound = Some(Sound {
+                        id: Some(k),
+                        custom: None,
+                        vol,
+                    });
+                    view.sound_volume_written = volume.is_some();
+                }
+            }
+            ("CustomAlertSound", Value::CustomSound { file, volume })
+                if b.sound.is_none() && volume_ok(volume) =>
+            {
+                let vol = volume.map_or(CUSTOM_DEFAULT_VOLUME, |v| v as u16);
+                b.sound = Some(e.clone());
+                b.sound_volume = volume;
+                b.sound_shown = vol;
+                view.sound = Some(Sound {
+                    id: None,
+                    custom: Some(file),
+                    vol,
+                });
+                view.sound_volume_written = volume.is_some();
+            }
+            ("DisableDropSound", Value::OptionalBool(on)) if b.drop.is_none() => {
+                b.drop = Some(e.clone());
+                view.disable_drop_sound = on != Some(false);
+            }
+            _ => {}
+        }
+    }
+    (view, b)
+}
+
+/// The action lines no style line is bound to, in file order.
+pub(crate) fn style_leftovers<'a>(
+    entries: &'a [BodyEntry],
+    binding: &StyleBinding,
+) -> Vec<&'a BodyEntry> {
+    entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Action && !binding.binds(e.line))
+        .collect()
+}
+
+fn add_action(id: BlockId, text: String) -> RowAction {
+    RowAction::AddLine {
         id,
         kind: LineKind::Action,
         text,
-    })
+    }
+}
+
+fn colour_keyword(slot: ColourSlot) -> &'static str {
+    match slot {
+        ColourSlot::Text => "SetTextColor",
+        ColourSlot::Border => "SetBorderColor",
+        ColourSlot::Background => "SetBackgroundColor",
+    }
+}
+
+fn icon_of(m: &mc::Minimap) -> Minimap {
+    Minimap::Icon {
+        size: i64::from(m.size),
+        colour: m.color.as_str().to_string(),
+        shape: m.shape.as_str().to_string(),
+    }
+}
+
+fn effect_of(b: &Beam) -> Effect {
+    Effect::Colour {
+        colour: b.color.as_str().to_string(),
+        temp: b.temp,
+    }
+}
+
+/// ` <v>` when a volume is written, else nothing.
+fn volume_suffix(volume: Option<i64>) -> String {
+    volume.map(|v| format!(" {v}")).unwrap_or_default()
+}
+
+/// The minimal line edits one style-line intent stands for (see the binding rule above).
+pub(crate) fn rule_intent_actions(
+    id: BlockId,
+    binding: &StyleBinding,
+    intent: StyleIntent,
+) -> Vec<RowAction> {
+    let one = |a: Option<RowAction>| a.into_iter().collect::<Vec<_>>();
+    match intent {
+        StyleIntent::Visibility(v) => {
+            let kw = match v {
+                Vis::Hide => BlockKeyword::Hide,
+                Vis::Show | Vis::Minimal => BlockKeyword::Show,
+            };
+            one((kw != binding.keyword).then_some(RowAction::SetKeyword(id, kw)))
+        }
+        StyleIntent::Colour {
+            slot,
+            value,
+            opened_had_alpha,
+        } => one(match (binding.colour(slot), value) {
+            (Some(e), Some(c)) => rgba_edit(id, e, c, opened_had_alpha),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some([r, g, b, a])) => Some(add_action(
+                id,
+                format!("{} {r} {g} {b} {a}", colour_keyword(slot)),
+            )),
+            (None, None) => None,
+        }),
+        StyleIntent::Font(f) => one(match (&binding.font, f) {
+            (Some(e), Some(n)) => font_edit(id, e, n),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some(n)) => Some(add_action(id, format!("SetFontSize {n}"))),
+            (None, None) => None,
+        }),
+        StyleIntent::Minimap(m) => one(match (&binding.minimap, m) {
+            (Some(e), Some(m)) => minimap_edit(id, e, icon_of(&m)),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some(m)) => Some(add_action(
+                id,
+                format!(
+                    "MinimapIcon {}",
+                    grammar::encode_tokens(&Value::Minimap(icon_of(&m))).join(" ")
+                ),
+            )),
+            (None, None) => None,
+        }),
+        StyleIntent::Beam(b) => one(match (&binding.beam, b) {
+            (Some(e), Some(b)) => effect_edit(id, e, effect_of(&b)),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some(b)) => Some(add_action(
+                id,
+                format!(
+                    "PlayEffect {}",
+                    grammar::encode_tokens(&Value::Effect(effect_of(&b))).join(" ")
+                ),
+            )),
+            (None, None) => None,
+        }),
+        StyleIntent::Sound(s) => one(sound_intent(id, binding, s)),
+        StyleIntent::DisableDropSound(on) => one(match (&binding.drop, on) {
+            (Some(e), true) => optional_bool_edit(id, e, true),
+            (Some(e), false) => optional_bool_on(e).then(|| remove(id, e)),
+            (None, true) => Some(add_action(id, "DisableDropSound".to_string())),
+            (None, false) => None,
+        }),
+    }
+}
+
+fn sound_intent(id: BlockId, binding: &StyleBinding, sound: Option<Sound>) -> Option<RowAction> {
+    let Some(s) = sound else {
+        return binding.sound.as_ref().map(|e| remove(id, e));
+    };
+    let file = s.custom.as_deref().map(str::trim);
+    if file.is_some_and(|f| f.is_empty() || !style_lines::safe_file_name(f)) {
+        return None;
+    }
+    let alert = i64::from(s.id.unwrap_or(1));
+    let Some(e) = &binding.sound else {
+        let text = match file {
+            Some(f) => format!("CustomAlertSound \"{f}\" {}", s.vol),
+            None => format!("PlayAlertSound {alert} {}", s.vol),
+        };
+        return Some(add_action(id, text));
+    };
+    // A volume the line does not write is written only once it is changed.
+    let volume = (binding.sound_volume.is_some() || s.vol != binding.sound_shown)
+        .then_some(i64::from(s.vol));
+    let bound_custom = e.keyword.is_some_and(|k| k.name == "CustomAlertSound");
+    match (bound_custom, file) {
+        (false, None) => sound_edit(id, e, SoundRef::Id(alert), volume),
+        (true, Some(f)) => custom_sound_edit(id, e, f, volume).ok().flatten(),
+        // A kind switch rewrites the bound line in place.
+        (false, Some(f)) => Some(edit(
+            id,
+            e,
+            LinePatch::Whole(format!("CustomAlertSound \"{f}\"{}", volume_suffix(volume))),
+        )),
+        (true, None) => Some(edit(
+            id,
+            e,
+            LinePatch::Whole(format!("PlayAlertSound {alert}{}", volume_suffix(volume))),
+        )),
+    }
+}
+
+/// The Custom STYLE lines plus the action lines they cannot represent.
+fn custom_style_lines(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+    row_idx: &mut usize,
+) {
+    let id = ctx.row.id;
+    let (view, binding) = rule_style_view(ctx.entries, ctx.row.keyword);
+    // A line the editor just added is already in view on its style line.
+    if let Some((b, line)) = list.focus_line
+        && b == id
+        && binding.binds(line)
+    {
+        list.focus_line = None;
+    }
+    let memo = egui::Id::new(("rule-style-last", id));
+    // A scope independent of the row's card epoch, so a picker stays open when its first change
+    // adds the slot's line (adding a line resets the per-card state).
+    let intents = ui
+        .scope_builder(
+            egui::UiBuilder::new().id(egui::Id::new(("rule-style-lines", id))),
+            |ui| {
+                ui.add_enabled_ui(ctx.editable, |ui| {
+                    style_lines::show(ui, &view, memo, row_idx)
+                })
+                .inner
+            },
+        )
+        .inner;
+    if ctx.editable {
+        for intent in intents {
+            actions.extend(rule_intent_actions(id, &binding, intent));
+        }
+    }
+    for (idx, e) in style_leftovers(ctx.entries, &binding)
+        .into_iter()
+        .enumerate()
+    {
+        match e.keyword {
+            Some(kw) if ctx.editable => {
+                action_card(ui, ctx, e, kw, idx, None, list, actions);
+            }
+            _ => {
+                raw_card_frame(idx).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    raw_row(ui, e, false, list, actions, id);
+                });
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // The ACTIONS group
 // ---------------------------------------------------------------------------------------------
 
-const NO_ACTIONS: &str = "No actions: matching items keep the game's look.";
 pub(crate) const SIZE_CHOICES: [(&str, i64); 4] =
     [("Large", 0), ("Medium", 1), ("Small", 2), ("Hide icon", -1)];
 
@@ -2545,45 +2934,6 @@ pub(crate) fn filter_colour(name: &str) -> egui::Color32 {
 pub(crate) fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 6.0, colour);
-}
-
-/// The dispositions the editor offers. `Minimal` is a real header but is never offered; a foreign
-/// Minimal block is displayed as such and left alone until the user picks Show or Hide.
-pub(crate) const DISPOSITION_CHOICES: [BlockKeyword; 2] = [BlockKeyword::Show, BlockKeyword::Hide];
-
-fn disposition_word(kw: BlockKeyword) -> &'static str {
-    match kw {
-        BlockKeyword::Show => "Show",
-        BlockKeyword::Hide => "Hide",
-        BlockKeyword::Minimal => "Minimal",
-    }
-}
-
-/// Segmented Show/Hide control, drawn only for Custom rules (a preset's action decides it).
-fn disposition_control(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
-    let row = ctx.row;
-    let id = row.id;
-    let skin = crate::skin::of(ui.ctx());
-    // A foreign `Minimal` lights neither segment; only a click on Show or Hide changes it.
-    let mut sel = match row.keyword {
-        BlockKeyword::Show => 0,
-        BlockKeyword::Hide => 1,
-        BlockKeyword::Minimal => 2,
-    };
-    if row.keyword == BlockKeyword::Minimal {
-        ui.label(
-            RichText::new(disposition_word(BlockKeyword::Minimal))
-                .font(regular(15.0))
-                .color(pal::MUTED),
-        );
-    }
-    let r = crate::skin::editor::ff_segmented(ui, &skin, &mut sel, &["Show", "Hide"], 132.0);
-    if r.changed() {
-        let kw = DISPOSITION_CHOICES[sel.min(1)];
-        if kw != row.keyword {
-            actions.push(RowAction::SetKeyword(id, kw));
-        }
-    }
 }
 
 /// What the style picker can choose.
@@ -2674,8 +3024,9 @@ fn style_picker(ui: &mut egui::Ui, ctx: &BodyCtx) -> Option<StylePick> {
     None
 }
 
-/// The STYLE section, last in the rule body: the Custom/preset picker, then (Custom only)
-/// Show/Hide and the action rows, then `Continue` on its own last line.
+/// The STYLE section, last in the rule body: the Custom/preset picker, then (Custom only) the
+/// style editor's lines and the action lines they cannot represent, then `Continue` on its own
+/// last line.
 pub fn style_section(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
@@ -2683,10 +3034,8 @@ pub fn style_section(
     actions: &mut Vec<RowAction>,
 ) {
     let id = ctx.row.id;
-    let added = added_actions(ctx.entries);
     let show_rows = shows_action_rows(&ctx.row.style);
     let skin = crate::skin::of(ui.ctx());
-    let mut picked_action = None;
     let mut row_idx = 0;
     widgets_skin::ff_field_row(ui, row_idx, "Style", None, |ui| {
         ui.add_enabled_ui(ctx.editable, |ui| {
@@ -2696,39 +3045,11 @@ pub fn style_section(
                 actions.push(a);
             }
         });
-        if show_rows {
-            let btn = widgets_skin::ff_button_ex(ui, &skin, "+ style", 132.0, ctx.editable, false);
-            let disabled = |e: &ConditionEntry| match e {
-                ConditionEntry::Keyword(k) => added.contains(&k.name).then_some("(added)"),
-                ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
-            };
-            picked_action = picker_popup(
-                ui,
-                &btn,
-                &keyword_entries(grammar::action_groups()),
-                false,
-                &disabled,
-                &|_| false,
-            )
-            .and_then(|e| match e {
-                ConditionEntry::Keyword(k) => Some(k),
-                ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
-            });
-        }
     });
     row_idx += 1;
-    if let Some(kw) = picked_action
-        && let Some(a) = pick_action(id, kw)
-    {
-        actions.push(a);
-    }
     ui.spacing_mut().item_spacing.y = 0.0;
     if show_rows {
-        widgets_skin::ff_field_row(ui, row_idx, "", None, |ui| {
-            ui.add_enabled_ui(ctx.editable, |ui| disposition_control(ui, ctx, actions));
-        });
-        row_idx += 1;
-        action_rows(ui, ctx, list, actions);
+        custom_style_lines(ui, ctx, list, actions, &mut row_idx);
     }
     widgets_skin::ff_field_row(ui, row_idx, "", None, |ui| {
         ui.add_enabled_ui(ctx.editable, |ui| {
@@ -2749,43 +3070,6 @@ pub fn style_section(
             }
         });
     });
-}
-
-/// One card per action line (Custom / unstyled rules).
-fn action_rows(ui: &mut egui::Ui, ctx: &BodyCtx, list: &mut ListUi, actions: &mut Vec<RowAction>) {
-    let id = ctx.row.id;
-    let lines: Vec<&BodyEntry> = ctx
-        .entries
-        .iter()
-        .filter(|e| e.kind == EntryKind::Action)
-        .collect();
-    if lines.is_empty() {
-        ui.horizontal(|ui| {
-            ui.add_space(
-                widgets_skin::ROW_PAD + widgets_skin::LABEL_COL_W + widgets_skin::LABEL_GAP,
-            );
-            ui.label(
-                RichText::new("No actions")
-                    .font(regular(15.0))
-                    .color(pal::MUTED),
-            )
-            .on_hover_text(NO_ACTIONS);
-        });
-        return;
-    }
-    for (idx, e) in lines.into_iter().enumerate() {
-        match e.keyword {
-            Some(kw) if ctx.editable => {
-                action_card(ui, ctx, e, kw, idx, None, list, actions);
-            }
-            _ => {
-                raw_card_frame(idx).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    raw_row(ui, e, false, list, actions, id);
-                });
-            }
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3736,7 +4020,7 @@ mod tests {
         let src = include_str!("body.rs");
         let prod = &src[..src.find("mod tests").unwrap()];
         assert!(prod.contains("\"+ condition\", 132.0"));
-        assert!(prod.contains("\"+ style\", 132.0"));
+        assert!(!prod.contains("\"+ style\""));
         assert!(!prod.contains("caption(ui, \"CONDITIONS\")"));
         assert!(!prod.contains("caption(ui, \"STYLE\")"));
         assert!(!prod.contains("egui::Checkbox::new"));
@@ -3859,9 +4143,9 @@ mod tests {
     }
 
     #[test]
-    fn custom_add_button_reads_plus_style() {
+    fn custom_rules_have_no_add_style_button() {
         let production = include_str!("body.rs").split("mod tests {").next().unwrap();
-        assert!(production.contains(&["\"+ ", "style\""].concat()));
+        assert!(!production.contains(&["\"+ ", "style\""].concat()));
         assert!(!production.contains(&["\"+ ", "action\""].concat()));
     }
 
@@ -5094,18 +5378,24 @@ mod tests {
     }
 
     #[test]
-    fn added_actions_and_picking() {
-        let (_, id, e) =
-            entries_of("Show\n    SetFontSize 30\n    PlayEffect Red\n    Class \"Rings\"\n");
-        assert_eq!(added_actions(&e), vec!["SetFontSize", "PlayEffect"]);
-        let kw = crate::filter::keywords::lookup("SetBackgroundColor").unwrap();
+    fn absent_slots_add_one_line_in_the_default_form() {
+        let (_, id, e) = entries_of("Show\n    Class \"Rings\"\n");
+        let (_, b) = rule_style_view(&e, BlockKeyword::Show);
         assert_eq!(
-            pick_action(id, kw),
-            Some(RowAction::AddLine {
+            rule_intent_actions(
+                id,
+                &b,
+                StyleIntent::Colour {
+                    slot: ColourSlot::Background,
+                    value: Some([40, 42, 54, 255]),
+                    opened_had_alpha: false,
+                }
+            ),
+            [RowAction::AddLine {
                 id,
                 kind: LineKind::Action,
                 text: "SetBackgroundColor 40 42 54 255".into()
-            })
+            }]
         );
     }
 
@@ -5128,8 +5418,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_actions_state_exists() {
-        assert!(include_str!("body.rs").contains(NO_ACTIONS));
+    fn rule_without_actions_renders_the_style_lines_idle() {
+        let prod = include_str!("body.rs").split("mod tests {").next().unwrap();
+        assert!(!prod.contains("No actions"));
         let wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
         let ctx = headless_ctx();
         let mut list = ListUi::default();
@@ -5304,11 +5595,20 @@ mod tests {
     }
 
     #[test]
-    fn disposition_offers_show_and_hide_only() {
+    fn visibility_writes_show_or_hide_only_when_it_differs() {
+        let (_, id, e) = entries_of("Minimal\n    Rarity Rare\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Minimal);
+        assert_eq!(view.visibility, Vis::Minimal);
         assert_eq!(
-            DISPOSITION_CHOICES,
-            [BlockKeyword::Show, BlockKeyword::Hide]
+            rule_intent_actions(id, &b, StyleIntent::Visibility(Vis::Show)),
+            [RowAction::SetKeyword(id, BlockKeyword::Show)]
         );
+        assert_eq!(
+            rule_intent_actions(id, &b, StyleIntent::Visibility(Vis::Hide)),
+            [RowAction::SetKeyword(id, BlockKeyword::Hide)]
+        );
+        let (_, b) = rule_style_view(&e, BlockKeyword::Hide);
+        assert!(rule_intent_actions(id, &b, StyleIntent::Visibility(Vis::Hide)).is_empty());
     }
 
     #[test]
@@ -6075,6 +6375,345 @@ mod tests {
         assert_eq!(
             wf.text(),
             "Show\n  BaseArmour >= 100\n  BaseArmour <= 1000\n  BaseEvasion > 5\n"
+        );
+    }
+
+    // ---- Custom STYLE lines: the lossless rule backend (quick 261016-qi7) ----
+
+    /// The text after applying `intent`'s line edits to the first rule of `src`.
+    fn intent_text(src: &str, intent: StyleIntent) -> String {
+        let (mut wf, id, e) = entries_of(src);
+        let (_, b) = rule_style_view(&e, wf.rows()[0].keyword);
+        let acts = rule_intent_actions(id, &b, intent);
+        apply_all(&mut wf, acts);
+        wf.text().to_string()
+    }
+
+    fn leftover_texts(src: &str) -> Vec<String> {
+        let (wf, _, e) = entries_of(src);
+        let (_, b) = rule_style_view(&e, wf.rows()[0].keyword);
+        style_leftovers(&e, &b)
+            .iter()
+            .map(|e| e.text.trim().to_string())
+            .collect()
+    }
+
+    fn colour(slot: ColourSlot, value: Option<[u8; 4]>, had: bool) -> StyleIntent {
+        StyleIntent::Colour {
+            slot,
+            value,
+            opened_had_alpha: had,
+        }
+    }
+
+    const LEFTOVERS: &str = "Show\n    SetFontSize 30\n    PlayAlertSoundPositional 3 100\n    CustomAlertSoundOptional \"x.mp3\"\n    EnableDropSound\n    PlayEffect None\n    PlayAlertSound ShAlchemy\n    MinimapIcon -1\n    FutureKw 3\n    SetFontSize 40\n";
+
+    #[test]
+    fn rule_style_view_binds_the_first_representable_line_per_slot() {
+        let src = "Hide\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6 7\n    SetBackgroundColor 9 9 9 128\n    PlayAlertSoundPositional 2 50\n    PlayAlertSound 5\n    CustomAlertSound \"a.mp3\" 80\n    MinimapIcon -1\n    MinimapIcon 2 Blue Star\n    PlayEffect None\n    PlayEffect Green Temp\n    DisableDropSound False\n    SetFontSize 60\n";
+        let (_, _, e) = entries_of(src);
+        let (view, b) = rule_style_view(&e, BlockKeyword::Hide);
+        assert_eq!(view.visibility, Vis::Hide);
+        assert!(view.alpha);
+        assert_eq!(
+            view.text,
+            Some(Rgba {
+                rgba: [1, 2, 3, 255],
+                had_alpha: false
+            })
+        );
+        assert_eq!(view.border, None);
+        assert_eq!(
+            view.background,
+            Some(Rgba {
+                rgba: [9, 9, 9, 128],
+                had_alpha: true
+            })
+        );
+        assert_eq!(view.font, None, "60 is outside 1-45");
+        assert_eq!(
+            view.minimap,
+            Some(mc::Minimap {
+                size: 2,
+                color: FilterColor::Blue,
+                shape: MinimapShape::Star
+            })
+        );
+        assert_eq!(
+            view.beam,
+            Some(Beam {
+                color: FilterColor::Green,
+                temp: true
+            })
+        );
+        assert_eq!(
+            view.sound,
+            Some(Sound {
+                id: Some(5),
+                custom: None,
+                vol: 50
+            })
+        );
+        assert!(!view.sound_volume_written);
+        assert!(!view.disable_drop_sound, "False reads as off");
+        assert!(b.drop.is_some(), "but it binds");
+        assert_eq!(
+            style_leftovers(&e, &b)
+                .iter()
+                .map(|e| e.text.trim())
+                .collect::<Vec<_>>(),
+            [
+                "SetTextColor 4 5 6 7",
+                "PlayAlertSoundPositional 2 50",
+                "CustomAlertSound \"a.mp3\" 80",
+                "MinimapIcon -1",
+                "PlayEffect None",
+                "SetFontSize 60",
+            ]
+        );
+    }
+
+    #[test]
+    fn colour_edits_keep_the_line_form() {
+        let src = "Show\n    SetTextColor 10 20 30\n    SetFontSize 30\n";
+        assert_eq!(
+            intent_text(src, colour(ColourSlot::Text, Some([1, 2, 3, 255]), false)),
+            "Show\n    SetTextColor 1 2 3\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(
+                src,
+                colour(ColourSlot::Text, Some([10, 20, 30, 128]), false)
+            ),
+            "Show\n    SetTextColor 10 20 30 128\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(src, colour(ColourSlot::Text, None, false)),
+            "Show\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(src, colour(ColourSlot::Border, Some([5, 6, 7, 255]), false)),
+            "Show\n    SetTextColor 10 20 30\n    SetFontSize 30\n    SetBorderColor 5 6 7 255\n"
+        );
+    }
+
+    #[test]
+    fn minimap_none_removes_only_the_bound_line() {
+        let src =
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n    MinimapIcon 0 Red Circle\n";
+        assert_eq!(
+            intent_text(src, StyleIntent::Minimap(None)),
+            "Show\n    MinimapIcon -1\n    MinimapIcon 0 Red Circle\n"
+        );
+        let pink = mc::Minimap {
+            size: 1,
+            color: FilterColor::Pink,
+            shape: MinimapShape::Star,
+        };
+        assert_eq!(
+            intent_text(src, StyleIntent::Minimap(Some(pink))),
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Pink Star\n    MinimapIcon 0 Red Circle\n"
+        );
+        assert_eq!(
+            leftover_texts(src),
+            ["MinimapIcon -1", "MinimapIcon 0 Red Circle"]
+        );
+        let small = mc::Minimap {
+            size: 2,
+            color: FilterColor::White,
+            shape: MinimapShape::Circle,
+        };
+        assert_eq!(
+            intent_text("Show\n    Rarity Rare\n", StyleIntent::Minimap(Some(small))),
+            "Show\n    Rarity Rare\n    MinimapIcon 2 White Circle\n"
+        );
+    }
+
+    #[test]
+    fn unrepresentable_lines_survive_other_edits_as_leftovers() {
+        assert_eq!(
+            leftover_texts(LEFTOVERS),
+            [
+                "PlayAlertSoundPositional 3 100",
+                "CustomAlertSoundOptional \"x.mp3\"",
+                "EnableDropSound",
+                "PlayEffect None",
+                "PlayAlertSound ShAlchemy",
+                "MinimapIcon -1",
+                "SetFontSize 40",
+            ]
+        );
+        assert_eq!(
+            intent_text(LEFTOVERS, StyleIntent::Font(Some(35))),
+            LEFTOVERS.replacen("SetFontSize 30", "SetFontSize 35", 1)
+        );
+        let added = intent_text(LEFTOVERS, StyleIntent::DisableDropSound(true));
+        assert!(
+            added.starts_with(LEFTOVERS.trim_end_matches('\n')),
+            "{added}"
+        );
+        assert!(added.contains("    DisableDropSound\n"), "{added}");
+    }
+
+    #[test]
+    fn sound_edits_keep_the_line_and_its_volume_form() {
+        let custom = |vol| Sound {
+            id: None,
+            custom: Some("uwu.mp3".to_string()),
+            vol,
+        };
+        let alert = |k, vol| Sound {
+            id: Some(k),
+            custom: None,
+            vol,
+        };
+        let src = "Show\n    PlayAlertSound 3 200\n    SetFontSize 30\n";
+        assert_eq!(
+            intent_text(src, StyleIntent::Sound(Some(custom(200)))),
+            "Show\n    CustomAlertSound \"uwu.mp3\" 200\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(src, StyleIntent::Sound(None)),
+            "Show\n    SetFontSize 30\n"
+        );
+        let bare = "Show\n    PlayAlertSound 5\n";
+        assert_eq!(
+            intent_text(bare, StyleIntent::Sound(Some(alert(5, 120)))),
+            "Show\n    PlayAlertSound 5 120\n"
+        );
+        assert_eq!(
+            intent_text(bare, StyleIntent::Sound(Some(alert(7, 50)))),
+            "Show\n    PlayAlertSound 7\n"
+        );
+        assert_eq!(
+            intent_text(bare, StyleIntent::Sound(Some(custom(50)))),
+            "Show\n    CustomAlertSound \"uwu.mp3\"\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::Sound(Some(alert(2, 100)))
+            ),
+            "Show\n    Rarity Rare\n    PlayAlertSound 2 100\n"
+        );
+        // A bad file name writes nothing.
+        let bad = Sound {
+            id: None,
+            custom: Some("a\"b.mp3".to_string()),
+            vol: 200,
+        };
+        assert_eq!(intent_text(src, StyleIntent::Sound(Some(bad))), src);
+    }
+
+    #[test]
+    fn font_and_drop_sound_add_and_remove_one_line() {
+        assert_eq!(
+            intent_text("Show\n    SetFontSize 30\n", StyleIntent::Font(None)),
+            "Show\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    Rarity Rare\n", StyleIntent::Font(Some(32))),
+            "Show\n    Rarity Rare\n    SetFontSize 32\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::DisableDropSound(true)
+            ),
+            "Show\n    Rarity Rare\n    DisableDropSound\n"
+        );
+        for line in ["DisableDropSound", "DisableDropSound True"] {
+            assert_eq!(
+                intent_text(
+                    &format!("Show\n    {line}\n"),
+                    StyleIntent::DisableDropSound(false)
+                ),
+                "Show\n"
+            );
+        }
+        let off = "Show\n    DisableDropSound False\n";
+        assert_eq!(
+            intent_text(off, StyleIntent::DisableDropSound(true)),
+            "Show\n    DisableDropSound True\n"
+        );
+        assert_eq!(intent_text(off, StyleIntent::DisableDropSound(false)), off);
+    }
+
+    fn style_probes(
+        ctx: &egui::Context,
+        wf: &WorkingFilter,
+        list: &mut ListUi,
+        tag: &str,
+    ) -> Vec<Rect> {
+        style_lines::drain_probes();
+        frame_of(ctx, input(vec![]), wf, list, None);
+        style_lines::drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == tag)
+            .map(|(_, r)| r)
+            .collect()
+    }
+
+    #[test]
+    fn untouched_custom_rule_renders_idle_and_byte_identical() {
+        let all = "Show\n    SetTextColor 1 2 3\n    PlayAlertSound 5\n    DisableDropSound\n    MinimapIcon 1 Blue Star\n    PlayEffect Red\n    SetBackgroundColor 0 0 0 128\n";
+        for src in [all, LEFTOVERS] {
+            let wf = WorkingFilter::from_text(src);
+            let ctx = headless_ctx();
+            let mut list = ListUi {
+                expanded: Some(wf.rows()[0].id),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                assert!(a.is_empty(), "idle frame emitted {a:?}");
+            }
+            assert_eq!(wf.text(), src);
+        }
+    }
+
+    #[test]
+    fn custom_rules_get_the_style_lines_presets_do_not() {
+        let ctx = headless_ctx();
+        let custom = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        let mut list = ListUi {
+            expanded: Some(custom.rows()[0].id),
+            ..Default::default()
+        };
+        assert_eq!(
+            style_probes(&ctx, &custom, &mut list, "ed-visibility").len(),
+            1
+        );
+        let preset = styled("# ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n");
+        let mut list = ListUi {
+            expanded: Some(preset.rows()[0].id),
+            ..Default::default()
+        };
+        assert!(style_probes(&ctx, &preset, &mut list, "ed-visibility").is_empty());
+        assert!(style_probes(&ctx, &preset, &mut list, "ed-drop-check").is_empty());
+    }
+
+    #[test]
+    fn clicking_a_style_line_writes_its_line() {
+        let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let r = style_probes(&ctx, &wf, &mut list, "ed-drop-check")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    Rarity Rare\n    DisableDropSound\n");
+        // The added line is bound to its style line, so the focus request is dropped.
+        frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        assert_eq!(list.focus_line, None);
+        let r = style_probes(&ctx, &wf, &mut list, "ed-font-check")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(
+            wf.text(),
+            "Show\n    Rarity Rare\n    DisableDropSound\n    SetFontSize 32\n"
         );
     }
 }

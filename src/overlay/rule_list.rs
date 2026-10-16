@@ -1381,6 +1381,16 @@ mod tests {
         }
     }
 
+    /// [`input`] on a 1200pt-tall screen: an expanded Custom rule's style lines push the rule's
+    /// buttons below the 600pt one.
+    fn tall_input(events: Vec<Event>) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(535.0, 1200.0))),
+            events,
+            ..Default::default()
+        }
+    }
+
     fn click_events(pos: Pos2) -> Vec<Event> {
         vec![
             Event::PointerMoved(pos),
@@ -1411,10 +1421,11 @@ mod tests {
         reorder: bool,
     ) -> (ListFrame, f32) {
         let visible = rule_entries(wf);
+        let area_h = raw.screen_rect.map_or(600.0, |r| r.height());
         let mut out = (ListFrame::default(), 0.0);
         ctx.run_ui(raw, |ui| {
             let h = row_height();
-            let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, area_h));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
             out = (show_list(&mut child, wf, &visible, list, reorder, None), h);
         })
@@ -2103,16 +2114,16 @@ Show
         let wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
         let id = wf.rows()[0].id;
         let (mut dup, mut del) = (false, false);
-        for y in (20..600).step_by(4) {
+        for y in (20..1200).step_by(4) {
             for x in [30.0f32, 150.0, 200.0, 300.0] {
                 let ctx = headless_ctx();
                 let mut list = ListUi::default();
                 list.expanded = Some(id);
-                run_frame(&ctx, input(vec![]), &wf, &mut list, true);
-                run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
                 let (f, _) = run_frame(
                     &ctx,
-                    input(click_events(Pos2::new(x, y as f32))),
+                    tall_input(click_events(Pos2::new(x, y as f32))),
                     &wf,
                     &mut list,
                     true,
@@ -2428,18 +2439,18 @@ Show
         let wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
         let id = wf.rows()[0].id;
         let mut got = false;
-        for y in (20..600).step_by(4) {
+        for y in (20..1200).step_by(4) {
             for x in [30.0f32, 100.0] {
                 let ctx = headless_ctx();
                 let mut list = ListUi {
                     expanded: Some(id),
                     ..Default::default()
                 };
-                run_frame(&ctx, input(vec![]), &wf, &mut list, true);
-                run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
                 let (f, _) = run_frame(
                     &ctx,
-                    input(click_events(Pos2::new(x, y as f32))),
+                    tall_input(click_events(Pos2::new(x, y as f32))),
                     &wf,
                     &mut list,
                     true,

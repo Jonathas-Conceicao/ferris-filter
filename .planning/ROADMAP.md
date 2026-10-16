@@ -86,7 +86,7 @@ skin proven by `ff-proto` (quick tasks 261015-tz2 / 261016-1de), every v0.5 edit
 survives the move, and the prototype is retired. `generate` / `sync` output and the committed
 fixtures stay byte-identical; the only file-format change is the divider / economy banner.
 
-- [ ] **Phase 29: Workspace & Asset Tool from the Root** - One Cargo workspace; `ff-art` runs from the repo root without being built with `ff`
+- [x] **Phase 29: Workspace & Asset Tool from the Root** - One Cargo workspace; `ff-art` runs from the repo root without being built with `ff` (completed 2026-10-16)
 - [ ] **Phase 30: Skinned Overlay Shell** - The new left-docked, game-styled window with four tabs, bottom bar, status line and skinned popups, carrying today's RULES / CONFIG content
 - [ ] **Phase 31: RULES Tab on the Skin** - Rule list and full editor redrawn with skin controls; + Add rule inserts at the top
 - [ ] **Phase 32: Rule Dividers & Economy Banner** - `# ff:section` banners become named, collapsible sections; the economy section becomes the locked last divider with banner markers
@@ -110,7 +110,7 @@ fixtures stay byte-identical; the only file-format change is the divider / econo
 **Plans**: 1 plan
 Plans:
 
-- [ ] 29-01-PLAN.md — Root Cargo workspace (ff default member), committed lock, nightly pin, `cargo ff-art` alias, repo-root paths, docs
+- [x] 29-01-PLAN.md — Root Cargo workspace (ff default member), committed lock, nightly pin, `cargo ff-art` alias, repo-root paths, docs
 
 ### Phase 30: Skinned Overlay Shell
 
@@ -208,7 +208,7 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 29. Workspace & Asset Tool from the Root | v0.6 | 0/TBD | Not started | - |
+| 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 0/TBD | Not started | - |
 | 31. RULES Tab on the Skin | v0.6 | 0/TBD | Not started | - |
 | 32. Rule Dividers & Economy Banner | v0.6 | 0/TBD | Not started | - |
@@ -298,7 +298,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 6/6 plans complete
+**Plans:** 1/1 plans complete
 
 Plans:
 

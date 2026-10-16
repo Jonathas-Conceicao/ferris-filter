@@ -2811,10 +2811,9 @@ fn custom_sound_control(
     ui.horizontal(|ui| {
         caption(ui, "File");
         let (r, c) = draft_field(ui, tid, file, 160.0, list, key);
-        resp = Some(r);
+        resp = Some(r.on_hover_text("The file must be in the game folder."));
         commit = c;
     });
-    caption(ui, "The file must be in the game folder.");
     if let Some(text) = commit {
         match custom_sound_edit(card.id, card.entry, &text, volume) {
             Ok(Some(a)) => {

@@ -212,7 +212,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 32-02-PLAN.md — Foundations: per-filter collapsed sections in ff-settings.json, mixed-height list offsets, chevron/rename icons
-- [ ] 32-03-PLAN.md — Divider edits on Document (insert top/above, rename, remove, move over groups, rule hops) and + Add rule above every divider
+- [x] 32-03-PLAN.md — Divider edits on Document (insert top/above, rename, remove, move over groups, rule hops) and + Add rule above every divider
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -281,7 +281,7 @@ Plans:
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
-| 32. Rule Dividers & Economy Banner | v0.6 | 2/6 | In Progress|  |
+| 32. Rule Dividers & Economy Banner | v0.6 | 3/6 | In Progress|  |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |

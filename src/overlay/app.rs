@@ -4654,6 +4654,76 @@ Hide
     }
 
     #[test]
+    fn style_editor_edits_stay_in_memory_until_apply_and_revert_restores() {
+        use crate::models::config::{Beam, FilterColor, Minimap, MinimapShape, Sound};
+        use crate::overlay::config_state::{ColourSlot, ConfigState, StyleEdit};
+        use crate::overlay::config_view::ConfigAction;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        let styles_path = dir.path().join("styles.json");
+        let before_bytes = std::fs::read(&styles_path).unwrap();
+        app.config = ConfigState::load(dir.path());
+        let original = app.config.as_ref().unwrap().style("S").unwrap().clone();
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+
+        let edit = |edit: StyleEdit| ConfigAction::EditStyle {
+            name: "S".to_string(),
+            edit,
+        };
+        app.handle_config_actions(
+            &ctx,
+            vec![
+                edit(StyleEdit::Colour {
+                    slot: ColourSlot::Text,
+                    value: Some([1, 2, 3]),
+                }),
+                edit(StyleEdit::Font(Some(20))),
+                edit(StyleEdit::Minimap(Some(Minimap {
+                    size: 0,
+                    color: FilterColor::Cyan,
+                    shape: MinimapShape::Star,
+                }))),
+                edit(StyleEdit::Beam(Some(Beam {
+                    color: FilterColor::Red,
+                    temp: true,
+                }))),
+                edit(StyleEdit::Sound(Some(Sound {
+                    id: Some(4),
+                    custom: None,
+                    vol: 50,
+                }))),
+            ],
+        );
+        let state = app.config.as_ref().unwrap();
+        assert!(state.is_dirty(), "edits make CONFIG unapplied");
+        let edited = state.style("S").unwrap();
+        assert_eq!(edited.text, Some([1, 2, 3]));
+        assert_eq!(edited.font, Some(20));
+        assert_eq!(
+            std::fs::read(&styles_path).unwrap(),
+            before_bytes,
+            "nothing is written before Apply"
+        );
+
+        let epoch = app.config_ui.epoch;
+        app.handle_config_actions(&ctx, vec![ConfigAction::Revert]);
+        let state = app.config.as_ref().unwrap();
+        assert!(!state.is_dirty());
+        assert_eq!(state.style("S").unwrap(), &original);
+        assert_ne!(app.config_ui.epoch, epoch, "Revert orphans open pickers");
+        assert_eq!(std::fs::read(&styles_path).unwrap(), before_bytes);
+    }
+    #[test]
     fn changed_on_disk_popup_keep_editing_closes_but_overwrite_slot_reopens() {
         use crate::overlay::shell::{Popup, active_popup};
         let (mut app, ctx) = popup_app(RULES);

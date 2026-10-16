@@ -129,6 +129,8 @@ impl ConfigUi {
     pub fn reset_for_new_styles(&mut self) {
         self.disarm_all();
         self.rename_drafts.clear();
+        // Open pickers and the remembered None-values sit under ids salted with the epoch.
+        self.epoch = self.epoch.wrapping_add(1);
     }
 }
 
@@ -1587,7 +1589,12 @@ mod tests {
         };
         cfg.rename_drafts
             .insert("t5hw2k".to_string(), "Recycle".to_string());
+        let epoch = cfg.epoch;
         cfg.reset_for_new_styles();
+        assert_ne!(
+            cfg.epoch, epoch,
+            "open pickers and remembered values are orphaned"
+        );
         assert!(cfg.rename_drafts.is_empty());
         assert!(cfg.delete_armed.is_none() && !cfg.revert_armed);
     }

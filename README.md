@@ -32,19 +32,23 @@ cargo run --bin ff-proto -- --screenshot shot.png   # render, save one frame, ex
 ## Game art tool (`ff-art`)
 `tools/ff-art/` extracts the UI art listed in `assets/poe2/manifest.toml` from the game install
 into `assets/poe2/` (PNGs and the Fontin fonts) and renders the Ferris background
-(`assets/ui/ferris-bg.png`). It reads the install **read-only** and is its own Cargo workspace,
-so its dependencies never enter `ff`. It uses the `poe_data_tools` library, which needs a
-nightly toolchain. Re-run it after a game patch:
+(`assets/ui/ferris-bg.png`). It reads the install **read-only**. It is a member of the repo's Cargo workspace but not a default
+member, so `cargo build`/`cargo test` at the root never build it or its dependencies. It uses the
+`poe_data_tools` library, which needs nightly (pinned by `rust-toolchain.toml`). Re-run it after a
+game patch:
 
 ```bash
-cd tools/ff-art
-cargo run --release                                  # extract everything in the manifest
-cargo run --release -- --game "D:\Games\Path of Exile 2"   # non-default install folder
-cargo run --release -- list optionsmenu              # find virtual paths
-cargo run --release -- dump "uiimages/common/" <scratch-dir>   # convert matches to PNG to look at
-cargo run --release -- dump minimap/player <scratch-dir>      # the whole minimap icon sheet
-cargo run --release -- ferris                        # only re-render the Ferris background
+cargo ff-art                                         # extract everything in the manifest
+cargo ff-art --game "D:\Games\Path of Exile 2"   # non-default install folder
+cargo ff-art list optionsmenu              # find virtual paths
+cargo ff-art dump "uiimages/common/" <scratch-dir>   # convert matches to PNG to look at
+cargo ff-art dump minimap/player <scratch-dir>      # the whole minimap icon sheet
+cargo ff-art ferris                        # only re-render the Ferris background
 ```
+
+It runs from any folder in the repo (the alias in `.cargo/config.toml` is
+`cargo run -p ff-art --release --`), and outputs always land in the repo's `assets/` (override with
+`--root`).
 
 The default install folder is `C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2`.
 `sheet`, `info` and `zoom` help inspect candidates and screenshots (see `--help`).

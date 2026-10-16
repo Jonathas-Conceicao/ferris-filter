@@ -89,7 +89,7 @@ fixtures stay byte-identical; the only file-format change is the divider / econo
 - [x] **Phase 29: Workspace & Asset Tool from the Root** - One Cargo workspace; `ff-art` runs from the repo root without being built with `ff` (completed 2026-10-16)
 - [x] **Phase 30: Skinned Overlay Shell** - The new left-docked, game-styled window with four tabs, bottom bar, status line and skinned popups, carrying today's RULES / CONFIG content (completed 2026-10-16)
 - [x] **Phase 31: RULES Tab on the Skin** - Rule list and full editor redrawn with skin controls; + Add rule inserts at the top (completed 2026-10-16)
-- [ ] **Phase 32: Rule Dividers & Economy Banner** - `# ff:section` banners become named, collapsible sections; the economy section becomes the locked last divider with banner markers
+- [x] **Phase 32: Rule Dividers & Economy Banner** - `# ff:section` banners become named, collapsible sections; the economy section becomes the locked last divider with banner markers (completed 2026-10-16)
 - [ ] **Phase 33: Style Table & Line-by-Line Style Editor** - CONFIG style table with column headers, a rule-editor-like style editor and a skinned colour picker
 - [ ] **Phase 34: ECONOMY & ABOUT Tabs** - League / sync info, SYNC ECONOMY, add/remove economy section and the tiers editor on ECONOMY; identity and credits on ABOUT
 - [ ] **Phase 35: Prototype Retirement & Docs** - `ff-proto` and `overlay::theme` removed; README / CLAUDE.md / CHANGELOG updated; version 0.6.0
@@ -224,7 +224,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 32-06-PLAN.md — --rename-section shot flag, verification shots, CLAUDE.md / CHANGELOG, verification checklist
+- [x] 32-06-PLAN.md — --rename-section shot flag, verification shots, CLAUDE.md / CHANGELOG, verification checklist
 
 **UI hint**: yes
 
@@ -281,7 +281,7 @@ Plans:
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
-| 32. Rule Dividers & Economy Banner | v0.6 | 5/6 | In Progress|  |
+| 32. Rule Dividers & Economy Banner | v0.6 | 6/6 | Complete   | 2026-10-16 |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |

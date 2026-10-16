@@ -41,6 +41,9 @@ pub struct PickerResult {
     pub none: bool,
     /// The user pressed Use colour.
     pub done: bool,
+    /// The user clicked a quick pick, including the one already selected (an explicit choice of
+    /// that colour, which matters for an empty slot whose seed equals a quick pick).
+    pub picked: bool,
 }
 
 /// An edit the popup asks its caller to apply.
@@ -513,22 +516,27 @@ pub fn ff_colour_picker(
             res.none = true;
         }
     };
+    let mut picked = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = TILE_GAP;
         for (name, c) in DRACULA {
             let selected = rgb == [c.r(), c.g(), c.b()];
             let r = ff_swatch(ui, Some(c), selected, vec2(tile, tile), name).on_hover_text(name);
             probe(&format!("quick:{name}"), r.rect);
-            if r.clicked() && !selected {
-                rgb = [c.r(), c.g(), c.b()];
-                hsv = hsv_of_rgb(rgb);
-                changed = true;
+            if r.clicked() {
+                picked = true;
+                if !selected {
+                    rgb = [c.r(), c.g(), c.b()];
+                    hsv = hsv_of_rgb(rgb);
+                    changed = true;
+                }
             }
         }
         if mode.allow_none {
             none_tile(ui);
         }
     });
+    res.picked = picked;
 
     // Footer.
     ui.add_space(12.0);
@@ -570,7 +578,8 @@ pub fn request_open(ctx: &egui::Context, tag: &str) {
 /// the screen), framed in the game's box art. It edits live: each change returns an edit at once;
 /// Escape returns the value the picker opened with; a click outside, the trigger again or Use
 /// colour keeps the current value. `current` is the slot's value (`None` = empty), `seed` what an
-/// empty slot starts the picker from. Opening, or closing without a change, returns `None`.
+/// empty slot starts the picker from; on an empty slot Use colour or any quick pick (even the
+/// selected one) sets the working colour. Opening, or closing without a change, returns `None`.
 pub fn colour_popup(
     ui: &mut Ui,
     trigger: &Response,
@@ -644,7 +653,9 @@ pub fn colour_popup(
                 if current.is_some() {
                     out = Some(PickerEdit::Clear);
                 }
-            } else if res.changed {
+            } else if res.changed || ((res.done || res.picked) && current.is_none()) {
+                // An explicit choice (Use colour, a quick pick) on an empty slot commits the
+                // working colour even when it is still the seed.
                 let mut now = st.hsva.to_srgba_unmultiplied();
                 if !mode.alpha {
                     now[3] = 255;
@@ -940,5 +951,34 @@ mod tests {
         assert_eq!(out, None);
         let (_, probes) = frame(&ctx, vec![], cur, OPEN);
         assert!(rect_of(&probes, "square").is_none());
+    }
+
+    #[test]
+    fn use_colour_on_an_unset_slot_sets_the_seed() {
+        let ctx = setup();
+        let probes = open(&ctx, None, OPEN);
+        let useb = rect_of(&probes, "use").unwrap();
+        let (out, _) = frame(&ctx, click_at(useb.center()), None, OPEN);
+        assert_eq!(out, Some(PickerEdit::Set([248, 248, 242, 255])));
+        let (_, probes) = frame(&ctx, vec![], Some([248, 248, 242, 255]), OPEN);
+        assert!(rect_of(&probes, "square").is_none(), "closed after Use colour");
+    }
+
+    #[test]
+    fn the_selected_quick_pick_on_an_unset_slot_sets_it() {
+        let ctx = setup();
+        let probes = open(&ctx, None, OPEN);
+        // The seed is Foreground, so that tile is drawn selected.
+        let fg = rect_of(&probes, "quick:Foreground").unwrap();
+        let (out, _) = frame(&ctx, click_at(fg.center()), None, OPEN);
+        assert_eq!(out, Some(PickerEdit::Set([248, 248, 242, 255])));
+        // Once set, clicking it again is a no-op.
+        let (out, _) = frame(
+            &ctx,
+            click_at(fg.center()),
+            Some([248, 248, 242, 255]),
+            OPEN,
+        );
+        assert_eq!(out, None);
     }
 }

@@ -18,6 +18,8 @@
 
 use super::text_entry::parse_base_type_entry;
 use super::theme;
+use crate::skin::fonts::regular;
+use crate::skin::palette as pal;
 
 /// What [`header_plate`] reports back to the caller.
 pub struct HeaderResponse {
@@ -546,7 +548,7 @@ pub fn chip_list(
     id_salt: impl std::hash::Hash,
     items: &[String],
     hint: &str,
-    max_height: f32,
+    _max_height: f32,
 ) -> ChipListOutcome {
     let id = salted_id(ui, id_salt);
     let mut outcome = ChipListOutcome::default();
@@ -558,42 +560,34 @@ pub fn chip_list(
             .color(theme::LABEL_TAN),
     );
 
-    egui::ScrollArea::vertical()
-        .id_salt(id.with("scroll"))
-        .max_height(max_height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                for (index, item) in items.iter().enumerate() {
-                    egui::Frame::new()
-                        .fill(theme::INPUT_FILL)
-                        .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
-                        .inner_margin(egui::Margin {
-                            left: 4,
-                            right: 0,
-                            top: 0,
-                            bottom: 0,
-                        })
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(item)
-                                        .size(theme::ROW_SUMMARY_SIZE)
-                                        .color(theme::VALUE_TEXT),
-                                );
-                                let label = format!("Remove {item}");
-                                if remove_x_button_with_id(ui, id.with(("x", index)), &label)
-                                    .clicked()
-                                {
-                                    outcome.removed = Some(index);
-                                }
-                            });
-                        });
-                }
-            });
-        });
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for (index, item) in items.iter().enumerate() {
+            egui::Frame::new()
+                .fill(theme::INPUT_FILL)
+                .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
+                .inner_margin(egui::Margin {
+                    left: 4,
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                })
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(item)
+                                .font(regular(15.0))
+                                .color(pal::VALUE),
+                        );
+                        let label = format!("Remove {item}");
+                        if remove_x_button_with_id(ui, id.with(("x", index)), &label).clicked() {
+                            outcome.removed = Some(index);
+                        }
+                    });
+                });
+        }
+    });
 
     let (added, rejected) = add_field(ui, id, hint);
     outcome.added = added;
@@ -610,38 +604,51 @@ pub fn string_list(
     hint: &str,
     max_rows: usize,
 ) -> ChipListOutcome {
-    const ROW_H: f32 = 26.0;
+    const ROW_H: f32 = 28.0;
     let id = salted_id(ui, id_salt);
     let mut outcome = ChipListOutcome::default();
+    let skin = crate::skin::of(ui.ctx());
 
-    egui::ScrollArea::vertical()
-        .id_salt(id.with("scroll"))
-        .max_height(max_rows as f32 * ROW_H)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for (index, item) in items.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.set_height(ROW_H);
+    if !items.is_empty() {
+        let height = (items.len() as f32 * ROW_H).min(max_rows as f32 * ROW_H);
+        ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            crate::skin::widgets::ff_scroll_area(ui, &skin, id.with("scroll"), |ui| {
+                for (index, item) in items.iter().enumerate() {
+                    let (rect, row) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), ROW_H),
+                        egui::Sense::hover(),
+                    );
+                    let x_rect = egui::Rect::from_center_size(
+                        egui::pos2(rect.max.x - 14.0, rect.center().y),
+                        egui::vec2(24.0, 24.0),
+                    );
+                    let text_w = (x_rect.min.x - rect.min.x - 12.0).max(20.0);
+                    let mut job = egui::text::LayoutJob::simple(
+                        item.clone(),
+                        regular(15.0),
+                        pal::VALUE,
+                        text_w,
+                    );
+                    job.wrap.max_rows = 1;
+                    job.wrap.break_anywhere = true;
+                    let galley = ui.painter().layout_job(job);
+                    ui.painter().galley(
+                        egui::pos2(rect.min.x + 8.0, rect.center().y - galley.size().y / 2.0),
+                        galley,
+                        pal::VALUE,
+                    );
+                    row.on_hover_text(item);
                     let label = format!("Remove {item}");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(x_rect), |ui| {
                         if remove_x_button_with_id(ui, id.with(("x", index)), &label).clicked() {
                             outcome.removed = Some(index);
                         }
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(item)
-                                        .size(theme::ROW_SUMMARY_SIZE)
-                                        .color(theme::VALUE_TEXT),
-                                )
-                                .truncate(),
-                            )
-                            .on_hover_text(item);
-                        });
                     });
-                });
-            }
+                }
+            });
         });
+    }
 
     let (added, rejected) = add_field(ui, id, hint);
     outcome.added = added;
@@ -651,7 +658,8 @@ pub fn string_list(
 
 /// The shared add field: draft in temp memory under `id`, Enter / + ADD commits, a quoted paste
 /// is split, stray quotes and control characters are refused visibly with the draft kept.
-fn add_field(ui: &mut egui::Ui, id: egui::Id, hint: &str) -> (Vec<String>, Option<String>) {
+fn add_field(ui: &mut egui::Ui, id: egui::Id, _hint: &str) -> (Vec<String>, Option<String>) {
+    let skin = crate::skin::of(ui.ctx());
     let field_id = id.with("field");
     let mut added = Vec::new();
     let mut rejected = None;
@@ -661,15 +669,17 @@ fn add_field(ui: &mut egui::Ui, id: egui::Id, hint: &str) -> (Vec<String>, Optio
     let mut commit = false;
     let mut enter = false;
     ui.horizontal(|ui| {
-        let width = (ui.available_width() - 64.0).max(60.0);
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut draft)
-                .id(field_id)
-                .hint_text(hint)
-                .desired_width(width),
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let width = (ui.available_width() - 84.0 - 8.0).max(60.0);
+        let response = crate::skin::widgets::ff_text_field_id(
+            ui,
+            field_id,
+            &mut draft,
+            "Type a name, press Enter",
+            width,
         );
         enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if ui.button("+ ADD").clicked() {
+        if crate::skin::widgets::ff_button(ui, &skin, "+ Add", 84.0).clicked() {
             commit = true;
         }
     });

@@ -11,7 +11,7 @@
 //! `(block id, keyword, ordinal)`, never by line index, because line indices shift as lines are
 //! added and removed (Pitfall 5).
 
-use egui::{Align, Layout, RichText, vec2};
+use egui::{Align, Align2, Layout, RichText, Sense, pos2, vec2};
 
 use crate::filter::keywords::{COLOURS, Keyword, Kind, RARITIES, SHAPES, ValueShape};
 use crate::filter::tokenize::Operator;
@@ -28,8 +28,9 @@ use super::theme;
 use super::widgets;
 #[cfg(test)]
 use crate::models::config::Style;
-use crate::skin::fonts::regular;
+use crate::skin::fonts::{regular, small_caps};
 use crate::skin::palette as pal;
+use crate::skin::slice::{self, Margins};
 use crate::skin::widgets as widgets_skin;
 
 /// Left inset of a condition / action card: its value controls start in the control column.
@@ -224,17 +225,26 @@ fn draft_field(
     list: &mut ListUi,
     key: (BlockId, usize),
 ) -> (egui::Response, Option<String>) {
+    draft_field_ex(ui, tid, current, width, list, key, regular(15.0))
+}
+
+/// [`draft_field`] with an explicit font (raw filter rows use 14pt monospace).
+fn draft_field_ex(
+    ui: &mut egui::Ui,
+    tid: egui::Id,
+    current: &str,
+    width: f32,
+    list: &mut ListUi,
+    key: (BlockId, usize),
+    font: egui::FontId,
+) -> (egui::Response, Option<String>) {
     let focused = ui.memory(|m| m.has_focus(tid));
     let stored = ui.data_mut(|d| d.get_temp::<String>(tid));
     let mut draft = match stored {
         Some(s) if focused => s,
         _ => current.to_string(),
     };
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut draft)
-            .id(tid)
-            .desired_width(width),
-    );
+    let resp = widgets_skin::ff_text_field_ex(ui, Some(tid), &mut draft, "", width, font);
     let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
     if resp.changed()
         && list
@@ -282,7 +292,15 @@ pub(crate) fn raw_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let width = (ui.available_width() - 32.0).max(80.0);
-        let (_, commit) = draft_field(ui, tid, &content, width, list, (id, entry.line));
+        let (_, commit) = draft_field_ex(
+            ui,
+            tid,
+            &content,
+            width,
+            list,
+            (id, entry.line),
+            egui::FontId::monospace(14.0),
+        );
         if let Some(text) = commit
             && let Some(a) = raw_line_edit(id, entry, &text)
         {
@@ -801,7 +819,7 @@ fn simple_defences_card(
                 }
             }
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                 for (chip, (label, tip, _)) in group::COMBOS.iter().enumerate() {
                     let mut sel = mask & (1 << chip) != 0;
                     let r = widgets::toggle_chip(ui, label, &mut sel).on_hover_text(*tip);
@@ -1199,6 +1217,88 @@ fn picker_section_override(searching: bool) -> Option<bool> {
     searching.then_some(true)
 }
 
+/// Row height of a picker / class-picker line.
+const PICK_ROW_H: f32 = 28.0;
+/// The picker list never grows beyond this; it scrolls instead.
+const PICKER_MAX_H: f32 = 320.0;
+
+/// A collapsible section head: a small triangle and a small-caps label on a 28pt line.
+fn section_head(ui: &mut egui::Ui, label: &str, open: bool) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), PICK_ROW_H), Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if r.hovered() {
+        ui.painter().rect_filled(rect, 0.0, pal::ROW_HOVER);
+    }
+    let c = pos2(rect.min.x + 12.0, rect.center().y);
+    let pts = if open {
+        vec![
+            c + vec2(-4.5, -2.5),
+            c + vec2(4.5, -2.5),
+            c + vec2(0.0, 3.5),
+        ]
+    } else {
+        vec![
+            c + vec2(-2.5, -4.5),
+            c + vec2(3.5, 0.0),
+            c + vec2(-2.5, 4.5),
+        ]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        pts,
+        pal::LABEL,
+        egui::Stroke::NONE,
+    ));
+    ui.painter().text(
+        pos2(rect.min.x + 26.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        small_caps(17.0),
+        pal::LABEL,
+    );
+    r
+}
+
+/// One full-width 28pt picker entry; greyed entries use the disabled colour. `clickable` is false
+/// for entries that cannot be picked at all.
+fn pick_row(ui: &mut egui::Ui, text: &str, greyed: bool, clickable: bool) -> egui::Response {
+    let sense = if clickable {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), PICK_ROW_H), sense);
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, clickable, text));
+    if clickable && r.hovered() {
+        ui.painter().rect_filled(rect, 0.0, pal::ROW_HOVER);
+    }
+    let color = if greyed { pal::DISABLED } else { pal::VALUE };
+    ui.painter().text(
+        pos2(rect.min.x + 26.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        regular(15.0),
+        color,
+    );
+    r
+}
+
+/// Paints the game's box art behind everything a popup drew so far (the shape `bg` was reserved
+/// first), the same way `ff_dropdown` frames its list.
+fn paint_box_behind(ui: &mut egui::Ui, skin: &crate::skin::Skin, bg: egui::layers::ShapeIdx) {
+    let frame_rect = ui.min_rect().expand(6.0);
+    let mut mesh = egui::Mesh::with_texture(skin.box_9slice.id());
+    for p in slice::nine_slice(
+        frame_rect,
+        skin.box_9slice.size(),
+        Margins::new(8.0, 8.0, 8.0, 8.0),
+        1.0,
+        ui.painter().pixels_per_point(),
+    ) {
+        mesh.add_rect_with_uv(p.dest, p.uv, egui::Color32::WHITE);
+    }
+    ui.painter().set(bg, egui::Shape::mesh(mesh));
+}
+
 /// A searchable, grouped picker anchored to `button` (shared with `+ style`). Returns the entry
 /// the user picked this frame. Entries for which `disabled` gives a reason are shown greyed with
 /// that reason as their tooltip and cannot be clicked. Entries `present` on the rule are also
@@ -1223,16 +1323,18 @@ pub(crate) fn picker_popup(
     let inner = egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(width)
+        .gap(2.0)
+        .frame(egui::Frame::NONE.inner_margin(6))
         .show(|ui| {
+            let skin = crate::skin::of(ui.ctx());
+            let bg = ui.painter().add(egui::Shape::Noop);
+            ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
             let mut query = ui
                 .data_mut(|d| d.get_temp::<String>(query_id))
                 .unwrap_or_default();
             if searchable {
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut query)
-                        .hint_text(hint_text)
-                        .desired_width(f32::INFINITY),
-                );
+                let w = ui.available_width();
+                let r = widgets_skin::ff_text_field(ui, &mut query, hint_text, w);
                 if !ui.data(|d| d.get_temp::<bool>(focus_id)).unwrap_or(false) {
                     r.request_focus();
                     ui.data_mut(|d| d.insert_temp(focus_id, true));
@@ -1241,63 +1343,77 @@ pub(crate) fn picker_popup(
             ui.data_mut(|d| d.insert_temp(query_id, query.clone()));
             let filtered = filter_groups(groups, &query);
             let searching = !query.trim().is_empty();
+            let forced = picker_section_override(searching);
+            let open_id = |label: &str| popup_id.with(("section-open", label.to_string()));
+            let is_open = |ui: &egui::Ui, label: &str| {
+                forced.unwrap_or_else(|| {
+                    ui.data(|d| d.get_temp::<bool>(open_id(label)))
+                        .unwrap_or(PICKER_SECTION_DEFAULT_OPEN)
+                })
+            };
+            let rows: usize = if filtered.is_empty() {
+                1
+            } else {
+                filtered
+                    .iter()
+                    .map(|(l, es)| 1 + if is_open(ui, l) { es.len() } else { 0 })
+                    .sum()
+            };
+            let list_h = (rows as f32 * PICK_ROW_H).min(PICKER_MAX_H);
             let mut picked: Option<ConditionEntry> = None;
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
+            ui.allocate_ui(vec2(ui.available_width(), list_h), |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                widgets_skin::ff_scroll_area(ui, &skin, (popup_id, "list"), |ui| {
                     if filtered.is_empty() {
-                        caption(ui, "Nothing matches");
+                        let (r, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), PICK_ROW_H),
+                            Sense::hover(),
+                        );
+                        ui.painter().text(
+                            pos2(r.min.x + 8.0, r.center().y),
+                            Align2::LEFT_CENTER,
+                            "Nothing matches",
+                            regular(15.0),
+                            pal::MUTED,
+                        );
                     }
                     for (label, kws) in filtered.iter() {
-                        let mut header = egui::CollapsingHeader::new(
-                            RichText::new(*label)
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::LABEL_TAN),
-                        )
-                        .id_salt((popup_id, *label))
-                        .default_open(PICKER_SECTION_DEFAULT_OPEN);
-                        if let Some(open) = picker_section_override(searching) {
-                            header = header.open(Some(open));
+                        let open = is_open(ui, label);
+                        if section_head(ui, label, open).clicked() && forced.is_none() {
+                            ui.data_mut(|d| d.insert_temp(open_id(label), !open));
+                            ui.ctx().request_repaint();
                         }
-                        header.show(ui, |ui| {
-                            for entry in kws {
-                                let reason = disabled(entry);
-                                let already = reason.is_none() && present(entry);
-                                let text = RichText::new(entry.label()).size(14.0).color(
-                                    if reason.is_some() || already {
-                                        theme::DISABLED_TEXT
+                        if !open {
+                            continue;
+                        }
+                        for entry in kws {
+                            let reason = disabled(entry);
+                            let already = reason.is_none() && present(entry);
+                            let greyed = reason.is_some() || already;
+                            let r = pick_row(ui, &entry.label(), greyed, reason.is_none());
+                            match reason {
+                                Some(msg) => {
+                                    r.on_hover_text(msg);
+                                }
+                                None => {
+                                    let r = if already {
+                                        r.on_hover_text(ALREADY_ON_RULE)
                                     } else {
-                                        theme::VALUE_TEXT
-                                    },
-                                );
-                                let r = ui
-                                    .add_enabled_ui(reason.is_none(), |ui| {
-                                        ui.selectable_label(false, text)
-                                    })
-                                    .inner;
-                                match reason {
-                                    Some(msg) => {
-                                        r.on_disabled_hover_text(msg);
-                                    }
-                                    None => {
-                                        let r = if already {
-                                            r.on_hover_text(ALREADY_ON_RULE)
-                                        } else {
-                                            r
-                                        };
-                                        if r.clicked() {
-                                            picked = Some(*entry);
-                                        }
+                                        r
+                                    };
+                                    if r.clicked() {
+                                        picked = Some(*entry);
                                     }
                                 }
                             }
-                        });
+                        }
                     }
                 });
+            });
             if picked.is_some() {
                 egui::Popup::close_id(ui.ctx(), popup_id);
             }
+            paint_box_behind(ui, &skin, bg);
             picked
         });
     if !egui::Popup::is_id_open(&ctx, popup_id) {
@@ -2066,23 +2182,26 @@ fn class_picker(
         // in use.
         let open_id = egui::Id::new(("ff-class-group-open", row_epoch, salt, *label));
         let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-        let out = egui::CollapsingHeader::new(
-            RichText::new(format!("{label} ({n})"))
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        )
-        .id_salt((salt, *label))
-        .open(Some(open))
-        .show(ui, |ui| {
+        if section_head(ui, &format!("{label} ({n})"), open).clicked() {
+            ui.data_mut(|d| d.insert_temp(open_id, !open));
+        }
+        if open {
             for c in classes {
                 let mut on = selected.contains(c);
-                if ui.checkbox(&mut on, c.as_str()).changed() {
-                    result = Some(class_toggle(selected, c, on));
-                }
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let toggled = widgets::circular_toggle(ui, &mut on).changed();
+                    ui.label(
+                        RichText::new(c.as_str())
+                            .font(regular(15.0))
+                            .color(pal::VALUE),
+                    );
+                    if toggled {
+                        result = Some(class_toggle(selected, c, on));
+                    }
+                });
             }
-        });
-        if out.header_response.clicked() {
-            ui.data_mut(|d| d.insert_temp(open_id, !open));
         }
     }
     let unknown = unknown_classes(selected, catalog);
@@ -2092,8 +2211,8 @@ fn class_picker(
             for c in unknown {
                 ui.label(
                     RichText::new(c.as_str())
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(theme::LABEL_TAN),
+                        .font(regular(15.0))
+                        .color(pal::MUTED),
                 )
                 .on_hover_text("Not in config.json's class list; kept as written.");
                 if widgets::remove_x_button(ui, &format!("Remove {c}")).clicked() {
@@ -4009,7 +4128,7 @@ mod tests {
         let production = include_str!("body.rs").split("mod tests {").next().unwrap();
         assert!(production.contains("Already on this rule"));
         // Present entries are only greyed: only a `disabled` reason blocks the click.
-        assert!(production.contains("add_enabled_ui(reason.is_none()"));
+        assert!(production.contains("greyed, reason.is_none())"));
     }
 
     // -- the Defences card --------------------------------------------------------------------
@@ -5498,7 +5617,64 @@ mod tests {
         assert_eq!(picker_section_override(true), Some(true));
         let production = include_str!("body.rs").split("mod tests {").next().unwrap();
         assert!(!production.contains(&["default_open(gi", " == 0)"].concat()));
-        assert!(production.contains("default_open(PICKER_SECTION_DEFAULT_OPEN)"));
+        assert!(production.contains(".unwrap_or(PICKER_SECTION_DEFAULT_OPEN)"));
+    }
+
+    #[test]
+    fn rules_editor_has_no_egui_default_widgets() {
+        // Phase 31 contract: only the colour picker keeps its legacy look. Doc and line comments
+        // are skipped so prose may name egui types.
+        let strip = |src: &'static str| -> String {
+            src.split("\nmod tests")
+                .next()
+                .unwrap()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let banned = [
+            "egui::ComboBox::from_id_salt",
+            "egui::TextEdit::singleline",
+            "egui::Button::new",
+            "egui::Checkbox::new",
+            "egui::CollapsingHeader::new",
+            "small_button(",
+            "ui.button(",
+            "egui::Slider::new",
+            "ui.checkbox(",
+            "selectable_label(",
+            "egui::DragValue",
+            "text_edit_singleline",
+            "ScrollArea::vertical",
+        ];
+        for (name, src) in [
+            ("body.rs", strip(include_str!("body.rs"))),
+            ("widgets.rs", strip(include_str!("widgets.rs"))),
+        ] {
+            for b in banned {
+                assert!(!src.contains(b), "{name} still uses {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn picker_popup_uses_skin_search_and_sections() {
+        let production = include_str!("body.rs").split("mod tests {").next().unwrap();
+        let start = production.find("pub(crate) fn picker_popup").unwrap();
+        let end = production[start..]
+            .find(
+                "
+}
+",
+            )
+            .unwrap()
+            + start;
+        let body = &production[start..end];
+        assert!(body.contains("ff_text_field("));
+        assert!(body.contains("section_head("));
+        assert!(body.contains("paint_box_behind("));
+        assert!(!production.contains("CollapsingHeader"));
     }
 
     #[test]

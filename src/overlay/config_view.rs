@@ -22,12 +22,15 @@ use super::config_state::{
 };
 use super::theme;
 use super::widgets;
+use crate::skin::editor as ed;
 use crate::skin::fonts::{regular, small_caps};
+use crate::skin::minimap;
 use crate::skin::palette as pal;
 
 const WHOLE_NUMBER: &str = "Enter a whole number";
 const NOT_SET: &str = "Not set (game default)";
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
+const ORDER_TIP: &str = "Built-in styles keep their order";
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
 const INVALID_RED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x55, 0x55);
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
@@ -826,6 +829,7 @@ fn style_row(
         return;
     };
     let epoch = cfg.epoch;
+    let skin = crate::skin::of(ui.ctx());
     ui.push_id(("style", name, epoch), |ui| {
         let width = ui.available_width();
         let cols = table_columns(width);
@@ -894,12 +898,25 @@ fn style_row(
         probe("row-name", name_cell);
 
         let icon = cols.icon.rect(rect);
+        if let Some(m) = &style.minimap
+            && let Some(shape) = minimap::index_of(&minimap::SHAPES, m.shape.as_str())
+            && let Some(colour) = minimap::index_of(&minimap::COLOURS, m.color.as_str())
+        {
+            ed::paint_minimap_icon(
+                ui.painter(),
+                &skin,
+                icon.center(),
+                shape,
+                colour,
+                minimap::icon_points(usize::from(m.size), 24.0),
+                egui::Color32::WHITE,
+            );
+        }
         probe("row-icon", icon);
 
         let preview = cols.preview.rect(rect);
-        cell_at(ui, "preview", preview, left_to_right, |ui| {
-            widgets::style_preview_chip(ui, name, style);
-        });
+        let label = egui::Rect::from_center_size(preview.center(), vec2(preview.width(), 26.0));
+        ed::ff_item_label(ui.painter(), label, "Item Name", label_look(style, false));
         probe("row-preview", preview);
 
         let order = cols.order.rect(rect);
@@ -910,23 +927,29 @@ fn style_row(
             Layout::right_to_left(Align::Center),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                if let Some((can_up, can_down)) = reorder {
-                    let down = widgets::arrow_button(ui, widgets::ArrowDirection::Down, can_down);
-                    let up = widgets::arrow_button(ui, widgets::ArrowDirection::Up, can_up);
-                    probe("row-up", up.rect);
-                    probe("row-down", down.rect);
-                    if down.clicked() {
-                        actions.push(ConfigAction::MoveStyle {
-                            name: name.to_string(),
-                            up: false,
-                        });
-                    }
-                    if up.clicked() {
-                        actions.push(ConfigAction::MoveStyle {
-                            name: name.to_string(),
-                            up: true,
-                        });
-                    }
+                // Built-ins draw both arrows greyed, at the same x as the custom rows' working
+                // ones, so the column reads as one.
+                let (can_up, can_down) = reorder.unwrap_or((false, false));
+                let down = crate::skin::widgets::ff_arrow(ui, &skin, false, can_down);
+                let up = crate::skin::widgets::ff_arrow(ui, &skin, true, can_up);
+                probe("row-up", up.rect);
+                probe("row-down", down.rect);
+                let (down_clicked, up_clicked) = (down.clicked(), up.clicked());
+                if reorder.is_none() {
+                    down.on_hover_text(ORDER_TIP);
+                    up.on_hover_text(ORDER_TIP);
+                }
+                if down_clicked {
+                    actions.push(ConfigAction::MoveStyle {
+                        name: name.to_string(),
+                        up: false,
+                    });
+                }
+                if up_clicked {
+                    actions.push(ConfigAction::MoveStyle {
+                        name: name.to_string(),
+                        up: true,
+                    });
                 }
             },
         );
@@ -941,15 +964,39 @@ fn style_row(
             egui::Popup::close_all(ui.ctx());
         }
         if is_expanded {
-            egui::Frame::new()
+            let editor = egui::Frame::new()
                 .fill(theme::ROW_BASE)
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     style_editor(ui, state, cfg, name, style, actions);
                 });
+            // A gold outline ties the row to the editor opened under it.
+            ui.painter().rect_stroke(
+                rect.union(editor.response.rect),
+                0.0,
+                egui::Stroke::new(1.0, pal::GOLD),
+                egui::StrokeKind::Inside,
+            );
         }
     });
+}
+
+/// How a style's item-label preview looks. `with_font` carries the style's font size; the table
+/// previews leave it off so every row is the same height.
+fn label_look(style: &Style, with_font: bool) -> ed::LabelLook {
+    let rgb = |c: [u8; 3]| egui::Color32::from_rgb(c[0], c[1], c[2]);
+    ed::LabelLook {
+        text: style.text.map(rgb),
+        border: style.border.map(rgb),
+        background: style.background.map(rgb),
+        font_size: if with_font {
+            style.font.map(f32::from)
+        } else {
+            None
+        },
+        hidden: style.action == StyleAction::Hide,
+    }
 }
 
 fn style_draft_row(
@@ -1612,71 +1659,116 @@ mod tests {
         assert_eq!(builtin.len() + custom.len(), state.style_names().len());
     }
 
+    /// The probe rects of one tag from a single rendering of the styles section.
+    fn render_probes(state: &ConfigState, cfg: &mut ConfigUi, tag: &str) -> Vec<egui::Rect> {
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, state, cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == tag)
+            .map(|(_, r)| r)
+            .collect()
+    }
+
     #[test]
     fn style_switch_click_emits_hide() {
         let (_d, state) = loaded();
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
         let (builtin, _) = style_groups(&state);
         let first = builtin[0].clone();
         assert_eq!(state.style(&first).unwrap().action, StyleAction::Show);
-        let mut found = 0;
-        let mut first_hit = false;
-        for y in (0..140).step_by(3) {
-            for x in (8..56).step_by(4) {
-                let (ctx, base) = headless();
-                let pos = egui::pos2(x as f32, y as f32);
-                let mut input = base;
-                input.events = vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed: true,
-                        modifiers: Default::default(),
-                    },
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed: false,
-                        modifiers: Default::default(),
-                    },
-                ];
-                let mut cfg = ConfigUi::default();
-                let vctx = view_ctx(None, &users, &refs);
-                let mut actions = Vec::new();
-                // Frame 1 settles layout and hover; frame 2 delivers the click.
-                ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: input.screen_rect,
-                        ..Default::default()
-                    },
-                    |ui| {
-                        show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
-                    },
-                )
-                .drop_without_applying_deltas();
-                ctx.run_ui(input, |ui| {
-                    show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
-                })
-                .drop_without_applying_deltas();
-                let hits: Vec<_> = actions
-                    .iter()
-                    .filter(|a| matches!(a, ConfigAction::EditStyle { .. }))
-                    .collect();
-                if let Some(ConfigAction::EditStyle { name, edit }) = hits.first() {
-                    assert_eq!(hits.len(), 1);
-                    assert!(builtin.contains(name));
-                    if name == &first {
-                        first_hit = true;
-                    }
-                    assert_eq!(*edit, StyleEdit::Action(StyleAction::Hide));
-                    assert_eq!(cfg.expanded, None, "switch click must not expand the row");
-                    found += 1;
-                }
-            }
+        let mut cfg = ConfigUi::default();
+        let switches = render_probes(&state, &mut cfg, "row-vis");
+        let (ctx, _) = headless();
+        let actions = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            switches[0].left_center() + vec2(16.0, 0.0),
+        );
+        let edits: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, ConfigAction::EditStyle { .. }))
+            .collect();
+        assert_eq!(
+            edits,
+            [&ConfigAction::EditStyle {
+                name: first,
+                edit: StyleEdit::Action(StyleAction::Hide),
+            }]
+        );
+        assert_eq!(cfg.expanded, None, "switch click must not expand the row");
+    }
+
+    #[test]
+    fn label_look_reads_the_style() {
+        let (_d, state) = loaded();
+        let s = label_look(state.style("S").unwrap(), false);
+        assert_eq!(s.text, Some(egui::Color32::from_rgb(255, 121, 198)));
+        assert_eq!(s.border, Some(egui::Color32::from_rgb(255, 121, 198)));
+        assert_eq!(s.background, Some(egui::Color32::from_rgb(40, 42, 54)));
+        assert_eq!((s.font_size, s.hidden), (None, false));
+        let with_font = label_look(state.style("S").unwrap(), true);
+        assert_eq!(
+            with_font.font_size,
+            state.style("S").unwrap().font.map(f32::from)
+        );
+        assert!(with_font.font_size.is_some());
+        let h = label_look(state.style("hidden").unwrap(), false);
+        assert!(h.hidden);
+        assert_eq!((h.text, h.border, h.background), (None, None, None));
+    }
+
+    fn mesh_rects(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(m) => out.push(m.calc_bounds()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| mesh_rects(s, out)),
+            _ => {}
         }
-        assert!(found > 0 && first_hit, "no click reached the first switch");
+    }
+
+    #[test]
+    fn a_style_with_a_minimap_paints_its_icon_in_the_icon_cell() {
+        let (_d, state) = loaded();
+        assert!(state.style("S").unwrap().minimap.is_some());
+        assert!(state.style("unchanged").unwrap().minimap.is_none());
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let mut actions = Vec::new();
+        drain_probes();
+        let out = ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        });
+        let icons: Vec<_> = drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == "row-icon")
+            .map(|(_, r)| r)
+            .collect();
+        let mut meshes = Vec::new();
+        for clipped in &out.shapes {
+            mesh_rects(&clipped.shape, &mut meshes);
+        }
+        out.drop_without_applying_deltas();
+        let painted_in = |cell: egui::Rect| {
+            meshes
+                .iter()
+                .filter(|m| cell.expand(1.0).contains_rect(**m))
+                .count()
+        };
+        let (builtin, _) = style_groups(&state);
+        let row = |n: &str| builtin.iter().position(|x| x == n).unwrap();
+        assert_eq!(painted_in(icons[row("S")]), 1);
+        assert_eq!(painted_in(icons[row("unchanged")]), 0);
     }
 
     #[test]
@@ -1753,6 +1845,10 @@ mod tests {
         for t in &texts {
             assert!(!t.contains("unapplied change"), "{t}");
             assert!(t != "new" && t != "edited", "{t}");
+            assert!(
+                t != "Show" && t != "Hide",
+                "no Show/Hide caption in a row: {t}"
+            );
         }
     }
 
@@ -1874,9 +1970,9 @@ mod tests {
         assert!(h("name").right() <= h("icon").left());
         assert!(h("icon").right() <= h("preview").left());
         assert!(h("preview").right() <= h("order").left());
-        // The custom arrows sit inside the Order cell, Up then Down, Down at its right edge.
+        // Every row's arrows sit inside the Order cell, Up then Down, Down at its right edge.
         let (orders, ups, downs) = (of("row-order"), of("row-up"), of("row-down"));
-        for ((u, d), k) in ups.iter().zip(&downs).zip(n_builtin..) {
+        for ((u, d), k) in ups.iter().zip(&downs).zip(0..) {
             let o = orders[k];
             assert!(u.center().x < d.center().x);
             assert!(
@@ -2169,41 +2265,39 @@ mod tests {
     }
 
     #[test]
-    fn custom_arrows_reorder_and_builtins_have_none() {
+    fn custom_arrows_reorder_and_builtin_arrows_are_disabled() {
         let (_d, mut state) = loaded();
         for n in ["k1", "k2", "k3"] {
             state.add_style(n).unwrap();
         }
         let (builtin, custom) = style_groups(&state);
         assert_eq!(custom.last().map(String::as_str), Some("k3"));
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
-        let (ctx, _) = headless();
         let mut cfg = ConfigUi::default();
-        let vctx = view_ctx(None, &users, &refs);
-        let mut actions = Vec::new();
-        drain_probes();
-        ctx.run_ui(tall_input(), |ui| {
-            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
-        })
-        .drop_without_applying_deltas();
-        let probes = drain_probes();
-        let rects = |tag: &str| -> Vec<egui::Rect> {
-            probes
-                .iter()
-                .filter(|(t, _)| *t == tag)
-                .map(|(_, r)| *r)
-                .collect()
-        };
-        let (ups, downs) = (rects("row-up"), rects("row-down"));
-        assert_eq!(ups.len(), custom.len(), "arrows only on custom rows");
-        assert_eq!(downs.len(), custom.len());
+        let ups = render_probes(&state, &mut cfg, "row-up");
+        let downs = render_probes(&state, &mut cfg, "row-down");
+        let n = builtin.len();
+        assert_eq!(ups.len(), n + custom.len(), "every row draws both arrows");
+        assert_eq!(downs.len(), n + custom.len());
 
-        // The ends are disabled: a click on them emits nothing.
+        // Built-in arrows are disabled: a click emits nothing, and they sit at the same x as the
+        // custom rows' working arrows.
+        for target in [ups[0].center(), downs[0].center(), downs[n - 1].center()] {
+            let (ctx, _) = headless();
+            let mut cfg = ConfigUi::default();
+            let clicked = click_styles(&ctx, &state, &mut cfg, target);
+            assert!(moves(&clicked).is_empty(), "built-in arrow at {target:?}");
+        }
+        assert!((ups[0].center().x - ups[n].center().x).abs() <= 0.5);
+        assert!((downs[0].center().x - downs[n].center().x).abs() <= 0.5);
+
+        // The custom ends are disabled too.
         let (ctx, _) = headless();
         let mut cfg = ConfigUi::default();
-        let first_up = click_styles(&ctx, &state, &mut cfg, ups[0].center());
-        assert!(moves(&first_up).is_empty(), "the first Up is disabled");
+        let first_up = click_styles(&ctx, &state, &mut cfg, ups[n].center());
+        assert!(
+            moves(&first_up).is_empty(),
+            "the first custom Up is disabled"
+        );
         let (ctx, _) = headless();
         let mut cfg = ConfigUi::default();
         let last_down = click_styles(&ctx, &state, &mut cfg, downs[downs.len() - 1].center());

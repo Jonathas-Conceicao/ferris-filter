@@ -3017,7 +3017,7 @@ mod tests {
 
     fn headless_ctx() -> egui::Context {
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         ctx
     }
 
@@ -5157,38 +5157,35 @@ mod tests {
     #[test]
     fn pending_class_operator_is_chosen_before_a_value_and_used_by_it() {
         let cat = committed_catalog();
-        // The operator dropdown is on the pending card: some click opens a popup.
-        let mut combo = None;
-        'a: for y in (110..170).step_by(4) {
+        // The operator dropdown is on the pending card: some click opens a popup, and the popup
+        // offers "Not" (other popups, such as the style picker, do not).
+        let mut found = None;
+        'a: for y in (164..200).step_by(4) {
             for x in (150..440).step_by(10) {
                 let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
                 let p = Pos2::new(x as f32, y as f32);
                 play(&ctx, &mut wf, &mut list, &cat, &[p]);
-                if egui::Popup::is_any_open(&ctx) {
-                    combo = Some(p);
-                    break 'a;
+                if !egui::Popup::is_any_open(&ctx) {
+                    continue;
+                }
+                // Choosing "Not" is stored on the pending row and writes nothing.
+                for iy in ((y + 8)..(y + 160)).step_by(4) {
+                    for dx in [-60.0f32, -40.0, -20.0, 0.0, 20.0, 40.0] {
+                        let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
+                        let before = wf.text();
+                        let q = Pos2::new(p.x + dx, iy as f32);
+                        let a = play(&ctx, &mut wf, &mut list, &cat, &[p, q]);
+                        if list.pending.len() == 1 && list.pending[0].op == Some(Operator::Ne) {
+                            assert!(a.is_empty(), "choosing an operator writes nothing: {a:?}");
+                            assert_eq!(wf.text(), before);
+                            found = Some((p, q));
+                            break 'a;
+                        }
+                    }
                 }
             }
         }
-        let combo = combo.expect("a pending Class row shows an operator dropdown");
-
-        // Choosing "Not" is stored on the pending row and writes nothing.
-        let mut item = None;
-        'b: for y in ((combo.y as i32 + 8)..(combo.y as i32 + 120)).step_by(4) {
-            for x in [combo.x - 20.0, combo.x, combo.x + 20.0] {
-                let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
-                let before = wf.text();
-                let p = Pos2::new(x, y as f32);
-                let a = play(&ctx, &mut wf, &mut list, &cat, &[combo, p]);
-                if list.pending.len() == 1 && list.pending[0].op == Some(Operator::Ne) {
-                    assert!(a.is_empty(), "choosing an operator writes nothing: {a:?}");
-                    assert_eq!(wf.text(), before);
-                    item = Some(p);
-                    break 'b;
-                }
-            }
-        }
-        let item = item.expect("the dropdown offers Not");
+        let (combo, item) = found.expect("a pending Class row offers the operator Not");
 
         // An idle frame with the operator set still writes nothing.
         let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
@@ -5199,7 +5196,7 @@ mod tests {
 
         // The first class then lands with that operator.
         let mut text = None;
-        'c: for hy in (160..184).step_by(4) {
+        'c: for hy in (188..212).step_by(4) {
             for (cx, cy) in [36.0f32, 90.0, 130.0]
                 .into_iter()
                 .flat_map(|x| ((hy + 16)..(hy + 120)).step_by(4).map(move |y| (x, y)))
@@ -5324,7 +5321,7 @@ mod tests {
         // Find a group header y and a checkbox position below it whose click writes the first
         // class.
         let mut found = None;
-        'scan: for hy in (164..188).step_by(4) {
+        'scan: for hy in (188..212).step_by(4) {
             for cx in [36.0f32, 60.0, 90.0, 130.0] {
                 for cy in ((hy + 16)..(hy + 120)).step_by(4) {
                     let at = Pos2::new(cx, cy as f32);

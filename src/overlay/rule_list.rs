@@ -21,11 +21,11 @@ use super::theme;
 use super::virtual_list::{build_offsets, scroll_offset_for, visible_range};
 use super::widgets::{self, ArrowDirection};
 use crate::skin::Skin;
-use crate::skin::fonts::regular;
+use crate::skin::fonts::{regular, small_caps};
+use crate::skin::icons::{FLAG_ICON_SIZE, FlagIcon, flag_icon};
 use crate::skin::palette as pal;
 use crate::skin::widgets::{ff_button_ex, ff_text_field};
 
-const GROUP_BROKEN_LONG: &str = "This block was written as part of one rule spread over several blocks (# ff:group), but those blocks no longer match, so each is shown as a rule of its own. It is left as written until you edit it.";
 const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so this rule cannot be turned on. You can still move or delete it.";
 
 /// Per-view UI state. Everything keyed by [`BlockId`] must be cleared when ids reset.
@@ -217,8 +217,21 @@ pub fn row_height(ui: &egui::Ui) -> f32 {
     header_height(ui) + SUMMARY_LINE_H
 }
 
+/// How a flag is drawn in a collapsed row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FlagKind {
+    /// A painted icon with a tooltip.
+    Icon(FlagIcon),
+    /// The word `Continue`, kept as text.
+    ContinueWord,
+    /// A gold diamond plus the (truncated) style name.
+    Styled(String),
+}
+
 struct Flag {
+    /// Accessible name and test handle.
     text: String,
+    kind: FlagKind,
     color: Color32,
     tip: String,
 }
@@ -232,13 +245,15 @@ fn diag_tip(diags: &[FilterDiagnostic]) -> String {
 }
 
 /// Characters of a style name shown in the collapsed-row flag.
-const STYLE_FLAG_CHARS: usize = 12;
+const STYLE_FLAG_CHARS: usize = 10;
 /// Width reserved for the `+N` overflow badge.
 const BADGE_W: f32 = 24.0;
 /// Total width flags may take in a collapsed row.
 const FLAG_BUDGET: f32 = 120.0;
 /// The label always keeps at least this much.
 const LABEL_MIN_W: f32 = 140.0;
+/// Width of the styled flag's diamond.
+const DIAMOND_W: f32 = 14.0;
 
 /// How many leading flags fit in `budget` (with a `+N` badge when some do not), and how many
 /// are hidden.
@@ -259,71 +274,80 @@ pub fn fit_flags(widths: &[f32], budget: f32) -> (usize, usize) {
     (shown, widths.len() - shown)
 }
 
+/// The flags of a row in painting order, right to left: the first entry sits closest to the
+/// reorder arrows, so errors are never the ones folded into the `+N` badge.
 fn flags_for(row: &RuleRow) -> Vec<Flag> {
     let mut out = Vec::new();
     if !row.enabled && row.cannot_enable {
         out.push(Flag {
             text: "can't enable".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
-            tip: CANNOT_ENABLE_LONG.to_string(),
+            kind: FlagKind::Icon(FlagIcon::Padlock),
+            color: pal::WARN,
+            tip: "Can't enable: these lines are not valid filter grammar. You can still move or delete it.".to_string(),
         });
         return out;
-    }
-    if row.has_continue {
-        out.push(Flag {
-            text: "Continue".to_string(),
-            color: theme::LABEL_TAN,
-            tip: "Matching goes on to the rules below".to_string(),
-        });
-    }
-    match &row.style {
-        StyleState::Known(tag) => {
-            let short: String = if tag.chars().count() > STYLE_FLAG_CHARS {
-                let head: String = tag.chars().take(STYLE_FLAG_CHARS).collect();
-                format!("{head}…")
-            } else {
-                tag.clone()
-            };
-            out.push(Flag {
-                text: format!("styled: {short}"),
-                color: theme::LABEL_TAN,
-                tip: format!("Style \"{tag}\" sets this rule's actions on Apply"),
-            });
-        }
-        StyleState::Unknown(_) => out.push(Flag {
-            text: "unknown style".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
-            tip: "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.".to_string(),
-        }),
-        StyleState::None | StyleState::Unchecked(_) => {}
     }
     if !row.errors.is_empty() {
         out.push(Flag {
             text: "grammar error".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
+            kind: FlagKind::Icon(FlagIcon::GrammarError),
+            color: pal::ERROR,
             tip: diag_tip(&row.errors),
         });
     }
     if !row.warnings.is_empty() {
         out.push(Flag {
             text: "grammar warning".to_string(),
-            color: theme::LABEL_TAN,
+            kind: FlagKind::Icon(FlagIcon::GrammarWarning),
+            color: pal::WARN,
             tip: diag_tip(&row.warnings),
+        });
+    }
+    if matches!(row.style, StyleState::Unknown(_)) {
+        out.push(Flag {
+            text: "unknown style".to_string(),
+            kind: FlagKind::Icon(FlagIcon::UnknownStyle),
+            color: pal::WARN,
+            tip: "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.".to_string(),
         });
     }
     if row.group_broken {
         out.push(Flag {
             text: "group broken".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
-            tip: GROUP_BROKEN_LONG.to_string(),
+            kind: FlagKind::Icon(FlagIcon::GroupBroken),
+            color: pal::WARN,
+            tip: "Group broken: these blocks were one rule (# ff:group) but no longer match, so each is shown on its own. Left as written until you edit it.".to_string(),
         });
     }
     if row.moved_across_continue {
         out.push(Flag {
             text: "moved across Continue".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
+            kind: FlagKind::Icon(FlagIcon::MovedAcrossContinue),
+            color: pal::WARN,
             tip: "This move changes which rules still apply after a Continue. Check the order."
                 .to_string(),
+        });
+    }
+    if row.has_continue {
+        out.push(Flag {
+            text: "Continue".to_string(),
+            kind: FlagKind::ContinueWord,
+            color: pal::GOLD,
+            tip: "Matching goes on to the rules below".to_string(),
+        });
+    }
+    if let StyleState::Known(tag) = &row.style {
+        let short: String = if tag.chars().count() > STYLE_FLAG_CHARS {
+            let head: String = tag.chars().take(STYLE_FLAG_CHARS).collect();
+            format!("{head}…")
+        } else {
+            tag.clone()
+        };
+        out.push(Flag {
+            text: format!("styled: {short}"),
+            kind: FlagKind::Styled(short),
+            color: pal::GOLD,
+            tip: format!("Style \"{tag}\" sets this rule's actions on Apply"),
         });
     }
     out
@@ -483,45 +507,88 @@ fn draw_row(
     }
     right.spacing_mut().item_spacing.x = 4.0;
     let flags = flags_for(row);
-    let font = egui::FontId::proportional(theme::ROW_SUMMARY_SIZE);
     let widths: Vec<f32> = flags
         .iter()
-        .map(|f| {
-            ui.fonts_mut(|fo| {
-                fo.layout_no_wrap(f.text.clone(), font.clone(), Color32::WHITE)
-                    .size()
-                    .x
-            }) + 4.0
+        .map(|f| match &f.kind {
+            FlagKind::Icon(_) => FLAG_ICON_SIZE,
+            FlagKind::ContinueWord => {
+                ui.fonts_mut(|fo| {
+                    fo.layout_no_wrap(f.text.clone(), small_caps(17.0), Color32::WHITE)
+                        .size()
+                        .x
+                }) + 4.0
+            }
+            FlagKind::Styled(name) => {
+                DIAMOND_W
+                    + 4.0
+                    + ui.fonts_mut(|fo| {
+                        fo.layout_no_wrap(name.clone(), regular(15.0), Color32::WHITE)
+                            .size()
+                            .x
+                    })
+            }
         })
         .collect();
     let arrows_w = right.min_rect().width();
     let budget = FLAG_BUDGET.min((inner.width() - arrows_w - 24.0 - 8.0 - LABEL_MIN_W).max(0.0));
     let (shown, hidden) = fit_flags(&widths, budget);
-    if hidden > 0 {
-        let tip = flags
+    let badge_tip = (hidden > 0).then(|| {
+        flags[shown..]
             .iter()
             .map(|f| format!("{}: {}", f.text, f.tip))
             .collect::<Vec<_>>()
-            .join(
-                "
-",
-            );
+            .join("\n")
+    });
+    // The first flag is painted closest to the arrows (errors first); the badge goes last, at
+    // the far left, so it only ever stands in for the least important flags.
+    for (i, flag) in flags.into_iter().take(shown).enumerate() {
+        match &flag.kind {
+            FlagKind::Icon(icon) => {
+                flag_icon(&mut right, *icon, flag.color, &flag.text, &flag.tip);
+            }
+            FlagKind::ContinueWord => {
+                right
+                    .add(egui::Label::new(
+                        RichText::new(flag.text.clone())
+                            .font(small_caps(17.0))
+                            .color(flag.color),
+                    ))
+                    .on_hover_text(flag.tip.clone());
+            }
+            FlagKind::Styled(name) => {
+                let w = widths[i];
+                let (r, resp) = right.allocate_exact_size(vec2(w, FLAG_ICON_SIZE), Sense::hover());
+                let c = egui::pos2(r.min.x + DIAMOND_W / 2.0, r.center().y);
+                let d = DIAMOND_W / 2.0 - 1.0;
+                right.painter().add(egui::Shape::convex_polygon(
+                    vec![
+                        c + vec2(0.0, -d),
+                        c + vec2(d, 0.0),
+                        c + vec2(0.0, d),
+                        c + vec2(-d, 0.0),
+                    ],
+                    flag.color,
+                    egui::Stroke::NONE,
+                ));
+                right.painter().text(
+                    egui::pos2(r.min.x + DIAMOND_W + 4.0, r.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    regular(15.0),
+                    pal::MUTED,
+                );
+                resp.on_hover_text(flag.tip.clone());
+            }
+        }
+    }
+    if let Some(tip) = badge_tip {
         right
             .add(egui::Label::new(
                 RichText::new(format!("+{hidden}"))
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(theme::LABEL_TAN),
+                    .font(regular(15.0))
+                    .color(pal::MUTED),
             ))
             .on_hover_text(tip);
-    }
-    for flag in flags.into_iter().take(shown).rev() {
-        right
-            .add(egui::Label::new(
-                RichText::new(flag.text)
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(flag.color),
-            ))
-            .on_hover_text(flag.tip);
     }
     let used_left = right.min_rect().left();
 
@@ -698,10 +765,12 @@ fn expanded_body(
     // CONDITIONS
     body::conditions_group(ui, &bctx, list, actions);
     if row.cannot_enable {
-        ui.add(
-            egui::Label::new(RichText::new(CANNOT_ENABLE_LONG).color(theme::WARM_ACCENT_TEXT))
-                .wrap(),
-        );
+        ui.add(egui::Label::new(
+            RichText::new("Can't enable")
+                .font(regular(15.0))
+                .color(pal::WARN),
+        ))
+        .on_hover_text(CANNOT_ENABLE_LONG);
     }
     for d in &row.errors {
         ui.add(
@@ -832,7 +901,7 @@ mod tests {
 
     fn headless_ctx() -> egui::Context {
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         ctx
     }
 
@@ -944,7 +1013,8 @@ Show
         row.style = StyleState::Known("Exalted Showcase".into());
         let f = flags_for(&row);
         let k = f.iter().find(|f| f.text.starts_with("styled:")).unwrap();
-        assert_eq!(k.text, "styled: Exalted Show…");
+        assert_eq!(k.text, "styled: Exalted Sh…");
+        assert_eq!(k.kind, FlagKind::Styled("Exalted Sh…".into()));
         assert!(k.tip.contains("Exalted Showcase"));
         row.style = StyleState::Unchecked("S".into());
         assert!(!flags_for(&row).iter().any(|f| f.text.contains("style")));
@@ -954,6 +1024,56 @@ Show
     fn fit_flags_collapses_overflow_into_a_badge() {
         assert_eq!(fit_flags(&[50.0, 50.0, 50.0], 120.0), (1, 2));
         assert_eq!(fit_flags(&[40.0, 40.0], 120.0), (2, 0));
+        assert_eq!(fit_flags(&[18.0; 5], 120.0), (5, 0));
+        assert_eq!(fit_flags(&[18.0; 8], 120.0), (5, 3));
+    }
+
+    #[test]
+    fn flags_carry_kinds_tips_and_paint_order() {
+        let wf = styled_filter("S");
+        let mut row = wf.rows()[0].clone();
+        row.has_continue = true;
+        row.group_broken = true;
+        row.moved_across_continue = true;
+        let diag = |severity| FilterDiagnostic {
+            line: 1,
+            severity,
+            message: "bad".into(),
+        };
+        row.errors = vec![diag(crate::filter::diag::Severity::Error)];
+        row.warnings = vec![diag(crate::filter::diag::Severity::Warning)];
+        let f = flags_for(&row);
+        let texts: Vec<&str> = f.iter().map(|f| f.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "grammar error",
+                "grammar warning",
+                "group broken",
+                "moved across Continue",
+                "Continue",
+                "styled: S"
+            ]
+        );
+        assert_eq!(f[0].kind, FlagKind::Icon(FlagIcon::GrammarError));
+        assert_eq!(f[2].kind, FlagKind::Icon(FlagIcon::GroupBroken));
+        assert!(
+            f[2].tip
+                .starts_with("Group broken: these blocks were one rule (# ff:group)")
+        );
+        assert_eq!(f[4].kind, FlagKind::ContinueWord);
+        assert_eq!(f[5].kind, FlagKind::Styled("S".into()));
+
+        let mut dis = row.clone();
+        dis.enabled = false;
+        dis.cannot_enable = true;
+        let f = flags_for(&dis);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].kind, FlagKind::Icon(FlagIcon::Padlock));
+        assert_eq!(
+            f[0].tip,
+            "Can't enable: these lines are not valid filter grammar. You can still move or delete it."
+        );
     }
 
     #[test]
@@ -1135,7 +1255,7 @@ Show
     fn collapsing_a_row_orphans_card_state() {
         let wf = filter_of(2);
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         let mut list = ListUi {
             expanded: Some(wf.rows()[0].id),
             ..Default::default()

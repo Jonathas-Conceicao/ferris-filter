@@ -3759,7 +3759,7 @@ mod tests {
         use crate::overlay::hotkey::HotkeyStatus;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         let skin = crate::skin::install(&ctx);
         let mut app = super::OverlayApp::build(
             TrayHandles::inert(),

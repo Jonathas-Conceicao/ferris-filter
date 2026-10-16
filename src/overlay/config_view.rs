@@ -22,13 +22,15 @@ use super::config_state::{
 };
 use super::theme;
 use super::widgets::{self, ArrowDirection};
+use crate::skin::fonts::regular;
+use crate::skin::palette as pal;
 
 const WHOLE_NUMBER: &str = "Enter a whole number";
 const NOT_SET: &str = "Not set (game default)";
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
 /// Fixed widths of the styles table columns (Visibility | Name | Preview), shared by the header
 /// and every row so they stay aligned across the Built-in and Custom groups.
-const COL_VISIBILITY: f32 = 48.0;
+const COL_VISIBILITY: f32 = 80.0;
 const COL_NAME: f32 = 104.0;
 const COL_PREVIEW: f32 = 120.0;
 /// The Order column (custom group only): the up/down arrows.
@@ -355,10 +357,14 @@ fn show_filter(
                         })
                 })
                 .inner;
+            let saved_note = "Saved on this computer. Default: dynamic.filter.";
             if let Some(dir) = ctx.game_dir {
-                combo
-                    .response
-                    .on_hover_text(dir.join(ctx.active_filter).display().to_string());
+                combo.response.on_hover_text(format!(
+                    "{}\n{saved_note}",
+                    dir.join(ctx.active_filter).display()
+                ));
+            } else {
+                combo.response.on_hover_text(saved_note);
             }
             if open_draft && cfg.filter_draft.is_none() {
                 cfg.filter_draft = Some(String::new());
@@ -369,12 +375,12 @@ fn show_filter(
                 filter_draft_row(ui, cfg, list, draft, actions);
             }
 
-            helper(ui, "Saved on this computer. Default: dynamic.filter.");
-
             ui.add_space(4.0);
             let mut on = ctx.reload_after_apply;
+            let reload_tip = format!("{RELOAD_TOGGLE_CAPTION}\n\n{RELOAD_TOGGLE_TIP}");
             ui.horizontal(|ui| {
-                let toggle = widgets::circular_toggle(ui, &mut on).on_hover_text(RELOAD_TOGGLE_TIP);
+                let toggle =
+                    widgets::circular_toggle(ui, &mut on).on_hover_text(reload_tip.clone());
                 if toggle.changed() {
                     actions.push(ConfigAction::SetReloadAfterApply(on));
                 }
@@ -382,9 +388,9 @@ fn show_filter(
                     RichText::new(RELOAD_TOGGLE_LABEL)
                         .size(theme::ROW_SUMMARY_SIZE)
                         .color(theme::VALUE_TEXT),
-                );
+                )
+                .on_hover_text(reload_tip);
             });
-            helper(ui, RELOAD_TOGGLE_CAPTION);
         });
 }
 
@@ -398,12 +404,17 @@ fn filter_draft_row(
     let hint = filter_name_hint(list, &draft);
     let mut commit = false;
     let mut discard = false;
-    let edit = ui.add(
+    let mut edit = ui.add(
         egui::TextEdit::singleline(&mut draft)
             .id_salt("cfg-filter-draft")
             .hint_text("my-filter.filter")
             .desired_width(ui.available_width() - 8.0),
     );
+    if draft.trim().is_empty()
+        && let Some(msg) = &hint
+    {
+        edit = edit.on_hover_text(msg.as_str());
+    }
     if std::mem::take(&mut cfg.focus_draft) {
         edit.request_focus();
     }
@@ -418,8 +429,6 @@ fn filter_draft_row(
         && !draft.trim().is_empty()
     {
         body::hint(ui, msg);
-    } else if let Some(msg) = &hint {
-        helper(ui, msg);
     }
     ui.horizontal(|ui| {
         if ui
@@ -622,7 +631,12 @@ fn show_styles(
 
     let (builtin, custom) = style_groups(state);
     if builtin.is_empty() && custom.is_empty() {
-        helper(ui, "No styles loaded. Revert to reload styles.json.");
+        ui.label(
+            RichText::new("No styles loaded")
+                .font(regular(15.0))
+                .color(pal::WARN),
+        )
+        .on_hover_text("Revert to reload styles.json.");
         return;
     }
     if !builtin.is_empty() {
@@ -886,12 +900,17 @@ fn style_draft_row(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 4.0;
-            let edit = ui.add(
+            let mut edit = ui.add(
                 egui::TextEdit::singleline(&mut draft)
                     .id_salt("cfg-style-draft")
                     .hint_text("Style name")
                     .desired_width(ui.available_width() - 8.0),
             );
+            if draft.trim().is_empty()
+                && let Some(msg) = &hint
+            {
+                edit = edit.on_hover_text(msg.as_str());
+            }
             if std::mem::take(&mut cfg.focus_draft) {
                 edit.request_focus();
             }
@@ -902,8 +921,10 @@ fn style_draft_row(
                     discard = true;
                 }
             }
-            if let Some(msg) = &hint {
-                helper(ui, msg);
+            if let Some(msg) = &hint
+                && !draft.trim().is_empty()
+            {
+                body::hint(ui, msg);
             }
             ui.horizontal(|ui| {
                 if ui
@@ -1103,12 +1124,14 @@ fn sound_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<
             let mut buf = file.clone();
             ui.horizontal(|ui| {
                 body::caption(ui, "File");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .id_salt(salt("file"))
-                        .hint_text("uwu.mp3")
-                        .desired_width(160.0),
-                );
+                let resp = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut buf)
+                            .id_salt(salt("file"))
+                            .hint_text("uwu.mp3")
+                            .desired_width(160.0),
+                    )
+                    .on_hover_text("The file must be in the game folder.");
                 if resp.changed() {
                     edit(
                         actions,
@@ -1121,7 +1144,6 @@ fn sound_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<
                     );
                 }
             });
-            body::caption(ui, "The file must be in the game folder.");
         } else {
             let id = sound.id.unwrap_or(1);
             ui.horizontal(|ui| {
@@ -2148,5 +2170,23 @@ mod tests {
         });
         out.drop_without_applying_deltas();
         assert_eq!(action, None);
+    }
+
+    #[test]
+    fn styles_header_captions_fit_their_columns() {
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for (text, col) in [
+                ("Visibility", COL_VISIBILITY),
+                ("Name", COL_NAME),
+                ("Preview", COL_PREVIEW),
+                ("Order", COL_ORDER),
+            ] {
+                let w = ui.label(caption_text(text)).rect.width();
+                assert!(w <= col, "{text} is {w}pt wide, its column is {col}pt");
+            }
+        });
+        out.drop_without_applying_deltas();
     }
 }

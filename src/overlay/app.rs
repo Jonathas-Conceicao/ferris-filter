@@ -612,8 +612,8 @@ fn apply_row_actions(
     (changed, status)
 }
 
-/// A heading plus an optional wrapped explanation, used for the empty and error states.
-fn centered_notice(ui: &mut egui::Ui, heading: &str, body: Option<&str>) {
+/// A heading only, used for the empty and error states (detail lives in tooltips and the status line).
+fn centered_notice(ui: &mut egui::Ui, heading: &str) {
     ui.add_space(16.0);
     ui.vertical_centered(|ui| {
         ui.label(
@@ -621,17 +621,6 @@ fn centered_notice(ui: &mut egui::Ui, heading: &str, body: Option<&str>) {
                 .font(fonts::small_caps(21.0))
                 .color(pal::HEADING),
         );
-        if let Some(body) = body {
-            ui.add_space(8.0);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(body)
-                        .font(fonts::regular(15.0))
-                        .color(pal::MUTED),
-                )
-                .wrap(),
-            );
-        }
     });
 }
 
@@ -1814,12 +1803,11 @@ impl OverlayApp {
             (Some(working), _) => {
                 let visible = working.matches(&self.query);
                 if working.rows().is_empty() {
-                    centered_notice(&mut lui, "No rules yet", None);
+                    centered_notice(&mut lui, "No rules yet");
                 } else if visible.is_empty() {
                     centered_notice(
                         &mut lui,
                         &format!("No rules match \"{}\"", self.query.trim()),
-                        None,
                     );
                 } else {
                     let frame = rule_list::show_list(
@@ -1833,8 +1821,8 @@ impl OverlayApp {
                     row_actions.extend(frame.actions);
                 }
             }
-            (None, Err(message)) => {
-                centered_notice(&mut lui, "The filter could not be loaded.", Some(message));
+            (None, Err(_)) => {
+                centered_notice(&mut lui, "The filter could not be loaded.");
             }
             (None, Ok(_)) => {}
         }

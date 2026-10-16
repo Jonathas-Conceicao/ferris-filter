@@ -28,6 +28,8 @@ use super::theme;
 use super::widgets;
 #[cfg(test)]
 use crate::models::config::Style;
+use crate::skin::fonts::regular;
+use crate::skin::palette as pal;
 
 const LABEL_W: f32 = 120.0;
 const OP_W: f32 = 104.0;
@@ -444,10 +446,11 @@ pub fn conditions_group(
         && defence_lines.is_empty();
     if lines.is_empty() && pending.is_empty() && !pending_defences && !pending_simple {
         ui.label(
-            RichText::new(NO_CONDITIONS)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
+            RichText::new("No conditions")
+                .font(regular(15.0))
+                .color(pal::MUTED),
+        )
+        .on_hover_text(NO_CONDITIONS);
     }
     let single = |ui: &mut egui::Ui,
                   i: usize,
@@ -2531,10 +2534,11 @@ fn action_rows(ui: &mut egui::Ui, ctx: &BodyCtx, list: &mut ListUi, actions: &mu
         .collect();
     if lines.is_empty() {
         ui.label(
-            RichText::new(NO_ACTIONS)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
+            RichText::new("No actions")
+                .font(regular(15.0))
+                .color(pal::MUTED),
+        )
+        .on_hover_text(NO_ACTIONS);
         return;
     }
     for (idx, e) in lines.into_iter().enumerate() {

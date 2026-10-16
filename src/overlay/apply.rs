@@ -199,7 +199,7 @@ pub const OVERWRITE_TOOLTIP: &str = "Replace the file with your edits.";
 pub const REVERTED_MESSAGE: &str = "Reverted to the last applied filter.";
 
 /// Tooltip on the disabled APPLY button while an enabled rule has a grammar error.
-pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix or disable the rules marked \"grammar error\" first.";
+pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix or disable the rules marked with the red ! first.";
 
 /// The status shown when Apply is refused by the grammar gate.
 pub fn invalid_blocks_message(count: usize, first_rule: usize, first_line: usize) -> String {
@@ -768,7 +768,7 @@ mod tests {
             "Config already up to date."
         );
         assert!(RELOAD_TOOLTIP.contains("Discard") && OVERWRITE_TOOLTIP.contains("Replace"));
-        assert!(APPLY_BLOCKED_TOOLTIP.contains("grammar error"));
+        assert!(APPLY_BLOCKED_TOOLTIP.contains("red !"));
         assert_eq!(
             added_hidden_message(7),
             "Rule added at position 7 (hidden by the current search)"

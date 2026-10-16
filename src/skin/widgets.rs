@@ -119,6 +119,15 @@ pub fn header_height(skin: &Skin, width: f32) -> f32 {
     width * h as f32 / w.max(1) as f32
 }
 
+/// The gold title plate inside a header drawn into `rect`: centred, on the gold bar at ~72% of
+/// the art's height. The overlay hangs the filter-path tooltip on it.
+pub fn header_plate_rect(rect: Rect) -> Rect {
+    Rect::from_center_size(
+        pos2(rect.center().x, rect.min.y + rect.height() * 0.717),
+        vec2(rect.width() * 0.4, rect.height() * 0.3),
+    )
+}
+
 /// Paints the header block into `rect` and returns the close button's response.
 ///
 /// `art` is the header picture: the prototype passes the game's Options title bar; `None`
@@ -133,15 +142,12 @@ pub fn ff_header(
     title: &str,
 ) -> Response {
     let painter = ui.painter_at(rect);
-    let plate_y = rect.min.y + rect.height() * 0.717;
+    let plate_y = header_plate_rect(rect).center().y;
     match art {
         Some(tex) => slice::paint_image(&painter, tex, rect, Color32::WHITE),
         None => {
             painter.rect_filled(rect, 0.0, pal::INPUT_FILL);
-            let plate = Rect::from_center_size(
-                pos2(rect.center().x, plate_y),
-                vec2(rect.width() * 0.4, rect.height() * 0.3),
-            );
+            let plate = header_plate_rect(rect);
             painter.rect(
                 plate,
                 2.0,
@@ -251,6 +257,19 @@ pub fn ff_tabs(
     labels: &[&str],
     selected: &mut usize,
 ) -> Response {
+    ff_tabs_ex(ui, skin, rect, labels, selected, &[])
+}
+
+/// [`ff_tabs`] with an optional hover tooltip per tab (`tips[i]`) and Left / Right arrow
+/// selection while a tab has keyboard focus.
+pub fn ff_tabs_ex(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    labels: &[&str],
+    selected: &mut usize,
+    tips: &[Option<&str>],
+) -> Response {
     let painter = ui.painter().clone();
     let h = rect.height();
     let font = small_caps((h * 0.58).clamp(12.0, 22.0));
@@ -285,13 +304,47 @@ pub fn ff_tabs(
                 g.rect.max.y,
             ),
         );
-        let resp = ui.interact(hit, ui.id().with(("ff_tab", i)), Sense::click());
+        let mut resp = ui.interact(hit, ui.id().with(("ff_tab", i)), Sense::click());
+        if let Some(Some(tip)) = tips.get(i) {
+            resp = resp.on_hover_text(*tip);
+        }
         let is_sel = *selected == i;
         let label = labels[i];
         resp.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, is_sel, label));
         if resp.clicked() && !is_sel {
             *selected = i;
             changed = true;
+        }
+        if resp.has_focus() {
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    resp.id,
+                    EventFilter {
+                        horizontal_arrows: true,
+                        vertical_arrows: false,
+                        tab: false,
+                        escape: false,
+                    },
+                )
+            });
+            let (left, right) = ui.input(|inp| {
+                (
+                    inp.key_pressed(Key::ArrowLeft),
+                    inp.key_pressed(Key::ArrowRight),
+                )
+            });
+            let next = if left && i > 0 {
+                Some(i - 1)
+            } else if right && i + 1 < labels.len() {
+                Some(i + 1)
+            } else {
+                None
+            };
+            if let Some(n) = next {
+                *selected = n;
+                changed = true;
+                ui.memory_mut(|m| m.request_focus(ui.id().with(("ff_tab", n))));
+            }
         }
         resps[i] = Some(resp);
     }
@@ -522,7 +575,7 @@ pub fn ff_slider(
         .iter()
         .map(|v| {
             ui.painter()
-                .layout_no_wrap(format(*v), regular(16.0), pal::VALUE)
+                .layout_no_wrap(format(*v), regular(15.0), pal::VALUE)
                 .size()
                 .x
         })
@@ -621,7 +674,7 @@ pub fn ff_slider(
         pos2(rect.max.x - 2.0, rect.center().y),
         Align2::RIGHT_CENTER,
         format(v),
-        regular(16.0),
+        regular(15.0),
         pal::VALUE,
     );
     resp
@@ -672,7 +725,7 @@ pub fn ff_dropdown(
         pos2(rect.min.x + 10.0, rect.center().y),
         Align2::LEFT_CENTER,
         current,
-        regular(16.0),
+        regular(15.0),
         pal::VALUE,
     );
     let arrow = Rect::from_center_size(
@@ -714,7 +767,7 @@ pub fn ff_dropdown(
                     pos2(r.min.x + 8.0, r.center().y),
                     Align2::LEFT_CENTER,
                     *opt,
-                    regular(16.0),
+                    regular(15.0),
                     color,
                 );
                 if o.clicked() {
@@ -746,19 +799,51 @@ pub fn ff_dropdown(
 /// The game's generic button (3-slice art with hover / pressed states) with a Fontin SmallCaps
 /// caption. At least `min_width` wide.
 pub fn ff_button(ui: &mut Ui, skin: &Skin, text: &str, min_width: f32) -> Response {
+    ff_button_ex(ui, skin, text, min_width, true, false)
+}
+
+/// [`ff_button`] that can be disabled (dimmed art and caption, never clicked, no hover state)
+/// and can be marked dangerous (red caption).
+pub fn ff_button_ex(
+    ui: &mut Ui,
+    skin: &Skin,
+    text: &str,
+    min_width: f32,
+    enabled: bool,
+    danger: bool,
+) -> Response {
     let height = 34.0;
+    let caption = if !enabled {
+        pal::DISABLED
+    } else if danger {
+        pal::ERROR
+    } else {
+        pal::BUTTON_TEXT
+    };
     let galley = ui
         .painter()
-        .layout_no_wrap(text.to_owned(), small_caps(17.0), pal::BUTTON_TEXT);
+        .layout_no_wrap(text.to_owned(), small_caps(17.0), caption);
     let width = (galley.size().x + 44.0).max(min_width);
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, text));
-    let state = if resp.is_pointer_button_down_on() {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), sense);
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, text));
+    let state = if !enabled {
+        0
+    } else if resp.is_pointer_button_down_on() {
         2
     } else if resp.hovered() || resp.has_focus() {
         1
     } else {
         0
+    };
+    let tint = if enabled {
+        Color32::WHITE
+    } else {
+        Color32::from_white_alpha(90)
     };
     let art = &skin.button[state];
     let painter = ui.painter();
@@ -771,11 +856,11 @@ pub fn ff_button(ui: &mut Ui, skin: &Skin, text: &str, min_width: f32) -> Respon
             art.right.size(),
             painter.pixels_per_point(),
         ),
-        Color32::WHITE,
+        tint,
     );
     let offset = if state == 2 { 1.0 } else { 0.0 };
     let pos = rect.center() - galley.size() / 2.0 + vec2(0.0, offset);
-    painter.galley(pos, galley, pal::BUTTON_TEXT);
+    painter.galley(pos, galley, caption);
     resp
 }
 
@@ -824,7 +909,7 @@ pub fn ff_text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> 
     let edit = egui::TextEdit::singleline(text)
         .frame(egui::Frame::NONE)
         .hint_text(egui::RichText::new(hint).color(pal::DISABLED))
-        .font(regular(16.0))
+        .font(regular(15.0))
         .text_color(pal::VALUE)
         .vertical_align(Align::Center);
     let resp = ui.put(rect.shrink2(vec2(10.0, 3.0)), edit);
@@ -896,7 +981,27 @@ pub fn status_job(text: &str, kind: StatusKind, width: f32) -> egui::text::Layou
 /// A one-line status message in `rect`: coloured by `kind`, cut with "…" when it does not
 /// fit, and shown whole in a tooltip while hovered (only when it was cut).
 pub fn ff_status(ui: &mut Ui, rect: Rect, text: &str, kind: StatusKind) -> Response {
-    let resp = ui.interact(rect, ui.id().with("ff_status"), Sense::hover());
+    ff_status_ex(ui, rect, text, kind, false)
+}
+
+/// [`ff_status`] that can be clickable (pointing-hand cursor, `clicked()` reports the click),
+/// for a status line that jumps to the thing it talks about.
+pub fn ff_status_ex(
+    ui: &mut Ui,
+    rect: Rect,
+    text: &str,
+    kind: StatusKind,
+    clickable: bool,
+) -> Response {
+    let sense = if clickable {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let mut resp = ui.interact(rect, ui.id().with("ff_status"), sense);
+    if clickable {
+        resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
     let galley = ui
         .painter()
@@ -1028,7 +1133,34 @@ pub fn apply_style(ctx: &egui::Context) {
         v.widgets.active.fg_stroke.color = pal::HEADING;
         style.spacing.scroll = egui::style::ScrollStyle::thin();
         style.spacing.scroll.bar_width = 6.0;
-        style.spacing.item_spacing = vec2(8.0, 2.0);
+        v.faint_bg_color = pal::INPUT_FILL;
+        v.hyperlink_color = pal::GOLD;
+        v.warn_fg_color = pal::WARN;
+        v.error_fg_color = pal::ERROR;
+        for w in [
+            &mut v.widgets.noninteractive,
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+            &mut v.widgets.open,
+        ] {
+            w.corner_radius = CornerRadius::same(1);
+        }
+        v.window_stroke = Stroke::new(1.0, pal::INPUT_BORDER_HOT);
+        v.window_shadow = egui::Shadow::NONE;
+        v.popup_shadow = egui::Shadow::NONE;
+        style.text_styles = [
+            (egui::TextStyle::Heading, small_caps(21.0)),
+            (egui::TextStyle::Body, regular(15.0)),
+            (egui::TextStyle::Button, small_caps(17.0)),
+            (egui::TextStyle::Small, regular(15.0)),
+            (egui::TextStyle::Monospace, egui::FontId::monospace(14.0)),
+        ]
+        .into();
+        style.spacing.item_spacing = vec2(8.0, 4.0);
+        style.spacing.button_padding = vec2(8.0, 4.0);
+        style.spacing.interact_size.y = 28.0;
+        style.spacing.tooltip_width = 420.0;
     });
 }
 
@@ -1167,6 +1299,98 @@ mod tests {
             assert_eq!(g.rows.len(), 1, "line breaks are flattened");
         })
         .drop_without_applying_deltas();
+    }
+
+    fn rect_of(ctx: &egui::Context, mut f: impl FnMut(&mut Ui) -> Rect) -> Rect {
+        let mut r = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| r = f(ui))
+            .drop_without_applying_deltas();
+        r
+    }
+
+    #[test]
+    fn disabled_button_never_clicks_and_enabled_does() {
+        let (ctx, skin) = setup();
+        for enabled in [false, true] {
+            let rect = rect_of(&ctx, |ui| {
+                ff_button_ex(ui, &skin, "Go", 84.0, enabled, false).rect
+            });
+            let mut clicked = false;
+            ctx.run_ui(click_at(rect.center()), |ui| {
+                clicked = ff_button_ex(ui, &skin, "Go", 84.0, enabled, false).clicked();
+            })
+            .drop_without_applying_deltas();
+            assert_eq!(clicked, enabled);
+        }
+    }
+
+    #[test]
+    fn tabs_with_tips_still_select_the_clicked_tab() {
+        let (ctx, skin) = setup();
+        let strip = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 36.0));
+        let labels = ["Rules", "Config *", "Economy", "About"];
+        let tips = [None, Some("Unapplied changes on this tab"), None, None];
+        let mut sel = 0usize;
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_tabs_ex(ui, &skin, strip, &labels, &mut sel, &tips);
+        })
+        .drop_without_applying_deltas();
+        let mut changed = false;
+        ctx.run_ui(click_at(pos2(430.0, 18.0)), |ui| {
+            changed = ff_tabs_ex(ui, &skin, strip, &labels, &mut sel, &tips).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(changed && sel != 0, "selected {sel}");
+    }
+
+    #[test]
+    fn clickable_status_clicks_and_plain_status_does_not() {
+        let (ctx, _skin) = setup();
+        let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(300.0, 24.0));
+        for clickable in [true, false] {
+            ctx.run_ui(RawInput::default(), |ui| {
+                ff_status_ex(ui, rect, "hello", StatusKind::Info, clickable);
+            })
+            .drop_without_applying_deltas();
+            let mut clicked = false;
+            ctx.run_ui(click_at(rect.center()), |ui| {
+                clicked = if clickable {
+                    ff_status_ex(ui, rect, "hello", StatusKind::Info, true).clicked()
+                } else {
+                    ff_status(ui, rect, "hello", StatusKind::Info).clicked()
+                };
+            })
+            .drop_without_applying_deltas();
+            assert_eq!(clicked, clickable);
+        }
+    }
+
+    #[test]
+    fn header_plate_is_centred_on_the_gold_bar() {
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(600.0, 100.0));
+        let p = header_plate_rect(rect);
+        assert!((p.center().x - rect.center().x).abs() < 1e-3);
+        assert!((p.center().y - (20.0 + 71.7)).abs() < 1e-3);
+        assert!((p.width() - 240.0).abs() < 1e-3 && (p.height() - 30.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn apply_style_sets_the_skin_text_sizes_and_spacing() {
+        let (ctx, _skin) = setup();
+        apply_style(&ctx);
+        let st = ctx.global_style();
+        let size = |t: &egui::TextStyle| st.text_styles[t].size;
+        assert_eq!(size(&egui::TextStyle::Body), 15.0);
+        assert_eq!(size(&egui::TextStyle::Button), 17.0);
+        assert_eq!(size(&egui::TextStyle::Heading), 21.0);
+        assert_eq!(size(&egui::TextStyle::Small), 15.0);
+        assert_eq!(size(&egui::TextStyle::Monospace), 14.0);
+        assert_eq!(
+            st.text_styles[&egui::TextStyle::Button].family,
+            egui::FontFamily::Name(super::super::fonts::SMALL_CAPS.into())
+        );
+        assert_eq!(st.spacing.item_spacing, vec2(8.0, 4.0));
+        assert_eq!(st.spacing.interact_size.y, 28.0);
     }
 
     #[test]

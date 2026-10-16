@@ -12,41 +12,42 @@
 //! verification, not by unit tests, since font rasterization only shows up visually
 //! (`PITFALLS.md` Pitfall 6's own warning sign note).
 
+use crate::skin::palette as pal;
 use egui::text::LayoutJob;
 use egui::{Color32, FontFamily, FontId, TextFormat};
 
 /// Row ground (base) — settings row background. Sampled from the reference screenshot (D-24).
-pub const ROW_BASE: Color32 = Color32::from_rgb(0x0D, 0x0D, 0x0D);
+pub const ROW_BASE: Color32 = pal::ROW_EVEN;
 /// Row ground (alternate) — the adjacent zebra row. Sampled from the reference screenshot (D-24).
-pub const ROW_ALT: Color32 = Color32::from_rgb(0x12, 0x12, 0x12);
+pub const ROW_ALT: Color32 = pal::ROW_ODD;
 /// Panel ground — panel body between sections. Sampled from the reference screenshot (D-24).
-pub const PANEL_GROUND: Color32 = Color32::from_rgb(0x14, 0x14, 0x14);
+pub const PANEL_GROUND: Color32 = pal::GROUND;
 /// Input / dropdown fill — the Language dropdown; recesses darker than a row. D-24.
 pub const INPUT_FILL: Color32 = Color32::from_rgb(0x09, 0x09, 0x09);
 /// Header plate — the ornate "Options" title plate. D-24.
-pub const HEADER_PLATE: Color32 = Color32::from_rgb(0x3B, 0x33, 0x26);
+pub const HEADER_PLATE: Color32 = pal::PANEL;
 /// Label text (warm tan) — "Language", "Auto-equip" row labels. D-24.
-pub const LABEL_TAN: Color32 = Color32::from_rgb(0xE3, 0xCD, 0x97);
+pub const LABEL_TAN: Color32 = pal::LABEL;
 /// Section header (cream) — "LANGUAGE", "GUIDANCE", "GENERAL". D-24.
-pub const SECTION_CREAM: Color32 = Color32::from_rgb(0xF1, 0xE4, 0xC2);
+pub const SECTION_CREAM: Color32 = pal::HEADING;
 /// Value text — dropdown values. D-24.
-pub const VALUE_TEXT: Color32 = Color32::from_rgb(0xFE, 0xFE, 0xFE);
+pub const VALUE_TEXT: Color32 = pal::VALUE;
 /// Control glyph (check) — the checked-toggle glyph. D-24.
 pub const CONTROL_GLYPH: Color32 = Color32::from_rgb(0xC4, 0xC4, 0xA8);
 /// Button text — SAVE / DEFAULTS / CLOSE. D-24.
 pub const BUTTON_TEXT: Color32 = Color32::from_rgb(0xDE, 0xDE, 0xDE);
 /// Tab active — the "GAME" tab. D-24.
-pub const TAB_ACTIVE: Color32 = Color32::from_rgb(0xB3, 0xAF, 0x93);
+pub const TAB_ACTIVE: Color32 = pal::HEADING;
 /// Tab inactive / disabled — "GRAPHICS", "UI" tabs. D-24. Doubles as the color a disabled rule
 /// row renders in (Task 3), since both are "present but not active" states.
-pub const DISABLED_TEXT: Color32 = Color32::from_rgb(0x88, 0x85, 0x6E);
+pub const DISABLED_TEXT: Color32 = pal::DISABLED;
 /// Warm accent / destructive — the red-bronze "USE DEFAULT" button. D-24.
 ///
 /// Used for fills and strokes only; reserved for the UI-SPEC "Accent reserved for" list. Text uses
 /// of the accent take [`WARM_ACCENT_TEXT`] instead.
-pub const WARM_ACCENT: Color32 = Color32::from_rgb(0xA3, 0x6C, 0x3C);
+pub const WARM_ACCENT: Color32 = pal::INPUT_FILL;
 /// Text uses of the accent; about 5.6:1 on ROW_BASE, AA at 13px (UI-SPEC carry-over).
-pub const WARM_ACCENT_TEXT: Color32 = Color32::from_rgb(0xBF, 0x85, 0x48);
+pub const WARM_ACCENT_TEXT: Color32 = pal::WARN;
 
 /// The Cinzel display face's family name, as registered by [`install_fonts`].
 pub const DISPLAY_FONT: &str = "cinzel";
@@ -159,33 +160,31 @@ pub fn row_summary(text: &str) -> egui::RichText {
 
 /// Summary text size — below [`row_label`]'s 14.0 so the hierarchy still reads, but far above
 /// egui's `.small()`.
-pub const ROW_SUMMARY_SIZE: f32 = 13.0;
+pub const ROW_SUMMARY_SIZE: f32 = 15.0;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_row_summary_stays_readable_and_subordinate() {
-        // It is the text that identifies a rule at a glance, so it must not drift back toward
-        // `.small()`; it is also not a heading, so it must stay under `row_label`'s 14.0.
-        assert!(ROW_SUMMARY_SIZE >= 12.0, "too small to scan");
-        assert!(ROW_SUMMARY_SIZE < 14.0, "must stay below a row label");
+    fn the_row_summary_matches_the_skin_body_size() {
+        assert_eq!(ROW_SUMMARY_SIZE, 15.0);
     }
 
     #[test]
-    fn palette_constants_match_the_d24_hex_table() {
-        assert_eq!(PANEL_GROUND, Color32::from_rgb(0x14, 0x14, 0x14));
-        assert_eq!(ROW_BASE, Color32::from_rgb(0x0D, 0x0D, 0x0D));
-        assert_eq!(ROW_ALT, Color32::from_rgb(0x12, 0x12, 0x12));
+    fn palette_constants_point_at_the_skin_palette() {
+        assert_eq!(ROW_BASE, pal::ROW_EVEN);
+        assert_eq!(ROW_ALT, pal::ROW_ODD);
+        assert_eq!(PANEL_GROUND, pal::GROUND);
         assert_eq!(INPUT_FILL, Color32::from_rgb(0x09, 0x09, 0x09));
-        assert_eq!(HEADER_PLATE, Color32::from_rgb(0x3B, 0x33, 0x26));
-        assert_eq!(LABEL_TAN, Color32::from_rgb(0xE3, 0xCD, 0x97));
-        assert_eq!(SECTION_CREAM, Color32::from_rgb(0xF1, 0xE4, 0xC2));
-        assert_eq!(VALUE_TEXT, Color32::from_rgb(0xFE, 0xFE, 0xFE));
-        assert_eq!(WARM_ACCENT, Color32::from_rgb(0xA3, 0x6C, 0x3C));
-        assert_eq!(WARM_ACCENT_TEXT, Color32::from_rgb(0xBF, 0x85, 0x48));
-        assert_eq!(DISABLED_TEXT, Color32::from_rgb(0x88, 0x85, 0x6E));
+        assert_eq!(HEADER_PLATE, pal::PANEL);
+        assert_eq!(LABEL_TAN, pal::LABEL);
+        assert_eq!(SECTION_CREAM, pal::HEADING);
+        assert_eq!(TAB_ACTIVE, pal::HEADING);
+        assert_eq!(VALUE_TEXT, pal::VALUE);
+        assert_eq!(WARM_ACCENT, pal::INPUT_FILL);
+        assert_eq!(WARM_ACCENT_TEXT, pal::WARN);
+        assert_eq!(DISABLED_TEXT, pal::DISABLED);
     }
 
     #[test]

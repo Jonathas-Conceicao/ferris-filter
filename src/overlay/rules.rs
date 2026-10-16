@@ -1191,6 +1191,19 @@ impl WorkingFilter {
         self.refresh_projection();
     }
 
+    /// Whether an economy add/remove is staged.
+    pub fn economy_staged(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Drop a staged economy add/remove without touching other edits (ECONOMY tab Revert).
+    pub fn unstage_economy(&mut self) {
+        if self.pending.is_some() {
+            self.pending = None;
+            self.refresh_projection();
+        }
+    }
+
     /// Whether the block's body lines accept line edits: false for an unknown id and for an
     /// invalid disabled block (its lines are commented prose the parser cannot structure).
     pub fn body_editable(&self, id: BlockId) -> bool {
@@ -2532,6 +2545,26 @@ Show
         wf.apply_action(RowAction::SetName(id, "x".into()));
         wf.apply_action(RowAction::ClearName(id));
         assert!(!wf.text().contains("ff:name"));
+    }
+
+    #[test]
+    fn unstage_economy_keeps_other_edits() {
+        let mut wf = WorkingFilter::from_text(THREE);
+        assert!(!wf.economy_staged());
+        wf.stage_add_economy(5);
+        assert!(wf.economy_staged());
+        assert_eq!(*wf.economy(), EconomyView::Present { blocks: 5 });
+        wf.unstage_economy();
+        assert!(!wf.economy_staged());
+        assert_eq!(*wf.economy(), EconomyView::Absent);
+        assert!(!wf.is_dirty());
+
+        wf.stage_add_economy(5);
+        let id = wf.rows()[0].id;
+        wf.apply_action(RowAction::Delete(id));
+        wf.unstage_economy();
+        assert!(wf.is_dirty(), "the rule edit survives");
+        assert!(!wf.economy_staged());
     }
 
     #[test]

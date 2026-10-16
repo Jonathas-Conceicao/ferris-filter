@@ -43,7 +43,7 @@ use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::apply_all::{self, ApplyAllError, DiskFile, FilterInput};
 use super::chat;
 use super::classes::ClassCatalog;
-use super::config_state::{self, ConfigState};
+use super::config_state::{self, ConfigState, RevertScope};
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
@@ -77,8 +77,9 @@ pub struct OverlayApp {
     #[cfg(debug_assertions)]
     shot: Option<ShotState>,
 
-    /// The ECONOMY tab's "Last sync" text, read when the tab opens and when a sync finishes.
-    last_sync: String,
+    /// What the ECONOMY tab shows about prices.json; re-read on switching to ECONOMY, at start
+    /// and after a sync.
+    economy_info: EconomyInfo,
 
     /// The tray icon, menu, and id->command mapping. Kept alive here until tray Quit, which
     /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
@@ -802,6 +803,36 @@ fn centered_notice(ui: &mut egui::Ui, heading: &str) {
     });
 }
 
+/// What the ECONOMY tab shows about prices.json; re-read on switching to ECONOMY, at start and
+/// after a sync.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct EconomyInfo {
+    mtime_secs: Option<u64>,
+    priced_items: usize,
+    live: bool,
+}
+
+impl EconomyInfo {
+    /// Reads `<root>/prices.json`. A missing, empty or malformed file is not live (never panics).
+    fn read(root: &std::path::Path) -> EconomyInfo {
+        let path = root.join("prices.json");
+        let mtime_secs = std::fs::metadata(&path)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        let priced_items = match crate::loader::load_prices_optional(&path.to_string_lossy()) {
+            Ok(Some(p)) => p.items.len(),
+            _ => 0,
+        };
+        EconomyInfo {
+            mtime_secs,
+            priced_items,
+            live: priced_items > 0,
+        }
+    }
+}
+
 /// What picking a filter in the dropdown should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SwitchDecision {
@@ -1080,7 +1111,7 @@ impl OverlayApp {
             docked: false,
             dock_ppp: None,
             skin,
-            last_sync: String::new(),
+            economy_info: EconomyInfo::default(),
             tray,
             hotkey_manager,
             hotkey_status,
@@ -1129,7 +1160,7 @@ impl OverlayApp {
             pending_switch: None,
         };
         app.refresh_inputs();
-        app.refresh_last_sync();
+        app.refresh_economy_info();
         if settings_warning.is_some() {
             app.list_status = settings_warning;
         }
@@ -1173,17 +1204,12 @@ impl OverlayApp {
         false
     }
 
-    /// Re-reads the `prices.json` modified time for the ECONOMY tab's "Last sync" row.
-    fn refresh_last_sync(&mut self) {
-        let secs = self
-            .root
-            .as_ref()
-            .ok()
-            .and_then(|root| std::fs::metadata(root.join("prices.json")).ok())
-            .and_then(|meta| meta.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs());
-        self.last_sync = shell::last_sync_text(secs, win::utc_offset_minutes());
+    /// Re-reads `prices.json` info (modified time, priced items, live/fallback) for the ECONOMY tab.
+    fn refresh_economy_info(&mut self) {
+        self.economy_info = match self.root.as_ref() {
+            Ok(root) => EconomyInfo::read(root),
+            Err(_) => EconomyInfo::default(),
+        };
     }
 
     /// Re-reads the game folder's filter list into the cache.
@@ -1673,7 +1699,10 @@ impl OverlayApp {
             }
             Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
             Popup::DiscardConfig => shell::popup_spec(PopupData::DiscardConfig {
-                count: self.config.as_ref().map_or(0, |c| c.dirty_count()),
+                count: self
+                    .config
+                    .as_ref()
+                    .map_or(0, |c| c.scope_dirty_count(self.config_ui.revert_scope)),
             }),
         }
     }
@@ -1756,7 +1785,8 @@ impl OverlayApp {
             Popup::DiscardConfig => {
                 self.config_ui.revert_armed = false;
                 if choice == 0 {
-                    self.handle_config_actions(ctx, vec![ConfigAction::Revert]);
+                    let scope = self.config_ui.revert_scope;
+                    self.handle_config_actions(ctx, vec![ConfigAction::RevertScoped(scope)]);
                 }
             }
         }
@@ -1803,6 +1833,22 @@ impl OverlayApp {
         // Per tab: CONFIG edits survive a RULES revert, so the state may stay out of date.
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         self.apply_state = apply::state_after_revert(self.applied_this_session, config_dirty);
+    }
+
+    /// ECONOMY Revert, staged part: drops a staged economy add/remove only.
+    fn unstage_economy_pressed(&mut self) {
+        self.clear_events_on_edit();
+        let Some(working) = &mut self.working else {
+            return;
+        };
+        working.unstage_economy();
+        let rules_dirty = working.is_dirty();
+        let style_pending = working.style_rewrite_pending();
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        self.apply_state = apply::state_after_revert(
+            self.applied_this_session,
+            rules_dirty || config_dirty || style_pending,
+        );
     }
 
     /// Stages adding the economy section; it is written by the next APPLY.
@@ -1930,6 +1976,7 @@ impl OverlayApp {
                     | ConfigAction::MoveStyle { .. }
                     | ConfigAction::TierText { .. }
                     | ConfigAction::Revert
+                    | ConfigAction::RevertScoped(_)
             )
         }) {
             // A revert sets its own CONFIG message below, after this clear.
@@ -2015,6 +2062,25 @@ impl OverlayApp {
                     let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
                     self.apply_state =
                         apply::state_after_revert(self.applied_this_session, rules_dirty);
+                }
+                ConfigAction::RevertScoped(scope) => {
+                    if let Ok(state) = &mut self.config {
+                        state.revert_scope(scope);
+                        let text = match scope {
+                            RevertScope::Styles => {
+                                self.config_ui.reset_for_new_styles();
+                                "Reverted config changes."
+                            }
+                            RevertScope::Tiers => "Reverted tier changes.",
+                        };
+                        self.config_message = Some((text.to_string(), false));
+                    }
+                    let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+                    let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+                    self.apply_state = apply::state_after_revert(
+                        self.applied_this_session,
+                        rules_dirty || config_dirty,
+                    );
                 }
                 ConfigAction::Apply => {
                     self.run_apply(ctx, false);
@@ -2388,7 +2454,7 @@ impl eframe::App for OverlayApp {
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
         if self.economy.poll() {
-            self.refresh_last_sync();
+            self.refresh_economy_info();
             ui.ctx().request_repaint();
         }
 
@@ -2558,7 +2624,10 @@ impl eframe::App for OverlayApp {
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let styles_dirty = self.config.as_ref().is_ok_and(|c| c.styles_dirty());
+        let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let economy_staged = self.working.as_ref().is_some_and(|w| w.economy_staged());
         // One unapplied state for both tabs: rule edits, a pending style rewrite or CONFIG edits.
         let combined_dirty = apply::combined_dirty(rules_dirty, style_pending, config_dirty);
         if combined_dirty && self.apply_state == ApplyState::Applied {
@@ -2642,7 +2711,7 @@ impl eframe::App for OverlayApp {
         }
 
         // Tabs: ` *` marks a tab when the other editing tab holds unapplied edits.
-        let markers = shell::tab_markers(self.tab, rules_dirty, config_dirty);
+        let markers = shell::tab_markers(self.tab, rules_dirty, styles_dirty, tiers_dirty);
         let labels: Vec<String> = ShellTab::ALL
             .iter()
             .map(|t| apply::tab_label(t.label(), markers[t.index()]))
@@ -2690,7 +2759,7 @@ impl eframe::App for OverlayApp {
                     &mut cui,
                     &skin,
                     crate::sync::OVERLAY_LEAGUE,
-                    &self.last_sync,
+                    &shell::last_sync_text(self.economy_info.mtime_secs, win::utc_offset_minutes()),
                     syncing,
                     actions.sync,
                 );
@@ -2703,7 +2772,9 @@ impl eframe::App for OverlayApp {
             self.tab,
             actions,
             ConfigBarInputs {
-                dirty: config_dirty,
+                styles_dirty,
+                tiers_dirty,
+                economy_staged,
                 apply_enabled: config_footer.apply_enabled,
                 tier_errors: self.config.as_ref().is_ok_and(|c| c.has_tier_errors()),
                 load_error: self.config.is_err()
@@ -2781,8 +2852,20 @@ impl eframe::App for OverlayApp {
             match self.tab {
                 ShellTab::Rules => self.revert(),
                 // The Discard-config popup opens from this flag.
-                ShellTab::Config => self.config_ui.revert_armed = true,
-                _ => {}
+                ShellTab::Config => {
+                    self.config_ui.revert_scope = RevertScope::Styles;
+                    self.config_ui.revert_armed = true;
+                }
+                ShellTab::Economy => {
+                    if economy_staged {
+                        self.unstage_economy_pressed();
+                    }
+                    if tiers_dirty {
+                        self.config_ui.revert_scope = RevertScope::Tiers;
+                        self.config_ui.revert_armed = true;
+                    }
+                }
+                ShellTab::About => {}
             }
         }
         if clicks.reload {
@@ -2819,7 +2902,10 @@ impl eframe::App for OverlayApp {
                     self.config_ui.disarm_all();
                     self.refresh_filters();
                 }
-                ShellTab::Economy => self.refresh_last_sync(),
+                ShellTab::Economy => {
+                    self.config_ui.disarm_all();
+                    self.refresh_economy_info();
+                }
                 _ => {}
             }
         }
@@ -2849,7 +2935,11 @@ impl eframe::App for OverlayApp {
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
         // survive hiding and re-summoning the stripe, so an open popup is still there.
-        if self.config_ui.revert_armed && self.config.as_ref().map_or(0, |c| c.dirty_count()) == 0 {
+        let armed_count = self
+            .config
+            .as_ref()
+            .map_or(0, |c| c.scope_dirty_count(self.config_ui.revert_scope));
+        if self.config_ui.revert_armed && armed_count == 0 {
             self.config_ui.revert_armed = false;
         }
         // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
@@ -4766,6 +4856,120 @@ Hide
             assert_eq!(app.config_ui.scroll_to.as_deref(), Some(name));
         }
     }
+
+    fn config_with_defaults(app: &mut super::OverlayApp) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        app.config = crate::overlay::config_state::ConfigState::load(dir.path());
+        dir
+    }
+
+    #[test]
+    fn economy_revert_discards_only_tier_edits() {
+        use crate::overlay::config_state::StyleEdit;
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.handle_config_actions(
+            &ctx,
+            vec![
+                ConfigAction::TierText {
+                    tier: "S".to_string(),
+                    text: "31".to_string(),
+                },
+                ConfigAction::EditStyle {
+                    name: "S".to_string(),
+                    edit: StyleEdit::Font(Some(20)),
+                },
+            ],
+        );
+        // What the ECONOMY bar Revert click does.
+        app.config_ui.revert_scope = crate::overlay::config_state::RevertScope::Tiers;
+        app.config_ui.revert_armed = true;
+        let spec = app.popup_spec_for(Popup::DiscardConfig);
+        assert!(!spec.buttons.is_empty());
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        let c = app.config.as_ref().unwrap();
+        assert!(!c.tiers_dirty(), "tier edit reverted");
+        assert!(c.styles_dirty(), "style edit kept");
+    }
+
+    #[test]
+    fn config_revert_discards_only_style_edits() {
+        use crate::overlay::config_state::StyleEdit;
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.handle_config_actions(
+            &ctx,
+            vec![
+                ConfigAction::TierText {
+                    tier: "S".to_string(),
+                    text: "31".to_string(),
+                },
+                ConfigAction::EditStyle {
+                    name: "S".to_string(),
+                    edit: StyleEdit::Font(Some(20)),
+                },
+            ],
+        );
+        app.config_ui.revert_scope = crate::overlay::config_state::RevertScope::Styles;
+        app.config_ui.revert_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        let c = app.config.as_ref().unwrap();
+        assert!(!c.styles_dirty(), "style edit reverted");
+        assert!(c.tiers_dirty(), "tier edit kept");
+    }
+
+    #[test]
+    fn economy_revert_unstages_only_the_economy_op() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert_eq!(
+            *app.working.as_ref().unwrap().economy(),
+            crate::overlay::rules::EconomyView::Absent
+        );
+        app.run_row_actions(vec![RowAction::AddRule]);
+        app.working.as_mut().unwrap().stage_add_economy(3);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        app.unstage_economy_pressed();
+        let w = app.working.as_ref().unwrap();
+        assert!(!w.economy_staged());
+        assert_eq!(*w.economy(), crate::overlay::rules::EconomyView::Absent);
+        assert!(w.is_dirty(), "the added rule survives");
+    }
+
+    #[test]
+    fn economy_info_reads_prices_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = super::EconomyInfo::read(dir.path());
+        assert_eq!(empty, super::EconomyInfo::default());
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/seed-prices.json");
+        std::fs::copy(&seed, dir.path().join("prices.json")).unwrap();
+        let expected = crate::loader::load_prices_optional(&seed.to_string_lossy())
+            .unwrap()
+            .unwrap()
+            .items
+            .len();
+        let info = super::EconomyInfo::read(dir.path());
+        assert_eq!(info.priced_items, expected);
+        assert!(info.live && info.mtime_secs.is_some());
+        std::fs::write(dir.path().join("prices.json"), "{ not json").unwrap();
+        let bad = super::EconomyInfo::read(dir.path());
+        assert!(!bad.live && bad.priced_items == 0);
+    }
+
     #[test]
     fn changed_on_disk_popup_keep_editing_closes_but_overwrite_slot_reopens() {
         use crate::overlay::shell::{Popup, active_popup};

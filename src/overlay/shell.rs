@@ -16,6 +16,7 @@ use crate::skin::widgets::{self as w, StatusKind};
 use super::apply::{self, ApplyState, FooterActions};
 use super::config_state;
 pub(crate) use super::config_view::{APPLY_LOAD_ERROR_TIP, APPLY_NOTHING_TIP};
+use super::rules::EconomyView;
 
 /// Window width in points (the same as `ff-proto`).
 pub(crate) const WIDTH: f32 = 660.0;
@@ -73,13 +74,19 @@ impl ShellTab {
     }
 }
 
-/// Which tabs show the ` *` marker: a tab is marked when the OTHER editing tab holds unapplied
-/// edits. Economy and About are never marked.
-pub(crate) fn tab_markers(active: ShellTab, rules_dirty: bool, config_dirty: bool) -> [bool; 4] {
+/// Which tabs show the ` *` marker: a tab is marked when it holds unapplied edits and is not the
+/// active one. RULES owns rule edits (and a staged economy add/remove), CONFIG owns style edits,
+/// ECONOMY owns tier edits; About is never marked.
+pub(crate) fn tab_markers(
+    active: ShellTab,
+    rules_dirty: bool,
+    styles_dirty: bool,
+    tiers_dirty: bool,
+) -> [bool; 4] {
     [
         active != ShellTab::Rules && rules_dirty,
-        active != ShellTab::Config && config_dirty,
-        false,
+        active != ShellTab::Config && styles_dirty,
+        active != ShellTab::Economy && tiers_dirty,
         false,
     ]
 }
@@ -244,7 +251,12 @@ pub(crate) fn event_from(
 /// What the CONFIG tab adds to the bar decision.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ConfigBarInputs {
-    pub dirty: bool,
+    /// Style edits (CONFIG tab).
+    pub styles_dirty: bool,
+    /// Tier cutoff edits (ECONOMY tab).
+    pub tiers_dirty: bool,
+    /// An economy add/remove is staged (ECONOMY tab).
+    pub economy_staged: bool,
     pub apply_enabled: bool,
     pub tier_errors: bool,
     pub load_error: bool,
@@ -331,8 +343,8 @@ pub(crate) struct BarState {
 }
 
 /// The bottom bar for this tab. Rules mirrors `footer_actions_combined`; Config's Revert follows
-/// its dirty state and its Apply follows `config_apply_enabled`; Economy and About have no Revert
-/// and use the combined Apply decision.
+/// its style edits and Economy's follows tier edits or a staged economy add/remove; both use
+/// `config_apply_enabled` for Apply. About has no Revert and uses the combined Apply decision.
 pub(crate) fn bar_state(
     tab: ShellTab,
     actions: FooterActions,
@@ -348,8 +360,9 @@ pub(crate) fn bar_state(
         ShellTab::Rules => actions.revert,
         // As on RULES, no Revert during a changed-on-disk refusal: only Reload or Overwrite
         // resolve it (v0.5; review WR-04).
-        ShellTab::Config => config.dirty && !needs_reload,
-        ShellTab::Economy | ShellTab::About => false,
+        ShellTab::Config => config.styles_dirty && !needs_reload,
+        ShellTab::Economy => (config.tiers_dirty || config.economy_staged) && !needs_reload,
+        ShellTab::About => false,
     };
     let apply = if needs_reload {
         ApplySlot {
@@ -366,7 +379,7 @@ pub(crate) fn bar_state(
         }
     } else {
         let enabled = match tab {
-            ShellTab::Config => config.apply_enabled,
+            ShellTab::Config | ShellTab::Economy => config.apply_enabled,
             _ => actions.apply,
         };
         let tip = if enabled {
@@ -422,6 +435,106 @@ pub(crate) fn last_sync_text(mtime_unix_secs: Option<u64>, utc_offset_minutes: i
         rem / 3600,
         (rem % 3600) / 60
     )
+}
+
+/// "Last sync" as a relative age: `Never`, `Just now`, `N min ago`, `N h ago`, `N d ago`, and the
+/// local `YYYY-MM-DD` date from 14 days on. A modified time in the future counts as `Just now`.
+#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
+pub(crate) fn relative_sync_text(
+    mtime_unix_secs: Option<u64>,
+    now_unix_secs: u64,
+    utc_offset_minutes: i32,
+) -> String {
+    let Some(mtime) = mtime_unix_secs else {
+        return "Never".to_string();
+    };
+    let age = now_unix_secs.saturating_sub(mtime);
+    if age < 60 {
+        "Just now".to_string()
+    } else if age < 3_600 {
+        format!("{} min ago", age / 60)
+    } else if age < 86_400 {
+        format!("{} h ago", age / 3_600)
+    } else if age < 14 * 86_400 {
+        format!("{} d ago", age / 86_400)
+    } else {
+        let local = (mtime as i64 + i64::from(utc_offset_minutes) * 60).max(0) as u64;
+        let (year, month, day) = crate::sync::prices::days_to_ymd(local / 86_400);
+        format!("{year:04}-{month:02}-{day:02}")
+    }
+}
+
+/// A count with comma thousands separators (`1,284`).
+#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
+pub(crate) fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Tooltip of the economy section button when it is unavailable.
+#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
+pub(crate) const FIX_FILTER_FIRST: &str = "Fix the filter first.";
+
+/// The Add / Remove economy section button of the ECONOMY tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
+pub(crate) struct SectionButton {
+    pub add: bool,
+    pub enabled: bool,
+    pub blocks: Option<usize>,
+}
+
+#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
+impl SectionButton {
+    pub(crate) fn label(&self) -> &'static str {
+        if self.add {
+            "Add economy section"
+        } else {
+            "Remove economy section"
+        }
+    }
+
+    pub(crate) fn danger(&self) -> bool {
+        !self.add
+    }
+
+    pub(crate) fn tip(&self) -> Option<&'static str> {
+        (!self.enabled).then_some(FIX_FILTER_FIRST)
+    }
+}
+
+/// The section button for the working filter's economy view (None: no filter loaded).
+#[allow(dead_code)] // wired by the ECONOMY view (plan 34-03)
+pub(crate) fn section_button(
+    view: Option<&EconomyView>,
+    root_ok: bool,
+    changed_on_disk: bool,
+) -> SectionButton {
+    let usable = root_ok && !changed_on_disk;
+    match view {
+        None | Some(EconomyView::Damaged(_)) => SectionButton {
+            add: true,
+            enabled: false,
+            blocks: None,
+        },
+        Some(EconomyView::Absent) => SectionButton {
+            add: true,
+            enabled: usable,
+            blocks: None,
+        },
+        Some(EconomyView::Present { blocks }) => SectionButton {
+            add: false,
+            enabled: usable,
+            blocks: Some(*blocks),
+        },
+    }
 }
 
 /// The ECONOMY tab: league, last sync and the one Sync economy button. Returns true when the
@@ -948,14 +1061,90 @@ mod tests {
     #[test]
     fn markers() {
         use ShellTab::*;
-        assert_eq!(tab_markers(Rules, true, true), [false, true, false, false]);
-        assert_eq!(tab_markers(Config, true, true), [true, false, false, false]);
-        assert_eq!(tab_markers(Economy, true, true), [true, true, false, false]);
-        assert_eq!(tab_markers(About, false, true), [false, true, false, false]);
         assert_eq!(
-            tab_markers(Rules, true, false),
+            tab_markers(Rules, false, false, true),
+            [false, false, true, false]
+        );
+        assert_eq!(
+            tab_markers(Rules, true, true, true),
+            [false, true, true, false]
+        );
+        assert_eq!(
+            tab_markers(Config, true, true, true),
+            [true, false, true, false]
+        );
+        assert_eq!(
+            tab_markers(Economy, true, true, true),
+            [true, true, false, false]
+        );
+        assert_eq!(
+            tab_markers(About, false, true, false),
+            [false, true, false, false]
+        );
+        assert_eq!(
+            tab_markers(Rules, true, false, false),
             [false, false, false, false]
         );
+    }
+
+    #[test]
+    fn relative_sync_buckets() {
+        let now = 10_000_000u64;
+        assert_eq!(relative_sync_text(None, now, 0), "Never");
+        assert_eq!(relative_sync_text(Some(now - 30), now, 0), "Just now");
+        assert_eq!(relative_sync_text(Some(now + 500), now, 0), "Just now");
+        assert_eq!(
+            relative_sync_text(Some(now - 59 * 60), now, 0),
+            "59 min ago"
+        );
+        assert_eq!(relative_sync_text(Some(now - 61 * 60), now, 0), "1 h ago");
+        assert_eq!(
+            relative_sync_text(Some(now - 23 * 3600), now, 0),
+            "23 h ago"
+        );
+        assert_eq!(
+            relative_sync_text(Some(now - 3 * 86_400), now, 0),
+            "3 d ago"
+        );
+        assert_eq!(
+            relative_sync_text(Some(now - 13 * 86_400), now, 0),
+            "13 d ago"
+        );
+        // 2026-01-01 00:00 UTC is 1767225600; at +60 minutes it is still the 1st, at -60 the 31st.
+        let mtime = 1_767_225_600u64;
+        let late = mtime + 14 * 86_400;
+        assert_eq!(relative_sync_text(Some(mtime), late, 0), "2026-01-01");
+        assert_eq!(relative_sync_text(Some(mtime), late, -60), "2025-12-31");
+    }
+
+    #[test]
+    fn thousands_groups() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1000), "1,000");
+        assert_eq!(thousands(1284), "1,284");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn section_button_decisions() {
+        let b = section_button(None, true, false);
+        assert!(b.add && !b.enabled && b.blocks.is_none());
+        assert_eq!(b.label(), "Add economy section");
+        assert_eq!(b.tip(), Some("Fix the filter first."));
+        let b = section_button(Some(&EconomyView::Absent), true, false);
+        assert!(b.add && b.enabled && b.tip().is_none() && !b.danger());
+        let b = section_button(Some(&EconomyView::Present { blocks: 12 }), true, false);
+        assert!(!b.add && b.enabled && b.danger());
+        assert_eq!(b.blocks, Some(12));
+        assert_eq!(b.label(), "Remove economy section");
+        let b = section_button(Some(&EconomyView::Damaged("x".into())), true, false);
+        assert!(!b.enabled);
+        for (root_ok, changed) in [(false, false), (true, true)] {
+            let b = section_button(Some(&EconomyView::Absent), root_ok, changed);
+            assert!(!b.enabled);
+            assert_eq!(b.tip(), Some(FIX_FILTER_FIRST));
+        }
     }
 
     #[test]
@@ -1005,7 +1194,7 @@ mod tests {
     #[test]
     fn config_bar_uses_config_state() {
         let cfg = ConfigBarInputs {
-            dirty: true,
+            styles_dirty: true,
             apply_enabled: true,
             ..Default::default()
         };
@@ -1020,20 +1209,60 @@ mod tests {
     }
 
     #[test]
-    fn economy_and_about_have_no_revert() {
-        for tab in [ShellTab::Economy, ShellTab::About] {
-            let b = bar_state(
-                tab,
-                actions(true, true, false, false),
-                ConfigBarInputs {
-                    dirty: true,
-                    ..Default::default()
-                },
-                false,
-            );
-            assert!(!b.revert);
-            assert!(b.apply.enabled);
-        }
+    fn about_has_no_revert() {
+        let b = bar_state(
+            ShellTab::About,
+            actions(true, true, false, false),
+            ConfigBarInputs {
+                styles_dirty: true,
+                tiers_dirty: true,
+                ..Default::default()
+            },
+            false,
+        );
+        assert!(!b.revert);
+        assert!(b.apply.enabled);
+    }
+
+    #[test]
+    fn revert_is_scoped_per_tab() {
+        let a = actions(false, false, false, false);
+        let styles = ConfigBarInputs {
+            styles_dirty: true,
+            ..Default::default()
+        };
+        let tiers = ConfigBarInputs {
+            tiers_dirty: true,
+            ..Default::default()
+        };
+        let staged = ConfigBarInputs {
+            economy_staged: true,
+            ..Default::default()
+        };
+        assert!(bar_state(ShellTab::Config, a, styles, false).revert);
+        assert!(!bar_state(ShellTab::Config, a, tiers, false).revert);
+        assert!(!bar_state(ShellTab::Economy, a, styles, false).revert);
+        assert!(bar_state(ShellTab::Economy, a, tiers, false).revert);
+        assert!(bar_state(ShellTab::Economy, a, staged, false).revert);
+        assert!(!bar_state(ShellTab::Economy, a, tiers, true).revert);
+    }
+
+    #[test]
+    fn economy_apply_follows_config_gate() {
+        let a = actions(true, false, false, false);
+        let blocked = ConfigBarInputs {
+            apply_enabled: false,
+            tier_errors: true,
+            ..Default::default()
+        };
+        let b = bar_state(ShellTab::Economy, a, blocked, false);
+        assert!(!b.apply.enabled);
+        assert_eq!(b.apply.tip, Some(config_state::APPLY_BLOCKED_TOOLTIP));
+        let ok = ConfigBarInputs {
+            apply_enabled: true,
+            ..Default::default()
+        };
+        assert!(bar_state(ShellTab::Economy, a, ok, false).apply.enabled);
     }
 
     #[test]
@@ -1059,7 +1288,7 @@ mod tests {
     #[test]
     fn config_revert_is_off_during_a_refusal() {
         let cfg = ConfigBarInputs {
-            dirty: true,
+            styles_dirty: true,
             ..ConfigBarInputs::default()
         };
         let a = actions(false, true, true, true);

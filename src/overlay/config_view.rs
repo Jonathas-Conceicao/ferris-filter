@@ -18,7 +18,7 @@ use crate::settings;
 
 use super::body;
 use super::config_state::{
-    ColourSlot, ConfigState, StyleEdit, config_warning, delete_confirm_text,
+    ColourSlot, ConfigState, RevertScope, StyleEdit, config_warning, delete_confirm_text,
 };
 use super::theme;
 use super::widgets;
@@ -73,6 +73,8 @@ pub enum ConfigAction {
     },
     Apply,
     Revert,
+    /// Revert one tab's CONFIG edits: styles from CONFIG, tiers from ECONOMY.
+    RevertScoped(RevertScope),
     Reload,
     Overwrite,
 }
@@ -95,6 +97,8 @@ pub struct ConfigUi {
     /// Style whose inline delete confirm is showing.
     pub delete_armed: Option<String>,
     pub revert_armed: bool,
+    /// What the armed Discard config changes? popup discards.
+    pub revert_scope: RevertScope,
     /// A just-added style to scroll into view.
     pub scroll_to: Option<String>,
     /// A name draft was just opened; its text field takes focus once.
@@ -132,6 +136,7 @@ impl ConfigUi {
     pub fn disarm_all(&mut self) {
         self.delete_armed = None;
         self.revert_armed = false;
+        self.revert_scope = RevertScope::Styles;
     }
 
     /// Called when the styles are replaced (CONFIG Revert, reload, Apply, an outside edit

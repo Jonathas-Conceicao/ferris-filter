@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **RULES tab on the skin (Phase 31).** The rule list, the rule editor and the toolbar are drawn with the PoE2 skin (fixed two-line rows, game scrollbar, two-column editor, skin dropdowns, switches, chips and buttons); every v0.5 editing capability is kept. The colour picker keeps its old look until Phase 33.
+- **+ Add rule inserts at the top of the file** (it used to append before the economy section).
 - **Cargo workspace (Phase 29).** The repo root is one Cargo workspace with `ff` as the default
   member. `tools/ff-art` now runs from the root via `cargo ff-art <cmd>` / `cargo run -p ff-art`
   from any directory and writes into the repo's `assets/`; root `cargo build`/`cargo test` do not
@@ -70,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RULES tab: the search field no longer touches **+ Add rule**; `◆ A CONTINUE` reads as a styled chip plus the Continue word; the group-broken and padlock icons are legible (the broken link no longer reads as "0/0"); the operator dropdown fits "Matches exactly".
 - **Docking used the wrong monitor and mixed units.** The stripe took the primary monitor's work
   area and mixed physical and logical units, so it was wrong at 125% and above and on a second
   monitor. It now docks on the game's monitor with that monitor's own scale.

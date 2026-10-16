@@ -381,6 +381,28 @@ fn config_reload_plan(config_failed: bool, changed: &[DiskFile]) -> ConfigReload
     }
 }
 
+/// Where a bottom-bar Reload click goes (review CR-01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarReload {
+    /// The CONFIG tab after a changed-on-disk refusal: the shared re-read of what changed
+    /// (`ConfigAction::Reload`).
+    ConfigRefusal,
+    /// Everything else, the CONFIG tab included: the RULES reload (`reload_pressed`), which
+    /// re-reads the filter and keeps CONFIG edits unless the root moved or the config had failed
+    /// to load. Without a refusal the bar's Reload is only live because of the filter (damaged
+    /// markers, a load failure, no app root), so it must re-read the filter and must not drop
+    /// CONFIG edits.
+    Shared,
+}
+
+fn bar_reload_target(tab: ShellTab, changed: &[DiskFile]) -> BarReload {
+    if tab == ShellTab::Config && !changed.is_empty() {
+        BarReload::ConfigRefusal
+    } else {
+        BarReload::Shared
+    }
+}
+
 /// The one Apply path (UAT2-10): the CONFIG edits (`styles.json`, `tiers.json`) and the RULES edits
 /// (the filter, rendered with the pending styles and tier cutoffs) validated together, then
 /// written all-or-none by [`apply_all`]. `config` is `None` when the CONFIG state failed to load;
@@ -2372,9 +2394,9 @@ impl eframe::App for OverlayApp {
             }
         }
         if clicks.reload {
-            match self.tab {
-                ShellTab::Config => config_actions.push(ConfigAction::Reload),
-                _ => self.reload_pressed(),
+            match bar_reload_target(self.tab, &self.changed_on_disk) {
+                BarReload::ConfigRefusal => config_actions.push(ConfigAction::Reload),
+                BarReload::Shared => self.reload_pressed(),
             }
         }
         if clicks.apply {
@@ -3223,6 +3245,26 @@ mod tests {
             &[DiskFile::Tiers, DiskFile::Filter],
         ] {
             assert_eq!(config_reload_plan(false, changed), ConfigReload::Changed);
+        }
+    }
+
+    #[test]
+    fn bar_reload_on_config_reloads_the_filter_unless_a_refusal_is_pending() {
+        use super::{BarReload, ShellTab, bar_reload_target};
+        // CR-01: without a changed-on-disk refusal the bar's Reload is live only because of the
+        // filter (damaged, failed, no root); on CONFIG it must re-read the filter, which keeps
+        // CONFIG edits, rather than reload the config and drop them.
+        assert_eq!(bar_reload_target(ShellTab::Config, &[]), BarReload::Shared);
+        assert_eq!(
+            bar_reload_target(ShellTab::Config, &[DiskFile::Styles]),
+            BarReload::ConfigRefusal
+        );
+        for tab in [ShellTab::Rules, ShellTab::Economy, ShellTab::About] {
+            assert_eq!(bar_reload_target(tab, &[]), BarReload::Shared);
+            assert_eq!(
+                bar_reload_target(tab, &[DiskFile::Filter]),
+                BarReload::Shared
+            );
         }
     }
 

@@ -6,6 +6,7 @@
 //! `ferrisfilter::dynamic` / `ferrisfilter::compile` for anything that touches
 //! the filter file or the filter compiler.
 
+pub mod about_view;
 pub mod app;
 pub mod apply;
 pub mod apply_all;

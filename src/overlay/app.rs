@@ -1287,10 +1287,8 @@ impl OverlayApp {
                 if working.is_dirty() {
                     self.apply_state = ApplyState::Unapplied;
                 }
-                self.apply_message = None;
-                self.list_status = None;
                 // An event is cleared by the next edit, a CONFIG message included (WR-01).
-                self.config_message = None;
+                self.clear_events_on_edit();
             }
             if status.is_some() {
                 self.list_status = status;
@@ -1310,6 +1308,15 @@ impl OverlayApp {
         self.config_message = None;
         self.list_status = None;
         self.economy.clear_message();
+    }
+
+    /// An edit or a revert on either tab clears every event message (the Apply outcome, the list
+    /// status, the CONFIG message) before setting its own, so a stale report never hides the
+    /// standing lines or the action's own message (review WR-01, iterations 1 and 2).
+    fn clear_events_on_edit(&mut self) {
+        self.apply_message = None;
+        self.list_status = None;
+        self.config_message = None;
     }
 
     /// Whether Overwrite is live: the filter's own decision, or a refusal only the config files
@@ -1533,6 +1540,10 @@ impl OverlayApp {
 
     /// REVERT: discard every in-memory edit and staged economy op.
     fn revert(&mut self) {
+        if self.working.is_none() {
+            return;
+        }
+        self.clear_events_on_edit();
         let Some(working) = &mut self.working else {
             return;
         };
@@ -1546,6 +1557,10 @@ impl OverlayApp {
 
     /// Stages adding the economy section; it is written by the next APPLY.
     fn stage_add_economy(&mut self) {
+        if self.root.is_err() || self.working.is_none() {
+            return;
+        }
+        self.clear_events_on_edit();
         let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
             return;
         };
@@ -1560,6 +1575,9 @@ impl OverlayApp {
 
     /// Stages removing the economy section; it is written by the next APPLY.
     fn stage_remove_economy(&mut self) {
+        if self.working.is_some() {
+            self.clear_events_on_edit();
+        }
         if let Some(working) = &mut self.working {
             working.stage_remove_economy();
             self.apply_state = ApplyState::Unapplied;
@@ -1661,9 +1679,11 @@ impl OverlayApp {
                     | ConfigAction::RenameStyle { .. }
                     | ConfigAction::MoveStyle { .. }
                     | ConfigAction::TierText { .. }
+                    | ConfigAction::Revert
             )
         }) {
-            self.apply_message = None;
+            // A revert sets its own CONFIG message below, after this clear.
+            self.clear_events_on_edit();
         }
         for action in actions {
             match action {
@@ -3945,6 +3965,54 @@ mod tests {
         app.config_message = Some(("Reverted config changes.".to_string(), false));
         app.run_row_actions(vec![RowAction::AddRule]);
         assert_eq!(app.config_message, None);
+    }
+
+    /// WR-01 (iteration 2): a refused Apply's Error line gives way to each tab's revert message,
+    /// economy staging clears a stale success, and a CONFIG edit clears the list status.
+    #[test]
+    fn reverts_staging_and_config_edits_clear_stale_events() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::skin::widgets::StatusKind;
+        let (mut app, ctx) = popup_app(RULES);
+        let refused = || {
+            Some((
+                "Apply refused: 1 invalid block".to_string(),
+                StatusKind::Error,
+            ))
+        };
+
+        // RULES Revert.
+        app.apply_message = refused();
+        app.revert();
+        assert_eq!(app.apply_message, None);
+        assert_eq!(
+            app.list_status.as_deref(),
+            Some(crate::overlay::apply::REVERTED_MESSAGE)
+        );
+
+        // CONFIG Revert (the config may be absent in this rig; the clear still runs).
+        app.apply_message = refused();
+        app.handle_config_actions(&ctx, vec![ConfigAction::Revert]);
+        assert_eq!(app.apply_message, None);
+        assert_eq!(app.list_status, None, "the RULES revert line is stale too");
+
+        // Economy staging hides neither the out-of-date indicator nor its own state.
+        app.apply_message = Some(("Wrote x.".to_string(), StatusKind::Ok));
+        app.list_status = Some(crate::overlay::apply::REVERTED_MESSAGE.to_string());
+        app.stage_remove_economy();
+        assert_eq!(app.apply_message, None);
+        assert_eq!(app.list_status, None);
+
+        // A CONFIG edit clears a RULES-side list status.
+        app.list_status = Some(crate::overlay::apply::REVERTED_MESSAGE.to_string());
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::TierText {
+                tier: "S".to_string(),
+                text: "1".to_string(),
+            }],
+        );
+        assert_eq!(app.list_status, None);
     }
 
     #[test]

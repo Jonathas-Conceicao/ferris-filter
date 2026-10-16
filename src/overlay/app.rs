@@ -1941,7 +1941,8 @@ impl OverlayApp {
                     if let Ok(state) = &mut self.config {
                         match state.add_style(&input) {
                             Ok(name) => {
-                                self.config_ui.set_expanded(&name);
+                                // Not the toggle: a new style always opens its editor (WR-01).
+                                self.config_ui.expand(&name);
                                 self.config_ui.scroll_to = Some(name);
                                 self.config_ui.style_draft = None;
                                 self.config_message = None;
@@ -4731,6 +4732,34 @@ Hide
         assert_eq!(state.style("S").unwrap(), &original);
         assert_ne!(app.config_ui.epoch, epoch, "Revert orphans open pickers");
         assert_eq!(std::fs::read(&styles_path).unwrap(), before_bytes);
+    }
+
+    /// WR-01: + Add style opens the new style's editor, even when the row was already marked
+    /// expanded (the handler used a toggle, which collapsed it again).
+    #[test]
+    fn adding_a_style_expands_it() {
+        use crate::overlay::config_state::ConfigState;
+        use crate::overlay::config_view::ConfigAction;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        app.config = ConfigState::load(dir.path());
+        for (name, pre) in [("glow", None), ("shine", Some("shine"))] {
+            app.config_ui.expanded = pre.map(str::to_string);
+            app.handle_config_actions(&ctx, vec![ConfigAction::AddStyle(name.to_string())]);
+            assert!(app.config.as_ref().unwrap().style(name).is_some());
+            assert_eq!(app.config_ui.expanded.as_deref(), Some(name));
+            assert_eq!(app.config_ui.scroll_to.as_deref(), Some(name));
+        }
     }
     #[test]
     fn changed_on_disk_popup_keep_editing_closes_but_overwrite_slot_reopens() {

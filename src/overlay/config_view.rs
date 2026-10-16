@@ -113,6 +113,14 @@ impl ConfigUi {
         self.epoch = self.epoch.wrapping_add(1);
     }
 
+    /// Expand `name` (never a toggle: a row that is already expanded stays expanded). Drops an
+    /// armed delete confirm and orphans per-row egui state, as [`Self::set_expanded`] does.
+    pub fn expand(&mut self, name: &str) {
+        self.expanded = Some(name.to_string());
+        self.delete_armed = None;
+        self.epoch = self.epoch.wrapping_add(1);
+    }
+
     pub fn arm_delete(&mut self, name: &str) {
         self.delete_armed = Some(name.to_string());
     }
@@ -1039,8 +1047,9 @@ fn style_draft_row(
     }
     if commit && hint.is_none() {
         let name = draft.trim().to_string();
+        // The AddStyle handler expands the new row (WR-01: expanding here too made its toggle
+        // collapse it again).
         actions.push(ConfigAction::AddStyle(name.clone()));
-        cfg.expanded = Some(name.clone());
         cfg.scroll_to = Some(name);
         cfg.style_draft = None;
     } else if discard {

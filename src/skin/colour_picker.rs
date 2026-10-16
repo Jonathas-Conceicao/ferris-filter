@@ -63,6 +63,24 @@ fn probe(tag: &str, rect: Rect) {
     PROBE.with(|p| p.borrow_mut().push((tag.to_owned(), rect)));
 }
 
+/// Test hook for other modules: forgets the recorded probes.
+#[cfg(test)]
+pub(crate) fn probes_clear() {
+    PROBE.with(|p| p.borrow_mut().clear());
+}
+
+/// Test hook for other modules: where the named piece was last drawn.
+#[cfg(test)]
+pub(crate) fn probe_rect(tag: &str) -> Option<Rect> {
+    PROBE.with(|p| {
+        p.borrow()
+            .iter()
+            .rev()
+            .find(|(t, _)| t == tag)
+            .map(|(_, r)| *r)
+    })
+}
+
 #[cfg(not(test))]
 fn probe(_tag: &str, _rect: Rect) {}
 

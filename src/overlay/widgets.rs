@@ -18,6 +18,8 @@
 
 use super::text_entry::parse_base_type_entry;
 use super::theme;
+use crate::skin::colour_picker::{PickerEdit, PickerMode, colour_popup};
+use crate::skin::editor::ff_swatch;
 use crate::skin::fonts::regular;
 use crate::skin::palette as pal;
 
@@ -392,47 +394,39 @@ pub fn rgba_caption(rgba: [u8; 4]) -> String {
     format!("R {} G {} B {} A {}", rgba[0], rgba[1], rgba[2], rgba[3])
 }
 
-/// Unmultiplied HSVA of a filter colour. Going through `Hsva::from_rgba_unmultiplied` (not a
-/// premultiplied `Color32`) keeps the RGB of a fully transparent colour such as
-/// `SetBackgroundColor 40 42 54 0` (WR-04).
-fn hsva_of(rgba: [u8; 4]) -> egui::ecolor::Hsva {
-    use egui::ecolor::linear_f32_from_gamma_u8 as lin;
-    egui::ecolor::Hsva::from_rgba_unmultiplied(
-        lin(rgba[0]),
-        lin(rgba[1]),
-        lin(rgba[2]),
-        f32::from(rgba[3]) / 255.0,
-    )
+/// A 34x22 colour chip that opens the skinned picker below it. The chip carries no caption (the
+/// `caption` is its tooltip) and shows the 2pt ring while its popup is open. Returns the picker's
+/// edit, if any.
+fn colour_chip(
+    ui: &mut egui::Ui,
+    rgba: [u8; 4],
+    caption: &str,
+    mode: PickerMode,
+) -> Option<[u8; 4]> {
+    let colour = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+    let probe_id = egui::Id::new(("ff-colour-chip-open", ui.next_auto_id()));
+    let open = ui.data(|d| d.get_temp::<bool>(probe_id)).unwrap_or(false);
+    let chip =
+        ff_swatch(ui, Some(colour), open, egui::vec2(34.0, 22.0), "Colour").on_hover_text(caption);
+    let out = colour_popup(ui, &chip, "rule", Some(rgba), rgba, mode);
+    let popup_id = egui::Popup::default_response_id(&chip);
+    let now_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+    ui.data_mut(|d| d.insert_temp(probe_id, now_open));
+    match out {
+        Some(PickerEdit::Set(c)) if c != rgba => Some(c),
+        _ => None,
+    }
 }
 
-/// An RGBA colour swatch that opens egui's picker (blend alpha only). Returns `Some(new)` only when
-/// the user changed it and the unmultiplied result differs from `rgba`, so merely showing a
-/// translucent colour never rewrites its line. The picker edits unmultiplied HSVA, so raising the
-/// alpha of a transparent colour keeps its RGB.
+/// An RGBA colour chip that opens the skinned picker with an Alpha slider. Returns `Some(new)`
+/// only when the user changed it and the unmultiplied result differs from `rgba`, so merely
+/// showing (or opening) a translucent colour never rewrites its line.
 pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4]) -> Option<[u8; 4]> {
-    let mut colour = hsva_of(rgba);
-    let caption = rgba_caption(rgba);
-    let mut result = None;
-    ui.horizontal(|ui| {
-        let response = egui::color_picker::color_edit_button_hsva(
-            ui,
-            &mut colour,
-            egui::color_picker::Alpha::OnlyBlend,
-        );
-        if response.changed() {
-            let now = colour.to_srgba_unmultiplied();
-            if now != rgba {
-                result = Some(now);
-            }
-        }
-        response.on_hover_text(&caption);
-        ui.label(
-            egui::RichText::new(&caption)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
-    });
-    result
+    let mode = PickerMode {
+        alpha: true,
+        allow_none: false,
+    };
+    colour_chip(ui, rgba, &rgba_caption(rgba), mode)
 }
 
 /// `R {r} G {g} B {b}` -- the opaque swatch caption and tooltip.
@@ -440,115 +434,17 @@ pub fn rgb_caption(rgb: [u8; 3]) -> String {
     format!("R {} G {} B {}", rgb[0], rgb[1], rgb[2])
 }
 
-/// An opaque RGB swatch that opens egui's picker without an alpha channel. `Style` stores RGB
-/// and the emitter always writes alpha 255, so a picker with alpha would show a translucency the
-/// filter never emits. Returns `Some(new)` only when the picked RGB differs from `rgb`.
+/// An opaque RGB chip that opens the picker without an alpha channel. `Style` stores RGB and the
+/// emitter always writes alpha 255, so a picker with alpha would show a translucency the filter
+/// never emits. Returns `Some(new)` only when the picked RGB differs from `rgb`.
 pub fn colour_swatch_rgb(ui: &mut egui::Ui, rgb: [u8; 3]) -> Option<[u8; 3]> {
-    let mut colour = hsva_of([rgb[0], rgb[1], rgb[2], 255]);
-    let caption = rgb_caption(rgb);
-    let mut result = None;
-    ui.horizontal(|ui| {
-        let response = egui::color_picker::color_edit_button_hsva(
-            ui,
-            &mut colour,
-            egui::color_picker::Alpha::Opaque,
-        );
-        if response.changed() {
-            let now = colour.to_srgba_unmultiplied();
-            let now = [now[0], now[1], now[2]];
-            if now != rgb {
-                result = Some(now);
-            }
-        }
-        response.on_hover_text(&caption);
-        ui.label(
-            egui::RichText::new(&caption)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
-    });
-    result
-}
-
-fn rgb_or_unset(rgb: Option<[u8; 3]>) -> String {
-    rgb.map_or_else(|| "Not set (game default)".to_string(), rgb_caption)
-}
-
-/// The sample-text size of a preview chip for a style font size: clamped to what fits the chip.
-fn chip_font_size(font: Option<u8>) -> f32 {
-    font.map_or(14.0, |f| f32::from(f).clamp(12.0, 18.0))
-}
-
-/// A 120x24 preview of how a style draws an item label: background over a checkerboard, a 2px
-/// border and the sample text `Item Name`. Hide styles are drawn at half strength with a strike
-/// line and say so in the tooltip.
-pub fn style_preview_chip(
-    ui: &mut egui::Ui,
-    name: &str,
-    style: &crate::models::config::Style,
-) -> egui::Response {
-    use crate::models::config::StyleAction;
-
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(120.0, 24.0), egui::Sense::hover());
-    let hidden = style.action == StyleAction::Hide;
-    let fade = |c: egui::Color32| if hidden { c.gamma_multiply(0.5) } else { c };
-    let rgb = |c: [u8; 3]| egui::Color32::from_rgb(c[0], c[1], c[2]);
-
-    let painter = ui.painter_at(rect);
-    // 6px checkerboard so any translucency would be visible.
-    for cy in 0..4 {
-        for cx in 0..20 {
-            let shade = if (cx + cy) % 2 == 0 {
-                egui::Color32::from_gray(0x2A)
-            } else {
-                egui::Color32::from_gray(0x1A)
-            };
-            let cell = egui::Rect::from_min_size(
-                rect.min + egui::vec2(cx as f32 * 6.0, cy as f32 * 6.0),
-                egui::vec2(6.0, 6.0),
-            );
-            painter.rect_filled(cell, 0.0, shade);
-        }
-    }
-    if let Some(bg) = style.background {
-        painter.rect_filled(rect, 4.0, rgb(bg));
-    }
-    if let Some(border) = style.border {
-        painter.rect_stroke(
-            rect.shrink(1.0),
-            4.0,
-            egui::Stroke::new(2.0, fade(rgb(border))),
-            egui::StrokeKind::Inside,
-        );
-    }
-    let text_colour = style.text.map_or(theme::VALUE_TEXT, rgb);
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "Item Name",
-        egui::FontId::proportional(chip_font_size(style.font)),
-        fade(text_colour),
-    );
-    if hidden {
-        painter.line_segment(
-            [rect.left_bottom(), rect.right_top()],
-            egui::Stroke::new(1.0, theme::DISABLED_TEXT),
-        );
-    }
-
-    let label = format!("Preview of style {name}");
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
-    let mut tip = String::new();
-    if hidden {
-        tip.push_str("Hidden in game; Alt reveals it.\n");
-    }
-    tip.push_str(&format!(
-        "Text: {}\nBorder: {}\nBackground: {}",
-        rgb_or_unset(style.text),
-        rgb_or_unset(style.border),
-        rgb_or_unset(style.background)
-    ));
-    response.on_hover_text(tip)
+    let mode = PickerMode {
+        alpha: false,
+        allow_none: false,
+    };
+    colour_chip(ui, [rgb[0], rgb[1], rgb[2], 255], &rgb_caption(rgb), mode)
+        .map(|c| [c[0], c[1], c[2]])
+        .filter(|c| *c != rgb)
 }
 
 /// What one frame of [`chip_list`] asks the caller to do.
@@ -1268,10 +1164,14 @@ mod tests {
         ] {
             for a in [0u8, 1, 2, 7, 128, 254, 255] {
                 let rgba = [rgb[0], rgb[1], rgb[2], a];
-                assert_eq!(hsva_of(rgba).to_srgba_unmultiplied(), rgba, "{rgba:?}");
+                assert_eq!(
+                    crate::skin::colour_picker::hsva_of(rgba).to_srgba_unmultiplied(),
+                    rgba,
+                    "{rgba:?}"
+                );
             }
         }
-        let mut h = hsva_of([40, 42, 54, 0]);
+        let mut h = crate::skin::colour_picker::hsva_of([40, 42, 54, 0]);
         h.a = 1.0;
         assert_eq!(h.to_srgba_unmultiplied(), [40, 42, 54, 255]);
     }
@@ -1542,37 +1442,107 @@ mod tests {
         assert_eq!(rgb_caption([255, 121, 198]), "R 255 G 121 B 198");
     }
 
-    #[test]
-    fn chip_font_is_clamped_to_what_fits() {
-        assert_eq!(chip_font_size(None), 14.0);
-        assert_eq!(chip_font_size(Some(5)), 12.0);
-        assert_eq!(chip_font_size(Some(37)), 18.0);
-        assert_eq!(chip_font_size(Some(15)), 15.0);
+    // ---- skinned colour picker wiring ----
+
+    fn click_events(pos: Pos2) -> Vec<Event> {
+        let button = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::default(),
+        };
+        vec![Event::PointerMoved(pos), button(true), button(false)]
+    }
+
+    fn picker_input(events: Vec<Event>) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(660.0, 900.0))),
+            events,
+            ..Default::default()
+        }
+    }
+
+    /// One frame of `colour_swatch`; returns its result and every painted text.
+    fn swatch_frame(
+        ctx: &egui::Context,
+        events: Vec<Event>,
+        rgba: [u8; 4],
+    ) -> (Option<[u8; 4]>, Vec<String>) {
+        crate::skin::colour_picker::probes_clear();
+        let mut out = None;
+        let full = ctx.run_ui(picker_input(events), |ui| {
+            out = colour_swatch(ui, rgba);
+        });
+        let mut texts = Vec::new();
+        for clipped in &full.shapes {
+            collect_text(&clipped.shape, &mut texts);
+        }
+        full.drop_without_applying_deltas();
+        (out, texts)
+    }
+
+    fn collect_text(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
     }
 
     #[test]
-    fn the_preview_chip_is_120_by_24_for_show_and_hide() {
-        use crate::models::config::{Style, StyleAction};
-        let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
-        let mut sizes = Vec::new();
-        let out = ctx.run_ui(
-            RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
-                ..Default::default()
-            },
-            |ui| {
-                let mut show = Style::blank_show();
-                show.text = Some([255, 121, 198]);
-                show.background = Some([40, 42, 54]);
-                let mut hide = Style::blank_show();
-                hide.action = StyleAction::Hide;
-                for s in [&show, &hide] {
-                    sizes.push(style_preview_chip(ui, "x", s).rect.size());
-                }
-            },
+    fn colour_swatch_paints_no_caption() {
+        let ctx = headless_ctx();
+        let rgba = [255, 121, 198, 255];
+        for _ in 0..2 {
+            let (_, texts) = swatch_frame(&ctx, vec![], rgba);
+            assert!(
+                texts.iter().all(|t| !t.contains("R 255")),
+                "caption painted: {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn opening_the_rule_picker_emits_nothing_and_a_quick_pick_keeps_alpha() {
+        for rgba in [[40, 42, 54, 255], [1, 2, 3, 128]] {
+            let ctx = headless_ctx();
+            swatch_frame(&ctx, vec![], rgba);
+            crate::skin::colour_picker::request_open(&ctx, "rule");
+            for _ in 0..3 {
+                let (out, _) = swatch_frame(&ctx, vec![], rgba);
+                assert_eq!(out, None, "an open, untouched picker emits nothing");
+            }
+            let pink = crate::skin::colour_picker::probe_rect("quick:Pink").expect("open");
+            assert!(crate::skin::colour_picker::probe_rect("alpha").is_some());
+            assert!(crate::skin::colour_picker::probe_rect("none").is_none());
+            let (out, _) = swatch_frame(&ctx, click_events(pink.center()), rgba);
+            assert_eq!(out, Some([255, 121, 198, rgba[3]]));
+        }
+    }
+
+    #[test]
+    fn colour_swatch_rgb_has_no_alpha_slider() {
+        let ctx = headless_ctx();
+        let frame = |ctx: &egui::Context, events: Vec<Event>| {
+            crate::skin::colour_picker::probes_clear();
+            let mut out = None;
+            ctx.run_ui(picker_input(events), |ui| {
+                out = colour_swatch_rgb(ui, [1, 2, 3]);
+            })
+            .drop_without_applying_deltas();
+            out
+        };
+        frame(&ctx, vec![]);
+        crate::skin::colour_picker::request_open(&ctx, "rule");
+        for _ in 0..3 {
+            assert_eq!(frame(&ctx, vec![]), None);
+        }
+        assert!(crate::skin::colour_picker::probe_rect("square").is_some());
+        assert!(crate::skin::colour_picker::probe_rect("alpha").is_none());
+        let pink = crate::skin::colour_picker::probe_rect("quick:Pink").unwrap();
+        assert_eq!(
+            frame(&ctx, click_events(pink.center())),
+            Some([255, 121, 198])
         );
-        out.drop_without_applying_deltas();
-        assert!(sizes.iter().all(|s| *s == egui::vec2(120.0, 24.0)));
     }
 }

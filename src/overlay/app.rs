@@ -630,15 +630,44 @@ fn section_to_reveal(working: &WorkingFilter, settings: &Settings, id: BlockId) 
         .then(|| sec.name.clone())
 }
 
+#[cfg(test)]
 fn apply_row_actions(
     working: &mut WorkingFilter,
     list: &mut ListUi,
     query: &mut String,
     actions: Vec<RowAction>,
 ) -> (bool, Option<String>) {
+    apply_row_actions_folding(working, list, query, actions, None)
+}
+
+/// [`apply_row_actions`], also keeping the stored folded state of the sections in `fold` in step
+/// (WR-04). Each section action's fold change is computed against the document just before it
+/// runs and kept only when the action changed the document, so a refused rename or remove leaves
+/// the flags alone and a batch of structural actions follows the shifting ordinals (WR-06).
+fn apply_row_actions_folding(
+    working: &mut WorkingFilter,
+    list: &mut ListUi,
+    query: &mut String,
+    actions: Vec<RowAction>,
+    mut fold: Option<&mut Settings>,
+) -> (bool, Option<String>) {
     let mut changed = false;
     let mut status = None;
     for action in rules::coalesce_edits(actions) {
+        let fold_next = match (&fold, &action) {
+            (
+                Some(settings),
+                RowAction::RenameSection { .. }
+                | RowAction::RemoveSection(_)
+                | RowAction::AddSection
+                | RowAction::AddSectionAbove(_),
+            ) => Some(section_state_after(
+                working,
+                settings,
+                std::slice::from_ref(&action),
+            )),
+            _ => None,
+        };
         let is_add = matches!(action, RowAction::AddRule);
         let is_add_section = matches!(action, RowAction::AddSection);
         let section_above = match &action {
@@ -695,6 +724,9 @@ fn apply_row_actions(
         }
         if outcome.changed {
             changed = true;
+            if let (Some(settings), Some(next)) = (fold.as_deref_mut(), fold_next) {
+                *settings = next;
+            }
             if is_add_section {
                 // The new divider is at the very top: clear the search so it shows, scroll
                 // there and put the cursor in its name box.
@@ -1292,17 +1324,6 @@ impl OverlayApp {
         }
     }
 
-    /// Keeps the stored folded state in step with the section actions of a batch (WR-04).
-    fn carry_section_state(&mut self, actions: &[RowAction]) {
-        let Some(working) = &self.working else {
-            return;
-        };
-        let next = section_state_after(working, &self.settings, actions);
-        if next != self.settings {
-            self.store_settings(next);
-        }
-    }
-
     /// Persist the reload-after-Apply preference at once. A view preference, not a CONFIG draft
     /// edit: it never touches the loaded filter or the CONFIG pending state.
     fn set_reload_after_apply(&mut self, on: bool) {
@@ -1463,10 +1484,15 @@ impl OverlayApp {
     /// Applies deferred row operations to the working filter and updates the status the way a
     /// list click does.
     fn run_row_actions(&mut self, row_actions: Vec<RowAction>) {
-        self.carry_section_state(&row_actions);
+        let mut fold = self.settings.clone();
         if let Some(working) = &mut self.working {
-            let (changed, status) =
-                apply_row_actions(working, &mut self.list, &mut self.query, row_actions);
+            let (changed, status) = apply_row_actions_folding(
+                working,
+                &mut self.list,
+                &mut self.query,
+                row_actions,
+                Some(&mut fold),
+            );
             if changed {
                 // An action can report `changed` without altering the bytes (clearing an
                 // absent name, moving a rule and back); only a real difference from the
@@ -1480,6 +1506,10 @@ impl OverlayApp {
             if status.is_some() {
                 self.list_status = status;
             }
+        }
+        // Keeps the stored folded state in step with the section actions that ran (WR-04).
+        if fold != self.settings {
+            self.store_settings(fold);
         }
         // A rule moved into a collapsed neighbour stays in view (WR-02).
         if let Some(id) = self.list.pending_scroll {
@@ -4076,6 +4106,100 @@ mod tests {
             std::fs::read_to_string(crate::settings::path(dir.path())).unwrap(),
             bad
         );
+    }
+
+    #[test]
+    fn a_refused_section_edit_keeps_its_fold_flag() {
+        let r = crate::filter::section::RULE_LINE;
+        // "After" directly follows the economy section, so removing it is refused.
+        let mut working = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section Old
+{r}
+
+Show
+
+{r}
+{}
+{r}
+
+Hide
+
+             {r}
+# ff:section After
+{r}
+
+Show
+",
+            crate::filter::section::BEGIN_LINE
+        ));
+        assert!(working.sections()[1].economy);
+        let f = "dynamic.filter";
+        let mut fold = crate::settings::Settings::default().set_section_collapsed(f, "After", true);
+        let before = fold.clone();
+        let (changed, _) = super::apply_row_actions_folding(
+            &mut working,
+            &mut ListUi::default(),
+            &mut String::new(),
+            vec![RowAction::RemoveSection(2)],
+            Some(&mut fold),
+        );
+        assert!(!changed);
+        assert_eq!(fold, before, "a refused remove must not drop the flag");
+        // A rename that is refused (the economy banner is locked) moves nothing either.
+        let (changed, _) = super::apply_row_actions_folding(
+            &mut working,
+            &mut ListUi::default(),
+            &mut String::new(),
+            vec![RowAction::RenameSection {
+                ordinal: 1,
+                name: "After".into(),
+            }],
+            Some(&mut fold),
+        );
+        assert!(!changed);
+        assert_eq!(fold, before);
+    }
+
+    #[test]
+    fn a_batch_of_removes_drops_the_flags_of_the_sections_it_removed() {
+        let r = crate::filter::section::RULE_LINE;
+        let mut working = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section A
+{r}
+
+Show
+
+{r}
+# ff:section B
+{r}
+
+Show
+
+             {r}
+# ff:section C
+{r}
+
+Show
+"
+        ));
+        let f = "dynamic.filter";
+        let mut fold = crate::settings::Settings::default()
+            .set_section_collapsed(f, "A", true)
+            .set_section_collapsed(f, "B", true)
+            .set_section_collapsed(f, "C", true);
+        let (changed, _) = super::apply_row_actions_folding(
+            &mut working,
+            &mut ListUi::default(),
+            &mut String::new(),
+            vec![RowAction::RemoveSection(0), RowAction::RemoveSection(0)],
+            Some(&mut fold),
+        );
+        assert!(changed);
+        assert!(!fold.section_collapsed(f, "A", false));
+        assert!(!fold.section_collapsed(f, "B", false));
+        assert!(fold.section_collapsed(f, "C", false), "C still exists");
     }
 
     #[test]

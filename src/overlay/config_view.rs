@@ -16,10 +16,9 @@ use crate::models::config::{
 };
 use crate::settings;
 
-use super::apply;
 use super::body;
 use super::config_state::{
-    APPLY_BLOCKED_TOOLTIP, ColourSlot, ConfigState, StyleEdit, config_warning, delete_confirm_text,
+    ColourSlot, ConfigState, StyleEdit, config_warning, delete_confirm_text,
 };
 use super::theme;
 use super::widgets::{self, ArrowDirection};
@@ -161,6 +160,8 @@ pub struct ConfigViewCtx<'a> {
     pub indicator: &'a str,
     /// Current value of the reload-after-Apply setting.
     pub reload_after_apply: bool,
+    /// The shell skin for section headings (`None` in headless tests).
+    pub skin: Option<&'a crate::skin::Skin>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -244,26 +245,22 @@ pub fn revert_prompt(n: usize) -> String {
     }
 }
 
-/// The footer's buttons as (label, enabled), left to right. The footer renders from this. After a
-/// changed-on-disk refusal only RELOAD and OVERWRITE remain, the same two as the RULES footer.
-pub fn footer_buttons(
-    state: &ConfigState,
-    cfg: &ConfigUi,
-    changed_on_disk: bool,
-    apply_enabled: bool,
-) -> Vec<(&'static str, bool)> {
-    if changed_on_disk {
-        return vec![("RELOAD", true), ("OVERWRITE", true)];
-    }
-    if cfg.revert_armed && state.is_dirty() {
-        return vec![("Discard", true), ("Cancel", true)];
-    }
-    vec![("Apply", apply_enabled), ("Revert", state.is_dirty())]
-}
-
 // ---------------------------------------------------------------------------------------------
 // Small widgets
 // ---------------------------------------------------------------------------------------------
+
+/// A section heading: the skin's gold rule heading, or a plain heading label when no skin is
+/// available (headless tests).
+fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) {
+    match ctx.skin {
+        Some(skin) => {
+            crate::skin::widgets::ff_section(ui, skin, title);
+        }
+        None => {
+            ui.label(RichText::new(title).size(21.0));
+        }
+    }
+}
 
 fn helper(ui: &mut egui::Ui, text: &str) {
     ui.add(
@@ -303,8 +300,8 @@ fn segmented(ui: &mut egui::Ui, options: &[&str], current: usize) -> Option<usiz
 // Sections
 // ---------------------------------------------------------------------------------------------
 
-/// FILTER, STYLES and TIERS inside their own vertical scroll area. The footer is drawn by the
-/// app (pinned, before this call) so Apply stays on screen however long the lists grow.
+/// FILTER, STYLES and TIERS. The app wraps this in the shell's game-art scroll area; Apply,
+/// Revert and Reload live in the shared bottom bar.
 pub fn show_sections(
     ui: &mut egui::Ui,
     state: &ConfigState,
@@ -312,18 +309,13 @@ pub fn show_sections(
     ctx: &ConfigViewCtx,
 ) -> Vec<ConfigAction> {
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("ff-config-scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.label(theme::section_header("FILTER"));
-            show_filter(ui, cfg, ctx, &mut actions);
-            ui.add_space(16.0);
-            show_styles(ui, state, cfg, ctx, &mut actions);
-            ui.add_space(16.0);
-            ui.label(theme::section_header("TIERS"));
-            show_tiers(ui, state, &mut actions);
-        });
+    section_title(ui, ctx, "Filter");
+    show_filter(ui, cfg, ctx, &mut actions);
+    ui.add_space(16.0);
+    show_styles(ui, state, cfg, ctx, &mut actions);
+    ui.add_space(16.0);
+    section_title(ui, ctx, "Tiers");
+    show_tiers(ui, state, &mut actions);
     actions
 }
 
@@ -659,7 +651,7 @@ fn show_styles(
     ctx: &ConfigViewCtx,
     actions: &mut Vec<ConfigAction>,
 ) {
-    ui.label(theme::section_header("STYLES"));
+    section_title(ui, ctx, "Styles");
 
     let (builtin, custom) = style_groups(state);
     if builtin.is_empty() && custom.is_empty() {
@@ -1344,83 +1336,6 @@ fn beam_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<C
 // Status, footer, load error
 // ---------------------------------------------------------------------------------------------
 
-/// The pinned button row. The app draws the outcome area above it.
-pub fn show_footer(
-    ui: &mut egui::Ui,
-    state: &ConfigState,
-    cfg: &mut ConfigUi,
-    ctx: &ConfigViewCtx,
-) -> Vec<ConfigAction> {
-    let mut actions = Vec::new();
-    // A revert confirm cannot outlive its edits.
-    if !state.is_dirty() {
-        cfg.revert_armed = false;
-    }
-
-    if cfg.revert_armed && state.is_dirty() && !ctx.changed_on_disk {
-        ui.label(
-            RichText::new(revert_prompt(state.dirty_count()))
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::VALUE_TEXT),
-        );
-    }
-    // The same state line as the RULES footer: one Apply state for both tabs.
-    ui.label(
-        RichText::new(ctx.indicator)
-            .size(theme::ROW_SUMMARY_SIZE)
-            .color(theme::TAB_ACTIVE),
-    );
-
-    let buttons = footer_buttons(state, cfg, ctx.changed_on_disk, ctx.apply_enabled);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        for (label, enabled) in buttons {
-            let accent = matches!(label, "OVERWRITE" | "Discard");
-            let text = RichText::new(label);
-            let mut button = egui::Button::new(text).min_size(vec2(0.0, 28.0));
-            if accent {
-                button = button.fill(theme::WARM_ACCENT);
-            }
-            let mut response = ui.add_enabled(enabled, button);
-            if label == "Apply" && !enabled {
-                let tip = if state.has_tier_errors() {
-                    APPLY_BLOCKED_TOOLTIP
-                } else if state.styles_error().is_some() || state.tiers_error().is_some() {
-                    APPLY_LOAD_ERROR_TIP
-                } else if ctx.rules_blocking {
-                    apply::APPLY_BLOCKED_TOOLTIP
-                } else if ctx.filter_damaged {
-                    apply::DAMAGED_MARKERS_MESSAGE
-                } else {
-                    APPLY_NOTHING_TIP
-                };
-                response = response.on_disabled_hover_text(tip);
-            }
-            match label {
-                "RELOAD" => response = response.on_hover_text(apply::RELOAD_TOOLTIP),
-                "OVERWRITE" => response = response.on_hover_text(apply::OVERWRITE_TOOLTIP),
-                _ => {}
-            }
-            if !response.clicked() {
-                continue;
-            }
-            match label {
-                "Apply" => actions.push(ConfigAction::Apply),
-                "Revert" => cfg.revert_armed = true,
-                "Discard" => {
-                    cfg.revert_armed = false;
-                    actions.push(ConfigAction::Revert);
-                }
-                "RELOAD" => actions.push(ConfigAction::Reload),
-                "OVERWRITE" => actions.push(ConfigAction::Overwrite),
-                "Cancel" => cfg.revert_armed = false,
-                _ => {}
-            }
-        }
-    });
-    actions
-}
-
 /// The load-failure view: the message and a way to retry.
 pub fn show_load_error(ui: &mut egui::Ui, message: &str) -> Option<ConfigAction> {
     ui.add(
@@ -1507,6 +1422,7 @@ mod tests {
             filter_damaged: false,
             indicator: "",
             reload_after_apply: true,
+            skin: None,
         }
     }
 
@@ -1766,40 +1682,6 @@ mod tests {
             delete_prompt("kite", &plain),
             delete_confirm_text("kite", 2)
         );
-    }
-
-    #[test]
-    fn footer_buttons_follow_the_shared_state() {
-        let (_d, mut state) = loaded();
-        let mut cfg = ConfigUi::default();
-        // Apply follows the combined state the app computes; Revert follows the config edits.
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, true),
-            vec![("Apply", true), ("Revert", false)]
-        );
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, false),
-            vec![("Apply", false), ("Revert", false)]
-        );
-        state.set_tier_text("S", "oops");
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, false),
-            vec![("Apply", false), ("Revert", true)]
-        );
-        assert!(state.has_tier_errors());
-
-        // After a changed-on-disk refusal: the same two buttons as the RULES footer, no guard.
-        let changed = footer_buttons(&state, &cfg, true, true);
-        assert_eq!(changed, vec![("RELOAD", true), ("OVERWRITE", true)]);
-        assert!(changed.iter().all(|(l, _)| *l != "Cancel"));
-
-        // The Revert confirm still works.
-        cfg.revert_armed = true;
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, true),
-            vec![("Discard", true), ("Cancel", true)]
-        );
-        assert_eq!(revert_prompt(3), "Discard 3 unapplied config changes?");
     }
 
     fn drain_probes() -> Vec<(&'static str, egui::Rect)> {
@@ -2317,36 +2199,6 @@ mod tests {
             .collect();
         assert_eq!(tail, ["k1", "k3", "k2"]);
         assert!(!state.move_style("S", true), "built-ins never move");
-    }
-
-    #[test]
-    fn the_footer_apply_button_stays_inside_the_stripe() {
-        let (_d, state) = loaded();
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
-        let (ctx, input) = headless();
-        let mut cfg = ConfigUi::default();
-        let vctx = view_ctx(None, &users, &refs);
-        let screen = input.screen_rect.unwrap();
-        let mut footer_rect = egui::Rect::NOTHING;
-        // A few frames: a bottom panel sizes itself from the previous frame's content.
-        for _ in 0..4 {
-            let out = ctx.run_ui(input.clone(), |ui| {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    egui::Panel::bottom(egui::Id::new("cfg-test-footer")).show(ui, |ui| {
-                        show_footer(ui, &state, &mut cfg, &vctx);
-                        footer_rect = ui.min_rect();
-                    });
-                    show_sections(ui, &state, &mut cfg, &vctx);
-                });
-            });
-            out.drop_without_applying_deltas();
-        }
-        assert!(
-            footer_rect.max.y <= screen.max.y,
-            "footer {footer_rect:?} outside {screen:?}"
-        );
-        assert!(footer_rect.height() >= 28.0);
     }
 
     #[test]

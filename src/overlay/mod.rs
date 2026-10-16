@@ -22,6 +22,7 @@ pub mod instance;
 pub mod layout;
 pub mod rule_list;
 pub mod rules;
+pub(crate) mod shell;
 pub mod text_entry;
 pub mod theme;
 pub mod tray;
@@ -81,7 +82,7 @@ pub fn launch() -> eframe::Result<()> {
         .with_title("FerrisFilter")
         .with_always_on_top()
         .with_decorations(false)
-        .with_inner_size([layout::STRIPE_WIDTH, 1000.0])
+        .with_inner_size([shell::WIDTH, 1000.0])
         .with_resizable(false)
         .with_taskbar(false)
         .with_active(false);
@@ -95,17 +96,16 @@ pub fn launch() -> eframe::Result<()> {
         "ferrisfilter",
         options,
         Box::new(move |cc| {
-            // D-24/D-25: register the Cinzel display face and switch to the PoE2-Options
-            // palette before the first frame paints, so nothing ever renders in egui's
-            // defaults even for one frame.
-            theme::install_fonts(&cc.egui_ctx);
-            cc.egui_ctx.set_visuals(theme::poe2_visuals());
+            // Fonts, the skin's style and every texture, before the first frame paints, so
+            // nothing ever renders in egui's defaults even for one frame.
+            let skin = crate::skin::install(&cc.egui_ctx);
 
             Ok(Box::new(app::OverlayApp::new(
                 tray,
                 hotkey_manager,
                 hotkey_status,
                 instance_guard,
+                skin,
             )))
         }),
     )

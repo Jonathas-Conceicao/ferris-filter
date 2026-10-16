@@ -5,8 +5,13 @@
 //! these return and performs the calls. The status line shows exactly one message, so
 //! [`status_for`] is the priority table from the Phase 30 UI contract made executable.
 
+use egui::TextureHandle;
+
 use crate::filter::BlockId;
-use crate::skin::widgets::StatusKind;
+use crate::skin::Skin;
+use crate::skin::fonts;
+use crate::skin::palette as pal;
+use crate::skin::widgets::{self as w, StatusKind};
 
 use super::apply::{self, ApplyState, FooterActions};
 use super::config_state;
@@ -317,8 +322,184 @@ pub(crate) fn bar_state(
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Header art, Economy and About
+// ---------------------------------------------------------------------------------------------
+
+/// The header picture: the ONE switch for FerrisFilter's own header art. `None` paints the
+/// placeholder plate; today it is the game's Options title bar.
+pub(crate) fn header_art(skin: &Skin) -> Option<&TextureHandle> {
+    Some(&skin.title_bar)
+}
+
+/// "Last sync" as local `YYYY-MM-DD HH:MM` from the `prices.json` modified time (Unix seconds)
+/// and the local UTC offset in minutes; `Never` when there is no such file.
+pub(crate) fn last_sync_text(mtime_unix_secs: Option<u64>, utc_offset_minutes: i32) -> String {
+    let Some(secs) = mtime_unix_secs else {
+        return "Never".to_string();
+    };
+    let local = (secs as i64 + i64::from(utc_offset_minutes) * 60).max(0) as u64;
+    let (year, month, day) = crate::sync::prices::days_to_ymd(local / 86_400);
+    let rem = local % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60
+    )
+}
+
+/// The ECONOMY tab: league, last sync and the one Sync economy button. Returns true when the
+/// button was clicked. While `syncing` it reads `Syncing…` and is disabled.
+pub(crate) fn economy_tab(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    league: &str,
+    last_sync: &str,
+    syncing: bool,
+    enabled: bool,
+) -> bool {
+    let mut clicked = false;
+    w::ff_scroll_area(ui, skin, "economy", |ui| {
+        w::ff_section(ui, skin, "Economy");
+        for (i, (label, value)) in [("League", league), ("Last sync", last_sync)]
+            .into_iter()
+            .enumerate()
+        {
+            w::ff_row(ui, i, label, |ui| {
+                ui.label(
+                    egui::RichText::new(value)
+                        .font(fonts::regular(15.0))
+                        .color(pal::VALUE),
+                );
+            });
+        }
+        ui.add_space(14.0);
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            let label = if syncing {
+                "Syncing…"
+            } else {
+                "Sync economy"
+            };
+            if w::ff_button_ex(ui, skin, label, 180.0, enabled && !syncing, false).clicked() {
+                clicked = true;
+            }
+        });
+    });
+    clicked
+}
+
+/// The ABOUT tab: identity, credits and the not-affiliated disclaimer pinned to the bottom.
+pub(crate) fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
+    use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
+    let area = ui.available_rect_before_wrap();
+    let foot_h = 80.0;
+    let body = Rect::from_min_max(
+        area.min,
+        pos2(area.max.x, (area.max.y - foot_h).max(area.min.y)),
+    );
+    let mut bui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(body)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    w::ff_scroll_area(&mut bui, skin, "about", |ui| {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                egui::RichText::new("FerrisFilter")
+                    .font(fonts::small_caps(21.0))
+                    .color(pal::HEADING),
+            );
+            ui.label(
+                egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                    .font(fonts::regular(15.0))
+                    .color(pal::MUTED),
+            );
+            ui.label(
+                egui::RichText::new("A loot-filter editor and overlay for Path of Exile 2")
+                    .font(fonts::regular(15.0))
+                    .color(pal::LABEL),
+            );
+        });
+        ui.add_space(24.0);
+        w::ff_section(ui, skin, "Credits");
+        let credits = [
+            ("Game UI art and font files", "© Grinding Gear Games"),
+            ("Fontin typeface", "exljbris"),
+            ("Ferris the crab", "Karen Rustad Tölva, public domain"),
+        ];
+        for (i, (what, who)) in credits.iter().enumerate() {
+            w::ff_row(ui, i, what, |ui| {
+                ui.label(
+                    egui::RichText::new(*who)
+                        .font(fonts::regular(15.0))
+                        .color(pal::VALUE),
+                );
+            });
+        }
+    });
+    let foot = Rect::from_min_max(pos2(area.min.x, area.max.y - foot_h), area.max);
+    crate::skin::slice::paint_image(
+        ui.painter(),
+        &skin.title_underline,
+        Rect::from_center_size(
+            pos2(foot.center().x, foot.min.y),
+            vec2(foot.width() * 0.8, 3.0),
+        ),
+        egui::Color32::from_white_alpha(110),
+    );
+    let mut fui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(foot.shrink2(vec2(6.0, 12.0)))
+            .layout(Layout::top_down(Align::Center)),
+    );
+    fui.spacing_mut().item_spacing.y = 4.0;
+    for (text, color) in [
+        (
+            "This product isn't affiliated with or endorsed by Grinding Gear Games in any way.",
+            pal::LABEL,
+        ),
+        (
+            "Game art and fonts belong to their owners. FerrisFilter is a free third-party              tool for Path of Exile 2 players.",
+            pal::MUTED,
+        ),
+    ] {
+        fui.add(
+            egui::Label::new(
+                egui::RichText::new(text)
+                    .font(fonts::regular(15.0))
+                    .color(color),
+            )
+            .halign(Align::Center)
+            .wrap(),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn last_sync_text_formats_local_time() {
+        assert_eq!(super::last_sync_text(Some(0), 0), "1970-01-01 00:00");
+        assert_eq!(super::last_sync_text(None, 120), "Never");
+        // 2023-11-14 22:13:20 UTC
+        assert_eq!(
+            super::last_sync_text(Some(1_700_000_000), 0),
+            "2023-11-14 22:13"
+        );
+        assert_eq!(
+            super::last_sync_text(Some(1_700_000_000), 120),
+            "2023-11-15 00:13"
+        );
+        assert_eq!(
+            super::last_sync_text(Some(1_700_000_000), -180),
+            "2023-11-14 19:13"
+        );
+        // A negative offset before the epoch clamps instead of wrapping.
+        assert_eq!(super::last_sync_text(Some(0), -60), "1970-01-01 00:00");
+    }
+
     use super::*;
 
     fn id() -> BlockId {
@@ -474,13 +655,25 @@ mod tests {
         let text = format!("Wrote x. {}", apply::RELOAD_INSTRUCTION);
         let e = event_from(Some(text.clone()), true, None, None, None);
         assert_eq!(e, Some((text, StatusKind::Warning)));
-        let e = event_from(None, true, Some(("c".into(), true)), Some(("s".into(), true)), None);
+        let e = event_from(
+            None,
+            true,
+            Some(("c".into(), true)),
+            Some(("s".into(), true)),
+            None,
+        );
         assert_eq!(e, Some(("c".into(), StatusKind::Error)));
         let e = event_from(None, true, Some(("c".into(), false)), None, None);
         assert_eq!(e, Some(("c".into(), StatusKind::Info)));
         let e = event_from(None, true, None, Some(("s".into(), true)), Some("l".into()));
         assert_eq!(e, Some(("s".into(), StatusKind::Error)));
-        let e = event_from(None, true, None, Some(("s".into(), false)), Some("l".into()));
+        let e = event_from(
+            None,
+            true,
+            None,
+            Some(("s".into(), false)),
+            Some("l".into()),
+        );
         assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
         let e = event_from(None, true, None, None, Some("l".into()));
         assert_eq!(e, Some(("l".into(), StatusKind::Info)));
@@ -494,7 +687,10 @@ mod tests {
         assert_eq!(tab_markers(Config, true, true), [true, false, false, false]);
         assert_eq!(tab_markers(Economy, true, true), [true, true, false, false]);
         assert_eq!(tab_markers(About, false, true), [false, true, false, false]);
-        assert_eq!(tab_markers(Rules, true, false), [false, false, false, false]);
+        assert_eq!(
+            tab_markers(Rules, true, false),
+            [false, false, false, false]
+        );
     }
 
     #[test]
@@ -548,7 +744,12 @@ mod tests {
             apply_enabled: true,
             ..Default::default()
         };
-        let b = bar_state(ShellTab::Config, actions(false, false, false, false), cfg, false);
+        let b = bar_state(
+            ShellTab::Config,
+            actions(false, false, false, false),
+            cfg,
+            false,
+        );
         assert!(b.revert);
         assert!(b.apply.enabled);
     }
@@ -593,9 +794,7 @@ mod tests {
     #[test]
     fn disabled_apply_tip_chain() {
         let a = actions(false, false, false, false);
-        let tip = |cfg: ConfigBarInputs| {
-            bar_state(ShellTab::Config, a, cfg, false).apply.tip
-        };
+        let tip = |cfg: ConfigBarInputs| bar_state(ShellTab::Config, a, cfg, false).apply.tip;
         let all = ConfigBarInputs {
             tier_errors: true,
             load_error: true,

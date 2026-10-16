@@ -48,20 +48,33 @@ use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
 use super::instance;
-use super::layout;
 use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
-use super::theme;
+use super::shell::{self, ConfigBarInputs, ShellTab, StatusInputs, StatusLine};
 use super::tray::{self, OverlayCommand, TrayHandles};
 use super::visibility::{self, Visibility};
-use super::widgets;
 use super::win::{self, OverlayWindow};
+use crate::skin::Skin;
+use crate::skin::fonts;
+use crate::skin::palette as pal;
+use crate::skin::widgets as w;
+use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
 
 /// The eframe application state for the overlay stripe.
 pub struct OverlayApp {
     /// Latches `true` once the first-frame docking has run, so it never runs
     /// again (position/width are not persisted or re-derived per frame).
     docked: bool,
+
+    /// The `native_pixels_per_point` seen at the last dock; a different value later (the window
+    /// crossed to a monitor of another scale) re-docks once so the width stays 660pt.
+    dock_ppp: Option<f32>,
+
+    /// The PoE2 skin: every texture, uploaded once at startup.
+    skin: Skin,
+
+    /// The ECONOMY tab's "Last sync" text, read when the tab opens and when a sync finishes.
+    last_sync: String,
 
     /// The tray icon, menu, and id->command mapping. Kept alive here until tray Quit, which
     /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
@@ -163,7 +176,7 @@ pub struct OverlayApp {
     styles_checked: f64,
 
     /// Which top-level tab is showing. Switching never applies or discards anything.
-    tab: Tab,
+    tab: ShellTab,
 
     /// The CONFIG tab's model (styles + tiers edits). `Err` holds the rendered load failure.
     config: Result<ConfigState, String>,
@@ -189,13 +202,6 @@ pub struct OverlayApp {
 
     /// A filter picked while the rules have unapplied edits, awaiting confirmation.
     pending_switch: Option<String>,
-}
-
-/// The two top-level tabs of the stripe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    Rules,
-    Config,
 }
 
 /// Seconds between `styles.json` modification-time polls while the stripe runs.
@@ -241,82 +247,6 @@ fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<Str
         )
     })
     .map_err(|e| e.to_string())
-}
-
-/// Draws the RULES | CONFIG strip and returns the tab the user picked this frame.
-/// `*` on a label means the OTHER tab holds unapplied edits.
-fn tab_strip(
-    ui: &mut egui::Ui,
-    active: Tab,
-    rules_marker: bool,
-    config_marker: bool,
-) -> Option<Tab> {
-    let mut picked = None;
-    let seg_w = ((ui.available_width() - 4.0) / 2.0).max(0.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (tab, name, marker) in [
-            (Tab::Rules, "RULES", rules_marker),
-            (Tab::Config, "CONFIG", config_marker),
-        ] {
-            let (rect, resp) =
-                ui.allocate_exact_size(egui::vec2(seg_w, 28.0), egui::Sense::click());
-            let is_active = tab == active;
-            let colour = if is_active || resp.hovered() {
-                theme::SECTION_CREAM
-            } else {
-                theme::TAB_ACTIVE
-            };
-            let fill = if is_active {
-                theme::HEADER_PLATE
-            } else {
-                theme::ROW_BASE
-            };
-            let mut job = theme::row_label(&apply::tab_label(name, marker));
-            for section in &mut job.sections {
-                section.format.color = colour;
-            }
-            let painter = ui.painter();
-            painter.rect_filled(rect, 0.0, fill);
-            let galley = painter.layout_job(job);
-            painter.galley(rect.center() - galley.size() / 2.0, galley, colour);
-            if is_active {
-                painter.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(rect.left(), rect.bottom() - 2.0),
-                        rect.right_bottom(),
-                    ),
-                    0.0,
-                    theme::SECTION_CREAM,
-                );
-            }
-            let resp = if marker {
-                resp.on_hover_text(apply::OTHER_TAB_DIRTY_TIP)
-            } else {
-                resp
-            };
-            resp.widget_info(|| {
-                egui::WidgetInfo::selected(egui::WidgetType::Button, true, is_active, name)
-            });
-            if resp.clicked() && !is_active {
-                picked = Some(tab);
-            }
-            if resp.has_focus() {
-                let (left, right) = ui.input(|i| {
-                    (
-                        i.key_pressed(egui::Key::ArrowLeft),
-                        i.key_pressed(egui::Key::ArrowRight),
-                    )
-                });
-                if tab == Tab::Rules && right {
-                    picked = Some(Tab::Config);
-                } else if tab == Tab::Config && left {
-                    picked = Some(Tab::Rules);
-                }
-            }
-        }
-    });
-    picked
 }
 
 /// The effective styles source under `root` and its modification time; `None` when neither
@@ -665,24 +595,26 @@ fn apply_row_actions(
     (changed, status)
 }
 
-/// The rule count beside the FILTER header: `142 rules`, `1 rule`, or `7 of 142 rules` while a
-/// search is active.
-fn rule_count_text(total: usize, shown: usize, filtering: bool) -> String {
-    let noun = if total == 1 { "rule" } else { "rules" };
-    if filtering {
-        format!("{shown} of {total} {noun}")
-    } else {
-        format!("{total} {noun}")
-    }
-}
-
-/// A heading plus a wrapped explanation, used for the empty and error states of the list.
-fn centered_notice(ui: &mut egui::Ui, heading: &str, body: &str) {
+/// A heading plus an optional wrapped explanation, used for the empty and error states.
+fn centered_notice(ui: &mut egui::Ui, heading: &str, body: Option<&str>) {
     ui.add_space(16.0);
     ui.vertical_centered(|ui| {
-        ui.label(theme::section_header(heading));
-        ui.add_space(8.0);
-        ui.add(egui::Label::new(egui::RichText::new(body).color(theme::TAB_ACTIVE)).wrap());
+        ui.label(
+            egui::RichText::new(heading)
+                .font(fonts::small_caps(21.0))
+                .color(pal::HEADING),
+        );
+        if let Some(body) = body {
+            ui.add_space(8.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(body)
+                        .font(fonts::regular(15.0))
+                        .color(pal::MUTED),
+                )
+                .wrap(),
+            );
+        }
     });
 }
 
@@ -826,6 +758,7 @@ impl OverlayApp {
         hotkey_manager: Option<GlobalHotKeyManager>,
         hotkey_status: HotkeyStatus,
         instance: instance::Guard,
+        skin: Skin,
     ) -> Self {
         let root = crate::paths::app_root().map_err(|e| e.to_string());
         let game_dir = dynamic::default_destination();
@@ -844,6 +777,9 @@ impl OverlayApp {
 
         let mut app = Self {
             docked: false,
+            dock_ppp: None,
+            skin,
+            last_sync: String::new(),
             tray,
             hotkey_manager,
             hotkey_status,
@@ -877,7 +813,7 @@ impl OverlayApp {
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
             styles_checked: 0.0,
-            tab: Tab::Rules,
+            tab: ShellTab::Rules,
             config,
             config_ui: ConfigUi::default(),
             config_message: None,
@@ -888,10 +824,24 @@ impl OverlayApp {
             pending_switch: None,
         };
         app.refresh_inputs();
+        app.refresh_last_sync();
         if settings_warning.is_some() {
             app.list_status = settings_warning;
         }
         app
+    }
+
+    /// Re-reads the `prices.json` modified time for the ECONOMY tab's "Last sync" row.
+    fn refresh_last_sync(&mut self) {
+        let secs = self
+            .root
+            .as_ref()
+            .ok()
+            .and_then(|root| std::fs::metadata(root.join("prices.json")).ok())
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        self.last_sync = shell::last_sync_text(secs, win::utc_offset_minutes());
     }
 
     /// Re-reads the game folder's filter list into the cache.
@@ -1463,8 +1413,13 @@ impl OverlayApp {
         }
     }
 
-    /// Draws the CONFIG tab below the tab strip and returns what the user asked for.
-    fn config_body(&mut self, ui: &mut egui::Ui, footer: ConfigFooterState) -> Vec<ConfigAction> {
+    /// Draws the CONFIG tab inside the shell's scroll area and returns what the user asked for.
+    fn config_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        skin: &Skin,
+        footer: ConfigFooterState,
+    ) -> Vec<ConfigAction> {
         let mut actions = Vec::new();
         // Fresh every frame: it must be right after a switch or a reload.
         let users = self
@@ -1486,64 +1441,104 @@ impl OverlayApp {
             filter_damaged: footer.filter_damaged,
             indicator: apply::indicator(self.apply_state),
             reload_after_apply: self.settings.reload_after_apply(),
+            skin: Some(skin),
         };
-        // The footer is claimed first so it keeps its height whatever the sections hold; the
-        // view's own scroll area then takes the rest (no ScrollArea nested around it).
-        egui::Panel::bottom(egui::Id::new("ff-config-footer"))
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::PANEL_GROUND)
-                    .inner_margin(egui::Margin {
-                        left: 8,
-                        right: 8,
-                        top: 0,
-                        bottom: 8,
-                    }),
-            )
-            .show(ui, |ui| {
-                // The shared Apply result shows on whichever tab is open.
-                let apply_line = self.apply_message.as_ref().map(|m| {
-                    let ok =
-                        self.apply_state == ApplyState::Applied && self.changed_on_disk.is_empty();
-                    (m.clone(), !ok)
-                });
-                let lines: Vec<OutcomeLine> = self
-                    .config_message
-                    .iter()
-                    .cloned()
-                    .chain(apply_line)
-                    .map(|(text, accent)| OutcomeLine {
-                        text,
-                        accent,
-                        jump: None,
-                    })
-                    .collect();
-                outcome_area(ui, "config-outcome", &lines);
-                if let Ok(state) = &self.config {
-                    actions.extend(config_view::show_footer(
-                        ui,
-                        state,
-                        &mut self.config_ui,
-                        &ctx,
-                    ));
-                }
-            });
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(8, 0))
-            .show(ui, |ui| match &self.config {
-                Ok(state) => {
-                    actions.extend(config_view::show_sections(
-                        ui,
-                        state,
-                        &mut self.config_ui,
-                        &ctx,
-                    ));
-                }
-                Err(message) => {
-                    actions.extend(config_view::show_load_error(ui, message));
-                }
-            });
+        w::ff_scroll_area(ui, skin, "config", |ui| match &self.config {
+            Ok(state) => {
+                actions.extend(config_view::show_sections(
+                    ui,
+                    state,
+                    &mut self.config_ui,
+                    &ctx,
+                ));
+            }
+            Err(message) => {
+                actions.extend(config_view::show_load_error(ui, message));
+            }
+        });
         actions
+    }
+
+    /// Draws the RULES tab: the search row, the rule list (or its notice) and the pinned economy
+    /// footer row at the bottom of the content.
+    fn rules_content(
+        &mut self,
+        ui: &mut egui::Ui,
+        skin: &Skin,
+        actions: apply::FooterActions,
+        row_actions: &mut Vec<RowAction>,
+        economy_action: &mut Option<rule_list::EconomyFooterAction>,
+    ) {
+        if let Some(working) = &self.working {
+            let total = working.rows().len();
+            if rule_list::search_row(ui, skin, &mut self.query, actions.add_rule, total) {
+                row_actions.push(RowAction::AddRule);
+            }
+            ui.add_space(6.0);
+        }
+        let avail = ui.available_rect_before_wrap();
+        let footer_h = if self.working.is_some() {
+            rule_list::ECONOMY_ROW_HEIGHT + 4.0
+        } else {
+            0.0
+        };
+        let list_rect = Rect::from_min_max(
+            avail.min,
+            pos2(avail.max.x, (avail.max.y - footer_h).max(avail.min.y)),
+        );
+        let mut lui = ui.new_child(
+            UiBuilder::new()
+                .max_rect(list_rect)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        lui.set_clip_rect(list_rect.intersect(ui.clip_rect()));
+        match (&mut self.working, &self.filter) {
+            (Some(working), _) => {
+                let visible = working.matches(&self.query);
+                if working.rows().is_empty() {
+                    centered_notice(&mut lui, "No rules yet", None);
+                } else if visible.is_empty() {
+                    centered_notice(
+                        &mut lui,
+                        &format!("No rules match \"{}\"", self.query.trim()),
+                        None,
+                    );
+                } else {
+                    let frame = rule_list::show_list(
+                        &mut lui,
+                        working,
+                        &visible,
+                        &mut self.list,
+                        self.query.trim().is_empty(),
+                        self.classes.as_ref().ok(),
+                    );
+                    row_actions.extend(frame.actions);
+                }
+            }
+            (None, Err(message)) => {
+                centered_notice(&mut lui, "The filter could not be loaded.", Some(message));
+            }
+            (None, Ok(_)) => {}
+        }
+        if let Some(working) = &self.working {
+            let footer_rect = Rect::from_min_max(
+                pos2(avail.min.x, avail.max.y - rule_list::ECONOMY_ROW_HEIGHT),
+                avail.max,
+            );
+            let mut fui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(footer_rect)
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            let can_edit_economy = self.root.is_ok() && self.changed_on_disk.is_empty();
+            *economy_action = rule_list::economy_footer(
+                &mut fui,
+                skin,
+                working.economy(),
+                &mut self.list,
+                can_edit_economy,
+            );
+        }
     }
 }
 
@@ -1555,120 +1550,82 @@ struct ConfigFooterState {
     filter_damaged: bool,
 }
 
-/// One message in the footer's outcome area.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct OutcomeLine {
-    pub text: String,
-    pub accent: bool,
-    pub jump: Option<BlockId>,
+/// What a frame of the bottom bar reported.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BarClicks {
+    pub revert: bool,
+    pub reload: bool,
+    pub apply: bool,
+    /// The status line was clicked (jump to its rule, when it has one).
+    pub status: bool,
+    /// The Revert, Reload and Apply button rectangles.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub rects: [Rect; 3],
 }
 
-/// Height cap of the outcome area; longer content scrolls inside it.
-pub(crate) const OUTCOME_MAX_HEIGHT: f32 = 96.0;
-
-/// The present footer messages, in display order: list status, Apply outcome, sync status, then
-/// the persistent grammar-gate and unknown-style lines.
-pub(crate) fn outcome_lines(
-    list_status: Option<String>,
-    apply_message: Option<(String, bool)>,
-    sync_status: Option<(String, bool)>,
-    grammar_gate: Option<(String, BlockId)>,
-    unknown_summary: Option<(String, BlockId)>,
-) -> Vec<OutcomeLine> {
-    let mut out = Vec::new();
-    if let Some(text) = list_status {
-        out.push(OutcomeLine {
-            text,
-            accent: false,
-            jump: None,
-        });
-    }
-    for (text, accent) in [apply_message, sync_status].into_iter().flatten() {
-        out.push(OutcomeLine {
-            text,
-            accent,
-            jump: None,
-        });
-    }
-    for (text, id) in [grammar_gate, unknown_summary].into_iter().flatten() {
-        out.push(OutcomeLine {
-            text,
-            accent: true,
-            jump: Some(id),
-        });
-    }
-    out
-}
-
-/// Draws the outcome lines inside one capped scroll area. Returns the rule a clicked line jumps to.
-pub(crate) fn outcome_area(
+/// Draws the bottom bar inside `bar`: Revert, Reload and the Apply slot right to left, then the
+/// one status line in the room left of them.
+pub(crate) fn bottom_bar(
     ui: &mut egui::Ui,
-    id_salt: &str,
-    lines: &[OutcomeLine],
-) -> Option<BlockId> {
-    if lines.is_empty() {
-        return None;
+    skin: &Skin,
+    bar: Rect,
+    state: &shell::BarState,
+    status: &StatusLine,
+) -> BarClicks {
+    let inner = bar.shrink2(vec2(10.0, 0.0));
+    let mut bui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    bui.spacing_mut().item_spacing.x = 8.0;
+    let slot = &state.apply;
+    let mut apply = w::ff_button_ex(&mut bui, skin, slot.label, 84.0, slot.enabled, slot.danger);
+    if let Some(tip) = slot.tip {
+        apply = apply.on_hover_text(tip);
     }
-    let mut jump = None;
-    egui::ScrollArea::vertical()
-        .id_salt(id_salt)
-        .max_height(OUTCOME_MAX_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for line in lines {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(8.0);
-                    let color = if line.accent {
-                        theme::WARM_ACCENT_TEXT
-                    } else {
-                        theme::TAB_ACTIVE
-                    };
-                    let mut label =
-                        egui::Label::new(egui::RichText::new(&line.text).size(13.0).color(color))
-                            .wrap();
-                    if line.jump.is_some() {
-                        label = label.sense(egui::Sense::click());
-                    }
-                    let resp = ui.add(label);
-                    if let Some(target) = line.jump
-                        && resp
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                    {
-                        jump = Some(target);
-                    }
-                });
-            }
-        });
-    jump
+    let reload = w::ff_button_ex(&mut bui, skin, "Reload", 84.0, state.reload, false)
+        .on_hover_text(state.reload_tip);
+    let revert = w::ff_button_ex(&mut bui, skin, "Revert", 84.0, state.revert, false);
+    let status_rect = Rect::from_min_max(
+        inner.min,
+        pos2((bui.min_rect().min.x - 10.0).max(inner.min.x), inner.max.y),
+    );
+    let line = w::ff_status_ex(
+        ui,
+        status_rect,
+        &status.text,
+        status.kind,
+        status.jump.is_some(),
+    );
+    BarClicks {
+        revert: state.revert && revert.clicked(),
+        reload: state.reload && reload.clicked(),
+        apply: slot.enabled && apply.clicked(),
+        status: status.jump.is_some() && line.clicked(),
+        rects: [revert.rect, reload.rect, apply.rect],
+    }
 }
 
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        if !self.docked {
-            // The work area (screen minus taskbar) when Windows will tell us, falling back to
-            // the raw monitor size elsewhere. Docking against the monitor put the APPLY row
-            // behind the taskbar (screenshot poe2_print008).
-            let monitor_size = ui.ctx().input(|i| i.viewport().monitor_size);
-            if let Some(monitor_size) = monitor_size {
-                let rect = match win::work_area() {
-                    Some(area) => layout::dock_rect_in(area, layout::STRIPE_WIDTH),
-                    None => layout::dock_rect(monitor_size, layout::STRIPE_WIDTH),
-                };
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::OuterPosition(rect.min));
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::InnerSize(rect.size()));
-                self.docked = true;
-            }
-            // When monitor_size is None, leave the builder defaults in place —
-            // never guess a monitor size. Retried on a later frame.
-        }
-
         // Cache the stripe's own HWND the first frame one is available
         // (RESEARCH Pattern 1). Retried every frame until it succeeds.
         if self.window.is_none() {
             self.window = win::from_frame(frame);
+        }
+
+        // Dock on the game's monitor (the primary one without the game): once as soon as the
+        // window handle exists, again on every summon (below), and once more when the window's
+        // scale changes after a move between monitors.
+        if let Some(window) = &self.window {
+            let ppp = ui.ctx().input(|i| i.viewport().native_pixels_per_point);
+            if (!self.docked || (ppp.is_some() && ppp != self.dock_ppp))
+                && win::dock_left(window, shell::WIDTH)
+            {
+                self.docked = true;
+                self.dock_ppp = ppp;
+            }
         }
 
         // Poll the global hotkey (D-09). Accept only our own registered id
@@ -1714,6 +1671,7 @@ impl eframe::App for OverlayApp {
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
         if self.economy.poll() {
+            self.refresh_last_sync();
             ui.ctx().request_repaint();
         }
 
@@ -1799,7 +1757,11 @@ impl eframe::App for OverlayApp {
         if let Some(effect) = visibility::effect_for(self.visibility, next) {
             if let Some(window) = &self.window {
                 match effect {
-                    visibility::Effect::Reveal => win::reveal(window),
+                    visibility::Effect::Reveal => {
+                        // Every summon re-docks first: the game may have moved monitors.
+                        let _ = win::dock_left(window, shell::WIDTH);
+                        win::reveal(window)
+                    }
                     visibility::Effect::Conceal => win::conceal(window),
                 }
             }
@@ -1852,10 +1814,6 @@ impl eframe::App for OverlayApp {
         // does not starve this loop — this just makes the interval
         // explicit in our own code.
         ui.ctx().request_repaint_after(Duration::from_millis(50));
-
-        let panel_frame = egui::Frame::central_panel(&ui.style())
-            .fill(theme::PANEL_GROUND)
-            .inner_margin(egui::Margin::ZERO);
 
         // Computed once per frame; every button below is shown/enabled strictly from it.
         self.poll_styles(ui.ctx().input(|i| i.time));
@@ -1915,306 +1873,244 @@ impl eframe::App for OverlayApp {
         let mut economy_action: Option<rule_list::EconomyFooterAction> = None;
         let mut jump_to: Option<BlockId> = None;
         let mut config_actions: Vec<ConfigAction> = Vec::new();
-        let mut picked_tab: Option<Tab> = None;
+        let mut picked_tab: Option<ShellTab> = None;
+        let mut sync_clicked = false;
 
-        egui::CentralPanel::default()
-            .frame(panel_frame)
-            .show(ui, |ui| {
-                // The header's close control hides the stripe; it is never the way the process exits
-                // (that is tray -> Quit alone). widgets::header_plate does the painting; this file
-                // only decides what a click on it does.
-                let header = widgets::header_plate(ui, "FERRISFILTER");
-                if header.close_clicked && self.visibility != Visibility::Hidden {
-                    if let Some(window) = &self.window {
-                        win::conceal(window);
-                    }
-                    self.visibility = Visibility::Hidden;
-                }
+        // ---- The shell: background, frame, header, tabs, content, bottom bar ----
+        let skin = self.skin.clone();
+        let win_rect = ui.max_rect();
+        let painter = ui.painter().clone();
+        w::ff_background(&painter, &skin, win_rect);
+        let header_h = w::header_height(&skin, win_rect.width());
+        let frame_outer = Rect::from_min_max(
+            pos2(win_rect.min.x, win_rect.min.y + header_h - 14.0),
+            win_rect.max,
+        );
+        let shell_frame = w::ff_frame(&painter, &skin, frame_outer);
 
-                picked_tab = tab_strip(
-                    ui,
-                    self.tab,
-                    self.tab == Tab::Config && rules_dirty,
-                    self.tab == Tab::Rules && config_dirty,
+        // The header's close control hides the stripe; it is never the way the process exits
+        // (that is tray -> Quit alone).
+        let header = Rect::from_min_size(win_rect.min, vec2(win_rect.width(), header_h));
+        let close = w::ff_header(ui, &skin, header, shell::header_art(&skin), "FerrisFilter")
+            .on_hover_text("Hide (Ctrl+Shift+Z)");
+        if let Ok(loaded) = &self.filter {
+            // The loaded filter's full path, where the old status block used to print it.
+            ui.interact(
+                w::header_plate_rect(header),
+                egui::Id::new("ff-title-plate"),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(loaded.path().display().to_string());
+        }
+        if close.clicked() && self.visibility != Visibility::Hidden {
+            if let Some(window) = &self.window {
+                win::conceal(window);
+            }
+            self.visibility = Visibility::Hidden;
+        }
+
+        // Tabs: ` *` marks a tab when the other editing tab holds unapplied edits.
+        let markers = shell::tab_markers(self.tab, rules_dirty, config_dirty);
+        let labels: Vec<String> = ShellTab::ALL
+            .iter()
+            .map(|t| apply::tab_label(t.label(), markers[t.index()]))
+            .collect();
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let tips: Vec<Option<&str>> = markers
+            .iter()
+            .map(|m| m.then_some(apply::OTHER_TAB_DIRTY_TIP))
+            .collect();
+        let mut selected = self.tab.index();
+        w::ff_tabs_ex(
+            ui,
+            &skin,
+            w::tab_strip(&shell_frame),
+            &label_refs,
+            &mut selected,
+            &tips,
+        );
+        if selected != self.tab.index() {
+            picked_tab = ShellTab::from_index(selected);
+        }
+
+        // Content, clipped to the area inside the gold line.
+        let content = shell_frame.content.shrink2(vec2(10.0, 8.0));
+        let mut cui = ui.new_child(
+            UiBuilder::new()
+                .max_rect(content)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        cui.set_clip_rect(shell_frame.content);
+        match self.tab {
+            ShellTab::Rules => self.rules_content(
+                &mut cui,
+                &skin,
+                actions,
+                &mut row_actions,
+                &mut economy_action,
+            ),
+            ShellTab::Config => {
+                config_actions = self.config_body(&mut cui, &skin, config_footer);
+            }
+            ShellTab::Economy => {
+                let syncing = self.economy.is_running();
+                sync_clicked = shell::economy_tab(
+                    &mut cui,
+                    &skin,
+                    crate::sync::OVERLAY_LEAGUE,
+                    &self.last_sync,
+                    syncing,
+                    actions.sync,
                 );
-                ui.add_space(4.0);
-                if self.tab == Tab::Config {
-                    config_actions = self.config_body(ui, config_footer);
-                    return;
-                }
+            }
+            ShellTab::About => shell::about_tab(&mut cui, &skin),
+        }
 
-                // The footer is a bottom panel, claimed BEFORE the central content is laid out, so it
-                // reserves its height first and is always on screen however much the content above
-                // it holds. Called after the content, the panel would find the space already taken
-                // and APPLY could be pushed off the bottom edge, unreachable (author, 2026-09-10).
-                egui::Panel::bottom(egui::Id::new("ff-footer"))
-                    // An inner margin so the APPLY row is not flush against the window's bottom
-                    // edge, where it read as clipped (screenshot poe2_print008).
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(theme::PANEL_GROUND)
-                            .inner_margin(egui::Margin {
-                                left: 0,
-                                right: 0,
-                                top: 0,
-                                bottom: 8,
-                            }),
-                    )
-                    .show(ui, |ui| {
-                        // The pinned economy summary row: a locked block count, with Add/Remove
-                        // staged in memory and written by the next APPLY.
-                        if let Some(working) = &self.working {
-                            let can_edit_economy =
-                                self.root.is_ok() && self.changed_on_disk.is_empty();
-                            economy_action = rule_list::economy_footer(
-                                ui,
-                                working.economy(),
-                                &mut self.list,
-                                can_edit_economy,
-                            );
-                        }
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new(apply::indicator(self.apply_state))
-                                    .size(14.0)
-                                    .color(theme::TAB_ACTIVE),
-                            );
-                        });
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(8.0);
-                            if ui
-                                .add_enabled(actions.add_rule, egui::Button::new("+ ADD RULE"))
-                                .clicked()
-                            {
-                                row_actions.push(RowAction::AddRule);
-                            }
-                            if actions.reload
-                                && ui
-                                    .button("RELOAD")
-                                    .on_hover_text(apply::RELOAD_TOOLTIP)
-                                    .clicked()
-                            {
-                                self.reload_pressed();
-                            }
-                            // Beside RELOAD after a changed-on-disk refusal: the other way out,
-                            // keeping the edits. Accent fill like CONFIG's Overwrite.
-                            if actions.overwrite
-                                && ui
-                                    .add(egui::Button::new("OVERWRITE").fill(theme::WARM_ACCENT))
-                                    .on_hover_text(apply::OVERWRITE_TOOLTIP)
-                                    .clicked()
-                            {
-                                let egui_ctx = ui.ctx().clone();
-                                self.run_apply(&egui_ctx, true);
-                            }
-                            // Economy sync sits beside Apply because that is the order it is used in:
-                            // refresh prices, then apply them. It is deliberately NOT part of Apply --
-                            // a sync is dozens of network round trips and can fail, and folding that
-                            // into the action that writes the game's filter would make a routine Apply
-                            // slow and failure-prone (author, 2026-09-10).
-                            //
-                            // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the
-                            // tiers file already in place, unlike the CLI.
-                            let syncing = self.economy.is_running();
-                            let sync_label = if syncing {
-                                "SYNCING\u{2026}"
-                            } else {
-                                "SYNC ECONOMY"
-                            };
-                            if ui
-                                .add_enabled(
-                                    actions.sync && !syncing,
-                                    egui::Button::new(sync_label),
-                                )
-                                .clicked()
-                            {
-                                // The app root, not the process working directory: the overlay can be
-                                // launched from anywhere, and prices.json must land where Apply will
-                                // read it from.
-                                if let Ok(root) = &self.root {
-                                    let base_dir = root.clone();
-                                    self.economy.start(move || {
-                                        crate::sync::sync_economy_blocking(&base_dir)
-                                            .map_err(|e| e.to_string())
-                                    });
-                                }
-                            }
-                            if ui
-                                .add_enabled(actions.revert, egui::Button::new("REVERT"))
-                                .clicked()
-                            {
-                                self.revert();
-                            }
-                            let apply_button =
-                                ui.add_enabled(actions.apply, egui::Button::new("APPLY"));
-                            let apply_button = if blocking > 0 {
-                                apply_button.on_disabled_hover_text(apply::APPLY_BLOCKED_TOOLTIP)
-                            } else {
-                                apply_button
-                            };
-                            if apply_button.clicked() {
-                                let egui_ctx = ui.ctx().clone();
-                                self.run_apply(&egui_ctx, false);
-                            }
-                        });
-                        // Every message lives in one capped area so a long one can never push
-                        // the buttons or the list off screen.
-                        let sync_status = match self.economy.state() {
-                            economy::SyncState::Idle => None,
-                            economy::SyncState::Running => {
-                                Some(("Fetching economy prices\u{2026}".to_string(), false))
-                            }
-                            economy::SyncState::Finished(outcome) => {
-                                Some((outcome.message().to_string(), outcome.is_failure()))
-                            }
-                        };
-                        let apply_line = self.apply_message.as_ref().map(|m| {
-                            let ok = self.apply_state == ApplyState::Applied
-                                && self.changed_on_disk.is_empty();
-                            (m.clone(), !ok)
-                        });
-                        let gate = first_blocking.as_ref().map(|first| {
-                            (
-                                apply::invalid_blocks_message(
-                                    blocking,
-                                    first.rule_index,
-                                    first.diagnostic.line,
-                                ),
-                                first.block,
-                            )
-                        });
-                        let unknown = unknown_styles.first().map(|(rule, id)| {
-                            (
-                                apply::unknown_styles_message(unknown_styles.len(), *rule),
-                                *id,
-                            )
-                        });
-                        let lines = outcome_lines(
-                            self.list_status.clone(),
-                            apply_line,
-                            sync_status,
-                            gate,
-                            unknown,
-                        );
-                        if let Some(target) = outcome_area(ui, "outcome", &lines) {
-                            jump_to = Some(target);
-                        }
-                    });
+        // Bottom bar: the one status line plus Revert / Reload / Apply.
+        let bar_state = shell::bar_state(
+            self.tab,
+            actions,
+            ConfigBarInputs {
+                dirty: config_dirty,
+                apply_enabled: config_footer.apply_enabled,
+                tier_errors: self.config.as_ref().is_ok_and(|c| c.has_tier_errors()),
+                load_error: self.config.is_err()
+                    || self
+                        .config
+                        .as_ref()
+                        .is_ok_and(|c| c.styles_error().is_some() || c.tiers_error().is_some()),
+                rules_blocking: blocking > 0,
+                damaged: state == FilterState::Damaged,
+            },
+            changed,
+        );
+        let sync_outcome = match self.economy.state() {
+            economy::SyncState::Finished(outcome) => {
+                Some((outcome.message().to_string(), outcome.is_failure()))
+            }
+            _ => None,
+        };
+        let event = shell::event_from(
+            self.apply_message.clone(),
+            self.apply_state == ApplyState::Applied && self.changed_on_disk.is_empty(),
+            self.config_message.clone(),
+            sync_outcome,
+            self.list_status.clone(),
+        );
+        let filter_error = match (&self.filter, state) {
+            (Err(message), _) => Some(shell::load_failed_status(message)),
+            (Ok(loaded), FilterState::Damaged) => Some(match loaded.has_section() {
+                Err(err) => err.to_string(),
+                Ok(_) => apply::DAMAGED_MARKERS_MESSAGE.to_string(),
+            }),
+            _ => None,
+        };
+        let status = shell::status_for(StatusInputs {
+            root_error: self.root.as_ref().err().cloned(),
+            event,
+            grammar_gate: first_blocking.as_ref().map(|first| {
+                (
+                    apply::invalid_blocks_message(
+                        blocking,
+                        first.rule_index,
+                        first.diagnostic.line,
+                    ),
+                    first.block,
+                )
+            }),
+            filter_error,
+            syncing: self.economy.is_running(),
+            unknown: unknown_styles.first().map(|(rule, id)| {
+                (
+                    apply::unknown_styles_message(unknown_styles.len(), *rule),
+                    *id,
+                )
+            }),
+            migrated: self.filter.as_ref().is_ok_and(|f| f.migrated()),
+            absent: state == FilterState::Absent,
+            indicator: (
+                apply::indicator(self.apply_state),
+                shell::indicator_kind(self.apply_state),
+            ),
+        });
+        let clicks = bottom_bar(ui, &skin, shell_frame.button_bar, &bar_state, &status);
+        if clicks.status {
+            jump_to = status.jump;
+        }
 
-                ui.add_space(8.0);
-                // Status block: root, filter path and state, v0.4 notice.
-                let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
-                let mut lines: Vec<(egui::Color32, String)> = Vec::new();
-                if let Err(message) = &self.root {
-                    lines.push((theme::WARM_ACCENT_TEXT, message.clone()));
-                }
-                if let Ok(loaded) = &self.filter {
-                    lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
-                    let text = match (state, loaded.has_section()) {
-                        (FilterState::Damaged, Err(err)) => err.to_string(),
-                        _ => apply::filter_state_message(state, false),
-                    };
-                    let colour = if state == FilterState::Damaged {
-                        theme::WARM_ACCENT_TEXT
-                    } else {
-                        theme::LABEL_TAN
-                    };
-                    lines.push((colour, text));
-                }
-                if migrated {
-                    lines.push((
-                        theme::LABEL_TAN,
-                        "This is a v0.4 dynamic.filter. It will be converted on the next APPLY (a \
-                         .ffbak backup of the original is kept)."
-                            .to_string(),
-                    ));
-                }
-                for (colour, text) in lines {
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).wrap());
-                    });
-                    ui.add_space(4.0);
-                }
-                ui.add_space(4.0);
-                let total_rules = self.working.as_ref().map_or(0, |w| w.rows().len());
-                let shown_rules = match &mut self.working {
-                    Some(w) => w.matches(&self.query).len(),
-                    None => 0,
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.label(theme::section_header("FILTER"));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(rule_count_text(
-                                total_rules,
-                                shown_rules,
-                                !self.query.trim().is_empty(),
-                            ))
-                            .color(theme::LABEL_TAN),
-                        );
-                    });
-                });
-                ui.add_space(8.0);
-
-                match (&mut self.working, &self.filter) {
-                    (Some(working), _) => {
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            rule_list::search_bar(ui, &mut self.query);
-                        });
-                        ui.add_space(8.0);
-                        let visible = working.matches(&self.query);
-                        if working.rows().is_empty() {
-                            centered_notice(
-                                ui,
-                                "No rules in this filter yet",
-                                "Press + ADD RULE to write your first one. Blocks you add are \
-                                 saved with the filter when you press APPLY.",
-                            );
-                        } else if visible.is_empty() {
-                            centered_notice(
-                                ui,
-                                &format!("No rules match \"{}\"", self.query.trim()),
-                                "Check the spelling, or press Clear to see every rule.",
-                            );
-                        } else {
-                            let frame = rule_list::show_list(
-                                ui,
-                                working,
-                                &visible,
-                                &mut self.list,
-                                self.query.trim().is_empty(),
-                                self.classes.as_ref().ok(),
-                            );
-                            row_actions.extend(frame.actions);
-                        }
-                    }
-                    (None, Err(message)) => {
-                        centered_notice(ui, "The filter could not be loaded.", message);
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new("Fix the file and press RELOAD.")
-                                    .color(theme::LABEL_TAN),
-                            );
-                        });
-                    }
-                    (None, Ok(_)) => {}
-                }
+        // Bar clicks run before the tab switch, against the tab they were drawn for.
+        let egui_ctx = ui.ctx().clone();
+        if clicks.revert {
+            match self.tab {
+                ShellTab::Rules => self.revert(),
+                // The Discard-config popup opens from this flag.
+                ShellTab::Config => self.config_ui.revert_armed = true,
+                _ => {}
+            }
+        }
+        if clicks.reload {
+            match self.tab {
+                ShellTab::Config => config_actions.push(ConfigAction::Reload),
+                _ => self.reload_pressed(),
+            }
+        }
+        if clicks.apply {
+            // The Apply slot reads Overwrite while a file changed on disk.
+            self.run_apply(&egui_ctx, bar_state.apply.overwrite);
+        }
+        if sync_clicked && let Ok(root) = &self.root {
+            // The app root, not the process working directory: the overlay can be launched from
+            // anywhere, and prices.json must land where Apply will read it from. A sync is not
+            // part of Apply (dozens of network round trips that can fail); it only refreshes
+            // prices, and the game sees them on the next Apply (author, 2026-09-10).
+            let base_dir = root.clone();
+            self.economy.start(move || {
+                crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
             });
+        }
+
+        // Revert on CONFIG asks first; the popup is a skinned modal.
+        if self.config_ui.revert_armed {
+            let n = self.config.as_ref().map_or(0, |c| c.dirty_count());
+            if n == 0 {
+                self.config_ui.revert_armed = false;
+            } else {
+                let choice = crate::skin::popup::ff_modal(
+                    &egui_ctx,
+                    &skin,
+                    egui::Id::new("discard-config"),
+                    "Discard config changes?",
+                    &config_view::revert_prompt(n),
+                    &[
+                        crate::skin::popup::PopupButton {
+                            label: "Discard",
+                            danger: true,
+                            tip: None,
+                        },
+                        crate::skin::popup::PopupButton::new("Keep editing"),
+                    ],
+                );
+                match choice {
+                    Some(0) => {
+                        self.config_ui.revert_armed = false;
+                        config_actions.push(ConfigAction::Revert);
+                    }
+                    Some(_) => self.config_ui.revert_armed = false,
+                    None => {}
+                }
+            }
+        }
 
         // Tab switch and CONFIG actions come first. Switching never applies or discards anything.
         if let Some(tab) = picked_tab {
             self.tab = tab;
-            if tab == Tab::Config {
-                self.config_ui.disarm_all();
-                self.refresh_filters();
+            match tab {
+                ShellTab::Config => {
+                    self.config_ui.disarm_all();
+                    self.refresh_filters();
+                }
+                ShellTab::Economy => self.refresh_last_sync(),
+                _ => {}
             }
         }
         if !config_actions.is_empty() {
@@ -2316,210 +2212,6 @@ impl eframe::App for OverlayApp {
 
 #[cfg(test)]
 mod tests {
-    /// A stripe-sized headless context.
-    fn stripe_ctx() -> egui::Context {
-        let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
-        ctx
-    }
-
-    fn stripe_input() -> egui::RawInput {
-        egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(460.0, 600.0),
-            )),
-            ..Default::default()
-        }
-    }
-
-    /// Renders a long scrolling list plus a footer, in the two possible orders, and reports where
-    /// the footer landed. `footer_first` is the bottom-panel arrangement `ui()` uses.
-    fn footer_bottom_edge(footer_first: bool) -> (f32, f32) {
-        let ctx = stripe_ctx();
-        let mut footer_rect = egui::Rect::NOTHING;
-        let mut screen_bottom = 0.0_f32;
-
-        ctx.run_ui(stripe_input(), |ui| {
-            // The viewport we handed in via RawInput.screen_rect.
-            screen_bottom = ui.max_rect().max.y;
-            egui::CentralPanel::default().show(ui, |ui| {
-                let list = |ui: &mut egui::Ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            // Far more rows than fit. Allocated geometry rather than labels: the
-                            // headless context has no fonts, so text would measure zero-height
-                            // and the list would never grow.
-                            for _ in 0..60 {
-                                ui.allocate_space(egui::vec2(400.0, 30.0));
-                            }
-                        });
-                };
-                if footer_first {
-                    egui::Panel::bottom(egui::Id::new("test-footer")).show(ui, |ui| {
-                        footer_rect = ui.button("APPLY").rect;
-                    });
-                    list(ui);
-                } else {
-                    list(ui);
-                    footer_rect = ui.button("APPLY").rect;
-                }
-            });
-        })
-        .drop_without_applying_deltas();
-
-        (footer_rect.max.y, screen_bottom)
-    }
-
-    /// APPLY must stay on screen however much content the stripe holds.
-    ///
-    /// The second assertion gives the first its meaning: it shows the old arrangement (footer
-    /// laid out after an `auto_shrink([false, true])` `ScrollArea`) really does push the button
-    /// off-screen with this much content, so the test would have failed before the fix.
-    #[test]
-    fn the_apply_button_stays_on_screen_however_long_the_rule_list_is() {
-        let (footer_bottom, screen_bottom) = footer_bottom_edge(true);
-        assert!(
-            footer_bottom <= screen_bottom,
-            "APPLY is below the stripe's bottom edge ({footer_bottom} > {screen_bottom}) -- \
-             it cannot be clicked at any scroll position"
-        );
-
-        let (old_bottom, screen_bottom) = footer_bottom_edge(false);
-        assert!(
-            old_bottom > screen_bottom,
-            "the pre-fix arrangement was expected to push APPLY off-screen, but it did not \
-             ({old_bottom} <= {screen_bottom}) -- this test is no longer exercising the defect"
-        );
-    }
-
-    #[test]
-    fn outcome_lines_order_and_jump_targets() {
-        use crate::overlay::app::outcome_lines;
-        let a = WorkingFilter::from_text(
-            "Show
-",
-        )
-        .rows()[0]
-            .id;
-        let lines = outcome_lines(
-            Some("list".into()),
-            Some(("apply".into(), false)),
-            Some(("sync".into(), true)),
-            Some(("gate".into(), a)),
-            Some(("unknown".into(), a)),
-        );
-        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
-        assert_eq!(texts, ["list", "apply", "sync", "gate", "unknown"]);
-        assert!(lines[3].jump.is_some() && lines[4].jump.is_some());
-        assert!(lines[0].jump.is_none() && !lines[0].accent && lines[2].accent);
-        assert!(outcome_lines(None, None, None, None, None).is_empty());
-    }
-
-    /// Long messages scroll inside the capped outcome area; APPLY stays on screen below it.
-    #[test]
-    fn outcome_area_is_capped_and_keeps_apply_on_screen() {
-        use crate::overlay::app::{OUTCOME_MAX_HEIGHT, OutcomeLine, outcome_area};
-        let long = "x ".repeat(95);
-        let lines: Vec<OutcomeLine> = (0..6)
-            .map(|_| OutcomeLine {
-                text: long.clone(),
-                accent: true,
-                jump: None,
-            })
-            .collect();
-        let ctx = egui::Context::default();
-        let mut area_h = 0.0_f32;
-        let mut apply_bottom = 0.0_f32;
-        let mut screen_bottom = 0.0_f32;
-        for _ in 0..4 {
-            ctx.run_ui(stripe_input(), |ui| {
-                screen_bottom = ui.max_rect().max.y;
-                egui::CentralPanel::default().show(ui, |ui| {
-                    egui::Panel::bottom(egui::Id::new("f")).show(ui, |ui| {
-                        let top = ui.cursor().min.y;
-                        outcome_area(ui, "outcome", &lines);
-                        area_h = ui.cursor().min.y - top;
-                        apply_bottom = ui.button("APPLY").rect.max.y;
-                    });
-                });
-            })
-            .drop_without_applying_deltas();
-        }
-        assert!(area_h > 0.0, "outcome area drew nothing");
-        assert!(area_h <= OUTCOME_MAX_HEIGHT + 8.0, "area {area_h}");
-        assert!(
-            apply_bottom <= screen_bottom,
-            "{apply_bottom} {screen_bottom} {area_h}"
-        );
-    }
-
-    /// The CONFIG footer is pinned in its own bottom panel: Apply stays on screen however long the
-    /// styles list above it grows.
-    #[test]
-    fn the_config_footer_keeps_apply_on_screen_with_a_long_styles_list() {
-        use crate::overlay::app::{OutcomeLine, outcome_area};
-        use crate::overlay::config_state::ConfigState;
-        use crate::overlay::config_view::{self, ConfigUi, ConfigViewCtx};
-        use std::collections::{BTreeSet, HashMap};
-
-        let state = ConfigState::load(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
-        let ctx = ConfigViewCtx {
-            filters: None,
-            active_filter: "dynamic.filter",
-            game_dir: None,
-            pending_switch: None,
-            rule_users: &users,
-            config_refs: &refs,
-            changed_on_disk: false,
-            apply_enabled: true,
-            rules_blocking: false,
-            filter_damaged: false,
-            indicator: "Filter out of date",
-            reload_after_apply: true,
-        };
-        let mut cfg = ConfigUi::default();
-        let long = "x ".repeat(95);
-        let lines: Vec<OutcomeLine> = (0..6)
-            .map(|_| OutcomeLine {
-                text: long.clone(),
-                accent: true,
-                jump: None,
-            })
-            .collect();
-        let rctx = egui::Context::default();
-        let mut footer_bottom = 0.0_f32;
-        let mut screen_bottom = 0.0_f32;
-        for _ in 0..4 {
-            rctx.run_ui(stripe_input(), |ui| {
-                screen_bottom = ui.max_rect().max.y;
-                egui::CentralPanel::default().show(ui, |ui| {
-                    egui::Panel::bottom(egui::Id::new("ff-config-footer")).show(ui, |ui| {
-                        outcome_area(ui, "config-outcome", &lines);
-                        config_view::show_footer(ui, &state, &mut cfg, &ctx);
-                        footer_bottom = ui.min_rect().max.y;
-                    });
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for _ in 0..80 {
-                                ui.allocate_space(egui::vec2(400.0, 30.0));
-                            }
-                        });
-                });
-            })
-            .drop_without_applying_deltas();
-        }
-        assert!(footer_bottom > 0.0, "footer drew nothing");
-        assert!(
-            footer_bottom <= screen_bottom,
-            "{footer_bottom} > {screen_bottom}"
-        );
-    }
-
     #[test]
     fn filter_target_refuses_traversal_and_a_missing_folder() {
         use super::filter_target;
@@ -2742,20 +2434,17 @@ mod tests {
         }
     }
 
+    /// The shell layout at its real size over a 511-block filter: the three bar buttons lie
+    /// inside the frame's button bar however long the list is, and only a bounded window of rows
+    /// is drawn (EDIT-07).
     #[test]
-    fn rule_count_copy() {
-        assert_eq!(super::rule_count_text(142, 142, false), "142 rules");
-        assert_eq!(super::rule_count_text(1, 1, false), "1 rule");
-        assert_eq!(super::rule_count_text(0, 0, false), "0 rules");
-        assert_eq!(super::rule_count_text(142, 7, true), "7 of 142 rules");
-    }
-
-    /// EDIT-07 at stripe scale: a 511-block filter in the real list keeps the footer on screen
-    /// and draws only a bounded window of rows.
-    #[test]
-    fn a_511_block_filter_keeps_the_footer_on_screen_and_draws_a_bounded_window() {
+    fn shell_bar_stays_inside_the_button_bar_with_a_long_list() {
+        use crate::overlay::apply::FooterActions;
         use crate::overlay::rule_list::{self, ListUi};
         use crate::overlay::rules::WorkingFilter;
+        use crate::overlay::shell::{self, ConfigBarInputs, ShellTab, StatusLine};
+        use crate::skin::widgets as w;
+        use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
 
         let bytes = include_bytes!("../../tests/fixtures/parser/filterblade.filter");
         let text = String::from_utf8_lossy(bytes).into_owned();
@@ -2767,30 +2456,61 @@ mod tests {
         let visible = working.matches("");
         let mut list = ListUi::default();
 
-        let ctx = stripe_ctx();
-        let mut input = stripe_input();
-        input.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(460.0, 1000.0),
-        ));
-        let mut footer_bottom = 0.0_f32;
-        let mut screen_bottom = 0.0_f32;
+        let ctx = egui::Context::default();
+        let skin = crate::skin::install(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(660.0, 1000.0))),
+            ..Default::default()
+        };
+        let actions = FooterActions {
+            sync: true,
+            apply: true,
+            revert: true,
+            add_rule: true,
+            reload: true,
+            overwrite: false,
+        };
+        let bar_state =
+            shell::bar_state(ShellTab::Rules, actions, ConfigBarInputs::default(), false);
+        let status = StatusLine {
+            text: "a very long status message ".repeat(20),
+            kind: w::StatusKind::Warning,
+            jump: None,
+        };
         let mut drawn = 0usize;
-        ctx.run_ui(input, |ui| {
-            screen_bottom = ui.max_rect().max.y;
-            egui::CentralPanel::default().show(ui, |ui| {
-                egui::Panel::bottom(egui::Id::new("test-footer")).show(ui, |ui| {
-                    footer_bottom = ui.button("APPLY").rect.max.y;
-                });
-                drawn = rule_list::show_list(ui, &working, &visible, &mut list, true, None).drawn;
-            });
-        })
-        .drop_without_applying_deltas();
-
-        assert!(
-            footer_bottom <= screen_bottom,
-            "{footer_bottom} > {screen_bottom}"
-        );
+        let mut button_bar = Rect::NOTHING;
+        let mut rects = [Rect::NOTHING; 3];
+        for _ in 0..3 {
+            ctx.run_ui(input.clone(), |ui| {
+                let win_rect = ui.max_rect();
+                let painter = ui.painter().clone();
+                w::ff_background(&painter, &skin, win_rect);
+                let header_h = w::header_height(&skin, win_rect.width());
+                let outer = Rect::from_min_max(
+                    pos2(win_rect.min.x, win_rect.min.y + header_h - 14.0),
+                    win_rect.max,
+                );
+                let frame = w::ff_frame(&painter, &skin, outer);
+                button_bar = frame.button_bar;
+                let content = frame.content.shrink2(vec2(10.0, 8.0));
+                let mut cui = ui.new_child(
+                    UiBuilder::new()
+                        .max_rect(content)
+                        .layout(Layout::top_down(Align::Min)),
+                );
+                cui.set_clip_rect(frame.content);
+                drawn =
+                    rule_list::show_list(&mut cui, &working, &visible, &mut list, true, None).drawn;
+                rects = super::bottom_bar(ui, &skin, frame.button_bar, &bar_state, &status).rects;
+            })
+            .drop_without_applying_deltas();
+        }
+        for r in rects {
+            assert!(
+                button_bar.contains_rect(r) && r.width() > 0.0,
+                "button {r:?} outside the button bar {button_bar:?}"
+            );
+        }
         assert!(drawn > 0, "something must be drawn");
         assert!(
             drawn < 80,

@@ -20,6 +20,10 @@ use super::rules::{Dir, EconomyView, LineKind, RowAction, RuleRow, StyleState, W
 use super::theme;
 use super::virtual_list::{build_offsets, scroll_offset_for, visible_range};
 use super::widgets::{self, ArrowDirection};
+use crate::skin::Skin;
+use crate::skin::fonts::regular;
+use crate::skin::palette as pal;
+use crate::skin::widgets::{ff_button_ex, ff_text_field};
 
 const GROUP_BROKEN_LONG: &str = "This block was written as part of one rule spread over several blocks (# ff:group), but those blocks no longer match, so each is shown as a rule of its own. It is left as written until you edit it.";
 const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so this rule cannot be turned on. You can still move or delete it.";
@@ -742,33 +746,41 @@ fn expanded_body(
     });
 }
 
-/// Full-width search field with a Clear button; true when the query changed this frame.
-pub fn search_bar(ui: &mut egui::Ui, query: &mut String) -> bool {
-    let mut changed = false;
+/// The search row of the RULES tab: the recessed field (hint names the rule count), a small Clear
+/// button while a query is typed, and the `+ Add rule` button. Escape clears the query. Returns
+/// true when `+ Add rule` was clicked.
+pub fn search_row(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    query: &mut String,
+    add_enabled: bool,
+    total: usize,
+) -> bool {
+    let mut add_clicked = false;
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
         let reserve = if query.is_empty() { 0.0 } else { 56.0 };
-        let resp = ui.add(
-            egui::TextEdit::singleline(query)
-                .hint_text("Search rules, classes, base types\u{2026}")
-                .desired_width((ui.available_width() - reserve).max(40.0)),
-        );
-        if resp.changed() {
-            changed = true;
-        }
+        let hint = format!("Search {total} rules, classes, base types…");
+        let width = (ui.available_width() - 132.0 - reserve).max(40.0);
+        let resp = ff_text_field(ui, query, &hint, width);
         if (resp.has_focus() || resp.lost_focus())
             && !query.is_empty()
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
             query.clear();
-            changed = true;
         }
         if !query.is_empty() && small_button(ui, "Clear").clicked() {
             query.clear();
-            changed = true;
         }
+        let add = ff_button_ex(ui, skin, "+ Add rule", 124.0, add_enabled, false)
+            .on_hover_text(ADD_RULE_TIP);
+        add_clicked = add_enabled && add.clicked();
     });
-    changed
+    add_clicked
 }
+
+/// Tooltip on `+ Add rule` (it replaces the standing empty-state paragraph).
+pub const ADD_RULE_TIP: &str = "Blocks you add are saved with the filter when you press Apply.";
 
 /// The footer line for an economy state.
 pub fn economy_footer_text(view: &EconomyView) -> String {
@@ -780,79 +792,65 @@ pub fn economy_footer_text(view: &EconomyView) -> String {
     }
 }
 
-/// The pinned economy footer row. `enabled` gates the buttons.
+/// Height of the pinned economy footer row.
+pub const ECONOMY_ROW_HEIGHT: f32 = 34.0;
+
+/// The pinned economy footer row (34pt, the row ground). `enabled` gates the buttons.
 pub fn economy_footer(
     ui: &mut egui::Ui,
+    skin: &Skin,
     view: &EconomyView,
     list: &mut ListUi,
     enabled: bool,
 ) -> Option<EconomyFooterAction> {
     let mut result = None;
     let text = economy_footer_text(view);
-    egui::Frame::new()
-        .fill(theme::HEADER_PLATE)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            match view {
-                EconomyView::Present { .. } => {
-                    ui.horizontal(|ui| {
-                        if list.confirm_economy_remove {
-                            ui.label(
-                                RichText::new("Remove the economy section?")
-                                    .color(theme::LABEL_TAN),
-                            );
-                            if small_button(ui, RichText::new("Yes, remove").color(theme::WARM_ACCENT_TEXT))
-                                .clicked()
-                            {
-                                result = Some(EconomyFooterAction::Remove);
-                                list.confirm_economy_remove = false;
-                            }
-                            if small_button(ui, "Keep").clicked() {
-                                list.confirm_economy_remove = false;
-                            }
-                        } else {
-                            ui.label(RichText::new(&text).color(theme::LABEL_TAN))
-                                .on_hover_text(
-                                    "Generated from prices.json by Sync economy and Apply. Not editable here.",
-                                );
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui
-                                    .add_enabled(enabled, egui::Button::new(RichText::new("Remove").size(theme::ROW_SUMMARY_SIZE)))
-                                    .clicked()
-                                {
-                                    list.confirm_economy_remove = true;
-                                }
-                            });
-                        }
-                    });
-                    if list.confirm_economy_remove {
-                        ui.label(
-                            RichText::new("Your own rules are kept. Add the section back any time.")
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::TAB_ACTIVE),
-                        );
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), ECONOMY_ROW_HEIGHT),
+        Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, 0.0, pal::ROW_EVEN);
+    let mut row = ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect.shrink2(vec2(10.0, 0.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    let label = |text: &str, color: Color32| RichText::new(text).font(regular(15.0)).color(color);
+    match view {
+        EconomyView::Present { .. } => {
+            if list.confirm_economy_remove {
+                row.label(label("Remove the economy section?", pal::LABEL));
+                if small_button(&mut row, RichText::new("Yes, remove").color(pal::ERROR)).clicked()
+                {
+                    result = Some(EconomyFooterAction::Remove);
+                    list.confirm_economy_remove = false;
+                }
+                if small_button(&mut row, "Keep").clicked() {
+                    list.confirm_economy_remove = false;
+                }
+            } else {
+                row.label(label(&text, pal::MUTED)).on_hover_text(
+                    "Generated from prices.json by Sync economy and Apply. Not editable here.",
+                );
+                row.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ff_button_ex(ui, skin, "Remove", 84.0, enabled, false).clicked() {
+                        list.confirm_economy_remove = true;
                     }
-                }
-                EconomyView::Absent => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&text).color(theme::DISABLED_TEXT));
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .add_enabled(enabled, egui::Button::new(RichText::new("Add economy section").size(theme::ROW_SUMMARY_SIZE)))
-                                .clicked()
-                            {
-                                result = Some(EconomyFooterAction::Add);
-                            }
-                        });
-                    });
-                }
-                EconomyView::Damaged(msg) => {
-                    ui.label(RichText::new(&text).color(theme::WARM_ACCENT_TEXT))
-                        .on_hover_text(msg);
-                }
+                });
             }
-        });
+        }
+        EconomyView::Absent => {
+            row.label(label(&text, pal::DISABLED));
+            row.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ff_button_ex(ui, skin, "Add economy section", 160.0, enabled, false).clicked() {
+                    result = Some(EconomyFooterAction::Add);
+                }
+            });
+        }
+        EconomyView::Damaged(msg) => {
+            row.label(label(&text, pal::ERROR)).on_hover_text(msg);
+        }
+    }
     result
 }
 
@@ -1404,6 +1402,7 @@ Show
     #[test]
     fn economy_footer_renders_every_state() {
         let ctx = headless_ctx();
+        let skin = crate::skin::install(&ctx);
         let mut list = ListUi::default();
         for view in [
             EconomyView::Absent,
@@ -1411,7 +1410,7 @@ Show
             EconomyView::Damaged("bad".into()),
         ] {
             ctx.run_ui(input(vec![]), |ui| {
-                assert!(economy_footer(ui, &view, &mut list, true).is_none());
+                assert!(economy_footer(ui, &skin, &view, &mut list, true).is_none());
             })
             .drop_without_applying_deltas();
         }

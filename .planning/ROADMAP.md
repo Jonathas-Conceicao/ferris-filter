@@ -253,7 +253,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 33-03-PLAN.md — RULES colour actions on the skinned picker; colour_slot and open-ring colour card for styles
+- [x] 33-03-PLAN.md — RULES colour actions on the skinned picker; colour_slot and open-ring colour card for styles
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -303,7 +303,7 @@ Plans:
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
 | 32. Rule Dividers & Economy Banner | v0.6 | 6/6 | Complete   | 2026-10-16 |
-| 33. Style Table & Line-by-Line Style Editor | v0.6 | 2/5 | In Progress|  |
+| 33. Style Table & Line-by-Line Style Editor | v0.6 | 3/5 | In Progress|  |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |
 
@@ -389,7 +389,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 2/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 

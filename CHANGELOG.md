@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   member. `tools/ff-art` now runs from the root via `cargo ff-art <cmd>` / `cargo run -p ff-art`
   from any directory and writes into the repo's `assets/`; root `cargo build`/`cargo test` do not
   build it. `Cargo.lock` is now committed (one lock for the workspace) and `rust-toolchain.toml`
-  pins nightly.
+  selects the nightly channel (not a specific compiler).
 - **The Cargo package version follows the release tags.** It was still `0.1.0`; it is now `0.5.0`
   (the last tag, `v0.5`) and moves with each milestone tag from here on.
 

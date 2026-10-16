@@ -34,7 +34,8 @@ cargo run --bin ff-proto -- --screenshot shot.png   # render, save one frame, ex
 into `assets/poe2/` (PNGs and the Fontin fonts) and renders the Ferris background
 (`assets/ui/ferris-bg.png`). It reads the install **read-only**. It is a member of the repo's Cargo workspace but not a default
 member, so `cargo build`/`cargo test` at the root never build it or its dependencies. It uses the
-`poe_data_tools` library, which needs nightly (pinned by `rust-toolchain.toml`). Re-run it after a
+`poe_data_tools` library, which needs nightly: `rust-toolchain.toml` selects the nightly channel
+(not a specific compiler; set a dated nightly there if a new one breaks `poe_data_tools`). Re-run it after a
 game patch:
 
 ```bash

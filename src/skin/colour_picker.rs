@@ -41,8 +41,9 @@ pub struct PickerResult {
     pub none: bool,
     /// The user pressed Use colour.
     pub done: bool,
-    /// The user clicked a quick pick, including the one already selected (an explicit choice of
-    /// that colour, which matters for an empty slot whose seed equals a quick pick).
+    /// The user clicked a quick pick, including the one already selected, or committed a Hex /
+    /// R / G / B value with Enter, including the current one (an explicit choice of that colour,
+    /// which matters for an empty slot whose seed is still showing).
     pub picked: bool,
 }
 
@@ -444,13 +445,18 @@ pub fn ff_colour_picker(
     // Hex and R / G / B (one line: 88 + 3 x (label + 38) + gaps = 268 of 268).
     ui.add_space(12.0);
     let mut typed: Option<[u8; 3]> = None;
+    // A value committed with Enter is an explicit choice even when it equals the working colour
+    // (an empty slot's seed), like a click on the selected quick pick.
+    let mut entered = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         if let Some(t) = value_field(ui, id.with("hex"), hex_of(rgb), 88.0, "Hex", "hex")
             && let Some(v) = parse_hex(&t)
-            && v != rgb
         {
-            typed = Some(v);
+            entered |= ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if v != rgb {
+                typed = Some(v);
+            }
         }
         for (k, (label, name)) in [("R", "Red"), ("G", "Green"), ("B", "Blue")]
             .into_iter()
@@ -470,11 +476,13 @@ pub fn ff_colour_picker(
                 name,
                 &name.to_lowercase(),
             ) && let Some(v) = parse_channel(&t)
-                && v != rgb[k]
             {
-                let mut next = typed.unwrap_or(rgb);
-                next[k] = v;
-                typed = Some(next);
+                entered |= ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if v != rgb[k] {
+                    let mut next = typed.unwrap_or(rgb);
+                    next[k] = v;
+                    typed = Some(next);
+                }
             }
         }
     });
@@ -536,7 +544,7 @@ pub fn ff_colour_picker(
             none_tile(ui);
         }
     });
-    res.picked = picked;
+    res.picked = picked || entered;
 
     // Footer.
     ui.add_space(12.0);
@@ -965,6 +973,29 @@ mod tests {
             rect_of(&probes, "square").is_none(),
             "closed after Use colour"
         );
+    }
+
+    /// Review iteration 2, WR-01: typing the seed's own hex on an empty slot and pressing Enter
+    /// sets it.
+    #[test]
+    fn entering_the_seed_hex_on_an_unset_slot_sets_it() {
+        let ctx = setup();
+        let probes = open(&ctx, None, OPEN);
+        let hex = rect_of(&probes, "hex").unwrap();
+        let _ = frame(&ctx, click_at(hex.center()), None, OPEN);
+        let (out, _) = frame(
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            None,
+            OPEN,
+        );
+        assert_eq!(out, Some(PickerEdit::Set([248, 248, 242, 255])));
     }
 
     #[test]

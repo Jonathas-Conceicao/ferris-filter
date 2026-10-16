@@ -216,7 +216,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 32-04-PLAN.md — Rule model: sections, read-only economy rows, display entries with collapse/search, section actions, WR-02 set
+- [x] 32-04-PLAN.md — Rule model: sections, read-only economy rows, display entries with collapse/search, section actions, WR-02 set
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -281,7 +281,7 @@ Plans:
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
-| 32. Rule Dividers & Economy Banner | v0.6 | 3/6 | In Progress|  |
+| 32. Rule Dividers & Economy Banner | v0.6 | 4/6 | In Progress|  |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |

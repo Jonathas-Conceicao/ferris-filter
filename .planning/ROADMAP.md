@@ -125,7 +125,9 @@ Plans:
   4. Every confirmation (changed-on-disk RELOAD / OVERWRITE, switch filter and discard, Quit with unapplied edits, deletes) appears as a skinned popup, and standing captions / wall-of-text panels are replaced by controls, icons, tooltips or the status line
   5. `Ctrl+Shift+Z`, the tray icon and Quit, single-instance relaunch and `/reloaditemfilter` after Apply behave exactly as in v0.5
 
-**Plans**: 5 plansPlans:
+**Plans**: 5 plans
+Plans:
+
 **Wave 1**
 
 - [x] 30-01-PLAN.md — Skin + Win32 foundations: monitor-aware DPI-correct dock, button/tab/status/header extensions, global restyle + theme re-point, ff_modal popup, painted flag icons
@@ -241,7 +243,26 @@ Plans:
   4. Custom styles can still be renamed, reordered and deleted; Delete sits at the bottom of the expanded editor and confirms in a popup showing how many rules use the style
   5. Every style and tier edit stays in memory until the one Apply, is written all or none with the filter, and is undone by Revert
 
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+
+**Wave 1**
+
+- [ ] 33-01-PLAN.md — Skinned colour picker widget (skin::colour_picker), Dracula quick picks, shared paint_box_behind
+- [ ] 33-02-PLAN.md — Style table: Visibility / Name / Icon / Preview / Order header, icon column, greyed built-in arrows
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 33-03-PLAN.md — RULES colour actions on the skinned picker; colour_slot and open-ring colour card for styles
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 33-04-PLAN.md — Line-by-line style editor (visibility, label, colours, font, minimap, beam, sound, drop sound, delete) + STY-05 test
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 33-05-PLAN.md — --expand-style / --picker shot flags, viewed shots, CLAUDE.md + CHANGELOG, verification checklist
+
 **UI hint**: yes
 
 ### Phase 34: ECONOMY & ABOUT Tabs

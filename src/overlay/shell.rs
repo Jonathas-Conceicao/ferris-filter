@@ -549,6 +549,8 @@ pub(crate) struct EconomyTabInputs<'a> {
     pub utc_offset_minutes: i32,
     pub priced_items: usize,
     pub live: bool,
+    /// Why an existing prices.json cannot be used (shown instead of "No prices.json yet").
+    pub problem: Option<&'a str>,
     pub syncing: bool,
     pub sync_enabled: bool,
     pub sync_disabled_tip: Option<&'a str>,
@@ -598,6 +600,10 @@ pub(crate) fn economy_tab(
             if inputs.live {
                 value(ui, "Live prices", pal::VALUE)
                     .on_hover_text("prices.json from the last sync.");
+            } else if let Some(problem) = inputs.problem {
+                value(ui, "Fallback prices", pal::WARN).on_hover_text(format!(
+                    "prices.json could not be used ({problem}) so the built-in early-league prices apply. Sync to replace it."
+                ));
             } else {
                 value(ui, "Fallback prices", pal::WARN).on_hover_text(
                     "No prices.json yet. Using the built-in early-league prices. Sync to get live ones.",
@@ -904,6 +910,7 @@ mod tests {
             utc_offset_minutes: 0,
             priced_items: 1284,
             live: false,
+            problem: None,
             syncing: false,
             sync_enabled: true,
             sync_disabled_tip: None,
@@ -947,7 +954,10 @@ mod tests {
         });
         disabled.sync_enabled = false;
         disabled.sync_disabled_tip = Some("No app root");
-        for i in [inputs(ADD), live, syncing, disabled] {
+        let mut broken = inputs(ADD);
+        broken.priced_items = 0;
+        broken.problem = Some("expected value at line 1");
+        for i in [inputs(ADD), live, syncing, disabled, broken] {
             let (clicks, ran) = draw(&i);
             assert_eq!(ran, 1);
             assert_eq!(clicks, EconomyClicks::default());

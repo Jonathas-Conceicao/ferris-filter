@@ -810,6 +810,9 @@ struct EconomyInfo {
     mtime_secs: Option<u64>,
     priced_items: usize,
     live: bool,
+    /// Why an existing prices.json is unusable (unreadable, malformed or without items). The
+    /// file's mtime is then not a sync time, so `mtime_secs` is `None`.
+    problem: Option<String>,
 }
 
 impl EconomyInfo {
@@ -821,14 +824,20 @@ impl EconomyInfo {
             .and_then(|meta| meta.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
-        let priced_items = match crate::loader::load_prices_optional(&path.to_string_lossy()) {
-            Ok(Some(p)) => p.items.len(),
-            _ => 0,
-        };
+        let (priced_items, problem) =
+            match crate::loader::load_prices_optional(&path.to_string_lossy()) {
+                Ok(Some(p)) if p.items.is_empty() => {
+                    (0, Some("prices.json has no priced items.".to_string()))
+                }
+                Ok(Some(p)) => (p.items.len(), None),
+                Ok(None) => (0, None),
+                Err(err) => (0, Some(err.to_string())),
+            };
         EconomyInfo {
-            mtime_secs,
+            mtime_secs: if problem.is_some() { None } else { mtime_secs },
             priced_items,
             live: priced_items > 0,
+            problem,
         }
     }
 }
@@ -2755,6 +2764,7 @@ impl eframe::App for OverlayApp {
                     utc_offset_minutes: win::utc_offset_minutes(),
                     priced_items: self.economy_info.priced_items,
                     live: self.economy_info.live,
+                    problem: self.economy_info.problem.as_deref(),
                     syncing: self.economy.is_running(),
                     sync_enabled: actions.sync,
                     sync_disabled_tip: self.root.as_ref().err().map(String::as_str),
@@ -5059,6 +5069,15 @@ Hide
         std::fs::write(dir.path().join("prices.json"), "{ not json").unwrap();
         let bad = super::EconomyInfo::read(dir.path());
         assert!(!bad.live && bad.priced_items == 0);
+        assert!(bad.problem.is_some(), "the parse error is kept");
+        assert_eq!(bad.mtime_secs, None, "a broken file is not a sync time");
+        // An empty file is also unusable, not a fresh sync.
+        std::fs::write(dir.path().join("prices.json"), "").unwrap();
+        let blank = super::EconomyInfo::read(dir.path());
+        assert!(!blank.live && blank.problem.is_some() && blank.mtime_secs.is_none());
+        // A missing file is simply absent: no problem to report.
+        std::fs::remove_file(dir.path().join("prices.json")).unwrap();
+        assert_eq!(super::EconomyInfo::read(dir.path()).problem, None);
     }
 
     #[test]

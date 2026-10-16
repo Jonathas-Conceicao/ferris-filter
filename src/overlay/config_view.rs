@@ -1439,7 +1439,9 @@ fn beam_line(
 
 /// The sound a dropdown choice stands for. `base` is the style's current sound, or the last one
 /// it had before it was switched to None; it supplies the volume (default 100) and the file.
-fn sound_for_choice(choice: usize, base: Option<&Sound>) -> Option<Sound> {
+/// `last_file` is the custom file the style had before it was switched away from Custom, used
+/// when `base` has none.
+fn sound_for_choice(choice: usize, base: Option<&Sound>, last_file: Option<&str>) -> Option<Sound> {
     let vol = base.map_or(100, |s| s.vol);
     match choice {
         0 => None,
@@ -1447,6 +1449,7 @@ fn sound_for_choice(choice: usize, base: Option<&Sound>) -> Option<Sound> {
             id: None,
             custom: Some(
                 base.and_then(|s| s.custom.clone())
+                    .or_else(|| last_file.map(str::to_string))
                     .unwrap_or_else(|| SOUND_FILE_DEFAULT.to_string()),
             ),
             vol,
@@ -1457,6 +1460,31 @@ fn sound_for_choice(choice: usize, base: Option<&Sound>) -> Option<Sound> {
             vol,
         }),
     }
+}
+
+/// The sound dropdown's switch-back memory: the sound before a switch to None, and the custom
+/// file before a switch away from Custom (WR-02: through an Alert the file used to be lost).
+#[derive(Debug, Default, PartialEq)]
+struct SoundMemo {
+    last: Option<Sound>,
+    file: Option<String>,
+}
+
+/// What switching the sound dropdown to `choice` writes, given the style's `current` sound;
+/// updates `memo` with what the switch replaces.
+fn switch_sound(choice: usize, current: Option<&Sound>, memo: &mut SoundMemo) -> Option<Sound> {
+    let base = current.cloned().or_else(|| memo.last.clone());
+    if choice == 0
+        && let Some(s) = current
+    {
+        memo.last = Some(s.clone());
+    }
+    if choice != SOUND_CUSTOM
+        && let Some(file) = current.and_then(|s| s.custom.as_ref())
+    {
+        memo.file = Some(file.clone());
+    }
+    sound_for_choice(choice, base.as_ref(), memo.file.as_deref())
 }
 
 /// A custom sound file name that is safe to write into `CustomAlertSound "<name>"`.
@@ -1484,20 +1512,18 @@ fn sound_lines(
             crate::skin::widgets::ff_dropdown(ui, skin, "sound", &mut sel, &SOUND_OPTIONS, 150.0);
         probe("ed-sound", r.rect);
         if r.changed() {
-            let base = style
-                .sound
-                .clone()
-                .or_else(|| recall::<Sound>(ui, name, "sound", epoch));
-            if sel == 0
-                && let Some(s) = &style.sound
-            {
+            let mut memo = SoundMemo {
+                last: recall::<Sound>(ui, name, "sound", epoch),
+                file: recall::<String>(ui, name, "sound-file", epoch),
+            };
+            let next = switch_sound(sel, style.sound.as_ref(), &mut memo);
+            if let Some(s) = &memo.last {
                 remember(ui, name, "sound", epoch, s);
             }
-            edit(
-                actions,
-                name,
-                StyleEdit::Sound(sound_for_choice(sel, base.as_ref())),
-            );
+            if let Some(f) = &memo.file {
+                remember(ui, name, "sound-file", epoch, f);
+            }
+            edit(actions, name, StyleEdit::Sound(next));
         }
         if let Some(sound) = &style.sound
             && let Some(file) = &sound.custom
@@ -2809,9 +2835,9 @@ mod tests {
             custom: None,
             vol: 200,
         };
-        assert_eq!(sound_for_choice(0, Some(&kite)), None);
+        assert_eq!(sound_for_choice(0, Some(&kite), None), None);
         assert_eq!(
-            sound_for_choice(3, Some(&kite)),
+            sound_for_choice(3, Some(&kite), None),
             Some(Sound {
                 id: Some(3),
                 custom: None,
@@ -2819,7 +2845,7 @@ mod tests {
             })
         );
         assert_eq!(
-            sound_for_choice(3, None),
+            sound_for_choice(3, None, None),
             Some(Sound {
                 id: Some(3),
                 custom: None,
@@ -2827,7 +2853,7 @@ mod tests {
             })
         );
         assert_eq!(
-            sound_for_choice(SOUND_CUSTOM, None),
+            sound_for_choice(SOUND_CUSTOM, None, None),
             Some(Sound {
                 id: None,
                 custom: Some("uwu.mp3".to_string()),
@@ -2836,6 +2862,50 @@ mod tests {
         );
         assert_eq!(SOUND_OPTIONS[SOUND_CUSTOM], "Custom file");
         assert_eq!(SOUND_OPTIONS[16], "Alert 16");
+    }
+
+    /// WR-02: the custom file survives a switch through an Alert, with or without a None first.
+    #[test]
+    fn switching_back_to_custom_keeps_the_file() {
+        let boss = || Sound {
+            id: None,
+            custom: Some("boss.mp3".to_string()),
+            vol: 150,
+        };
+        let alert = |vol| Sound {
+            id: Some(3),
+            custom: None,
+            vol,
+        };
+        // Custom -> Alert 3 -> Custom.
+        let mut memo = SoundMemo::default();
+        let cur = boss();
+        let next = switch_sound(3, Some(&cur), &mut memo);
+        assert_eq!(next, Some(alert(150)));
+        let back = switch_sound(SOUND_CUSTOM, next.as_ref(), &mut memo);
+        assert_eq!(back, Some(boss()));
+
+        // Custom -> None -> Alert 3 -> Custom.
+        let mut memo = SoundMemo::default();
+        let cur = boss();
+        let none = switch_sound(0, Some(&cur), &mut memo);
+        assert_eq!(none, None);
+        let next = switch_sound(3, None, &mut memo);
+        assert_eq!(next, Some(alert(150)));
+        let back = switch_sound(SOUND_CUSTOM, next.as_ref(), &mut memo);
+        assert_eq!(back, Some(boss()));
+
+        // Never custom: Custom falls back to the default file.
+        let mut memo = SoundMemo::default();
+        let cur = alert(100);
+        assert_eq!(
+            switch_sound(SOUND_CUSTOM, Some(&cur), &mut memo),
+            Some(Sound {
+                id: None,
+                custom: Some(SOUND_FILE_DEFAULT.to_string()),
+                vol: 100
+            })
+        );
     }
 
     #[test]

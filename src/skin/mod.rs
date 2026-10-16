@@ -41,5 +41,46 @@ pub use textures::Skin;
 pub fn install(ctx: &egui::Context) -> Skin {
     fonts::install(ctx);
     widgets::apply_style(ctx);
-    Skin::load(ctx)
+    let skin = Skin::load(ctx);
+    remember(ctx, &skin);
+    skin
+}
+
+/// Stores a clone of `skin` in the context so any widget can fetch it with [`of`].
+pub fn remember(ctx: &egui::Context, skin: &Skin) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("ff-skin"), skin.clone()));
+}
+
+/// The skin installed on `ctx`. The overlay wrappers use this so their signatures need no
+/// `&Skin`. When none was installed (headless tests that only installed fonts) it is loaded
+/// once, remembered, and returned, so later calls reuse the same textures.
+pub fn of(ctx: &egui::Context) -> Skin {
+    if let Some(s) = ctx.data(|d| d.get_temp::<Skin>(egui::Id::new("ff-skin"))) {
+        return s;
+    }
+    let skin = Skin::load(ctx);
+    remember(ctx, &skin);
+    skin
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skin_of_returns_the_installed_skin() {
+        let ctx = egui::Context::default();
+        let s = install(&ctx);
+        assert_eq!(of(&ctx).check_on.id(), s.check_on.id());
+    }
+
+    #[test]
+    fn skin_of_loads_once_when_absent() {
+        let ctx = egui::Context::default();
+        fonts::install(&ctx);
+        let a = of(&ctx);
+        let b = of(&ctx);
+        assert_eq!(a.check_on.id(), b.check_on.id());
+        assert_eq!(a.title_bar.id(), b.title_bar.id());
+    }
 }

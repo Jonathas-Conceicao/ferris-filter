@@ -1,6 +1,6 @@
 //! Small painted flag icons for rule rows: vector shapes, no textures, tinted by the caller.
 //!
-//! [`paint_flag_icon`] draws into any rect (14pt glyph, 1.5pt strokes); [`flag_icon`] is the
+//! [`paint_flag_icon`] draws into any rect (16pt glyph, 1.75pt strokes); [`flag_icon`] is the
 //! 18x18 hover-only widget with an accessible name and a tooltip.
 
 use egui::{
@@ -9,12 +9,13 @@ use egui::{
 };
 
 use super::fonts::regular;
+use super::palette as pal;
 
 /// Side of the square a [`flag_icon`] occupies.
 pub const FLAG_ICON_SIZE: f32 = 18.0;
 
 /// Stroke width of every glyph.
-const STROKE: f32 = 1.5;
+const STROKE: f32 = 1.75;
 
 /// The flags a rule row can carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,10 +34,21 @@ pub enum FlagIcon {
     MovedAcrossContinue,
 }
 
+/// The two chain links of the group-broken glyph: separated by a visible gap.
+pub fn group_broken_links(rect: Rect) -> (Rect, Rect) {
+    let c = rect.center();
+    let r = rect.width().min(rect.height()).min(16.0) / 2.0;
+    let size = vec2(r * 0.7, r * 1.2);
+    (
+        Rect::from_center_size(pos2(c.x - r * 0.62, c.y), size),
+        Rect::from_center_size(pos2(c.x + r * 0.62, c.y), size),
+    )
+}
+
 /// Paints `icon` centred in `rect` in `colour`.
 pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Color32) {
     let c = rect.center();
-    let r = rect.width().min(rect.height()).min(14.0) / 2.0;
+    let r = rect.width().min(rect.height()).min(16.0) / 2.0;
     let stroke = Stroke::new(STROKE, colour);
     match icon {
         FlagIcon::Padlock => {
@@ -44,12 +56,18 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
                 pos2(c.x - r * 0.75, c.y - r * 0.05),
                 pos2(c.x + r * 0.75, c.y + r),
             );
+            painter.rect_filled(
+                body,
+                1.0,
+                Color32::from_rgba_unmultiplied(pal::WARN.r(), pal::WARN.g(), pal::WARN.b(), 90),
+            );
             painter.rect_stroke(body, 1.0, stroke, egui::StrokeKind::Inside);
             let centre = pos2(c.x, c.y - r * 0.05);
             let sr = r * 0.5;
-            let mut pts: Vec<Pos2> = (0..=8)
+            let mut pts: Vec<Pos2> = (0..=6)
                 .map(|i| {
-                    let a = std::f32::consts::PI * (i as f32 / 8.0);
+                    // Stops short of the half circle: the right leg is left open.
+                    let a = std::f32::consts::PI * 0.8 * (i as f32 / 6.0);
                     pos2(centre.x - a.cos() * sr, centre.y - a.sin() * sr)
                 })
                 .collect();
@@ -62,7 +80,7 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
         }
         FlagIcon::GrammarError => {
             painter.circle_filled(c, r * 0.9, colour);
-            painter.text(c, Align2::CENTER_CENTER, "!", regular(13.0), Color32::WHITE);
+            painter.text(c, Align2::CENTER_CENTER, "!", regular(13.0), pal::HEADING);
         }
         FlagIcon::GrammarWarning => {
             let tri = vec![
@@ -80,16 +98,15 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
             );
         }
         FlagIcon::GroupBroken => {
-            let a = Rect::from_center_size(pos2(c.x - r * 0.55, c.y), vec2(r * 0.9, r * 1.2));
-            let b = Rect::from_center_size(pos2(c.x + r * 0.55, c.y), vec2(r * 0.9, r * 1.2));
+            let (a, b) = group_broken_links(rect);
             let rad = (r * 0.45) as u8;
             painter.rect_stroke(a, rad, stroke, egui::StrokeKind::Inside);
             painter.rect_stroke(b, rad, stroke, egui::StrokeKind::Inside);
             // The break: a short slash between the two links.
             painter.line_segment(
                 [
-                    pos2(c.x - r * 0.15, c.y + r * 0.5),
-                    pos2(c.x + r * 0.15, c.y - r * 0.5),
+                    pos2(c.x - r * 0.2, c.y + r * 0.6),
+                    pos2(c.x + r * 0.2, c.y - r * 0.6),
                 ],
                 stroke,
             );
@@ -116,7 +133,7 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
 pub fn flag_icon(ui: &mut Ui, icon: FlagIcon, colour: Color32, name: &str, tip: &str) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(FLAG_ICON_SIZE), Sense::hover());
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, name));
-    paint_flag_icon(ui.painter(), rect.shrink(2.0), icon, colour);
+    paint_flag_icon(ui.painter(), rect.shrink(1.0), icon, colour);
     resp.on_hover_text(tip)
 }
 
@@ -158,6 +175,14 @@ mod tests {
             });
             assert!(n > base, "{icon:?} painted nothing");
         }
+    }
+
+    #[test]
+    fn group_broken_links_have_a_gap() {
+        let rect = Rect::from_min_size(pos2(10.0, 10.0), Vec2::splat(16.0));
+        let (a, b) = group_broken_links(rect);
+        assert!(!a.intersects(b));
+        assert!(b.min.x - a.max.x >= 2.0, "gap {}", b.min.x - a.max.x);
     }
 
     #[test]

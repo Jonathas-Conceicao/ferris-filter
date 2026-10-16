@@ -36,3 +36,6 @@ desktop.ini
 # tiers-default.json (committed) are read instead. Delete one to reset it to the defaults.
 /styles.json
 /tiers.json
+
+# My personal notes
+human_notes.org

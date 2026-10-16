@@ -55,3 +55,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 assert_cmd  = "2.2"
 predicates  = "3.1"
 insta       = "1.47.2"
+
+# Optimise dependencies (egui/epaint/ab_glyph font rasterising) in debug and test builds:
+# the overlay tests render with the real Fontin fonts, which is very slow unoptimised.
+# Our own crate stays at opt-level 0 for debugging.
+[profile.dev.package."*"]
+opt-level = 2

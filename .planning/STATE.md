@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
 status: executing
-stopped_at: Completed 30-01-PLAN.md
-last_updated: "2026-10-16T06:56:41.077Z"
+stopped_at: Completed 30-02-PLAN.md
+last_updated: "2026-10-16T07:14:03.621Z"
 last_activity: 2026-10-16
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
   percent: 14
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-16)
 ## Current Position
 
 Phase: 30 (Skinned Overlay Shell) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-10-16
 
@@ -81,6 +81,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 28 P03 | 10min | 2 tasks | 5 files |
 | Phase 28 P04 | 6 min | 2 tasks | 4 files |
 | Phase 30 P01 | 40min | 3 tasks | 8 files |
+| Phase 30 P02 | ~2h | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -186,6 +187,7 @@ work (carried forward past the v0.3 close):
 - [Phase 28]: 28-02: reads go through InputPaths::styles_source/tiers_source (live, else -default.json); app-root marker is styles-default.json
 - [Phase 28]: 28-03: overlay config files keep two baselines - content (source read) and live (live file bytes or None, the changed-on-disk guard)
 - [Phase 28]: 28-04: styles.json/tiers.json untracked (index only) and git-ignored; committed -default.json files hold the defaults
+- [Phase 30]: Config Revert uses an interim ff_modal Discard confirm until the popup plan
 
 ### Pending Todos
 
@@ -341,8 +343,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T06:56:41.069Z
-Stopped at: Completed 30-01-PLAN.md
+Last session: 2026-10-16T07:13:56.311Z
+Stopped at: Completed 30-02-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

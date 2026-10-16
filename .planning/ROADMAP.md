@@ -125,7 +125,14 @@ Plans:
   4. Every confirmation (changed-on-disk RELOAD / OVERWRITE, switch filter and discard, Quit with unapplied edits, deletes) appears as a skinned popup, and standing captions / wall-of-text panels are replaced by controls, icons, tooltips or the status line
   5. `Ctrl+Shift+Z`, the tray icon and Quit, single-instance relaunch and `/reloaditemfilter` after Apply behave exactly as in v0.5
 
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+
+- [ ] 30-01-PLAN.md — Skin + Win32 foundations: monitor-aware DPI-correct dock, button/tab/status/header extensions, global restyle + theme re-point, ff_modal popup, painted flag icons
+- [ ] 30-02-PLAN.md — Shell composition: docked 660pt window, header, Rules/Config/Economy/About tabs, bottom bar + status line (priority fn), Economy/About placeholders, debug screenshot mode
+- [ ] 30-03-PLAN.md — All seven confirmations as skinned popups (changed-on-disk, switch filter, quit, delete rule/style, remove economy, discard config)
+- [ ] 30-04-PLAN.md — Less-texty pass: row flags to icons, captions to tooltips, short empty states
+- [ ] 30-05-PLAN.md — Docs (CLAUDE.md, README, CHANGELOG), viewed screenshot set, 30-LESS-TEXTY-INVENTORY review checklist
 **UI hint**: yes
 
 ### Phase 31: RULES Tab on the Skin

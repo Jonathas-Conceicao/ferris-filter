@@ -105,7 +105,7 @@ retired. Every v0.5 editor capability survives the move.
   Preview / Order); built-in styles show the Order arrows greyed out so the columns line up; the
   textual Show/Hide caption before the icon is gone (the visibility switch says it).
 
-- [ ] **STY-02**: Clicking a style expands a line-by-line editor like the rule editor, with no boxed
+- [x] **STY-02**: Clicking a style expands a line-by-line editor like the rule editor, with no boxed
   panels: `Visibility  <Show><Hide>` on one line, the label preview with Text / Border / Background
   swatches, font size, minimap (size, colour, game-icon shape), beam (colour, Temp), sound and
   volume.
@@ -114,10 +114,10 @@ retired. Every v0.5 editor capability survives the move.
   exact RGB/hex input, alpha where the target supports it) whose frame and controls use the game
   art; the same picker serves rule colour actions.
 
-- [ ] **STY-04**: Custom styles keep rename, reorder and delete; Delete sits at the bottom of the
+- [x] **STY-04**: Custom styles keep rename, reorder and delete; Delete sits at the bottom of the
   expanded editor and asks for confirmation (showing how many rules use the style, as today).
 
-- [ ] **STY-05**: Every style and tier edit keeps v0.5's model: in memory until the one Apply,
+- [x] **STY-05**: Every style and tier edit keeps v0.5's model: in memory until the one Apply,
   written all or none, undone by Revert.
 
 ### Economy Tab (ECO)
@@ -188,10 +188,10 @@ retired. Every v0.5 editor capability survives the move.
 | SECT-04 | Phase 32 | Complete |
 | SECT-05 | Phase 32 | Complete |
 | STY-01 | Phase 33 | Complete |
-| STY-02 | Phase 33 | Pending |
+| STY-02 | Phase 33 | Complete |
 | STY-03 | Phase 33 | Complete |
-| STY-04 | Phase 33 | Pending |
-| STY-05 | Phase 33 | Pending |
+| STY-04 | Phase 33 | Complete |
+| STY-05 | Phase 33 | Complete |
 | ECO-01 | Phase 34 | Pending |
 | ECO-02 | Phase 34 | Pending |
 | ABOUT-01 | Phase 34 | Pending |

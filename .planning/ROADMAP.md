@@ -257,7 +257,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 33-04-PLAN.md — Line-by-line style editor (visibility, label, colours, font, minimap, beam, sound, drop sound, delete) + STY-05 test
+- [x] 33-04-PLAN.md — Line-by-line style editor (visibility, label, colours, font, minimap, beam, sound, drop sound, delete) + STY-05 test
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -303,7 +303,7 @@ Plans:
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
 | 32. Rule Dividers & Economy Banner | v0.6 | 6/6 | Complete   | 2026-10-16 |
-| 33. Style Table & Line-by-Line Style Editor | v0.6 | 3/5 | In Progress|  |
+| 33. Style Table & Line-by-Line Style Editor | v0.6 | 4/5 | In Progress|  |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
 | 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |
 
@@ -389,7 +389,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 

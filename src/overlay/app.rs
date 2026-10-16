@@ -554,6 +554,15 @@ fn apply_row_actions(
     let mut status = None;
     for action in rules::coalesce_edits(actions) {
         let is_add = matches!(action, RowAction::AddRule);
+        let is_add_section = matches!(action, RowAction::AddSection);
+        let section_above = match &action {
+            RowAction::AddSectionAbove(id) => Some(*id),
+            _ => None,
+        };
+        let drops_rename = matches!(
+            action,
+            RowAction::RemoveSection(_) | RowAction::MoveSection(..)
+        );
         let is_duplicate = matches!(action, RowAction::Duplicate(_));
         let is_move = matches!(action, RowAction::Move(..));
         let deleted = match &action {
@@ -600,6 +609,24 @@ fn apply_row_actions(
         }
         if outcome.changed {
             changed = true;
+            if is_add_section {
+                // The new divider is at the very top: clear the search so it shows, scroll
+                // there and put the cursor in its name box.
+                query.clear();
+                list.scroll_top = true;
+            }
+            if drops_rename {
+                list.editing_section = None;
+            }
+            if let Some(ordinal) = outcome.section {
+                list.editing_section = Some(ordinal);
+                list.section_draft = "Section".to_string();
+                list.section_focus = true;
+            }
+            if let Some(id) = section_above {
+                // The rule stays open and in view next to its new header.
+                list.pending_scroll = Some(id);
+            }
             if let Some(b) = edited_block {
                 if list.line_error.as_ref().is_some_and(|(e, _, _)| *e == b) {
                     list.line_error = None;
@@ -1132,6 +1159,59 @@ impl OverlayApp {
         }
     }
 
+    /// Saves `next` as the settings now in force. A failed save still applies it for this
+    /// session and says so, like the other view preferences.
+    fn store_settings(&mut self, next: Settings) {
+        let save_error = match &self.root {
+            Ok(root) => settings::save(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Remember that a section of the active filter is folded or open. A view preference: it
+    /// never touches the loaded filter, the dirty flag or the CONFIG pending state.
+    fn set_section_collapsed(&mut self, name: &str, economy: bool, collapsed: bool) {
+        let key = if economy {
+            settings::ECONOMY_SECTION_KEY
+        } else {
+            name
+        };
+        let next = self
+            .settings
+            .set_section_collapsed(self.settings.filter_name(), key, collapsed);
+        self.store_settings(next);
+    }
+
+    /// A renamed section keeps its folded state: copy the stored flag from the old name to the
+    /// new one before the rename is applied (the old entry stays, so a Revert still finds it).
+    fn carry_section_state(&mut self, actions: &[RowAction]) {
+        let Some(working) = &self.working else {
+            return;
+        };
+        let filter = self.settings.filter_name().to_string();
+        let mut next = self.settings.clone();
+        for action in actions {
+            if let RowAction::RenameSection { ordinal, name } = action
+                && let Some(sec) = working
+                    .sections()
+                    .iter()
+                    .find(|s| s.ordinal == *ordinal && !s.economy)
+            {
+                let to = crate::filter::section::sanitize_name(name);
+                if to != sec.name {
+                    next = next.copy_section_state(&filter, &sec.name, &to);
+                }
+            }
+        }
+        if next != self.settings {
+            self.store_settings(next);
+        }
+    }
+
     /// Persist the reload-after-Apply preference at once. A view preference, not a CONFIG draft
     /// edit: it never touches the loaded filter or the CONFIG pending state.
     fn set_reload_after_apply(&mut self, on: bool) {
@@ -1292,6 +1372,7 @@ impl OverlayApp {
     /// Applies deferred row operations to the working filter and updates the status the way a
     /// list click does.
     fn run_row_actions(&mut self, row_actions: Vec<RowAction>) {
+        self.carry_section_state(&row_actions);
         if let Some(working) = &mut self.working {
             let (changed, status) =
                 apply_row_actions(working, &mut self.list, &mut self.query, row_actions);
@@ -1931,7 +2012,13 @@ impl OverlayApp {
             ui.add_space(8.0);
         }
         let avail = ui.available_rect_before_wrap();
-        let footer_h = if self.working.is_some() {
+        // The economy section is a header in the list; the footer slot is only for an absent or
+        // damaged one.
+        let footer_needed = self
+            .working
+            .as_ref()
+            .is_some_and(|w| !matches!(w.economy(), EconomyView::Present { .. }));
+        let footer_h = if footer_needed {
             rule_list::ECONOMY_ROW_HEIGHT + 4.0
         } else {
             0.0
@@ -1946,27 +2033,68 @@ impl OverlayApp {
                 .layout(Layout::top_down(Align::Min)),
         );
         lui.set_clip_rect(list_rect.intersect(ui.clip_rect()));
+        let filter_name = self.settings.filter_name().to_string();
+        let can_edit_economy = self.root.is_ok() && self.changed_on_disk.is_empty();
+        let mut toggled: Vec<(String, bool, bool)> = Vec::new();
         match (&mut self.working, &self.filter) {
             (Some(working), _) => {
-                let visible = working.entries(&self.query, |_| false);
-                if working.rows().is_empty() {
+                let settings = &self.settings;
+                let entries = working.entries(&self.query, |sec| {
+                    let key = if sec.economy {
+                        settings::ECONOMY_SECTION_KEY
+                    } else {
+                        sec.name.as_str()
+                    };
+                    settings.section_collapsed(&filter_name, key, sec.economy)
+                });
+                let searching = !self.query.trim().is_empty();
+                let has_rules = entries.iter().any(|e| {
+                    matches!(
+                        e,
+                        rules::ListEntry::Rule(_) | rules::ListEntry::EconomyRule(_)
+                    )
+                });
+                if entries.is_empty() && !searching {
                     centered_notice(&mut lui, "No rules yet");
-                } else if visible.is_empty() {
+                } else if !has_rules && searching {
                     centered_notice(
                         &mut lui,
                         &format!("No rules match \"{}\"", self.query.trim()),
                     );
+                } else if working.rows().is_empty() && !searching {
+                    // Only dividers (and maybe the economy section): list them, then say so.
+                    let h = rule_list::entries_height(&entries).min(lui.available_height());
+                    let w = lui.available_width();
+                    let frame = lui
+                        .allocate_ui(vec2(w, h), |ui| {
+                            rule_list::show_list(
+                                ui,
+                                working,
+                                &entries,
+                                &mut self.list,
+                                true,
+                                self.classes.as_ref().ok(),
+                                can_edit_economy,
+                            )
+                        })
+                        .inner;
+                    row_actions.extend(frame.actions);
+                    toggled = frame.toggled;
+                    if lui.available_height() > 60.0 {
+                        centered_notice(&mut lui, "No rules yet");
+                    }
                 } else {
                     let frame = rule_list::show_list(
                         &mut lui,
                         working,
-                        &visible,
+                        &entries,
                         &mut self.list,
-                        self.query.trim().is_empty(),
+                        !searching,
                         self.classes.as_ref().ok(),
-                        false,
+                        can_edit_economy,
                     );
                     row_actions.extend(frame.actions);
+                    toggled = frame.toggled;
                 }
             }
             (None, Err(_)) => {
@@ -1974,7 +2102,10 @@ impl OverlayApp {
             }
             (None, Ok(_)) => {}
         }
-        if let Some(working) = &self.working {
+        for (name, economy, collapsed) in toggled {
+            self.set_section_collapsed(&name, economy, collapsed);
+        }
+        if footer_needed && let Some(working) = &self.working {
             let footer_rect = Rect::from_min_max(
                 pos2(avail.min.x, avail.max.y - rule_list::ECONOMY_ROW_HEIGHT),
                 avail.max,
@@ -1984,7 +2115,6 @@ impl OverlayApp {
                     .max_rect(footer_rect)
                     .layout(Layout::top_down(Align::Min)),
             );
-            let can_edit_economy = self.root.is_ok() && self.changed_on_disk.is_empty();
             *economy_action = rule_list::economy_footer(
                 &mut fui,
                 skin,
@@ -3861,6 +3991,44 @@ mod tests {
         assert!(changed);
         assert_eq!(status, None, "the stale first edit must not run");
         assert_eq!(working.text(), "Show\n  ItemLevel >= 72\n");
+    }
+
+    #[test]
+    fn add_section_opens_its_name_box_and_scrolls_to_the_top() {
+        let mut working = WorkingFilter::from_text(
+            "Show
+  Class \"Rings\"
+",
+        );
+        let mut list = ListUi::default();
+        let mut query = "rings".to_string();
+        let (changed, status) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut query,
+            vec![RowAction::AddSection],
+        );
+        assert!(changed);
+        assert!(
+            query.is_empty(),
+            "the search is cleared so the divider shows"
+        );
+        assert!(list.scroll_top && list.section_focus);
+        assert_eq!(list.section_draft, "Section");
+        assert_eq!(list.editing_section, Some(working.sections()[0].ordinal));
+        assert_eq!(
+            status.as_deref(),
+            Some("Section added at the top. Press Apply to save it.")
+        );
+        // Removing it ends the rename.
+        let ord = working.sections()[0].ordinal;
+        apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut query,
+            vec![RowAction::RemoveSection(ord)],
+        );
+        assert!(list.editing_section.is_none());
     }
 
     /// WR-07: a removed line re-keys the cards after it, so their egui temp state is orphaned;

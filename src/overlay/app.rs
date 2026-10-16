@@ -990,6 +990,10 @@ impl OverlayApp {
                 app.list.section_focus = true;
             }
         }
+        if let Some(name) = &shot.expand_style {
+            app.config_ui.expanded = Some(name.clone());
+            app.config_ui.scroll_to = Some(name.clone());
+        }
         app.shot = Some(ShotState {
             args: shot,
             frames: 0,
@@ -1141,6 +1145,11 @@ impl OverlayApp {
         };
         shot.frames += 1;
         ctx.request_repaint();
+        if let Some(tag) = &shot.args.picker {
+            if (3..=5).contains(&shot.frames) {
+                crate::skin::colour_picker::request_open(ctx, tag);
+            }
+        }
         let image = ctx.input(|i| {
             i.raw.events.iter().find_map(|e| match e {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),

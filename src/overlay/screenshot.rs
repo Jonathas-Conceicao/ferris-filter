@@ -1,5 +1,6 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
-//! [--filter f] [--expand n] [--search text] [--rename-section n]` renders the shell once, saves the frame as a PNG and exits.
+//! [--filter f] [--expand n] [--search text] [--rename-section n] [--expand-style name]
+//! [--picker text|border|background|rule]` renders the shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
 //! the hotkey and the tray, never applies, reloads or syncs, and refuses to run unless
@@ -24,6 +25,9 @@ pub(crate) const POPUPS: [&str; 7] = [
     "discard-config",
 ];
 
+/// The colour pickers `--picker` can open (the `colour_popup` tags).
+pub(crate) const PICKERS: [&str; 4] = ["text", "border", "background", "rule"];
+
 /// The parsed command line of the screenshot mode.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ShotArgs {
@@ -43,6 +47,10 @@ pub(crate) struct ShotArgs {
     pub search: Option<String>,
     /// Open the n-th user section header (1-based, economy skipped) in rename mode.
     pub rename_section: Option<usize>,
+    /// Expand this style in the CONFIG tab's Styles tables.
+    pub expand_style: Option<String>,
+    /// Open the colour picker with this tag (one of [`PICKERS`]).
+    pub picker: Option<String>,
 }
 
 /// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent: a
@@ -61,6 +69,8 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut expand = None;
     let mut search = None;
     let mut rename_section = None;
+    let mut expand_style = None;
+    let mut picker = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -98,6 +108,14 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                     }
                 };
             }
+            "--expand-style" => expand_style = Some(value("--expand-style")?),
+            "--picker" => {
+                let p = value("--picker")?;
+                if !PICKERS.contains(&p.as_str()) {
+                    return Err(format!("unknown picker `{p}` ({})", PICKERS.join("|")));
+                }
+                picker = Some(p);
+            }
             "--search" => search = Some(value("--search")?),
             other => return Err(format!("unknown argument `{other}`")),
         }
@@ -111,6 +129,8 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         expand,
         search,
         rename_section,
+        expand_style,
+        picker,
     }))
 }
 
@@ -291,10 +311,19 @@ mod tests {
             "ring",
             "--rename-section",
             "2",
+            "--expand-style",
+            "S",
+            "--picker",
+            "text",
         ])
         .unwrap()
         .unwrap();
         assert_eq!(a.rename_section, Some(2));
+        assert_eq!(a.expand_style.as_deref(), Some("S"));
+        assert_eq!(a.picker.as_deref(), Some("text"));
+        for slot in PICKERS {
+            assert!(p(&["--screenshot", "o.png", "--picker", slot]).is_ok());
+        }
         assert_eq!(a.expand, Some(3));
         assert_eq!(a.search.as_deref(), Some("ring"));
         assert_eq!(a.png, PathBuf::from("out.png"));
@@ -319,6 +348,9 @@ mod tests {
         assert!(p(&["--screenshot", "o.png", "--rename-section", "0"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--rename-section", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--rename-section"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--picker", "foo"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--picker"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--expand-style"]).is_err());
     }
 
     #[test]

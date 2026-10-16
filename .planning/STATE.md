@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
 status: verifying
-stopped_at: Completed 30-05-PLAN.md
-last_updated: "2026-10-16T09:36:18.383Z"
+stopped_at: Phase 30 executed; verification human_needed (30-HUMAN-UAT.md)
+last_updated: "2026-10-16T10:24:29.428Z"
 last_activity: 2026-10-16
 progress:
   total_phases: 7
@@ -344,8 +344,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T09:36:18.374Z
-Stopped at: Completed 30-05-PLAN.md
-Resume file: None
+Last session: 2026-10-16T10:24:29.421Z
+Stopped at: Phase 30 executed; verification human_needed (30-HUMAN-UAT.md)
+Resume file: .planning/phases/30-skinned-overlay-shell/30-HUMAN-UAT.md
 
 **Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

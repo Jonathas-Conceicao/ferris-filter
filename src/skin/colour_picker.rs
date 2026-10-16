@@ -438,12 +438,12 @@ pub fn ff_colour_picker(
         StrokeKind::Outside,
     );
 
-    // Hex and R / G / B (one line: 72 + 3 x (label + 44) + gaps = 264 of 268).
+    // Hex and R / G / B (one line: 88 + 3 x (label + 38) + gaps = 268 of 268).
     ui.add_space(12.0);
     let mut typed: Option<[u8; 3]> = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
-        if let Some(t) = value_field(ui, id.with("hex"), hex_of(rgb), 72.0, "Hex", "hex")
+        if let Some(t) = value_field(ui, id.with("hex"), hex_of(rgb), 88.0, "Hex", "hex")
             && let Some(v) = parse_hex(&t)
             && v != rgb
         {
@@ -463,7 +463,7 @@ pub fn ff_colour_picker(
                 ui,
                 id.with(("ch", k)),
                 rgb[k].to_string(),
-                44.0,
+                38.0,
                 name,
                 &name.to_lowercase(),
             ) && let Some(v) = parse_channel(&t)

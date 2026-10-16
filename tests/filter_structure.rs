@@ -181,18 +181,22 @@ fn enable_disable_works_on_moved_and_duplicated_blocks() {
 }
 
 #[test]
-fn append_leaves_existing_bytes_alone() {
+fn insert_top_leaves_existing_bytes_alone() {
     let bytes = fixture();
     let mut d = parse(&bytes).unwrap();
     let id = d
-        .append_rule(vec!["Show # N".into(), "  Rarity Rare".into()])
+        .insert_rule_at_top(vec!["Show # N".into(), "  Rarity Rare".into()])
         .unwrap();
-    assert_eq!(d.blocks().last().unwrap().id(), id);
-    let appended = d.to_bytes();
-    assert_bytes_eq("untouched prefix", &appended[..bytes.len()], &bytes);
+    assert_eq!(d.blocks().next().unwrap().id(), id);
+    let inserted = d.to_bytes();
+    // Everything before the new block (a free-standing preamble) and everything after it is
+    // untouched.
+    let grown = inserted.len() - bytes.len();
+    let at = inserted.windows(8).position(|w| w == b"Show # N").unwrap();
+    assert_bytes_eq("untouched prefix", &inserted[..at], &bytes[..at]);
+    assert_bytes_eq("untouched suffix", &inserted[at + grown..], &bytes[at..]);
     d.remove_block(id).unwrap();
-    // The separating blank line the append created stays behind.
-    assert!(d.to_bytes().starts_with(&bytes));
+    assert_bytes_eq("after remove", &d.to_bytes(), &bytes);
 }
 
 #[test]
@@ -224,15 +228,14 @@ fn v04_dynamic_economy_is_never_touched() {
         .id();
     assert_eq!(d.move_neighbour(first_economy, true).unwrap(), None);
 
-    let new = d.append_rule(vec!["Show # Added".into()]).unwrap();
+    let new = d.insert_rule_at_top(vec!["Show # Added".into()]).unwrap();
     assert!(section::find(&d).unwrap().is_some());
     assert_eq!(econ(&d), before);
     let s2 = section::find(&d).unwrap().unwrap();
     assert!(d.block(new).unwrap().header_line() < s2.begin);
-    // The appended rule is now the last rule, and still cannot move into the economy.
-    assert_eq!(d.move_neighbour(new, false).unwrap(), None);
-    d.move_block(new, true).unwrap();
-    d.move_block(new, false).unwrap();
+    // The new rule is the first one: it cannot move up, and the economy stays untouched.
+    assert_eq!(d.blocks().next().unwrap().id(), new);
+    assert_eq!(d.move_neighbour(new, true).unwrap(), None);
     assert_eq!(econ(&d), before);
     d.remove_block(new).unwrap();
     assert_eq!(econ(&d), before);

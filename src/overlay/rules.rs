@@ -1094,7 +1094,7 @@ impl WorkingFilter {
                 }
                 self.doc.set_enabled(id, on).map_err(|e| e.to_string())
             }
-            RowAction::AddRule => match self.doc.append_rule(vec!["Show".to_string()]) {
+            RowAction::AddRule => match self.doc.insert_rule_at_top(vec!["Show".to_string()]) {
                 Ok(id) => {
                     focus = Some(id);
                     Ok(())

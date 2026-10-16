@@ -202,8 +202,9 @@ impl Document {
         }
     }
 
-    /// Append a new rule block before the economy section (or at the end of the file).
-    pub fn append_rule(&mut self, lines: Vec<String>) -> Result<BlockId, EditError> {
+    /// Insert a new rule block as the first block of the file, above the first block's leading
+    /// comments, outside every section.
+    pub fn insert_rule_at_top(&mut self, lines: Vec<String>) -> Result<BlockId, EditError> {
         if lines.iter().any(|s| s.contains(['\n', '\r'])) {
             return Err(EditError::EmbeddedNewline);
         }
@@ -233,21 +234,14 @@ impl Document {
         }
 
         let sec = section::find(self).map_err(|e| EditError::EconomyDamaged(e.to_string()))?;
-        let total = self.lines.len();
-        let ins = match sec {
-            Some(s) => {
-                let mut i = s.begin;
-                while i > 0 && is_blank(&self.lines[i - 1]) {
-                    i -= 1;
-                }
-                i
-            }
-            None => total,
-        };
+        let ins = self.top_insertion_line(sec);
         let eol = if ins > 0 {
             self.fresh_eol(ins - 1)
         } else {
-            self.last_eol()
+            match self.lines.first().map(|l| l.eol()) {
+                Some(e) if e != Eol::None => e,
+                _ => self.last_eol(),
+            }
         };
         let mut new: Vec<Line> = self.lines[..ins].to_vec();
         if let Some(last) = new.last_mut() {
@@ -261,7 +255,7 @@ impl Document {
         for t in &lines {
             new.push(Line::new(t.clone(), eol));
         }
-        if sec.is_some_and(|s| ins == s.begin) {
+        if self.lines.get(ins).is_some_and(|l| !is_blank(l)) {
             new.push(Line::new(String::new(), eol));
         }
         new.extend_from_slice(&self.lines[ins..]);
@@ -277,6 +271,27 @@ impl Document {
         expected.insert(pos, lines);
         let out = self.commit_structural(new, ids, expected)?;
         Ok(out[pos])
+    }
+
+    /// The one insertion point for new rules: the first line of the first block outside the
+    /// economy section, including that block's leading comments and `# ff:` meta lines. Phase 32
+    /// extends this to also stop before the first `# ff:section` banner. With no such block it is
+    /// just above the economy section's leading blank lines, or the end of the file.
+    fn top_insertion_line(&self, sec: Option<section::SectionSpan>) -> usize {
+        let limit = sec.map_or(usize::MAX, |s| s.begin);
+        if let Some(first) = self.infos().iter().find(|i| i.span.start < limit) {
+            return first.span.start;
+        }
+        match sec {
+            Some(s) => {
+                let mut i = s.begin;
+                while i > 0 && is_blank(&self.lines[i - 1]) {
+                    i -= 1;
+                }
+                i
+            }
+            None => self.lines.len(),
+        }
     }
 
     /// Remove the block's unit (span plus the blank lines directly after it).
@@ -528,82 +543,273 @@ mod tests {
     }
 
     #[test]
-    fn append_basic_and_fresh_id() {
-        let mut d = p("Show\n    Class \"Rings\"\n");
+    fn insert_top_basic_and_fresh_id() {
+        let mut d = p("Show
+    Class \"Rings\"
+");
         let before = ids(&d);
-        let id = d.append_rule(v(&["Show"])).unwrap();
-        assert_eq!(s(&d), "Show\n    Class \"Rings\"\n\nShow\n");
+        let id = d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+
+Show
+    Class \"Rings\"
+"
+        );
         assert!(!before.contains(&id));
-        assert_eq!(ids(&d), vec![before[0], id]);
+        assert_eq!(ids(&d), vec![id, before[0]]);
     }
 
     #[test]
-    fn append_before_economy_section() {
-        let src = format!("Show # A\n  Rarity Rare\n\n{BEGIN}\n\nHide # e\n\n{END}\n");
-        let mut d = p(&src);
-        let econ_before: Vec<String> = d.lines()[3..]
-            .iter()
-            .map(|l| l.text().to_string())
-            .collect();
-        d.append_rule(v(&["Show # N"])).unwrap();
+    fn insert_top_keeps_first_block_meta() {
+        let mut d = p("# ff:name X
+Show
+");
+        let old = ids(&d)[0];
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
         assert_eq!(
             s(&d),
-            format!("Show # A\n  Rarity Rare\n\nShow # N\n\n{BEGIN}\n\nHide # e\n\n{END}\n")
+            "Show
+
+# ff:name X
+Show
+"
         );
+        assert_eq!(d.meta_get(old, "name"), Some("X"));
+    }
+
+    #[test]
+    fn insert_top_after_free_preamble() {
+        let mut d = p("# header
+
+Show
+");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "# header
+
+Show
+
+Show
+"
+        );
+    }
+
+    #[test]
+    fn insert_top_above_disabled_block() {
+        let mut d = p("# Show
+# 	Rarity Rare
+");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+
+# Show
+# 	Rarity Rare
+"
+        );
+    }
+
+    #[test]
+    fn insert_top_with_economy_after_rules() {
+        let tail = format!(
+            "Show # A
+  Rarity Rare
+
+{BEGIN}
+
+Hide # e
+
+{END}
+"
+        );
+        let mut d = p(&tail);
+        d.insert_rule_at_top(v(&["Show # N"])).unwrap();
+        let out = s(&d);
+        assert_eq!(
+            out,
+            format!(
+                "Show # N
+
+{tail}"
+            )
+        );
+        assert!(out.ends_with(&tail));
         assert!(section::find(&d).unwrap().is_some());
-        let n = d.lines().len();
-        let econ_after: Vec<String> = d.lines()[n - econ_before.len()..]
-            .iter()
-            .map(|l| l.text().to_string())
-            .collect();
-        assert_eq!(econ_before, econ_after);
-        // No blank run above the begin marker: one is created.
-        let src = format!("Show # A\n{BEGIN}\n\nHide\n\n{END}\n");
+    }
+
+    #[test]
+    fn insert_top_economy_only_lands_above_begin() {
+        let src = format!(
+            "{BEGIN}
+
+Hide
+
+{END}
+"
+        );
         let mut d = p(&src);
-        d.append_rule(v(&["Show # N"])).unwrap();
+        d.insert_rule_at_top(v(&["Show # N"])).unwrap();
         assert_eq!(
             s(&d),
-            format!("Show # A\n\nShow # N\n\n{BEGIN}\n\nHide\n\n{END}\n")
+            format!(
+                "Show # N
+
+{src}"
+            )
+        );
+        let src = format!(
+            "# note
+{BEGIN}
+
+Hide
+
+{END}
+"
+        );
+        let mut d = p(&src);
+        d.insert_rule_at_top(v(&["Show # N"])).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "# note
+
+Show # N
+
+{BEGIN}
+
+Hide
+
+{END}
+"
+            )
+        );
+        let sec = section::find(&d).unwrap().unwrap();
+        assert!(d.blocks().next().unwrap().header_line() < sec.begin);
+    }
+
+    #[test]
+    fn insert_top_keeps_group_run_intact() {
+        let run = "# ff:group abc 1/2
+Show
+  BaseArmour 0
+
+# ff:group abc 2/2
+Show
+  BaseEvasion 0
+";
+        let mut d = p(run);
+        let old = ids(&d);
+        let id = d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "Show
+
+{run}"
+            )
+        );
+        assert_eq!(ids(&d), vec![id, old[0], old[1]]);
+    }
+
+    #[test]
+    fn insert_top_no_blocks_appends() {
+        let mut d = p("");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
+"
+        );
+        let mut d = p("# note
+");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "# note
+
+Show
+"
+        );
+        let src = format!(
+            "# note
+
+{BEGIN}
+
+{END}
+"
+        );
+        let mut d = p(&src);
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "# note
+
+Show
+
+{BEGIN}
+
+{END}
+"
+            )
         );
     }
 
     #[test]
-    fn append_after_trailing_comment_and_edge_inputs() {
-        let mut d = p("Show\n# note\n");
-        d.append_rule(v(&["Show"])).unwrap();
-        assert_eq!(s(&d), "Show\n# note\n\nShow\n");
-        assert_eq!(d.blocks().nth(1).unwrap().leading().len(), 0);
+    fn insert_top_crlf() {
+        let mut d = p("Hide
+");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
 
-        let mut d = p("");
-        d.append_rule(v(&["Show"])).unwrap();
-        assert_eq!(s(&d), "Show\n");
+Hide
+"
+        );
+        let mut d = p("Show
+Hide");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(
+            s(&d),
+            "Show
 
-        let mut d = p("Show\r\nHide");
-        d.append_rule(v(&["Show"])).unwrap();
-        assert_eq!(s(&d), "Show\r\nHide\r\n\r\nShow\r\n");
+Show
+Hide"
+        );
     }
 
     #[test]
-    fn append_rejects_bad_input_and_damaged_economy() {
-        let src = "Show\n";
+    fn insert_top_rejects_bad_input_and_damaged_economy() {
+        let src = "Show
+";
         let mut d = p(src);
         assert!(matches!(
-            d.append_rule(v(&["Show\n"])),
+            d.insert_rule_at_top(v(&["Show
+"])),
             Err(EditError::EmbeddedNewline)
         ));
         assert!(matches!(
-            d.append_rule(v(&["Show", "Hide"])),
+            d.insert_rule_at_top(v(&["Show", "Hide"])),
             Err(EditError::NotOneBlock)
         ));
         assert!(matches!(
-            d.append_rule(v(&["Show", "  Rarity =< Rare"])),
+            d.insert_rule_at_top(v(&["Show", "  Rarity =< Rare"])),
             Err(EditError::InvalidBlock { .. })
         ));
         assert_eq!(s(&d), src);
-        let src = format!("Show\n{END}\n");
+        let src = format!(
+            "Show
+{END}
+"
+        );
         let mut d = p(&src);
         assert!(matches!(
-            d.append_rule(v(&["Show"])),
+            d.insert_rule_at_top(v(&["Show"])),
             Err(EditError::EconomyDamaged(_))
         ));
         assert_eq!(s(&d), src);
@@ -758,9 +964,9 @@ mod tests {
     fn crlf_is_preserved() {
         let src = "Show # A\r\n\r\nHide # B\r\n";
         let mut d = p(src);
+        d.insert_rule_at_top(v(&["Minimal"])).unwrap();
         let all = ids(&d);
-        d.duplicate_block(all[0]).unwrap();
-        d.append_rule(v(&["Minimal"])).unwrap();
+        d.duplicate_block(all[1]).unwrap();
         d.move_block(all[1], false).unwrap();
         d.remove_block(all[0]).unwrap();
         let out = s(&d);

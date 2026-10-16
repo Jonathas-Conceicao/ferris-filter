@@ -709,8 +709,8 @@ fn draw_row(
 
     if is_expanded {
         let body = egui::Frame::new()
-            .fill(theme::PANEL_GROUND)
-            .inner_margin(egui::Margin::same(8))
+            .fill(pal::ROW_EVEN)
+            .inner_margin(egui::Margin::symmetric(0, 4))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 expanded_body(ui, working, classes, row, list, actions);
@@ -728,15 +728,6 @@ fn draw_row(
             egui::StrokeKind::Inside,
         );
     }
-}
-
-/// A row-action button at the 13px body-small size (UI-SPEC: 11px is for captions only).
-fn small_button(ui: &mut egui::Ui, text: impl Into<RichText>) -> egui::Response {
-    ui.add(egui::Button::new(text.into().size(theme::ROW_SUMMARY_SIZE)))
-}
-
-fn caption(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
 }
 
 /// What the name box emits for its current text: an empty box removes the `# ff:name` line.
@@ -759,18 +750,19 @@ fn expanded_body(
     let id = row.id;
 
     // NAME
-    caption(ui, "NAME");
+    let skin = crate::skin::of(ui.ctx());
     // The draft outlives `row.name`: emptying the box clears the meta line, and the box must
     // keep its focus while the author retypes.
     let draft = list
         .name_drafts
         .entry(id)
         .or_insert_with(|| row.name.clone().unwrap_or_default());
-    let resp = ui.add(
-        egui::TextEdit::singleline(draft)
-            .hint_text("name")
-            .desired_width(f32::INFINITY),
-    );
+    let name_id = ui.id().with(("name-box", id));
+    let resp = crate::skin::widgets::ff_field_row(ui, 0, "Name", None, |ui| {
+        let w = ui.available_width();
+        crate::skin::widgets::ff_text_field_id(ui, name_id, draft, "Name", w)
+    })
+    .inner;
     if resp.changed() {
         actions.push(name_action(id, draft));
     }
@@ -778,7 +770,6 @@ fn expanded_body(
         resp.request_focus();
         list.focus_name = None;
     }
-    ui.add_space(8.0);
 
     let entries = working.body_view(row.id);
     let bctx = BodyCtx {
@@ -815,11 +806,14 @@ fn expanded_body(
     ui.add_space(8.0);
 
     // Duplicate / Delete
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        if small_button(ui, "Duplicate").clicked() {
+        ui.add_space(crate::skin::widgets::ROW_PAD);
+        if crate::skin::widgets::ff_button(ui, &skin, "Duplicate", 112.0).clicked() {
             actions.push(RowAction::Duplicate(id));
         }
-        if small_button(ui, "Delete").clicked() {
+        ui.add_space(8.0);
+        if crate::skin::widgets::ff_button_ex(ui, &skin, "Delete", 112.0, true, true).clicked() {
             list.confirm_delete = Some(id);
         }
     });
@@ -1568,7 +1562,7 @@ Show
         // `\n}` (not `\n}\n`) so a CRLF checkout (core.autocrlf) still finds the function end.
         let end = start + src[start..].find("\n}").unwrap();
         let f = &src[start..end];
-        let name = f.find("caption(ui, \"NAME\")").unwrap();
+        let name = f.find("\"Name\", None").unwrap();
         let cond = f.find("body::conditions_group").unwrap();
         let style = f.find("body::style_section").unwrap();
         assert!(name < cond && cond < style);
@@ -1669,6 +1663,39 @@ Show
                 assert!(frame.actions.is_empty(), "{src}: {:?}", frame.actions);
             }
         }
+    }
+
+    #[test]
+    fn duplicate_and_delete_are_skin_buttons() {
+        let wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        let id = wf.rows()[0].id;
+        let (mut dup, mut del) = (false, false);
+        for y in (20..600).step_by(4) {
+            for x in [30.0f32, 90.0, 150.0, 200.0] {
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+                let (f, _) = run_frame(
+                    &ctx,
+                    input(click_events(Pos2::new(x, y as f32))),
+                    &wf,
+                    &mut list,
+                    true,
+                );
+                assert!(
+                    !f.actions.iter().any(|a| matches!(a, RowAction::Delete(_))),
+                    "Delete only asks, the popup deletes"
+                );
+                dup |= f.actions.contains(&RowAction::Duplicate(id));
+                del |= list.confirm_delete == Some(id);
+            }
+        }
+        assert!(dup, "Duplicate emits RowAction::Duplicate");
+        assert!(del, "Delete arms confirm_delete");
+        let src = include_str!("rule_list.rs");
+        assert!(src.contains("\"Duplicate\", 112.0") && src.contains("\"Delete\", 112.0"));
     }
 
     #[test]

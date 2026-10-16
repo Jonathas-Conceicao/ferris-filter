@@ -30,8 +30,10 @@ use super::widgets;
 use crate::models::config::Style;
 use crate::skin::fonts::regular;
 use crate::skin::palette as pal;
+use crate::skin::widgets as widgets_skin;
 
-const LABEL_W: f32 = 120.0;
+/// Left inset of a condition / action card: its value controls start in the control column.
+const CARD_LEFT: f32 = widgets_skin::ROW_PAD + widgets_skin::LABEL_COL_W + widgets_skin::LABEL_GAP;
 const OP_W: f32 = 104.0;
 
 const NO_CONDITIONS: &str = "No conditions: this rule matches every item.";
@@ -272,14 +274,55 @@ pub(crate) fn raw_row(
 // The CONDITIONS group
 // ---------------------------------------------------------------------------------------------
 
-fn card_frame(idx: usize) -> egui::Frame {
+fn ground(idx: usize) -> egui::Color32 {
+    if idx.is_multiple_of(2) {
+        pal::ROW_EVEN
+    } else {
+        pal::ROW_ODD
+    }
+}
+
+/// The ground of a condition or action card: alternating row colour, the left inset puts every
+/// control below the header in the control column (the header itself reaches back into it).
+/// (`egui::Margin` is `i8`, too small for the 154pt inset, hence two nested frames.)
+fn card_frame(idx: usize) -> CardFrame {
+    CardFrame(idx)
+}
+
+struct CardFrame(usize);
+
+impl CardFrame {
+    fn show<R>(
+        self,
+        ui: &mut egui::Ui,
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let half = (CARD_LEFT / 2.0) as i8;
+        let outer = egui::Frame::new()
+            .fill(ground(self.0))
+            .inner_margin(egui::Margin {
+                left: half,
+                right: widgets_skin::ROW_PAD as i8,
+                top: 0,
+                bottom: 4,
+            });
+        let r = outer.show(ui, |ui| {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: half,
+                    ..egui::Margin::ZERO
+                })
+                .show(ui, add)
+        });
+        egui::InnerResponse::new(r.inner.inner, r.response)
+    }
+}
+
+/// The ground of a card that is one full-width raw line.
+fn raw_card_frame(idx: usize) -> egui::Frame {
     egui::Frame::new()
-        .fill(if idx.is_multiple_of(2) {
-            theme::ROW_BASE
-        } else {
-            theme::ROW_ALT
-        })
-        .inner_margin(egui::Margin::same(8))
+        .fill(ground(idx))
+        .inner_margin(egui::Margin::symmetric(widgets_skin::ROW_PAD as i8, 4))
 }
 
 fn is_condition_side(e: &BodyEntry) -> bool {
@@ -388,22 +431,17 @@ pub fn conditions_group(
     let pending_kws: Vec<&'static Keyword> = pending.iter().map(|p| p.keyword).collect();
     let present = conditions::present_entries(&lines, &pending_kws, any_pending_defences(list, id));
     let mut picked = None;
-    ui.horizontal(|ui| {
-        caption(ui, "CONDITIONS");
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = ui.add_enabled(
-                ctx.editable,
-                egui::Button::new(RichText::new("+ condition").size(theme::ROW_SUMMARY_SIZE)),
-            );
-            picked = picker_popup(
-                ui,
-                &btn,
-                &grammar::condition_picker_groups(),
-                true,
-                &|_| None,
-                &|e| present.contains(e),
-            );
-        });
+    let skin = crate::skin::of(ui.ctx());
+    widgets_skin::ff_field_row(ui, 0, "Conditions", None, |ui| {
+        let btn = widgets_skin::ff_button_ex(ui, &skin, "+ condition", 132.0, ctx.editable, false);
+        picked = picker_popup(
+            ui,
+            &btn,
+            &grammar::condition_picker_groups(),
+            true,
+            &|_| None,
+            &|e| present.contains(e),
+        );
     });
     if let Some(entry) = picked
         && let Some(a) = pick_entry(id, entry, &lines, &present, list)
@@ -464,7 +502,7 @@ pub fn conditions_group(
                 condition_card(ui, ctx, e, kw, idx, can_between, list, actions)
             }
             _ => {
-                card_frame(idx).show(ui, |ui| {
+                raw_card_frame(idx).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     raw_row(ui, e, true, list, actions, id);
                 });
@@ -539,6 +577,7 @@ fn defences_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             let x = condition_header(
                 ui,
+                idx,
                 "Defences",
                 "Armour, Evasion and Energy Shield",
                 |_| {},
@@ -560,74 +599,76 @@ fn defences_card(
                     actions.push(remove(id, e));
                 }
             }
-            for (name, label) in conditions::DEFENCES {
-                let Some(kw) = crate::filter::keywords::lookup(name) else {
-                    continue;
-                };
-                let own: Vec<&BodyEntry> = defence_lines
-                    .iter()
-                    .copied()
-                    .filter(|e| e.keyword.is_some_and(|k| k.name == name))
-                    .collect();
-                let mut on = !own.is_empty();
-                ui.horizontal(|ui| {
-                    let t = widgets::circular_toggle(ui, &mut on);
-                    #[cfg(test)]
-                    probe_rect(ui, ("defences-toggle", id, name), t.rect);
-                    ui.label(RichText::new(label).size(14.0).color(theme::VALUE_TEXT));
-                    if t.changed() {
-                        if on {
-                            if let Some(text) = grammar::default_line(kw) {
-                                actions.push(RowAction::AddLine {
-                                    id,
-                                    kind: LineKind::Condition,
-                                    text,
-                                });
-                            }
-                            list.pending_defences.remove(&id);
-                        } else {
-                            let mut doomed = own.clone();
-                            doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
-                            for e in doomed {
-                                actions.push(remove(id, e));
+            crate::skin::editor::ff_card(ui, "", |ui| {
+                for (name, label) in conditions::DEFENCES {
+                    let Some(kw) = crate::filter::keywords::lookup(name) else {
+                        continue;
+                    };
+                    let own: Vec<&BodyEntry> = defence_lines
+                        .iter()
+                        .copied()
+                        .filter(|e| e.keyword.is_some_and(|k| k.name == name))
+                        .collect();
+                    let mut on = !own.is_empty();
+                    ui.horizontal(|ui| {
+                        let t = widgets::circular_toggle(ui, &mut on);
+                        #[cfg(test)]
+                        probe_rect(ui, ("defences-toggle", id, name), t.rect);
+                        ui.label(RichText::new(label).size(14.0).color(theme::VALUE_TEXT));
+                        if t.changed() {
+                            if on {
+                                if let Some(text) = grammar::default_line(kw) {
+                                    actions.push(RowAction::AddLine {
+                                        id,
+                                        kind: LineKind::Condition,
+                                        text,
+                                    });
+                                }
+                                list.pending_defences.remove(&id);
+                            } else {
+                                let mut doomed = own.clone();
+                                doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
+                                for e in doomed {
+                                    actions.push(remove(id, e));
+                                }
                             }
                         }
-                    }
-                    if first_toggle.is_none() {
-                        first_toggle = Some(t);
-                    }
-                });
-                let parts = subs
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, p)| p.as_slice())
-                    .unwrap_or(&[]);
-                for part in parts {
-                    match *part {
-                        Part::Single(i) => {
-                            let can_between = conditions::sole_line(defence_lines, i);
-                            defence_line_controls(
+                        if first_toggle.is_none() {
+                            first_toggle = Some(t);
+                        }
+                    });
+                    let parts = subs
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .map(|(_, p)| p.as_slice())
+                        .unwrap_or(&[]);
+                    for part in parts {
+                        match *part {
+                            Part::Single(i) => {
+                                let can_between = conditions::sole_line(defence_lines, i);
+                                defence_line_controls(
+                                    ui,
+                                    ctx,
+                                    defence_lines[i],
+                                    kw,
+                                    can_between,
+                                    list,
+                                    actions,
+                                )
+                            }
+                            Part::Between { lower, upper } => defence_between(
                                 ui,
                                 ctx,
-                                defence_lines[i],
+                                defence_lines[lower],
+                                defence_lines[upper],
                                 kw,
-                                can_between,
                                 list,
                                 actions,
-                            )
+                            ),
                         }
-                        Part::Between { lower, upper } => defence_between(
-                            ui,
-                            ctx,
-                            defence_lines[lower],
-                            defence_lines[upper],
-                            kw,
-                            list,
-                            actions,
-                        ),
                     }
                 }
-            }
+            });
         })
     });
     let rect = framed.inner.response.rect;
@@ -710,6 +751,7 @@ fn simple_defences_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             let x = condition_header(
                 ui,
+                idx,
                 "Simple Defences",
                 "Defence base types",
                 |_| {},
@@ -1013,6 +1055,7 @@ fn between_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             let x = condition_header(
                 ui,
+                idx,
                 &grammar::display_name(kw.name),
                 kw.name,
                 |ui| between_op_combo(ui, id, kw, lower, upper, actions),
@@ -1353,6 +1396,7 @@ fn pending_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             discard = condition_header(
                 ui,
+                idx,
                 &grammar::display_name(p.keyword.name),
                 p.keyword.name,
                 |ui| {
@@ -1513,6 +1557,7 @@ fn condition_card(
             };
             let x = condition_header(
                 ui,
+                idx,
                 &grammar::display_name(kw.name),
                 kw.name,
                 |ui| {
@@ -1555,33 +1600,50 @@ fn condition_card(
     });
 }
 
-/// One condition header row: fixed-width keyword label, the `middle` control, and the remove X
+/// A two-column card header: `label_text` in the 128pt label column, `add_control` from the label
+/// end + 16 to the right edge. The line reaches back over the card's left inset so its label sits
+/// at the row's left edge; the cursor advances by its height only.
+fn card_header<R>(
+    ui: &mut egui::Ui,
+    idx: usize,
+    label_text: &str,
+    label_hover: &str,
+    add_control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let avail = ui.available_rect_before_wrap();
+    let outer = egui::Rect::from_min_max(
+        egui::pos2(avail.min.x - CARD_LEFT, avail.min.y),
+        egui::pos2(avail.max.x + widgets_skin::ROW_PAD, avail.max.y),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(outer)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    let inner =
+        widgets_skin::ff_field_row(&mut child, idx, label_text, Some(label_hover), add_control)
+            .inner;
+    ui.allocate_space(vec2(0.0, child.min_rect().height()));
+    inner
+}
+
+/// One condition header row: the keyword label column, the `middle` control, and the remove X
 /// flush against the right edge so the X buttons line up across rows. Returns the X response.
 fn condition_header(
     ui: &mut egui::Ui,
+    idx: usize,
     label_text: &str,
     label_hover: &str,
     middle: impl FnOnce(&mut egui::Ui),
     remove_tip: &str,
 ) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [LABEL_W, 24.0],
-            egui::Label::new(
-                RichText::new(label_text)
-                    .size(14.0)
-                    .color(theme::VALUE_TEXT),
-            )
-            .truncate(),
-        )
-        .on_hover_text(label_hover);
+    card_header(ui, idx, label_text, label_hover, |ui| {
         middle(ui);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             widgets::remove_x_button(ui, remove_tip)
         })
         .inner
     })
-    .inner
 }
 
 /// The Yes/No a boolean line reads as: negating operators flip the written word; ordering
@@ -1619,17 +1681,11 @@ pub(crate) fn bool_edit(id: BlockId, entry: &BodyEntry, want: bool) -> Option<Ro
 
 /// The compact `Yes | No` control; `Some(want)` when the unselected side was clicked.
 fn bool_yes_no(ui: &mut egui::Ui, effective: bool) -> Option<bool> {
-    let mut picked = None;
-    ui.spacing_mut().item_spacing.x = 2.0;
-    for (label, val) in [("Yes", true), ("No", false)] {
-        let mut sel = effective == val;
-        let r = widgets::toggle_chip(ui, label, &mut sel);
-        if r.changed() && val != effective {
-            picked = Some(val);
-        }
-        r.on_hover_text("Remove the condition to match either.");
-    }
-    picked
+    let skin = crate::skin::of(ui.ctx());
+    let mut idx = if effective { 0 } else { 1 };
+    let r = crate::skin::editor::ff_segmented(ui, &skin, &mut idx, &["Yes", "No"], 132.0)
+        .on_hover_text("Remove the condition to match either.");
+    (r.changed() && (idx == 0) != effective).then_some(idx == 0)
 }
 
 /// The operator dropdown; `Some(new)` only when the user picked a different operator.
@@ -2183,14 +2239,18 @@ fn bool_or_name_control(
     let named_id = ui.make_persistent_id(card.salt("named"));
     let is_name = matches!(current, BoolOrName::Name(_));
     let named = ui.data(|d| d.get_temp::<bool>(named_id)).unwrap_or(is_name);
-    let mut any = !named && matches!(current, BoolOrName::Bool(true));
-    let mut nm = named;
-    let (mut any_changed, mut nm_changed) = (false, false);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        any_changed = widgets::toggle_chip(ui, "Any", &mut any).changed();
-        nm_changed = widgets::toggle_chip(ui, "Named", &mut nm).changed();
-    });
+    let skin = crate::skin::of(ui.ctx());
+    let mut sel = if named {
+        1
+    } else if matches!(current, BoolOrName::Bool(true)) {
+        0
+    } else {
+        2
+    };
+    let changed =
+        crate::skin::editor::ff_segmented(ui, &skin, &mut sel, &["Any", "Named"], 132.0).changed();
+    let (any_changed, nm_changed) = (changed && sel == 0, changed && sel == 1);
+    let (any, nm) = (sel == 0, sel == 1);
     let mut show_name = named;
     if any_changed && any {
         ui.data_mut(|d| d.insert_temp(named_id, false));
@@ -2378,21 +2438,24 @@ fn disposition_word(kw: BlockKeyword) -> &'static str {
 fn disposition_control(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
     let row = ctx.row;
     let id = row.id;
+    let skin = crate::skin::of(ui.ctx());
+    // A foreign `Minimal` lights neither segment; only a click on Show or Hide changes it.
+    let mut sel = match row.keyword {
+        BlockKeyword::Show => 0,
+        BlockKeyword::Hide => 1,
+        BlockKeyword::Minimal => 2,
+    };
     if row.keyword == BlockKeyword::Minimal {
         ui.label(
-            RichText::new(disposition_word(BlockKeyword::Minimal)).color(theme::SECTION_CREAM),
+            RichText::new(disposition_word(BlockKeyword::Minimal))
+                .font(regular(15.0))
+                .color(pal::MUTED),
         );
     }
-    for kw in DISPOSITION_CHOICES {
-        let selected = row.keyword == kw;
-        let (text_color, fill) = if selected {
-            (theme::SECTION_CREAM, theme::HEADER_PLATE)
-        } else {
-            (theme::LABEL_TAN, theme::ROW_BASE)
-        };
-        let btn =
-            egui::Button::new(RichText::new(disposition_word(kw)).color(text_color)).fill(fill);
-        if ui.add(btn).clicked() && !selected {
+    let r = crate::skin::editor::ff_segmented(ui, &skin, &mut sel, &["Show", "Hide"], 132.0);
+    if r.changed() {
+        let kw = DISPOSITION_CHOICES[sel.min(1)];
+        if kw != row.keyword {
             actions.push(RowAction::SetKeyword(id, kw));
         }
     }
@@ -2492,63 +2555,69 @@ pub fn style_section(
     let id = ctx.row.id;
     let added = added_actions(ctx.entries);
     let show_rows = shows_action_rows(&ctx.row.style);
+    let skin = crate::skin::of(ui.ctx());
     let mut picked_action = None;
-    ui.horizontal(|ui| {
-        caption(ui, "STYLE");
+    let mut row_idx = 0;
+    widgets_skin::ff_field_row(ui, row_idx, "Style", None, |ui| {
+        ui.add_enabled_ui(ctx.editable, |ui| {
+            if let Some(p) = style_picker(ui, ctx)
+                && let Some(a) = style_pick_action(id, &ctx.row.style, p)
+            {
+                actions.push(a);
+            }
+        });
         if show_rows {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let btn = ui.add_enabled(
-                    ctx.editable,
-                    egui::Button::new(RichText::new("+ style").size(theme::ROW_SUMMARY_SIZE)),
-                );
-                let disabled = |e: &ConditionEntry| match e {
-                    ConditionEntry::Keyword(k) => added.contains(&k.name).then_some("(added)"),
-                    ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
-                };
-                picked_action = picker_popup(
-                    ui,
-                    &btn,
-                    &keyword_entries(grammar::action_groups()),
-                    false,
-                    &disabled,
-                    &|_| false,
-                )
-                .and_then(|e| match e {
-                    ConditionEntry::Keyword(k) => Some(k),
-                    ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
-                });
+            let btn = widgets_skin::ff_button_ex(ui, &skin, "+ style", 132.0, ctx.editable, false);
+            let disabled = |e: &ConditionEntry| match e {
+                ConditionEntry::Keyword(k) => added.contains(&k.name).then_some("(added)"),
+                ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
+            };
+            picked_action = picker_popup(
+                ui,
+                &btn,
+                &keyword_entries(grammar::action_groups()),
+                false,
+                &disabled,
+                &|_| false,
+            )
+            .and_then(|e| match e {
+                ConditionEntry::Keyword(k) => Some(k),
+                ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
             });
         }
     });
+    row_idx += 1;
     if let Some(kw) = picked_action
         && let Some(a) = pick_action(id, kw)
     {
         actions.push(a);
     }
-    ui.spacing_mut().item_spacing.y = 4.0;
-    ui.add_enabled_ui(ctx.editable, |ui| {
-        if let Some(p) = style_picker(ui, ctx)
-            && let Some(a) = style_pick_action(id, &ctx.row.style, p)
-        {
-            actions.push(a);
-        }
-        if show_rows {
-            ui.horizontal(|ui| disposition_control(ui, ctx, actions));
-        }
-    });
+    ui.spacing_mut().item_spacing.y = 0.0;
     if show_rows {
+        widgets_skin::ff_field_row(ui, row_idx, "", None, |ui| {
+            ui.add_enabled_ui(ctx.editable, |ui| disposition_control(ui, ctx, actions));
+        });
+        row_idx += 1;
         action_rows(ui, ctx, list, actions);
     }
-    ui.add_enabled_ui(ctx.editable, |ui| {
-        // A style never owns `Continue`, so the checkbox stays editable on a styled rule.
-        let mut cont = ctx.row.has_continue;
-        let cb = egui::Checkbox::new(
-            &mut cont,
-            RichText::new("Continue to later rules").color(theme::LABEL_TAN),
-        );
-        if ui.add(cb).changed() {
-            actions.push(RowAction::SetContinue(id, cont));
-        }
+    widgets_skin::ff_field_row(ui, row_idx, "", None, |ui| {
+        ui.add_enabled_ui(ctx.editable, |ui| {
+            // A style never owns `Continue`, so the check stays editable on a styled rule.
+            let mut cont = ctx.row.has_continue;
+            let tip = "Matching goes on to the rules below";
+            let changed = widgets_skin::ff_check(ui, &skin, &mut cont, "Continue to later rules")
+                .on_hover_text(tip)
+                .changed();
+            ui.label(
+                RichText::new("Continue to later rules")
+                    .font(crate::skin::fonts::small_caps(17.0))
+                    .color(pal::LABEL),
+            )
+            .on_hover_text(tip);
+            if changed {
+                actions.push(RowAction::SetContinue(id, cont));
+            }
+        });
     });
 }
 
@@ -2575,7 +2644,7 @@ fn action_rows(ui: &mut egui::Ui, ctx: &BodyCtx, list: &mut ListUi, actions: &mu
                 action_card(ui, ctx, e, kw, idx, None, list, actions);
             }
             _ => {
-                card_frame(idx).show(ui, |ui| {
+                raw_card_frame(idx).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     raw_row(ui, e, false, list, actions, id);
                 });
@@ -2612,21 +2681,7 @@ fn action_card(
         let framed = card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [LABEL_W, 24.0],
-                    egui::Label::new(
-                        RichText::new(grammar::display_name(kw.name))
-                            .size(14.0)
-                            .color(if lock.is_some() {
-                                theme::DISABLED_TEXT
-                            } else {
-                                theme::VALUE_TEXT
-                            }),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(kw.name);
+            card_header(ui, idx, &grammar::display_name(kw.name), kw.name, |ui| {
                 match lock {
                     Some((name, true)) => {
                         widgets::badge(
@@ -2645,7 +2700,12 @@ fn action_card(
                         );
                     }
                     None => {
-                        if widgets::remove_x_button(ui, "Remove this action").clicked() {
+                        let x = ui
+                            .with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                widgets::remove_x_button(ui, "Remove this action")
+                            })
+                            .inner;
+                        if x.clicked() {
                             actions.push(remove(id, entry));
                         }
                     }
@@ -3517,6 +3577,74 @@ mod tests {
     }
 
     #[test]
+    fn condition_control_starts_after_label_column() {
+        let ctx = headless_ctx();
+        let mut start = 0.0;
+        let mut inner_left = 0.0;
+        ctx.run_ui(input(vec![]), |ui| {
+            let area = Rect::from_min_size(Pos2::new(200.0, 0.0), vec2(500.0, 200.0));
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            inner_left = child.max_rect().left();
+            condition_header(
+                &mut child,
+                0,
+                "Label",
+                "hover",
+                |ui| {
+                    start = ui.min_rect().left().max(ui.cursor().left());
+                },
+                "Remove",
+            );
+        })
+        .drop_without_applying_deltas();
+        // Label at row left + 10, control at label column end + 16: the card's inner left.
+        assert!((start - inner_left).abs() < 1.0, "{start} vs {inner_left}");
+        assert_eq!(CARD_LEFT, 154.0);
+    }
+
+    #[test]
+    fn defences_card_is_an_ff_card_with_three_lines() {
+        let src = include_str!("body.rs");
+        let start = src.find("fn defences_card(").unwrap();
+        let f = &src[start..start + src[start..].find("\n}\n").unwrap()];
+        assert!(f.contains("ff_card("));
+        let wf = WorkingFilter::from_text("Show\n  BaseArmour > 300\n");
+        assert!(
+            wf.rows()[0]
+                .conditions
+                .iter()
+                .any(|c| c.contains("BaseArmour"))
+        );
+        for (name, label) in conditions::DEFENCES {
+            assert!(
+                ["Armour", "Evasion", "Energy Shield"].contains(&label),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn section_heads_use_skin_buttons() {
+        let src = include_str!("body.rs");
+        let prod = &src[..src.find("mod tests").unwrap()];
+        assert!(prod.contains("\"+ condition\", 132.0"));
+        assert!(prod.contains("\"+ style\", 132.0"));
+        assert!(!prod.contains("caption(ui, \"CONDITIONS\")"));
+        assert!(!prod.contains("caption(ui, \"STYLE\")"));
+        assert!(!prod.contains("egui::Checkbox::new"));
+    }
+
+    #[test]
+    fn bool_segment_keeps_not_equal_operator() {
+        let (_, id, e) = entries_of("Show\n    Corrupted != True\n");
+        // `!= True` reads as No; picking Yes writes False and keeps the `!=`.
+        assert_eq!(bool_effective(e[0].op, true), Some(false));
+        let a = bool_edit(id, &e[0], true);
+        assert_eq!(values_of(a), Some("False".to_string()));
+        assert_eq!(bool_edit(id, &e[0], false), None);
+    }
+
+    #[test]
     fn condition_x_buttons_line_up() {
         let ctx = headless_ctx();
         let mut rights = Vec::new();
@@ -3525,9 +3653,10 @@ mod tests {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
             edge = child.max_rect().right();
-            let r1 = condition_header(&mut child, "Short", "a", |_| {}, "Remove");
+            let r1 = condition_header(&mut child, 0, "Short", "a", |_| {}, "Remove");
             let r2 = condition_header(
                 &mut child,
+                1,
                 "A longer label",
                 "b",
                 |ui| {
@@ -3922,7 +4051,7 @@ mod tests {
     }
 
     fn scan_clicks(src: &str, pending: bool) -> Vec<(Pos2, Vec<RowAction>, WorkingFilter)> {
-        scan_clicks_at(src, pending, &[30.0, 40.0, 52.0])
+        scan_clicks_at(src, pending, &[170.0, 178.0, 186.0])
     }
 
     fn scan_clicks_at(
@@ -4702,7 +4831,7 @@ mod tests {
         let id = wf.rows()[0].id;
         let mut opened = false;
         'scan: for y in (20..120).step_by(8) {
-            for x in (300..456).step_by(8) {
+            for x in (150..300).step_by(8) {
                 let ctx = headless_ctx();
                 let mut list = ListUi::default();
                 list.expanded = Some(id);
@@ -5060,7 +5189,7 @@ mod tests {
     /// 2. on `changed` + `AddLine`: `list.focus_line = Some((block, outcome.line))`;
     /// 3. on `changed` + (`AddLine` | `RemoveLine`): `list.forget_card_state()` (WR-07).
     ///
-    /// The `list.expanded` / `pending_scroll` resets in app.rs only fire for AddRule, Duplicate,
+    /// The `list.expanded` / `pending_scroll` resets in app.rs only fire for AddRule (adds a rule at the top of the file), Duplicate,
     /// Move and Delete, none of which a value click emits.
     fn mirror_apply(wf: &mut WorkingFilter, list: &mut ListUi, actions: Vec<RowAction>) {
         for action in actions {
@@ -5104,7 +5233,7 @@ mod tests {
         actions
     }
 
-    const CLASS_HEADER_X: f32 = 40.0;
+    const CLASS_HEADER_X: f32 = 170.0;
 
     /// A fresh session with an expanded rule and a pending Class row, after the group header at
     /// `header` was clicked and (when given) the checkbox at `box_at` was clicked.
@@ -5191,7 +5320,7 @@ mod tests {
         // The operator dropdown is on the pending card: some click opens a popup, and the popup
         // offers "Not" (other popups, such as the style picker, do not).
         let mut found = None;
-        'a: for y in (194..230).step_by(4) {
+        'a: for y in (194..300).step_by(4) {
             for x in (150..440).step_by(10) {
                 let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
                 let p = Pos2::new(x as f32, y as f32);
@@ -5227,8 +5356,8 @@ mod tests {
 
         // The first class then lands with that operator.
         let mut text = None;
-        'c: for hy in (218..242).step_by(4) {
-            for (cx, cy) in [36.0f32, 90.0, 130.0]
+        'c: for hy in (218..300).step_by(4) {
+            for (cx, cy) in [166.0f32, 220.0, 260.0]
                 .into_iter()
                 .flat_map(|x| ((hy + 16)..(hy + 120)).step_by(4).map(move |y| (x, y)))
             {
@@ -5352,8 +5481,8 @@ mod tests {
         // Find a group header y and a checkbox position below it whose click writes the first
         // class.
         let mut found = None;
-        'scan: for hy in (218..242).step_by(4) {
-            for cx in [36.0f32, 60.0, 90.0, 130.0] {
+        'scan: for hy in (218..300).step_by(4) {
+            for cx in [166.0f32, 190.0, 220.0, 260.0] {
                 for cy in ((hy + 16)..(hy + 120)).step_by(4) {
                     let at = Pos2::new(cx, cy as f32);
                     let (_, _, _, _, got) = pending_class_session(&cat, hy as f32, Some(at));

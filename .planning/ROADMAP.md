@@ -159,7 +159,36 @@ Plans:
   2. Every v0.5 editing path still works through skin controls: all conditions and actions, operators, Between, Defences / Simple Defences, grouped rules, raw rows, the style picker, Continue, duplicate and delete; an untouched filter still round-trips byte-for-byte
   3. + Add rule inserts the new empty rule as the first block of the file (ahead of any divider), not before the economy section
 
-**Plans**: TBD
+**Plans:** 7 plans
+Plans:
+**Wave 1**
+
+- [ ] 31-02-PLAN.md — Skin additions: skin::of, icon fixes, viewport scroll area, two-column field row, chip, X button, id text field, coloured dropdown
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 31-01-PLAN.md — + Add rule inserts at the top of the file (Document::insert_rule_at_top) and the overlay expands/focuses it
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 31-03-PLAN.md — Toolbar, 52pt collapsed rows, flag cluster and game-scrollbar list (virtualised)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 31-04-PLAN.md — Legacy wrappers delegate to skin widgets; skin slider + exact-number field
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 31-05-PLAN.md — Two-column expanded editor: card chrome, section buttons, segmented booleans/Show-Hide, Continue, Name, Duplicate/Delete
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 31-06-PLAN.md — Dropdowns, + condition/+ style pickers, class picker, quoted lists, raw/draft fields; no egui-default widgets left
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 31-07-PLAN.md — Screenshot --expand/--search, viewed shots, CLAUDE.md + CHANGELOG, capability checklist
+
 **UI hint**: yes
 
 ### Phase 32: Rule Dividers & Economy Banner

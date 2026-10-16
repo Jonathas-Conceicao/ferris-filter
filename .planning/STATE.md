@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
-status: verifying
-stopped_at: Phase 30 executed; verification human_needed (30-HUMAN-UAT.md)
-last_updated: "2026-10-16T10:24:29.428Z"
-last_activity: 2026-10-16
+status: executing
+stopped_at: Phase 31 UI-SPEC approved
+last_updated: "2026-10-16T10:53:18.747Z"
+last_activity: 2026-10-16 -- Phase 31 planning complete
 progress:
   total_phases: 7
-  completed_phases: 1
-  total_plans: 6
+  completed_phases: 2
+  total_plans: 13
   completed_plans: 6
-  percent: 14
+  percent: 29
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-16)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 30 — Skinned Overlay Shell
+**Current focus:** Phase 31 — RULES Tab on the Skin
 
 ## Current Position
 
-Phase: 30 (Skinned Overlay Shell) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-10-16
+Phase: 31 (RULES Tab on the Skin) — PLANNED
+Plan: 0 of 7
+Status: Ready to execute
+Last activity: 2026-10-16 -- Phase 31 planning complete
 
 Progress (v0.6): [█░░░░░░░░░] 14%
 
@@ -344,8 +344,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T10:24:29.421Z
-Stopped at: Phase 30 executed; verification human_needed (30-HUMAN-UAT.md)
-Resume file: .planning/phases/30-skinned-overlay-shell/30-HUMAN-UAT.md
+Last session: 2026-10-16T10:30:59.916Z
+Stopped at: Phase 31 UI-SPEC approved
+Resume file: .planning/phases/31-rules-tab-on-the-skin/31-UI-SPEC.md
 
 **Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

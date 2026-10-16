@@ -25,7 +25,8 @@ struct Cli {
     /// The Path of Exile 2 install folder (read-only; must hold Bundles2/_.index.bin).
     #[arg(long, global = true, default_value = DEFAULT_GAME)]
     game: PathBuf,
-    /// The FerrisFilter repo root (outputs are written below it).
+    /// The FerrisFilter repo root (outputs are written below it). Defaults to the repo root this
+    /// binary was built from.
     #[arg(long, global = true)]
     root: Option<PathBuf>,
     #[command(subcommand)]
@@ -146,11 +147,21 @@ struct FerrisEntry {
     line_radius: u32,
 }
 
+/// The repo root this binary was built from (tools/ff-art -> tools -> root), independent of the
+/// working directory. Not canonicalized, which would give a `\?` verbatim path on Windows.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("CARGO_MANIFEST_DIR has no grandparent")
+        .to_path_buf()
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.root {
         Some(r) => r.clone(),
-        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+        None => repo_root(),
     };
     let manifest_path = root.join("assets/poe2/manifest.toml");
     let manifest: Manifest = toml::from_str(

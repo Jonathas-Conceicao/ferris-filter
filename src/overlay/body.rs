@@ -2398,14 +2398,21 @@ fn bool_or_name_control(
 // Pure action edits
 // ---------------------------------------------------------------------------------------------
 
-/// Colour edit. A 3-token line keeps its 3-token form while the alpha stays 255.
-pub(crate) fn rgba_edit(id: BlockId, entry: &BodyEntry, new: [u8; 4]) -> Option<RowAction> {
+/// Colour edit. `had_alpha` is the line's form when the picker opened (4 tokens), not its
+/// current form: a 3-token line keeps its 3-token form while the alpha stays 255, even after a
+/// live alpha edit wrote 4 tokens, so Escape restores the original bytes (CR-02).
+pub(crate) fn rgba_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    new: [u8; 4],
+    had_alpha: bool,
+) -> Option<RowAction> {
     values_edit(
         id,
         entry,
         &Value::Rgba {
             rgba: new,
-            had_alpha: entry.values.len() >= 4,
+            had_alpha,
         },
     )
     .ok()
@@ -2876,9 +2883,9 @@ fn action_controls(
     actions: &mut Vec<RowAction>,
 ) -> Option<egui::Response> {
     match value {
-        Value::Rgba { rgba, .. } => {
-            if let Some(n) = widgets::colour_swatch(ui, *rgba)
-                && let Some(a) = rgba_edit(card.id, card.entry, n)
+        Value::Rgba { rgba, had_alpha } => {
+            if let Some((n, opened_had_alpha)) = widgets::colour_swatch(ui, *rgba, *had_alpha)
+                && let Some(a) = rgba_edit(card.id, card.entry, n, opened_had_alpha)
             {
                 actions.push(a);
             }
@@ -4982,20 +4989,41 @@ mod tests {
     #[test]
     fn rgba_edits_keep_form() {
         let (_, id, e) = entries_of("Show\n    SetTextColor 255 121 198\n");
-        assert_eq!(rgba_edit(id, &e[0], [255, 121, 198, 255]), None);
+        assert_eq!(rgba_edit(id, &e[0], [255, 121, 198, 255], false), None);
         assert_eq!(
-            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255])).as_deref(),
+            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255], false)).as_deref(),
             Some("255 0 198")
         );
         assert_eq!(
-            values_of(rgba_edit(id, &e[0], [255, 121, 198, 128])).as_deref(),
+            values_of(rgba_edit(id, &e[0], [255, 121, 198, 128], false)).as_deref(),
             Some("255 121 198 128")
         );
         let (_, id, e) = entries_of("Show\n    SetTextColor 255 121 198 255\n");
         assert_eq!(
-            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255])).as_deref(),
+            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255], true)).as_deref(),
             Some("255 0 198 255")
         );
+    }
+
+    /// CR-02: a 3-token line, a live alpha edit (written as 4 tokens), then Escape restoring the
+    /// opening colour with the opening form gives back the original bytes.
+    #[test]
+    fn escape_after_an_alpha_edit_restores_a_three_token_line() {
+        let src = "Show\n    SetTextColor 1 2 3\n";
+        let (mut wf, id, e) = entries_of(src);
+        let opened_had_alpha = e[0].values.len() >= 4;
+        assert!(!opened_had_alpha);
+        apply_all(
+            &mut wf,
+            vec![rgba_edit(id, &e[0], [1, 2, 3, 128], opened_had_alpha).unwrap()],
+        );
+        assert_eq!(wf.text(), "Show\n    SetTextColor 1 2 3 128\n");
+        let e = wf.body_view(id);
+        apply_all(
+            &mut wf,
+            vec![rgba_edit(id, &e[0], [1, 2, 3, 255], opened_had_alpha).unwrap()],
+        );
+        assert_eq!(wf.text(), src);
     }
 
     #[test]

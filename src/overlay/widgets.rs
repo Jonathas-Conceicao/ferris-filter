@@ -395,38 +395,51 @@ pub fn rgba_caption(rgba: [u8; 4]) -> String {
 }
 
 /// A 34x22 colour chip that opens the skinned picker below it. The chip carries no caption (the
-/// `caption` is its tooltip) and shows the 2pt ring while its popup is open. Returns the picker's
-/// edit, if any.
+/// `caption` is its tooltip) and shows the 2pt ring while its popup is open. `had_alpha` is the
+/// line's current form (4 tokens); the form it had when the picker opened is remembered for as
+/// long as the picker stays open. Returns the picker's edit, if any, with that opening form.
 fn colour_chip(
     ui: &mut egui::Ui,
     rgba: [u8; 4],
+    had_alpha: bool,
     caption: &str,
     mode: PickerMode,
-) -> Option<[u8; 4]> {
+) -> Option<([u8; 4], bool)> {
     let colour = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
     let probe_id = egui::Id::new(("ff-colour-chip-open", ui.next_auto_id()));
     let open = ui.data(|d| d.get_temp::<bool>(probe_id)).unwrap_or(false);
     let chip =
         ff_swatch(ui, Some(colour), open, egui::vec2(34.0, 22.0), "Colour").on_hover_text(caption);
-    let out = colour_popup(ui, &chip, "rule", Some(rgba), rgba, mode);
     let popup_id = egui::Popup::default_response_id(&chip);
+    // CR-02: live edits can change the line's form (an alpha edit turns `1 2 3` into
+    // `1 2 3 128`), so the form is captured while the picker is closed and kept while it is open.
+    let form_id = popup_id.with("had-alpha");
+    if !egui::Popup::is_id_open(ui.ctx(), popup_id) {
+        ui.data_mut(|d| d.insert_temp(form_id, had_alpha));
+    }
+    let out = colour_popup(ui, &chip, "rule", Some(rgba), rgba, mode);
+    let opened_had_alpha = ui
+        .data(|d| d.get_temp::<bool>(form_id))
+        .unwrap_or(had_alpha);
     let now_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
     ui.data_mut(|d| d.insert_temp(probe_id, now_open));
     match out {
-        Some(PickerEdit::Set(c)) if c != rgba => Some(c),
+        Some(PickerEdit::Set(c)) if c != rgba => Some((c, opened_had_alpha)),
         _ => None,
     }
 }
 
-/// An RGBA colour chip that opens the skinned picker with an Alpha slider. Returns `Some(new)`
-/// only when the user changed it and the unmultiplied result differs from `rgba`, so merely
-/// showing (or opening) a translucent colour never rewrites its line.
-pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4]) -> Option<[u8; 4]> {
+/// An RGBA colour chip that opens the skinned picker with an Alpha slider. `had_alpha` is whether
+/// the line currently has 4 tokens. Returns `Some((new, had_alpha_at_open))` only when the user
+/// changed it and the unmultiplied result differs from `rgba`, so merely showing (or opening) a
+/// translucent colour never rewrites its line. Encoding the edit with the form the line had when
+/// the picker opened makes Escape restore a 3-token line byte for byte.
+pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4], had_alpha: bool) -> Option<([u8; 4], bool)> {
     let mode = PickerMode {
         alpha: true,
         allow_none: false,
     };
-    colour_chip(ui, rgba, &rgba_caption(rgba), mode)
+    colour_chip(ui, rgba, had_alpha, &rgba_caption(rgba), mode)
 }
 
 /// What a style colour slot did this frame.
@@ -493,9 +506,15 @@ pub fn colour_swatch_rgb(ui: &mut egui::Ui, rgb: [u8; 3]) -> Option<[u8; 3]> {
         alpha: false,
         allow_none: false,
     };
-    colour_chip(ui, [rgb[0], rgb[1], rgb[2], 255], &rgb_caption(rgb), mode)
-        .map(|c| [c[0], c[1], c[2]])
-        .filter(|c| *c != rgb)
+    colour_chip(
+        ui,
+        [rgb[0], rgb[1], rgb[2], 255],
+        false,
+        &rgb_caption(rgb),
+        mode,
+    )
+    .map(|(c, _)| [c[0], c[1], c[2]])
+    .filter(|c| *c != rgb)
 }
 
 /// What one frame of [`chip_list`] asks the caller to do.
@@ -1195,7 +1214,7 @@ mod tests {
         for rgba in [[40, 42, 54, 255], [255, 121, 198, 128], [40, 42, 54, 0]] {
             for _ in 0..2 {
                 ctx.run_ui(RawInput::default(), |ui| {
-                    assert_eq!(colour_swatch(ui, rgba), None);
+                    assert_eq!(colour_swatch(ui, rgba, rgba[3] != 255), None);
                 })
                 .drop_without_applying_deltas();
             }
@@ -1518,11 +1537,11 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<Event>,
         rgba: [u8; 4],
-    ) -> (Option<[u8; 4]>, Vec<String>) {
+    ) -> (Option<([u8; 4], bool)>, Vec<String>) {
         crate::skin::colour_picker::probes_clear();
         let mut out = None;
         let full = ctx.run_ui(picker_input(events), |ui| {
-            out = colour_swatch(ui, rgba);
+            out = colour_swatch(ui, rgba, rgba[3] != 255);
         });
         let mut texts = Vec::new();
         for clipped in &full.shapes {
@@ -1567,8 +1586,38 @@ mod tests {
             assert!(crate::skin::colour_picker::probe_rect("alpha").is_some());
             assert!(crate::skin::colour_picker::probe_rect("none").is_none());
             let (out, _) = swatch_frame(&ctx, click_events(pink.center()), rgba);
-            assert_eq!(out, Some([255, 121, 198, rgba[3]]));
+            assert_eq!(out, Some(([255, 121, 198, rgba[3]], rgba[3] != 255)));
         }
+    }
+
+    /// CR-02: an alpha edit turns a 3-token line into 4 tokens; Escape must report the form the
+    /// line had when the picker opened, not its current one.
+    #[test]
+    fn escape_after_an_alpha_edit_reports_the_opening_form() {
+        let ctx = headless_ctx();
+        let start = [1, 2, 3, 255];
+        swatch_frame(&ctx, vec![], start);
+        crate::skin::colour_picker::request_open(&ctx, "rule");
+        for _ in 0..3 {
+            swatch_frame(&ctx, vec![], start);
+        }
+        let alpha = crate::skin::colour_picker::probe_rect("alpha").expect("open");
+        let (out, _) = swatch_frame(&ctx, click_events(alpha.left_center()), start);
+        let Some((edited, form)) = out else {
+            panic!("the alpha click emitted nothing");
+        };
+        assert_ne!(edited[3], 255, "{edited:?}");
+        assert!(!form, "a 3-token line opened the picker");
+        // The caller wrote 4 tokens; the line now has alpha. Escape restores the opening value.
+        let escape = vec![Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        }];
+        let (out, _) = swatch_frame(&ctx, escape, edited);
+        assert_eq!(out, Some((start, false)));
     }
 
     #[test]

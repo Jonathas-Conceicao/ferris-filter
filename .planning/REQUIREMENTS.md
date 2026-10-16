@@ -51,15 +51,15 @@ retired. Every v0.5 editor capability survives the move.
 
 ### Rules Tab (RULES)
 
-- [ ] **RULES-01**: The RULES tab is drawn with the skin (rows, round enable check, Show/Hide,
+- [x] **RULES-01**: The RULES tab is drawn with the skin (rows, round enable check, Show/Hide,
   name, condition summary, flags, reorder arrows, search, + Add rule) and stays responsive on the
   ~500-block NeverSink/FilterBlade sample.
 
-- [ ] **RULES-02**: The expanded rule editor keeps every v0.5 capability (all conditions and actions,
+- [x] **RULES-02**: The expanded rule editor keeps every v0.5 capability (all conditions and actions,
   operators, Between, Defences / Simple Defences, grouped rules, raw rows, style picker, Continue,
   duplicate, delete) using the skin's controls.
 
-- [ ] **RULES-03**: + Add rule inserts the new rule at the top of the rule list (first block of the
+- [x] **RULES-03**: + Add rule inserts the new rule at the top of the rule list (first block of the
   file, ahead of any divider), not before the economy section. It always lands outside every
   section, even when a divider is the first thing in the list, collapsed or not.
 
@@ -179,9 +179,9 @@ retired. Every v0.5 editor capability survives the move.
 | SHELL-06 | Phase 30 | Complete |
 | SHELL-07 | Phase 30 | Complete |
 | SHELL-08 | Phase 30 | Complete |
-| RULES-01 | Phase 31 | Pending |
-| RULES-02 | Phase 31 | Pending |
-| RULES-03 | Phase 31 | Pending |
+| RULES-01 | Phase 31 | Complete |
+| RULES-02 | Phase 31 | Complete |
+| RULES-03 | Phase 31 | Complete |
 | SECT-01 | Phase 32 | Pending |
 | SECT-02 | Phase 32 | Pending |
 | SECT-03 | Phase 32 | Pending |

@@ -824,6 +824,14 @@ pub fn ff_dropdown_ex(
         Color32::WHITE,
     );
 
+    // A long list scrolls inside a popup that fits the screen above or below the box (WR-05).
+    let screen = ui.ctx().content_rect();
+    let room = (screen.max.y - rect.max.y).max(rect.min.y - screen.min.y) - 2.0 - 12.0 - 4.0;
+    let max_h = (DROPDOWN_MAX_ROWS * DROPDOWN_ROW_H)
+        .min(room)
+        .max(3.0 * DROPDOWN_ROW_H);
+    let scroll = options.len() as f32 * DROPDOWN_ROW_H > max_h;
+
     let mut picked = None;
     egui::Popup::from_toggle_button_response(&resp)
         .id(id)
@@ -833,31 +841,22 @@ pub fn ff_dropdown_ex(
         .show(|ui| {
             let bg = ui.painter().add(Shape::Noop);
             ui.spacing_mut().item_spacing.y = 0.0;
-            for (i, opt) in options.iter().enumerate() {
-                let (r, o) = ui.allocate_exact_size(vec2(width - 12.0, 26.0), Sense::click());
-                o.widget_info(|| {
-                    WidgetInfo::selected(WidgetType::SelectableLabel, true, i == *selected, *opt)
+            let mut rows = |ui: &mut Ui, row_w: f32| {
+                for (i, opt) in options.iter().enumerate() {
+                    dropdown_row(ui, row_w, i, opt, *selected, &mut picked);
+                }
+            };
+            if scroll {
+                ui.allocate_ui(vec2(width - 12.0, max_h), |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ff_scroll_area(ui, skin, (id, "list"), |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let row_w = ui.available_width();
+                        rows(ui, row_w);
+                    });
                 });
-                if o.hovered() {
-                    ui.painter().rect_filled(r, 0.0, pal::ROW_HOVER);
-                }
-                let color = if i == *selected {
-                    pal::HEADING
-                } else if o.hovered() {
-                    pal::VALUE
-                } else {
-                    pal::LABEL
-                };
-                ui.painter().text(
-                    pos2(r.min.x + 8.0, r.center().y),
-                    Align2::LEFT_CENTER,
-                    *opt,
-                    regular(15.0),
-                    color,
-                );
-                if o.clicked() {
-                    picked = Some(i);
-                }
+            } else {
+                rows(ui, width - 12.0);
             }
             let frame_rect = ui.min_rect().expand(6.0);
             let mut mesh = egui::Mesh::with_texture(skin.box_9slice.id());
@@ -879,6 +878,44 @@ pub fn ff_dropdown_ex(
         resp.mark_changed();
     }
     resp
+}
+
+/// Height of one option row in [`ff_dropdown_ex`]'s popup.
+const DROPDOWN_ROW_H: f32 = 26.0;
+/// Rows shown before [`ff_dropdown_ex`]'s popup scrolls.
+const DROPDOWN_MAX_ROWS: f32 = 12.0;
+
+/// One option row of [`ff_dropdown_ex`]'s popup; sets `picked` when clicked.
+fn dropdown_row(
+    ui: &mut Ui,
+    row_w: f32,
+    i: usize,
+    opt: &str,
+    selected: usize,
+    picked: &mut Option<usize>,
+) {
+    let (r, o) = ui.allocate_exact_size(vec2(row_w, DROPDOWN_ROW_H), Sense::click());
+    o.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, i == selected, opt));
+    if o.hovered() {
+        ui.painter().rect_filled(r, 0.0, pal::ROW_HOVER);
+    }
+    let color = if i == selected {
+        pal::HEADING
+    } else if o.hovered() {
+        pal::VALUE
+    } else {
+        pal::LABEL
+    };
+    ui.painter().text(
+        pos2(r.min.x + 8.0, r.center().y),
+        Align2::LEFT_CENTER,
+        opt,
+        regular(15.0),
+        color,
+    );
+    if o.clicked() {
+        *picked = Some(i);
+    }
 }
 
 /// The game's generic button (3-slice art with hover / pressed states) with a Fontin SmallCaps
@@ -1750,5 +1787,64 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert_eq!(sel, 1);
+    }
+
+    /// Opens a dropdown of `n` options in a 400x400 screen; returns the popup's area rect.
+    fn open_dropdown_area(n: usize) -> Rect {
+        let (ctx, skin) = setup();
+        let labels: Vec<String> = (0..n).map(|i| format!("opt {i}")).collect();
+        let opts: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 400.0));
+        let mut sel = 0usize;
+        let mut rect = Rect::NOTHING;
+        let frame = |events: Vec<egui::Event>| RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(frame(vec![]), |ui| {
+            rect = ff_dropdown(ui, &skin, "dd", &mut sel, &opts, 120.0).rect;
+        })
+        .drop_without_applying_deltas();
+        let c = rect.center();
+        let click = vec![
+            egui::Event::PointerMoved(c),
+            egui::Event::PointerButton {
+                pos: c,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+            egui::Event::PointerButton {
+                pos: c,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        ];
+        for events in [click, vec![], vec![]] {
+            ctx.run_ui(frame(events), |ui| {
+                ff_dropdown(ui, &skin, "dd", &mut sel, &opts, 120.0);
+            })
+            .drop_without_applying_deltas();
+        }
+        ctx.memory(|m| {
+            m.areas()
+                .visible_layer_ids()
+                .into_iter()
+                .filter(|l| l.order == egui::Order::Foreground)
+                .filter_map(|l| m.area_rect(l.id))
+                .next()
+        })
+        .expect("the dropdown popup is open")
+    }
+
+    #[test]
+    fn dropdown_long_list_scrolls_inside_the_screen() {
+        let short = open_dropdown_area(4);
+        assert!(short.height() < 4.0 * 26.0 + 20.0, "{short:?}");
+        let long = open_dropdown_area(40);
+        assert!(long.height() <= 12.0 * 26.0 + 20.0, "{long:?}");
+        assert!(long.max.y <= 400.0 + 1.0, "{long:?}");
     }
 }

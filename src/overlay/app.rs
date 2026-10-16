@@ -549,8 +549,6 @@ fn line_keyword(text: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Applies the frame's collected row actions once, after the list rendered. Returns whether the
-/// document changed and the last status worth showing.
 /// The settings after the section actions of one batch: a rename moves the folded flag to the new
 /// name, a removed section's flag is dropped, and a new section starts expanded. A flag is only
 /// touched when no other section shares its name (duplicate names share one flag).
@@ -630,6 +628,8 @@ fn section_to_reveal(working: &WorkingFilter, settings: &Settings, id: BlockId) 
         .then(|| sec.name.clone())
 }
 
+/// Applies the frame's collected row actions once, after the list rendered. Returns whether the
+/// document changed and the last status worth showing.
 #[cfg(test)]
 fn apply_row_actions(
     working: &mut WorkingFilter,
@@ -1479,8 +1479,6 @@ impl OverlayApp {
         true
     }
 
-    /// Anything waiting for an Apply, judged with the same inputs as the per-frame indicator:
-    /// rule edits (a staged economy op is part of `is_dirty`), a pending style rewrite, CONFIG edits.
     /// Applies deferred row operations to the working filter and updates the status the way a
     /// list click does.
     fn run_row_actions(&mut self, row_actions: Vec<RowAction>) {

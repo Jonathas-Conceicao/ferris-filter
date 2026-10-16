@@ -501,6 +501,77 @@ pub fn ff_row<R>(
     InnerResponse::new(inner, resp)
 }
 
+/// Width of the label column of [`ff_field_row`].
+pub const LABEL_COL_W: f32 = 128.0;
+/// Gap between the label column and the control of [`ff_field_row`].
+pub const LABEL_GAP: f32 = 16.0;
+
+/// An editor line: `label` in a fixed 128pt column, the control starting 16pt after it and
+/// filling the rest of the row. Unlike [`ff_row`] the row is as tall as its control needs
+/// (at least [`ROW_HEIGHT`]), and a control that does not fit wraps. The label is centred on
+/// the first 34pt line; `tip` is its tooltip.
+pub fn ff_field_row<R>(
+    ui: &mut Ui,
+    index: usize,
+    label: &str,
+    tip: Option<&str>,
+    add_control: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    let full = ui.available_rect_before_wrap();
+    let left = full.min.x;
+    let right = ui.max_rect().max.x.min(full.max.x);
+    let control_min_x = left + ROW_PAD + LABEL_COL_W + LABEL_GAP;
+    let ground = ui.painter().add(Shape::Noop);
+    let control = Rect::from_min_max(
+        pos2(control_min_x, full.min.y),
+        pos2(
+            (right - ROW_PAD).max(control_min_x + 24.0),
+            full.min.y + ROW_HEIGHT,
+        ),
+    );
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .max_rect(control)
+            .layout(Layout::left_to_right(Align::Center).with_main_wrap(true)),
+    );
+    let inner = add_control(&mut child);
+    let used = child.min_rect().height();
+    let height = if used > ROW_HEIGHT {
+        used + 4.0
+    } else {
+        ROW_HEIGHT
+    };
+    let rect = Rect::from_min_size(pos2(left, full.min.y), vec2(right - left, height));
+    let resp = ui.allocate_rect(rect, Sense::hover());
+    let color = if ui.rect_contains_pointer(rect) {
+        pal::ROW_HOVER
+    } else if index.is_multiple_of(2) {
+        pal::ROW_EVEN
+    } else {
+        pal::ROW_ODD
+    };
+    ui.painter()
+        .set(ground, Shape::rect_filled(rect, 0.0, color));
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), small_caps(17.0), pal::LABEL);
+    let label_pos = pos2(
+        left + ROW_PAD,
+        full.min.y + ROW_HEIGHT / 2.0 - galley.size().y / 2.0,
+    );
+    let label_clip = Rect::from_min_max(rect.min, pos2(control_min_x - 4.0, rect.max.y));
+    ui.painter()
+        .with_clip_rect(label_clip)
+        .galley(label_pos, galley.clone(), pal::LABEL);
+    if let Some(tip) = tip {
+        let label_rect = Rect::from_min_size(label_pos, galley.size()).intersect(label_clip);
+        let id = ui.id().with(("ff-field-label", label));
+        ui.interact(label_rect, id, Sense::hover())
+            .on_hover_text(tip);
+    }
+    InnerResponse::new(inner, resp)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Check, slider, dropdown, button, small arrows, search box
 
@@ -708,6 +779,20 @@ pub fn ff_dropdown(
     options: &[&str],
     width: f32,
 ) -> Response {
+    ff_dropdown_ex(ui, skin, id_salt, selected, options, width, None)
+}
+
+/// [`ff_dropdown`] whose closed caption can be painted in `caption_color` (e.g. `pal::WARN`
+/// for an unknown style) instead of the usual value colour.
+pub fn ff_dropdown_ex(
+    ui: &mut Ui,
+    skin: &Skin,
+    id_salt: impl Hash + std::fmt::Debug,
+    selected: &mut usize,
+    options: &[&str],
+    width: f32,
+    caption_color: Option<Color32>,
+) -> Response {
     let width = if width > 0.0 {
         width
     } else {
@@ -726,7 +811,7 @@ pub fn ff_dropdown(
         Align2::LEFT_CENTER,
         current,
         regular(15.0),
-        pal::VALUE,
+        caption_color.unwrap_or(pal::VALUE),
     );
     let arrow = Rect::from_center_size(
         pos2(rect.max.x - 15.0, rect.center().y + 1.0),
@@ -897,8 +982,51 @@ pub fn ff_arrow(ui: &mut Ui, skin: &Skin, up: bool, enabled: bool) -> Response {
     resp
 }
 
+/// A 24x24 remove button: a thin painted X, muted until hovered. `label` is the accessible
+/// name and the tooltip.
+pub fn ff_x_button(ui: &mut Ui, label: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    let color = if resp.hovered() || resp.has_focus() {
+        pal::HEADING
+    } else {
+        pal::MUTED
+    };
+    let c = rect.center();
+    let h = 5.0;
+    let stroke = Stroke::new(1.75, color);
+    let painter = ui.painter();
+    painter.line_segment([pos2(c.x - h, c.y - h), pos2(c.x + h, c.y + h)], stroke);
+    painter.line_segment([pos2(c.x - h, c.y + h), pos2(c.x + h, c.y - h)], stroke);
+    resp.on_hover_text(label)
+}
+
 /// A single-line search / text field in the recessed input box style.
 pub fn ff_text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    ff_text_field_ex(ui, None, text, hint, width, regular(15.0))
+}
+
+/// [`ff_text_field`] with an explicit TextEdit id, so callers can focus it by id.
+pub fn ff_text_field_id(
+    ui: &mut Ui,
+    id: egui::Id,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+) -> Response {
+    ff_text_field_ex(ui, Some(id), text, hint, width, regular(15.0))
+}
+
+/// The single text-field implementation: optional explicit `id`, and the `font` (e.g. monospace
+/// 14 for raw filter rows).
+pub fn ff_text_field_ex(
+    ui: &mut Ui,
+    id: Option<egui::Id>,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    font: egui::FontId,
+) -> Response {
     let width = if width > 0.0 {
         width
     } else {
@@ -906,12 +1034,15 @@ pub fn ff_text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> 
     };
     let (rect, _) = ui.allocate_exact_size(vec2(width, 30.0), Sense::hover());
     let bg = ui.painter().add(Shape::Noop);
-    let edit = egui::TextEdit::singleline(text)
+    let mut edit = egui::TextEdit::singleline(text)
         .frame(egui::Frame::NONE)
         .hint_text(egui::RichText::new(hint).color(pal::DISABLED))
-        .font(regular(15.0))
+        .font(font)
         .text_color(pal::VALUE)
         .vertical_align(Align::Center);
+    if let Some(id) = id {
+        edit = edit.id(id);
+    }
     let resp = ui.put(rect.shrink2(vec2(10.0, 3.0)), edit);
     let hot = resp.hovered() || resp.has_focus();
     let shapes = vec![
@@ -1058,24 +1189,86 @@ pub fn ff_scroll_area<R>(
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .show(&mut child, add_contents);
     ui.allocate_rect(outer, Sense::hover());
+    paint_game_scrollbar(
+        ui,
+        skin,
+        outer,
+        out.state,
+        out.id,
+        out.content_size.y,
+        out.inner_rect.height(),
+    );
+    out.inner
+}
 
-    let view_h = out.inner_rect.height();
-    let content_h = out.content_size.y;
+/// [`ff_scroll_area`] for virtualised lists: `add_contents` also receives the visible viewport
+/// (in content coordinates, so `viewport.min.y` is the scroll offset), and `offset` can set
+/// the vertical scroll position (`None` keeps the stored one). The content is as wide as
+/// `ff_scroll_area`'s, leaving room for the game scrollbar.
+pub fn ff_scroll_area_viewport<R>(
+    ui: &mut Ui,
+    skin: &Skin,
+    id_salt: impl Hash + std::fmt::Debug,
+    offset: Option<f32>,
+    add_contents: impl FnOnce(&mut Ui, Rect) -> R,
+) -> R {
+    let outer = ui.available_rect_before_wrap();
+    let content = Rect::from_min_max(
+        outer.min,
+        pos2(outer.max.x - SCROLLBAR_WIDTH - 4.0, outer.max.y),
+    );
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .max_rect(content)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt(id_salt)
+        .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+    if let Some(o) = offset {
+        area = area.vertical_scroll_offset(o);
+    }
+    let out = area.show_viewport(&mut child, add_contents);
+    ui.allocate_rect(outer, Sense::hover());
+    paint_game_scrollbar(
+        ui,
+        skin,
+        outer,
+        out.state,
+        out.id,
+        out.content_size.y,
+        out.inner_rect.height(),
+    );
+    out.inner
+}
+
+/// Paints the game scrollbar (track line, gold thumb) in the right strip of `outer` and applies
+/// thumb drags / track clicks to the stored scroll state.
+fn paint_game_scrollbar(
+    ui: &mut Ui,
+    skin: &Skin,
+    outer: Rect,
+    state: egui::scroll_area::State,
+    id: egui::Id,
+    content_h: f32,
+    view_h: f32,
+) {
     let track = Rect::from_min_max(pos2(outer.max.x - SCROLLBAR_WIDTH, outer.min.y), outer.max);
     let painter = ui.painter();
     let line = Rect::from_center_size(track.center(), vec2(5.0, track.height()));
     slice::paint_image(painter, &skin.scroll_track, line, Color32::from_gray(160));
     if content_h <= view_h + 0.5 {
-        return out.inner;
+        return;
     }
     let max_offset = content_h - view_h;
     let thumb_h = (view_h / content_h * track.height()).clamp(28.0, track.height());
     let travel = (track.height() - thumb_h).max(1.0);
-    let offset = out.state.offset.y.clamp(0.0, max_offset);
+    let offset = state.offset.y.clamp(0.0, max_offset);
     let thumb_top = track.min.y + offset / max_offset * travel;
     let thumb = Rect::from_min_size(pos2(track.center().x - 6.0, thumb_top), vec2(12.0, thumb_h));
 
-    let bar = ui.interact(track, out.id.with("ff_scrollbar"), Sense::click_and_drag());
+    let bar = ui.interact(track, id.with("ff_scrollbar"), Sense::click_and_drag());
     let mut new_offset = None;
     if bar.dragged() {
         new_offset = Some(offset + bar.drag_delta().y * max_offset / travel);
@@ -1087,9 +1280,9 @@ pub fn ff_scroll_area<R>(
         new_offset = Some(offset + page);
     }
     if let Some(o) = new_offset {
-        let mut state = out.state;
+        let mut state = state;
         state.offset.y = o.clamp(0.0, max_offset);
-        state.store(ui.ctx(), out.id);
+        state.store(ui.ctx(), id);
         ui.ctx().request_repaint();
     }
     let th = &skin.scroll_thumb;
@@ -1109,7 +1302,6 @@ pub fn ff_scroll_area<R>(
         ),
         tint,
     );
-    out.inner
 }
 
 /// The skin's `egui::Visuals` and spacing: dark, gold selection, recessed inputs, and a thin
@@ -1408,5 +1600,155 @@ mod tests {
         assert!(t.min.y > outer.min.y && t.max.y < l.content.min.y);
         assert_eq!((t.min.y, t.max.y), (124.0, 151.5));
         assert!(t.height() >= 26.0);
+    }
+
+    #[test]
+    fn viewport_scroll_area_honours_offset_and_width() {
+        let (ctx, skin) = setup();
+        let mut seen = None;
+        for _ in 0..2 {
+            ctx.run_ui(RawInput::default(), |ui| {
+                ui.set_max_size(vec2(300.0, 300.0));
+                ff_scroll_area_viewport(ui, &skin, "t", Some(120.0), |ui, vp| {
+                    seen = Some((vp, ui.available_width()));
+                    ui.allocate_space(vec2(10.0, 2000.0));
+                });
+            })
+            .drop_without_applying_deltas();
+        }
+        let (vp, w) = seen.unwrap();
+        assert!((vp.min.y - 120.0).abs() < 0.5, "viewport {vp:?}");
+        assert!(w <= 300.0 - SCROLLBAR_WIDTH - 4.0 + 0.5, "width {w}");
+    }
+
+    #[test]
+    fn viewport_scroll_area_keeps_offset_without_override() {
+        let (ctx, skin) = setup();
+        let mut offsets = vec![];
+        for i in 0..3 {
+            ctx.run_ui(RawInput::default(), |ui| {
+                ui.set_max_size(vec2(300.0, 300.0));
+                let off = if i == 0 { Some(80.0) } else { None };
+                ff_scroll_area_viewport(ui, &skin, "keep", off, |ui, vp| {
+                    offsets.push(vp.min.y);
+                    ui.allocate_space(vec2(10.0, 2000.0));
+                });
+            })
+            .drop_without_applying_deltas();
+        }
+        assert!((offsets[2] - 80.0).abs() < 0.5, "offsets {offsets:?}");
+    }
+
+    #[test]
+    fn field_row_grows_with_tall_controls() {
+        let (ctx, _skin) = setup();
+        let tall = rect_of(&ctx, |ui| {
+            ff_field_row(ui, 0, "Name", None, |ui| {
+                ui.allocate_space(vec2(40.0, 80.0));
+            })
+            .response
+            .rect
+        });
+        assert!(tall.height() >= 80.0, "{tall:?}");
+        let small = rect_of(&ctx, |ui| {
+            ff_field_row(ui, 0, "Name", None, |ui| {
+                ui.allocate_space(vec2(40.0, 20.0));
+            })
+            .response
+            .rect
+        });
+        assert_eq!(small.height(), ROW_HEIGHT);
+    }
+
+    #[test]
+    fn field_row_control_starts_after_label_column() {
+        let (ctx, _skin) = setup();
+        let mut start = 0.0;
+        let mut left = 0.0;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let r = ff_field_row(ui, 0, "Name", Some("tip"), |ui| {
+                ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover()).0
+            });
+            start = r.inner.min.x;
+            left = r.response.rect.min.x;
+        })
+        .drop_without_applying_deltas();
+        assert!((start - (left + ROW_PAD + LABEL_COL_W + LABEL_GAP)).abs() < 0.5);
+    }
+
+    #[test]
+    fn chip_toggles_and_is_28_high() {
+        let (ctx, _skin) = setup();
+        let mut sel = false;
+        let rect = rect_of(&ctx, |ui| {
+            super::super::editor::ff_chip(ui, "Full AR", &mut sel).rect
+        });
+        assert_eq!(rect.height(), 28.0);
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            let r = super::super::editor::ff_chip(ui, "Full AR", &mut sel);
+            assert!(r.changed());
+        })
+        .drop_without_applying_deltas();
+        assert!(sel);
+    }
+
+    #[test]
+    fn x_button_is_24_square_and_labelled() {
+        let (ctx, _skin) = setup();
+        ctx.enable_accesskit();
+        let mut size = Vec2::ZERO;
+        let out = ctx.run_ui(RawInput::default(), |ui| {
+            size = ff_x_button(ui, "Remove condition").rect.size();
+        });
+        assert_eq!(size, Vec2::splat(24.0));
+        let update = out
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("update");
+        assert!(update.nodes.iter().any(|(_, n)| {
+            n.label() == Some("Remove condition") || n.value() == Some("Remove condition")
+        }));
+        out.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn text_field_id_is_focusable_by_id() {
+        let (ctx, _skin) = setup();
+        let id = egui::Id::new("my-field");
+        let mut text = String::new();
+        let mut got = None;
+        ctx.run_ui(RawInput::default(), |ui| {
+            got = Some(ff_text_field_id(ui, id, &mut text, "hint", 200.0).id);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(got, Some(id));
+        ctx.memory_mut(|m| m.request_focus(id));
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_text_field_id(ui, id, &mut text, "hint", 200.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.memory(|m| m.has_focus(id)));
+    }
+
+    #[test]
+    fn dropdown_ex_keeps_selection_semantics() {
+        let (ctx, skin) = setup();
+        let mut sel = 1usize;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let r = ff_dropdown_ex(
+                ui,
+                &skin,
+                "dd",
+                &mut sel,
+                &["a", "b"],
+                120.0,
+                Some(pal::WARN),
+            );
+            assert!(!r.changed());
+            assert_eq!(r.rect.height(), 28.0);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(sel, 1);
     }
 }

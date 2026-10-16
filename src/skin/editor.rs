@@ -389,6 +389,48 @@ pub fn caption(ui: &mut Ui, text: &str) -> Response {
     )
 }
 
+/// A multi-select pill: 28pt high, SmallCaps 17, 12pt side padding. Off is a recessed input box;
+/// on has a gold border and a faint gold fill. Clicking flips `selected`.
+pub fn ff_chip(ui: &mut Ui, label: &str, selected: &mut bool) -> Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), small_caps(17.0), pal::LABEL);
+    let size = vec2(galley.size().x + 24.0, 28.0);
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, *selected, label));
+    if resp.clicked() {
+        *selected = !*selected;
+        resp.mark_changed();
+    }
+    let (fill, border, text) = if *selected {
+        (
+            Color32::from_rgba_unmultiplied(pal::GOLD.r(), pal::GOLD.g(), pal::GOLD.b(), 60),
+            pal::GOLD,
+            pal::HEADING,
+        )
+    } else {
+        (
+            pal::INPUT_FILL,
+            if resp.hovered() {
+                pal::INPUT_BORDER_HOT
+            } else {
+                pal::INPUT_BORDER
+            },
+            pal::LABEL,
+        )
+    };
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        CornerRadius::same(1),
+        fill,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+    painter.galley(rect.center() - galley.size() / 2.0, galley, text);
+    resp
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

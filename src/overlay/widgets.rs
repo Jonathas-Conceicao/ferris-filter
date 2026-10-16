@@ -875,6 +875,35 @@ mod tests {
         );
     }
 
+    /// WR-08: the 16pt art keeps a padded 24x22 click target, so a click 3pt outside the art
+    /// still counts.
+    #[test]
+    fn enabled_arrow_button_has_a_padded_click_target() {
+        let ctx = headless_ctx();
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                rect = arrow_button(ui, ArrowDirection::Up, true).rect;
+            });
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(rect.size(), egui::vec2(24.0, 22.0));
+        let art = rect.shrink2(crate::skin::widgets::ARROW_HIT_PAD);
+        assert_eq!(art.size(), egui::vec2(16.0, 16.0));
+        let mut clicked = false;
+        ctx.run_ui(click_at(art.left_top() - egui::vec2(3.0, 2.5)), |ui| {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                clicked = arrow_button(ui, ArrowDirection::Up, true).clicked();
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(clicked, "a click just outside the art must still count");
+    }
+
     #[test]
     fn disabled_arrow_button_never_reports_clicked() {
         let ctx = headless_ctx();

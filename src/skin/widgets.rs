@@ -986,16 +986,28 @@ pub fn ff_button_ex(
     resp
 }
 
+/// Padding of [`ff_arrow`]'s click target around its 16pt art. Vertically 3, not 4, so in a
+/// collapsed rule row (arrows at y 18..34) the target stays clear of the summary line's centre
+/// (y 38), where a click expands the row.
+pub const ARROW_HIT_PAD: Vec2 = Vec2::new(4.0, 3.0);
+
 /// A small gold triangle button (the dropdown arrow art, flipped for "up"), for reordering.
-/// Disabled arrows are dimmed and never report clicks.
+/// Disabled arrows are dimmed and never report clicks. The art takes 16x16 of the layout, but an
+/// enabled arrow senses clicks on a padded 24x22 target around it ([`ARROW_HIT_PAD`], WR-08), so
+/// a slightly-off click does not fall through to the row behind.
 pub fn ff_arrow(ui: &mut Ui, skin: &Skin, up: bool, enabled: bool) -> Response {
     let size = 16.0;
-    let sense = if enabled {
-        Sense::click()
+    let auto_id = ui.next_auto_id();
+    let (rect, hover) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    let resp = if enabled {
+        ui.interact(
+            rect.expand2(ARROW_HIT_PAD),
+            auto_id.with("hit"),
+            Sense::click(),
+        )
     } else {
-        Sense::hover()
+        hover
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), sense);
     let label = if up { "Move up" } else { "Move down" };
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
     let tex = &skin.combo_arrow[usize::from(enabled && resp.hovered())];

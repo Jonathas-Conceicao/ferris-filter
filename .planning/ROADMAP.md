@@ -309,3 +309,29 @@ keep rejecting it with a clear message.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.15: Sound preview in the style editor (BACKLOG)
+
+**Goal:** A small play icon beside the style editor's sound control previews the selected sound:
+the game's alert sounds 1-16 (extracted by `ff-art` from the install) and a custom sound file such
+as `uwu.mp3` from the game folder, at the chosen volume. Needs an audio playback dependency in `ff`
+(e.g. rodio). Dropped from v0.6 by the author on 2026-10-16.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.16: Move rules more than a few positions at once (BACKLOG)
+
+**Goal:** Reordering with the up/down arrows is painful past about five positions. Revisit rule
+placement: drag and drop, move to top/bottom, or move into a named section (v0.6 dividers), and
+reconsider where + Add rule inserts (v0.6 inserts at the top of the file). Raised by the author on
+2026-10-16.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

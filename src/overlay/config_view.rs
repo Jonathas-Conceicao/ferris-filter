@@ -521,7 +521,9 @@ fn show_tiers(ui: &mut egui::Ui, state: &ConfigState, actions: &mut Vec<ConfigAc
                 egui::pos2(r.left() - 8.0, r.top() - 4.0),
                 egui::pos2(r.left() - 4.0, r.bottom() + 4.0),
             );
-            ui.painter().rect_filled(bar, 0.0, theme::WARM_ACCENT);
+            // The tier-error marker shares the error text's colour; `WARM_ACCENT` is now the
+            // near-black button fill and would be invisible here (review WR-06).
+            ui.painter().rect_filled(bar, 0.0, theme::WARM_ACCENT_TEXT);
         }
     }
     ui.add_space(4.0);

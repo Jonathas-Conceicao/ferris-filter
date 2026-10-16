@@ -165,8 +165,10 @@ pub fn slide_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     }
 
     let t = ui.ctx().animate_bool_responsive(auto_id.with("anim"), *on);
+    // The "on" track is gold (UI-SPEC: track INPUT_FILL, on GOLD), not `WARM_ACCENT`, which is
+    // now the near-black button fill and would make on and off look the same (review WR-06).
     let track = if *on {
-        theme::WARM_ACCENT
+        crate::skin::palette::GOLD
     } else {
         theme::INPUT_FILL
     };

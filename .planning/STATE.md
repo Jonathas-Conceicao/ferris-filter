@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
-status: executing
-stopped_at: Completed 29-01-PLAN.md
-last_updated: "2026-10-16T06:09:46.055Z"
-last_activity: 2026-10-16 -- Phase 29 planning complete
+status: ready_to_plan
+stopped_at: Phase 29 complete
+last_updated: "2026-10-16T06:17:57.709Z"
+last_activity: 2026-10-16 -- Phase 29 complete (verified, reviewed)
 progress:
   total_phases: 7
   completed_phases: 1
@@ -25,18 +25,18 @@ See: .planning/PROJECT.md (updated 2026-10-16)
 
 ## Current Position
 
-Phase: 29 of 35 (Workspace & Asset Tool from the Root) — v0.6 spans Phases 29-35
-Plan: —
-Status: Ready to execute
-Last activity: 2026-10-16 -- Phase 29 planning complete
+Phase: 30 of 35 (Skinned Overlay Shell) — v0.6 spans Phases 29-35
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-10-16 -- Phase 29 complete (workspace + cargo ff-art)
 
-Progress (v0.6): [░░░░░░░░░░] 0%
+Progress (v0.6): [█░░░░░░░░░] 14%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 117 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
+- Total plans completed: 118 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
 
 **By Milestone:**
 

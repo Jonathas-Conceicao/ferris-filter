@@ -552,9 +552,8 @@ pub fn ff_field_row<R>(
     };
     ui.painter()
         .set(ground, Shape::rect_filled(rect, 0.0, color));
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), small_caps(17.0), pal::LABEL);
+    let galley = ui.painter().layout_job(field_label_job(label));
+    let elided = galley.elided;
     let label_pos = pos2(
         left + ROW_PAD,
         full.min.y + ROW_HEIGHT / 2.0 - galley.size().y / 2.0,
@@ -563,13 +562,37 @@ pub fn ff_field_row<R>(
     ui.painter()
         .with_clip_rect(label_clip)
         .galley(label_pos, galley.clone(), pal::LABEL);
-    if let Some(tip) = tip {
+    // A cut label shows its full text on hover (above the tip, when there is one).
+    let hover = match (elided, tip) {
+        (true, Some(tip)) => Some(format!("{label}\n{tip}")),
+        (true, None) => Some(label.to_owned()),
+        (false, Some(tip)) => Some(tip.to_owned()),
+        (false, None) => None,
+    };
+    if let Some(hover) = hover {
         let label_rect = Rect::from_min_size(label_pos, galley.size()).intersect(label_clip);
         let id = ui.id().with(("ff-field-label", label));
         ui.interact(label_rect, id, Sense::hover())
-            .on_hover_text(tip);
+            .on_hover_text(hover);
     }
     InnerResponse::new(inner, resp)
+}
+
+/// The label of an [`ff_field_row`]: small caps 17 on one line, cut with "…" so it never runs
+/// past the [`LABEL_COL_W`] column (`SetBackgroundColor` reads `SET BACKGROUND…`, never a bare
+/// `SET BACKGROUND C`).
+pub fn field_label_job(label: &str) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::single_section(
+        label.replace(['\n', '\r'], " "),
+        egui::TextFormat::simple(small_caps(17.0), pal::LABEL),
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: LABEL_COL_W + LABEL_GAP - 4.0,
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    job
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1723,6 +1746,32 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!((start - (left + ROW_PAD + LABEL_COL_W + LABEL_GAP)).abs() < 0.5);
+    }
+
+    #[test]
+    fn long_field_labels_are_cut_with_an_ellipsis() {
+        let (ctx, _skin) = setup();
+        let mut long = None;
+        let mut short = None;
+        ctx.run_ui(RawInput::default(), |ui| {
+            long = Some(
+                ui.painter()
+                    .layout_job(field_label_job("SetBackgroundColor")),
+            );
+            short = Some(ui.painter().layout_job(field_label_job("Rarity")));
+        })
+        .drop_without_applying_deltas();
+        let (long, short) = (long.unwrap(), short.unwrap());
+        assert!(long.elided, "a long label is cut");
+        let last = long
+            .rows
+            .last()
+            .and_then(|r| r.glyphs.last())
+            .map(|g| g.chr);
+        assert_eq!(last, Some('…'));
+        assert!(long.size().x <= LABEL_COL_W + LABEL_GAP - 4.0 + 0.5);
+        assert!(!short.elided);
+        assert_eq!(short.text(), "Rarity");
     }
 
     #[test]

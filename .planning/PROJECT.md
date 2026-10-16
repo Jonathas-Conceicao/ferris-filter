@@ -8,6 +8,32 @@ FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
+## Current Milestone: v0.6 New PoE2-based Tool UI
+
+**Goal:** `ff` is rebuilt in Path of Exile 2's own Options-window style, on the shared skin proven
+by the `ff-proto` prototype (quick tasks 261015-tz2 / 261016-1de), and the prototype binary is
+retired.
+
+**Target features:**
+- One Cargo workspace: `ff` stays the default package; `tools/ff-art` is a member runnable from the
+  repo root (`cargo run -p ff-art`)
+- New overlay shell: left-docked 660px full-height window on the game's monitor, DPI-correct, game
+  header, RULES / CONFIG / ECONOMY / ABOUT tabs, REVERT / RELOAD / APPLY bar with a one-line,
+  truncating, colour-coded status (absorbs backlog 999.11)
+- RULES tab on the skin, every existing editor capability kept; new rules are added at the top
+- Rule dividers: an explicit `#`-banner comment in the filter renders as a named, collapsible
+  section; the economy section becomes the default (locked) divider
+- CONFIG style table with a column header and aligned (greyed) order arrows; a line-by-line style
+  editor with a skinned colour-picker popup and Delete-with-confirm at the bottom
+- ECONOMY tab (league, last sync, priced items, SYNC ECONOMY) and ABOUT tab (identity, version,
+  repo, ownership disclaimer, third-party credits)
+
+**Key context:** Branch `milestone/v0.6-new-poe2-based-tool-ui` was cut from `topic/dev`, so it
+also carries the Simple Defences rework (quick 261015-nbp) and both prototype rounds; they ship to
+`main` with v0.6. Game art is GGG's (README credits); Ferris is public-domain community art.
+Research skipped (the prototype answered the look). Sound preview and long-distance rule
+reordering are backlog. The Cargo version now follows tags (0.5.0, bumped to 0.6.0 at close).
+
 <details>
 <summary>✅ v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15</summary>
 
@@ -80,7 +106,7 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** not yet defined (`/gsd-new-milestone`). Candidates: the open backlog
+**Next milestone:** v0.6 New PoE2-based Tool UI (in progress). Remaining candidates: the open backlog
 (999.3 load message for online filters, 999.4 economy change summary, 999.7 locked rules / `Import`
 layering, 999.8 rest of the configuration tab, 999.9 presets, 999.10 raw-text block editing, 999.11
 UI review, 999.12 in-game keyword checks, 999.13 unmatchable-condition guidance, 999.14 `Minimal`),
@@ -123,7 +149,7 @@ install folder needs `styles-default.json` to be found as the app root. Full sui
 
 ### Active
 
-None — next milestone requirements are defined by `/gsd-new-milestone`.
+See `.planning/REQUIREMENTS.md` (milestone v0.6).
 
 ### Deferred (next-milestone candidates)
 
@@ -235,4 +261,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-15 after v0.5 milestone*
+*Last updated: 2026-10-16 at the start of milestone v0.6*

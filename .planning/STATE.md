@@ -1,34 +1,33 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.5
-milestone_name: Generic Filter Editor & Initial App Configuration
-status: completed
-stopped_at: v0.5 milestone completed, archived and tagged
-last_updated: "2026-10-16T04:30:00.000Z"
-last_activity: 2026-10-16 -- Completed quick task 261016-1de: PoE2 prototype round 2 (tabs, style editor, ABOUT, status line, minimap atlas)
+milestone: v0.6
+milestone_name: New PoE2-based Tool UI
+status: planning
+last_updated: "2026-10-16T05:22:52.283Z"
+last_activity: 2026-10-16
 progress:
-  total_phases: 13
-  completed_phases: 13
-  total_plans: 71
-  completed_plans: 71
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-15)
+See: .planning/PROJECT.md (updated 2026-10-16)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Planning next milestone (`/gsd-new-milestone`)
+**Current focus:** v0.6 New PoE2-based Tool UI — defining requirements
 
 ## Current Position
 
-Milestone v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15 (tag `v0.5`).
-Archives: .planning/milestones/v0.5-ROADMAP.md, v0.5-REQUIREMENTS.md, v0.5-MILESTONE-AUDIT.md.
-Status: Between milestones. Next: `/gsd-new-milestone`.
-Progress: [██████████] 100%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-10-16 — Milestone v0.6 started
 
 ## Performance Metrics
 

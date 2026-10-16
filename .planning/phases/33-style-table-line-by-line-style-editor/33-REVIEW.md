@@ -1,7 +1,8 @@
 ---
 phase: 33-style-table-line-by-line-style-editor
-reviewed: 2026-10-16T17:41:38Z
+reviewed: 2026-10-16T19:30:00Z
 depth: standard
+iteration: 2
 files_reviewed: 10
 files_reviewed_list:
   - src/overlay/app.rs
@@ -15,16 +16,16 @@ files_reviewed_list:
   - src/skin/mod.rs
   - src/skin/popup.rs
 findings:
-  critical: 2
-  warning: 3
+  critical: 0
+  warning: 2
   info: 5
-  total: 10
+  total: 7
 status: issues_found
 ---
 
-# Phase 33: Code Review Report
+# Phase 33: Code Review Report (iteration 2)
 
-**Reviewed:** 2026-10-16T17:41:38Z
+**Reviewed:** 2026-10-16
 **Depth:** standard
 **Files Reviewed:** 10
 **Status:** issues_found
@@ -33,224 +34,155 @@ status: issues_found
 
 ## Summary
 
-I reviewed the phase diff (`33a41e9..HEAD -- src`) and the code it calls: `grammar::encode`
-for `Value::Rgba`, `body::rgba_edit` / `values_edit`, `ConfigState::edit_style` / `add_style`,
-`StyleSet::validate`, egui 0.36 `Popup` / `Memory` popup lifecycle and the app's
-`handle_config_actions`.
+I read `git diff 576d456..HEAD -- src CLAUDE.md` (fix commits e7b4c66, 2895bee, b1993e3, 5b6c83c,
+b98445b, 0ce58b2) and traced each change against its iteration-1 finding and its callers
+(`colour_popup` / `ff_colour_picker`, `colour_chip` / `colour_slot`, `rgba_edit` / `values_edit` /
+`grammar::encode`, `ConfigUi::expand` / `set_expanded` / `reset_for_new_styles`, the
+`remember` / `recall` epoch memory, `ConfigState::edit_style`).
 
-What checks out:
-- An open but untouched picker emits nothing. Each live edit is compared with `current`.
-- Escape restores the opening value.
-- The style dirty count is computed by comparing values, so a live edit that returns to the
-  original value leaves CONFIG clean.
-- Picker state is keyed by the trigger's popup id. Revert, Reload and expand/collapse bump the
-  epoch, which orphans that state.
-- The custom sound file check matches the loader's `InvalidCustomSound` rule.
-- The screenshot hooks (`request_open`, the `ff-colour-picker-shot` block, `shot_step`) are all
-  behind `cfg(debug_assertions)`.
-- Delete, rename and reorder still go through `rename_drafts` keyed by id and through
-  name-based actions on unique names.
+I also ran two checks with `CARGO_TARGET_DIR` set to the temp folder:
+- `cargo fmt --check` is clean.
+- `cargo test --lib` passes: 1297 tests, 0 failures.
 
-Two defects break the picker's stated semantics:
-- On an **unset** style slot, the colour the picker opens on cannot be committed.
-- **Escape** on a 3-token rule colour line does not restore the original bytes.
+All five in-scope iteration-1 findings are fixed for the paths the review described, and I found no
+regression in the fixed code. Two warnings remain:
+- **WR-01:** CR-01 is only partly closed. On an unset slot, typing the seed's hex or R/G/B value
+  still does nothing, which was the third no-op path that CR-01 named.
+- **WR-02:** The switch-back memory that WR-02 and WR-03 build on lasts only while the row stays
+  expanded. Collapsing the row, or expanding another one, bumps the epoch and erases it. CLAUDE.md
+  and the `memo_id` comment both promise memory for the whole session.
 
-There are also smaller problems:
-- The editor's "switch back" memory is lost in some paths.
-- A pre-existing toggle bug collapses a newly added style.
+The five iteration-1 Info items were out of the fixer's scope and are all still present. They are
+listed again below.
 
-## Critical Issues
+## Verification of iteration-1 findings
 
-### CR-01: An unset style slot cannot take the colour the picker opens on (Use colour, the selected quick pick and a matching hex are all no-ops)
-
-**File:** `src/skin/colour_picker.rs:519-526, 536-540, 643-658` (with `src/overlay/config_view.rs:1167-1188`)
-
-**Issue:** For an unset slot (`current == None`), `colour_popup` seeds the working colour from
-`seed`. The style editor passes Dracula Foreground `[248,248,242]` as the Text and Border seeds and
-Dracula Background `[40,42,54]` as the Background seed. Those are exactly two of the quick picks.
-The seed colour shows in the picker, but nothing commits it:
-- **Use colour** only sets `res.done`. `done` never emits a `PickerEdit`, so the popup closes and
-  the slot stays `(none)`.
-- The matching quick pick is drawn as `selected`, and `if r.clicked() && !selected` ignores the
-  click.
-- Typing the same hex or R/G/B value is dropped by `v != rgb`.
-
-So a user who opens an empty Text slot, sees the off-white seed and presses Use colour (or clicks
-the highlighted Foreground tile) gets no edit. To set the seed colour, they must pick some other
-colour first and then come back. The tests never cover Use colour or a selected quick pick on an
-unset slot: `use_colour_closes_without_an_edit` only uses a set slot.
-
-**Fix:** Treat an explicit commit on an empty slot as a Set of the working colour:
-```rust
-// colour_picker.rs, quick picks: let a click on the selected tile through when the slot is empty
-// (pass `slot_empty: bool` into ff_colour_picker, or report `res.picked = true` and decide in colour_popup)
-if r.clicked() && (!selected || slot_empty) { ...; changed = true; }
-
-// colour_popup, after the escape / none / changed chain:
-} else if (res.done || res.changed) && current.is_none() {
-    let mut now = st.hsva.to_srgba_unmultiplied();
-    if !mode.alpha { now[3] = 255; }
-    out = Some(PickerEdit::Set(now));
-}
-```
-Add a test: open with `current = None`, click `use`, expect `Set(seed)`.
-
-### CR-02: Escape on a 3-token rule colour line rewrites it as 4 tokens and leaves the filter unapplied
-
-**File:** `src/skin/colour_picker.rs:636-642`, `src/overlay/widgets.rs:411-416`, `src/overlay/body.rs:2402-2412`, `src/overlay/grammar.rs:557-562`
-
-**Issue:** Live edits change the line's form, and the Escape restore reads `had_alpha` from the
-**current** line, not from the original one:
-1. A line `SetTextColor 1 2 3` opens with `opening = Some([1,2,3,255])`.
-2. Dragging Alpha to 128 emits `Set([1,2,3,128])`. `rgba_edit` encodes this as `1 2 3 128`
-   (`had_alpha || rgba[3] != 255`), so the line now has 4 values.
-3. Pressing Escape emits `Set([1,2,3,255])`. `rgba_edit` now computes
-   `had_alpha = entry.values.len() >= 4 == true` and writes `1 2 3 255`.
-
-The result never matches the original bytes. `RulesState` computes `dirty` from
-`doc.serialize() != applied_text` (rules.rs:870), so the filter stays "unapplied":
-- Apply stays enabled.
-- The ` *` tab marker shows.
-- Quit asks for confirmation.
-
-The next Apply then rewrites a line the user explicitly reverted. This breaks the project rule
-that "an edit rewrites only the edited value's lines" and that disable/enable is byte-exact, and
-it contradicts the picker's documented "Escape returns the value the picker opened with".
-
-**Fix:** Make Escape restore the original line rather than re-encode a value. Two options:
-- When the popup opens, capture the 3-or-4-token form in `colour_chip`, and pass `had_alpha`
-  through to `rgba_edit`:
-```rust
-// widgets.rs colour_chip: remember the opening token count with the popup state
-let opened_had_alpha_id = popup_id.with("had-alpha");
-// on open: insert_temp(opened_had_alpha_id, entry_had_alpha)
-// body.rs: rgba_edit(id, entry, n, had_alpha_at_open)
-//   -> Value::Rgba { rgba: new, had_alpha: had_alpha_at_open }
-```
-- Alternatively, have `rgba_edit` write the 3-token form whenever `new[3] == 255` and the line
-  was 3-token in the applied text.
-
-Add a test: 3-token line, alpha edit, Escape, then `serialize() == applied_text`.
+| ID | Verdict | Evidence |
+|----|---------|----------|
+| CR-01 unset slot cannot take the seed colour | Fixed (partly, see WR-01) | `PickerResult.picked` is set by any quick-pick click, including the selected tile (`colour_picker.rs:519-539`). `colour_popup` emits `Set(working colour)` when `res.changed \|\| ((res.done \|\| res.picked) && current.is_none())` (`colour_picker.rs:656`). A set slot is unchanged: `current.is_none()` guards the new branch, and the `Some(now) != current` check still drops no-ops. Escape after a seed commit gives `opening == None != current`, so it returns `Clear`, which is correct. Tests: `use_colour_on_an_unset_slot_sets_the_seed` and `the_selected_quick_pick_on_an_unset_slot_sets_it`. The hex / R/G/B path is not covered (WR-01). |
+| CR-02 Escape rewrites a 3-token line as 4 tokens | Fixed | `colour_chip` writes `had_alpha` under `popup_id.with("had-alpha")` only while the popup is closed (`widgets.rs:416-419`). On the opening click it is captured before `colour_popup` toggles the popup open, so the stored form is the opening form. `rgba_edit` now encodes with that form (`body.rs:2404-2418`, caller `body.rs:2887-2888`). `grammar::encode` writes 4 tokens only when `had_alpha \|\| a != 255` (`grammar.rs:559`), so alpha 128 followed by Escape gives back `1 2 3`, and `values_edit` compares text against the current `1 2 3 128` and emits the edit. Tests: `body::escape_after_an_alpha_edit_restores_a_three_token_line` (byte-equal `wf.text()`) and `widgets::escape_after_an_alpha_edit_reports_the_opening_form` (real chip, alpha click, Escape). `colour_swatch_rgb` passes `false`, which is right for a fixed alpha of 255. |
+| WR-01 + Add style collapses the new row | Fixed | `style_draft_row` no longer sets `cfg.expanded` (`config_view.rs:1048-1054`). The handler calls the new non-toggle `ConfigUi::expand` (`app.rs:1945`), which drops the armed delete and bumps the epoch as `set_expanded` does. Test `app::adding_a_style_expands_it` covers both the pre-expanded and the not-expanded case. |
+| WR-02 sound file lost through an Alert | Fixed (within one epoch, see WR-02) | `switch_sound` stores `memo.file` on any switch away from Custom and `memo.last` on a switch to None. `sound_for_choice(SOUND_CUSTOM, ..)` uses `base.custom`, then `last_file`, then `uwu.mp3` (`config_view.rs:1453-1497`). I traced Custom→Alert→Custom, Custom→None→Alert→Custom, and file-edit-then-switch: all keep the right file and the current volume. The `"sound-file"` memo id does not collide with the file-draft id (`"cfg-style-file-draft"`). Test `switching_back_to_custom_keeps_the_file`. |
+| WR-03 Font off/on resets to 32 | Fixed (within one epoch, see WR-02) | Turning the check off remembers `style.font` (`u8`), and turning it on recalls `u8`, so the types match (`config_view.rs:1213-1224`, `models/config.rs:176`). The fallback is 32. Test `font_off_then_on_restores_the_last_size` (S 37→None→37). |
+| IN-01 dead `colour_swatch_rgb` / `rgb_caption` | Open | Still only used by tests. The CR-02 fix even updated its signature (`widgets.rs:497-518`). |
+| IN-02 table columns overflow on narrow widths | Open | Unchanged. |
+| IN-03 editor memory keyed by name | Open | Unchanged. The new `"font"` and `"sound-file"` memos widen it. |
+| IN-04 bad or empty sound file silently dropped on blur | Open | Unchanged (`config_view.rs:1553-1568`). |
+| IN-05 unused `skin` in `beam_line` | Open | `let _ = skin;` is still at `config_view.rs:1390`. |
 
 ## Warnings
 
-### WR-01: Adding a style collapses it instead of expanding it (expand toggled twice)
+### WR-01: On an unset slot, typing the seed's hex or R/G/B value still commits nothing (CR-01 residue)
 
-**File:** `src/overlay/config_view.rs:1040-1045`, `src/overlay/app.rs:1940-1946`
+**File:** `src/skin/colour_picker.rs:446-485, 656`
+**Issue:** Iteration-1 CR-01 named three ways to commit the seed colour of an unset slot that did
+nothing: **Use colour**, the selected quick pick, and "typing the same hex or R/G/B value". The fix
+covers the first two through `res.done` / `res.picked`. Typed values are still dropped:
+- `value_field(..) && parse_hex(&t) && v != rgb` discards a hex equal to the seed.
+- The R/G/B fields likewise check `v != rgb[k]`.
 
-**Issue:** On commit, `style_draft_row` sets `cfg.expanded = Some(name)` itself. After the frame,
-the `ConfigAction::AddStyle` handler calls `self.config_ui.set_expanded(&name)`. `set_expanded` is
-a **toggle**: because `expanded` already equals `name`, it sets `expanded = None`. The new custom
-style is scrolled to but shown collapsed, so the user has to click it again to reach the editor.
-This defeats the "+ Add style opens its editor" flow that the line-by-line editor depends on. The
-two lines predate this phase, but the flow now lives in the rewritten draft row, and no test
-covers the view and the handler together.
+So `res.changed` stays false and neither `done` nor `picked` is set.
 
-**Fix:** Let only one side expand, and do not use the toggle in the handler:
+On an unset Text slot that opens on `#F8F8F2`, a user who types `#F8F8F2`, presses Enter and then
+clicks outside ends with the slot still `(none)` and no message. CLAUDE.md now says only Use colour
+and the quick picks set the colour shown on an empty slot, so this is documented, but it still
+breaks the "an explicit choice commits" rule the fix set up. The fix report marks CR-01 fixed
+without mentioning this path.
+**Fix:** Report any committed typed value as an explicit choice, the same way as `picked`:
 ```rust
-// config_view.rs style_draft_row: drop `cfg.expanded = Some(name.clone());`
-// app.rs AddStyle handler:
-self.config_ui.expanded = Some(name.clone());
-self.config_ui.delete_armed = None;
-self.config_ui.epoch = self.config_ui.epoch.wrapping_add(1);
-```
-
-### WR-02: Sound "switch back" memory loses the custom file name when switching through an Alert
-
-**File:** `src/overlay/config_view.rs:1477-1491, 1433-1451`
-
-**Issue:** The memory is only written when the choice becomes None (`sel == 0`), and it is only
-read when the style has no sound (`style.sound.or_else(recall)`). Two paths lose the custom file:
-- **Custom to Alert to Custom:** Custom `boss.mp3` becomes Alert 3, which builds
-  `Sound { id: Some(3), custom: None }` and drops the file. Switching back to Custom then finds
-  `base.custom == None` and writes `uwu.mp3`.
-- **Custom to None to Alert to Custom:** this loses the file the same way, because the remembered
-  sound is ignored once `style.sound` is `Some`.
-
-So the switch-back memory this phase added for minimap, beam and sound does not hold for the sound
-file, which is the only free-text value in the editor.
-
-**Fix:** Remember the custom file name whenever a custom sound is replaced, and prefer it when
-switching to Custom:
-```rust
-if let Some(s) = &style.sound && s.custom.is_some() && sel != SOUND_CUSTOM {
-    remember(ui, name, "sound-file", epoch, s.custom.as_ref().unwrap());
+// ff_colour_picker: set a flag whenever a hex / channel field commits a parseable value,
+// even when it equals the working colour
+let mut entered = false;
+if let Some(t) = value_field(..) && let Some(v) = parse_hex(&t) {
+    entered = true;
+    if v != rgb { typed = Some(v); }
 }
-// in sound_for_choice(SOUND_CUSTOM, ..): base.custom.or(recalled_file).unwrap_or(SOUND_FILE_DEFAULT)
+// ... same for R/G/B ...
+res.picked |= entered;   // or a separate `res.entered`
 ```
+Then the existing `(res.done || res.picked) && current.is_none()` branch commits it. Add a test:
+open with `current = None`, type the seed hex plus Enter, and expect `Set(seed)`.
 
-### WR-03: Turning Font size off and on again replaces the style's font with 32
+### WR-02: Switch-back memory (minimap, beam, sound, sound file, font) is erased when any style row is collapsed or expanded, not kept "for the session"
 
-**File:** `src/overlay/config_view.rs:1201-1206`
+**File:** `src/overlay/config_view.rs:106-122, 961-963, 1113-1136`
+**Issue:** `memo_id` salts every remembered value with `cfg.epoch`. The epoch is bumped by:
+- `set_expanded`, which runs on every row-header click (line 962);
+- `expand`, used by + Add style;
+- `reset_for_new_styles`, used by Revert, Reload, Apply and outside edits.
 
-**Issue:** `StyleEdit::Font(on.then_some(32))` hard-codes 32 when the check is turned back on. A
-style with font 37 (S, A, B) that is toggled off and on again ends up at 32 and stays dirty.
-Minimap, beam and sound all restore their last value through `remember`/`recall`; font is the only
-optional field that does not, so a quick off/on silently changes the style.
+So the memory lives only while one row stays expanded. Example:
+1. Turn Font size off on `S` (37 is remembered).
+2. Click the `S` header to collapse it, then click it again to expand it.
+3. Turn Font size back on. The result is **32**, and `S` stays dirty.
 
-**Fix:**
+The same happens to a minimap, beam, sound or custom file after a collapse. Opening another row
+and coming back has the same effect, because each header click bumps the epoch.
+
+This contradicts:
+- the `memo_id` doc comment: "kept for the session (until the next Revert / Reload, which bumps the
+  epoch)";
+- CLAUDE.md: "restores the last values of this session (a custom sound file is kept even through an
+  Alert)".
+
+The WR-02 and WR-03 fixes rely on this memory, and their tests stay inside one epoch, so they do
+not catch it.
+**Fix:** Separate the memo salt from the per-row widget epoch. Keep a `memo_epoch` in `ConfigUi`
+that only `reset_for_new_styles` bumps (Revert, Reload, Apply), and use it in
+`remember`/`recall`:
 ```rust
-if check.changed() {
-    let next = if on {
-        Some(recall::<u8>(ui, name, "font", epoch).map_or(32, i64::from))
-    } else {
-        if let Some(f) = style.font { remember(ui, name, "font", epoch, &f); }
-        None
-    };
-    edit(actions, name, StyleEdit::Font(next));
+pub struct ConfigUi { /* ... */ pub memo_epoch: u64 }
+pub fn reset_for_new_styles(&mut self) {
+    /* ... */ self.epoch = self.epoch.wrapping_add(1);
+    self.memo_epoch = self.memo_epoch.wrapping_add(1);
 }
+// style_editor: let memo = cfg.memo_epoch; pass `memo` (not `epoch`) to remember/recall
 ```
+Alternatively, narrow the wording in CLAUDE.md and the comment to "while the row stays open". Add a
+test: font off, `set_expanded("S")` twice, font on, and expect `Font(Some(37))`.
 
 ## Info
 
-### IN-01: `colour_swatch_rgb` and `rgb_caption` are dead in production code
+### IN-01: `colour_swatch_rgb` and `rgb_caption` are still dead in production code
 
-**File:** `src/overlay/widgets.rs:483-498`
-**Issue:** The style editor now uses `colour_slot`, and the only remaining callers of
-`colour_swatch_rgb` (and therefore of `rgb_caption`) are tests. They are `pub`, so the compiler
-does not warn about them. The trailing `.filter(|c| *c != rgb)` also repeats a check that
+**File:** `src/overlay/widgets.rs:496-518`
+**Issue:** Only tests call them. The CR-02 fix kept them alive by threading a `false` form
+through `colour_chip`. The trailing `.filter(|c| *c != rgb)` still repeats the check that
 `colour_chip` already makes.
-**Fix:** Remove both, along with their tests, or mark them `#[cfg(test)]` if the tests should stay.
+**Fix:** Remove both functions and their tests, or mark them `#[cfg(test)]`.
 
-### IN-02: Styles-table columns overflow the row below about 394pt plus padding
+### IN-02: Styles-table columns and editor tiles overflow below about 394pt plus padding
 
-**File:** `src/overlay/config_view.rs:557-596`, `1266-1270`
-**Issue:** `table_columns` holds Name at 110 and Preview at 100 or more, but nothing makes the
-total fit `width`. Below `2*ROW_PAD + 394` the Order arrows are drawn past the row's right edge,
-outside the row background and the click rect. `tile_size` similarly clamps to at least 14pt, so
-the 12 beam tiles plus Temp overflow on narrow widths. The window is fixed at 660pt, so this is
-latent today.
-**Fix:** Clamp the last column to `width - pad`, or let `name` drop below `NAME_MIN` as a last
-resort. Add a test at a narrow width that asserts `order.x + order.w <= width - pad`.
+**File:** `src/overlay/config_view.rs` (`table_columns`, `tile_size`)
+**Issue:** This is unchanged from iteration 1. Nothing clamps the total column width, or the 12
+beam tiles plus Temp, to the row width. It is latent at the fixed 660pt window.
+**Fix:** Clamp the last column (and `tile_size`) to `width - pad`, and add a narrow-width test.
 
-### IN-03: Editor memory and drafts are keyed by style name, not id
+### IN-03: Editor memory, file drafts and row ids are keyed by style name, not id
 
-**File:** `src/overlay/config_view.rs:1106-1108`, `1496`, `822`
-**Issue:** `memo_id`, the sound-file draft id and the row `push_id` all use `name`:
-- A rename loses the remembered None-values.
-- Within one epoch, renaming another custom style to a freed name inherits the old style's
-  memory.
+**File:** `src/overlay/config_view.rs:1115-1116, 1540`
+**Issue:** This is unchanged, and the new `"font"` and `"sound-file"` memos add to it. A rename
+within one epoch loses the remembered values: `RenameStyle` does not bump the epoch, and the memo
+key changes with the name. A style later renamed to the freed name inherits them.
+**Fix:** Key the memos and drafts on `state.style_id(name).unwrap_or(name)`.
 
-Everywhere else this phase keys by id (`rename_drafts`).
-**Fix:** Key these on `state.style_id(name).unwrap_or(name)`.
+### IN-04: Invalid or emptied custom sound file text is dropped silently on focus loss
 
-### IN-04: Invalid or emptied custom sound file text is silently discarded on focus loss
-
-**File:** `src/overlay/config_view.rs:1508-1535`
-**Issue:** Text that is bad (contains `"` or a control character) or empty is never committed.
-On focus loss the draft is removed and the field snaps back to the old file without any message.
-The red outline exists only while the field is focused.
-**Fix:** Keep the draft, and its red outline, until it becomes valid or the row collapses, or put
-a short status hint ("File name not changed") when the draft is dropped.
+**File:** `src/overlay/config_view.rs:1553-1568`
+**Issue:** This is unchanged. The draft is removed on blur and the field snaps back to the old file
+with no message.
+**Fix:** Keep the draft and its red outline until it becomes valid or the row collapses, or post a
+short status hint.
 
 ### IN-05: Unused `skin` parameter in `beam_line`
 
-**File:** `src/overlay/config_view.rs:1363-1372`
-**Issue:** `let _ = skin;` silences an unused parameter.
-**Fix:** Drop the parameter from `beam_line` and from its call site.
+**File:** `src/overlay/config_view.rs:1381-1390`
+**Issue:** `let _ = skin;` still silences an unused parameter.
+**Fix:** Drop the parameter from `beam_line` and from its call site at line 1253.
 
 ---
 
-_Reviewed: 2026-10-16T17:41:38Z_
+_Reviewed: 2026-10-16_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+_Iteration: 2_

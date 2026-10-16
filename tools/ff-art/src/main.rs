@@ -43,6 +43,18 @@ enum Cmd {
     Dump { pattern: String, dir: PathBuf },
     /// Render only the Ferris background (no game install needed).
     Ferris,
+    /// Crop `[x, y, w, h]` out of a PNG and enlarge it `zoom` times (nearest neighbour), to
+    /// inspect screenshots of the skinned UI up close.
+    Zoom {
+        input: PathBuf,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+        out: PathBuf,
+        #[arg(long, default_value_t = 3)]
+        zoom: u32,
+    },
     /// Print each PNG's size, the bounding box of its non-transparent pixels and the alpha of
     /// its four edge midpoints (to find padding/bleed gutters before writing a crop).
     Info { files: Vec<PathBuf> },
@@ -148,6 +160,24 @@ fn main() -> Result<()> {
         }
         Cmd::Ferris => ferris(&manifest, &root),
         Cmd::Sheet { list, out, cell } => sheet(&list, &out, cell),
+        Cmd::Zoom {
+            input,
+            x,
+            y,
+            w,
+            h,
+            out,
+            zoom,
+        } => {
+            let img = image::open(&input)?.to_rgba8();
+            let w = w.min(img.width().saturating_sub(x));
+            let h = h.min(img.height().saturating_sub(y));
+            let part = img.view(x, y, w, h).to_image();
+            let z = zoom.max(1);
+            let big =
+                image::imageops::resize(&part, w * z, h * z, image::imageops::FilterType::Nearest);
+            save_png(&big, &out)
+        }
         Cmd::Info { files } => {
             for f in files {
                 let img = image::open(&f)?.to_rgba8();

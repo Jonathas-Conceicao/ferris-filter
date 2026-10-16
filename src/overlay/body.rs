@@ -5581,9 +5581,9 @@ mod tests {
                 .unwrap();
         assert!(style_owned(set.get("S").unwrap(), "SetFontSize"));
         assert!(style_owned(set.get("S").unwrap(), "PlayEffect"));
-        for (_, kw) in grammar::action_groups()
+        for kw in crate::filter::keywords::KEYWORDS
             .iter()
-            .flat_map(|(g, ks)| ks.iter().map(move |k| (*g, k)))
+            .filter(|k| k.kind == Kind::Action)
         {
             assert!(!style_owned(set.get("unchanged").unwrap(), kw.name));
         }

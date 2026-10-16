@@ -111,14 +111,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom rule styling uses the style editor lines (quick 261016-qi7).** A Custom rule's STYLE
   section shows the same lines as the CONFIG style editor (visibility, label preview, colours with
   alpha, font size, minimap, beam, sound, volume, drop sound), written to the rule's own action
-  lines one line at a time (untouched lines stay byte-identical). Action lines the editor cannot
-  represent stay as rows below it; the `+ style` button is gone.
+  lines one line at a time (untouched lines stay byte-identical). Each line edits the last action
+  line of its kind, the one the game uses, and never adds a second one: a line it cannot show
+  exactly (`MinimapIcon -1`, `PlayEffect None`, a named sound, an out-of-range font size or volume)
+  shows its nearest state, is rewritten in place by an edit and is also listed as a row below with
+  its exact text, like every other action line the editor cannot represent; the `+ style` button
+  is gone.
 - **Style chip shows the minimap icon (quick 261016-qi7).** A collapsed rule's style chip draws the
   style's minimap icon (game art, its colour) instead of a gold diamond; a Custom rule with a
   minimap icon shows that icon.
 - **Every Revert asks first (quick 261016-qi7).** RULES Revert opens a new **Discard rule
-  changes?** popup (Discard / Keep editing); ECONOMY Revert also asks when only a staged economy
-  section add/remove is pending. Debug screenshot mode gains `--popup discard-rules`.
+  changes?** popup (Discard / Keep editing); it is live only with rule edits and keeps a staged
+  economy section add/remove, which ECONOMY Revert owns. ECONOMY Revert also asks when only a
+  staged economy section add/remove is pending. Debug screenshot mode gains
+  `--popup discard-rules`.
+
+### Removed
+
+- **Adding actions the style lines cannot express (quick 261016-qi7).** With the RULES `+ style`
+  picker gone, `PlayAlertSoundPositional`, `CustomAlertSoundOptional`, `EnableDropSound`,
+  `DisableDropSoundIfAlertSound`, `EnableDropSoundIfAlertSound`, `MinimapIcon -1` (hide icon) and
+  `PlayEffect None` can no longer be added from the overlay. Lines already in a filter are kept,
+  shown and editable.
 
 ### Fixed
 

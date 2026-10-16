@@ -112,33 +112,6 @@ const CONDITION_GROUPS: &[(&str, &[&str])] = &[
     ),
 ];
 
-const ACTION_GROUPS: &[(&str, &[&str])] = &[
-    (
-        "Colours",
-        &["SetTextColor", "SetBorderColor", "SetBackgroundColor"],
-    ),
-    ("Text", &["SetFontSize"]),
-    ("Map", &["MinimapIcon", "PlayEffect"]),
-    (
-        "Sound",
-        &[
-            "PlayAlertSound",
-            "PlayAlertSoundPositional",
-            "CustomAlertSound",
-            "CustomAlertSoundOptional",
-        ],
-    ),
-    (
-        "Drop sound",
-        &[
-            "DisableDropSound",
-            "EnableDropSound",
-            "DisableDropSoundIfAlertSound",
-            "EnableDropSoundIfAlertSound",
-        ],
-    ),
-];
-
 fn resolve(names: &[&str]) -> Vec<&'static Keyword> {
     names
         .iter()
@@ -206,14 +179,6 @@ pub fn condition_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
                 .collect();
             (g, kws)
         })
-        .collect()
-}
-
-/// Action picker groups in UI order.
-pub fn action_groups() -> Vec<(&'static str, Vec<&'static Keyword>)> {
-    ACTION_GROUPS
-        .iter()
-        .map(|(g, names)| (*g, resolve(names)))
         .collect()
 }
 
@@ -831,7 +796,7 @@ mod tests {
                 .filter(|k| k.kind == Kind::Condition)
                 .count()
         );
-        for (_, ns) in CONDITION_GROUPS.iter().chain(ACTION_GROUPS) {
+        for (_, ns) in CONDITION_GROUPS {
             for n in ns
                 .iter()
                 .filter(|n| **n != DEFENCES_MARKER && **n != SIMPLE_DEFENCES_MARKER)
@@ -900,20 +865,6 @@ mod tests {
         for n in DEFENCE_KEYWORDS {
             assert_eq!(all.iter().filter(|x| **x == n).count(), 1);
         }
-    }
-
-    #[test]
-    fn every_action_is_reachable_exactly_once() {
-        let all = names(&action_groups());
-        for k in KEYWORDS.iter().filter(|k| k.kind == Kind::Action) {
-            assert_eq!(
-                all.iter().filter(|n| **n == k.name).count(),
-                1,
-                "{}",
-                k.name
-            );
-        }
-        assert_eq!(all.len(), 14);
     }
 
     #[test]

@@ -81,20 +81,36 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > typing adds or updates it. STYLE is one picker of **Custom** plus every `styles.json` preset. For
 > **Custom** only, the picker is followed by the same lines as the CONFIG style editor (Visibility,
 > label preview + Text / Border / Background with alpha, Font size, Minimap, Beam, Sound + Volume,
-> Drop sound), read from and written to the rule's own action lines: each line binds the first
-> action line it can represent and an edit rewrites, adds or removes only that line (a 3-value colour
-> stays 3-value while alpha is 255). Action lines the editor cannot represent (positional or optional
-> sounds, named sounds, `EnableDropSound`, `MinimapIcon -1`, `PlayEffect None`, a second line of a
-> slot) follow as editable / removable rows. There is no **+ style** button. A preset hides all of
+> Drop sound), read from and written to the rule's own action lines. A later action line of the
+> same kind overrides an earlier one in game, so each line binds the **last** line of its keyword
+> family (one per colour keyword; `SetFontSize`; `MinimapIcon`; `PlayEffect`; the sound family
+> `PlayAlertSound` / `PlayAlertSoundPositional` / `CustomAlertSound` / `CustomAlertSoundOptional`;
+> `DisableDropSound` / `EnableDropSound`), and an edit rewrites only that line in place, removes it
+> (an earlier line of the family then shows through, as in game), or adds one line when the family
+> has none: a family never gets a second line. A 3-value colour stays 3-value while alpha is 255; a
+> colour added to an empty slot is written with 4 values; a sound kind switch keeps a trailing
+> `# comment`. When the bound line is one the editor cannot show exactly (`MinimapIcon -1`,
+> `PlayEffect None`, a named sound, an out-of-range font size or volume, a positional or optional
+> sound, `EnableDropSound`) its line shows the nearest honest state (None; the value clamped into
+> the slider; the plain sound kind, whose keyword is kept on edit; the drop sound check unticked), an
+> edit rewrites that line, and the line is also listed below as a separate row with its exact text.
+> Every other action line (earlier lines of a family, `DisableDropSoundIfAlertSound`,
+> `EnableDropSoundIfAlertSound`) follows as an editable / removable row. There is no **+ style**
+> button, so an action the style lines cannot express (`PlayAlertSoundPositional`,
+> `CustomAlertSoundOptional`, `EnableDropSound`, the two `...IfAlertSound` keywords,
+> `MinimapIcon -1`, `PlayEffect None`) can no longer be **added** from the overlay; one already in
+> the file is kept, shown and editable. A preset hides all of
 > it, decides Show/Hide itself and writes `# ff:style <id> <name>`.
 > Switching a preset back to Custom keeps the current actions and drops the tag. Only Show and Hide
 > are offered: a foreign `Minimal` block is shown as Minimal (Custom only) and left as is unless
 > changed. **Continue to later rules** is its own line, last in the body. No caption
-> text; an unknown style is flagged on the picker with a tooltip, and standing explanations are tooltips on the control they explain. Every condition and action is editable with structured
-> controls: a grouped, searchable **+ condition** picker, an operator dropdown with
+> text; an unknown style is flagged on the picker with a tooltip, and standing explanations are tooltips on the control they explain. Every condition and every action line in the file is editable with structured
+> controls (new actions are added through the style lines only, see above): a grouped, searchable **+ condition** picker, an operator dropdown with
 > plain-English labels (an existing operator is never normalized), sliders paired with exact numbers,
-> a class picker whose groups come from `config.json`, quoted lists, the skinned colour
-> picker with an Alpha slider (no None; the colour line is a chip whose `R G B A` text is its tooltip, and a 3-token colour line stays 3-token), and minimap / beam / sound controls. An edit rewrites only the edited value's
+> a class picker whose groups come from `config.json`, quoted lists, the skinned colour picker with
+> an Alpha slider (on the style lines it opens from the Text / Border / Background cards, which have
+> a None tile that removes the line; a leftover colour row is a chip whose `R G B A` text is its
+> tooltip, without None; a 3-token colour line stays 3-token while alpha is 255), and minimap / beam / sound controls. An edit rewrites only the edited value's
 > lines. A list condition added with **+ condition** is an unwritten row until its first entry.
 > Quoted lists (BaseType, mod names) are a vertical list, one entry per line with its own remove, a
 > type + Enter / **+ ADD** field that splits a pasted quoted list, in a scroll area of about 7 rows.
@@ -152,7 +168,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > errors are flagged and **Apply is refused** until they are fixed or disabled (warnings are flagged
 > but do not block). **+ Add rule** inserts an empty `Show` rule as the first block of the file (above the first rule's own comments, outside the economy section), expands it with the Name field focused, clears the search and reports `Rule added at the top of the file. Press Apply to save it.`. The list is drawn with the PoE2 skin (Phase 31): fixed two-line rows (round check, index, Show/Hide, name, muted summary line), flags as below with the styled chip left of the gold `Continue` word, and the game scrollbar. The editor is two columns (labels left, skin controls right): booleans are a Yes | No switch, Custom has a Show | Hide switch, Continue is a round check, Duplicate / Delete are buttons (Delete via its popup), quoted lists have a **+ Add** field; only the colour picker keeps its old look until Phase 33. The
 > **Sections (Phase 32):** a `# ff:section` banner is a 36pt header row (chevron, name, `{n} rules`, rename pencil, up / down, remove x) that collapses its rules; rules above the first banner have no header. **+ Add section** (toolbar) inserts a banner at the top of the file with its name box focused; **Section above** (beside Duplicate / Delete on an expanded rule) puts a banner above that rule (above the whole run for a grouped rule). Rename trims, an empty name becomes `Section`, newlines are stripped. A section's arrows move its divider past one rule at a time (a whole `# ff:group` run counts as one rule; dimmed when no rule is left to step over); a rule's arrows hop a divider with the rule. Remove deletes only the banner (its rules join the section above); the divider right below the economy section can neither be removed nor move down, since that would hand its rules to the economy section. Search shows matching rules inside collapsed sections (header expanded for display, `m of n rules`). Collapsed state is per filter in `ff-settings.json` (`collapsed_sections`), keyed by section name (a name starting with `ff:` or `user:` is stored with a `user:` prefix so it never shares the economy key); renaming moves the flag, removing drops it, a new section starts expanded, and jumping to a rule opens its section. A `+ Add rule` still inserts above everything, including a leading banner. A rule with no conditions, enabled, not `Continue`, and followed by more rules carries an amber triangle (WR-02: it matches everything, so later rules never fire). The **Economy** section is the locked last header (padlock, collapsed by default, `{n} rules`) whose expanded rows are read-only and muted. It is display-only: no remove x and no footer button; the section is added and removed on the **Economy** tab. All edits stay in memory until **Apply** writes them (a
-> filter without an economy section can be applied); **Revert** re-reads the last applied text (after the **Discard rule changes?** popup),
+> filter without an economy section can be applied); **Revert** re-reads the last applied text (after the **Discard rule changes?** popup; it is live only with rule edits and keeps a staged economy add/remove, which the Economy tab owns),
 > **Reload** re-reads the file and discards unapplied edits (also needed when the folder was not
 > found, the filter could not be loaded, or Apply was refused because the file changed on disk), and
 > **Sync economy** (Economy tab) is described below. **Apply** is one action shared with the Config tab (see the
@@ -169,7 +185,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > of a styled rule's actions in the file is overwritten on the next Apply. Switching to **Custom**
 > keeps the current actions as the rule's own. A tag naming a style that
 > does not exist is flagged `unknown style` (ring-with-? icon), reported in the status line (click jumps to the first such rule), and never rewritten or
-> blocking. A disabled styled rule is rewritten once it is enabled. A collapsed rule shows a one-line condition summary under its header (hidden when expanded). Collapsed rows show their flags as small painted icons with tooltips (the word flags are only accessible names), right to left from the reorder arrows: grammar error (red filled circle with !), grammar warning (amber triangle with !), unknown style (amber ring with ?), group broken (amber broken link), moved across Continue (amber up/down arrows), `Continue` (gold word), and `styled` (the style's minimap icon in game art and its colour, plus the style name truncated to 10 characters; the name only when the style has no minimap icon; a Custom rule with a `MinimapIcon` shows just that icon, tooltip `Minimap icon: <Size Colour Shape>`). A disabled rule that cannot be enabled shows an amber padlock. Flags beyond a 120px budget fold into a `+N` badge (at the far left of the group; errors are never folded away), so the
+> blocking. A disabled styled rule is rewritten once it is enabled. A collapsed rule shows a one-line condition summary under its header (hidden when expanded). Collapsed rows show their flags as small painted icons with tooltips (the word flags are only accessible names), right to left from the reorder arrows: grammar error (red filled circle with !), grammar warning (amber triangle with !), unknown style (amber ring with ?), group broken (amber broken link), moved across Continue (amber up/down arrows), `Continue` (gold word), and `styled` (the style's minimap icon in game art and its colour, plus the style name truncated to 10 characters; the name only when the style has no minimap icon; a Custom rule whose effective (last) `MinimapIcon` line shows an icon shows just that icon, none when it is `MinimapIcon -1`, tooltip `Minimap icon: <Size Colour Shape>`). A disabled rule that cannot be enabled shows an amber padlock. Flags beyond a 120px budget fold into a `+N` badge (at the far left of the group; errors are never folded away), so the
 > rule label always keeps at least 140px. The empty states are a heading only (`No rules yet`, `No rules match "<query>"`, `The filter could not be loaded.`).
 >
 > **Bottom bar and status line (Phase 30):** every message that v0.5 stacked in a scrolling 96px footer block (Apply outcome, list status, sync status, the grammar-gate and unknown-style lines, filter state, indicator) is now **one status line** to the left of **Revert / Reload / Apply**, one message at a time. An event message (Apply, Overwrite, Reload, Revert or Sync outcome, a list status) shows until the next edit; otherwise the highest-priority standing condition shows: missing app root, event, grammar gate, damaged markers or load failure, sync running, unknown styles, v0.4 notice, absent filter, then the indicator (`Unapplied changes`, its explanation on hover, or `Filter matches saved rules`). It is coloured info / ok / warning / error, is cut with … on one line, and the whole text appears on hover only when it was cut. Clicking a grammar-gate or unknown-style message jumps to the first such rule. The filter's full path is the tooltip of the header title plate. A successful Apply on either tab (or Overwrite) sends

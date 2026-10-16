@@ -39,15 +39,20 @@ pub(crate) struct ShotArgs {
     pub filter: Option<PathBuf>,
 }
 
-/// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent (normal
-/// launch); an unknown flag or a missing value is an `Err`.
+/// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent: a
+/// normal launch, which ignores its arguments like a release `ff` does (review WR-08). With
+/// `--screenshot`, an unknown flag or a missing value is an `Err`.
 pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArgs>, String> {
+    let args: Vec<String> = args.collect();
+    if !args.iter().any(|a| a == "--screenshot") {
+        return Ok(None);
+    }
     let mut png = None;
     let mut tab = ShellTab::Rules;
     let mut popup = None;
     let mut status = None;
     let mut filter = None;
-    let mut args = args;
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
         match arg.as_str() {
@@ -231,6 +236,9 @@ mod tests {
     #[test]
     fn no_screenshot_flag_is_a_normal_launch() {
         assert_eq!(p(&[]), Ok(None));
+        // Other arguments (a shortcut, a launcher) do not stop a normal launch.
+        assert_eq!(p(&["--nope"]), Ok(None));
+        assert_eq!(p(&["foo", "--tab", "x"]), Ok(None));
     }
 
     #[test]
@@ -260,7 +268,7 @@ mod tests {
 
     #[test]
     fn bad_input_is_an_error() {
-        assert!(p(&["--nope"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--nope"]).is_err());
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--tab", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--popup", "nope"]).is_err());

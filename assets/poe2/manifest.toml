@@ -257,3 +257,10 @@ crab_fraction = 0.8
 crab_center_y = 0.5
 line_alpha = 34
 line_radius = 2
+
+# Orange Ferris for the ABOUT tab (original colours, rendered from the committed SVG; no game
+# install needed). 3x of the 112pt it is drawn at.
+[ferris_about]
+svg = "assets/ferris/rustacean-flat-happy.svg"
+out = "assets/ui/ferris-about.png"
+width = 336

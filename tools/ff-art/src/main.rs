@@ -35,14 +35,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Extract every manifest entry and render the Ferris background (the default).
+    /// Extract every manifest entry and render both Ferris images (the default).
     Extract,
     /// Print the game's virtual paths containing PATTERN (case-insensitive).
     List { pattern: String },
     /// Convert every .dds whose path contains PATTERN to a PNG under DIR (for exploring; DIR
     /// should be a scratch folder, never the repo).
     Dump { pattern: String, dir: PathBuf },
-    /// Render only the Ferris background (no game install needed).
+    /// Render the Ferris background and the orange ABOUT Ferris (no game install needed).
     Ferris,
     /// Crop `[x, y, w, h]` out of a PNG and enlarge it `zoom` times (nearest neighbour), to
     /// inspect screenshots of the skinned UI up close.
@@ -79,6 +79,7 @@ struct Manifest {
     #[serde(default)]
     font: Vec<FontEntry>,
     ferris: Option<FerrisEntry>,
+    ferris_about: Option<FerrisAboutEntry>,
 }
 
 #[derive(Deserialize)]
@@ -128,6 +129,16 @@ struct FontEntry {
 }
 
 #[derive(Deserialize)]
+struct FerrisAboutEntry {
+    /// Source SVG, relative to the repo root.
+    svg: String,
+    /// Output PNG, relative to the repo root.
+    out: String,
+    /// Output width in pixels (the artwork is cropped tight and scaled to exactly this).
+    width: u32,
+}
+
+#[derive(Deserialize)]
 struct FerrisEntry {
     /// Source SVG, relative to the repo root.
     svg: String,
@@ -174,7 +185,8 @@ fn main() -> Result<()> {
         Cmd::Extract => {
             let fs = open_game(&cli.game)?;
             extract(&fs, &manifest, &root)?;
-            ferris(&manifest, &root)
+            ferris(&manifest, &root)?;
+            ferris_about(&manifest, &root)
         }
         Cmd::List { pattern } => {
             let fs = open_game(&cli.game)?;
@@ -188,7 +200,10 @@ fn main() -> Result<()> {
             let fs = open_game(&cli.game)?;
             dump(&fs, &pattern, &dir)
         }
-        Cmd::Ferris => ferris(&manifest, &root),
+        Cmd::Ferris => {
+            ferris(&manifest, &root)?;
+            ferris_about(&manifest, &root)
+        }
         Cmd::Sheet { list, out, cell } => sheet(&list, &out, cell),
         Cmd::Zoom {
             input,
@@ -481,6 +496,64 @@ fn ferris(manifest: &Manifest, root: &Path) -> Result<()> {
     std::fs::create_dir_all(out_path.parent().unwrap())?;
     save_png(&out, &out_path)?;
     println!("{}x{} {} <- {}", f.width, f.height, f.out, f.svg);
+    Ok(())
+}
+
+/// Renders `tree` at `scale` onto a transparent pixmap covering the whole SVG and returns it with
+/// the bounding box `(min_x, min_y, max_x, max_y)` (inclusive) of its pixels with alpha > 0.
+fn render_with_bbox(
+    tree: &resvg::usvg::Tree,
+    scale: f32,
+) -> Result<(resvg::tiny_skia::Pixmap, (u32, u32, u32, u32))> {
+    let size = tree.size();
+    let pw = (size.width() * scale).ceil() as u32;
+    let ph = (size.height() * scale).ceil() as u32;
+    let mut pix = resvg::tiny_skia::Pixmap::new(pw, ph).context("pixmap")?;
+    resvg::render(
+        tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pix.as_mut(),
+    );
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for (i, p) in pix.pixels().iter().enumerate() {
+        if p.alpha() > 0 {
+            let (x, y) = (i as u32 % pw, i as u32 / pw);
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+    }
+    anyhow::ensure!(x0 != u32::MAX, "the SVG rendered nothing");
+    Ok((pix, (x0, y0, x1, y1)))
+}
+
+/// Renders the Ferris SVG in its original colours (no tint, no edge pass), cropped tight to the
+/// artwork and exactly `width` pixels wide, for the ABOUT tab.
+fn ferris_about(manifest: &Manifest, root: &Path) -> Result<()> {
+    let Some(f) = &manifest.ferris_about else {
+        return Ok(());
+    };
+    let svg = std::fs::read(root.join(&f.svg)).with_context(|| format!("reading {}", f.svg))?;
+    let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default())?;
+    // Pass 1 measures the artwork's share of the SVG; pass 2 scales so that share is `width`.
+    let s1 = f.width as f32 / tree.size().width();
+    let (_, (x0, _, x1, _)) = render_with_bbox(&tree, s1)?;
+    let s2 = s1 * f.width as f32 / (x1 - x0 + 1) as f32;
+    let (pix, (x0, y0, x1, y1)) = render_with_bbox(&tree, s2)?;
+    let pw = pix.width();
+    let h = y1 - y0 + 1;
+    let mut out = RgbaImage::new(f.width, h);
+    for y in 0..h {
+        for x in 0..f.width.min(x1 - x0 + 1) {
+            let p = pix.pixels()[((y0 + y) * pw + x0 + x) as usize].demultiply();
+            out.put_pixel(x, y, image::Rgba([p.red(), p.green(), p.blue(), p.alpha()]));
+        }
+    }
+    let out_path = root.join(&f.out);
+    std::fs::create_dir_all(out_path.parent().unwrap())?;
+    save_png(&out, &out_path)?;
+    println!("{}x{} {} <- {}", f.width, h, f.out, f.svg);
     Ok(())
 }
 

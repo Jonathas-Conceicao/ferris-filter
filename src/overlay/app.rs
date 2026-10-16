@@ -2463,6 +2463,8 @@ impl eframe::App for OverlayApp {
         // Deferred mutations: jump from the grammar line, then row operations, then the economy
         // footer. Quit stays last.
         if let (Some(target), Some(working)) = (jump_to, &self.working) {
+            // The line is clickable on every tab; the rule it names lives on RULES (WR-02).
+            self.tab = ShellTab::Rules;
             if !working.row_matches(target, &self.query) {
                 self.query.clear();
             }

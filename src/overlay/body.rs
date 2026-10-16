@@ -6883,6 +6883,27 @@ mod tests {
         assert_eq!(intent_text(src, StyleIntent::Sound(Some(bad))), src);
     }
 
+    /// IN-01: a picker opened on an empty slot reports the 4-token form for the whole session
+    /// (`colour_slot_rgba`), so the line it added keeps 4 tokens on every later change.
+    #[test]
+    fn a_colour_added_to_an_empty_slot_stays_four_valued() {
+        let added = intent_text(
+            "Show\n    Rarity Rare\n",
+            colour(ColourSlot::Border, Some([5, 6, 7, 255]), true),
+        );
+        assert_eq!(
+            added,
+            "Show\n    Rarity Rare\n    SetBorderColor 5 6 7 255\n"
+        );
+        assert_eq!(
+            intent_text(
+                &added,
+                colour(ColourSlot::Border, Some([8, 9, 10, 255]), true)
+            ),
+            "Show\n    Rarity Rare\n    SetBorderColor 8 9 10 255\n"
+        );
+    }
+
     #[test]
     fn sound_kind_switch_keeps_the_inline_comment() {
         let custom = Sound {

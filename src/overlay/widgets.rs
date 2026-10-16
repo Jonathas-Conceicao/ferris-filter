@@ -529,7 +529,9 @@ pub fn colour_slot_rgba(
     let popup_id = egui::Popup::default_response_id(&card);
     let form_id = popup_id.with("had-alpha");
     if !egui::Popup::is_id_open(ui.ctx(), popup_id) {
-        ui.data_mut(|d| d.insert_temp(form_id, had_alpha));
+        // An empty slot's first change adds a 4-token line, so the session keeps that form
+        // rather than rewriting it to 3 tokens on the next change.
+        ui.data_mut(|d| d.insert_temp(form_id, had_alpha || current.is_none()));
     }
     let mode = PickerMode {
         alpha: true,

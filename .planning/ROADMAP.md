@@ -204,7 +204,28 @@ Plans:
   4. The economy section shows as a locked "Economy" divider at the end of the list (collapsed by default, read-only rows, collapse/expand only) instead of the `+ N locked rule blocks` footer; `ff-cli apply --add-economy` / `--remove-economy` append / remove a begin-only economy banner at the end of the file (the section runs to the next banner or EOF), Apply regenerates the blocks under it, and old one-line `# ff:economy-begin/end` markers are no longer recognised. (Between this phase and Phase 34 the overlay has no add/remove control; it arrives on the ECONOMY tab.)
   5. `generate` output and the committed fixtures (`seed-universal.filter`, `artifact_guard`, `generate_snapshot`) are unchanged
 
-**Plans**: TBD
+**Plans**: 6 plansPlans:
+**Wave 1**
+
+- [ ] 32-01-PLAN.md — Filter model: three-line `# ff:section` / begin-only economy banners, parser fences, old markers dropped, v0.4 conversion retargeted, tests migrated
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 32-02-PLAN.md — Foundations: per-filter collapsed sections in ff-settings.json, mixed-height list offsets, chevron/rename icons
+- [ ] 32-03-PLAN.md — Divider edits on Document (insert top/above, rename, remove, move over groups, rule hops) and + Add rule above every divider
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 32-04-PLAN.md — Rule model: sections, read-only economy rows, display entries with collapse/search, section actions, WR-02 set
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 32-05-PLAN.md — RULES tab UI: section headers, locked Economy section, + Add section, Section above, collapse persistence
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 32-06-PLAN.md — --rename-section shot flag, verification shots, CLAUDE.md / CHANGELOG, verification checklist
+
 **UI hint**: yes
 
 ### Phase 33: Style Table & Line-by-Line Style Editor

@@ -1344,11 +1344,32 @@ impl OverlayApp {
             filter_overwrite,
             self.root.is_ok(),
             self.config.as_ref().is_ok_and(|c| c.validate().is_ok()),
+            self.config_invalid(),
             state,
             changed,
             apply::combined_dirty(rules_dirty, style_pending, config_dirty),
             blocking,
         )
+    }
+
+    /// A loaded config that fails validation: every Apply (Overwrite included) would refuse it.
+    fn config_invalid(&self) -> bool {
+        self.config.as_ref().is_ok_and(|c| c.validate().is_err())
+    }
+
+    /// Why Overwrite is unavailable, for the changed-on-disk popup (WR-02, iteration 2); the
+    /// same reason chain as the bar slot's tooltip.
+    fn overwrite_block(&self) -> shell::OverwriteBlock {
+        shell::OverwriteBlock::from_inputs(ConfigBarInputs {
+            tier_errors: self.config.as_ref().is_ok_and(|c| c.has_tier_errors()),
+            config_invalid: self.config_invalid(),
+            rules_blocking: self
+                .working
+                .as_ref()
+                .is_some_and(|w| !w.blocking().is_empty()),
+            damaged: self.filter_state() == FilterState::Damaged,
+            ..ConfigBarInputs::default()
+        })
     }
 
     /// Which popups want to be open this frame.
@@ -1377,6 +1398,7 @@ impl OverlayApp {
                 shell::popup_spec(PopupData::ChangedOnDisk {
                     files: &files,
                     overwrite: self.overwrite_live,
+                    block: self.overwrite_block(),
                 })
             }
             Popup::SwitchFilter => shell::popup_spec(PopupData::SwitchFilter {
@@ -2410,6 +2432,7 @@ impl eframe::App for OverlayApp {
                         .is_ok_and(|c| c.styles_error().is_some() || c.tiers_error().is_some()),
                 rules_blocking: blocking > 0,
                 damaged: state == FilterState::Damaged,
+                config_invalid: self.config_invalid(),
             },
             changed,
         );
@@ -3948,6 +3971,45 @@ mod tests {
         let event = crate::overlay::shell::event_from(app.apply_message.clone(), None, None, None);
         assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
+    }
+
+    /// WR-02 (iteration 2): tier errors keep Overwrite off during a styles.json refusal, and the
+    /// popup says how to get it back.
+    #[test]
+    fn tier_errors_block_overwrite_and_the_popup_says_why() {
+        use crate::overlay::shell::{OverwriteBlock, Popup};
+        let (mut app, _ctx) = popup_app(RULES);
+        let Rig {
+            root,
+            _game,
+            path: _,
+            loaded,
+            working,
+            config,
+        } = rig(S_RULE);
+        app.root = Ok(root.path().to_path_buf());
+        app.config = Ok(config);
+        app.filter = Ok(loaded);
+        app.working = Some(working);
+        app.changed_on_disk = vec![DiskFile::Styles];
+        assert!(app.overwrite_decision(), "a valid config is overwritable");
+
+        app.config
+            .as_mut()
+            .unwrap()
+            .set_tier_text("S", "not a number");
+        assert!(app.config.as_ref().unwrap().has_tier_errors());
+        assert!(!app.overwrite_decision());
+        assert_eq!(app.overwrite_block(), OverwriteBlock::TierErrors);
+        app.overwrite_live = app.overwrite_decision();
+        let spec = app.popup_spec_for(Popup::ChangedOnDisk);
+        assert!(
+            spec.body
+                .contains("Fix the tier errors to overwrite instead."),
+            "{}",
+            spec.body
+        );
+        assert!(spec.buttons.iter().all(|b| b.0 != "Overwrite"));
     }
 
     /// WR-01: hiding clears the CONFIG message and the list status too, so neither hides the

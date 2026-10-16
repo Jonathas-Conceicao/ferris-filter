@@ -242,6 +242,64 @@ pub(crate) struct ConfigBarInputs {
     pub load_error: bool,
     pub rules_blocking: bool,
     pub damaged: bool,
+    /// A loaded config that fails validation (tier errors, invalid styles.json/tiers.json).
+    pub config_invalid: bool,
+}
+
+/// Overwrite's tooltip when it is unavailable because of the config.
+pub(crate) const OVERWRITE_CONFIG_INVALID_TIP: &str =
+    "styles.json or tiers.json is invalid. Fix it first.";
+/// Overwrite's tooltip when nothing can be written.
+pub(crate) const OVERWRITE_NOTHING_TIP: &str = "Nothing to overwrite.";
+
+/// Why Overwrite is unavailable during a changed-on-disk refusal, for the bar slot's tooltip and
+/// a short line in the popup (review WR-02, iteration 2). The order follows the Apply slot's
+/// reason chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverwriteBlock {
+    TierErrors,
+    ConfigInvalid,
+    RulesBlocking,
+    Damaged,
+    Nothing,
+}
+
+impl OverwriteBlock {
+    pub(crate) fn from_inputs(config: ConfigBarInputs) -> Self {
+        if config.tier_errors {
+            Self::TierErrors
+        } else if config.config_invalid {
+            Self::ConfigInvalid
+        } else if config.rules_blocking {
+            Self::RulesBlocking
+        } else if config.damaged {
+            Self::Damaged
+        } else {
+            Self::Nothing
+        }
+    }
+
+    /// The disabled Overwrite button's tooltip.
+    pub(crate) fn tip(self) -> &'static str {
+        match self {
+            Self::TierErrors => config_state::APPLY_BLOCKED_TOOLTIP,
+            Self::ConfigInvalid => OVERWRITE_CONFIG_INVALID_TIP,
+            Self::RulesBlocking => apply::APPLY_BLOCKED_TOOLTIP,
+            Self::Damaged => apply::DAMAGED_MARKERS_MESSAGE,
+            Self::Nothing => OVERWRITE_NOTHING_TIP,
+        }
+    }
+
+    /// The popup's extra sentence: how to get Overwrite back, when there is a way.
+    pub(crate) fn popup_clause(self) -> Option<&'static str> {
+        match self {
+            Self::TierErrors => Some("Fix the tier errors to overwrite instead."),
+            Self::ConfigInvalid => Some("Fix styles.json or tiers.json to overwrite instead."),
+            Self::RulesBlocking => Some("Fix or disable the flagged rules to overwrite instead."),
+            Self::Damaged => Some("Overwrite is off while the economy markers are damaged."),
+            Self::Nothing => None,
+        }
+    }
 }
 
 /// The right-most button: Apply, or Overwrite while a file changed on disk.
@@ -290,7 +348,12 @@ pub(crate) fn bar_state(
             label: "Overwrite",
             enabled: actions.overwrite,
             danger: true,
-            tip: Some(apply::OVERWRITE_TOOLTIP),
+            // A dead Overwrite says why (WR-02, iteration 2).
+            tip: Some(if actions.overwrite {
+                apply::OVERWRITE_TOOLTIP
+            } else {
+                OverwriteBlock::from_inputs(config).tip()
+            }),
             overwrite: true,
         }
     } else {
@@ -558,6 +621,8 @@ pub(crate) enum PopupData<'a> {
         /// Whether Overwrite is live; the same decision as the bottom bar's slot (WR-03). When it
         /// is not, the popup offers no Overwrite button.
         overwrite: bool,
+        /// Why Overwrite is unavailable; read only when `overwrite` is false.
+        block: OverwriteBlock,
     },
     SwitchFilter {
         target: &'a str,
@@ -592,7 +657,11 @@ pub(crate) fn changed_on_disk_choice(overwrite: bool, clicked: usize) -> usize {
 /// Title, body and buttons of a popup.
 pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
     let (title, body, buttons): (&str, String, Vec<SpecButton>) = match data {
-        PopupData::ChangedOnDisk { files, overwrite } => {
+        PopupData::ChangedOnDisk {
+            files,
+            overwrite,
+            block,
+        } => {
             let mut buttons = vec![(RELOAD, false, Some(apply::RELOAD_TOOLTIP))];
             let body = if overwrite {
                 buttons.push((OVERWRITE, true, Some(apply::OVERWRITE_TOOLTIP)));
@@ -601,10 +670,15 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
                     files.join(", ")
                 )
             } else {
-                format!(
+                let mut body = format!(
                     "{} changed since ff loaded it. Reload discards your edits.",
                     files.join(", ")
-                )
+                );
+                if let Some(clause) = block.popup_clause() {
+                    body.push(' ');
+                    body.push_str(clause);
+                }
+                body
             };
             buttons.push((KEEP_EDITING, false, None));
             ("File changed on disk", body, buttons)
@@ -1063,6 +1137,7 @@ mod tests {
         let s = popup_spec(PopupData::ChangedOnDisk {
             files: &files,
             overwrite: false,
+            block: OverwriteBlock::Nothing,
         });
         assert_eq!(labels(&s), ["Reload", "Keep editing"]);
         assert!(!s.body.contains("Overwrite"), "{}", s.body);
@@ -1073,12 +1148,64 @@ mod tests {
         }
     }
 
+    /// WR-02 (iteration 2): a dead Overwrite says why, on the bar and in the popup.
+    #[test]
+    fn a_disabled_overwrite_explains_itself() {
+        let dead = FooterActions {
+            reload: true,
+            ..FooterActions::default()
+        };
+        let tip = |cfg: ConfigBarInputs| bar_state(ShellTab::Rules, dead, cfg, true).apply.tip;
+        let rules = ConfigBarInputs {
+            rules_blocking: true,
+            ..ConfigBarInputs::default()
+        };
+        assert_eq!(tip(rules), Some(apply::APPLY_BLOCKED_TOOLTIP));
+        let tiers = ConfigBarInputs {
+            tier_errors: true,
+            config_invalid: true,
+            rules_blocking: true,
+            ..ConfigBarInputs::default()
+        };
+        assert_eq!(tip(tiers), Some(config_state::APPLY_BLOCKED_TOOLTIP));
+        let damaged = ConfigBarInputs {
+            damaged: true,
+            ..ConfigBarInputs::default()
+        };
+        assert_eq!(tip(damaged), Some(apply::DAMAGED_MARKERS_MESSAGE));
+        assert_eq!(tip(ConfigBarInputs::default()), Some(OVERWRITE_NOTHING_TIP));
+        // A live Overwrite keeps its own tooltip.
+        let live = FooterActions {
+            overwrite: true,
+            ..dead
+        };
+        assert_eq!(
+            bar_state(ShellTab::Rules, live, rules, true).apply.tip,
+            Some(apply::OVERWRITE_TOOLTIP)
+        );
+
+        let files = vec!["dynamic.filter".to_string()];
+        let s = popup_spec(PopupData::ChangedOnDisk {
+            files: &files,
+            overwrite: false,
+            block: OverwriteBlock::RulesBlocking,
+        });
+        assert!(
+            s.body
+                .ends_with("Fix or disable the flagged rules to overwrite instead."),
+            "{}",
+            s.body
+        );
+        assert_eq!(labels(&s), ["Reload", "Keep editing"]);
+    }
+
     #[test]
     fn popup_specs_match_the_contract() {
         let files = vec!["dynamic.filter".to_string(), "styles.json".to_string()];
         let s = popup_spec(PopupData::ChangedOnDisk {
             files: &files,
             overwrite: true,
+            block: OverwriteBlock::Nothing,
         });
         assert_eq!(s.title, "File changed on disk");
         assert!(
@@ -1163,10 +1290,12 @@ mod tests {
             PopupData::ChangedOnDisk {
                 files: &files,
                 overwrite: true,
+                block: OverwriteBlock::Nothing,
             },
             PopupData::ChangedOnDisk {
                 files: &files,
                 overwrite: false,
+                block: OverwriteBlock::Nothing,
             },
             PopupData::SwitchFilter { target: "t" },
             PopupData::Quit,

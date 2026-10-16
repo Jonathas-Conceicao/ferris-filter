@@ -450,16 +450,23 @@ pub fn config_apply_enabled(
 /// `FooterActions::overwrite`), or -- for a refusal that only the config files can resolve, such as
 /// a filter that failed to load or an absent, clean one -- the CONFIG Apply decision with the
 /// changed-on-disk guard lifted, so a config-only refusal stays overwritable.
+///
+/// `config_blocks` is a loaded config that fails validation (tier errors, an invalid
+/// styles.json/tiers.json): every Apply validates it, so Overwrite is off then, as v0.5's CONFIG
+/// OVERWRITE was gated on validity like its Apply (review WR-02, iteration 2).
+#[allow(clippy::too_many_arguments)]
 pub fn overwrite_enabled(
     filter_overwrite: bool,
     root_ok: bool,
     config_valid: bool,
+    config_blocks: bool,
     state: FilterState,
     needs_reload: bool,
     dirty: bool,
     blocking: usize,
 ) -> bool {
     needs_reload
+        && !config_blocks
         && (filter_overwrite
             || config_apply_enabled(root_ok, config_valid, state, false, dirty, blocking))
 }
@@ -750,59 +757,46 @@ mod tests {
 
     #[test]
     fn overwrite_covers_config_only_refusals() {
+        use FilterState::*;
+        // Arguments: filter_overwrite, root_ok, config_valid, config_blocks, state,
+        // needs_reload, dirty, blocking.
         // The filter's own Overwrite stands.
         assert!(overwrite_enabled(
-            true,
-            true,
-            true,
-            FilterState::HasSection,
-            true,
-            false,
-            0
+            true, true, true, false, HasSection, true, false, 0
         ));
         // A failed or absent-and-clean filter: a config edit is still overwritable.
-        for st in [FilterState::LoadFailed, FilterState::Absent] {
+        for st in [LoadFailed, Absent] {
             assert!(
-                overwrite_enabled(false, true, true, st, true, true, 0),
+                overwrite_enabled(false, true, true, false, st, true, true, 0),
                 "{st:?}"
             );
             assert!(
-                !overwrite_enabled(false, true, true, st, true, false, 0),
+                !overwrite_enabled(false, true, true, false, st, true, false, 0),
                 "{st:?}"
             );
             assert!(
-                !overwrite_enabled(false, true, false, st, true, true, 0),
+                !overwrite_enabled(false, true, false, true, st, true, true, 0),
                 "{st:?}"
             );
         }
         // Grammar errors or damaged markers still keep a filter write from happening.
         assert!(!overwrite_enabled(
-            false,
-            true,
-            true,
-            FilterState::HasSection,
-            true,
-            true,
-            1
+            false, true, true, false, HasSection, true, true, 1
         ));
         assert!(!overwrite_enabled(
-            false,
-            true,
-            true,
-            FilterState::Damaged,
-            true,
-            true,
-            0
+            false, true, true, false, Damaged, true, true, 0
+        ));
+        // An invalid config (tier errors) blocks even the filter's own Overwrite (WR-02).
+        assert!(!overwrite_enabled(
+            true, true, false, true, HasSection, true, true, 0
+        ));
+        // A config that failed to load is not validated, so it does not block.
+        assert!(overwrite_enabled(
+            true, true, false, false, HasSection, true, true, 0
         ));
         // Never outside a refusal.
         assert!(!overwrite_enabled(
-            true,
-            true,
-            true,
-            FilterState::HasSection,
-            false,
-            true,
-            0
+            true, true, true, false, HasSection, false, true, 0
         ));
     }
 

@@ -235,9 +235,15 @@ pub fn badge(ui: &mut egui::Ui, text: &str, tip: &str) -> egui::Response {
     inner.response.on_hover_text(tip)
 }
 
-/// The v0.4 slider look: a visible warm rail, circle handle, `CONTROL_GLYPH` trailing fill. The
-/// value is never clamped to `min..=max` (a hand-written out-of-range value must survive), and the
-/// numeric readout is left to [`number_field`]. Callers write only when `.changed()`.
+/// Room kept to the right of a numeric slider for its exact-number field (44) and the gap (8).
+pub const NUMBER_FIELD_W: f32 = 44.0;
+const SLIDER_RESERVE: f32 = NUMBER_FIELD_W + 8.0;
+
+/// The skin slider for a whole number. The value is never clamped on display (a hand-written
+/// out-of-range value must survive); it is written back only when the user moves the slider, and
+/// the numeric readout is left to [`number_field`]. Log ranges (`log`) slide over `ln(1 + v - min)`.
+/// The slider leaves [`NUMBER_FIELD_W`] plus a gap free at the right end of the available width.
+/// Callers write only when `.changed()`.
 pub fn themed_slider(
     ui: &mut egui::Ui,
     value: &mut i64,
@@ -245,36 +251,39 @@ pub fn themed_slider(
     max: i64,
     log: bool,
 ) -> egui::Response {
-    ui.scope(|ui| {
-        let width = (ui.available_width() - 96.0).clamp(120.0, 200.0);
-        let spacing = ui.spacing_mut();
-        spacing.slider_width = width;
-        spacing.slider_rail_height = 16.0;
-
-        let visuals = ui.visuals_mut();
-        visuals.handle_shape = egui::style::HandleShape::Circle;
-        visuals.widgets.inactive.bg_fill = theme::HEADER_PLATE;
-        visuals.widgets.hovered.bg_fill = theme::HEADER_PLATE;
-        visuals.widgets.active.bg_fill = theme::HEADER_PLATE;
-        visuals.selection.bg_fill = theme::CONTROL_GLYPH;
-        for state in [
-            &mut visuals.widgets.inactive,
-            &mut visuals.widgets.hovered,
-            &mut visuals.widgets.active,
-        ] {
-            state.fg_stroke = egui::Stroke::new(1.0, theme::SECTION_CREAM);
-        }
-
-        ui.add(
-            egui::Slider::new(value, min..=max)
-                .integer()
-                .show_value(false)
-                .clamping(egui::SliderClamping::Never)
-                .logarithmic(log)
-                .trailing_fill(true),
+    let skin = crate::skin::of(ui.ctx());
+    let width = (ui.available_width() - SLIDER_RESERVE).max(120.0);
+    let shown = (*value).clamp(min, max.max(min));
+    let (mut x, range, step) = if log {
+        (
+            ((1 + shown - min) as f64).ln(),
+            0.0..=((1 + max - min).max(1) as f64).ln(),
+            0.0,
         )
-    })
-    .inner
+    } else {
+        (shown as f64, min as f64..=max as f64, 1.0)
+    };
+    let mut resp = ui
+        .allocate_ui(egui::vec2(width, 24.0), |ui| {
+            crate::skin::widgets::ff_slider(ui, &skin, &mut x, range, step, "Value", |_| {
+                String::new()
+            })
+        })
+        .inner;
+    if resp.changed() {
+        let new = if log {
+            min + (x.exp() - 1.0).round() as i64
+        } else {
+            x.round() as i64
+        }
+        .clamp(min, max.max(min));
+        if new == *value {
+            resp.flags.remove(egui::response::Flags::CHANGED);
+        } else {
+            *value = new;
+        }
+    }
+    resp
 }
 
 /// A persistent widget id from any `Hash` salt (egui's own salt bound also demands `Debug`).
@@ -310,11 +319,7 @@ pub fn number_field(
         draft = value.to_string();
     }
 
-    let mut response = ui.add(
-        egui::TextEdit::singleline(&mut draft)
-            .id(id)
-            .desired_width(width),
-    );
+    let mut response = crate::skin::widgets::ff_text_field_id(ui, id, &mut draft, "", width);
     let mut invalid = false;
     if response.changed() {
         match draft.trim().parse::<i64>() {
@@ -949,7 +954,7 @@ mod tests {
     }
 
     #[test]
-    fn themed_slider_idle_frame_changes_nothing_and_never_clamps() {
+    fn themed_slider_never_clamps_on_display() {
         let ctx = headless_ctx();
         let mut a = 70_i64;
         let mut b = 400_i64;
@@ -963,28 +968,85 @@ mod tests {
         assert_eq!((a, b), (70, 400));
     }
 
+    #[test]
+    fn themed_slider_log_maps_midpoint() {
+        let ctx = headless_ctx();
+        let mut v = 1_i64;
+        let mut rect = egui::Rect::NOTHING;
+        ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                rect = themed_slider(ui, &mut v, 1, 5000, true).rect;
+            },
+        )
+        .drop_without_applying_deltas();
+        // Track runs from rect.min + 4 to rect.max - 12 (empty value text keeps 12 pt).
+        let mid = egui::pos2(
+            (rect.min.x + 4.0 + rect.max.x - 12.0) / 2.0,
+            rect.center().y,
+        );
+        let mut changed = false;
+        ctx.run_ui(click_at(mid), |ui| {
+            changed = themed_slider(ui, &mut v, 1, 5000, true).changed();
+        })
+        .drop_without_applying_deltas();
+        assert!(changed);
+        assert!(
+            (50..=100).contains(&v),
+            "log midpoint should be near sqrt(5000), got {v}"
+        );
+    }
+
+    #[test]
+    fn number_field_is_44_wide_and_keeps_focus_id() {
+        let ctx = headless_ctx();
+        let mut value = 5_i64;
+        let mut rect = egui::Rect::NOTHING;
+        let mut id = egui::Id::NULL;
+        ctx.run_ui(RawInput::default(), |ui| {
+            id = salted_id(ui, "n");
+            rect = number_field(ui, "n", &mut value, NUMBER_FIELD_W)
+                .response
+                .rect;
+        })
+        .drop_without_applying_deltas();
+        // The edit sits 10 pt inside each side of the 44 pt box.
+        assert_eq!(rect.width() + 20.0, 44.0);
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            number_field(ui, "n", &mut value, NUMBER_FIELD_W);
+        })
+        .drop_without_applying_deltas();
+        assert!(
+            ctx.memory(|m| m.has_focus(id)),
+            "the field keeps its salted id for focus"
+        );
+    }
+
     /// Focus the number field (click), then type `text`; returns (value, invalid, changed-on-type).
     fn type_into_number_field(start: i64, text: &str) -> (i64, bool, bool) {
         let ctx = headless_ctx();
         let mut value = start;
         let mut rect = egui::Rect::NOTHING;
         ctx.run_ui(RawInput::default(), |ui| {
-            let f = number_field(ui, "n", &mut value, 80.0);
+            let f = number_field(ui, "n", &mut value, NUMBER_FIELD_W);
             assert!(!f.response.changed() && !f.invalid, "idle frame is quiet");
             rect = f.response.rect;
         })
         .drop_without_applying_deltas();
         ctx.run_ui(click_at(rect.center()), |ui| {
-            number_field(ui, "n", &mut value, 80.0);
+            number_field(ui, "n", &mut value, NUMBER_FIELD_W);
         })
         .drop_without_applying_deltas();
         ctx.run_ui(RawInput::default(), |ui| {
-            number_field(ui, "n", &mut value, 80.0);
+            number_field(ui, "n", &mut value, NUMBER_FIELD_W);
         })
         .drop_without_applying_deltas();
         let (mut invalid, mut changed) = (false, false);
         ctx.run_ui(text_input(text), |ui| {
-            let f = number_field(ui, "n", &mut value, 80.0);
+            let f = number_field(ui, "n", &mut value, NUMBER_FIELD_W);
             invalid = f.invalid;
             changed = f.response.changed();
         })

@@ -932,7 +932,12 @@ fn bound_control(
     ui.horizontal(|ui| {
         let (min, max, log) = grammar::slider_range(kw.name);
         let s = widgets::themed_slider(ui, &mut v, min, max, log);
-        let n = widgets::number_field(ui, (id, kw.name, entry.ordinal, "num"), &mut v, 64.0);
+        let n = widgets::number_field(
+            ui,
+            (id, kw.name, entry.ordinal, "num"),
+            &mut v,
+            widgets::NUMBER_FIELD_W,
+        );
         invalid = n.invalid;
         changed = s.changed() || n.response.changed();
     });
@@ -1693,7 +1698,7 @@ fn int_control(
     ui.horizontal(|ui| {
         let (min, max, log) = grammar::slider_range(card.kw.name);
         let s = widgets::themed_slider(ui, &mut v, min, max, log);
-        let n = widgets::number_field(ui, card.salt("num"), &mut v, 64.0);
+        let n = widgets::number_field(ui, card.salt("num"), &mut v, widgets::NUMBER_FIELD_W);
         invalid = n.invalid;
         changed = s.changed() || n.response.changed();
         primary = Some(n.response);
@@ -2093,8 +2098,20 @@ fn count_names_control(
             };
             ui.label(RichText::new(lead).size(14.0).color(theme::VALUE_TEXT));
             let (lo, hi, _) = grammar::slider_range("Sockets");
-            let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
-            let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
+            // Leave room for the trailing "of these:" label.
+            let (s, n) = ui
+                .scope(|ui| {
+                    ui.set_max_width((ui.available_width() - 80.0).max(180.0));
+                    let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
+                    let n = widgets::number_field(
+                        ui,
+                        card.salt("count"),
+                        &mut v,
+                        widgets::NUMBER_FIELD_W,
+                    );
+                    (s, n)
+                })
+                .inner;
             changed = s.changed() || n.response.changed();
             ui.label(
                 RichText::new("of these:")
@@ -2134,7 +2151,7 @@ fn sockets_control(
     ui.horizontal(|ui| {
         let (lo, hi, _) = grammar::slider_range("Sockets");
         let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
-        let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
+        let n = widgets::number_field(ui, card.salt("count"), &mut v, widgets::NUMBER_FIELD_W);
         changed = s.changed() || n.response.changed();
     });
     if changed
@@ -2702,7 +2719,7 @@ pub(crate) fn slider_pair(
 ) -> (Option<i64>, egui::Response) {
     let mut v = current;
     let s = widgets::themed_slider(ui, &mut v, range.0, range.1, false);
-    let n = widgets::number_field(ui, salt, &mut v, 56.0);
+    let n = widgets::number_field(ui, salt, &mut v, widgets::NUMBER_FIELD_W);
     *invalid |= n.invalid;
     let changed = (s.changed() || n.response.changed()) && v != current;
     (changed.then_some(v), n.response)

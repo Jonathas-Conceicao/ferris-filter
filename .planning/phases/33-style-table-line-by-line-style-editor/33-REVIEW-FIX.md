@@ -93,3 +93,16 @@ re-enable and the custom sound file (WR-02) keep their last values.
 _Fixed: 2026-10-16T18:30:00Z_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
+
+## After the loop (orchestrator)
+
+The iteration-2 re-review found no blockers, so the --auto loop stopped. Its two warnings were then
+fixed by hand:
+
+- WR-01 (iteration 2): a Hex / R / G / B value equal to an empty slot's seed now commits when
+  confirmed with Enter (`31362d8`, test `entering_the_seed_hex_on_an_unset_slot_sets_it`).
+- WR-02 (iteration 2): the switch-back memory uses a memo epoch that only Revert / Reload / Apply /
+  outside edits bump, so folding a row keeps it (`297cbf9`, test
+  `the_remembered_font_size_survives_a_fold`); CLAUDE.md wording updated.
+
+The five info items of the review stay open.

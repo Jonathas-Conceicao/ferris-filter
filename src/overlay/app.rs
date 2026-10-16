@@ -206,6 +206,9 @@ pub struct OverlayApp {
 
     /// The per-user settings (the chosen game-folder filter), from `ff-settings.json`.
     settings: Settings,
+    /// `ff-settings.json` exists but could not be used as it stands (WR-03). A fold click then
+    /// stays in memory instead of overwriting the file; an explicit Config save clears it.
+    settings_unusable: bool,
 
     /// The in-game config folder, resolved once.
     game_dir: Option<std::path::PathBuf>,
@@ -551,6 +554,19 @@ fn line_keyword(text: &str) -> String {
 
 /// Applies the frame's collected row actions once, after the list rendered. Returns whether the
 /// document changed and the last status worth showing.
+/// Saves a view preference (a fold click). An unusable `ff-settings.json` is left alone so the
+/// user's hand-edited file is not replaced by fallback defaults (WR-03).
+fn save_view_settings(
+    root: &std::path::Path,
+    unusable: bool,
+    next: &Settings,
+) -> std::io::Result<()> {
+    if unusable {
+        return Ok(());
+    }
+    settings::save(root, next)
+}
+
 /// Name of the collapsed user section that holds rule `id`, if any.
 fn section_to_reveal(working: &WorkingFilter, settings: &Settings, id: BlockId) -> Option<String> {
     let ordinal = working.rows().iter().find(|r| r.id == id)?.section?;
@@ -1021,6 +1037,7 @@ impl OverlayApp {
             config_message: None,
             config_refs: BTreeSet::new(),
             settings,
+            settings_unusable: settings_warning.is_some(),
             game_dir,
             filters_cache: None,
             pending_switch: None,
@@ -1181,6 +1198,7 @@ impl OverlayApp {
             Err(_) => None,
         };
         self.settings = next;
+        self.settings_unusable = self.settings_unusable && save_error.is_some();
         self.reset_filter_state();
         self.refresh_inputs();
         self.refresh_filters();
@@ -1192,8 +1210,9 @@ impl OverlayApp {
     /// Saves `next` as the settings now in force. A failed save still applies it for this
     /// session and says so, like the other view preferences.
     fn store_settings(&mut self, next: Settings) {
+        // An unusable file is left alone: a fold click is not worth discarding it (WR-03).
         let save_error = match &self.root {
-            Ok(root) => settings::save(root, &next).err(),
+            Ok(root) => save_view_settings(root, self.settings_unusable, &next).err(),
             Err(_) => None,
         };
         self.settings = next;
@@ -1263,6 +1282,7 @@ impl OverlayApp {
             Err(_) => None,
         };
         self.settings = next;
+        self.settings_unusable = self.settings_unusable && save_error.is_some();
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
@@ -1758,6 +1778,7 @@ impl OverlayApp {
         let settings_warning = match &self.root {
             Ok(root) => {
                 let (settings, warning) = settings::load(root);
+                self.settings_unusable = warning.is_some();
                 // A momentarily unreadable file must not reset the session's chosen filter (nor
                 // drop unknown keys held in memory), but a reload-off from the file always wins.
                 self.settings = settings_after_reload(
@@ -1770,6 +1791,7 @@ impl OverlayApp {
             }
             Err(_) => {
                 self.settings = Settings::default();
+                self.settings_unusable = false;
                 None
             }
         };
@@ -4016,6 +4038,26 @@ mod tests {
         assert!(reload);
         assert_eq!(working.text(), before, "rewrite must not leak into edits");
         assert!(working.text().contains("SetFontSize 20"));
+    }
+
+    #[test]
+    fn a_fold_click_does_not_overwrite_an_unusable_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = "{ \"filter\": \"x.filter\", }";
+        std::fs::write(crate::settings::path(dir.path()), bad).unwrap();
+        let (loaded, warning) = crate::settings::load(dir.path());
+        assert!(warning.is_some());
+        let next = loaded.set_section_collapsed("dynamic.filter", "Gear", true);
+        super::save_view_settings(dir.path(), warning.is_some(), &next).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(crate::settings::path(dir.path())).unwrap(),
+            bad
+        );
+        super::save_view_settings(dir.path(), false, &next).unwrap();
+        assert_ne!(
+            std::fs::read_to_string(crate::settings::path(dir.path())).unwrap(),
+            bad
+        );
     }
 
     #[test]

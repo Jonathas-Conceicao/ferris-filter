@@ -183,56 +183,8 @@ pub enum ArrowDirection {
 /// `enabled = false` for the first row's up arrow / the last row's down arrow rather than hiding
 /// the control, keeping the row's control layout stable across rows.
 pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool) -> egui::Response {
-    let size = 16.0;
-    let auto_id = ui.next_auto_id();
-    let (rect, hover) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    // Padded 24x24 click target; disabled arrows keep hover-only sensing.
-    let response = if enabled {
-        ui.interact(rect.expand(4.0), auto_id.with("hit"), egui::Sense::click())
-    } else {
-        hover
-    };
-    let label = match direction {
-        ArrowDirection::Up => "Move up",
-        ArrowDirection::Down => "Move down",
-    };
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-
-    let color = if !enabled {
-        theme::DISABLED_TEXT
-    } else if response.hovered() {
-        theme::SECTION_CREAM
-    } else {
-        theme::CONTROL_GLYPH
-    };
-
-    let pad = 4.0;
-    let left = rect.left() + pad;
-    let right = rect.right() - pad;
-    let top = rect.top() + pad;
-    let bottom = rect.bottom() - pad;
-    let mid_x = rect.center().x;
-
-    let points = match direction {
-        ArrowDirection::Up => vec![
-            egui::pos2(mid_x, top),
-            egui::pos2(right, bottom),
-            egui::pos2(left, bottom),
-        ],
-        ArrowDirection::Down => vec![
-            egui::pos2(left, top),
-            egui::pos2(right, top),
-            egui::pos2(mid_x, bottom),
-        ],
-    };
-
-    ui.painter().add(egui::Shape::convex_polygon(
-        points,
-        color,
-        egui::Stroke::NONE,
-    ));
-
-    response
+    let skin = crate::skin::of(ui.ctx());
+    crate::skin::widgets::ff_arrow(ui, &skin, direction == ArrowDirection::Up, enabled)
 }
 
 /// A 16px painted X inside a 24x24 click target, with a tooltip and accessible name `label`

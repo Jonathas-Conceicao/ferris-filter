@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
-status: planning
-last_updated: "2026-10-16T05:22:52.283Z"
+status: ready_to_plan
+last_updated: "2026-10-16T12:00:00.000Z"
 last_activity: 2026-10-16
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-16)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.6 New PoE2-based Tool UI — defining requirements
+**Current focus:** v0.6 New PoE2-based Tool UI — Phase 29: Workspace & Asset Tool from the Root
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 29 of 35 (Workspace & Asset Tool from the Root) — v0.6 spans Phases 29-35
 Plan: —
-Status: Defining requirements
-Last activity: 2026-10-16 — Milestone v0.6 started
+Status: Ready to plan
+Last activity: 2026-10-16 — v0.6 roadmap created (7 phases, 28/28 requirements mapped)
+
+Progress (v0.6): [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -81,6 +83,11 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.6 roadmap created (2026-10-16): Phases 29-35 — workspace + ff-art from the root, skinned
+  shell, RULES on the skin + add-at-top, dividers + economy banner, style table/editor + colour
+  picker, ECONOMY + ABOUT tabs (tiers move; add/remove economy section lives on ECONOMY, after the
+  Phase 32 banner work), prototype retirement + docs. UI phases 30-34 carry `UI hint: yes`.
 
 - Phase 28 added (2026-10-15): **Default config files** — committed `styles-default.json` /
   `tiers-default.json`; live `styles.json` / `tiers.json` git-ignored and falling back to the
@@ -332,8 +339,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-15
-Stopped at: v0.5 milestone complete
+Last session: 2026-10-16
+Stopped at: v0.6 roadmap created
 Resume file: None
 
-**Next step:** `/gsd-new-milestone`.
+**Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

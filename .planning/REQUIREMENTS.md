@@ -50,7 +50,8 @@ retired. Every v0.5 editor capability survives the move.
   operators, Between, Defences / Simple Defences, grouped rules, raw rows, style picker, Continue,
   duplicate, delete) using the skin's controls.
 - [ ] **RULES-03**: + Add rule inserts the new rule at the top of the rule list (first block of the
-  file, ahead of any divider), not before the economy section.
+  file, ahead of any divider), not before the economy section. It always lands outside every
+  section, even when a divider is the first thing in the list, collapsed or not.
 
 ### Rule Dividers (SECT)
 
@@ -63,15 +64,20 @@ retired. Every v0.5 editor capability survives the move.
   ```
   (80 `#` per rule line). Loading a filter shows each banner as a named section header in the rule
   list; rules above the first divider have no header. Foreign comment banners are not dividers.
-- [ ] **SECT-02**: User can add a divider, rename it, move it among the rules and delete it
-  (deleting keeps its rules); each is an in-memory edit written by Apply and undone by Revert.
+- [ ] **SECT-02**: User can add a divider (a toolbar **+ Add section** inserts one at the top with its
+  name field open; **Section above** in an expanded rule inserts one directly above that rule),
+  rename it inline, move the divider line up/down one rule at a time, and delete it (its rules stay
+  and join the section above); each is an in-memory edit written by Apply and undone by Revert.
+  Each section header shows a collapse arrow, the name, its rule count, rename, arrows and remove.
 - [ ] **SECT-03**: User can collapse and expand a section, hiding every rule up to the next divider;
   the collapsed state is remembered per filter in `ff-settings.json`, never written into the filter.
 - [ ] **SECT-04**: The economy section is shown as the last divider, a locked "Economy" section
-  (collapsed by default, read-only rows), replacing the `+ N locked rule blocks` footer row. Its
-  begin and end markers use the same 80-`#` banner format as dividers (exact text settled in the
-  phase), written by Add economy section (overlay) and `ff-cli apply --add-economy`, removed by
-  Remove / `--remove-economy`, and regenerated between by Apply. The old one-line
+  (collapsed by default, read-only rows), replacing the `+ N locked rule blocks` footer row. The
+  divider is display-only: it can be collapsed and expanded, but adding or removing the economy
+  section is done from the ECONOMY tab (ECO-01), not from the rule list. Its begin and end markers
+  use the same 80-`#` banner format as dividers (exact text settled in the phase), written by Add
+  economy section (ECONOMY tab) and `ff-cli apply --add-economy`, removed by Remove economy section /
+  `--remove-economy`, and regenerated between by Apply. The old one-line
   `# ff:economy-begin/end` markers are no longer recognised: no migration (the app is not publicly
   released; the author converts their own `dynamic.filter` by hand).
 - [ ] **SECT-05**: Search shows matches inside collapsed sections; reordering and grouped rules keep
@@ -98,7 +104,9 @@ retired. Every v0.5 editor capability survives the move.
 
 - [ ] **ECO-01**: The ECONOMY tab shows the pinned league, the last sync time and the number of
   priced items, with SYNC ECONOMY (moved from the RULES footer); sync still runs off the UI thread
-  and writes only `prices.json`.
+  and writes only `prices.json`. The tab also holds the Add economy section / Remove economy section
+  control for the loaded filter: it writes or removes the banner-format markers of SECT-04 as an
+  in-memory edit, written by the shared Apply and undone by Revert.
 - [ ] **ECO-02**: The TIERS cutoffs editor lives on the ECONOMY tab with inline validation, applied
   by the shared Apply.
 
@@ -137,6 +145,37 @@ retired. Every v0.5 editor capability survives the move.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| WS-01 | Phase 29 | Pending |
+| WS-02 | Phase 29 | Pending |
+| SHELL-01 | Phase 30 | Pending |
+| SHELL-02 | Phase 30 | Pending |
+| SHELL-03 | Phase 30 | Pending |
+| SHELL-04 | Phase 30 | Pending |
+| SHELL-05 | Phase 30 | Pending |
+| SHELL-06 | Phase 30 | Pending |
+| SHELL-07 | Phase 30 | Pending |
+| SHELL-08 | Phase 30 | Pending |
+| RULES-01 | Phase 31 | Pending |
+| RULES-02 | Phase 31 | Pending |
+| RULES-03 | Phase 31 | Pending |
+| SECT-01 | Phase 32 | Pending |
+| SECT-02 | Phase 32 | Pending |
+| SECT-03 | Phase 32 | Pending |
+| SECT-04 | Phase 32 | Pending |
+| SECT-05 | Phase 32 | Pending |
+| STY-01 | Phase 33 | Pending |
+| STY-02 | Phase 33 | Pending |
+| STY-03 | Phase 33 | Pending |
+| STY-04 | Phase 33 | Pending |
+| STY-05 | Phase 33 | Pending |
+| ECO-01 | Phase 34 | Pending |
+| ECO-02 | Phase 34 | Pending |
+| ABOUT-01 | Phase 34 | Pending |
+| CLEAN-01 | Phase 35 | Pending |
+| CLEAN-02 | Phase 35 | Pending |
+
+**Coverage:** 28/28 v1 requirements mapped, no orphans, no duplicates.
 
 ---
 *Requirements defined: 2026-10-16*
+*Last updated: 2026-10-16 — roadmap created (traceability filled); add/remove economy section moved to the ECONOMY tab (ECO-01, SECT-04)*

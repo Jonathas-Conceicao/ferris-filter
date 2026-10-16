@@ -159,7 +159,7 @@ Plans:
   2. Every v0.5 editing path still works through skin controls: all conditions and actions, operators, Between, Defences / Simple Defences, grouped rules, raw rows, the style picker, Continue, duplicate and delete; an untouched filter still round-trips byte-for-byte
   3. + Add rule inserts the new empty rule as the first block of the file (ahead of any divider), not before the economy section
 
-**Plans:** 2/7 plans executed
+**Plans:** 3/7 plans executed
 Plans:
 **Wave 1**
 
@@ -171,7 +171,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 31-03-PLAN.md — Toolbar, 52pt collapsed rows, flag cluster and game-scrollbar list (virtualised)
+- [x] 31-03-PLAN.md — Toolbar, 52pt collapsed rows, flag cluster and game-scrollbar list (virtualised)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -259,7 +259,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 29. Workspace & Asset Tool from the Root | v0.6 | 1/1 | Complete   | 2026-10-16 |
 | 30. Skinned Overlay Shell | v0.6 | 5/5 | Complete   | 2026-10-16 |
-| 31. RULES Tab on the Skin | v0.6 | 2/7 | In Progress|  |
+| 31. RULES Tab on the Skin | v0.6 | 3/7 | In Progress|  |
 | 32. Rule Dividers & Economy Banner | v0.6 | 0/TBD | Not started | - |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 0/TBD | Not started | - |
 | 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |

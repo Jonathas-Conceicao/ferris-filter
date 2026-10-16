@@ -599,18 +599,9 @@ Show
 
     #[test]
     fn insert_top_above_disabled_block() {
-        let mut d = p("# Show
-# 	Rarity Rare
-");
+        let mut d = p("# Show\n# \tRarity Rare\n");
         d.insert_rule_at_top(v(&["Show"])).unwrap();
-        assert_eq!(
-            s(&d),
-            "Show
-
-# Show
-# 	Rarity Rare
-"
-        );
+        assert_eq!(s(&d), "Show\n\n# Show\n# \tRarity Rare\n");
     }
 
     #[test]
@@ -761,26 +752,17 @@ Show
 
     #[test]
     fn insert_top_crlf() {
-        let mut d = p("Hide
-");
+        // Escaped literals on purpose: a real line break in the source would be LF-only.
+        let mut d = p("Hide\r\n");
         d.insert_rule_at_top(v(&["Show"])).unwrap();
-        assert_eq!(
-            s(&d),
-            "Show
-
-Hide
-"
-        );
-        let mut d = p("Show
-Hide");
+        assert_eq!(s(&d), "Show\r\n\r\nHide\r\n");
+        let mut d = p("Show\r\nHide");
         d.insert_rule_at_top(v(&["Show"])).unwrap();
-        assert_eq!(
-            s(&d),
-            "Show
-
-Show
-Hide"
-        );
+        assert_eq!(s(&d), "Show\r\n\r\nShow\r\nHide");
+        // The line ending of the first line decides, even in a mixed file.
+        let mut d = p("Hide\r\nShow\n");
+        d.insert_rule_at_top(v(&["Show"])).unwrap();
+        assert_eq!(s(&d), "Show\r\n\r\nHide\r\nShow\n");
     }
 
     #[test]

@@ -55,6 +55,17 @@ warning cut with an ellipsis), `ff-proto-status-error.png`, `ff-proto-tabs-zoom.
   ff-art); no clippy warnings in `src/skin`, `src/bin/ff-proto.rs` or ff-art.
 - `src/overlay/`, `src/bin/ff.rs`, `tests/` and fixtures untouched.
 
+## Follow-up: tab strip seating (user feedback)
+The tab strip was a hard-coded 26pt band starting 13pt below the frame's top. In frame
+texels (scale 0.5) that is rows 26-78: the stones started above the frame's outer gold line
+(rows 41-47), running into the header's lower edge, and ended in the middle of the dark band,
+floating above the light stone strip (row 103) instead of resting on it. New
+`skin::widgets::tab_strip(&FrameLayout)` derives the strip from the frame art
+(`TAB_STRIP_TEXELS = (48, 103)`): stones are drawn at their full height (27.5pt) between the
+gold line and the light strip, as in the game's Options window (`poe2_print009.png`), with no
+clip rect on them, selected or not. Unit-tested in `frame_layout_keeps_content_inside_the_gold_line`.
+All screenshots in this folder were re-taken after the fix.
+
 ## Known gaps
 - No colour picker (by request); swatch cards only toggle none / colour.
 - The status tooltip and hover states were checked in code and headless tests, not in a

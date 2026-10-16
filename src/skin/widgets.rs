@@ -91,6 +91,25 @@ pub fn ff_frame(painter: &Painter, skin: &Skin, outer: Rect) -> FrameLayout {
     layout
 }
 
+/// The rows of the page frame's top border (in texels of the 4K art) that hold the tabs: from
+/// just below the outer gold line (rows 41-47) to the top of the light stone strip (row 103),
+/// the dark band where the game's Options window seats its tabs.
+pub const TAB_STRIP_TEXELS: (f32, f32) = (48.0, 103.0);
+
+/// Where [`ff_tabs`] goes on a frame: the dark band of its top border, as wide as the content.
+/// Each stone is drawn at this full height, its bottom resting on the light stone strip and its
+/// top clear of the gold line and of the header art above.
+pub fn tab_strip(frame: &FrameLayout) -> Rect {
+    let (top, bottom) = TAB_STRIP_TEXELS;
+    Rect::from_min_max(
+        pos2(frame.content.min.x, frame.outer.min.y + top * frame.scale),
+        pos2(
+            frame.content.max.x,
+            frame.outer.min.y + bottom * frame.scale,
+        ),
+    )
+}
+
 // ---------------------------------------------------------------------------------------------
 // Header, close button, tabs
 
@@ -1159,5 +1178,11 @@ mod tests {
         assert_eq!(l.content.max, pos2(605.0, 900.0));
         assert!(l.button_bar.min.y > l.content.max.y);
         assert!(l.button_bar.max.y < outer.max.y);
+        // The tab strip sits inside the frame's top border, above the content, never above the
+        // frame (where the header art is).
+        let t = tab_strip(&l);
+        assert!(t.min.y > outer.min.y && t.max.y < l.content.min.y);
+        assert_eq!((t.min.y, t.max.y), (124.0, 151.5));
+        assert!(t.height() >= 26.0);
     }
 }

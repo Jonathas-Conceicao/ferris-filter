@@ -340,12 +340,7 @@ impl eframe::App for Proto {
         }
 
         // 4. Tabs, sitting on the frame's top edge.
-        let tab_h = 26.0;
-        let tabs = Rect::from_min_max(
-            pos2(frame.content.min.x, frame.outer.min.y + 13.0),
-            pos2(frame.content.max.x, frame.outer.min.y + 13.0 + tab_h),
-        );
-        w::ff_tabs(ui, &skin, tabs, &TABS, &mut self.tab);
+        w::ff_tabs(ui, &skin, w::tab_strip(&frame), &TABS, &mut self.tab);
 
         // 5. Content, clipped to the area inside the gold line.
         let content = frame.content.shrink2(vec2(10.0, 8.0));

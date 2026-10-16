@@ -254,12 +254,12 @@ pub fn footer_actions(
 
 /// The status line for damaged economy markers; also the disabled CONFIG Apply tooltip.
 pub const DAMAGED_MARKERS_MESSAGE: &str =
-    "The economy section markers are damaged. Fix them by hand, then RELOAD.";
+    "The economy section markers are damaged. Fix them by hand, then Reload.";
 
 /// The stripe's status text for the filter file.
 pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     let mut text = match state {
-        FilterState::Absent => "The filter does not exist yet. APPLY creates it once it has rules \
+        FilterState::Absent => "The filter does not exist yet. Apply creates it once it has rules \
              or an economy section."
             .to_string(),
         FilterState::NoSection => "The filter has no economy section.".to_string(),
@@ -269,7 +269,7 @@ pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     };
     if migrated {
         text.push_str(
-            " This is a v0.4 dynamic.filter. It will be converted on the next APPLY \
+            " This is a v0.4 dynamic.filter. It will be converted on the next Apply \
              (a .ffbak backup of the original is kept).",
         );
     }

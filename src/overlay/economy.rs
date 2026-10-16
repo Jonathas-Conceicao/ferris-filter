@@ -64,10 +64,10 @@ impl SyncOutcome {
 /// change colour.
 pub fn success_message(league: &str) -> String {
     if league.is_empty() {
-        return "Economy prices refreshed. Press APPLY to compile them into the filter."
+        return "Economy prices refreshed. Press Apply to compile them into the filter."
             .to_string();
     }
-    format!("Economy prices refreshed from {league}. Press APPLY to compile them into the filter.")
+    format!("Economy prices refreshed from {league}. Press Apply to compile them into the filter.")
 }
 
 /// What the stripe says when a sync fails.

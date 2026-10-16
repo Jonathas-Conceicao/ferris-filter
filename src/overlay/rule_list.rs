@@ -814,7 +814,7 @@ pub fn economy_footer(
                         } else {
                             ui.label(RichText::new(&text).color(theme::LABEL_TAN))
                                 .on_hover_text(
-                                    "Generated from prices.json by SYNC ECONOMY and APPLY. Not editable here.",
+                                    "Generated from prices.json by Sync economy and Apply. Not editable here.",
                                 );
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui

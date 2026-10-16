@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
-status: ready_to_plan
-stopped_at: Phase 29 complete
-last_updated: "2026-10-16T06:17:57.709Z"
-last_activity: 2026-10-16 -- Phase 29 complete (verified, reviewed)
+status: planning
+stopped_at: Phase 30 UI-SPEC approved
+last_updated: "2026-10-16T06:24:54.378Z"
+last_activity: 2026-10-16 -- Phase 29 complete (workspace + cargo ff-art)
 progress:
-  total_phases: 7
+  total_phases: 23
   completed_phases: 1
   total_plans: 1
   completed_plans: 1
-  percent: 14
+  percent: 4
 ---
 
 # Project State
@@ -340,8 +340,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T06:09:46.045Z
-Stopped at: v0.6 roadmap created
-Resume file: None
+Last session: 2026-10-16T06:24:54.372Z
+Stopped at: Phase 30 UI-SPEC approved
+Resume file: .planning/phases/30-skinned-overlay-shell/30-UI-SPEC.md
 
 **Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).

@@ -377,6 +377,8 @@ pub struct WorkingFilter {
     moved: HashSet<BlockId>,
     generation: u64,
     dirty: bool,
+    /// The rule text differs from the applied text (a staged economy op does not count).
+    rules_edited: bool,
     search_cache: Option<(String, u64, Vec<usize>)>,
     styles: Option<StyleSet>,
     /// The applied (on-disk) style set that legacy name-only tags were written against, so a
@@ -627,6 +629,7 @@ impl WorkingFilter {
             moved: HashSet::new(),
             generation: 0,
             dirty: false,
+            rules_edited: false,
             search_cache: None,
             styles: None,
             legacy_base: None,
@@ -867,7 +870,8 @@ impl WorkingFilter {
             Some(Pending::Remove) => EconomyView::Absent,
             None => self.base_economy.clone(),
         };
-        self.dirty = self.pending.is_some() || self.doc.serialize() != self.applied_text;
+        self.rules_edited = self.doc.serialize() != self.applied_text;
+        self.dirty = self.pending.is_some() || self.rules_edited;
         let mut sections = self.base_sections.clone();
         match self.pending {
             Some(Pending::Remove) => sections.retain(|s| !s.economy),
@@ -1804,6 +1808,12 @@ impl WorkingFilter {
         self.dirty
     }
 
+    /// Rule edits only: like [`Self::is_dirty`] but a staged economy add/remove (owned by the
+    /// ECONOMY tab) does not count.
+    pub fn rules_edited(&self) -> bool {
+        self.rules_edited
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -2565,6 +2575,19 @@ Show
         wf.unstage_economy();
         assert!(wf.is_dirty(), "the rule edit survives");
         assert!(!wf.economy_staged());
+    }
+
+    #[test]
+    fn a_staged_economy_op_is_not_a_rules_edit() {
+        let mut wf = WorkingFilter::from_text(THREE);
+        wf.stage_add_economy(5);
+        assert!(wf.is_dirty());
+        assert!(!wf.rules_edited());
+        let id = wf.rows()[0].id;
+        wf.apply_action(RowAction::Delete(id));
+        assert!(wf.rules_edited());
+        wf.unstage_economy();
+        assert!(wf.rules_edited(), "the rule edit survives");
     }
 
     #[test]

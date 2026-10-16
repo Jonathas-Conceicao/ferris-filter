@@ -2676,7 +2676,15 @@ impl eframe::App for OverlayApp {
         }
 
         // Tabs: ` *` marks a tab when the other editing tab holds unapplied edits.
-        let markers = shell::tab_markers(self.tab, rules_dirty, styles_dirty, tiers_dirty);
+        // A staged economy add/remove belongs to ECONOMY, not to the RULES marker.
+        let rules_edited = self.working.as_ref().is_some_and(|w| w.rules_edited());
+        let markers = shell::tab_markers(
+            self.tab,
+            rules_edited,
+            styles_dirty,
+            tiers_dirty,
+            economy_staged,
+        );
         let labels: Vec<String> = ShellTab::ALL
             .iter()
             .map(|t| apply::tab_label(t.label(), markers[t.index()]))

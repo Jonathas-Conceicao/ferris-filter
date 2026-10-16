@@ -235,6 +235,13 @@ fn nth_row_id(rows: &[rules::RuleRow], n: usize) -> Option<BlockId> {
     n.checked_sub(1).and_then(|i| rows.get(i)).map(|r| r.id)
 }
 
+/// The `n`-th user section (1-based, the economy section skipped), for `--rename-section`.
+#[cfg(debug_assertions)]
+fn nth_user_section(sections: &[rules::SectionRow], n: usize) -> Option<&rules::SectionRow> {
+    n.checked_sub(1)
+        .and_then(|i| sections.iter().filter(|s| !s.economy).nth(i))
+}
+
 /// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
 /// hold exactly that set, so it is cheap to call every frame.
 fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> bool {
@@ -859,6 +866,17 @@ impl OverlayApp {
             if id.is_some() {
                 app.list.expanded = id;
                 app.list.pending_scroll = id;
+            }
+        }
+        if let Some(n) = shot.rename_section {
+            let found = app
+                .working
+                .as_ref()
+                .and_then(|w| nth_user_section(w.sections(), n).cloned());
+            if let Some(sec) = found {
+                app.list.editing_section = Some(sec.ordinal);
+                app.list.section_draft = sec.name;
+                app.list.section_focus = true;
             }
         }
         app.shot = Some(ShotState {
@@ -4126,6 +4144,24 @@ mod tests {
         assert_eq!(super::nth_row_id(rows, 2), Some(rows[1].id));
         assert_eq!(super::nth_row_id(rows, 0), None);
         assert_eq!(super::nth_row_id(rows, rows.len() + 1), None);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn rename_section_picks_the_nth_user_section_and_skips_economy() {
+        let sec = |ordinal: usize, name: &str, economy: bool| crate::overlay::rules::SectionRow {
+            ordinal,
+            name: name.to_string(),
+            economy,
+            rules: 1,
+            can_move_up: false,
+            can_move_down: false,
+        };
+        let all = [sec(0, "A", false), sec(1, "B", false), sec(2, "Eco", true)];
+        assert_eq!(super::nth_user_section(&all, 1).unwrap().name, "A");
+        assert_eq!(super::nth_user_section(&all, 2).unwrap().ordinal, 1);
+        assert!(super::nth_user_section(&all, 3).is_none());
+        assert!(super::nth_user_section(&all, 0).is_none());
     }
 
     #[test]

@@ -477,6 +477,170 @@ pub(crate) fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Popups (SHELL-07)
+// ---------------------------------------------------------------------------------------------
+
+/// The seven confirmations and choices the overlay asks, each shown as one skinned modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Popup {
+    Quit,
+    ChangedOnDisk,
+    SwitchFilter,
+    DeleteRule,
+    DeleteStyle,
+    RemoveEconomy,
+    DiscardConfig,
+}
+
+/// Which popups want to be open. Only one is shown at a time.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PopupFlags {
+    pub quit: bool,
+    pub changed: bool,
+    pub switch: bool,
+    pub delete_rule: bool,
+    pub delete_style: bool,
+    pub remove_economy: bool,
+    pub discard_config: bool,
+}
+
+/// The popup to show: Quit beats Changed-on-disk, which beats the rest (in the order of
+/// [`Popup`]'s declaration after those two).
+pub(crate) fn active_popup(f: PopupFlags) -> Option<Popup> {
+    [
+        (f.quit, Popup::Quit),
+        (f.changed, Popup::ChangedOnDisk),
+        (f.switch, Popup::SwitchFilter),
+        (f.delete_rule, Popup::DeleteRule),
+        (f.delete_style, Popup::DeleteStyle),
+        (f.remove_economy, Popup::RemoveEconomy),
+        (f.discard_config, Popup::DiscardConfig),
+    ]
+    .into_iter()
+    .find_map(|(on, p)| on.then_some(p))
+}
+
+pub(crate) const KEEP_EDITING: &str = "Keep editing";
+pub(crate) const SWITCH_AND_DISCARD: &str = "Switch and discard";
+pub(crate) const STAY: &str = "Stay";
+pub(crate) const DELETE: &str = "Delete";
+pub(crate) const KEEP: &str = "Keep";
+pub(crate) const DELETE_STYLE: &str = "Delete style";
+pub(crate) const KEEP_STYLE: &str = "Keep style";
+pub(crate) const REMOVE: &str = "Remove";
+pub(crate) const DISCARD: &str = "Discard";
+pub(crate) const RELOAD: &str = "Reload";
+pub(crate) const OVERWRITE: &str = "Overwrite";
+
+/// One popup button: caption, red caption, tooltip.
+pub(crate) type SpecButton = (&'static str, bool, Option<&'static str>);
+
+/// Everything a popup says. The last button is the safe dismiss (Escape, backdrop click).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PopupSpec {
+    pub title: String,
+    pub body: String,
+    pub buttons: Vec<SpecButton>,
+}
+
+/// The facts a popup's text is made from.
+#[derive(Debug, Clone)]
+pub(crate) enum PopupData<'a> {
+    ChangedOnDisk {
+        files: &'a [String],
+    },
+    SwitchFilter {
+        target: &'a str,
+    },
+    Quit,
+    DeleteRule {
+        /// 1-based position of the rule in the list.
+        index: usize,
+        label: &'a str,
+        /// Blocks the rule is written as (more than one for a grouped rule).
+        blocks: usize,
+    },
+    DeleteStyle {
+        prompt: String,
+    },
+    RemoveEconomy,
+    DiscardConfig {
+        count: usize,
+    },
+}
+
+/// Title, body and buttons of a popup.
+pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
+    let (title, body, buttons): (&str, String, Vec<SpecButton>) = match data {
+        PopupData::ChangedOnDisk { files } => (
+            "File changed on disk",
+            format!(
+                "{} changed since ff loaded it. Reload discards your edits. Overwrite replaces the file with them.",
+                files.join(", ")
+            ),
+            vec![
+                (RELOAD, false, Some(apply::RELOAD_TOOLTIP)),
+                (OVERWRITE, true, Some(apply::OVERWRITE_TOOLTIP)),
+                (KEEP_EDITING, false, None),
+            ],
+        ),
+        PopupData::SwitchFilter { target } => (
+            "Switch filter?",
+            format!("Unapplied rule changes will be discarded. Switching to {target}."),
+            vec![(SWITCH_AND_DISCARD, true, None), (STAY, false, None)],
+        ),
+        PopupData::Quit => (
+            apply::QUIT_CONFIRM_TITLE,
+            "Apply them before quitting?".to_string(),
+            vec![
+                (apply::QUIT_APPLY_LABEL, false, None),
+                (
+                    apply::QUIT_DISCARD_LABEL,
+                    true,
+                    Some(apply::QUIT_DISCARD_TIP),
+                ),
+                (apply::QUIT_CANCEL_LABEL, false, None),
+            ],
+        ),
+        PopupData::DeleteRule {
+            index,
+            label,
+            blocks,
+        } => {
+            let mut body = format!("Rule {index}: {label}");
+            if blocks > 1 {
+                body.push_str(&format!("\nDeletes all {blocks} blocks of this rule."));
+            }
+            (
+                "Delete this rule?",
+                body,
+                vec![(DELETE, true, None), (KEEP, false, None)],
+            )
+        }
+        PopupData::DeleteStyle { prompt } => (
+            "Delete style?",
+            prompt,
+            vec![(DELETE_STYLE, true, None), (KEEP_STYLE, false, None)],
+        ),
+        PopupData::RemoveEconomy => (
+            "Remove economy section?",
+            "Your own rules are kept. Add the section back any time.".to_string(),
+            vec![(REMOVE, true, None), (KEEP, false, None)],
+        ),
+        PopupData::DiscardConfig { count } => (
+            "Discard config changes?",
+            super::config_view::revert_prompt(count),
+            vec![(DISCARD, true, None), (KEEP_EDITING, false, None)],
+        ),
+    };
+    PopupSpec {
+        title: title.to_string(),
+        body,
+        buttons,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -819,5 +983,153 @@ mod tests {
         };
         assert_eq!(tip(all), Some(apply::DAMAGED_MARKERS_MESSAGE));
         assert_eq!(tip(ConfigBarInputs::default()), Some(APPLY_NOTHING_TIP));
+    }
+
+    #[test]
+    fn popup_stacking_order() {
+        let all = PopupFlags {
+            quit: true,
+            changed: true,
+            switch: true,
+            delete_rule: true,
+            delete_style: true,
+            remove_economy: true,
+            discard_config: true,
+        };
+        assert_eq!(active_popup(all), Some(Popup::Quit));
+        let f = PopupFlags { quit: false, ..all };
+        assert_eq!(active_popup(f), Some(Popup::ChangedOnDisk));
+        let f = PopupFlags {
+            changed: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::SwitchFilter));
+        let f = PopupFlags { switch: false, ..f };
+        assert_eq!(active_popup(f), Some(Popup::DeleteRule));
+        let f = PopupFlags {
+            delete_rule: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::DeleteStyle));
+        let f = PopupFlags {
+            delete_style: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::RemoveEconomy));
+        let f = PopupFlags {
+            remove_economy: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::DiscardConfig));
+        assert_eq!(active_popup(PopupFlags::default()), None);
+    }
+
+    fn labels(s: &PopupSpec) -> Vec<&'static str> {
+        s.buttons.iter().map(|b| b.0).collect()
+    }
+
+    #[test]
+    fn popup_specs_match_the_contract() {
+        let files = vec!["dynamic.filter".to_string(), "styles.json".to_string()];
+        let s = popup_spec(PopupData::ChangedOnDisk { files: &files });
+        assert_eq!(s.title, "File changed on disk");
+        assert!(
+            s.body
+                .starts_with("dynamic.filter, styles.json changed since ff loaded it.")
+        );
+        assert!(
+            s.body
+                .contains("Reload discards your edits. Overwrite replaces the file with them.")
+        );
+        assert_eq!(labels(&s), ["Reload", "Overwrite", "Keep editing"]);
+        assert_eq!(s.buttons[0].2, Some(apply::RELOAD_TOOLTIP));
+        assert_eq!(
+            s.buttons[1],
+            ("Overwrite", true, Some(apply::OVERWRITE_TOOLTIP))
+        );
+
+        let s = popup_spec(PopupData::SwitchFilter { target: "a.filter" });
+        assert_eq!(s.title, "Switch filter?");
+        assert!(s.body.contains("Unapplied rule changes will be discarded."));
+        assert!(s.body.contains("Switching to a.filter."));
+        assert_eq!(labels(&s), ["Switch and discard", "Stay"]);
+        assert!(s.buttons[0].1);
+
+        let s = popup_spec(PopupData::Quit);
+        assert_eq!(s.title, apply::QUIT_CONFIRM_TITLE);
+        assert_eq!(s.body, "Apply them before quitting?");
+        assert_eq!(
+            labels(&s),
+            [
+                apply::QUIT_APPLY_LABEL,
+                apply::QUIT_DISCARD_LABEL,
+                apply::QUIT_CANCEL_LABEL
+            ]
+        );
+        assert_eq!(
+            s.buttons[1],
+            (
+                apply::QUIT_DISCARD_LABEL,
+                true,
+                Some(apply::QUIT_DISCARD_TIP)
+            )
+        );
+
+        let one = popup_spec(PopupData::DeleteRule {
+            index: 3,
+            label: "Boots",
+            blocks: 1,
+        });
+        assert_eq!(one.title, "Delete this rule?");
+        assert_eq!(one.body, "Rule 3: Boots");
+        assert_eq!(labels(&one), ["Delete", "Keep"]);
+        let four = popup_spec(PopupData::DeleteRule {
+            index: 3,
+            label: "Boots",
+            blocks: 4,
+        });
+        assert!(four.body.contains("Deletes all 4 blocks of this rule."));
+
+        let s = popup_spec(PopupData::DeleteStyle { prompt: "p".into() });
+        assert_eq!((s.title.as_str(), s.body.as_str()), ("Delete style?", "p"));
+        assert_eq!(labels(&s), ["Delete style", "Keep style"]);
+
+        let s = popup_spec(PopupData::RemoveEconomy);
+        assert_eq!(s.title, "Remove economy section?");
+        assert_eq!(
+            s.body,
+            "Your own rules are kept. Add the section back any time."
+        );
+        assert_eq!(labels(&s), ["Remove", "Keep"]);
+
+        let s = popup_spec(PopupData::DiscardConfig { count: 2 });
+        assert_eq!(s.title, "Discard config changes?");
+        assert_eq!(s.body, super::super::config_view::revert_prompt(2));
+        assert_eq!(labels(&s), ["Discard", "Keep editing"]);
+    }
+
+    #[test]
+    fn the_last_button_is_the_safe_one_and_never_danger() {
+        let files = vec!["x".to_string()];
+        for data in [
+            PopupData::ChangedOnDisk { files: &files },
+            PopupData::SwitchFilter { target: "t" },
+            PopupData::Quit,
+            PopupData::DeleteRule {
+                index: 1,
+                label: "l",
+                blocks: 1,
+            },
+            PopupData::DeleteStyle {
+                prompt: String::new(),
+            },
+            PopupData::RemoveEconomy,
+            PopupData::DiscardConfig { count: 1 },
+        ] {
+            let s = popup_spec(data);
+            let last = s.buttons.last().unwrap();
+            assert!(!last.1, "{}: safe button is not danger", s.title);
+            assert!(s.buttons.len() >= 2);
+        }
     }
 }

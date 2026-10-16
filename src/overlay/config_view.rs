@@ -142,8 +142,6 @@ pub struct ConfigViewCtx<'a> {
     pub filters: Option<&'a [String]>,
     pub active_filter: &'a str,
     pub game_dir: Option<&'a Path>,
-    /// A filter the user picked while rules have unapplied edits.
-    pub pending_switch: Option<&'a str>,
     /// Style name -> number of loaded rules using it.
     pub rule_users: &'a HashMap<String, usize>,
     /// Styles `config.json` itself references.
@@ -277,11 +275,6 @@ fn small_button(text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.to_string()).size(theme::ROW_SUMMARY_SIZE))
 }
 
-fn accent_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).size(theme::ROW_SUMMARY_SIZE))
-        .fill(theme::WARM_ACCENT)
-}
-
 fn segmented(ui: &mut egui::Ui, options: &[&str], current: usize) -> Option<usize> {
     let mut picked = None;
     ui.horizontal(|ui| {
@@ -353,7 +346,10 @@ fn show_filter(
                                 }
                             }
                             ui.separator();
-                            if ui.selectable_label(false, "New empty filter\u{2026}").clicked() {
+                            if ui
+                                .selectable_label(false, "New empty filter\u{2026}")
+                                .clicked()
+                            {
                                 open_draft = true;
                             }
                         })
@@ -373,41 +369,12 @@ fn show_filter(
                 filter_draft_row(ui, cfg, list, draft, actions);
             }
 
-            if let Some(target) = ctx.pending_switch {
-                egui::Frame::new()
-                    .fill(theme::ROW_ALT)
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(
-                                    "You have unapplied rule changes. Switching filters will discard them.",
-                                )
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::VALUE_TEXT),
-                            )
-                            .wrap(),
-                        )
-                        .on_hover_text(format!("Switching to {target}"));
-                        ui.horizontal(|ui| {
-                            if ui.add(accent_button("Switch and discard")).clicked() {
-                                actions.push(ConfigAction::ConfirmSwitch);
-                            }
-                            if ui.add(small_button("Stay")).clicked() {
-                                actions.push(ConfigAction::CancelSwitch);
-                            }
-                        });
-                    });
-            } else {
-                helper(ui, "Saved on this computer. Default: dynamic.filter.");
-            }
+            helper(ui, "Saved on this computer. Default: dynamic.filter.");
 
             ui.add_space(4.0);
             let mut on = ctx.reload_after_apply;
             ui.horizontal(|ui| {
-                let toggle =
-                    widgets::circular_toggle(ui, &mut on).on_hover_text(RELOAD_TOGGLE_TIP);
+                let toggle = widgets::circular_toggle(ui, &mut on).on_hover_text(RELOAD_TOGGLE_TIP);
                 if toggle.changed() {
                     actions.push(ConfigAction::SetReloadAfterApply(on));
                 }
@@ -896,7 +863,7 @@ fn style_row(
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        style_editor(ui, state, cfg, ctx, name, style, actions);
+                        style_editor(ui, state, cfg, name, style, actions);
                     });
             }
         });
@@ -974,7 +941,6 @@ fn style_editor(
     ui: &mut egui::Ui,
     state: &ConfigState,
     cfg: &mut ConfigUi,
-    ctx: &ConfigViewCtx,
     name: &str,
     style: &Style,
     actions: &mut Vec<ConfigAction>,
@@ -1094,37 +1060,11 @@ fn style_editor(
 
     // Delete.
     if delete_visible(state, name) {
-        if cfg.delete_armed.as_deref() == Some(name) {
-            egui::Frame::new()
-                .fill(theme::ROW_ALT)
-                .inner_margin(egui::Margin::same(8))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(delete_prompt(name, ctx))
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::VALUE_TEXT),
-                        )
-                        .wrap(),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.add(accent_button("Delete style")).clicked() {
-                            actions.push(ConfigAction::DeleteStyle(name.to_string()));
-                            cfg.delete_armed = None;
-                        }
-                        if ui.add(small_button("Keep style")).clicked() {
-                            cfg.delete_armed = None;
-                        }
-                    });
-                });
-        } else {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(small_button("Delete style")).clicked() {
-                    cfg.arm_delete(name);
-                }
-            });
-        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui.add(small_button("Delete style")).clicked() {
+                cfg.arm_delete(name);
+            }
+        });
     }
 }
 
@@ -1413,7 +1353,6 @@ mod tests {
             filters,
             active_filter: "dynamic.filter",
             game_dir: None,
-            pending_switch: None,
             rule_users: users,
             config_refs: refs,
             changed_on_disk: false,
@@ -1554,7 +1493,7 @@ mod tests {
     }
 
     #[test]
-    fn open_drafts_and_a_switch_guard_render() {
+    fn open_drafts_render() {
         let (_d, state) = loaded();
         let users = HashMap::new();
         let refs = BTreeSet::new();
@@ -1565,8 +1504,7 @@ mod tests {
             filter_draft: Some("ssf".to_string()),
             ..Default::default()
         };
-        let mut vctx = view_ctx(Some(&filters), &users, &refs);
-        vctx.pending_switch = Some("ssf.filter");
+        let vctx = view_ctx(Some(&filters), &users, &refs);
         let mut actions = None;
         let out = ctx.run_ui(input, |ui| {
             actions = Some(show_sections(ui, &state, &mut cfg, &vctx));

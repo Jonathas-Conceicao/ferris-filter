@@ -1524,7 +1524,6 @@ impl OverlayApp {
             filters: filters.as_deref(),
             active_filter: self.settings.filter_name(),
             game_dir: self.game_dir.as_deref(),
-            pending_switch: self.pending_switch.as_deref(),
             rule_users: &users,
             config_refs: &self.config_refs,
             changed_on_disk: !self.changed_on_disk.is_empty(),
@@ -2257,7 +2256,6 @@ impl eframe::App for OverlayApp {
         }
         match economy_action {
             Some(rule_list::EconomyFooterAction::Add) => self.stage_add_economy(),
-            Some(rule_list::EconomyFooterAction::Remove) => self.stage_remove_economy(),
             None => {}
         }
 

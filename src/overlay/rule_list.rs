@@ -199,7 +199,6 @@ pub struct ListFrame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EconomyFooterAction {
     Add,
-    Remove,
 }
 
 /// Height of a row's header line (the part that stays when the row is expanded).
@@ -721,27 +720,11 @@ fn expanded_body(
 
     // Duplicate / Delete
     ui.horizontal(|ui| {
-        if list.confirm_delete == Some(id) {
-            ui.label(RichText::new("Delete this rule?").color(theme::LABEL_TAN));
-            if small_button(
-                ui,
-                RichText::new("Yes, delete").color(theme::WARM_ACCENT_TEXT),
-            )
-            .clicked()
-            {
-                actions.push(RowAction::Delete(id));
-                list.confirm_delete = None;
-            }
-            if small_button(ui, "Keep").clicked() {
-                list.confirm_delete = None;
-            }
-        } else {
-            if small_button(ui, "Duplicate").clicked() {
-                actions.push(RowAction::Duplicate(id));
-            }
-            if small_button(ui, "Delete").clicked() {
-                list.confirm_delete = Some(id);
-            }
+        if small_button(ui, "Duplicate").clicked() {
+            actions.push(RowAction::Duplicate(id));
+        }
+        if small_button(ui, "Delete").clicked() {
+            list.confirm_delete = Some(id);
         }
     });
 }
@@ -818,26 +801,14 @@ pub fn economy_footer(
     let label = |text: &str, color: Color32| RichText::new(text).font(regular(15.0)).color(color);
     match view {
         EconomyView::Present { .. } => {
-            if list.confirm_economy_remove {
-                row.label(label("Remove the economy section?", pal::LABEL));
-                if small_button(&mut row, RichText::new("Yes, remove").color(pal::ERROR)).clicked()
-                {
-                    result = Some(EconomyFooterAction::Remove);
-                    list.confirm_economy_remove = false;
+            row.label(label(&text, pal::MUTED)).on_hover_text(
+                "Generated from prices.json by Sync economy and Apply. Not editable here.",
+            );
+            row.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ff_button_ex(ui, skin, "Remove", 84.0, enabled, false).clicked() {
+                    list.confirm_economy_remove = true;
                 }
-                if small_button(&mut row, "Keep").clicked() {
-                    list.confirm_economy_remove = false;
-                }
-            } else {
-                row.label(label(&text, pal::MUTED)).on_hover_text(
-                    "Generated from prices.json by Sync economy and Apply. Not editable here.",
-                );
-                row.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ff_button_ex(ui, skin, "Remove", 84.0, enabled, false).clicked() {
-                        list.confirm_economy_remove = true;
-                    }
-                });
-            }
+            });
         }
         EconomyView::Absent => {
             row.label(label(&text, pal::DISABLED));

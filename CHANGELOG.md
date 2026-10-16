@@ -51,6 +51,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   styled-rule report count it once. Untouched groups stay byte-identical. A group whose blocks no
   longer match is shown as separate rules flagged `group broken` and is left as written.
 
+- **Skinned overlay shell (Phase 30).** `ff` opens the game-styled window instead of the stripe:
+  660pt wide, flush to the left edge at the full work-area height, on the monitor the game is on
+  (the primary monitor when it is not running), docked again on every summon (hotkey, tray, second
+  launch) and correct at 100-200% display scale. The header and four stone tabs (Rules, Config,
+  Economy, About) use the game's art. The bottom bar holds Revert, Reload and Apply with one
+  status line that replaces the scrolling outcome area (one message at a time, cut with … and shown
+  whole on hover, clicking a grammar or unknown-style message jumps to the rule). Every confirmation
+  (quit, file changed on disk, switch filter, delete rule, delete style, remove economy section,
+  discard config changes) is a skinned popup; the inline confirms and the Reload / Overwrite footer
+  buttons are gone (the Apply slot reads Overwrite while a file changed on disk). Row flags are
+  small icons with tooltips, standing captions are tooltips, and the empty states are a heading.
+  Sync economy moved to the Economy tab. Debug builds gain `ff --screenshot <png>` (with `--tab`,
+  `--popup`, `--status`, `--filter`) that renders one frame from a temp home and exits.
+- **Faster dev and test builds.** `Cargo.toml` sets `[profile.dev.package."*"] opt-level = 2`
+  (dependencies only). The overlay tests now render with the real fonts, and unoptimised font
+  rasterising had pushed `cargo test --lib` to about 1000 s; it is now about 57 s.
+
+### Fixed
+
+- **Docking used the wrong monitor and mixed units.** The stripe took the primary monitor's work
+  area and mixed physical and logical units, so it was wrong at 125% and above and on a second
+  monitor. It now docks on the game's monitor with that monitor's own scale.
+- The CONFIG styles table header no longer overlaps its Visibility and Name captions.
+
 ## [0.5.0] - 2026-10-15
 
 **Generic Filter Editor & Initial App Configuration** — the overlay opens, edits and saves any

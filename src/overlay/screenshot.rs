@@ -4,8 +4,10 @@
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
 //! the hotkey and the tray, never applies, reloads or syncs, and refuses to run unless
 //! `FERRISFILTER_HOME`, `USERPROFILE` and the game folder derived from it all live under the
-//! system temp directory -- so it can never read or write the real game folder or the user's live
-//! `styles.json` / `tiers.json` / `prices.json`.
+//! system temp directory, which must itself have a `Temp`/`tmp` component (`TMP`/`TEMP` are
+//! environment variables too) -- so it can never read or write the real game folder or the user's
+//! live `styles.json` / `tiers.json` / `prices.json`. `--filter` is staged under the filter name
+//! the temp home selects and never overwrites a file in a game folder this mode did not create.
 
 use std::path::{Path, PathBuf};
 
@@ -95,7 +97,21 @@ fn canonical_lossy(path: &Path) -> PathBuf {
     }
 }
 
-/// Pure core of [`guard_env`]: every path must lie under `temp`.
+/// Whether `temp` looks like a real temp folder: one of its components is named `Temp` or
+/// `tmp` (any case). `std::env::temp_dir()` comes from the same kind of environment variable
+/// (`TMP`/`TEMP`) the guard distrusts, so `TEMP=C:\Users\me` or `TEMP=C:\` must not make the
+/// real profile, and with it the real game folder, count as "under temp" (review WR-07).
+pub(crate) fn temp_looks_real(temp: &Path) -> bool {
+    temp.components().any(|c| match c {
+        std::path::Component::Normal(name) => name
+            .to_str()
+            .is_some_and(|n| n.eq_ignore_ascii_case("temp") || n.eq_ignore_ascii_case("tmp")),
+        _ => false,
+    })
+}
+
+/// Pure core of [`guard_env`]: every path must lie under `temp`, which must itself look like a
+/// temp folder ([`temp_looks_real`]).
 pub(crate) fn paths_under_temp(
     home: &Path,
     profile: &Path,
@@ -103,6 +119,13 @@ pub(crate) fn paths_under_temp(
     temp: &Path,
 ) -> Result<(), String> {
     let temp = canonical_lossy(temp);
+    if !temp_looks_real(&temp) {
+        return Err(format!(
+            "screenshot mode refuses to run: the temp folder ({}) has no Temp or tmp component; \
+             check TMP/TEMP",
+            temp.display()
+        ));
+    }
     for (name, path) in [
         ("FERRISFILTER_HOME", home),
         ("USERPROFILE", profile),
@@ -145,15 +168,40 @@ fn game_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "screenshot mode needs USERPROFILE set".to_string())
 }
 
-/// Copies `--filter` into the temp game folder as `dynamic.filter`. Call only after
-/// [`guard_env`] succeeded.
+/// The marker file the screenshot mode leaves in a game folder it created, so later runs may
+/// overwrite the filter they staged there.
+const STAGED_MARKER: &str = ".ff-screenshot-staged";
+
+/// Copies `--filter` into the temp game folder under the filter name the temp home's
+/// `ff-settings.json` selects (default `dynamic.filter`), which is the file the app then loads.
+/// Call only after [`guard_env`] succeeded.
 pub(crate) fn stage_filter(args: &ShotArgs) -> Result<(), String> {
     let Some(src) = &args.filter else {
         return Ok(());
     };
-    let dir = game_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let dest = dir.join("dynamic.filter");
+    let home = std::env::var_os(crate::paths::HOME_ENV)
+        .ok_or_else(|| "screenshot mode needs FERRISFILTER_HOME set".to_string())?;
+    let (settings, _) = crate::settings::load(Path::new(&home));
+    stage_into(src, &game_dir()?, settings.filter_name())
+}
+
+/// Copies `src` to `dir/name`. A game folder this mode did not create (no [`STAGED_MARKER`])
+/// never has an existing file overwritten (review WR-07).
+fn stage_into(src: &Path, dir: &Path, name: &str) -> Result<(), String> {
+    let marker = dir.join(STAGED_MARKER);
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        std::fs::write(&marker, b"")
+            .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+    }
+    let dest = dir.join(name);
+    if dest.exists() && !marker.exists() {
+        return Err(format!(
+            "screenshot mode refuses to overwrite {}: its folder was not created by screenshot mode",
+            dest.display()
+        ));
+    }
     std::fs::copy(src, &dest)
         .map(|_| ())
         .map_err(|e| format!("cannot copy {} to {}: {e}", src.display(), dest.display()))
@@ -216,6 +264,51 @@ mod tests {
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--tab", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--popup", "nope"]).is_err());
+    }
+
+    #[test]
+    fn a_temp_folder_without_a_temp_component_is_refused() {
+        assert!(temp_looks_real(Path::new("C:/Users/me/AppData/Local/Temp")));
+        assert!(temp_looks_real(Path::new("/tmp")));
+        assert!(temp_looks_real(Path::new(
+            "C:/Users/me/AppData/Local/Temp/2"
+        )));
+        assert!(!temp_looks_real(Path::new("C:/Users/me")));
+        assert!(!temp_looks_real(Path::new("C:/")));
+        // TEMP pointed at the profile: the real game folder would otherwise pass.
+        let profile = Path::new("C:/Users/me");
+        let game = profile.join("OneDrive/Documentos/My Games/Path of Exile 2");
+        let err = paths_under_temp(&profile.join("ff"), profile, &game, profile).unwrap_err();
+        assert!(err.contains("TEMP"), "{err}");
+    }
+
+    #[test]
+    fn staging_never_overwrites_a_file_in_a_folder_it_did_not_create() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.filter");
+        std::fs::write(&src, "Show\n").unwrap();
+
+        // A folder this mode creates is marked, and later runs may overwrite the staged file.
+        let fresh = tmp.path().join("fresh");
+        stage_into(&src, &fresh, "x.filter").unwrap();
+        assert!(fresh.join(STAGED_MARKER).exists());
+        std::fs::write(&src, "Hide\n").unwrap();
+        stage_into(&src, &fresh, "x.filter").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(fresh.join("x.filter")).unwrap(),
+            "Hide\n"
+        );
+
+        // A pre-existing folder: a new file is fine, an existing one is never replaced.
+        let existing = tmp.path().join("existing");
+        std::fs::create_dir_all(&existing).unwrap();
+        std::fs::write(existing.join("dynamic.filter"), "mine").unwrap();
+        assert!(stage_into(&src, &existing, "dynamic.filter").is_err());
+        assert_eq!(
+            std::fs::read_to_string(existing.join("dynamic.filter")).unwrap(),
+            "mine"
+        );
+        stage_into(&src, &existing, "other.filter").unwrap();
     }
 
     #[test]

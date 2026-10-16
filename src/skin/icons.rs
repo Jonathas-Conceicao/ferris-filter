@@ -32,6 +32,12 @@ pub enum FlagIcon {
     GroupBroken,
     /// The rule was moved across a Continue rule.
     MovedAcrossContinue,
+    /// Section collapsed (click to expand).
+    ChevronRight,
+    /// Section expanded (click to collapse).
+    ChevronDown,
+    /// Rename a section.
+    Rename,
 }
 
 /// The two chain links of the group-broken glyph: separated by a visible gap.
@@ -130,6 +136,36 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
                 Stroke::new(1.0, colour.gamma_multiply(0.6)),
             );
         }
+        FlagIcon::ChevronRight => {
+            let k = r * 0.6;
+            let pts = vec![
+                pos2(c.x - k * 0.5, c.y - k),
+                pos2(c.x + k * 0.5, c.y),
+                pos2(c.x - k * 0.5, c.y + k),
+            ];
+            painter.add(Shape::line(pts, stroke));
+        }
+        FlagIcon::ChevronDown => {
+            let k = r * 0.6;
+            let pts = vec![
+                pos2(c.x - k, c.y - k * 0.5),
+                pos2(c.x, c.y + k * 0.5),
+                pos2(c.x + k, c.y - k * 0.5),
+            ];
+            painter.add(Shape::line(pts, stroke));
+        }
+        FlagIcon::Rename => {
+            // Pencil: a diagonal body from the lower left to the upper right, tip at the lower left.
+            let tip = pos2(c.x - r * 0.8, c.y + r * 0.8);
+            let top = pos2(c.x + r * 0.75, c.y - r * 0.75);
+            let d = (top - tip).normalized();
+            let n = vec2(-d.y, d.x) * r * 0.22;
+            let neck = tip + d * r * 0.45;
+            painter.add(Shape::closed_line(vec![tip, neck + n, neck - n], stroke));
+            painter.line_segment([neck + n, top + n], stroke);
+            painter.line_segment([neck - n, top - n], stroke);
+            painter.line_segment([top + n, top - n], stroke);
+        }
     }
 }
 
@@ -145,7 +181,10 @@ pub fn flag_icon(ui: &mut Ui, icon: FlagIcon, colour: Color32, name: &str, tip: 
 mod tests {
     use super::*;
 
-    const ALL: [FlagIcon; 6] = [
+    const ALL: [FlagIcon; 9] = [
+        FlagIcon::ChevronRight,
+        FlagIcon::ChevronDown,
+        FlagIcon::Rename,
         FlagIcon::Padlock,
         FlagIcon::UnknownStyle,
         FlagIcon::GrammarError,

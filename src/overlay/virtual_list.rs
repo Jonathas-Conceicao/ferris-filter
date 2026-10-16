@@ -1,7 +1,7 @@
 //! Pure arithmetic behind a virtualized rule list (`ScrollArea::show_viewport`).
 //!
-//! The list has one variable-height row (the expanded accordion row); everything else has a fixed
-//! height. [`build_offsets`] turns that into cumulative row tops, [`visible_range`] picks the rows
+//! Rows have per-entry heights (section headers, rule rows) plus one variable-height row (the
+//! expanded accordion row). [`build_offsets_mixed`] turns that into cumulative row tops, [`visible_range`] picks the rows
 //! intersecting the viewport with a binary search, and [`scroll_offset_for`] centres a row. No
 //! GUI-toolkit types.
 
@@ -10,13 +10,18 @@ use std::ops::Range;
 /// Cumulative row tops: `len == n + 1`, `offsets[n]` is the total height. `expanded` replaces the
 /// height of one row `(index, height)`.
 pub fn build_offsets(n: usize, row_h: f32, expanded: Option<(usize, f32)>) -> Vec<f32> {
-    let mut out = Vec::with_capacity(n + 1);
+    build_offsets_mixed(&vec![row_h; n], expanded)
+}
+
+/// Like [`build_offsets`] with a base height per row (section headers and rule rows differ).
+pub fn build_offsets_mixed(heights: &[f32], expanded: Option<(usize, f32)>) -> Vec<f32> {
+    let mut out = Vec::with_capacity(heights.len() + 1);
     let mut y = 0.0f32;
     out.push(y);
-    for i in 0..n {
+    for (i, &base) in heights.iter().enumerate() {
         y += match expanded {
             Some((idx, h)) if idx == i => h,
-            _ => row_h,
+            _ => base,
         };
         out.push(y);
     }
@@ -61,6 +66,26 @@ mod tests {
             vec![0.0, 20.0, 120.0, 140.0]
         );
         assert_eq!(build_offsets(0, 20.0, None), vec![0.0]);
+    }
+
+    #[test]
+    fn mixed_offsets_and_equivalence() {
+        assert_eq!(
+            build_offsets_mixed(&[36.0, 52.0, 52.0], None),
+            vec![0.0, 36.0, 88.0, 140.0]
+        );
+        assert_eq!(
+            build_offsets_mixed(&[36.0, 52.0], Some((1, 300.0))),
+            vec![0.0, 36.0, 336.0]
+        );
+        for n in 0..5 {
+            for e in [None, Some((1, 300.0))] {
+                assert_eq!(
+                    build_offsets(n, 52.0, e),
+                    build_offsets_mixed(&vec![52.0; n], e)
+                );
+            }
+        }
     }
 
     #[test]

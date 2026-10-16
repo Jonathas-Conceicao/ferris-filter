@@ -956,6 +956,17 @@ pub(crate) fn clamped_bound(current: i64, new: i64, clamp: (i64, i64)) -> Option
     (v != current).then_some(v)
 }
 
+/// The `Min` / `Max` label that starts a Between slider line, in a fixed 36 pt slot.
+fn bound_label(ui: &mut egui::Ui, text: &str) {
+    ui.allocate_ui_with_layout(
+        vec2(36.0, 30.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.label(RichText::new(text).font(regular(15.0)).color(pal::MUTED));
+        },
+    );
+}
+
 /// The min and max controls of a Between pair, each editing only its own line.
 fn between_sliders(
     ui: &mut egui::Ui,
@@ -971,11 +982,11 @@ fn between_sliders(
     // Strict `>` / `<` bounds exclude their own value, so the clamps and the hint account for them.
     let (lo_clamp, hi_clamp) = conditions::bound_clamps(lower.op, lo, upper.op, hi);
     ui.horizontal(|ui| {
-        caption(ui, "min");
+        bound_label(ui, "Min");
         bound_control(ui, id, kw, lower, lo, lo_clamp, actions);
     });
     ui.horizontal(|ui| {
-        caption(ui, "max");
+        bound_label(ui, "Max");
         bound_control(ui, id, kw, upper, hi, hi_clamp, actions);
     });
     if !conditions::between_ok(lower.op, lo, upper.op, hi) {
@@ -5448,6 +5459,37 @@ mod tests {
         }
         assert!(seen.contains("Between"), "{seen}");
         assert!(!seen.contains("min > max"), "{seen}");
+    }
+
+    #[test]
+    fn between_card_labels_min_and_max() {
+        let (ctx, wf, mut list) = defences_session(PAIR, false);
+        let mut seen = String::new();
+        for _ in 0..3 {
+            seen = rendered_text(&ctx, &wf, &mut list);
+        }
+        let min = seen.find("Min").expect("Min label");
+        let max = seen.find("Max").expect("Max label");
+        assert!(min < max, "{seen}");
+    }
+
+    #[test]
+    fn int_control_number_field_right_of_slider() {
+        let ctx = headless_ctx();
+        let (mut slider, mut field) = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        let mut v = 30_i64;
+        ctx.run_ui(input(vec![]), |ui| {
+            ui.set_max_width(360.0);
+            ui.horizontal(|ui| {
+                slider = widgets::themed_slider(ui, &mut v, 1, 100, false).rect;
+                field = widgets::number_field(ui, "n", &mut v, widgets::NUMBER_FIELD_W)
+                    .response
+                    .rect;
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(field.min.x >= slider.max.x, "{slider:?} {field:?}");
+        assert!(field.max.x <= 360.0 + 1.0, "{field:?}");
     }
 
     #[test]

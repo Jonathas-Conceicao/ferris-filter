@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Cargo package version follows the release tags.** It was still `0.1.0`; it is now `0.5.0`
+  (the last tag, `v0.5`) and moves with each milestone tag from here on.
+
 - **Simple Defences picks base types (quick 261015-nbp).** The card is one line of seven
   multi-select chips (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES) instead of the
   AR / EV / ES `Any | Has | No` rows and the combination strip; the selection is exactly what the rule

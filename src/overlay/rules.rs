@@ -195,7 +195,7 @@ fn action_target(action: &RowAction) -> Option<BlockId> {
 }
 
 /// Keep only the last `EditLine` per `(id, line, patch variant)`, at the position of the last;
-/// every other action is untouched and in order.
+/// every other action is untouched and in order, except that section renames run first.
 pub fn coalesce_edits(actions: Vec<RowAction>) -> Vec<RowAction> {
     let key = |a: &RowAction| match a {
         RowAction::EditLine {
@@ -211,11 +211,14 @@ pub fn coalesce_edits(actions: Vec<RowAction>) -> Vec<RowAction> {
             keep[i] = false;
         }
     }
-    actions
+    let (renames, rest): (Vec<_>, Vec<_>) = actions
         .into_iter()
         .zip(keep)
         .filter_map(|(a, k)| k.then_some(a))
-        .collect()
+        .partition(|a| matches!(a, RowAction::RenameSection { .. }));
+    // A rename addresses its section by ordinal and commits on the focus loss that any other
+    // click in the same frame also causes: run it before a structural action shifts the ordinals.
+    renames.into_iter().chain(rest).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -2680,6 +2683,45 @@ Show
         };
         let v = vec![ins("A >= 1"), ins("A <= 2")];
         assert_eq!(coalesce_edits(v.clone()), v);
+    }
+
+    #[test]
+    fn rename_runs_before_a_structural_action_in_the_same_batch() {
+        let r = crate::filter::section::RULE_LINE;
+        let mut wf = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section Old
+{r}
+
+Show
+"
+        ));
+        let batch = vec![
+            RowAction::AddSection,
+            RowAction::RenameSection {
+                ordinal: 0,
+                name: "New".into(),
+            },
+        ];
+        for a in coalesce_edits(batch) {
+            wf.apply_action(a);
+        }
+        let t = wf.text();
+        assert!(
+            t.contains(
+                "# ff:section New
+"
+            ),
+            "{t}"
+        );
+        assert!(
+            t.contains(
+                "# ff:section Section
+"
+            ),
+            "{t}"
+        );
+        assert!(!t.contains("# ff:section Old"), "{t}");
     }
 
     #[test]

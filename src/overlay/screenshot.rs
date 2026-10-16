@@ -1,5 +1,5 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
-//! [--filter f]` renders the shell once, saves the frame as a PNG and exits.
+//! [--filter f] [--expand n] [--search text]` renders the shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
 //! the hotkey and the tray, never applies, reloads or syncs, and refuses to run unless
@@ -37,6 +37,10 @@ pub(crate) struct ShotArgs {
     pub status: Option<String>,
     /// A filter file copied into the temp game folder as `dynamic.filter` before the app starts.
     pub filter: Option<PathBuf>,
+    /// Expand the n-th rule (1-based) of the RULES tab.
+    pub expand: Option<usize>,
+    /// Text for the RULES search box.
+    pub search: Option<String>,
 }
 
 /// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent: a
@@ -52,6 +56,8 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut popup = None;
     let mut status = None;
     let mut filter = None;
+    let mut expand = None;
+    let mut search = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -71,6 +77,14 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
             }
             "--status" => status = Some(value("--status")?),
             "--filter" => filter = Some(PathBuf::from(value("--filter")?)),
+            "--expand" => {
+                let n = value("--expand")?;
+                expand = match n.parse::<usize>() {
+                    Ok(v) if v >= 1 => Some(v),
+                    _ => return Err(format!("--expand needs a rule number >= 1, got `{n}`")),
+                };
+            }
+            "--search" => search = Some(value("--search")?),
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
@@ -80,6 +94,8 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         popup,
         status,
         filter,
+        expand,
+        search,
     }))
 }
 
@@ -254,9 +270,15 @@ mod tests {
             "hello",
             "--filter",
             "f.filter",
+            "--expand",
+            "3",
+            "--search",
+            "ring",
         ])
         .unwrap()
         .unwrap();
+        assert_eq!(a.expand, Some(3));
+        assert_eq!(a.search.as_deref(), Some("ring"));
         assert_eq!(a.png, PathBuf::from("out.png"));
         assert_eq!(a.tab, ShellTab::Economy);
         assert_eq!(a.popup.as_deref(), Some("quit"));
@@ -272,6 +294,10 @@ mod tests {
         assert!(p(&["--screenshot"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--tab", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--popup", "nope"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--expand", "0"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--expand", "x"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--expand"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--search"]).is_err());
     }
 
     #[test]

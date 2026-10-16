@@ -231,6 +231,12 @@ const STYLES_POLL_SECS: f64 = 2.0;
 
 /// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
 /// hold exactly that set, so it is cheap to call every frame.
+/// The id of the `n`-th row (1-based), for the debug screenshot `--expand`.
+#[cfg(debug_assertions)]
+fn nth_row_id(rows: &[rules::RuleRow], n: usize) -> Option<BlockId> {
+    n.checked_sub(1).and_then(|i| rows.get(i)).map(|r| r.id)
+}
+
 fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> bool {
     // `IndexMap` equality ignores order, so a pure reorder needs the name order compared too.
     let pending = config.pending_styles();
@@ -819,6 +825,16 @@ impl OverlayApp {
             app.refresh_filters();
         }
         app.open_shot_popup(shot.popup.as_deref());
+        if let Some(q) = &shot.search {
+            app.query = q.clone();
+        }
+        if let Some(n) = shot.expand {
+            let id = app.working.as_ref().and_then(|w| nth_row_id(w.rows(), n));
+            if id.is_some() {
+                app.list.expanded = id;
+                app.list.pending_scroll = id;
+            }
+        }
         app.shot = Some(ShotState {
             args: shot,
             frames: 0,
@@ -3928,6 +3944,16 @@ mod tests {
         );
         app.working = Some(WorkingFilter::from_text(filter_text));
         (app, ctx)
+    }
+
+    #[test]
+    fn expand_seeds_the_nth_row() {
+        let (app, _ctx) = popup_app(RULES);
+        let rows = app.working.as_ref().unwrap().rows();
+        assert_eq!(super::nth_row_id(rows, 1), Some(rows[0].id));
+        assert_eq!(super::nth_row_id(rows, 2), Some(rows[1].id));
+        assert_eq!(super::nth_row_id(rows, 0), None);
+        assert_eq!(super::nth_row_id(rows, rows.len() + 1), None);
     }
 
     #[test]

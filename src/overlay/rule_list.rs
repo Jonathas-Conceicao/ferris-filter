@@ -74,6 +74,8 @@ pub struct ListUi {
     /// A card to scroll to, focus and briefly highlight: set when a picker entry that is already
     /// on the rule is clicked (UAT3-06). Line-backed keyword cards use `focus_line` instead.
     pub focus_card: Option<(BlockId, FocusTarget)>,
+    /// One-shot request to focus the NAME field of that rule (set when a rule is added).
+    pub focus_name: Option<BlockId>,
 }
 
 /// A card without a line of its own to point at.
@@ -114,6 +116,7 @@ impl Default for ListUi {
             simple_all: HashSet::new(),
             advanced_defences: HashSet::new(),
             focus_card: None,
+            focus_name: None,
         }
     }
 }
@@ -133,6 +136,7 @@ impl ListUi {
         self.simple_all.clear();
         self.advanced_defences.clear();
         self.focus_card = None;
+        self.focus_name = None;
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
@@ -751,6 +755,10 @@ fn expanded_body(
     if resp.changed() {
         actions.push(name_action(id, draft));
     }
+    if list.focus_name == Some(id) {
+        resp.request_focus();
+        list.focus_name = None;
+    }
     ui.add_space(8.0);
 
     let entries = working.body_view(row.id);
@@ -832,7 +840,7 @@ pub fn search_row(
 }
 
 /// Tooltip on `+ Add rule` (it replaces the standing empty-state paragraph).
-pub const ADD_RULE_TIP: &str = "Blocks you add are saved with the filter when you press Apply.";
+pub const ADD_RULE_TIP: &str = "Adds a new rule at the top of the file.";
 
 /// The footer line for an economy state.
 pub fn economy_footer_text(view: &EconomyView) -> String {
@@ -1214,6 +1222,23 @@ Show
         // Second row, a few pixels into the summary text (past the indent).
         click(&mut list, Pos2::new(SUMMARY_INDENT + 12.0, y));
         assert_eq!(list.expanded, Some(wf.rows()[1].id), "summary-text click");
+    }
+
+    #[test]
+    fn focus_name_is_consumed_by_the_expanded_body() {
+        let wf = filter_of(2);
+        let id = wf.rows()[0].id;
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(id),
+            focus_name: Some(id),
+            ..ListUi::default()
+        };
+        for _ in 0..3 {
+            run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        }
+        assert_eq!(list.focus_name, None);
+        assert!(ctx.memory(|m| m.focused()).is_some());
     }
 
     #[test]

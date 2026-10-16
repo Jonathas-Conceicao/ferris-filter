@@ -213,10 +213,8 @@ pub fn invalid_blocks_message(count: usize, first_rule: usize, first_line: usize
     )
 }
 
-/// The status after adding a rule the current search hides.
-pub fn added_hidden_message(position: usize) -> String {
-    format!("Rule added at position {position} (hidden by the current search)")
-}
+/// The status after + Add rule: the new rule is the first block of the file.
+pub const RULE_ADDED_MESSAGE: &str = "Rule added at the top of the file. Press Apply to save it.";
 
 /// The footer's button rules. A missing app root disables everything that touches files; after a
 /// changed-on-disk refusal only RELOAD, OVERWRITE (gated like APPLY) and SYNC remain.
@@ -841,8 +839,8 @@ mod tests {
         assert!(RELOAD_TOOLTIP.contains("Discard") && OVERWRITE_TOOLTIP.contains("Replace"));
         assert!(APPLY_BLOCKED_TOOLTIP.contains("red !"));
         assert_eq!(
-            added_hidden_message(7),
-            "Rule added at position 7 (hidden by the current search)"
+            RULE_ADDED_MESSAGE,
+            "Rule added at the top of the file. Press Apply to save it."
         );
     }
 

@@ -1974,16 +1974,38 @@ Show
     // ---- actions ----
 
     #[test]
-    fn add_rule_appends_before_economy() {
+    fn add_rule_inserts_at_top_of_file() {
         let mut wf = WorkingFilter::from_text(&with_economy());
         let o = wf.apply_action(RowAction::AddRule);
         assert!(o.changed);
         let id = o.focus.expect("focus");
         let row = wf.row(id).expect("row");
-        assert_eq!(row.label, "2  Show");
+        assert_eq!(row.label, "1  Show");
+        assert_eq!(wf.rows()[1].index, 2);
         assert_eq!(wf.rows().len(), 4);
         assert!(wf.is_dirty());
         assert_eq!(*wf.economy(), EconomyView::Present { blocks: 2 });
+    }
+
+    #[test]
+    fn add_rule_above_a_group_keeps_the_group_one_rule() {
+        let text = "# ff:group abc 1/2
+Show
+  Class \"Body Armours\"
+  BaseArmour > 0
+
+# ff:group abc 2/2
+Show
+  Class \"Body Armours\"
+  BaseEvasion > 0
+";
+        let mut wf = WorkingFilter::from_text(text);
+        assert_eq!(wf.rows().len(), 1);
+        let o = wf.apply_action(RowAction::AddRule);
+        assert!(o.changed);
+        assert_eq!(wf.rows().len(), 2);
+        assert_eq!(wf.rows()[0].label, "1  Show");
+        assert_eq!(wf.rows()[1].index, 2);
     }
 
     #[test]

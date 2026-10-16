@@ -541,7 +541,7 @@ fn line_keyword(text: &str) -> String {
 fn apply_row_actions(
     working: &mut WorkingFilter,
     list: &mut ListUi,
-    query: &str,
+    query: &mut String,
     actions: Vec<RowAction>,
 ) -> (bool, Option<String>) {
     let mut changed = false;
@@ -616,15 +616,15 @@ fn apply_row_actions(
                 }
             }
             if let Some(focus) = outcome.focus {
-                // A rule the search hides cannot be expanded or scrolled to: the list resets
-                // both on the next frame because the row is not in the filtered slice.
-                let hidden =
-                    is_add && !query.trim().is_empty() && !working.row_matches(focus, query);
-                if hidden {
-                    if let Some(row) = working.row(focus) {
-                        status = Some(apply::added_hidden_message(row.index));
-                    }
-                } else if is_add || is_duplicate {
+                if is_add {
+                    // The new rule is row 1: clear the search so it is visible, open it and
+                    // put the cursor in its NAME field.
+                    query.clear();
+                    list.expanded = Some(focus);
+                    list.pending_scroll = Some(focus);
+                    list.focus_name = Some(focus);
+                    status = Some(apply::RULE_ADDED_MESSAGE.to_string());
+                } else if is_duplicate {
                     list.expanded = Some(focus);
                     list.pending_scroll = Some(focus);
                 } else if is_move {
@@ -1279,7 +1279,7 @@ impl OverlayApp {
     fn run_row_actions(&mut self, row_actions: Vec<RowAction>) {
         if let Some(working) = &mut self.working {
             let (changed, status) =
-                apply_row_actions(working, &mut self.list, &self.query, row_actions);
+                apply_row_actions(working, &mut self.list, &mut self.query, row_actions);
             if changed {
                 // An action can report `changed` without altering the bytes (clearing an
                 // absent name, moving a rule and back); only a real difference from the
@@ -3654,18 +3654,23 @@ mod tests {
     }
 
     #[test]
-    fn adding_a_rule_the_search_hides_says_so_and_does_not_expand_it() {
+    fn adding_a_rule_clears_the_search_expands_and_focuses_it() {
         let mut working = WorkingFilter::from_text(RULES);
         let mut list = ListUi::default();
-        let (changed, status) =
-            apply_row_actions(&mut working, &mut list, "zzz", vec![RowAction::AddRule]);
-        assert!(changed);
-        assert_eq!(
-            status.as_deref(),
-            Some("Rule added at position 3 (hidden by the current search)")
+        let mut query = String::from("zzz");
+        let (changed, status) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut query,
+            vec![RowAction::AddRule],
         );
-        assert_eq!(list.expanded, None);
-        assert_eq!(list.pending_scroll, None);
+        assert!(changed);
+        assert_eq!(status.as_deref(), Some(apply::RULE_ADDED_MESSAGE));
+        assert!(query.is_empty());
+        let new = working.rows()[0].id;
+        assert_eq!(list.expanded, Some(new));
+        assert_eq!(list.pending_scroll, Some(new));
+        assert_eq!(list.focus_name, Some(new));
     }
 
     #[test]
@@ -3674,8 +3679,12 @@ mod tests {
         let mut list = ListUi::default();
         let id = working.rows()[0].id;
         list.expanded = Some(id);
-        let (changed, _) =
-            apply_row_actions(&mut working, &mut list, "", vec![RowAction::Delete(id)]);
+        let (changed, _) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut String::new(),
+            vec![RowAction::Delete(id)],
+        );
         assert!(changed);
         assert!(list.expanded.is_none());
     }
@@ -3824,8 +3833,12 @@ mod tests {
             patch: crate::filter::LinePatch::Values(v.into()),
         };
         let mut list = ListUi::default();
-        let (changed, status) =
-            apply_row_actions(&mut working, &mut list, "", vec![ed("71"), ed("72")]);
+        let (changed, status) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut String::new(),
+            vec![ed("71"), ed("72")],
+        );
         assert!(changed);
         assert_eq!(status, None, "the stale first edit must not run");
         assert_eq!(working.text(), "Show\n  ItemLevel >= 72\n");
@@ -3845,14 +3858,14 @@ mod tests {
             expect: "  BaseType \"B\"".into(),
             patch: crate::filter::LinePatch::Values("\"C\"".into()),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![ed]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![ed]).0);
         assert_eq!(list.epoch, epoch);
         let rm = RowAction::RemoveLine {
             id,
             line: 1,
             expect: "  BaseType \"A\"".into(),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![rm]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![rm]).0);
         assert_ne!(list.epoch, epoch);
     }
 
@@ -3871,10 +3884,10 @@ mod tests {
         };
         let epoch = list.epoch;
         let same = whole(2, "  BaseType \"B\"", "basetype \"C\"");
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![same]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![same]).0);
         assert_eq!(list.epoch, epoch, "same keyword, ordinals unchanged");
         let fix = whole(1, "  BaseTyp \"A\"", "BaseType \"A\"");
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![fix]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![fix]).0);
         assert_ne!(list.epoch, epoch, "a changed keyword shifts ordinals");
         let epoch = list.epoch;
         let add = RowAction::AddLine {
@@ -3882,7 +3895,7 @@ mod tests {
             kind: crate::overlay::rules::LineKind::Condition,
             text: "ItemLevel >= 70".into(),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![add]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![add]).0);
         assert_ne!(list.epoch, epoch, "an added line can shift ordinals");
         let epoch = list.epoch;
         let insert = RowAction::InsertLineAfter {
@@ -3891,7 +3904,7 @@ mod tests {
             expect: "  BaseType \"A\"".into(),
             text: "ItemLevel <= 80".into(),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![insert]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![insert]).0);
         assert_ne!(list.epoch, epoch, "an inserted line can shift ordinals");
         assert_eq!(list.focus_line.map(|(_, l)| l), Some(2));
     }

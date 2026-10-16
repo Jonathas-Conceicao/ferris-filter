@@ -38,10 +38,12 @@ pub enum FlagIcon {
 pub fn group_broken_links(rect: Rect) -> (Rect, Rect) {
     let c = rect.center();
     let r = rect.width().min(rect.height()).min(16.0) / 2.0;
-    let size = vec2(r * 0.7, r * 1.2);
+    // Wide, short links (a chain seen from the side), not tall boxes: tall ones with a slash
+    // between them read as "0/0".
+    let size = vec2(r * 0.95, r * 0.8);
     (
-        Rect::from_center_size(pos2(c.x - r * 0.62, c.y), size),
-        Rect::from_center_size(pos2(c.x + r * 0.62, c.y), size),
+        Rect::from_center_size(pos2(c.x - r * 0.6, c.y), size),
+        Rect::from_center_size(pos2(c.x + r * 0.6, c.y), size),
     )
 }
 
@@ -102,14 +104,16 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
             let rad = (r * 0.45) as u8;
             painter.rect_stroke(a, rad, stroke, egui::StrokeKind::Inside);
             painter.rect_stroke(b, rad, stroke, egui::StrokeKind::Inside);
-            // The break: a short slash between the two links.
-            painter.line_segment(
-                [
-                    pos2(c.x - r * 0.2, c.y + r * 0.6),
-                    pos2(c.x + r * 0.2, c.y - r * 0.6),
-                ],
-                stroke,
-            );
+            // The break: two short sparks in the gap between the links.
+            for dy in [-1.0_f32, 1.0] {
+                painter.line_segment(
+                    [
+                        pos2(c.x, c.y + dy * r * 0.25),
+                        pos2(c.x, c.y + dy * r * 0.7),
+                    ],
+                    Stroke::new(1.25, colour),
+                );
+            }
         }
         FlagIcon::MovedAcrossContinue => {
             let up = pos2(c.x - r * 0.45, c.y);

@@ -13,11 +13,13 @@ use super::editor::ff_swatch;
 use super::fonts::regular;
 use super::minimap::DRACULA;
 use super::palette as pal;
-use super::popup::paint_box_behind;
+use super::popup::paint_box_behind_pad;
 use super::widgets::{ff_button, ff_slider, ff_text_field_id};
 
 /// Width of the picker's content; the popup is this plus 2 x 16 of padding.
 const CONTENT_W: f32 = 268.0;
+/// How far the box art sits out from the picker content (inside the popup's 16pt margin).
+const FRAME_PAD: f32 = 14.0;
 const SQUARE_H: f32 = 150.0;
 const BAR_H: f32 = 16.0;
 const TILE: f32 = 24.0;
@@ -637,7 +639,9 @@ pub fn colour_popup(
                 });
             let res = ff_colour_picker(ui, &skin, body_id, &mut st.hsva, mode);
             ctx.data_mut(|d| d.insert_temp(state_id, st.clone()));
-            paint_box_behind(ui, &skin, bg);
+            // The box fills the popup (its 16pt margin less a 2pt rim), like the modals frame
+            // their content, rather than hugging the controls.
+            paint_box_behind_pad(ui, &skin, bg, FRAME_PAD);
             let escape = ui.input(|i| {
                 i.events.iter().any(|e| {
                     matches!(

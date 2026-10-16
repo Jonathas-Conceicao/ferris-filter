@@ -107,7 +107,13 @@ pub fn ff_modal(
 /// Paints the game's box art behind everything a popup drew so far (the shape `bg` was reserved
 /// first), the same way `ff_dropdown` frames its list.
 pub fn paint_box_behind(ui: &mut Ui, skin: &Skin, bg: egui::layers::ShapeIdx) {
-    let frame_rect = ui.min_rect().expand(6.0);
+    paint_box_behind_pad(ui, skin, bg, 6.0);
+}
+
+/// [`paint_box_behind`] with the box drawn `pad` points out from what the popup drew, so a
+/// popup with an inner margin can sit inside the frame the way the modals do.
+pub fn paint_box_behind_pad(ui: &mut Ui, skin: &Skin, bg: egui::layers::ShapeIdx, pad: f32) {
+    let frame_rect = ui.min_rect().expand(pad);
     let mut mesh = egui::Mesh::with_texture(skin.box_9slice.id());
     for p in slice::nine_slice(
         frame_rect,

@@ -20,6 +20,7 @@ pub mod paths;
 pub mod run;
 pub mod safe_write;
 pub mod settings;
+pub mod skin;
 pub mod styled;
 pub use run::run;
 pub mod models;

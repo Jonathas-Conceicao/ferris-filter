@@ -106,6 +106,21 @@ pub fn is_rule_line(text: &str) -> bool {
     t.len() >= 3 && t.bytes().all(|b| b == b'#')
 }
 
+/// A user-typed section name made safe to write into the banner line: every control character
+/// (CR, LF, tab, ...) becomes a space, the result is trimmed, and an empty name becomes `Section`.
+pub fn sanitize_name(raw: &str) -> String {
+    let s: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let s = s.trim();
+    if s.is_empty() {
+        "Section".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 /// 0-based index of the first rule line of every banner, scanned top-down. After a match the scan
 /// resumes after the banner, so `###/a/###/b/###` is one banner `a` plus two comment lines.
 pub fn banner_starts(lines: &[Line]) -> Vec<usize> {

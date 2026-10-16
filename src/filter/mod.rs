@@ -8,6 +8,7 @@
 pub mod block;
 pub mod diag;
 mod disabled;
+mod divider;
 mod edit;
 pub mod group;
 pub mod keywords;

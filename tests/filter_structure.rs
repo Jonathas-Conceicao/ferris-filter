@@ -240,3 +240,54 @@ fn v04_dynamic_economy_is_never_touched() {
     d.remove_block(new).unwrap();
     assert_eq!(econ(&d), before);
 }
+
+const RULE: &str = section::RULE_LINE;
+
+#[test]
+fn divider_insert_then_remove_is_identity() {
+    let bytes = fixture();
+    let mut d = parse(&bytes).unwrap();
+    let ids: Vec<BlockId> = d.blocks().map(|b| b.id()).collect();
+    for id in picks(&d) {
+        let k = d.insert_section_above(id, "Probe").unwrap();
+        assert_eq!(d.blocks().map(|b| b.id()).collect::<Vec<_>>(), ids);
+        d.remove_section(k).unwrap();
+        assert_bytes_eq("insert/remove above", d.serialize().as_bytes(), &bytes);
+    }
+    let k = d.insert_section_at_top("Top").unwrap();
+    assert_eq!(k, 0);
+    d.remove_section(k).unwrap();
+    assert_bytes_eq("insert/remove top", d.serialize().as_bytes(), &bytes);
+}
+
+#[test]
+fn divider_rename_touches_only_its_line() {
+    let src = format!("Show\n\n{RULE}\n# ff:section Old\n{RULE}\n\nHide\n");
+    let mut d = parse(src.as_bytes()).unwrap();
+    d.rename_section(0, "New name").unwrap();
+    let want = src.replace("Old", "New name");
+    assert_bytes_eq("rename", d.serialize().as_bytes(), want.as_bytes());
+}
+
+#[test]
+fn add_rule_lands_above_a_leading_divider() {
+    let src = format!("{RULE}\n# ff:section A\n{RULE}\n\nShow\n\tRarity Rare\n");
+    let mut d = parse(src.as_bytes()).unwrap();
+    d.insert_rule_at_top(vec!["Show".to_string()]).unwrap();
+    let want = format!("Show\n\n{src}");
+    assert_bytes_eq(
+        "add above leading divider",
+        d.serialize().as_bytes(),
+        want.as_bytes(),
+    );
+
+    let src = format!("Show\n\n{RULE}\n# ff:section A\n{RULE}\n\nHide\n");
+    let mut d = parse(src.as_bytes()).unwrap();
+    d.insert_rule_at_top(vec!["Show".to_string()]).unwrap();
+    let want = format!("Show\n\n{src}");
+    assert_bytes_eq(
+        "add above first rule",
+        d.serialize().as_bytes(),
+        want.as_bytes(),
+    );
+}

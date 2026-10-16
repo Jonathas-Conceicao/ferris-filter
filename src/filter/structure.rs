@@ -25,20 +25,20 @@ use super::parse;
 use super::section;
 use super::tokenize::tokenize;
 
-struct Info {
-    id: BlockId,
-    header: usize,
-    span: Range<usize>,
-    unit: Range<usize>,
+pub(super) struct Info {
+    pub(super) id: BlockId,
+    pub(super) header: usize,
+    pub(super) span: Range<usize>,
+    pub(super) unit: Range<usize>,
 }
 
-fn is_blank(l: &Line) -> bool {
+pub(super) fn is_blank(l: &Line) -> bool {
     l.text().trim().is_empty()
 }
 
 impl Document {
     /// The terminator of the last terminated line, `Lf` when there is none.
-    fn last_eol(&self) -> Eol {
+    pub(super) fn last_eol(&self) -> Eol {
         self.lines
             .iter()
             .rev()
@@ -47,7 +47,7 @@ impl Document {
             .unwrap_or(Eol::Lf)
     }
 
-    fn infos(&self) -> Vec<Info> {
+    pub(super) fn infos(&self) -> Vec<Info> {
         let n = self.lines.len();
         self.blocks()
             .map(|b: &Block| {
@@ -66,7 +66,7 @@ impl Document {
             .collect()
     }
 
-    fn span_texts(&self, span: Range<usize>) -> Vec<String> {
+    pub(super) fn span_texts(&self, span: Range<usize>) -> Vec<String> {
         self.lines[span]
             .iter()
             .map(|l| l.text().to_string())
@@ -76,7 +76,7 @@ impl Document {
     /// Rebuild the index over `new_lines` and commit it. `ids` names every block of the result in
     /// order (`None` = a fresh id); `expected` is the span text each block must have. Nothing is
     /// mutated on `Err`.
-    fn commit_structural(
+    pub(super) fn commit_structural(
         &mut self,
         new_lines: Vec<Line>,
         ids: Vec<Option<BlockId>>,
@@ -267,13 +267,23 @@ impl Document {
     }
 
     /// The one insertion point for new rules: the first line of the first block outside the
-    /// economy section, including that block's leading comments and `# ff:` meta lines. Phase 32
-    /// extends this to also stop before the first `# ff:section` banner. With no such block it is
-    /// just above the economy section's leading blank lines, or the end of the file.
-    fn top_insertion_line(&self, sec: Option<section::SectionSpan>) -> usize {
+    /// economy section, including that block's leading comments and `# ff:` meta lines, or the
+    /// first section banner when that comes first, so a new rule always lands outside every
+    /// section. With neither it is just above the economy section's leading blank lines, or the
+    /// end of the file.
+    pub(super) fn top_insertion_line(&self, sec: Option<section::SectionSpan>) -> usize {
         let limit = sec.map_or(usize::MAX, |s| s.begin);
-        if let Some(first) = self.infos().iter().find(|i| i.span.start < limit) {
-            return first.span.start;
+        let first_block = self
+            .infos()
+            .iter()
+            .find(|i| i.span.start < limit)
+            .map(|i| i.span.start);
+        let first_banner = section::banners(self)
+            .iter()
+            .find(|b| b.kind == section::BannerKind::Section && b.start < limit)
+            .map(|b| b.start);
+        if let Some(at) = first_block.into_iter().chain(first_banner).min() {
+            return at;
         }
         match sec {
             Some(s) => {

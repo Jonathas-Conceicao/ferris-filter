@@ -460,11 +460,12 @@ fn edit_set_meta_inserts_only_one_line() {
 
 #[test]
 fn both_meta_spellings_read_and_untouched_files_roundtrip() {
-    let src = "# notes\r\n#ff:name Legacy\r\n#ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n# ff:name Current\r\n#Hide\r\n#\tClass \"Bows\"\r\n\r\n#ff:economy-begin\r\n\r\nShow # eco\r\n\r\n# ff:economy-end\r\n";
+    let src = "# notes\r\n#ff:name Legacy\r\n#ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n# ff:name Current\r\n#Hide\r\n#\tClass \"Bows\"\r\n\r\n####\r\n#ff:section Mine\r\n####\r\nShow # mine\r\n\r\n####\r\n#ff:economy-begin\r\n####\r\n\r\nShow # eco\r\n";
     let doc = parse(src.as_bytes()).unwrap();
     assert_eq!(doc.to_bytes(), src.as_bytes());
     let blocks: Vec<_> = doc.blocks().cloned().collect();
-    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks.len(), 4);
+    assert_eq!(ferrisfilter::filter::section::banners(&doc).len(), 2);
     assert_eq!(doc.meta_get(blocks[0].id(), "name"), Some("Legacy"));
     assert_eq!(doc.meta_get(blocks[0].id(), "style"), Some("S"));
     assert_eq!(doc.meta_get(blocks[1].id(), "name"), Some("Current"));
@@ -659,4 +660,40 @@ fn insert_remove_roundtrip_crlf() {
         doc.remove_body_line(id, new).unwrap();
     }
     assert_bytes_eq("insert/remove", &doc.to_bytes(), &orig);
+}
+
+#[test]
+fn banners_round_trip_byte_for_byte() {
+    use ferrisfilter::filter::section::{self, BannerKind};
+    let rule = section::RULE_LINE;
+    let lf = format!(
+        "# top\nShow # a\n  Rarity Rare\n\n{rule}\n# ff:section One\n{rule}\nShow # b\n\n#====\n# [[0100]] Foreign\n#====\nHide # c\n\n{rule}\n#ff:section Two\n{rule}\n\n{rule}\n{}\n{rule}\n\nShow # eco\n",
+        section::BEGIN_LINE
+    );
+    for src in [
+        lf.clone(),
+        lf.replace('\n', "\r\n"),
+        format!("\u{feff}{lf}"),
+        format!("\u{feff}{}", lf.replace('\n', "\r\n")),
+    ] {
+        let doc = parse(src.as_bytes()).unwrap();
+        assert_eq!(doc.to_bytes(), src.as_bytes());
+        let b = section::banners(&doc);
+        assert_eq!(b.len(), 3);
+        assert_eq!(b[0].name, "One");
+        assert_eq!(b[1].name, "Two");
+        assert_eq!(b[2].kind, BannerKind::Economy);
+    }
+}
+
+#[test]
+fn foreign_banner_is_not_a_section() {
+    let src = "#====\n# [[0100]] Title\n#====\nShow\n  Rarity Rare\n\n#######\n# [[0200]] Other\n#######\nHide\n";
+    let doc = parse(src.as_bytes()).unwrap();
+    assert!(ferrisfilter::filter::section::banners(&doc).is_empty());
+    assert_eq!(doc.to_bytes(), src.as_bytes());
+    // A bare tag without both rule lines is a plain comment too.
+    let src = "# ff:section Lonely\nShow\n";
+    let doc = parse(src.as_bytes()).unwrap();
+    assert!(ferrisfilter::filter::section::banners(&doc).is_empty());
 }

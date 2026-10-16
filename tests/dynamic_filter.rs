@@ -12,7 +12,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const BEGIN: &str = "# ff:economy-begin";
-const END: &str = "# ff:economy-end";
+const ECONOMY_LINE: &str = ferrisfilter::filter::section::BEGIN_LINE;
+const RULE: &str = ferrisfilter::filter::section::RULE_LINE;
+/// The retired end marker key: it must never be written.
+const OLD_END: &str = "economy-end";
 
 /// Normalize CRLF to LF. The generator emits LF-only; the working tree is CRLF on Windows.
 fn normalize(s: &str) -> String {
@@ -83,18 +86,16 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).expect("read filter")
 }
 
-/// Lines strictly between the marker lines.
+/// Everything under the economy banner (the three banner lines are not included).
 fn section_body(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let b = lines
         .iter()
         .position(|l| l.starts_with(BEGIN))
         .expect("begin marker");
-    let e = lines
-        .iter()
-        .position(|l| l.starts_with(END))
-        .expect("end marker");
-    lines[b + 1..e].join("\n")
+    assert_eq!(lines[b - 1], RULE, "rule line above the banner");
+    assert_eq!(lines[b + 1], RULE, "rule line below the banner");
+    lines[b + 2..].join("\n")
 }
 
 fn ffbak(dir: &Path) -> PathBuf {
@@ -107,8 +108,12 @@ fn add_economy_creates_a_new_filter_with_only_the_section() {
     let f = gfs(&dir);
     apply(&dir, &["--filter", &f, "--add-economy"]).success();
     let text = read(&gf(&dir));
-    assert!(text.lines().next().unwrap().starts_with(BEGIN), "{text}");
-    assert!(text.contains(END));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], RULE, "{text}");
+    assert_eq!(lines[1], ECONOMY_LINE, "{text}");
+    assert_eq!(lines[2], RULE, "{text}");
+    assert!(lines[3..].iter().any(|l| l.starts_with("Show")), "{text}");
+    assert!(!text.contains(OLD_END));
     assert!(!ffbak(&dir).exists());
 }
 
@@ -159,19 +164,17 @@ fn reapply_is_a_no_op() {
 }
 
 #[test]
-fn refresh_changes_nothing_outside_the_markers() {
+fn refresh_changes_nothing_outside_the_banner() {
     let dir = workspace("outside");
     let prefix = format!(
-        "Show # one\r\n  Class \"Rings\"\r\n\r\nShow # two\r\n  Rarity Rare\r\n\r\n{BEGIN} old\r\n"
+        "Show # one\r\n  Class \"Rings\"\r\n\r\nShow # two\r\n  Rarity Rare\r\n\r\n{RULE}\r\n{BEGIN} old\r\n{RULE}\r\n"
     );
-    let suffix = format!("{END} old\r\n");
-    let original = format!("{prefix}\r\nShow # GARBAGE\r\n  Class \"Rings\"\r\n\r\n{suffix}");
+    let original = format!("{prefix}\r\nShow # GARBAGE\r\n  Class \"Rings\"\r\n\r\n");
     fs::write(gf(&dir), &original).unwrap();
     let f = gfs(&dir);
     apply(&dir, &["--filter", &f]).success();
     let after = fs::read_to_string(gf(&dir)).unwrap();
     assert!(after.starts_with(&prefix), "prefix changed");
-    assert!(after.ends_with(&suffix), "suffix changed");
     assert!(!after.contains("GARBAGE"));
     assert!(
         !after.replace("\r\n", "").contains('\n'),
@@ -200,8 +203,50 @@ fn remove_economy_removes_the_section_and_keeps_the_rest() {
     apply(&dir, &["--filter", &f, "--add-economy"]).success();
     apply(&dir, &["--filter", &f, "--remove-economy"]).success();
     let text = read(&gf(&dir));
-    assert!(!text.contains(BEGIN) && !text.contains(END));
-    assert!(text.contains("Show # mine"));
+    assert!(!text.contains(BEGIN) && !text.contains(RULE));
+    assert_eq!(text, "Show # mine\n  Class \"Rings\"\n");
+}
+
+#[test]
+fn remove_keeps_a_following_section() {
+    let dir = workspace("removekeep");
+    let tail = format!("{RULE}\n# ff:section Later\n{RULE}\n\nShow # later\n  Class \"Belts\"\n");
+    let original = format!(
+        "Show # mine\n  Class \"Rings\"\n\n{RULE}\n{ECONOMY_LINE}\n{RULE}\n\nHide # old\n\n{tail}"
+    );
+    fs::write(gf(&dir), &original).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--remove-economy"]).success();
+    assert_eq!(
+        read(&gf(&dir)),
+        format!("Show # mine\n  Class \"Rings\"\n{tail}")
+    );
+}
+
+#[test]
+fn refresh_keeps_a_following_section() {
+    let dir = workspace("refreshkeep");
+    let tail = format!("{RULE}\n# ff:section Later\n{RULE}\n\nShow # later\n  Class \"Belts\"\n");
+    let original = format!("{RULE}\n{ECONOMY_LINE}\n{RULE}\n\nHide # old\n\n{tail}");
+    fs::write(gf(&dir), &original).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f]).success();
+    let after = read(&gf(&dir));
+    assert!(after.ends_with(&format!("\n\n{tail}")), "{after}");
+    assert!(!after.contains("Hide # old"));
+}
+
+#[test]
+fn old_one_line_markers_are_damaged() {
+    let dir = workspace("oldmarkers");
+    let original = "Show # a\n\n# ff:economy-begin old\n\nShow # old\n\n# ff:economy-end old\n";
+    fs::write(gf(&dir), original).unwrap();
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f])
+        .failure()
+        .stderr(contains("line 3"));
+    apply(&dir, &["--filter", &f, "--add-economy"]).failure();
+    assert_eq!(read(&gf(&dir)), original);
 }
 
 #[test]
@@ -234,7 +279,7 @@ fn v04_filter_is_converted_on_first_apply() {
         .success()
         .stdout(contains("converting"));
     let text = read(&gf(&dir));
-    assert!(text.contains(BEGIN) && text.contains(END));
+    assert!(text.contains(ECONOMY_LINE) && !text.contains(OLD_END));
     assert!(text.contains("# ff:name Chance bases"));
     assert!(!text.contains("ff:name rule 4"));
     assert_eq!(fs::read(ffbak(&dir)).unwrap(), fixture);
@@ -352,7 +397,7 @@ fn apply_falls_back_to_default_files_and_creates_no_live_file() {
     let f = gfs(&dir);
     apply(&dir, &["--filter", &f, "--add-economy"]).success();
     let from_defaults = read(&gf(&dir));
-    assert!(from_defaults.contains(END), "{from_defaults}");
+    assert!(from_defaults.contains(ECONOMY_LINE), "{from_defaults}");
     assert!(!dir.join("styles.json").exists(), "styles.json was created");
     assert!(!dir.join("tiers.json").exists(), "tiers.json was created");
 

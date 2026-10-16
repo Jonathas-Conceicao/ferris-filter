@@ -207,7 +207,7 @@ fn v04_dynamic_economy_is_never_touched() {
     let span = section::find(&d).unwrap().unwrap();
     let econ = |d: &Document| -> Vec<String> {
         let s = section::find(d).unwrap().unwrap();
-        d.lines()[s.begin..=s.end]
+        d.lines()[s.begin..s.end]
             .iter()
             .map(|l| l.text().to_string())
             .collect()

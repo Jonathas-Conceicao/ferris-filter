@@ -35,7 +35,7 @@ use crate::skin::widgets as widgets_skin;
 
 /// Left inset of a condition / action card: its value controls start in the control column.
 const CARD_LEFT: f32 = widgets_skin::ROW_PAD + widgets_skin::LABEL_COL_W + widgets_skin::LABEL_GAP;
-const OP_W: f32 = 104.0;
+const OP_W: f32 = 140.0;
 
 /// A skin dropdown over `(value, label)` choices. Returns `Some(value)` only when the user picks a
 /// different entry than `current`. A current value that is not among the choices is appended as an
@@ -2771,12 +2771,17 @@ fn action_rows(ui: &mut egui::Ui, ctx: &BodyCtx, list: &mut ListUi, actions: &mu
         .filter(|e| e.kind == EntryKind::Action)
         .collect();
     if lines.is_empty() {
-        ui.label(
-            RichText::new("No actions")
-                .font(regular(15.0))
-                .color(pal::MUTED),
-        )
-        .on_hover_text(NO_ACTIONS);
+        ui.horizontal(|ui| {
+            ui.add_space(
+                widgets_skin::ROW_PAD + widgets_skin::LABEL_COL_W + widgets_skin::LABEL_GAP,
+            );
+            ui.label(
+                RichText::new("No actions")
+                    .font(regular(15.0))
+                    .color(pal::MUTED),
+            )
+            .on_hover_text(NO_ACTIONS);
+        });
         return;
     }
     for (idx, e) in lines.into_iter().enumerate() {

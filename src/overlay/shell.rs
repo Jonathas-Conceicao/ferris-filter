@@ -280,7 +280,9 @@ pub(crate) fn bar_state(
     };
     let revert = match tab {
         ShellTab::Rules => actions.revert,
-        ShellTab::Config => config.dirty,
+        // As on RULES, no Revert during a changed-on-disk refusal: only Reload or Overwrite
+        // resolve it (v0.5; review WR-04).
+        ShellTab::Config => config.dirty && !needs_reload,
         ShellTab::Economy | ShellTab::About => false,
     };
     let apply = if needs_reload {
@@ -968,6 +970,17 @@ mod tests {
             true,
         );
         assert!(!b.apply.enabled);
+    }
+
+    #[test]
+    fn config_revert_is_off_during_a_refusal() {
+        let cfg = ConfigBarInputs {
+            dirty: true,
+            ..ConfigBarInputs::default()
+        };
+        let a = actions(false, true, true, true);
+        assert!(bar_state(ShellTab::Config, a, cfg, false).revert);
+        assert!(!bar_state(ShellTab::Config, a, cfg, true).revert);
     }
 
     #[test]

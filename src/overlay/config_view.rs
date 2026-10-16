@@ -611,6 +611,9 @@ fn probe(tag: &'static str, rect: egui::Rect) {
 fn probe(_tag: &'static str, _rect: egui::Rect) {}
 
 /// One table cell: a child ui over `rect` with `layout`.
+/// Where the text starts inside a custom style's name field; built-in names start there too.
+const NAME_TEXT_INSET: f32 = 9.0;
+
 fn cell_at<R>(
     ui: &mut egui::Ui,
     salt: &'static str,
@@ -872,8 +875,10 @@ fn style_row(
             if reorder.is_some() {
                 rename_field(ui, state, cfg, ctx, name, name_cell.width(), actions);
             } else {
-                ui.add_sized(
-                    vec2(name_cell.width(), 20.0),
+                // Left-aligned at the text inset of the custom rows' name fields, so the Name
+                // column reads as one edge in both groups.
+                ui.add_space(NAME_TEXT_INSET);
+                ui.add(
                     egui::Label::new(RichText::new(name).font(small_caps(17.0)).color(pal::VALUE))
                         .truncate()
                         .sense(egui::Sense::hover()),

@@ -500,12 +500,13 @@ pub fn ff_colour_picker(
         });
     }
 
-    // Quick picks (and the None tile, on the same row only when it fits).
+    // Quick picks and, where the slot can be empty, the None tile: one row. The tiles shrink
+    // just enough (24 -> 23pt) for the tenth tile to fit the content width.
     ui.add_space(12.0);
-    let row_w = DRACULA.len() as f32 * TILE + (DRACULA.len() - 1) as f32 * TILE_GAP;
-    let none_inline = mode.allow_none && row_w + TILE_GAP + TILE <= CONTENT_W;
+    let tiles = DRACULA.len() + usize::from(mode.allow_none);
+    let tile = TILE.min(((CONTENT_W - (tiles - 1) as f32 * TILE_GAP) / tiles as f32).floor());
     let mut none_tile = |ui: &mut Ui| {
-        let r = ff_swatch(ui, None, false, vec2(TILE, TILE), "No colour")
+        let r = ff_swatch(ui, None, false, vec2(tile, tile), "No colour")
             .on_hover_text("No colour (game default)");
         probe("none", r.rect);
         if r.clicked() {
@@ -516,7 +517,7 @@ pub fn ff_colour_picker(
         ui.spacing_mut().item_spacing.x = TILE_GAP;
         for (name, c) in DRACULA {
             let selected = rgb == [c.r(), c.g(), c.b()];
-            let r = ff_swatch(ui, Some(c), selected, vec2(TILE, TILE), name).on_hover_text(name);
+            let r = ff_swatch(ui, Some(c), selected, vec2(tile, tile), name).on_hover_text(name);
             probe(&format!("quick:{name}"), r.rect);
             if r.clicked() && !selected {
                 rgb = [c.r(), c.g(), c.b()];
@@ -524,14 +525,10 @@ pub fn ff_colour_picker(
                 changed = true;
             }
         }
-        if none_inline {
+        if mode.allow_none {
             none_tile(ui);
         }
     });
-    if mode.allow_none && !none_inline {
-        ui.add_space(TILE_GAP);
-        ui.horizontal(|ui| none_tile(ui));
-    }
 
     // Footer.
     ui.add_space(12.0);

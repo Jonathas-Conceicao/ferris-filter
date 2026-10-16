@@ -74,6 +74,8 @@ struct Manifest {
     #[serde(default)]
     image: Vec<ImageEntry>,
     #[serde(default)]
+    atlas: Vec<AtlasEntry>,
+    #[serde(default)]
     font: Vec<FontEntry>,
     ferris: Option<FerrisEntry>,
 }
@@ -99,6 +101,23 @@ struct ImageEntry {
     /// middle of the Options page frame, which the overlay replaces with its own background.
     #[serde(default)]
     clear: Vec<[u32; 4]>,
+}
+
+/// A trimmed atlas: picks cells out of a grid sheet (the minimap icon sheet) and packs them
+/// into a smaller grid, so the repo carries only the cells the UI uses.
+#[derive(Deserialize)]
+struct AtlasEntry {
+    /// Game virtual path of the source sheet (.dds).
+    path: String,
+    /// Output PNG, relative to `assets/poe2/`.
+    out: String,
+    /// Cell size in pixels (square cells, no spacing).
+    cell: u32,
+    /// Cells per row in the source sheet.
+    columns: u32,
+    /// Output rows, each a list of source cell numbers (row-major from 0). Every row must have
+    /// the same length.
+    cells: Vec<Vec<u32>>,
 }
 
 #[derive(Deserialize)]
@@ -288,6 +307,21 @@ fn extract(fs: &FS, manifest: &Manifest, root: &Path) -> Result<()> {
             entry.out
         );
     }
+    for atlas in &manifest.atlas {
+        let sheet = read_dds(fs, &atlas.path)?.to_rgba8();
+        let img = pack_atlas(&sheet, atlas)?;
+        let out = out_dir.join(&atlas.out);
+        std::fs::create_dir_all(out.parent().unwrap())?;
+        save_png(&img, &out)?;
+        println!(
+            "{:>4}x{:<4} {} <- {} ({} cells)",
+            img.width(),
+            img.height(),
+            atlas.out,
+            atlas.path,
+            atlas.cells.iter().map(Vec::len).sum::<usize>()
+        );
+    }
     for font in &manifest.font {
         let bytes = fs
             .read(&font.path)
@@ -298,6 +332,35 @@ fn extract(fs: &FS, manifest: &Manifest, root: &Path) -> Result<()> {
         println!("{:>9} B  {} <- {}", bytes.len(), font.out, font.path);
     }
     Ok(())
+}
+
+/// Copies the listed cells of `sheet` into a new grid (one output row per `cells` row).
+fn pack_atlas(sheet: &RgbaImage, atlas: &AtlasEntry) -> Result<RgbaImage> {
+    let c = atlas.cell;
+    let cols = atlas.cells.first().map_or(0, Vec::len) as u32;
+    if cols == 0 || atlas.cells.iter().any(|r| r.len() as u32 != cols) {
+        bail!(
+            "{}: every cells row must have the same, non-zero length",
+            atlas.out
+        );
+    }
+    let mut img = RgbaImage::new(cols * c, atlas.cells.len() as u32 * c);
+    for (row, cells) in atlas.cells.iter().enumerate() {
+        for (col, &n) in cells.iter().enumerate() {
+            let (sx, sy) = ((n % atlas.columns) * c, (n / atlas.columns) * c);
+            if sx + c > sheet.width() || sy + c > sheet.height() {
+                bail!("{}: cell {n} is outside {}", atlas.out, atlas.path);
+            }
+            let part = sheet.view(sx, sy, c, c).to_image();
+            image::imageops::replace(
+                &mut img,
+                &part,
+                (col as u32 * c) as i64,
+                (row as u32 * c) as i64,
+            );
+        }
+    }
+    Ok(img)
 }
 
 fn dump(fs: &FS, pattern: &str, dir: &Path) -> Result<()> {

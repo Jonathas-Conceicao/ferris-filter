@@ -200,10 +200,43 @@ out = "common/button_pressed_right.png"
 prefer_4k = true
 trim = true
 
-# --- Minimap icon sheet (not used by the prototype; kept for the item-filter icon previews).
-[[image]]
+# --- Minimap icons: the 12 item-filter shapes in the 11 item-filter colours.
+#
+# The game sheet (art/2dart/minimap/player.dds, 896x4928) is a grid of 64px cells, 14 per row,
+# numbered left to right, top to bottom from 0. Every coloured filter icon comes as a Large,
+# Medium, Small triplet (cells n, n+1, n+2); the editor only needs Large (the other two are the
+# same art scaled down), so only those are kept:
+#   Circle, Diamond, Hexagon, Square, Star, Triangle (18 cells per shape from cell 46):
+#     Blue, Green, Brown, Red, White, Yellow
+#   the same six shapes, Cyan, Grey, Orange, Pink, Purple (15 cells per shape from cell 212)
+#   Cross, Moon, Raindrop, Kite, Pentagon, UpsideDownHouse (33 cells per shape from cell 302):
+#     Blue, Green, Brown, Red, White, Yellow, Cyan, Grey, Orange, Pink, Purple
+# To look at the whole sheet, dump it to a scratch folder (never the repo):
+#   ff-art dump minimap/player <scratch-dir>
+#
+# [[atlas]] fields: path (game .dds), out (PNG under assets/poe2/), cell (cell size in pixels),
+# columns (cells per row in the source), cells (one array per output row of source cell numbers).
+# Output: one row per colour (Red, Green, Blue, Brown, White, Yellow, Cyan, Grey, Orange, Pink,
+# Purple), one column per shape (Circle, Diamond, Hexagon, Square, Star, Triangle, Cross, Moon,
+# Raindrop, Kite, Pentagon, UpsideDownHouse) -- the order src/skin/minimap.rs indexes it in.
+[[atlas]]
 path = "art/2dart/minimap/player.dds"
-out = "minimap/player.png"
+out = "minimap/icons.png"
+cell = 64
+columns = 14
+cells = [
+  [ 55,  73,  91, 109, 127, 145, 311, 344, 377, 410, 443, 476], # Red
+  [ 49,  67,  85, 103, 121, 139, 305, 338, 371, 404, 437, 470], # Green
+  [ 46,  64,  82, 100, 118, 136, 302, 335, 368, 401, 434, 467], # Blue
+  [ 52,  70,  88, 106, 124, 142, 308, 341, 374, 407, 440, 473], # Brown
+  [ 58,  76,  94, 112, 130, 148, 314, 347, 380, 413, 446, 479], # White
+  [ 61,  79,  97, 115, 133, 151, 317, 350, 383, 416, 449, 482], # Yellow
+  [212, 227, 242, 257, 272, 287, 320, 353, 386, 419, 452, 485], # Cyan
+  [215, 230, 245, 260, 275, 290, 323, 356, 389, 422, 455, 488], # Grey
+  [218, 233, 248, 263, 278, 293, 326, 359, 392, 425, 458, 491], # Orange
+  [221, 236, 251, 266, 281, 296, 329, 362, 395, 428, 461, 494], # Pink
+  [224, 239, 254, 269, 284, 299, 332, 365, 398, 431, 464, 497], # Purple
+]
 
 # --- Fonts (by exljbris / Jos Buivenga, shipped with the game).
 [[font]]

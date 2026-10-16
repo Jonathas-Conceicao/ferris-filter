@@ -1873,8 +1873,15 @@ impl WorkingFilter {
 
     /// Discard every in-memory edit and staged economy op.
     pub fn revert(&mut self) {
-        self.doc = parse_text(&self.applied_text);
         self.pending = None;
+        self.revert_rules();
+    }
+
+    /// The RULES Revert: discard the rule edits and keep a staged economy add/remove, which the
+    /// ECONOMY tab owns. The economy section is locked to rule edits, so the staged op stays valid
+    /// against the re-parsed text.
+    pub fn revert_rules(&mut self) {
+        self.doc = parse_text(&self.applied_text);
         self.moved.clear();
         self.rebuild();
     }
@@ -2632,6 +2639,29 @@ Show
         assert!(wf.rules_edited());
         wf.unstage_economy();
         assert!(wf.rules_edited(), "the rule edit survives");
+    }
+
+    #[test]
+    fn revert_rules_keeps_a_staged_economy_op() {
+        let mut wf = WorkingFilter::from_text(&with_economy());
+        wf.stage_remove_economy();
+        let id = wf.rows()[0].id;
+        wf.apply_action(RowAction::Delete(id));
+        assert!(wf.rules_edited());
+        wf.revert_rules();
+        assert_eq!(wf.text(), with_economy());
+        assert!(!wf.rules_edited());
+        assert!(wf.economy_staged(), "ECONOMY owns the staged op");
+        assert_eq!(wf.economy_plan(), EconomyPlan::Remove);
+        assert_eq!(*wf.economy(), EconomyView::Absent);
+        assert!(wf.is_dirty());
+
+        let mut wf = WorkingFilter::from_text(THREE);
+        wf.stage_add_economy(5);
+        wf.apply_action(RowAction::AddRule);
+        wf.revert_rules();
+        assert_eq!(wf.text(), THREE);
+        assert_eq!(*wf.economy(), EconomyView::Present { blocks: 5 });
     }
 
     #[test]

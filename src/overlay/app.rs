@@ -1689,9 +1689,25 @@ impl OverlayApp {
         self.working.as_ref().is_some_and(|w| w.economy_staged())
     }
 
-    /// Whether the RULES Revert has anything to discard (the bar's Revert predicate).
+    /// Whether the RULES Revert has anything to discard: rule edits only. A staged economy
+    /// add/remove belongs to the ECONOMY Revert, and a pending style rewrite comes from
+    /// `styles.json`, which a rule revert cannot undo. The one predicate behind both the bar's
+    /// RULES Revert enablement and the Discard-rule-changes popup, so a click always opens it.
     fn rules_revertible(&self) -> bool {
-        self.working.as_ref().is_some_and(|w| w.is_dirty())
+        self.working.as_ref().is_some_and(|w| w.rules_edited())
+    }
+
+    /// The RULES bar Revert enablement: [`Self::rules_revertible`], except in the states where no
+    /// Revert applies (a changed-on-disk refusal, a filter that failed to load).
+    fn rules_revert_live(&self) -> bool {
+        apply::footer_actions(
+            self.root.is_ok(),
+            self.filter_state(),
+            !self.changed_on_disk.is_empty(),
+            self.rules_revertible(),
+            0,
+        )
+        .revert
     }
 
     /// The text and buttons of an open popup, from the current state.
@@ -1906,7 +1922,8 @@ impl OverlayApp {
         self.instance = None;
     }
 
-    /// REVERT: discard every in-memory edit and staged economy op.
+    /// RULES REVERT: discard the rule edits. A staged economy add/remove is the ECONOMY tab's and
+    /// survives (WR-04).
     fn revert(&mut self) {
         if self.working.is_none() {
             return;
@@ -1915,12 +1932,15 @@ impl OverlayApp {
         let Some(working) = &mut self.working else {
             return;
         };
-        working.revert();
+        working.revert_rules();
+        let still_dirty = working.is_dirty();
         self.list.clear_ids();
         self.list_status = Some(apply::REVERTED_MESSAGE.to_string());
-        // Per tab: CONFIG edits survive a RULES revert, so the state may stay out of date.
+        // Per tab: CONFIG edits and a staged economy op survive a RULES revert, so the state may
+        // stay out of date.
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        self.apply_state = apply::state_after_revert(self.applied_this_session, config_dirty);
+        self.apply_state =
+            apply::state_after_revert(self.applied_this_session, config_dirty || still_dirty);
     }
 
     /// The ECONOMY bar Revert: opens the Discard popup whenever there are tier edits or a staged
@@ -2713,6 +2733,7 @@ impl eframe::App for OverlayApp {
             config_dirty,
             blocking,
         );
+        actions.revert = self.rules_revert_live();
         // One Overwrite decision for the bar slot and the popup (WR-03).
         actions.overwrite = self.overwrite_decision();
         self.overwrite_live = actions.overwrite;
@@ -5165,8 +5186,37 @@ Hide
         let (mut app, _ctx) = popup_app(RULES);
         app.revert_rules_armed = true;
         assert!(!app.popup_flags(false).discard_rules);
+        assert!(!app.rules_revert_live());
         app.run_row_actions(vec![RowAction::AddRule]);
         assert!(app.popup_flags(false).discard_rules);
+        assert!(app.rules_revert_live());
+    }
+
+    /// WR-03 / WR-04: the RULES Revert button is live exactly when its popup opens. A staged
+    /// economy op alone (ECONOMY's) leaves both off, and Discard keeps it.
+    #[test]
+    fn rules_revert_button_and_popup_share_one_predicate() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.working.as_mut().unwrap().stage_add_economy(3);
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        app.revert_rules_armed = true;
+        assert!(!app.rules_revert_live());
+        assert!(!app.popup_flags(false).discard_rules);
+        app.revert_rules_armed = false;
+
+        app.run_row_actions(vec![RowAction::AddRule]);
+        assert!(app.rules_revert_live());
+        app.revert_rules_armed = true;
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardRules)
+        );
+        app.dispatch_popup(&ctx, Popup::DiscardRules, 0);
+        let w = app.working.as_ref().unwrap();
+        assert!(!w.rules_edited());
+        assert!(w.economy_staged(), "the ECONOMY tab's staged op survives");
+        assert!(!app.rules_revert_live());
     }
 
     #[test]

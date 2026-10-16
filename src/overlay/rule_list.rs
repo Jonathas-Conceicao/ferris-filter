@@ -683,12 +683,14 @@ fn draw_row(
         painter.galley(pos, g, Color32::PLACEHOLDER);
     }
     if !is_expanded && !row.summary.is_empty() {
+        // The flags and arrows are centred across both lines, so the summary stops where they
+        // start, like the name (WR-06).
         let g = cut_galley(
             ui,
             &row.summary,
             regular(15.0),
             if dim { pal::DISABLED } else { pal::MUTED },
-            (inner.max.x - (index_right + 8.0)).max(40.0),
+            (used_left - 8.0 - (index_right + 8.0)).max(40.0),
         );
         cut |= g.elided;
         let pos = egui::pos2(index_right + 8.0, line2_y - g.size().y / 2.0);
@@ -1197,6 +1199,39 @@ Show
             cont.min.x - name.max.x >= 8.0 - 0.01,
             "gap {}",
             cont.min.x - name.max.x
+        );
+    }
+
+    /// WR-06: a long collapsed-row summary is cut before the flags and arrows, not painted under
+    /// them.
+    #[test]
+    fn long_summary_stops_before_the_flags() {
+        let src = "Show\n  Class \"Body Armours\" \"Helmets\"\n  AreaLevel >= 65\n  \
+                   ItemLevel >= 80\n  Quality >= 10\n  Sockets >= 2\n  DropLevel >= 50\n  \
+                   Rarity >= Rare\n  Corrupted False\n  Continue\n";
+        let wf = WorkingFilter::from_text(src);
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let mut found = None;
+        for _ in 0..3 {
+            let full = ctx.run_ui(input(vec![]), |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                show_list(&mut child, &wf, &visible, &mut list, true, None);
+            });
+            let texts = text_rects(full);
+            let cont = texts.iter().find(|(t, _)| t == "Continue").map(|(_, r)| *r);
+            let summary = texts
+                .iter()
+                .find(|(t, _)| t.starts_with("Class"))
+                .map(|(_, r)| *r);
+            found = cont.zip(summary);
+        }
+        let (cont, summary) = found.expect("Continue flag and summary painted");
+        assert!(
+            summary.max.x <= cont.min.x - 8.0 + 0.5,
+            "summary {summary:?} runs into the flags at {cont:?}"
         );
     }
 

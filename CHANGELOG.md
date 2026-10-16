@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a static Ferris line drawing; `--screenshot <png>` saves a frame and exits. Built on a new shared
   skin module (`src/skin/`) that the `ff` overlay can adopt later; `ff` itself is unchanged. The
   art and Fontin fonts in `assets/poe2/` come from the game via the new `tools/ff-art` dev tool
-  (own workspace, reads the install read-only, manifest in `assets/poe2/manifest.toml`). README
+  (reads the install read-only, manifest in `assets/poe2/manifest.toml`). README
   gains a credits section with the Grinding Gear Games disclaimer.
 - **Prototype round 2 (quick 261016-1de).** `ff-proto` tabs now sit like the game's (captions
   centred on the stone's flat top, even spacing, overlapping tails) and there are four: RULES /

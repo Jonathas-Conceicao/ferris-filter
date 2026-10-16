@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PoE2-style UI prototype (quick 261015-tz2).** `ff-proto` (new, not default-run) shows the
+  overlay in Path of Exile 2's own Options-window style on fake data: left-docked, 660pt wide, full
+  height, game header / tabs / frame / round checks / sliders / dropdowns / buttons / scrollbar over
+  a static Ferris line drawing; `--screenshot <png>` saves a frame and exits. Built on a new shared
+  skin module (`src/skin/`) that the `ff` overlay can adopt later; `ff` itself is unchanged. The
+  art and Fontin fonts in `assets/poe2/` come from the game via the new `tools/ff-art` dev tool
+  (own workspace, reads the install read-only, manifest in `assets/poe2/manifest.toml`). README
+  gains a credits section with the Grinding Gear Games disclaimer.
+
 ### Changed
 
 - **Simple Defences picks base types (quick 261015-nbp).** The card is one line of seven

@@ -2,7 +2,8 @@
 phase: 32-rule-dividers-economy-banner
 reviewed: 2026-10-16T00:00:00Z
 depth: standard
-files_reviewed: 24
+iteration: 2
+files_reviewed: 22
 files_reviewed_list:
   - src/cli.rs
   - src/dynamic.rs
@@ -27,97 +28,66 @@ files_reviewed_list:
   - tests/filter_roundtrip.rs
   - tests/filter_structure.rs
 findings:
-  critical: 2
-  warning: 4
-  info: 0
-  total: 6
+  critical: 0
+  warning: 2
+  info: 1
+  total: 3
 status: issues_found
 ---
 
-# Phase 32: Code Review Report
+# Phase 32: Code Review Report (iteration 2)
 
 **Reviewed:** 2026-10-16
 **Depth:** standard
-**Files Reviewed:** 24 (22 distinct paths listed; two of the 24 requested were unchanged or test-only)
+**Files Reviewed:** 22
 **Status:** issues_found
 
 ## Summary
 
-I checked these invariants by reading the code and tracing the call paths. I did not run cargo.
+I read `git diff b8f50f8..HEAD -- src tests` (5 fix commits) and traced each change against its finding. I did not run cargo. The fixer reports a green test run.
 
-- Banner parsing, `lead_start` fencing, `refresh`/`add`/`remove`, `insert_banner_at`, CRLF and unterminated-last-line handling all look sound.
-- `+ Add rule` lands above every divider, and `top_insertion_line` is correct.
-- A divider never splits a `# ff:group` run, because group detection requires blank-only gaps and the hop logic moves whole groups.
-- Collapsed state is stored only in `ff-settings.json` and never touches the filter or its dirty flag.
+All six iteration-1 findings are fixed. No fix regressed anything I could find. I found two new low-severity warnings and one info item, all in the settings and fold-state code. No data-loss or blocker issues remain.
 
-The invariant "nothing user-editable can move into or below the economy section" is broken for the divider operations. A user section that follows the economy section (a legal layout, since the economy section runs to the next banner) can lose its rules to the economy section, and Apply then deletes them.
+## Verification of iteration-1 findings
 
-## Critical Issues
-
-### CR-01: Removing the divider directly below the economy section silently turns its rules into economy rules (data loss on Apply)
-
-**File:** `src/filter/divider.rs:136-153` (`remove_section`); UI entry `src/overlay/rules.rs:1421-1435`, `src/overlay/rule_list.rs:662`
-**Issue:** `remove_section` only rejects the economy banner itself (`user_banner`). The economy section runs from its banner to the next banner. If a user section sits right after it (`economy banner, economy blocks, # ff:section After, user rules`), removing `After` deletes the banner that ends the economy section. The user rules then fall inside the economy span. They become read-only economy rows, and the next Apply regenerates that region from `prices.json` and discards them. The status text claims "Its rules joined the section above", which is not what happens. The x button is always shown for non-economy headers, and no test covers this layout. `tests/filter_structure.rs:420-445` only tests a user section before the economy section.
-**Fix:** In `remove_section`, refuse when the previous banner is the economy banner, and hide or disable the x in `draw_section_header`. Also set `SectionRow.can_remove`.
-```rust
-pub fn remove_section(&mut self, ordinal: usize) -> Result<(), EditError> {
-    let start = self.user_banner(ordinal)?;
-    let b = section::banners(self);
-    if ordinal > 0 && b[ordinal - 1].kind == BannerKind::Economy {
-        return Err(EditError::SectionLocked); // or a dedicated error
-    }
-    ...
-```
-Alternative: allow it, but only after the rules are moved out first (not recommended).
-
-### CR-02: Moving the divider below the economy section down puts user rules inside the economy section
-
-**File:** `src/filter/divider.rs:184-233` (`hop`), `:243-276` (`move_section`); `src/overlay/rules.rs:767-787` (`SectionRow.can_move_down`)
-**Issue:** For `up == false`, `hop` only rejects a nearest rule that is itself in the economy section. For a banner sitting right below the economy section, the nearest rule after it is a user rule (after the banner), so the hop is allowed. `move_section` then swaps the banner below that rule, which leaves the rule between the economy banner body and the divider, so it is now in the economy section. `section_can_move(k, false)` returns true, so the down arrow is enabled. The result is the same as CR-01: the rule becomes locked and is deleted by the next Apply. `rule_step`/the layout pass block the mirror case for rules (`below_economy`), but dividers have no equivalent guard.
-**Fix:** In `hop`, return `Ok(None)` when `!up` and the banner at `ordinal - 1` is the economy banner.
-```rust
-if !up && ordinal > 0 && banners[ordinal - 1].kind == BannerKind::Economy {
-    return Ok(None);
-}
-```
-Add a test with the layout `economy banner, blocks, user divider, rule` for `section_can_move(k, false)`, `move_section` and `remove_section`.
+| ID | Verdict | Evidence |
+|----|---------|----------|
+| CR-01 remove divider below economy | Fixed | `remove_section` returns `SectionLocked` when `follows_economy(ordinal)` (`divider.rs`). `section_can_remove` feeds `SectionRow.can_remove`, and the x button is not drawn when it is false (`rule_list.rs:662`). Tests: `divider.rs` unit test and `tests/filter_structure.rs::divider_below_economy_stays_put`. |
+| CR-02 move divider below economy down | Fixed | `hop` returns `Ok(None)` for `!up && follows_economy`, so `section_can_move` is false and `move_section` gives `NoNeighbour`. The ordinal used by `follows_economy` is the same one `user_banner` uses (`banners()[ordinal-1]`). The same tests cover it. The up direction was already blocked by the economy-neighbour check. |
+| WR-01 stale ordinal on batched rename | Fixed | `coalesce_edits` stable-partitions `RenameSection` to the front. Test `rename_runs_before_a_structural_action_in_the_same_batch`. |
+| WR-02 jump into a collapsed section | Fixed | `section_to_reveal` and `reveal_rule` are called on the status-line jump and after row actions. `pending_scroll` is `take()`n by each list draw, so a stale id cannot re-open a section the user later folds. |
+| WR-03 fold overwrites unusable settings | Fixed | `settings_unusable` is set at start and on Reload. `save_view_settings` skips the write while it is set. An explicit Config save clears it. See WR-05 for a side effect. |
+| WR-04 name-keyed fold state leaks | Fixed | `section_key` prefixes `ff:` and `user:` names with `user:`. The rename, remove and add paths now go through `section_state_after`, which drops or moves the flag. Duplicate-named sections still share one flag by design. |
 
 ## Warnings
 
-### WR-01: Section actions batched in one frame address banners by ordinal, so a pending rename can hit the wrong section
+### WR-05: Any `ff-settings.json` load warning now stops fold clicks from persisting, with no message
 
-**File:** `src/overlay/rule_list.rs:742-760`, `src/overlay/app.rs:2022-2030` and `:1390-1400`, `src/overlay/rules.rs:1421-1434`
-**Issue:** The rename commits on `lost_focus`, which also fires on the same frame as any click elsewhere. All actions of one frame go into one `Vec` and run in order. The toolbar actions (`AddSection`) are pushed before the list's actions. Rows drawn above the header are also pushed first (`AddSectionAbove`), as are `RemoveSection` clicks on earlier headers. So `[AddSection, RenameSection{ordinal: 1, ...}]` applies the add first. That shifts every ordinal, and the typed name lands on the new section (or on the wrong one), while the edited section keeps its old name. `carry_section_state` also computes the old name from the pre-action ordinals, so the saved collapsed state is copied from the wrong section. If the ordinal now points at the economy banner, the rename is refused with the economy-locked message.
-**Fix:** Apply the pending rename before any structural action in the same batch. For example, sort `RenameSection` to the front in `run_row_actions`/`coalesce_edits`, or commit the rename inside `draw_section_header` when any structural click happens. Alternatively, key renames by the banner's line text or position, not by ordinal.
+**File:** `src/overlay/app.rs:1107` (init), `:1829` (reload), `:1280-1284` (`store_settings`)
+**Issue:** `settings_unusable` is set from `settings_warning.is_some()`. `settings::load` also returns a warning for a still-valid JSON object, for example one wrong-typed key such as `reload_after_apply: "yes"`, or a malformed `collapsed_sections`. In that case unknown keys were salvaged, so a save would have been safe. Fold clicks are now kept in memory only, and they are lost on restart. The user sees nothing after the first status line is replaced. The 32-REVIEW-FIX note says a fold stays in memory, but no message tells the user. The behaviour only matches the intent for the "not a JSON object / unreadable" case.
+**Fix:** Distinguish the two cases. Either have `load` return a flag (or an enum) saying the file was entirely unusable, or set `settings_unusable` only when `load` took the `unusable(...)` branch. Also post a one-time `list_status` or `config_message` ("Fold state not saved: ff-settings.json could not be used") when a fold is skipped.
 
-### WR-02: A rule with a blocking grammar error inside a collapsed section cannot be reached from the status line
+### WR-06: `section_state_after` assumes every section action succeeds and addresses pre-batch ordinals
 
-**File:** `src/overlay/app.rs:2720-2727` (`jump_to`), `src/overlay/rule_list.rs:489-494`, `src/overlay/rules.rs` (`entries`)
-**Issue:** The status line's "click to jump" sets `list.expanded` and `pending_scroll` to the offending rule. If the rule lives in a collapsed section it is not in `entries`, so `show_list` drops the expansion and the scroll target without showing anything. Apply is blocked by that error, and the collapsed header gives no hint (no error badge). The same happens for a rule moved with the arrows into a neighbouring collapsed section: it vanishes. The jump should open the section.
-**Fix:** When handling `jump_to` (and a `Move` result), un-collapse the rule's section: look up `row.section`, find its `SectionRow`, and call `set_section_collapsed(name, false, false)`. Alternatively show an error or unknown-style marker on collapsed headers.
+**File:** `src/overlay/app.rs:557-610` (`section_state_after`), `:1484` (`run_row_actions`)
+**Issue:** The stored fold state is updated before `apply_row_actions` runs, and it is based on the pre-batch section list. Two consequences:
+1. A refused `RemoveSection` or `RenameSection` still drops or moves the stored flag. A folded section then re-opens although it still exists. The new `can_remove` guard makes this unlikely for removal, but the code does not depend on it.
+2. Two structural actions in one frame, for example `[RemoveSection(0), RemoveSection(1)]`, apply sequentially against shifted ordinals, but the state update uses the pre-batch ordinals for both. The flag that is dropped may belong to a different section than the one removed.
 
-### WR-03: Toggling a section silently overwrites an unusable `ff-settings.json`
-
-**File:** `src/overlay/app.rs:1177-1204` (`store_settings`, `set_section_collapsed`), `src/settings.rs:121-195` (`load`)
-**Issue:** When `ff-settings.json` exists but is invalid JSON (for example a trailing comma), `load` returns defaults with `reload_after_apply = off` and a warning, and the file is left alone. Before this phase the file was only rewritten by an explicit Config change. A fold or unfold click is a casual action, but it now calls `settings::save` with those fallback defaults. That discards the user's hand-edited file, including all unknown keys, and persists `reload_after_apply: false` and `filter: dynamic.filter`. This violates the stated "preserves unknown ff-settings keys" invariant for the unreadable-file case.
-**Fix:** Keep a `settings_unusable` flag from `load` (the warning string is already available). In `set_section_collapsed`, update only the in-memory value and skip the write when the file was unusable, or write only when the file is missing or valid. Show the existing warning.
-
-### WR-04: Collapsed state is keyed by section name only, so it leaks between sections
-
-**File:** `src/settings.rs:40-80`, `src/overlay/app.rs:1189-1230`
-**Issue:** Four problems follow from keying on the name:
-1. `copy_section_state` keeps the `from` entry after a rename and copies even when the rename is later refused. Stale `true` flags accumulate in `ff-settings.json`.
-2. A new section named "Section" (the default name) or any reused name inherits an old collapsed flag, so the spec rule "new sections start expanded" is violated. A section whose rules just moved in can start hidden.
-3. Duplicate-named sections (allowed) share one flag, so toggling one folds the other.
-4. A user section named exactly `ff:economy` shares the key with the economy section (`ECONOMY_SECTION_KEY`), so it toggles the economy state. `sanitize_name` does not prevent this.
-**Fix:** On `RemoveSection`/rename, delete the stale entry (`remove` the old key). On `AddSection`/`AddSectionAbove`, clear the stored flag for the new name. Reject or escape the reserved `ff:economy` key, for example by prefixing user keys (`user:<name>`).
+Both need several clicks in a single frame or a refused action, so the impact is cosmetic (a wrong fold state).
+**Fix:** Compute the state change from the result. Compare `working.sections()` before and after `apply_row_actions` and reconcile the stored flags against the section names that still exist. Or move `carry_section_state` after `apply_row_actions` and only act when the document changed.
 
 ## Info
 
-None.
+### IN-01: Doc comment of `apply_row_actions` is now attached to the wrong function
+
+**File:** `src/overlay/app.rs:555-559`
+**Issue:** The two fix commits inserted `section_state_after`, `save_view_settings` and `section_to_reveal` between the doc comment "Applies the frame's collected row actions once, after the list rendered..." and `apply_row_actions`. That comment is now glued to the `section_state_after` docs, and `apply_row_actions` has no doc comment.
+**Fix:** Move the three helper functions above that doc comment, or move the comment back onto `apply_row_actions`.
 
 ---
 
 _Reviewed: 2026-10-16_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+_Iteration: 2_

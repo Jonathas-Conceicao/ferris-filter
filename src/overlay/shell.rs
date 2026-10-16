@@ -552,6 +552,9 @@ pub(crate) struct PopupSpec {
 pub(crate) enum PopupData<'a> {
     ChangedOnDisk {
         files: &'a [String],
+        /// Whether Overwrite is live; the same decision as the bottom bar's slot (WR-03). When it
+        /// is not, the popup offers no Overwrite button.
+        overwrite: bool,
     },
     SwitchFilter {
         target: &'a str,
@@ -573,21 +576,36 @@ pub(crate) enum PopupData<'a> {
     },
 }
 
+/// The changed-on-disk popup's choice as the full-set index (0 Reload, 1 Overwrite, 2 Keep
+/// editing), from the index of the button clicked when Overwrite may have been left out.
+pub(crate) fn changed_on_disk_choice(overwrite: bool, clicked: usize) -> usize {
+    if overwrite || clicked == 0 {
+        clicked
+    } else {
+        clicked + 1
+    }
+}
+
 /// Title, body and buttons of a popup.
 pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
     let (title, body, buttons): (&str, String, Vec<SpecButton>) = match data {
-        PopupData::ChangedOnDisk { files } => (
-            "File changed on disk",
-            format!(
-                "{} changed since ff loaded it. Reload discards your edits. Overwrite replaces the file with them.",
-                files.join(", ")
-            ),
-            vec![
-                (RELOAD, false, Some(apply::RELOAD_TOOLTIP)),
-                (OVERWRITE, true, Some(apply::OVERWRITE_TOOLTIP)),
-                (KEEP_EDITING, false, None),
-            ],
-        ),
+        PopupData::ChangedOnDisk { files, overwrite } => {
+            let mut buttons = vec![(RELOAD, false, Some(apply::RELOAD_TOOLTIP))];
+            let body = if overwrite {
+                buttons.push((OVERWRITE, true, Some(apply::OVERWRITE_TOOLTIP)));
+                format!(
+                    "{} changed since ff loaded it. Reload discards your edits. Overwrite replaces the file with them.",
+                    files.join(", ")
+                )
+            } else {
+                format!(
+                    "{} changed since ff loaded it. Reload discards your edits.",
+                    files.join(", ")
+                )
+            };
+            buttons.push((KEEP_EDITING, false, None));
+            ("File changed on disk", body, buttons)
+        }
         PopupData::SwitchFilter { target } => (
             "Switch filter?",
             format!("Unapplied rule changes will be discarded. Switching to {target}."),
@@ -1026,9 +1044,28 @@ mod tests {
     }
 
     #[test]
+    fn changed_on_disk_popup_drops_a_disabled_overwrite() {
+        let files = vec!["styles.json".to_string()];
+        let s = popup_spec(PopupData::ChangedOnDisk {
+            files: &files,
+            overwrite: false,
+        });
+        assert_eq!(labels(&s), ["Reload", "Keep editing"]);
+        assert!(!s.body.contains("Overwrite"), "{}", s.body);
+        assert_eq!(changed_on_disk_choice(false, 0), 0);
+        assert_eq!(changed_on_disk_choice(false, 1), 2);
+        for i in 0..3 {
+            assert_eq!(changed_on_disk_choice(true, i), i);
+        }
+    }
+
+    #[test]
     fn popup_specs_match_the_contract() {
         let files = vec!["dynamic.filter".to_string(), "styles.json".to_string()];
-        let s = popup_spec(PopupData::ChangedOnDisk { files: &files });
+        let s = popup_spec(PopupData::ChangedOnDisk {
+            files: &files,
+            overwrite: true,
+        });
         assert_eq!(s.title, "File changed on disk");
         assert!(
             s.body
@@ -1109,7 +1146,14 @@ mod tests {
     fn the_last_button_is_the_safe_one_and_never_danger() {
         let files = vec!["x".to_string()];
         for data in [
-            PopupData::ChangedOnDisk { files: &files },
+            PopupData::ChangedOnDisk {
+                files: &files,
+                overwrite: true,
+            },
+            PopupData::ChangedOnDisk {
+                files: &files,
+                overwrite: false,
+            },
             PopupData::SwitchFilter { target: "t" },
             PopupData::Quit,
             PopupData::DeleteRule {

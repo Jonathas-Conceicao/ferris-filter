@@ -132,6 +132,10 @@ pub struct OverlayApp {
     /// RELOAD or a successful OVERWRITE clears it.
     changed_on_disk: Vec<DiskFile>,
 
+    /// Whether Overwrite is live this frame (the bar slot's decision), so the changed-on-disk
+    /// popup offers it exactly when the bar does (review WR-03).
+    overwrite_live: bool,
+
     /// The changed-on-disk popup is open. `changed_on_disk` stays non-empty until a reload or an
     /// overwrite, so "Keep editing" closes the popup through this flag alone; the bottom-bar
     /// Overwrite slot opens it again.
@@ -925,6 +929,7 @@ impl OverlayApp {
             filter,
             changed_on_disk: Vec::new(),
             changed_popup: false,
+            overwrite_live: false,
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
@@ -1307,6 +1312,38 @@ impl OverlayApp {
         self.economy.clear_message();
     }
 
+    /// Whether Overwrite is live: the filter's own decision, or a refusal only the config files
+    /// can resolve, which stays overwritable even when the filter part is not writable (WR-03).
+    fn overwrite_decision(&mut self) -> bool {
+        let state = self.filter_state();
+        let style_pending = self
+            .working
+            .as_mut()
+            .is_some_and(|w| w.style_rewrite_pending());
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
+        let changed = !self.changed_on_disk.is_empty();
+        let filter_overwrite = apply::footer_actions_combined(
+            self.root.is_ok(),
+            state,
+            changed,
+            rules_dirty || style_pending,
+            config_dirty,
+            blocking,
+        )
+        .overwrite;
+        apply::overwrite_enabled(
+            filter_overwrite,
+            self.root.is_ok(),
+            self.config.as_ref().is_ok_and(|c| c.validate().is_ok()),
+            state,
+            changed,
+            apply::combined_dirty(rules_dirty, style_pending, config_dirty),
+            blocking,
+        )
+    }
+
     /// Which popups want to be open this frame.
     fn popup_flags(&self, quit_requested: bool) -> shell::PopupFlags {
         shell::PopupFlags {
@@ -1330,7 +1367,10 @@ impl OverlayApp {
                 let path = self.filter.as_ref().ok().map_or(fallback, |l| l.path());
                 let files: Vec<String> =
                     self.changed_on_disk.iter().map(|f| f.label(path)).collect();
-                shell::popup_spec(PopupData::ChangedOnDisk { files: &files })
+                shell::popup_spec(PopupData::ChangedOnDisk {
+                    files: &files,
+                    overwrite: self.overwrite_live,
+                })
             }
             Popup::SwitchFilter => shell::popup_spec(PopupData::SwitchFilter {
                 target: self.pending_switch.as_deref().unwrap_or(""),
@@ -1417,6 +1457,7 @@ impl OverlayApp {
             }
             Popup::ChangedOnDisk => {
                 self.changed_popup = false;
+                let choice = shell::changed_on_disk_choice(self.overwrite_live, choice);
                 match (choice, on_config) {
                     (0, true) => self.handle_config_actions(ctx, vec![ConfigAction::Reload]),
                     (0, false) => self.reload_pressed(),
@@ -2211,7 +2252,7 @@ impl eframe::App for OverlayApp {
             .and_then(|w| w.blocking().first().cloned());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
         let changed = !self.changed_on_disk.is_empty();
-        let actions = apply::footer_actions_combined(
+        let mut actions = apply::footer_actions_combined(
             self.root.is_ok(),
             state,
             changed,
@@ -2219,6 +2260,9 @@ impl eframe::App for OverlayApp {
             config_dirty,
             blocking,
         );
+        // One Overwrite decision for the bar slot and the popup (WR-03).
+        actions.overwrite = self.overwrite_decision();
+        self.overwrite_live = actions.overwrite;
         let config_footer = ConfigFooterState {
             apply_enabled: apply::config_apply_enabled(
                 self.root.is_ok(),
@@ -2483,6 +2527,8 @@ impl eframe::App for OverlayApp {
         if self.config_ui.revert_armed && self.config.as_ref().map_or(0, |c| c.dirty_count()) == 0 {
             self.config_ui.revert_armed = false;
         }
+        // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
+        self.overwrite_live = self.overwrite_decision();
         if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
             let spec = self.popup_spec_for(popup);
             let buttons: Vec<crate::skin::popup::PopupButton> = spec
@@ -3907,6 +3953,7 @@ mod tests {
         let (mut app, ctx) = popup_app(RULES);
         app.changed_on_disk = vec![DiskFile::Filter];
         app.changed_popup = true;
+        app.overwrite_live = true;
         assert_eq!(
             active_popup(app.popup_flags(false)),
             Some(Popup::ChangedOnDisk)

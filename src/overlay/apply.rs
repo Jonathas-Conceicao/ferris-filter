@@ -445,6 +445,25 @@ pub fn config_apply_enabled(
         && (!has_filter || (blocking == 0 && state != FilterState::Damaged))
 }
 
+/// Whether OVERWRITE is live after a changed-on-disk refusal, for the bottom bar and the popup
+/// alike (review WR-03): the filter's own decision (`filter_overwrite`, i.e.
+/// `FooterActions::overwrite`), or -- for a refusal that only the config files can resolve, such as
+/// a filter that failed to load or an absent, clean one -- the CONFIG Apply decision with the
+/// changed-on-disk guard lifted, so a config-only refusal stays overwritable.
+pub fn overwrite_enabled(
+    filter_overwrite: bool,
+    root_ok: bool,
+    config_valid: bool,
+    state: FilterState,
+    needs_reload: bool,
+    dirty: bool,
+    blocking: usize,
+) -> bool {
+    needs_reload
+        && (filter_overwrite
+            || config_apply_enabled(root_ok, config_valid, state, false, dirty, blocking))
+}
+
 /// The indicator after one tab's REVERT: still out of date when the other tab holds edits.
 pub fn state_after_revert(applied_this_session: bool, other_dirty: bool) -> ApplyState {
     if other_dirty {
@@ -727,6 +746,64 @@ mod tests {
         assert!(!footer_actions(true, FilterState::Damaged, true, true, 0).overwrite);
         // Never offered outside a changed-on-disk refusal.
         assert!(!footer_actions(true, FilterState::HasSection, false, true, 0).overwrite);
+    }
+
+    #[test]
+    fn overwrite_covers_config_only_refusals() {
+        // The filter's own Overwrite stands.
+        assert!(overwrite_enabled(
+            true,
+            true,
+            true,
+            FilterState::HasSection,
+            true,
+            false,
+            0
+        ));
+        // A failed or absent-and-clean filter: a config edit is still overwritable.
+        for st in [FilterState::LoadFailed, FilterState::Absent] {
+            assert!(
+                overwrite_enabled(false, true, true, st, true, true, 0),
+                "{st:?}"
+            );
+            assert!(
+                !overwrite_enabled(false, true, true, st, true, false, 0),
+                "{st:?}"
+            );
+            assert!(
+                !overwrite_enabled(false, true, false, st, true, true, 0),
+                "{st:?}"
+            );
+        }
+        // Grammar errors or damaged markers still keep a filter write from happening.
+        assert!(!overwrite_enabled(
+            false,
+            true,
+            true,
+            FilterState::HasSection,
+            true,
+            true,
+            1
+        ));
+        assert!(!overwrite_enabled(
+            false,
+            true,
+            true,
+            FilterState::Damaged,
+            true,
+            true,
+            0
+        ));
+        // Never outside a refusal.
+        assert!(!overwrite_enabled(
+            true,
+            true,
+            true,
+            FilterState::HasSection,
+            false,
+            true,
+            0
+        ));
     }
 
     #[test]

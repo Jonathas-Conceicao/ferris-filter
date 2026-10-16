@@ -1923,8 +1923,10 @@ impl OverlayApp {
     ) {
         if let Some(working) = &self.working {
             let total = working.rows().len();
-            if rule_list::search_row(ui, skin, &mut self.query, actions.add_rule, total) {
-                row_actions.push(RowAction::AddRule);
+            match rule_list::search_row(ui, skin, &mut self.query, actions.add_rule, total) {
+                rule_list::ToolbarClick::AddRule => row_actions.push(RowAction::AddRule),
+                rule_list::ToolbarClick::AddSection => row_actions.push(RowAction::AddSection),
+                rule_list::ToolbarClick::None => {}
             }
             ui.add_space(8.0);
         }
@@ -1946,7 +1948,7 @@ impl OverlayApp {
         lui.set_clip_rect(list_rect.intersect(ui.clip_rect()));
         match (&mut self.working, &self.filter) {
             (Some(working), _) => {
-                let visible = working.matches(&self.query);
+                let visible = working.entries(&self.query, |_| false);
                 if working.rows().is_empty() {
                     centered_notice(&mut lui, "No rules yet");
                 } else if visible.is_empty() {
@@ -1962,6 +1964,7 @@ impl OverlayApp {
                         &mut self.list,
                         self.query.trim().is_empty(),
                         self.classes.as_ref().ok(),
+                        false,
                     );
                     row_actions.extend(frame.actions);
                 }
@@ -2863,7 +2866,7 @@ mod tests {
             working.rows().len() > 400,
             "fixture has a few hundred rules"
         );
-        let visible = working.matches("");
+        let visible = working.entries("", |_| false);
         let mut list = ListUi::default();
 
         let ctx = egui::Context::default();
@@ -2910,7 +2913,8 @@ mod tests {
                 );
                 cui.set_clip_rect(frame.content);
                 drawn =
-                    rule_list::show_list(&mut cui, &working, &visible, &mut list, true, None).drawn;
+                    rule_list::show_list(&mut cui, &working, &visible, &mut list, true, None, true)
+                        .drawn;
                 rects = super::bottom_bar(ui, &skin, frame.button_bar, &bar_state, &status).rects;
             })
             .drop_without_applying_deltas();

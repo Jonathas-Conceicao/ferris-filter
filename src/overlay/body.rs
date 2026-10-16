@@ -3261,12 +3261,14 @@ mod tests {
         list: &mut ListUi,
         classes: Option<&ClassCatalog>,
     ) -> Vec<RowAction> {
-        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let visible: Vec<crate::overlay::rules::ListEntry> = (0..wf.rows().len())
+            .map(crate::overlay::rules::ListEntry::Rule)
+            .collect();
         let mut actions = Vec::new();
         ctx.run_ui(raw, |ui| {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-            actions = show_list(&mut child, wf, &visible, list, true, classes).actions;
+            actions = show_list(&mut child, wf, &visible, list, true, classes, true).actions;
         })
         .drop_without_applying_deltas();
         actions
@@ -5780,13 +5782,15 @@ mod tests {
     }
 
     fn rendered_text(ctx: &egui::Context, wf: &WorkingFilter, list: &mut ListUi) -> String {
-        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let visible: Vec<crate::overlay::rules::ListEntry> = (0..wf.rows().len())
+            .map(crate::overlay::rules::ListEntry::Rule)
+            .collect();
         let cat = committed_catalog();
         let mut out = String::new();
         let full = ctx.run_ui(input(vec![]), |ui| {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-            show_list(&mut child, wf, &visible, list, true, Some(&cat));
+            show_list(&mut child, wf, &visible, list, true, Some(&cat), true);
         });
         for clipped in &full.shapes {
             if let egui::epaint::Shape::Text(t) = &clipped.shape {

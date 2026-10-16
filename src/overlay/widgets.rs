@@ -237,14 +237,35 @@ pub fn badge(ui: &mut egui::Ui, text: &str, tip: &str) -> egui::Response {
     inner.response.on_hover_text(tip)
 }
 
-/// Room kept to the right of a numeric slider for its exact-number field (44) and the gap (8).
+/// The exact-number field's minimum width: room for three digits at regular 15 (the edit sits
+/// 10 pt inside each side of the box).
 pub const NUMBER_FIELD_W: f32 = 44.0;
-const SLIDER_RESERVE: f32 = NUMBER_FIELD_W + 8.0;
+/// Gap between a slider and its exact-number field.
+const SLIDER_GAP: f32 = 8.0;
+/// Extra width per character beyond three (a regular-15 digit is about 8 pt wide).
+const NUMBER_CHAR_W: f32 = 9.0;
+
+/// Width of an exact-number field that shows `chars` characters in full: [`NUMBER_FIELD_W`] for up
+/// to three, growing by [`NUMBER_CHAR_W`] per extra character (WR-03: `BaseArmour 1500`,
+/// `StackSize 5000`).
+pub fn number_field_width(chars: usize) -> f32 {
+    NUMBER_FIELD_W + NUMBER_CHAR_W * chars.saturating_sub(3) as f32
+}
+
+/// Characters needed to print the widest of `values`.
+fn widest_chars(values: &[i64]) -> usize {
+    values
+        .iter()
+        .map(|v| v.to_string().len())
+        .max()
+        .unwrap_or(0)
+}
 
 /// The skin slider for a whole number. The value is never clamped on display (a hand-written
 /// out-of-range value must survive); it is written back only when the user moves the slider, and
 /// the numeric readout is left to [`number_field`]. Log ranges (`log`) slide over `ln(1 + v - min)`.
-/// The slider leaves [`NUMBER_FIELD_W`] plus a gap free at the right end of the available width.
+/// The slider leaves the exact-number field (wide enough for the range ends and the current value,
+/// see [`number_field_width`]) plus a gap free at the right end of the available width.
 /// Callers write only when `.changed()`.
 pub fn themed_slider(
     ui: &mut egui::Ui,
@@ -254,7 +275,8 @@ pub fn themed_slider(
     log: bool,
 ) -> egui::Response {
     let skin = crate::skin::of(ui.ctx());
-    let width = (ui.available_width() - SLIDER_RESERVE).max(120.0);
+    let reserve = number_field_width(widest_chars(&[min, max, *value])) + SLIDER_GAP;
+    let width = (ui.available_width() - reserve).max(120.0);
     let shown = (*value).clamp(min, max.max(min));
     let (mut x, range, step) = if log {
         (
@@ -305,7 +327,8 @@ pub struct NumberField {
 
 /// An exact whole-number entry. The text lives in a draft kept in egui temp memory; it commits to
 /// `*value` only when it parses as `i64` and differs, and resyncs from `*value` whenever the field
-/// is not focused. The caller shows the `Enter a whole number` hint when `invalid`.
+/// is not focused. The caller shows the `Enter a whole number` hint when `invalid`. The field is
+/// `width` wide, or wider when the value or draft needs more than three characters.
 pub fn number_field(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
@@ -321,6 +344,8 @@ pub fn number_field(
         draft = value.to_string();
     }
 
+    let chars = widest_chars(&[*value]).max(draft.chars().count());
+    let width = width.max(number_field_width(chars));
     let mut response = crate::skin::widgets::ff_text_field_id(ui, id, &mut draft, "", width);
     let mut invalid = false;
     if response.changed() {
@@ -1033,6 +1058,30 @@ mod tests {
             ctx.memory(|m| m.has_focus(id)),
             "the field keeps its salted id for focus"
         );
+    }
+
+    #[test]
+    fn number_field_grows_for_four_digits_and_the_slider_leaves_room() {
+        assert_eq!(number_field_width(3), NUMBER_FIELD_W);
+        assert!(
+            number_field_width(4) >= 52.0,
+            "four digits need ~32 pt plus 20"
+        );
+        assert!(number_field_width(5) > number_field_width(4));
+        let ctx = headless_ctx();
+        let (mut slider, mut field) = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        let mut v = 1500_i64;
+        ctx.run_ui(RawInput::default(), |ui| {
+            ui.set_max_width(360.0);
+            ui.horizontal(|ui| {
+                slider = themed_slider(ui, &mut v, 0, 1000, true).rect;
+                field = number_field(ui, "n", &mut v, NUMBER_FIELD_W).response.rect;
+            });
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(field.width() + 20.0, number_field_width(4));
+        assert!(field.min.x >= slider.max.x, "{slider:?} {field:?}");
+        assert!(field.max.x <= 360.0 + 1.0, "{field:?}");
     }
 
     /// Focus the number field (click), then type `text`; returns (value, invalid, changed-on-type).

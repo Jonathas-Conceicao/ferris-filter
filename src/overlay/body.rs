@@ -2500,22 +2500,30 @@ pub(crate) fn font_hint(size: i64) -> Option<&'static str> {
 // A Custom rule's STYLE section draws the same lines as the CONFIG style editor
 // (`style_lines::show`), over the rule's own action lines, losslessly:
 //
-// * Binding. Each style line (Text, Border, Background, Font size, Minimap, Beam, Sound, Drop
-//   sound) is bound to the FIRST action line in file order that it can represent exactly:
-//   `SetTextColor` / `SetBorderColor` / `SetBackgroundColor` decoding as a colour; `SetFontSize`
-//   within 1-45; `MinimapIcon` with size 0-2 and a known colour and shape; `PlayEffect` with a
-//   known colour; for Sound, the first of `PlayAlertSound` 1-16 or `CustomAlertSound` (volume
-//   absent or 0-300); `DisableDropSound` (bare, `True` or `False`, the last reading as off).
-// * Leftovers. Every other action line (`PlayAlertSoundPositional`, `CustomAlertSoundOptional`,
-//   `EnableDropSound`, `MinimapIcon -1`, `PlayEffect None`, named sounds, raw values, and every
-//   later line of an already bound slot) is kept as written and shown under the lines as the
-//   usual action card (or a read-only raw row).
+// * Binding. A later action line of the same kind overrides an earlier one in game, so each style
+//   line is bound to the LAST action line of its keyword family, the one the game uses: one
+//   family per colour keyword (`SetTextColor`, `SetBorderColor`, `SetBackgroundColor`),
+//   `SetFontSize`, `MinimapIcon`, `PlayEffect`, Sound (`PlayAlertSound`,
+//   `PlayAlertSoundPositional`, `CustomAlertSound`, `CustomAlertSoundOptional`: one alert sound
+//   per item) and Drop sound (`DisableDropSound`, `EnableDropSound`).
+// * Exact or not. The bound line is shown exactly when the editor can represent it: a decoded
+//   colour; a font size within 1-45; `MinimapIcon` with size 0-2 and a known colour and shape;
+//   `PlayEffect` with a known colour; `PlayAlertSound` 1-16 or `CustomAlertSound` with a volume
+//   absent or within 0-300; `DisableDropSound`. Otherwise the line shows the nearest honest
+//   state (None for `MinimapIcon -1`, `PlayEffect None` or a named sound; a font size or volume
+//   clamped into the slider's range; a positional or optional sound as its plain kind;
+//   `EnableDropSound` as the drop sound check unticked) and is ALSO listed as a leftover row, so
+//   its exact text stays visible. Both places edit the same line.
+// * Leftovers. Every other action line (`DisableDropSoundIfAlertSound`, and every earlier line of
+//   a family, which the game overrides) is kept as written and shown under the lines as the usual
+//   action card (or a read-only raw row).
 // * Edits. An intent rewrites only its bound line (`EditLine` with the line's text as `expect`),
-//   inserts one line after the last action line when the slot is absent, or removes the bound
-//   line when it is cleared. A 3-value colour stays 3-value while its alpha is 255; a volume the
-//   line did not write is only written when it is changed; a sound kind switch rewrites the
-//   bound line in place. Rendering with no input emits nothing, so an untouched rule is byte-
-//   identical on Apply.
+//   inserts one line after the last action line only when the family has no line at all (so a
+//   family never gets a second line), or removes the bound line when it is cleared (an earlier
+//   line of the family then shows through, as it would in game). A 3-value colour stays 3-value
+//   while its alpha is 255; a volume the line did not write is only written when it is changed;
+//   a sound kind switch rewrites the keyword in place and keeps a trailing comment. Rendering
+//   with no input emits nothing, so an untouched rule is byte-identical on Apply.
 
 /// The action line each style line edits (`None` = the slot is absent).
 #[derive(Debug, Clone, PartialEq)]
@@ -2531,8 +2539,11 @@ pub(crate) struct StyleBinding {
     pub drop: Option<BodyEntry>,
     /// The bound sound line's written volume (`None` when the line has none).
     pub sound_volume: Option<i64>,
-    /// The volume the Volume line shows (the written one, or the game default for the kind).
+    /// The volume the Volume line shows (the written one clamped to 0-300, or the game default
+    /// for the kind).
     pub sound_shown: u16,
+    /// Bound lines the editor cannot show exactly (also listed as leftover rows).
+    pub inexact: Vec<usize>,
 }
 
 impl StyleBinding {
@@ -2556,6 +2567,11 @@ impl StyleBinding {
             .any(|s| s.as_ref().is_some_and(|e| e.line == line))
     }
 
+    /// Whether document line `line` is bound and shown exactly by its style line.
+    fn shows_exactly(&self, line: usize) -> bool {
+        self.binds(line) && !self.inexact.contains(&line)
+    }
+
     fn colour(&self, slot: ColourSlot) -> &Option<BodyEntry> {
         match slot {
             ColourSlot::Text => &self.text,
@@ -2573,7 +2589,47 @@ fn volume_ok(volume: Option<i64>) -> bool {
     volume.is_none_or(|v| (grammar::VOLUME_RANGE.0..=grammar::VOLUME_RANGE.1).contains(&v))
 }
 
-/// The style view of a rule's action lines and the line each style line is bound to.
+/// A written volume clamped into the Volume slider's range.
+fn volume_shown(volume: i64) -> u16 {
+    volume.clamp(grammar::VOLUME_RANGE.0, grammar::VOLUME_RANGE.1) as u16
+}
+
+/// The style line (slot) whose keyword family `name` belongs to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Family {
+    Colour(ColourSlot),
+    Font,
+    Minimap,
+    Beam,
+    Sound,
+    Drop,
+}
+
+fn family_of(name: &str) -> Option<Family> {
+    Some(match name {
+        "SetTextColor" => Family::Colour(ColourSlot::Text),
+        "SetBorderColor" => Family::Colour(ColourSlot::Border),
+        "SetBackgroundColor" => Family::Colour(ColourSlot::Background),
+        "SetFontSize" => Family::Font,
+        "MinimapIcon" => Family::Minimap,
+        "PlayEffect" => Family::Beam,
+        "PlayAlertSound"
+        | "PlayAlertSoundPositional"
+        | "CustomAlertSound"
+        | "CustomAlertSoundOptional" => Family::Sound,
+        "DisableDropSound" | "EnableDropSound" => Family::Drop,
+        _ => return None,
+    })
+}
+
+fn decoded(e: &BodyEntry) -> Option<(&'static str, Value)> {
+    let kw = e.keyword?;
+    let tokens: Vec<&str> = e.values.iter().map(String::as_str).collect();
+    Some((kw.name, grammar::decode(kw, &tokens)))
+}
+
+/// The style view of a rule's action lines and the line each style line is bound to (the last
+/// line of its family, see the binding rule above).
 pub(crate) fn rule_style_view(
     entries: &[BodyEntry],
     keyword: BlockKeyword,
@@ -2607,107 +2663,149 @@ pub(crate) fn rule_style_view(
         drop: None,
         sound_volume: None,
         sound_shown: ALERT_DEFAULT_VOLUME,
+        inexact: Vec::new(),
     };
+    // The last line of each family wins.
     for e in entries.iter().filter(|e| e.kind == EntryKind::Action) {
-        let Some(kw) = e.keyword else {
+        let Some(family) = e.keyword.and_then(|k| family_of(k.name)) else {
             continue;
         };
-        let tokens: Vec<&str> = e.values.iter().map(String::as_str).collect();
-        match (kw.name, grammar::decode(kw, &tokens)) {
-            (name, Value::Rgba { rgba, had_alpha }) => {
-                let (slot, shown) = match name {
-                    "SetTextColor" => (&mut b.text, &mut view.text),
-                    "SetBorderColor" => (&mut b.border, &mut view.border),
-                    "SetBackgroundColor" => (&mut b.background, &mut view.background),
-                    _ => continue,
-                };
-                if slot.is_none() {
-                    *slot = Some(e.clone());
+        let slot = match family {
+            Family::Colour(ColourSlot::Text) => &mut b.text,
+            Family::Colour(ColourSlot::Border) => &mut b.border,
+            Family::Colour(ColourSlot::Background) => &mut b.background,
+            Family::Font => &mut b.font,
+            Family::Minimap => &mut b.minimap,
+            Family::Beam => &mut b.beam,
+            Family::Sound => &mut b.sound,
+            Family::Drop => &mut b.drop,
+        };
+        *slot = Some(e.clone());
+    }
+    let mut inexact = Vec::new();
+    for (slot, shown) in [
+        (&b.text, &mut view.text),
+        (&b.border, &mut view.border),
+        (&b.background, &mut view.background),
+    ] {
+        if let Some(e) = slot {
+            match decoded(e) {
+                Some((_, Value::Rgba { rgba, had_alpha })) => {
                     *shown = Some(Rgba { rgba, had_alpha });
                 }
+                _ => inexact.push(e.line),
             }
-            ("SetFontSize", Value::FontSize(n))
-                if b.font.is_none()
-                    && (grammar::FONT_SIZE_RANGE.0..=grammar::FONT_SIZE_RANGE.1).contains(&n) =>
-            {
-                b.font = Some(e.clone());
-                view.font = Some(n);
+        }
+    }
+    if let Some(e) = &b.font {
+        let (lo, hi) = grammar::FONT_SIZE_RANGE;
+        match decoded(e) {
+            Some((_, Value::FontSize(n))) => {
+                view.font = Some(n.clamp(lo, hi));
+                if !(lo..=hi).contains(&n) {
+                    inexact.push(e.line);
+                }
             }
-            (
-                "MinimapIcon",
+            _ => inexact.push(e.line),
+        }
+    }
+    if let Some(e) = &b.minimap {
+        let shown = match decoded(e) {
+            Some((
+                _,
                 Value::Minimap(Minimap::Icon {
                     size,
                     colour,
                     shape,
                 }),
-            ) if b.minimap.is_none() => {
-                if let (Ok(size @ 0..=2), Some(color), Some(shape)) = (
-                    u8::try_from(size),
-                    FilterColor::from_name(&colour),
-                    MinimapShape::from_name(&shape),
-                ) {
-                    b.minimap = Some(e.clone());
-                    view.minimap = Some(mc::Minimap { size, color, shape });
+            )) => match (
+                u8::try_from(size),
+                FilterColor::from_name(&colour),
+                MinimapShape::from_name(&shape),
+            ) {
+                (Ok(size @ 0..=2), Some(color), Some(shape)) => {
+                    Some(mc::Minimap { size, color, shape })
                 }
+                _ => None,
+            },
+            _ => None,
+        };
+        if shown.is_none() {
+            inexact.push(e.line);
+        }
+        view.minimap = shown;
+    }
+    if let Some(e) = &b.beam {
+        let shown = match decoded(e) {
+            Some((_, Value::Effect(Effect::Colour { colour, temp }))) => {
+                FilterColor::from_name(&colour).map(|color| Beam { color, temp })
             }
-            ("PlayEffect", Value::Effect(Effect::Colour { colour, temp })) if b.beam.is_none() => {
-                if let Some(color) = FilterColor::from_name(&colour) {
-                    b.beam = Some(e.clone());
-                    view.beam = Some(Beam { color, temp });
-                }
-            }
-            (
-                "PlayAlertSound",
+            _ => None,
+        };
+        if shown.is_none() {
+            inexact.push(e.line);
+        }
+        view.beam = shown;
+    }
+    if let Some(e) = &b.sound {
+        let (sound, volume, exact) = match decoded(e) {
+            Some((
+                name,
                 Value::Sound {
                     id: SoundRef::Id(k),
                     volume,
                 },
-            ) if b.sound.is_none() && volume_ok(volume) => {
-                if let Ok(k @ 1..=16) = u8::try_from(k) {
-                    let vol = volume.map_or(ALERT_DEFAULT_VOLUME, |v| v as u16);
-                    b.sound = Some(e.clone());
-                    b.sound_volume = volume;
-                    b.sound_shown = vol;
-                    view.sound = Some(Sound {
-                        id: Some(k),
-                        custom: None,
-                        vol,
-                    });
-                    view.sound_volume_written = volume.is_some();
-                }
-            }
-            ("CustomAlertSound", Value::CustomSound { file, volume })
-                if b.sound.is_none() && volume_ok(volume) =>
-            {
-                let vol = volume.map_or(CUSTOM_DEFAULT_VOLUME, |v| v as u16);
-                b.sound = Some(e.clone());
-                b.sound_volume = volume;
-                b.sound_shown = vol;
-                view.sound = Some(Sound {
-                    id: None,
-                    custom: Some(file),
-                    vol,
-                });
-                view.sound_volume_written = volume.is_some();
-            }
-            ("DisableDropSound", Value::OptionalBool(on)) if b.drop.is_none() => {
-                b.drop = Some(e.clone());
-                view.disable_drop_sound = on != Some(false);
-            }
-            _ => {}
+            )) => match u8::try_from(k) {
+                Ok(k @ 1..=16) => (
+                    Some((Some(k), None, ALERT_DEFAULT_VOLUME)),
+                    volume,
+                    name == "PlayAlertSound" && volume_ok(volume),
+                ),
+                _ => (None, volume, false),
+            },
+            Some((name, Value::CustomSound { file, volume })) => (
+                Some((None, Some(file), CUSTOM_DEFAULT_VOLUME)),
+                volume,
+                name == "CustomAlertSound" && volume_ok(volume),
+            ),
+            _ => (None, None, false),
+        };
+        if let Some((id, custom, default)) = sound {
+            let vol = volume.map_or(default, volume_shown);
+            b.sound_volume = volume;
+            b.sound_shown = vol;
+            view.sound = Some(Sound { id, custom, vol });
+            view.sound_volume_written = volume.is_some();
+        }
+        if !exact {
+            inexact.push(e.line);
         }
     }
+    if let Some(e) = &b.drop {
+        match decoded(e) {
+            Some(("DisableDropSound", Value::OptionalBool(on))) => {
+                view.disable_drop_sound = on != Some(false);
+            }
+            Some(("EnableDropSound", Value::OptionalBool(on))) => {
+                view.disable_drop_sound = on == Some(false);
+                inexact.push(e.line);
+            }
+            _ => inexact.push(e.line),
+        }
+    }
+    b.inexact = inexact;
     (view, b)
 }
 
-/// The action lines no style line is bound to, in file order.
+/// The action lines no style line shows exactly, in file order: the earlier lines of a family,
+/// the actions outside every family, and a bound line the editor cannot show exactly.
 pub(crate) fn style_leftovers<'a>(
     entries: &'a [BodyEntry],
     binding: &StyleBinding,
 ) -> Vec<&'a BodyEntry> {
     entries
         .iter()
-        .filter(|e| e.kind == EntryKind::Action && !binding.binds(e.line))
+        .filter(|e| e.kind == EntryKind::Action && !binding.shows_exactly(e.line))
         .collect()
 }
 
@@ -2806,12 +2904,38 @@ pub(crate) fn rule_intent_actions(
             (None, None) => None,
         }),
         StyleIntent::Sound(s) => one(sound_intent(id, binding, s)),
-        StyleIntent::DisableDropSound(on) => one(match (&binding.drop, on) {
-            (Some(e), true) => optional_bool_edit(id, e, true),
-            (Some(e), false) => optional_bool_on(e).then(|| remove(id, e)),
-            (None, true) => Some(add_action(id, "DisableDropSound".to_string())),
-            (None, false) => None,
-        }),
+        StyleIntent::DisableDropSound(on) => one(drop_sound_intent(id, binding, on)),
+    }
+}
+
+/// The drop sound check: ticked silences the drop sound. The bound line is the last
+/// `DisableDropSound` / `EnableDropSound` line; an `EnableDropSound` line is rewritten in place
+/// rather than followed by a contradicting `DisableDropSound`.
+fn drop_sound_intent(id: BlockId, binding: &StyleBinding, on: bool) -> Option<RowAction> {
+    let Some(e) = &binding.drop else {
+        return on.then(|| add_action(id, "DisableDropSound".to_string()));
+    };
+    let decoded = decoded(e);
+    match (decoded, on) {
+        (Some(("DisableDropSound", Value::OptionalBool(_))), true) => {
+            optional_bool_edit(id, e, true)
+        }
+        (Some(("DisableDropSound", Value::OptionalBool(_))), false) => {
+            optional_bool_on(e).then(|| remove(id, e))
+        }
+        // `EnableDropSound False` silences it too: ticking it again keeps the line as written.
+        (Some(("EnableDropSound", Value::OptionalBool(_))), true) => optional_bool_on(e)
+            .then(|| edit(id, e, LinePatch::Content("DisableDropSound".to_string()))),
+        (Some(("EnableDropSound", Value::OptionalBool(_))), false) => {
+            optional_bool_edit(id, e, true)
+        }
+        // A line that does not decode reads as unticked; ticking rewrites it.
+        (_, true) => Some(edit(
+            id,
+            e,
+            LinePatch::Content("DisableDropSound".to_string()),
+        )),
+        (_, false) => None,
     }
 }
 
@@ -2831,23 +2955,32 @@ fn sound_intent(id: BlockId, binding: &StyleBinding, sound: Option<Sound>) -> Op
         };
         return Some(add_action(id, text));
     };
-    // A volume the line does not write is written only once it is changed.
-    let volume = (binding.sound_volume.is_some() || s.vol != binding.sound_shown)
-        .then_some(i64::from(s.vol));
-    let bound_custom = e.keyword.is_some_and(|k| k.name == "CustomAlertSound");
+    // A volume is written only once it is changed: a line without one keeps none, and a volume
+    // the slider shows clamped (outside 0-300) is kept as written until the slider moves.
+    let volume = if s.vol != binding.sound_shown {
+        Some(i64::from(s.vol))
+    } else {
+        binding.sound_volume
+    };
+    // `PlayAlertSoundPositional` / `CustomAlertSoundOptional` keep their keyword while the kind
+    // stays the same.
+    let bound_custom = e
+        .keyword
+        .is_some_and(|k| k.name.starts_with("CustomAlertSound"));
     match (bound_custom, file) {
         (false, None) => sound_edit(id, e, SoundRef::Id(alert), volume),
         (true, Some(f)) => custom_sound_edit(id, e, f, volume).ok().flatten(),
-        // A kind switch rewrites the bound line in place.
+        // A kind switch rewrites the bound line's keyword and values in place, keeping a
+        // trailing comment.
         (false, Some(f)) => Some(edit(
             id,
             e,
-            LinePatch::Whole(format!("CustomAlertSound \"{f}\"{}", volume_suffix(volume))),
+            LinePatch::Content(format!("CustomAlertSound \"{f}\"{}", volume_suffix(volume))),
         )),
         (true, None) => Some(edit(
             id,
             e,
-            LinePatch::Whole(format!("PlayAlertSound {alert}{}", volume_suffix(volume))),
+            LinePatch::Content(format!("PlayAlertSound {alert}{}", volume_suffix(volume))),
         )),
     }
 }
@@ -6409,7 +6542,7 @@ mod tests {
     const LEFTOVERS: &str = "Show\n    SetFontSize 30\n    PlayAlertSoundPositional 3 100\n    CustomAlertSoundOptional \"x.mp3\"\n    EnableDropSound\n    PlayEffect None\n    PlayAlertSound ShAlchemy\n    MinimapIcon -1\n    FutureKw 3\n    SetFontSize 40\n";
 
     #[test]
-    fn rule_style_view_binds_the_first_representable_line_per_slot() {
+    fn rule_style_view_binds_the_last_line_of_each_family() {
         let src = "Hide\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6 7\n    SetBackgroundColor 9 9 9 128\n    PlayAlertSoundPositional 2 50\n    PlayAlertSound 5\n    CustomAlertSound \"a.mp3\" 80\n    MinimapIcon -1\n    MinimapIcon 2 Blue Star\n    PlayEffect None\n    PlayEffect Green Temp\n    DisableDropSound False\n    SetFontSize 60\n";
         let (_, _, e) = entries_of(src);
         let (view, b) = rule_style_view(&e, BlockKeyword::Hide);
@@ -6418,8 +6551,8 @@ mod tests {
         assert_eq!(
             view.text,
             Some(Rgba {
-                rgba: [1, 2, 3, 255],
-                had_alpha: false
+                rgba: [4, 5, 6, 7],
+                had_alpha: true
             })
         );
         assert_eq!(view.border, None);
@@ -6430,7 +6563,7 @@ mod tests {
                 had_alpha: true
             })
         );
-        assert_eq!(view.font, None, "60 is outside 1-45");
+        assert_eq!(view.font, Some(45), "60 shows clamped into 1-45");
         assert_eq!(
             view.minimap,
             Some(mc::Minimap {
@@ -6449,12 +6582,13 @@ mod tests {
         assert_eq!(
             view.sound,
             Some(Sound {
-                id: Some(5),
-                custom: None,
-                vol: 50
-            })
+                id: None,
+                custom: Some("a.mp3".to_string()),
+                vol: 80
+            }),
+            "one sound family: the last of the four keywords"
         );
-        assert!(!view.sound_volume_written);
+        assert!(view.sound_volume_written);
         assert!(!view.disable_drop_sound, "False reads as off");
         assert!(b.drop.is_some(), "but it binds");
         assert_eq!(
@@ -6463,13 +6597,140 @@ mod tests {
                 .map(|e| e.text.trim())
                 .collect::<Vec<_>>(),
             [
-                "SetTextColor 4 5 6 7",
+                "SetTextColor 1 2 3",
                 "PlayAlertSoundPositional 2 50",
-                "CustomAlertSound \"a.mp3\" 80",
+                "PlayAlertSound 5",
                 "MinimapIcon -1",
                 "PlayEffect None",
                 "SetFontSize 60",
-            ]
+            ],
+            "earlier lines of a family, and the clamped font line it binds"
+        );
+    }
+
+    #[test]
+    fn an_unrepresentable_last_line_shows_its_nearest_state_and_stays_listed() {
+        let src = "Show\n    MinimapIcon 1 Blue Star\n    MinimapIcon -1\n    PlayEffect Red\n    PlayEffect None\n    PlayAlertSound 3\n    PlayAlertSound ShAlchemy\n    DisableDropSound\n    EnableDropSound\n    SetFontSize 30\n    SetFontSize 0\n";
+        let (_, _, e) = entries_of(src);
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(view.minimap, None, "the game hides the icon");
+        assert_eq!(view.beam, None);
+        assert_eq!(view.sound, None, "a named sound has no dropdown entry");
+        assert!(!view.disable_drop_sound, "EnableDropSound wins");
+        assert_eq!(view.font, Some(1));
+        for (slot, line) in [
+            (&b.minimap, "MinimapIcon -1"),
+            (&b.beam, "PlayEffect None"),
+            (&b.sound, "PlayAlertSound ShAlchemy"),
+            (&b.drop, "EnableDropSound"),
+            (&b.font, "SetFontSize 0"),
+        ] {
+            assert_eq!(slot.as_ref().map(|e| e.text.trim()), Some(line));
+        }
+        // Every action line is listed: the earlier ones, and the bound ones it cannot show.
+        assert_eq!(style_leftovers(&e, &b).len(), 10);
+        // Positional and optional sounds show as their plain kind and are listed too.
+        let (_, _, e) = entries_of("Show\n    PlayAlertSoundPositional 4 120\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(
+            view.sound,
+            Some(Sound {
+                id: Some(4),
+                custom: None,
+                vol: 120
+            })
+        );
+        assert_eq!(style_leftovers(&e, &b).len(), 1);
+        let (_, _, e) = entries_of("Show\n    CustomAlertSoundOptional \"x.mp3\"\n");
+        let (view, _) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(
+            view.sound,
+            Some(Sound {
+                id: None,
+                custom: Some("x.mp3".to_string()),
+                vol: 100
+            })
+        );
+        assert!(!view.sound_volume_written);
+    }
+
+    #[test]
+    fn an_edit_rewrites_the_last_line_and_never_adds_a_second_one() {
+        let pick = mc::Minimap {
+            size: 0,
+            color: FilterColor::White,
+            shape: MinimapShape::Circle,
+        };
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n    MinimapIcon -1\n",
+                StyleIntent::Minimap(Some(pick.clone()))
+            ),
+            "Show\n    Rarity Rare\n    MinimapIcon 0 White Circle\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    MinimapIcon -1 # hidden\n    SetFontSize 30\n",
+                StyleIntent::Minimap(Some(pick))
+            ),
+            "Show\n    MinimapIcon 0 White Circle # hidden\n    SetFontSize 30\n"
+        );
+        let two_fonts = "Show\n    SetFontSize 30\n    SetFontSize 40\n";
+        let (_, _, e) = entries_of(two_fonts);
+        assert_eq!(rule_style_view(&e, BlockKeyword::Show).0.font, Some(40));
+        assert_eq!(
+            intent_text(two_fonts, StyleIntent::Font(Some(35))),
+            "Show\n    SetFontSize 30\n    SetFontSize 35\n"
+        );
+        assert_eq!(
+            intent_text(two_fonts, StyleIntent::Font(None)),
+            "Show\n    SetFontSize 30\n",
+            "clearing removes the effective line; the earlier one then shows through"
+        );
+        let two_colours = "Show\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6\n";
+        assert_eq!(
+            intent_text(
+                two_colours,
+                colour(ColourSlot::Text, Some([7, 8, 9, 255]), false)
+            ),
+            "Show\n    SetTextColor 1 2 3\n    SetTextColor 7 8 9\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayEffect None\n",
+                StyleIntent::Beam(Some(Beam {
+                    color: FilterColor::Red,
+                    temp: false
+                }))
+            ),
+            "Show\n    PlayEffect Red\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    SetFontSize 50\n", StyleIntent::Font(Some(44))),
+            "Show\n    SetFontSize 44\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound ShAlchemy\n",
+                StyleIntent::Sound(Some(Sound {
+                    id: Some(2),
+                    custom: None,
+                    vol: 100
+                }))
+            ),
+            "Show\n    PlayAlertSound 2 100\n"
+        );
+        // A different sound keyword is the same family: no second alert sound.
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSoundOptional \"x.mp3\"\n",
+                StyleIntent::Sound(Some(Sound {
+                    id: Some(2),
+                    custom: None,
+                    vol: 100
+                }))
+            ),
+            "Show\n    PlayAlertSound 2\n"
         );
     }
 
@@ -6503,7 +6764,7 @@ mod tests {
             "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n    MinimapIcon 0 Red Circle\n";
         assert_eq!(
             intent_text(src, StyleIntent::Minimap(None)),
-            "Show\n    MinimapIcon -1\n    MinimapIcon 0 Red Circle\n"
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n"
         );
         let pink = mc::Minimap {
             size: 1,
@@ -6512,11 +6773,11 @@ mod tests {
         };
         assert_eq!(
             intent_text(src, StyleIntent::Minimap(Some(pink))),
-            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Pink Star\n    MinimapIcon 0 Red Circle\n"
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n    MinimapIcon 1 Pink Star\n"
         );
         assert_eq!(
             leftover_texts(src),
-            ["MinimapIcon -1", "MinimapIcon 0 Red Circle"]
+            ["MinimapIcon -1", "MinimapIcon 1 Blue Star"]
         );
         let small = mc::Minimap {
             size: 2,
@@ -6534,25 +6795,42 @@ mod tests {
         assert_eq!(
             leftover_texts(LEFTOVERS),
             [
+                "SetFontSize 30",
                 "PlayAlertSoundPositional 3 100",
                 "CustomAlertSoundOptional \"x.mp3\"",
                 "EnableDropSound",
                 "PlayEffect None",
                 "PlayAlertSound ShAlchemy",
                 "MinimapIcon -1",
-                "SetFontSize 40",
             ]
         );
         assert_eq!(
             intent_text(LEFTOVERS, StyleIntent::Font(Some(35))),
-            LEFTOVERS.replacen("SetFontSize 30", "SetFontSize 35", 1)
+            LEFTOVERS.replacen("SetFontSize 40", "SetFontSize 35", 1)
         );
-        let added = intent_text(LEFTOVERS, StyleIntent::DisableDropSound(true));
-        assert!(
-            added.starts_with(LEFTOVERS.trim_end_matches('\n')),
-            "{added}"
+        // The bound `EnableDropSound` is rewritten in place, never contradicted by a new line.
+        assert_eq!(
+            intent_text(LEFTOVERS, StyleIntent::DisableDropSound(true)),
+            LEFTOVERS.replacen("    EnableDropSound\n", "    DisableDropSound\n", 1)
         );
-        assert!(added.contains("    DisableDropSound\n"), "{added}");
+    }
+
+    #[test]
+    fn drop_sound_follows_the_last_disable_or_enable_line() {
+        let off = "Show\n    DisableDropSound\n    EnableDropSound False\n";
+        let (_, _, e) = entries_of(off);
+        assert!(rule_style_view(&e, BlockKeyword::Show).0.disable_drop_sound);
+        assert_eq!(
+            intent_text(off, StyleIntent::DisableDropSound(false)),
+            "Show\n    DisableDropSound\n    EnableDropSound True\n"
+        );
+        assert_eq!(intent_text(off, StyleIntent::DisableDropSound(true)), off);
+        let on = "Show\n    EnableDropSound # loud\n";
+        assert_eq!(
+            intent_text(on, StyleIntent::DisableDropSound(true)),
+            "Show\n    DisableDropSound # loud\n"
+        );
+        assert_eq!(intent_text(on, StyleIntent::DisableDropSound(false)), on);
     }
 
     #[test]
@@ -6603,6 +6881,92 @@ mod tests {
             vol: 200,
         };
         assert_eq!(intent_text(src, StyleIntent::Sound(Some(bad))), src);
+    }
+
+    #[test]
+    fn sound_kind_switch_keeps_the_inline_comment() {
+        let custom = Sound {
+            id: None,
+            custom: Some("uwu.mp3".to_string()),
+            vol: 200,
+        };
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound 3 200 # loud\n",
+                StyleIntent::Sound(Some(custom))
+            ),
+            "Show\n    CustomAlertSound \"uwu.mp3\" 200 # loud\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSound \"a.mp3\"  # mine\n",
+                StyleIntent::Sound(Some(Sound {
+                    id: Some(4),
+                    custom: None,
+                    vol: 100
+                }))
+            ),
+            "Show\n    PlayAlertSound 4  # mine\n"
+        );
+    }
+
+    #[test]
+    fn positional_optional_and_out_of_range_sound_lines_keep_their_form() {
+        // Same kind: the keyword stays.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSoundPositional 3 100\n",
+                StyleIntent::Sound(Some(Sound {
+                    id: Some(5),
+                    custom: None,
+                    vol: 100
+                }))
+            ),
+            "Show\n    PlayAlertSoundPositional 5 100\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSoundOptional \"x.mp3\" 90\n",
+                StyleIntent::Sound(Some(Sound {
+                    id: None,
+                    custom: Some("y.mp3".to_string()),
+                    vol: 90
+                }))
+            ),
+            "Show\n    CustomAlertSoundOptional \"y.mp3\" 90\n"
+        );
+        // A volume shown clamped is kept as written until the slider moves.
+        let loud = "Show\n    PlayAlertSound 3 400\n";
+        let (_, _, e) = entries_of(loud);
+        assert_eq!(
+            rule_style_view(&e, BlockKeyword::Show)
+                .0
+                .sound
+                .map(|s| s.vol),
+            Some(300)
+        );
+        assert_eq!(
+            intent_text(
+                loud,
+                StyleIntent::Sound(Some(Sound {
+                    id: Some(6),
+                    custom: None,
+                    vol: 300
+                }))
+            ),
+            "Show\n    PlayAlertSound 6 400\n"
+        );
+        assert_eq!(
+            intent_text(
+                loud,
+                StyleIntent::Sound(Some(Sound {
+                    id: Some(3),
+                    custom: None,
+                    vol: 250
+                }))
+            ),
+            "Show\n    PlayAlertSound 3 250\n"
+        );
     }
 
     #[test]
@@ -6657,7 +7021,8 @@ mod tests {
     #[test]
     fn untouched_custom_rule_renders_idle_and_byte_identical() {
         let all = "Show\n    SetTextColor 1 2 3\n    PlayAlertSound 5\n    DisableDropSound\n    MinimapIcon 1 Blue Star\n    PlayEffect Red\n    SetBackgroundColor 0 0 0 128\n";
-        for src in [all, LEFTOVERS] {
+        let clamped = "Show\n    SetFontSize 60\n    PlayAlertSound 3 400\n    MinimapIcon -1\n    EnableDropSound False\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6 7\n";
+        for src in [all, LEFTOVERS, clamped] {
             let wf = WorkingFilter::from_text(src);
             let ctx = headless_ctx();
             let mut list = ListUi {
@@ -6715,6 +7080,22 @@ mod tests {
             wf.text(),
             "Show\n    Rarity Rare\n    DisableDropSound\n    SetFontSize 32\n"
         );
+    }
+
+    #[test]
+    fn picking_a_minimap_size_over_a_hidden_icon_rewrites_that_line() {
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let r = style_probes(&ctx, &wf, &mut list, "ed-minimap")[0];
+        // None | Large | Medium | Small: the second quarter is Large.
+        let large = egui::pos2(r.left() + r.width() * 0.375, r.center().y);
+        let a = frame_of(&ctx, input(click_events(large)), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 White Circle\n");
     }
 }
 

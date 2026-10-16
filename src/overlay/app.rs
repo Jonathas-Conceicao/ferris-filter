@@ -709,7 +709,7 @@ fn apply_row_actions_folding(
             | RowAction::SetDefenceSelection { .. } => true,
             RowAction::EditLine {
                 expect,
-                patch: LinePatch::Whole(text),
+                patch: LinePatch::Whole(text) | LinePatch::Content(text),
                 ..
             } => line_keyword(expect) != line_keyword(text),
             _ => false,
@@ -717,7 +717,13 @@ fn apply_row_actions_folding(
         let refused_edit = match &action {
             RowAction::EditLine {
                 id, line, patch, ..
-            } if matches!(patch, LinePatch::Whole(_) | LinePatch::Values(_)) => Some((*id, *line)),
+            } if matches!(
+                patch,
+                LinePatch::Whole(_) | LinePatch::Values(_) | LinePatch::Content(_)
+            ) =>
+            {
+                Some((*id, *line))
+            }
             _ => None,
         };
         let outcome = working.apply_action(action);

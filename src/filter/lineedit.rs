@@ -25,6 +25,10 @@ pub enum LinePatch {
     Both(Option<Operator>, String),
     /// Raw edit of everything after the line's indent (and after a disabled block's `#`).
     Whole(String),
+    /// Replace the keyword, operator and values (a keyword change such as `PlayAlertSound` to
+    /// `CustomAlertSound`), keeping the indent and everything after the last value: its spacing
+    /// and a trailing `# comment`. Validated like a value edit.
+    Content(String),
 }
 
 fn is_ws(b: u8) -> bool {
@@ -91,6 +95,21 @@ fn apply_values(inner: &str, text: &str) -> Result<String, EditError> {
     Ok(out)
 }
 
+fn apply_content(inner: &str, text: &str) -> Result<String, EditError> {
+    let t = tok(inner)?;
+    let start = t.keyword.as_ref().map_or(0, |k| k.start);
+    let end = t
+        .values
+        .last()
+        .map(|v| v.end)
+        .or(t.operator.as_ref().map(|(r, _)| r.end))
+        .or(t.keyword.as_ref().map(|k| k.end))
+        .unwrap_or(inner.len());
+    let mut out = inner.to_string();
+    out.replace_range(start..end, text);
+    Ok(out)
+}
+
 fn check_text(text: &str) -> Result<(), EditError> {
     if text.contains(['\n', '\r']) {
         return Err(EditError::EmbeddedNewline);
@@ -120,7 +139,10 @@ impl Document {
         patch: LinePatch,
     ) -> Result<(), EditError> {
         match &patch {
-            LinePatch::Values(t) | LinePatch::Both(_, t) | LinePatch::Whole(t) => check_text(t)?,
+            LinePatch::Values(t)
+            | LinePatch::Both(_, t)
+            | LinePatch::Whole(t)
+            | LinePatch::Content(t) => check_text(t)?,
             LinePatch::Operator(_) => {}
         }
         let b = self.block(id).ok_or(EditError::UnknownBlock)?;
@@ -143,6 +165,7 @@ impl Document {
                 let ws = inner.bytes().take_while(|c| is_ws(*c)).count();
                 format!("{}{v}", &inner[..ws])
             }
+            LinePatch::Content(v) => apply_content(inner, v)?,
         };
         let mut cand: Vec<Line> = self.lines[owned.clone()].to_vec();
         cand[line - owned.start] = Line::new(format!("{head}{new_inner}"), self.lines[line].eol());
@@ -395,6 +418,34 @@ mod tests {
             Err(EditError::EmptyValue)
         ));
         assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn content_replaces_keyword_and_values_and_keeps_the_comment() {
+        assert_eq!(
+            patch(
+                "Show\n\tPlayAlertSound 3 200  # loud\n",
+                1,
+                LinePatch::Content("CustomAlertSound \"uwu.mp3\" 200".into())
+            ),
+            "Show\n\tCustomAlertSound \"uwu.mp3\" 200  # loud\n"
+        );
+        assert_eq!(
+            patch(
+                "#Show\n# \tEnableDropSound\n",
+                1,
+                LinePatch::Content("DisableDropSound".into())
+            ),
+            "#Show\n# \tDisableDropSound\n"
+        );
+        assert_eq!(
+            patch(
+                "Show\n    CustomAlertSound \"a.mp3\"\n",
+                1,
+                LinePatch::Content("PlayAlertSound 2".into())
+            ),
+            "Show\n    PlayAlertSound 2\n"
+        );
     }
 
     #[test]

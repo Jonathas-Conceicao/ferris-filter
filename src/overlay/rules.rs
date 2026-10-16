@@ -711,7 +711,8 @@ impl WorkingFilter {
             let mut chip = None;
             let style = match self.doc.meta_get(id, "style") {
                 None => {
-                    // Untagged: the first MinimapIcon line the Custom style lines would bind.
+                    // Untagged: the effective (last) MinimapIcon line the Custom style lines
+                    // bind, when it is a shown icon (`MinimapIcon -1` shows none).
                     let has_icon = b
                         .body()
                         .iter()

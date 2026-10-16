@@ -1589,14 +1589,15 @@ Show
     #[test]
     fn untagged_rule_chip_is_its_minimap_icon_alone() {
         let wf = WorkingFilter::from_text(
-            "Show\n  Class \"Rings\"\n  MinimapIcon -1\n  MinimapIcon 1 Blue Star\n  \
-             MinimapIcon 0 Red Circle\n\nShow\n  MinimapIcon -1\n\n\
-             Show\n  MinimapIcon 3 Blue Star\n\nShow\n  Class \"Belts\"\n",
+            "Show\n  Class \"Rings\"\n  MinimapIcon -1\n  MinimapIcon 0 Red Circle\n  \
+             MinimapIcon 1 Blue Star\n\nShow\n  MinimapIcon -1\n\n\
+             Show\n  MinimapIcon 3 Blue Star\n\nShow\n  Class \"Belts\"\n\n\
+             Show\n  MinimapIcon 1 Blue Star\n  MinimapIcon -1\n",
         );
         let f = chip_flag(&wf.rows()[0]).expect("chip");
         assert_eq!(f.text, "minimap icon");
         assert_eq!(f.tip, "Minimap icon: Medium Blue Star");
-        // Star is shape 4, Blue colour 2; the first representable line wins.
+        // Star is shape 4, Blue colour 2; the last line wins, as it does in game.
         assert_eq!(
             f.kind,
             FlagKind::Styled {
@@ -1604,7 +1605,8 @@ Show
                 icon: Some((4, 2)),
             }
         );
-        // MinimapIcon -1, an out-of-range size, or no MinimapIcon: no chip.
+        // MinimapIcon -1, an out-of-range size, no MinimapIcon, or a shown icon overridden by a
+        // later `MinimapIcon -1`: no chip.
         for row in &wf.rows()[1..] {
             assert!(chip_flag(row).is_none(), "{}", row.label);
         }

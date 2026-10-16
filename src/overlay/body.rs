@@ -3720,7 +3720,8 @@ mod tests {
 
     #[test]
     fn defences_card_is_an_ff_card_with_three_lines() {
-        let src = include_str!("body.rs");
+        // Normalised so a CRLF checkout (core.autocrlf) still finds the function end.
+        let src = include_str!("body.rs").replace("\r\n", "\n");
         let start = src.find("fn defences_card(").unwrap();
         let f = &src[start..start + src[start..].find("\n}\n").unwrap()];
         assert!(f.contains("ff_card("));
@@ -5665,16 +5666,11 @@ mod tests {
 
     #[test]
     fn picker_popup_uses_skin_search_and_sections() {
-        let production = include_str!("body.rs").split("mod tests {").next().unwrap();
+        // Normalised so a CRLF checkout (core.autocrlf) still finds the function end.
+        let src = include_str!("body.rs").replace("\r\n", "\n");
+        let production = src.split("mod tests {").next().unwrap();
         let start = production.find("pub(crate) fn picker_popup").unwrap();
-        let end = production[start..]
-            .find(
-                "
-}
-",
-            )
-            .unwrap()
-            + start;
+        let end = production[start..].find("\n}\n").unwrap() + start;
         let body = &production[start..end];
         assert!(body.contains("ff_text_field("));
         assert!(body.contains("section_head("));

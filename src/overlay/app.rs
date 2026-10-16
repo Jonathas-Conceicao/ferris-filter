@@ -1100,6 +1100,12 @@ impl OverlayApp {
                 if let Some((id, cont)) = row {
                     self.run_row_actions(vec![RowAction::SetContinue(id, !cont)]);
                 }
+                if !self.rules_revertible() {
+                    eprintln!(
+                        "--popup discard-rules: could not stage a rule edit (no filter, no rules, \
+                         or the first rule is not editable); the popup will not open"
+                    );
+                }
                 self.revert_rules_armed = true;
             }
             _ => {}

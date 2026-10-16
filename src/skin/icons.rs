@@ -74,8 +74,8 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
             let sr = r * 0.5;
             let mut pts: Vec<Pos2> = (0..=6)
                 .map(|i| {
-                    // Stops short of the half circle: the right leg is left open.
-                    let a = std::f32::consts::PI * 0.8 * (i as f32 / 6.0);
+                    // A full half circle: both legs reach the body, so it reads as a closed (locked) lock.
+                    let a = std::f32::consts::PI * (i as f32 / 6.0);
                     pos2(centre.x - a.cos() * sr, centre.y - a.sin() * sr)
                 })
                 .collect();

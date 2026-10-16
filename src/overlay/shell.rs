@@ -466,7 +466,8 @@ pub(crate) fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
             pal::LABEL,
         ),
         (
-            "Game art and fonts belong to their owners. FerrisFilter is a free third-party              tool for Path of Exile 2 players.",
+            "Game art and fonts belong to their owners. FerrisFilter is a free third-party \
+             tool for Path of Exile 2 players.",
             pal::MUTED,
         ),
     ] {

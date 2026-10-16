@@ -961,7 +961,10 @@ mod tests {
         let (out, _) = frame(&ctx, click_at(useb.center()), None, OPEN);
         assert_eq!(out, Some(PickerEdit::Set([248, 248, 242, 255])));
         let (_, probes) = frame(&ctx, vec![], Some([248, 248, 242, 255]), OPEN);
-        assert!(rect_of(&probes, "square").is_none(), "closed after Use colour");
+        assert!(
+            rect_of(&probes, "square").is_none(),
+            "closed after Use colour"
+        );
     }
 
     #[test]

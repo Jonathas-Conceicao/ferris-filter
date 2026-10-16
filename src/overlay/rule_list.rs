@@ -243,8 +243,13 @@ enum FlagKind {
     Icon(FlagIcon),
     /// The word `Continue`, kept as text.
     ContinueWord,
-    /// A gold diamond plus the (truncated) style name.
-    Styled(String),
+    /// The style chip: the minimap icon (shape, colour indices into `skin::minimap`), drawn
+    /// from the game atlas in its colour, then the (truncated) style name. A known style without
+    /// a minimap icon has a name only; an untagged rule with a `MinimapIcon` has an icon only.
+    Styled {
+        name: Option<String>,
+        icon: Option<(usize, usize)>,
+    },
 }
 
 struct Flag {
@@ -271,8 +276,19 @@ const BADGE_W: f32 = 24.0;
 const FLAG_BUDGET: f32 = 120.0;
 /// The label always keeps at least this much.
 const LABEL_MIN_W: f32 = 140.0;
-/// Width of the styled flag's diamond.
-const DIAMOND_W: f32 = 14.0;
+/// Gap between the style chip's icon and its name.
+const CHIP_ICON_GAP: f32 = 4.0;
+
+/// Width of a style chip: the icon, the gap when both are present, and the name.
+fn chip_width(icon: bool, name_w: Option<f32>) -> f32 {
+    let icon_w = if icon { FLAG_ICON_SIZE } else { 0.0 };
+    let gap = if icon && name_w.is_some() {
+        CHIP_ICON_GAP
+    } else {
+        0.0
+    };
+    icon_w + gap + name_w.unwrap_or(0.0)
+}
 
 /// Width the flags may take in a row `content_w` wide whose arrows (with their gap) take
 /// `arrows_w`: [`FLAG_BUDGET`], less whatever the label would otherwise lose below
@@ -373,9 +389,27 @@ fn flags_for(row: &RuleRow) -> Vec<Flag> {
         };
         out.push(Flag {
             text: format!("styled: {short}"),
-            kind: FlagKind::Styled(short),
+            kind: FlagKind::Styled {
+                name: Some(short),
+                icon: row.chip_icon,
+            },
             color: pal::LABEL,
             tip: format!("Style \"{tag}\" sets this rule's actions on Apply"),
+        });
+    } else if matches!(row.style, StyleState::None)
+        && let Some(icon) = row.chip_icon
+    {
+        out.push(Flag {
+            text: "minimap icon".to_string(),
+            kind: FlagKind::Styled {
+                name: None,
+                icon: Some(icon),
+            },
+            color: pal::LABEL,
+            tip: format!(
+                "Minimap icon: {}",
+                row.chip_icon_desc.as_deref().unwrap_or_default()
+            ),
         });
     }
     out
@@ -962,7 +996,10 @@ fn draw_row(
         .map(|f| match &f.kind {
             FlagKind::Icon(_) => FLAG_ICON_SIZE,
             FlagKind::ContinueWord => text_width(ui, &f.text, small_caps(17.0)) + 4.0,
-            FlagKind::Styled(name) => DIAMOND_W + 4.0 + text_width(ui, name, regular(15.0)),
+            FlagKind::Styled { name, icon } => chip_width(
+                icon.is_some(),
+                name.as_ref().map(|n| text_width(ui, n, regular(15.0))),
+            ),
         })
         .collect();
     let budget = flag_budget(width, arrows_w);
@@ -993,26 +1030,31 @@ fn draw_row(
                 );
                 resp.on_hover_text(flag.tip.clone());
             }
-            FlagKind::Styled(name) => {
+            FlagKind::Styled { name, icon } => {
                 let (r, resp) =
                     right.allocate_exact_size(vec2(widths[i], FLAG_ICON_SIZE), Sense::hover());
-                let thumb = egui::Rect::from_center_size(
-                    egui::pos2(r.min.x + DIAMOND_W / 2.0, r.center().y),
-                    vec2(DIAMOND_W, DIAMOND_W),
-                );
-                crate::skin::slice::paint_image(
-                    right.painter(),
-                    &skin.slider_thumb,
-                    thumb,
-                    flag.color,
-                );
-                right.painter().text(
-                    egui::pos2(r.min.x + DIAMOND_W + 4.0, r.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    name,
-                    regular(15.0),
-                    pal::MUTED,
-                );
+                let mut x = r.min.x;
+                if let Some((shape, colour)) = *icon {
+                    crate::skin::editor::paint_minimap_icon(
+                        right.painter(),
+                        skin,
+                        egui::pos2(x + FLAG_ICON_SIZE / 2.0, r.center().y),
+                        shape,
+                        colour,
+                        FLAG_ICON_SIZE,
+                        Color32::WHITE,
+                    );
+                    x += FLAG_ICON_SIZE + CHIP_ICON_GAP;
+                }
+                if let Some(name) = name {
+                    right.painter().text(
+                        egui::pos2(x, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        name,
+                        regular(15.0),
+                        pal::MUTED,
+                    );
+                }
                 resp.on_hover_text(flag.tip.clone());
             }
         }
@@ -1493,10 +1535,117 @@ Show
         let f = flags_for(&row);
         let k = f.iter().find(|f| f.text.starts_with("styled:")).unwrap();
         assert_eq!(k.text, "styled: Exalted Sh…");
-        assert_eq!(k.kind, FlagKind::Styled("Exalted Sh…".into()));
+        assert_eq!(
+            k.kind,
+            FlagKind::Styled {
+                name: Some("Exalted Sh…".into()),
+                icon: row.chip_icon,
+            }
+        );
         assert!(k.tip.contains("Exalted Showcase"));
         row.style = StyleState::Unchecked("S".into());
         assert!(!flags_for(&row).iter().any(|f| f.text.contains("style")));
+    }
+
+    fn chip_flag(row: &RuleRow) -> Option<Flag> {
+        flags_for(row)
+            .into_iter()
+            .find(|f| matches!(f.kind, FlagKind::Styled { .. }))
+    }
+
+    #[test]
+    fn known_style_chip_draws_its_minimap_icon_then_the_name() {
+        // B: Small Red Circle.
+        let wf = styled_filter("B");
+        let row = &wf.rows()[0];
+        assert_eq!(row.chip_icon, Some((0, 0)));
+        let f = chip_flag(row).expect("chip");
+        assert_eq!(f.text, "styled: B");
+        assert_eq!(
+            f.kind,
+            FlagKind::Styled {
+                name: Some("B".into()),
+                icon: Some((0, 0)),
+            }
+        );
+        assert_eq!(f.tip, "Style \"B\" sets this rule's actions on Apply");
+        // The untagged second rule has no MinimapIcon: no chip.
+        assert!(chip_flag(&wf.rows()[1]).is_none());
+    }
+
+    #[test]
+    fn known_style_without_minimap_chip_is_name_only() {
+        let wf = styled_filter("E");
+        let f = chip_flag(&wf.rows()[0]).expect("chip");
+        assert_eq!(
+            f.kind,
+            FlagKind::Styled {
+                name: Some("E".into()),
+                icon: None,
+            }
+        );
+    }
+
+    #[test]
+    fn untagged_rule_chip_is_its_minimap_icon_alone() {
+        let wf = WorkingFilter::from_text(
+            "Show\n  Class \"Rings\"\n  MinimapIcon -1\n  MinimapIcon 1 Blue Star\n  \
+             MinimapIcon 0 Red Circle\n\nShow\n  MinimapIcon -1\n\n\
+             Show\n  MinimapIcon 3 Blue Star\n\nShow\n  Class \"Belts\"\n",
+        );
+        let f = chip_flag(&wf.rows()[0]).expect("chip");
+        assert_eq!(f.text, "minimap icon");
+        assert_eq!(f.tip, "Minimap icon: Medium Blue Star");
+        // Star is shape 4, Blue colour 2; the first representable line wins.
+        assert_eq!(
+            f.kind,
+            FlagKind::Styled {
+                name: None,
+                icon: Some((4, 2)),
+            }
+        );
+        // MinimapIcon -1, an out-of-range size, or no MinimapIcon: no chip.
+        for row in &wf.rows()[1..] {
+            assert!(chip_flag(row).is_none(), "{}", row.label);
+        }
+    }
+
+    #[test]
+    fn unknown_or_unchecked_style_has_no_chip() {
+        let src = "#ff:style Nope\nShow\n  MinimapIcon 1 Blue Star\n";
+        let wf = WorkingFilter::from_text(src);
+        // No styles loaded: Unchecked, no chip.
+        assert!(matches!(wf.rows()[0].style, StyleState::Unchecked(_)));
+        assert!(chip_flag(&wf.rows()[0]).is_none());
+        let mut wf = wf;
+        wf.set_styles(Ok(crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles-default.json"
+        ))
+        .unwrap()));
+        let f = flags_for(&wf.rows()[0]);
+        assert!(f.iter().any(|f| f.text == "unknown style"));
+        assert!(chip_flag(&wf.rows()[0]).is_none());
+    }
+
+    #[test]
+    fn chip_icon_follows_the_loaded_styles() {
+        // Rows rebuild on set_styles, so a style set arriving later lights the icon.
+        let mut wf = WorkingFilter::from_text("#ff:style S\nShow\n");
+        assert_eq!(wf.rows()[0].chip_icon, None);
+        wf.set_styles(Ok(crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles-default.json"
+        ))
+        .unwrap()));
+        assert_eq!(wf.rows()[0].chip_icon, Some((0, 9)));
+    }
+
+    #[test]
+    fn chip_width_is_icon_gap_and_name() {
+        assert_eq!(chip_width(true, Some(30.0)), FLAG_ICON_SIZE + 4.0 + 30.0);
+        assert_eq!(chip_width(true, None), FLAG_ICON_SIZE);
+        assert_eq!(chip_width(false, Some(30.0)), 30.0);
     }
 
     #[test]
@@ -1555,7 +1704,14 @@ Show
                 .starts_with("Group broken: these blocks were one rule (# ff:group)")
         );
         assert_eq!(f[4].kind, FlagKind::ContinueWord);
-        assert_eq!(f[5].kind, FlagKind::Styled("S".into()));
+        // S: Pink Circle (shape 0, colour 9).
+        assert_eq!(
+            f[5].kind,
+            FlagKind::Styled {
+                name: Some("S".into()),
+                icon: Some((0, 9)),
+            }
+        );
 
         let mut dis = row.clone();
         dis.enabled = false;
@@ -1607,6 +1763,56 @@ Show
             "gap {}",
             cont.min.x - name.max.x
         );
+    }
+
+    /// Bounds of every mesh drawn with texture `tex`.
+    fn meshes_with(shape: &egui::Shape, tex: egui::TextureId, out: &mut Vec<Rect>) {
+        match shape {
+            egui::Shape::Mesh(m) if m.texture_id == tex => out.push(m.calc_bounds()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| meshes_with(s, tex, out)),
+            _ => {}
+        }
+    }
+
+    /// The style chip paints the atlas icon (18pt) left of the style name; a style without a
+    /// minimap paints no atlas icon.
+    #[test]
+    fn style_chip_paints_the_atlas_icon_left_of_the_name() {
+        for (tag, want_icon) in [("S", true), ("E", false)] {
+            let wf = styled_filter(tag);
+            let ctx = headless_ctx();
+            let mut list = ListUi::default();
+            let visible = rule_entries(&wf);
+            let mut last = None;
+            for _ in 0..3 {
+                let mut full = ctx.run_ui(input(vec![]), |ui| {
+                    let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                    let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                    show_list(&mut child, &wf, &visible, &mut list, true, None);
+                });
+                let tex = crate::skin::of(&ctx).minimap_icons.id();
+                let mut icons = Vec::new();
+                for c in &full.shapes {
+                    meshes_with(&c.shape, tex, &mut icons);
+                }
+                full.textures_delta.clear();
+                let name = text_rects(full)
+                    .into_iter()
+                    .find(|(t, _)| t == tag)
+                    .map(|(_, r)| r);
+                last = Some((icons, name));
+            }
+            let (icons, name) = last.unwrap();
+            let name = name.expect("style name painted");
+            if want_icon {
+                assert_eq!(icons.len(), 1, "{tag}");
+                let icon = icons[0];
+                assert!((icon.width() - FLAG_ICON_SIZE).abs() < 1.0, "{icon:?}");
+                assert!(icon.max.x <= name.min.x + 0.01, "{icon:?} {name:?}");
+            } else {
+                assert!(icons.is_empty(), "{tag}");
+            }
+        }
     }
 
     /// WR-06: a long collapsed-row summary is cut before the flags and arrows, not painted under

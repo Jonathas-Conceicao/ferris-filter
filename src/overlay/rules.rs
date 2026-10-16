@@ -336,6 +336,24 @@ pub struct RuleRow {
     /// Ordinal of the containing banner; `None` above the first banner and for rules written
     /// after the economy section (they belong to no divider).
     pub section: Option<usize>,
+    /// The collapsed-row style chip's minimap icon as (shape, colour) indices into
+    /// `skin::minimap::SHAPES` / `COLOURS`: the known style's minimap, or for an untagged rule
+    /// its first representable `MinimapIcon` line. Built at row rebuild, never per frame.
+    pub chip_icon: Option<(usize, usize)>,
+    /// The chip icon in words (`Medium Blue Star`), for an untagged rule's chip tooltip.
+    pub chip_icon_desc: Option<String>,
+}
+
+/// The chip icon (shape, colour indices) and its description for a minimap spec.
+fn chip_icon_of(m: &crate::models::config::Minimap) -> Option<((usize, usize), String)> {
+    use crate::skin::minimap;
+    let shape = minimap::index_of(&minimap::SHAPES, m.shape.as_str())?;
+    let colour = minimap::index_of(&minimap::COLOURS, m.color.as_str())?;
+    let size = minimap::SIZES.get(usize::from(m.size))?;
+    Some((
+        (shape, colour),
+        format!("{size} {} {}", m.color.as_str(), m.shape.as_str()),
+    ))
 }
 
 /// Longest collapsed-row summary, in characters (the rest is cut with an ellipsis).
@@ -607,6 +625,8 @@ fn economy_row(doc: &Document, b: &Block) -> RuleRow {
         group_broken: false,
         simple_mask: None,
         section: None,
+        chip_icon: None,
+        chip_icon_desc: None,
     }
 }
 
@@ -688,16 +708,37 @@ impl WorkingFilter {
                 extract(&self.doc, b)
             };
             let name = self.doc.meta_get(id, "name").map(str::to_string);
+            let mut chip = None;
             let style = match self.doc.meta_get(id, "style") {
-                None => StyleState::None,
+                None => {
+                    // Untagged: the first MinimapIcon line the Custom style lines would bind.
+                    let has_icon = b
+                        .body()
+                        .iter()
+                        .any(|bl| bl.keyword.is_some_and(|k| k.name == "MinimapIcon"));
+                    if has_icon {
+                        let entries = self.body_view(id);
+                        chip = super::body::rule_style_view(&entries, b.keyword())
+                            .0
+                            .minimap
+                            .as_ref()
+                            .and_then(chip_icon_of);
+                    }
+                    StyleState::None
+                }
                 Some(n) => match &self.styles {
                     Some(set) => match set.resolve_tag(n) {
-                        Some(m) => StyleState::Known(m.name.to_string()),
+                        Some(m) => {
+                            chip = m.style.minimap.as_ref().and_then(chip_icon_of);
+                            StyleState::Known(m.name.to_string())
+                        }
                         None => StyleState::Unknown(n.to_string()),
                     },
                     None => StyleState::Unchecked(n.to_string()),
                 },
             };
+            let (chip_icon, chip_icon_desc) =
+                chip.map_or((None, None), |(i, d)| (Some(i), Some(d)));
             let kw = keyword_word(b.keyword());
             let label = match &name {
                 Some(n) => format!("{index}  {kw} - {n}"),
@@ -756,6 +797,8 @@ impl WorkingFilter {
                 group_broken: groups.is_broken(id),
                 simple_mask,
                 section: None,
+                chip_icon,
+                chip_icon_desc,
             });
         }
 

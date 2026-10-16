@@ -551,6 +551,18 @@ fn line_keyword(text: &str) -> String {
 
 /// Applies the frame's collected row actions once, after the list rendered. Returns whether the
 /// document changed and the last status worth showing.
+/// Name of the collapsed user section that holds rule `id`, if any.
+fn section_to_reveal(working: &WorkingFilter, settings: &Settings, id: BlockId) -> Option<String> {
+    let ordinal = working.rows().iter().find(|r| r.id == id)?.section?;
+    let sec = working
+        .sections()
+        .iter()
+        .find(|s| s.ordinal == ordinal && !s.economy)?;
+    settings
+        .section_collapsed(settings.filter_name(), &sec.name, false)
+        .then(|| sec.name.clone())
+}
+
 fn apply_row_actions(
     working: &mut WorkingFilter,
     list: &mut ListUi,
@@ -1204,6 +1216,18 @@ impl OverlayApp {
         self.store_settings(next);
     }
 
+    /// Open the collapsed section holding rule `id`, so a jump or a move that targets it shows
+    /// something (WR-02).
+    fn reveal_rule(&mut self, id: BlockId) {
+        let Some(working) = &self.working else {
+            return;
+        };
+        let name = section_to_reveal(working, &self.settings, id);
+        if let Some(name) = name {
+            self.set_section_collapsed(&name, false, false);
+        }
+    }
+
     /// A renamed section keeps its folded state: copy the stored flag from the old name to the
     /// new one before the rename is applied (the old entry stays, so a Revert still finds it).
     fn carry_section_state(&mut self, actions: &[RowAction]) {
@@ -1407,6 +1431,10 @@ impl OverlayApp {
             if status.is_some() {
                 self.list_status = status;
             }
+        }
+        // A rule moved into a collapsed neighbour stays in view (WR-02).
+        if let Some(id) = self.list.pending_scroll {
+            self.reveal_rule(id);
         }
     }
 
@@ -2723,6 +2751,7 @@ impl eframe::App for OverlayApp {
             }
             self.list.expanded = Some(target);
             self.list.pending_scroll = Some(target);
+            self.reveal_rule(target);
         }
         if !row_actions.is_empty() {
             self.run_row_actions(row_actions);
@@ -3987,6 +4016,35 @@ mod tests {
         assert!(reload);
         assert_eq!(working.text(), before, "rewrite must not leak into edits");
         assert!(working.text().contains("SetFontSize 20"));
+    }
+
+    #[test]
+    fn a_rule_in_a_collapsed_section_is_revealed() {
+        let r = crate::filter::section::RULE_LINE;
+        let working = WorkingFilter::from_text(&format!(
+            "Show
+
+{r}
+# ff:section Gear
+{r}
+
+Hide
+"
+        ));
+        let settings = crate::settings::Settings::default().set_section_collapsed(
+            "dynamic.filter",
+            "Gear",
+            true,
+        );
+        let top = working.rows()[0].id;
+        let inner = working.rows()[1].id;
+        assert_eq!(super::section_to_reveal(&working, &settings, top), None);
+        assert_eq!(
+            super::section_to_reveal(&working, &settings, inner).as_deref(),
+            Some("Gear")
+        );
+        let open = crate::settings::Settings::default();
+        assert_eq!(super::section_to_reveal(&working, &open, inner), None);
     }
 
     #[test]

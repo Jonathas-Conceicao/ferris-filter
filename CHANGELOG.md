@@ -108,6 +108,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Faster dev and test builds.** `Cargo.toml` sets `[profile.dev.package."*"] opt-level = 2`
   (dependencies only). The overlay tests now render with the real fonts, and unoptimised font
   rasterising had pushed `cargo test --lib` to about 1000 s; it is now about 57 s.
+- **Custom rule styling uses the style editor lines (quick 261016-qi7).** A Custom rule's STYLE
+  section shows the same lines as the CONFIG style editor (visibility, label preview, colours with
+  alpha, font size, minimap, beam, sound, volume, drop sound), written to the rule's own action
+  lines one line at a time (untouched lines stay byte-identical). Action lines the editor cannot
+  represent stay as rows below it; the `+ style` button is gone.
+- **Style chip shows the minimap icon (quick 261016-qi7).** A collapsed rule's style chip draws the
+  style's minimap icon (game art, its colour) instead of a gold diamond; a Custom rule with a
+  minimap icon shows that icon.
+- **Every Revert asks first (quick 261016-qi7).** RULES Revert opens a new **Discard rule
+  changes?** popup (Discard / Keep editing); ECONOMY Revert also asks when only a staged economy
+  section add/remove is pending. Debug screenshot mode gains `--popup discard-rules`.
 
 ### Fixed
 

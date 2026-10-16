@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use super::shell::ShellTab;
 
 /// The popups `--popup` can open.
-pub(crate) const POPUPS: [&str; 7] = [
+pub(crate) const POPUPS: [&str; 8] = [
     "changed",
     "switch",
     "quit",
@@ -23,6 +23,7 @@ pub(crate) const POPUPS: [&str; 7] = [
     "delete-style",
     "remove-economy",
     "discard-config",
+    "discard-rules",
 ];
 
 /// The colour pickers `--picker` can open (the `colour_popup` tags).
@@ -346,6 +347,17 @@ mod tests {
         assert_eq!(a.filter, Some(PathBuf::from("f.filter")));
         let b = p(&["--screenshot", "o.png"]).unwrap().unwrap();
         assert_eq!(b.tab, ShellTab::Rules);
+    }
+
+    #[test]
+    fn every_popup_name_parses() {
+        for name in POPUPS {
+            let a = p(&["--screenshot", "o.png", "--popup", name])
+                .unwrap()
+                .unwrap();
+            assert_eq!(a.popup.as_deref(), Some(name));
+        }
+        assert!(POPUPS.contains(&"discard-rules"));
     }
 
     #[test]

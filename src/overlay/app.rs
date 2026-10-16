@@ -108,6 +108,9 @@ pub struct OverlayApp {
     /// The tray-Quit confirm ("Unapplied changes") is showing.
     quit_confirm: bool,
 
+    /// The RULES Revert was clicked: the "Discard rule changes?" popup asks first.
+    revert_rules_armed: bool,
+
     /// Apply & quit succeeded; the shutdown runs once any in-game reload worker has finished.
     quit_after_apply: bool,
 
@@ -1081,6 +1084,18 @@ impl OverlayApp {
                 }
                 self.config_ui.revert_armed = true;
             }
+            Some("discard-rules") => {
+                // A harmless in-memory edit (never applied in this mode) so the popup has
+                // something to discard.
+                let row = self
+                    .working
+                    .as_ref()
+                    .and_then(|w| w.rows().first().map(|r| (r.id, r.has_continue)));
+                if let Some((id, cont)) = row {
+                    self.run_row_actions(vec![RowAction::SetContinue(id, !cont)]);
+                }
+                self.revert_rules_armed = true;
+            }
             _ => {}
         }
     }
@@ -1132,6 +1147,7 @@ impl OverlayApp {
             shot: None,
             toggle_requested: false,
             quit_confirm: false,
+            revert_rules_armed: false,
             quit_after_apply: false,
             quit_next_frame: false,
             // The window created in `overlay::launch` starts visible
@@ -1647,9 +1663,29 @@ impl OverlayApp {
             delete_rule: self.list.confirm_delete.is_some(),
             delete_style: self.config_ui.delete_armed.is_some(),
             remove_economy: self.list.confirm_economy_remove,
-            discard_config: self.config_ui.revert_armed
-                && self.config.as_ref().is_ok_and(|c| c.dirty_count() > 0),
+            discard_config: self.config_ui.revert_armed && self.config_discard_count() > 0,
+            discard_rules: self.revert_rules_armed && self.rules_revertible(),
         }
+    }
+
+    /// What the armed Discard-config popup would discard: the scope's config edits, plus one
+    /// for a staged economy add/remove on the ECONOMY scope.
+    fn config_discard_count(&self) -> usize {
+        let scope = self.config_ui.revert_scope;
+        let edits = self
+            .config
+            .as_ref()
+            .map_or(0, |c| c.scope_dirty_count(scope));
+        edits + usize::from(scope == RevertScope::Tiers && self.economy_staged())
+    }
+
+    fn economy_staged(&self) -> bool {
+        self.working.as_ref().is_some_and(|w| w.economy_staged())
+    }
+
+    /// Whether the RULES Revert has anything to discard (the bar's Revert predicate).
+    fn rules_revertible(&self) -> bool {
+        self.working.as_ref().is_some_and(|w| w.is_dirty())
     }
 
     /// The text and buttons of an open popup, from the current state.
@@ -1712,15 +1748,25 @@ impl OverlayApp {
             Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
             Popup::DiscardConfig => {
                 let scope = self.config_ui.revert_scope;
-                let staged = scope == RevertScope::Tiers
-                    && self.working.as_ref().is_some_and(|w| w.economy_staged());
+                let economy = scope == RevertScope::Tiers;
                 shell::popup_spec(PopupData::DiscardConfig {
                     count: self
                         .config
                         .as_ref()
-                        .map_or(0, |c| c.scope_dirty_count(scope))
-                        + usize::from(staged),
+                        .map_or(0, |c| c.scope_dirty_count(scope)),
+                    economy,
+                    staged: economy && self.economy_staged(),
                 })
+            }
+            Popup::DiscardRules => {
+                let name = self
+                    .filter
+                    .as_ref()
+                    .ok()
+                    .and_then(|l| l.path().file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                shell::popup_spec(PopupData::DiscardRules { filter: &name })
             }
         }
     }
@@ -1804,11 +1850,25 @@ impl OverlayApp {
                 self.config_ui.revert_armed = false;
                 if choice == 0 {
                     let scope = self.config_ui.revert_scope;
-                    self.handle_config_actions(ctx, vec![ConfigAction::RevertScoped(scope)]);
+                    // ECONOMY with only a staged op has no tier edits to revert (and no tier
+                    // message to show).
+                    let scoped_dirty = self
+                        .config
+                        .as_ref()
+                        .is_ok_and(|c| c.scope_dirty_count(scope) > 0);
+                    if scope == RevertScope::Styles || scoped_dirty {
+                        self.handle_config_actions(ctx, vec![ConfigAction::RevertScoped(scope)]);
+                    }
                     // The ECONOMY Revert owns a staged economy op too; it goes with the tiers.
-                    if scope == RevertScope::Tiers {
+                    if scope == RevertScope::Tiers && self.economy_staged() {
                         self.unstage_economy_pressed();
                     }
+                }
+            }
+            Popup::DiscardRules => {
+                self.revert_rules_armed = false;
+                if choice == 0 {
+                    self.revert();
                 }
             }
         }
@@ -1857,17 +1917,13 @@ impl OverlayApp {
         self.apply_state = apply::state_after_revert(self.applied_this_session, config_dirty);
     }
 
-    /// The ECONOMY bar Revert. With tier edits it only opens the Discard popup (a staged economy
-    /// op is dropped together with them when the user confirms); without, a staged op is dropped
-    /// at once.
+    /// The ECONOMY bar Revert: opens the Discard popup whenever there are tier edits or a staged
+    /// economy add/remove; both go together when the user confirms. Nothing is dropped unasked.
     fn economy_revert_pressed(&mut self) {
         let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
-        let economy_staged = self.working.as_ref().is_some_and(|w| w.economy_staged());
-        if tiers_dirty {
+        if tiers_dirty || self.economy_staged() {
             self.config_ui.revert_scope = RevertScope::Tiers;
             self.config_ui.revert_armed = true;
-        } else if economy_staged {
-            self.unstage_economy_pressed();
         }
     }
 
@@ -2874,7 +2930,8 @@ impl eframe::App for OverlayApp {
         let egui_ctx = ui.ctx().clone();
         if clicks.revert {
             match self.tab {
-                ShellTab::Rules => self.revert(),
+                // The Discard-rules popup opens from this flag.
+                ShellTab::Rules => self.revert_rules_armed = true,
                 // The Discard-config popup opens from this flag.
                 ShellTab::Config => {
                     self.config_ui.revert_scope = RevertScope::Styles;
@@ -2956,12 +3013,12 @@ impl eframe::App for OverlayApp {
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
         // survive hiding and re-summoning the stripe, so an open popup is still there.
-        let armed_count = self
-            .config
-            .as_ref()
-            .map_or(0, |c| c.scope_dirty_count(self.config_ui.revert_scope));
-        if self.config_ui.revert_armed && armed_count == 0 {
+        // An armed Revert with nothing left to discard disarms itself.
+        if self.config_ui.revert_armed && self.config_discard_count() == 0 {
             self.config_ui.revert_armed = false;
+        }
+        if self.revert_rules_armed && !self.rules_revertible() {
+            self.revert_rules_armed = false;
         }
         // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
         self.overwrite_live = self.overwrite_decision();
@@ -5025,12 +5082,98 @@ Hide
     }
 
     #[test]
-    fn economy_revert_without_tier_edits_drops_the_staged_op_at_once() {
-        let (mut app, _ctx) = popup_app(RULES);
+    fn economy_revert_without_tier_edits_asks_before_dropping_the_staged_op() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx) = popup_app(RULES);
         app.working.as_mut().unwrap().stage_add_economy(3);
         app.economy_revert_pressed();
+        assert!(app.config_ui.revert_armed, "the popup is armed");
+        assert!(
+            app.working.as_ref().unwrap().economy_staged(),
+            "nothing dropped yet"
+        );
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardConfig)
+        );
+        let spec = app.popup_spec_for(Popup::DiscardConfig);
+        assert_eq!(spec.title, "Discard economy changes?");
+        assert_eq!(spec.body, "Discard the staged economy section change?");
+        // Keep editing keeps it.
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
         assert!(!app.config_ui.revert_armed);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        // Discard drops it, with no tier message.
+        app.economy_revert_pressed();
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
         assert!(!app.working.as_ref().unwrap().economy_staged());
+        assert!(app.config_message.is_none(), "{:?}", app.config_message);
+    }
+
+    #[test]
+    fn economy_revert_with_nothing_to_discard_does_not_arm() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.economy_revert_pressed();
+        assert!(!app.config_ui.revert_armed);
+    }
+
+    #[test]
+    fn rules_revert_asks_first_and_discard_reverts() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.run_row_actions(vec![RowAction::AddRule]);
+        let before = app.working.as_ref().unwrap().rows().len();
+        // What the RULES bar Revert click does: arm only.
+        app.revert_rules_armed = true;
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardRules)
+        );
+        let spec = app.popup_spec_for(Popup::DiscardRules);
+        assert_eq!(spec.title, "Discard rule changes?");
+        assert_eq!(spec.buttons.len(), 2);
+        assert!(
+            app.working.as_ref().unwrap().is_dirty(),
+            "nothing reverted yet"
+        );
+        // Keep editing (also Escape / click outside: the last button) keeps the edit.
+        app.dispatch_popup(&ctx, Popup::DiscardRules, 1);
+        assert!(!app.revert_rules_armed);
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        assert_eq!(app.working.as_ref().unwrap().rows().len(), before);
+        // Discard runs the revert.
+        app.revert_rules_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardRules, 0);
+        assert!(!app.revert_rules_armed);
+        let w = app.working.as_ref().unwrap();
+        assert!(!w.is_dirty());
+        assert_eq!(w.rows().len(), before - 1);
+        assert_eq!(
+            app.list_status.as_deref(),
+            Some(crate::overlay::apply::REVERTED_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn discard_rules_flag_needs_something_to_revert() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.revert_rules_armed = true;
+        assert!(!app.popup_flags(false).discard_rules);
+        app.run_row_actions(vec![RowAction::AddRule]);
+        assert!(app.popup_flags(false).discard_rules);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn shot_popup_discard_rules_opens_the_popup() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, _ctx) = popup_app(RULES);
+        app.open_shot_popup(Some("discard-rules"));
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardRules)
+        );
     }
 
     #[test]

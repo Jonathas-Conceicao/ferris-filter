@@ -689,7 +689,7 @@ pub(crate) fn economy_tab(
 // Popups (SHELL-07)
 // ---------------------------------------------------------------------------------------------
 
-/// The seven confirmations and choices the overlay asks, each shown as one skinned modal.
+/// The eight confirmations and choices the overlay asks, each shown as one skinned modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Popup {
     Quit,
@@ -699,6 +699,7 @@ pub(crate) enum Popup {
     DeleteStyle,
     RemoveEconomy,
     DiscardConfig,
+    DiscardRules,
 }
 
 /// Which popups want to be open. Only one is shown at a time.
@@ -711,6 +712,7 @@ pub(crate) struct PopupFlags {
     pub delete_style: bool,
     pub remove_economy: bool,
     pub discard_config: bool,
+    pub discard_rules: bool,
 }
 
 /// The popup to show: Quit beats Changed-on-disk, which beats the rest (in the order of
@@ -724,6 +726,7 @@ pub(crate) fn active_popup(f: PopupFlags) -> Option<Popup> {
         (f.delete_style, Popup::DeleteStyle),
         (f.remove_economy, Popup::RemoveEconomy),
         (f.discard_config, Popup::DiscardConfig),
+        (f.discard_rules, Popup::DiscardRules),
     ]
     .into_iter()
     .find_map(|(on, p)| on.then_some(p))
@@ -779,8 +782,31 @@ pub(crate) enum PopupData<'a> {
     },
     RemoveEconomy,
     DiscardConfig {
+        /// Unapplied edits in the reverted scope (styles on CONFIG, tiers on ECONOMY).
         count: usize,
+        /// The ECONOMY Revert (tier cutoffs plus a staged economy add/remove).
+        economy: bool,
+        /// A staged economy add/remove goes too (ECONOMY only).
+        staged: bool,
     },
+    DiscardRules {
+        /// The filter's file name; empty when unknown.
+        filter: &'a str,
+    },
+}
+
+/// The ECONOMY Discard popup's body: the tier edits and/or the staged section add/remove.
+pub(crate) fn economy_revert_prompt(count: usize, staged: bool) -> String {
+    let tiers = match count {
+        0 => String::new(),
+        1 => "1 unapplied tier change".to_string(),
+        n => format!("{n} unapplied tier changes"),
+    };
+    match (tiers.is_empty(), staged) {
+        (true, _) => "Discard the staged economy section change?".to_string(),
+        (false, true) => format!("Discard {tiers} and the staged economy section change?"),
+        (false, false) => format!("Discard {tiers}?"),
+    }
 }
 
 /// The changed-on-disk popup's choice as the full-set index (0 Reload, 1 Overwrite, 2 Keep
@@ -865,9 +891,32 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
             "Your own rules are kept. Add the section back any time.".to_string(),
             vec![(REMOVE, true, None), (KEEP, false, None)],
         ),
-        PopupData::DiscardConfig { count } => (
-            "Discard config changes?",
-            super::config_view::revert_prompt(count),
+        PopupData::DiscardConfig {
+            count,
+            economy,
+            staged,
+        } => {
+            if economy {
+                (
+                    "Discard economy changes?",
+                    economy_revert_prompt(count, staged),
+                    vec![(DISCARD, true, None), (KEEP_EDITING, false, None)],
+                )
+            } else {
+                (
+                    "Discard config changes?",
+                    super::config_view::revert_prompt(count),
+                    vec![(DISCARD, true, None), (KEEP_EDITING, false, None)],
+                )
+            }
+        }
+        PopupData::DiscardRules { filter } => (
+            "Discard rule changes?",
+            if filter.is_empty() {
+                "Unapplied rule changes will be discarded.".to_string()
+            } else {
+                format!("Unapplied rule changes to {filter} will be discarded.")
+            },
             vec![(DISCARD, true, None), (KEEP_EDITING, false, None)],
         ),
     };
@@ -1459,6 +1508,7 @@ mod tests {
             delete_style: true,
             remove_economy: true,
             discard_config: true,
+            discard_rules: true,
         };
         assert_eq!(active_popup(all), Some(Popup::Quit));
         let f = PopupFlags { quit: false, ..all };
@@ -1485,6 +1535,11 @@ mod tests {
             ..f
         };
         assert_eq!(active_popup(f), Some(Popup::DiscardConfig));
+        let f = PopupFlags {
+            discard_config: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::DiscardRules));
         assert_eq!(active_popup(PopupFlags::default()), None);
     }
 
@@ -1638,10 +1693,49 @@ mod tests {
         );
         assert_eq!(labels(&s), ["Remove", "Keep"]);
 
-        let s = popup_spec(PopupData::DiscardConfig { count: 2 });
+        let s = popup_spec(PopupData::DiscardConfig {
+            count: 2,
+            economy: false,
+            staged: false,
+        });
         assert_eq!(s.title, "Discard config changes?");
         assert_eq!(s.body, super::super::config_view::revert_prompt(2));
         assert_eq!(labels(&s), ["Discard", "Keep editing"]);
+
+        let s = popup_spec(PopupData::DiscardConfig {
+            count: 2,
+            economy: true,
+            staged: true,
+        });
+        assert_eq!(s.title, "Discard economy changes?");
+        assert_eq!(
+            s.body,
+            "Discard 2 unapplied tier changes and the staged economy section change?"
+        );
+        assert_eq!(labels(&s), ["Discard", "Keep editing"]);
+        let s = popup_spec(PopupData::DiscardConfig {
+            count: 0,
+            economy: true,
+            staged: true,
+        });
+        assert_eq!(s.body, "Discard the staged economy section change?");
+        let s = popup_spec(PopupData::DiscardConfig {
+            count: 1,
+            economy: true,
+            staged: false,
+        });
+        assert_eq!(s.body, "Discard 1 unapplied tier change?");
+
+        let s = popup_spec(PopupData::DiscardRules { filter: "a.filter" });
+        assert_eq!(s.title, "Discard rule changes?");
+        assert_eq!(
+            s.body,
+            "Unapplied rule changes to a.filter will be discarded."
+        );
+        assert_eq!(labels(&s), ["Discard", "Keep editing"]);
+        assert!(s.buttons[0].1, "Discard is the destructive button");
+        let s = popup_spec(PopupData::DiscardRules { filter: "" });
+        assert_eq!(s.body, "Unapplied rule changes will be discarded.");
     }
 
     #[test]
@@ -1669,7 +1763,17 @@ mod tests {
                 prompt: String::new(),
             },
             PopupData::RemoveEconomy,
-            PopupData::DiscardConfig { count: 1 },
+            PopupData::DiscardConfig {
+                count: 1,
+                economy: false,
+                staged: false,
+            },
+            PopupData::DiscardConfig {
+                count: 0,
+                economy: true,
+                staged: true,
+            },
+            PopupData::DiscardRules { filter: "f" },
         ] {
             let s = popup_spec(data);
             let last = s.buttons.last().unwrap();

@@ -360,9 +360,10 @@ mod tests {
     #[test]
     fn economy_block_is_untouched() {
         let src = format!(
-            "{}\n#ff:style S\nHide\n  SetFontSize 20\n{}\n",
+            "{}\n{}\n{}\n#ff:style S\nHide\n  SetFontSize 20\n",
+            section::RULE_LINE,
             section::BEGIN_LINE,
-            section::END_LINE
+            section::RULE_LINE
         );
         let (out, rep) = run(&src);
         assert_eq!(out, src);
@@ -429,9 +430,10 @@ mod tests {
     #[test]
     fn drop_skips_economy_blocks() {
         let src = format!(
-            "{}\n#ff:style Gone\nShow\n  SetFontSize 20\n{}\n",
+            "{}\n{}\n{}\n#ff:style Gone\nShow\n  SetFontSize 20\n",
+            section::RULE_LINE,
             section::BEGIN_LINE,
-            section::END_LINE
+            section::RULE_LINE
         );
         let (out, d) = drop_run(&src);
         assert!(d.is_empty());

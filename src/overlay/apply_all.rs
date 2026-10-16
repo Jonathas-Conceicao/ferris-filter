@@ -577,7 +577,7 @@ mod tests {
         cfg.set_tier_text("S", "35");
         let bad = FilterInput {
             loaded: &lf,
-            styled: Ok(format!("{}\nShow # bad\n\tRarity =< Rare\n", lf.text())),
+            styled: Ok(format!("Show # bad\n\tRarity =< Rare\n\n{}", lf.text())),
             plan: EconomyPlan::Refresh,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(bad), false);
@@ -598,7 +598,11 @@ mod tests {
         // (iv) damaged economy markers with a Refresh plan.
         let damaged = FilterInput {
             loaded: &lf,
-            styled: Ok(lf.text().replace("# ff:economy-end", "")),
+            styled: Ok(lf.text().replacen(
+                &format!("{}\n{}", section::RULE_LINE, section::BEGIN_LINE),
+                section::BEGIN_LINE,
+                1,
+            )),
             plan: EconomyPlan::Refresh,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(damaged), false);
@@ -792,9 +796,11 @@ mod tests {
     #[test]
     fn damaged_markers_refuse_even_a_config_only_apply() {
         let fx = Fixture::new();
-        let damaged = fs::read_to_string(&fx.filter)
-            .unwrap()
-            .replace("# ff:economy-end", "");
+        let damaged = fs::read_to_string(&fx.filter).unwrap().replacen(
+            &format!("{}\n{}", section::RULE_LINE, section::BEGIN_LINE),
+            section::BEGIN_LINE,
+            1,
+        );
         fs::write(&fx.filter, &damaged).unwrap();
         let lf = fx.loaded();
         let mut cfg = fx.config();

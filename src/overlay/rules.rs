@@ -516,7 +516,7 @@ impl WorkingFilter {
         let mut order: Vec<(&Block, bool, u8)> = Vec::new();
         for b in self.doc.blocks() {
             let econ = in_economy(b.header_line());
-            let side = u8::from(span.is_some_and(|s| b.header_line() > s.end));
+            let side = u8::from(span.is_some_and(|s| b.header_line() >= s.end));
             order.push((b, econ, side));
         }
         let econ_blocks = order.iter().filter(|(_, e, _)| *e).count();
@@ -1383,14 +1383,14 @@ impl WorkingFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::section::{BEGIN_LINE, END_LINE};
+    use crate::filter::section::{BEGIN_LINE, RULE_LINE};
 
     const THREE: &str =
         "Show\n  Class \"Rings\"\n\nHide\n  Rarity Normal\n\nShow\n  ItemLevel >= 82\n";
 
     fn with_economy() -> String {
         format!(
-            "Show\n  Class \"Rings\"\n\n{BEGIN_LINE}\nShow\n  Class \"Gems\"\n\nShow\n  Class \"Currency\"\n\n{END_LINE}\n\nHide\n  Rarity Normal\n\nShow\n  ItemLevel >= 82\n"
+            "Show\n  Class \"Rings\"\n\n{RULE_LINE}\n{BEGIN_LINE}\n{RULE_LINE}\nShow\n  Class \"Gems\"\n\nShow\n  Class \"Currency\"\n\n{RULE_LINE}\n# ff:section After\n{RULE_LINE}\n\nHide\n  Rarity Normal\n\nShow\n  ItemLevel >= 82\n"
         )
     }
 

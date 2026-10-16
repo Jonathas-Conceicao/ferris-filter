@@ -1072,6 +1072,12 @@ fn edit(actions: &mut Vec<ConfigAction>, name: &str, edit: StyleEdit) {
 }
 
 const FONT_TIP: &str = "Font size override; off uses the game default";
+/// Hover text of the Font size check and its dimmed slider while the override is off.
+const FONT_OFF_TIP: &str = "Off: the game's default size. Tick to set a size.";
+/// Hover text of the Font size check while the override is on.
+const FONT_ON_TIP: &str = "On: this size. Untick for the game's default size.";
+/// The value text of the dimmed Font size slider while the override is off.
+const FONT_OFF_VALUE: &str = "Default";
 const DROP_TIP: &str = "Silence the default drop sound";
 const FILE_TIP: &str = "The file must be in the game folder.";
 const BAD_FILE_TIP: &str = "File names cannot contain quotes or control characters";
@@ -1217,6 +1223,11 @@ fn style_editor(
         let mut on = style.font.is_some();
         let check = crate::skin::widgets::ff_check(ui, &skin, &mut on, "Font size");
         probe("ed-font-check", check.rect);
+        let check = check.on_hover_text(if style.font.is_some() {
+            FONT_ON_TIP
+        } else {
+            FONT_OFF_TIP
+        });
         if check.changed() {
             // WR-03: turning it back on restores the size it had before it was turned off.
             let next = if on {
@@ -1253,6 +1264,29 @@ fn style_editor(
             if let Some(msg) = body::font_hint(i64::from(font)) {
                 r.on_hover_text(msg);
             }
+        } else {
+            // Off keeps the line's shape: the slider stays, dimmed and inert, reading "Default"
+            // at the size a tick would bring back, so the line never shows a lone circle.
+            let mut v = recall::<u8>(ui, name, "font", epoch).map_or(32.0, f64::from);
+            let rest = (ui.max_rect().right() - ui.next_widget_position().x).max(120.0);
+            let r = ui
+                .allocate_ui(vec2(rest, 28.0), |ui| {
+                    ui.add_enabled_ui(false, |ui| {
+                        crate::skin::widgets::ff_slider(
+                            ui,
+                            &skin,
+                            &mut v,
+                            1.0..=45.0,
+                            1.0,
+                            "Font size (game default)",
+                            |_| FONT_OFF_VALUE.to_string(),
+                        )
+                    })
+                    .inner
+                })
+                .inner;
+            probe("ed-font-slider-off", r.rect);
+            r.on_disabled_hover_text(FONT_OFF_TIP);
         }
     });
 
@@ -2652,6 +2686,23 @@ mod tests {
         let mut cfg = expanded("kite");
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
         assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(32))]);
+    }
+
+    /// Font size off keeps a dimmed, inert slider on the line instead of a lone check.
+    #[test]
+    fn font_off_shows_a_dimmed_slider_that_does_nothing() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        assert_eq!(state.style("kite").unwrap().font, None);
+        let off = render_probes(&state, &mut cfg, "ed-font-slider-off");
+        assert_eq!(off.len(), 1, "the off line keeps its slider");
+        assert!(off[0].width() >= 120.0, "{:?}", off[0]);
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-slider-off", 0, 20.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let mut cfg = expanded("S");
+        assert!(render_probes(&state, &mut cfg, "ed-font-slider-off").is_empty());
+        assert_eq!(render_probes(&state, &mut cfg, "ed-font-slider").len(), 1);
     }
 
     /// WR-03: off then on again restores the style's own size, not 32.

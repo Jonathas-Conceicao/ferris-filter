@@ -4,35 +4,59 @@
 //! before the UI-redo milestone: a 660-point window docked to the left edge of the primary
 //! monitor's work area at full height, the game's Options header / tabs / frame / controls, and
 //! a static Ferris drawing behind the scrolling content. Nothing is read or written; the
-//! buttons only set the status line.
+//! buttons only set the status line, and style edits live in memory.
 //!
 //! ```text
 //! cargo run --bin ff-proto
-//! cargo run --bin ff-proto -- --tab config --screenshot shot.png
+//! cargo run --bin ff-proto -- --tab config --expand-style kite --screenshot shot.png
 //! ```
 //!
-//! `--screenshot <png>` renders a few frames, saves one (physical pixels) and exits.
-//! `--tab rules|config|economy` picks the starting tab.
+//! - `--screenshot <png>` renders a few frames, saves one (physical pixels) and exits.
+//! - `--tab rules|config|economy|about` picks the starting tab.
+//! - `--expand-style <name>` opens that style's editor (CONFIG tab) and scrolls to it.
+//! - `--status ok|warning|error` starts with the long status message REVERT / APPLY / RELOAD
+//!   would set (to check the one-line truncation in a screenshot).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 
-use egui::{Align, Align2, Color32, Layout, Rect, Sense, UiBuilder, pos2, vec2};
+use egui::{Align, Color32, Layout, Rect, Sense, UiBuilder, pos2, vec2};
+use ferrisfilter::skin::editor::{self as ed, LabelLook};
+use ferrisfilter::skin::minimap::{self, COLOURS, SHAPES, SWATCHES};
+use ferrisfilter::skin::widgets::StatusKind;
 use ferrisfilter::skin::{self, Skin, fonts, palette as pal, widgets as w};
 
 /// The window's fixed width, in logical points.
 const WIDTH: f32 = 660.0;
-const TABS: [&str; 3] = ["Rules", "Config", "Economy"];
+const TABS: [&str; 4] = ["Rules", "Config", "Economy", "About"];
+/// The repository, shown on the ABOUT tab.
+const REPO_URL: &str = "https://github.com/Jonathas-Conceicao/poe2-myfilter";
+
+/// The long messages the bottom-bar buttons set, to exercise the one-line status truncation.
+const MSG_OK: &str = "Reverted to the last applied filter: 3 rule edits and 1 style edit were \
+                      discarded (prototype: nothing was read).";
+const MSG_WARNING: &str = "Applied with warnings: 2 rules use the unknown style \
+                           \"leaguestart-gold\" and were left as written, and the in-game reload \
+                           was skipped because Path of Exile 2 was not the foreground window -- \
+                           use Options > Game > Item Filter > Refresh (prototype: nothing was \
+                           written).";
+const MSG_ERROR: &str = "Could not reload dynamic.filter: the economy section's end marker is \
+                         missing (expected after line 1412), so nothing was read. Restore the \
+                         marker or remove the section, then press RELOAD again (prototype).";
 
 struct Args {
     screenshot: Option<PathBuf>,
     tab: usize,
+    expand_style: Option<String>,
+    status: Option<StatusKind>,
 }
 
 fn parse_args() -> Args {
     let mut args = Args {
         screenshot: None,
         tab: 0,
+        expand_style: None,
+        status: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -42,7 +66,17 @@ fn parse_args() -> Args {
                 args.tab = match it.next().as_deref() {
                     Some("config") => 1,
                     Some("economy") => 2,
+                    Some("about") => 3,
                     _ => 0,
+                }
+            }
+            "--expand-style" => args.expand_style = it.next(),
+            "--status" => {
+                args.status = match it.next().as_deref() {
+                    Some("ok") => Some(StatusKind::Ok),
+                    Some("warning") => Some(StatusKind::Warning),
+                    Some("error") => Some(StatusKind::Error),
+                    _ => None,
                 }
             }
             other => eprintln!("ff-proto: ignoring unknown argument {other:?}"),
@@ -83,13 +117,55 @@ struct Rule {
     cont: bool,
 }
 
-/// One fake style row.
-struct StyleRow {
-    name: &'static str,
-    visible: bool,
-    text: Color32,
-    border: Color32,
-    bg: Color32,
+/// One style, as `styles.json` holds it (fake: loaded from `styles-default.json` at compile
+/// time, edited in memory only).
+#[derive(Clone)]
+struct Style {
+    name: String,
+    builtin: bool,
+    show: bool,
+    /// Text, border, background; `None` = keep the game's.
+    colors: [Option<Color32>; 3],
+    /// What a colour card goes back to when switched from "none" to a colour.
+    remembered: [Color32; 3],
+    font: Option<f64>,
+    /// `MinimapIcon` size (0 = Large); `None` = no icon. Colour and shape are kept while off.
+    mm_size: Option<usize>,
+    mm_colour: usize,
+    mm_shape: usize,
+    /// `PlayEffect` colour; `None` = no beam.
+    beam: Option<usize>,
+    beam_temp: bool,
+    /// Index into [`Proto::sound_options`]: 0 none, 1-16 alert sounds, 17 the custom file.
+    sound: usize,
+    volume: f64,
+}
+
+impl Style {
+    fn look(&self) -> LabelLook {
+        LabelLook {
+            text: self.colors[0],
+            border: self.colors[1],
+            background: self.colors[2],
+            font_size: self.font.map(|f| f as f32),
+            hidden: !self.show,
+        }
+    }
+}
+
+/// A message in the bottom bar.
+struct Status {
+    text: String,
+    kind: StatusKind,
+}
+
+impl Status {
+    fn new(kind: StatusKind, text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind,
+        }
+    }
 }
 
 struct Proto {
@@ -99,7 +175,7 @@ struct Proto {
     docked: bool,
     frames: u32,
     shot_requested: bool,
-    status: String,
+    status: Status,
 
     search: String,
     rules: Vec<Rule>,
@@ -113,13 +189,31 @@ struct Proto {
 
     filter: usize,
     reload_after_apply: bool,
-    styles: Vec<StyleRow>,
+    styles: Vec<Style>,
+    style_open: Option<usize>,
+    confirm_delete: bool,
+    added: usize,
+    sound_options: Vec<String>,
     tiers: Vec<(&'static str, f64)>,
 }
 
 impl Proto {
     fn new(skin: Skin, args: Args) -> Self {
         let tab = args.tab;
+        let styles = fake_styles();
+        let style_open = args
+            .expand_style
+            .as_ref()
+            .and_then(|n| styles.iter().position(|s| s.name.eq_ignore_ascii_case(n)));
+        let status = match args.status {
+            Some(StatusKind::Ok) => Status::new(StatusKind::Ok, MSG_OK),
+            Some(StatusKind::Warning) => Status::new(StatusKind::Warning, MSG_WARNING),
+            Some(StatusKind::Error) => Status::new(StatusKind::Error, MSG_ERROR),
+            _ => Status::new(StatusKind::Info, "Prototype: fake data, nothing is saved."),
+        };
+        let mut sound_options = vec!["None".to_owned()];
+        sound_options.extend((1..=16).map(|i| format!("Alert sound {i}")));
+        sound_options.push("Custom: uwu.mp3".to_owned());
         Self {
             skin,
             tab,
@@ -127,7 +221,7 @@ impl Proto {
             docked: false,
             frames: 0,
             shot_requested: false,
-            status: "Prototype: fake data, nothing is saved.".into(),
+            status,
             search: String::new(),
             rules: fake_rules(),
             expanded: Some(2),
@@ -139,7 +233,11 @@ impl Proto {
             style: 3,
             filter: 0,
             reload_after_apply: true,
-            styles: fake_styles(),
+            styles,
+            style_open,
+            confirm_delete: false,
+            added: 0,
+            sound_options,
             tiers: vec![
                 ("S", 50.0),
                 ("A", 10.0),
@@ -260,7 +358,8 @@ impl eframe::App for Proto {
         match self.tab {
             0 => self.rules_tab(&mut cui, &skin),
             1 => self.config_tab(&mut cui, &skin),
-            _ => self.economy_tab(&mut cui, &skin),
+            2 => self.economy_tab(&mut cui, &skin),
+            _ => self.about_tab(&mut cui, &skin),
         }
 
         // 6. Bottom bar: status on the left, REVERT / RELOAD / APPLY on the right.
@@ -278,23 +377,21 @@ impl Proto {
         );
         bui.spacing_mut().item_spacing.x = 6.0;
         if w::ff_button(&mut bui, skin, "Apply", 84.0).clicked() {
-            self.status = "APPLY pressed (prototype: nothing was written).".into();
+            self.status = Status::new(StatusKind::Warning, MSG_WARNING);
         }
         if w::ff_button(&mut bui, skin, "Reload", 84.0).clicked() {
-            self.status = "RELOAD pressed (prototype: nothing was read).".into();
+            self.status = Status::new(StatusKind::Error, MSG_ERROR);
         }
         if w::ff_button(&mut bui, skin, "Revert", 84.0).clicked() {
-            self.status = "REVERT pressed (prototype: nothing to revert).".into();
+            self.status = Status::new(StatusKind::Ok, MSG_OK);
         }
         let status_rect =
-            Rect::from_min_max(inner.min, pos2(bui.min_rect().min.x - 8.0, inner.max.y));
-        ui.painter().with_clip_rect(status_rect).text(
-            pos2(status_rect.min.x, status_rect.center().y),
-            Align2::LEFT_CENTER,
-            &self.status,
-            fonts::regular(13.0),
-            pal::MUTED,
-        );
+            Rect::from_min_max(inner.min, pos2(bui.min_rect().min.x - 10.0, inner.max.y));
+        w::ff_status(ui, status_rect, &self.status.text, self.status.kind);
+    }
+
+    fn info(&mut self, text: impl Into<String>) {
+        self.status = Status::new(StatusKind::Info, text);
     }
 
     fn rules_tab(&mut self, ui: &mut egui::Ui, skin: &Skin) {
@@ -308,7 +405,7 @@ impl Proto {
                 field_w,
             );
             if w::ff_button(ui, skin, "+ Add rule", 124.0).clicked() {
-                self.status = "+ ADD RULE pressed (prototype).".into();
+                self.info("+ ADD RULE pressed (prototype).");
             }
         });
         ui.add_space(6.0);
@@ -367,10 +464,10 @@ impl Proto {
         );
         right.spacing_mut().item_spacing.x = 4.0;
         if w::ff_arrow(&mut right, skin, false, i + 1 < 40).clicked() {
-            self.status = format!("Moved rule {} down (prototype).", i + 1);
+            self.info(format!("Moved rule {} down (prototype).", i + 1));
         }
         if w::ff_arrow(&mut right, skin, true, i > 0).clicked() {
-            self.status = format!("Moved rule {} up (prototype).", i + 1);
+            self.info(format!("Moved rule {} up (prototype).", i + 1));
         }
         let rule = &self.rules[i];
         if rule.cont {
@@ -412,14 +509,14 @@ impl Proto {
         );
         p.text(
             pos2(x + act_w + 10.0, l1),
-            Align2::LEFT_CENTER,
+            egui::Align2::LEFT_CENTER,
             rule.name,
             fonts::small_caps(16.0),
             fade(pal::LABEL),
         );
         p.text(
             pos2(text_left, rect.min.y + 34.0),
-            Align2::LEFT_CENTER,
+            egui::Align2::LEFT_CENTER,
             &rule.summary,
             fonts::regular(14.0),
             fade(pal::MUTED),
@@ -452,7 +549,7 @@ impl Proto {
             )
             .changed()
             {
-                self.status = "Operator changed (prototype).".into();
+                self.status = Status::new(StatusKind::Info, "Operator changed (prototype).");
             }
             w::ff_slider(
                 ui,
@@ -480,17 +577,11 @@ impl Proto {
         w::ff_row(&mut body, 0, "Identified", |ui| {
             w::ff_check(ui, skin, &mut self.identified, "Identified");
         });
+        let names: Vec<&str> = std::iter::once("Custom")
+            .chain(self.styles.iter().map(|s| s.name.as_str()))
+            .collect();
         w::ff_row(&mut body, 1, "Style", |ui| {
-            w::ff_dropdown(
-                ui,
-                skin,
-                "style",
-                &mut self.style,
-                &[
-                    "Custom", "S", "A", "B", "C", "D", "E", "F", "Recycle", "kite", "hidden",
-                ],
-                0.0,
-            );
+            w::ff_dropdown(ui, skin, "style", &mut self.style, &names, 0.0);
         });
         body.add_space(6.0);
         let used = body.min_rect();
@@ -528,43 +619,18 @@ impl Proto {
             });
 
             w::ff_section(ui, skin, "Styles");
-            for (i, s) in self.styles.iter_mut().enumerate() {
-                let (rect, _) = ui
-                    .allocate_exact_size(vec2(ui.available_width(), w::ROW_HEIGHT), Sense::hover());
-                w::row_background(ui, i, rect);
-                let mut row = ui.new_child(
-                    UiBuilder::new()
-                        .max_rect(rect.shrink2(vec2(w::ROW_PAD, 0.0)))
-                        .layout(Layout::left_to_right(Align::Center)),
-                );
-                w::ff_check(&mut row, skin, &mut s.visible, "Visible");
-                row.add_space(12.0);
-                let color = if s.visible { pal::LABEL } else { pal::DISABLED };
-                row.label(
-                    egui::RichText::new(s.name)
-                        .font(fonts::small_caps(17.0))
-                        .color(color),
-                );
-                // Colour preview chip on the right.
-                let chip = Rect::from_min_size(
-                    pos2(rect.max.x - w::ROW_PAD - 96.0, rect.center().y - 11.0),
-                    vec2(96.0, 22.0),
-                );
-                let p = ui.painter();
-                p.rect(
-                    chip,
-                    1.0,
-                    s.bg,
-                    egui::Stroke::new(1.5, s.border),
-                    egui::StrokeKind::Inside,
-                );
-                p.text(
-                    chip.center(),
-                    Align2::CENTER_CENTER,
-                    "Item",
-                    fonts::regular(14.0),
-                    s.text,
-                );
+            self.style_group_heading(ui, skin, "Built-in", false);
+            for i in 0..self.styles.len() {
+                if self.styles[i].builtin {
+                    self.style_row(ui, skin, i);
+                }
+            }
+            ui.add_space(6.0);
+            self.style_group_heading(ui, skin, "Custom", true);
+            for i in 0..self.styles.len() {
+                if i < self.styles.len() && !self.styles[i].builtin {
+                    self.style_row(ui, skin, i);
+                }
             }
 
             w::ff_section(ui, skin, "Tiers");
@@ -577,6 +643,401 @@ impl Proto {
             }
             ui.add_space(8.0);
         });
+    }
+
+    /// "Built-in" / "Custom" above a style group; the Custom one carries "+ Add style".
+    fn style_group_heading(&mut self, ui: &mut egui::Ui, skin: &Skin, title: &str, add: bool) {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.set_min_height(34.0);
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(title)
+                    .font(fonts::small_caps(16.0))
+                    .color(pal::GOLD),
+            );
+            if add {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if w::ff_button(ui, skin, "+ Add style", 130.0).clicked() {
+                        self.add_style();
+                    }
+                });
+            }
+        });
+        ui.add_space(2.0);
+    }
+
+    fn add_style(&mut self) {
+        self.added += 1;
+        let name = format!("new style {}", self.added);
+        let white = Color32::from_rgb(248, 248, 242);
+        let dracula = Color32::from_rgb(40, 42, 54);
+        self.styles.push(Style {
+            name: name.clone(),
+            builtin: false,
+            show: true,
+            colors: [Some(white), Some(white), Some(dracula)],
+            remembered: [white, white, dracula],
+            font: None,
+            mm_size: None,
+            mm_colour: 4,
+            mm_shape: 0,
+            beam: None,
+            beam_temp: false,
+            sound: 0,
+            volume: 100.0,
+        });
+        self.style_open = Some(self.styles.len() - 1);
+        self.confirm_delete = false;
+        self.info(format!(
+            "Added style \"{name}\" (prototype: in memory only)."
+        ));
+    }
+
+    /// One style: a collapsed row (show switch, name, minimap icon, label chip, and for custom
+    /// styles the reorder arrows); clicking it opens the editor below it.
+    fn style_row(&mut self, ui: &mut egui::Ui, skin: &Skin, i: usize) {
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+        w::row_background(ui, i, rect);
+        let open = self.style_open == Some(i);
+        if open {
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(1.0, pal::INPUT_BORDER_HOT),
+                egui::StrokeKind::Inside,
+            );
+            if self.frames < 12 && self.args.expand_style.is_some() {
+                ui.scroll_to_rect(rect, Some(Align::Min));
+            }
+        }
+        let mut row = ui.new_child(
+            UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(w::ROW_PAD, 0.0)))
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        let s = &mut self.styles[i];
+        let label = format!("Show {}", s.name);
+        w::ff_check(&mut row, skin, &mut s.show, &label);
+        row.add_space(12.0);
+        let name_left = row.cursor().min.x;
+
+        let mut right = row.new_child(
+            UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(w::ROW_PAD, 0.0)))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        right.spacing_mut().item_spacing.x = 4.0;
+        let custom_range = self.first_custom()..self.styles.len();
+        if !self.styles[i].builtin {
+            let down = i + 1 < custom_range.end;
+            let up = i > custom_range.start;
+            if w::ff_arrow(&mut right, skin, false, down).clicked() {
+                self.move_style(i, i + 1);
+            }
+            if w::ff_arrow(&mut right, skin, true, up).clicked() {
+                self.move_style(i, i - 1);
+            }
+            right.add_space(8.0);
+        }
+        let Some(s) = self.styles.get(i) else {
+            return;
+        };
+        // The label chip, then the minimap icon left of it.
+        let (chip, _) = right.allocate_exact_size(vec2(130.0, 30.0), Sense::hover());
+        let mut look = s.look();
+        look.font_size = Some(26.0);
+        ed::ff_item_label(ui.painter(), chip, "Item", look);
+        right.add_space(6.0);
+        let (icon, _) = right.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+        if let Some(size) = s.mm_size {
+            ed::paint_minimap_icon(
+                ui.painter(),
+                skin,
+                icon.center(),
+                s.mm_shape,
+                s.mm_colour,
+                minimap::icon_points(size, 28.0),
+                Color32::WHITE,
+            );
+        }
+        let name_right = right.min_rect().min.x - 8.0;
+        let color = if s.show { pal::LABEL } else { pal::DISABLED };
+        ui.painter()
+            .with_clip_rect(Rect::from_min_max(
+                pos2(name_left, rect.min.y),
+                pos2(name_right, rect.max.y),
+            ))
+            .text(
+                pos2(name_left, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                &s.name,
+                fonts::small_caps(17.0),
+                color,
+            );
+        if !s.show {
+            ui.painter().text(
+                pos2(name_right, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                "Hide",
+                fonts::small_caps(14.0),
+                pal::DISABLED,
+            );
+        }
+
+        if resp.clicked() {
+            self.style_open = if open { None } else { Some(i) };
+            self.confirm_delete = false;
+        }
+        if self.style_open == Some(i) && open {
+            self.style_editor(ui, skin, i);
+        }
+    }
+
+    fn first_custom(&self) -> usize {
+        self.styles
+            .iter()
+            .position(|s| !s.builtin)
+            .unwrap_or(self.styles.len())
+    }
+
+    fn move_style(&mut self, from: usize, to: usize) {
+        self.styles.swap(from, to);
+        self.style_open = match self.style_open {
+            Some(o) if o == from => Some(to),
+            Some(o) if o == to => Some(from),
+            other => other,
+        };
+        self.info(format!(
+            "Moved style \"{}\" (prototype: in memory only).",
+            self.styles[to].name
+        ));
+    }
+
+    /// The style editor, laid out like Scalpel's tier editor in the game's look.
+    fn style_editor(&mut self, ui: &mut egui::Ui, skin: &Skin, i: usize) {
+        let mut deleted = false;
+        egui::Frame::NONE
+            .fill(Color32::from_black_alpha(80))
+            .inner_margin(egui::Margin {
+                left: 12,
+                right: 10,
+                top: 8,
+                bottom: 10,
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 8.0;
+                if !self.styles[i].builtin {
+                    deleted = self.custom_header(ui, skin, i);
+                    if deleted {
+                        return;
+                    }
+                }
+                let sound_options: Vec<&str> =
+                    self.sound_options.iter().map(String::as_str).collect();
+                let s = &mut self.styles[i];
+
+                ed::ff_card(ui, "Visibility", |ui| {
+                    let mut sel = usize::from(!s.show);
+                    if ed::ff_segmented(ui, skin, &mut sel, &["Show", "Hide"], 0.0).changed() {
+                        s.show = sel == 0;
+                    }
+                });
+
+                ed::ff_card(ui, "Label", |ui| {
+                    let (strip, _) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
+                    ed::ff_item_label(ui.painter(), strip, "Razor Quarterstaff", s.look());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let card_w = (ui.available_width() - 12.0) / 3.0;
+                        for (k, name) in ["Text", "Border", "Background"].iter().enumerate() {
+                            if ed::ff_colour_card(ui, name, s.colors[k], card_w).clicked() {
+                                s.colors[k] = match s.colors[k] {
+                                    Some(c) => {
+                                        s.remembered[k] = c;
+                                        None
+                                    }
+                                    None => Some(s.remembered[k]),
+                                };
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(28.0);
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let mut custom = s.font.is_some();
+                        if w::ff_check(ui, skin, &mut custom, "Font size").changed() {
+                            s.font = custom.then_some(32.0);
+                        }
+                        ed::caption(ui, "Font size");
+                        match &mut s.font {
+                            Some(f) => {
+                                w::ff_slider(ui, skin, f, 18.0..=45.0, 1.0, "Font size", |v| {
+                                    format!("{v:.0}")
+                                });
+                            }
+                            None => {
+                                ui.label(
+                                    egui::RichText::new("game default")
+                                        .font(fonts::regular(15.0))
+                                        .color(pal::DISABLED),
+                                );
+                            }
+                        }
+                    });
+                });
+
+                ed::ff_card(ui, "Minimap icon", |ui| {
+                    ui.horizontal(|ui| {
+                        let (icon, _) = ui.allocate_exact_size(vec2(44.0, 40.0), Sense::hover());
+                        match s.mm_size {
+                            Some(size) => ed::paint_minimap_icon(
+                                ui.painter(),
+                                skin,
+                                icon.center(),
+                                s.mm_shape,
+                                s.mm_colour,
+                                minimap::icon_points(size, 40.0),
+                                Color32::WHITE,
+                            ),
+                            None => {
+                                ui.painter().text(
+                                    icon.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "--",
+                                    fonts::regular(15.0),
+                                    pal::DISABLED,
+                                );
+                            }
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let mut sel = s.mm_size.map_or(0, |v| v + 1);
+                            if ed::ff_segmented(
+                                ui,
+                                skin,
+                                &mut sel,
+                                &["None", "Large", "Medium", "Small"],
+                                300.0,
+                            )
+                            .changed()
+                            {
+                                s.mm_size = sel.checked_sub(1);
+                            }
+                        });
+                    });
+                    let on = s.mm_size.is_some();
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let n = COLOURS.len() as f32;
+                        let sw = ((ui.available_width() - 4.0 * (n - 1.0)) / n).floor();
+                        for (c, name) in COLOURS.iter().enumerate() {
+                            let sel = on && s.mm_colour == c;
+                            if ed::ff_swatch(ui, Some(SWATCHES[c]), sel, vec2(sw, 24.0), name)
+                                .on_hover_text(*name)
+                                .clicked()
+                            {
+                                s.mm_colour = c;
+                                s.mm_size.get_or_insert(1);
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let n = SHAPES.len() as f32;
+                        let tile = ((ui.available_width() - 4.0 * (n - 1.0)) / n).floor();
+                        for shape in 0..SHAPES.len() {
+                            let sel = on && s.mm_shape == shape;
+                            if ed::ff_icon_button(ui, skin, shape, s.mm_colour, sel, tile).clicked()
+                            {
+                                s.mm_shape = shape;
+                                s.mm_size.get_or_insert(1);
+                            }
+                        }
+                    });
+                });
+
+                ed::ff_card(ui, "Beam", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let temp_w = 74.0;
+                        let n = COLOURS.len() as f32 + 1.0;
+                        let sw = ((ui.available_width() - temp_w - 4.0 * n) / n).floor();
+                        if ed::ff_swatch(ui, None, s.beam.is_none(), vec2(sw, 24.0), "No beam")
+                            .on_hover_text("None")
+                            .clicked()
+                        {
+                            s.beam = None;
+                        }
+                        for (c, name) in COLOURS.iter().enumerate() {
+                            if ed::ff_swatch(
+                                ui,
+                                Some(SWATCHES[c]),
+                                s.beam == Some(c),
+                                vec2(sw, 24.0),
+                                name,
+                            )
+                            .on_hover_text(*name)
+                            .clicked()
+                            {
+                                s.beam = Some(c);
+                            }
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ed::caption(ui, "Temp");
+                            w::ff_check(ui, skin, &mut s.beam_temp, "Temporary beam");
+                        });
+                    });
+                });
+
+                ed::ff_card(ui, "Sound", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        w::ff_dropdown(ui, skin, ("sound", i), &mut s.sound, &sound_options, 190.0);
+                        ed::caption(ui, "Volume");
+                        w::ff_slider(ui, skin, &mut s.volume, 0.0..=300.0, 5.0, "Volume", |v| {
+                            format!("{v:.0}")
+                        });
+                    });
+                });
+            });
+        if deleted {
+            self.style_open = None;
+        }
+    }
+
+    /// A custom style's name field and Delete (with an inline confirm). Returns true when the
+    /// style was deleted.
+    fn custom_header(&mut self, ui: &mut egui::Ui, skin: &Skin, i: usize) -> bool {
+        let mut delete = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ed::caption(ui, "Name");
+            let field_w = ui.available_width() - if self.confirm_delete { 250.0 } else { 120.0 };
+            w::ff_text_field(ui, &mut self.styles[i].name, "Style name", field_w);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if self.confirm_delete {
+                    if w::ff_button(ui, skin, "Cancel", 90.0).clicked() {
+                        self.confirm_delete = false;
+                    }
+                    if w::ff_button(ui, skin, "Delete", 90.0).clicked() {
+                        delete = true;
+                    }
+                    ed::caption(ui, "Sure?");
+                } else if w::ff_button(ui, skin, "Delete", 100.0).clicked() {
+                    self.confirm_delete = true;
+                }
+            });
+        });
+        if delete {
+            let name = self.styles.remove(i).name;
+            self.confirm_delete = false;
+            self.info(format!(
+                "Deleted style \"{name}\" (prototype: in memory only)."
+            ));
+        }
+        delete
     }
 
     fn economy_tab(&mut self, ui: &mut egui::Ui, skin: &Skin) {
@@ -599,10 +1060,96 @@ impl Proto {
             ui.add_space(14.0);
             ui.with_layout(Layout::top_down(Align::Center), |ui| {
                 if w::ff_button(ui, skin, "Sync economy", 180.0).clicked() {
-                    self.status = "SYNC ECONOMY pressed (prototype: no network).".into();
+                    self.info("SYNC ECONOMY pressed (prototype: no network).");
                 }
             });
         });
+    }
+
+    fn about_tab(&mut self, ui: &mut egui::Ui, skin: &Skin) {
+        let area = ui.available_rect_before_wrap();
+        ui.add_space(26.0);
+        ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                egui::RichText::new("FerrisFilter")
+                    .font(fonts::small_caps(36.0))
+                    .color(pal::HEADING),
+            );
+            ui.label(
+                egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                    .font(fonts::regular(15.0))
+                    .color(pal::MUTED),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("A loot-filter editor and overlay for Path of Exile 2")
+                    .font(fonts::regular(17.0))
+                    .color(pal::LABEL),
+            );
+            ui.hyperlink_to(
+                egui::RichText::new("github.com/Jonathas-Conceicao/poe2-myfilter")
+                    .font(fonts::regular(16.0))
+                    .color(pal::GOLD),
+                REPO_URL,
+            );
+        });
+        ui.add_space(10.0);
+        w::ff_section(ui, skin, "Credits");
+        let credits = [
+            ("Game UI art and font files", "\u{a9} Grinding Gear Games"),
+            ("Fontin typeface", "exljbris"),
+            ("Ferris the crab", "Karen Rustad T\u{f6}lva, public domain"),
+        ];
+        for (i, (what, who)) in credits.iter().enumerate() {
+            w::ff_row(ui, i, what, |ui| {
+                ui.label(
+                    egui::RichText::new(*who)
+                        .font(fonts::regular(16.0))
+                        .color(pal::VALUE),
+                );
+            });
+        }
+
+        // The disclaimer, pinned to the bottom of the page.
+        let foot = Rect::from_min_max(pos2(area.min.x, area.max.y - 80.0), area.max);
+        let painter = ui.painter();
+        ferrisfilter::skin::slice::paint_image(
+            painter,
+            &skin.title_underline,
+            Rect::from_center_size(
+                pos2(foot.center().x, foot.min.y),
+                vec2(foot.width() * 0.8, 3.0),
+            ),
+            Color32::from_white_alpha(110),
+        );
+        let mut fui = ui.new_child(
+            UiBuilder::new()
+                .max_rect(foot.shrink2(vec2(6.0, 12.0)))
+                .layout(Layout::top_down(Align::Center)),
+        );
+        fui.spacing_mut().item_spacing.y = 4.0;
+        for (text, color) in [
+            (
+                "This product isn't affiliated with or endorsed by Grinding Gear Games in any way.",
+                pal::LABEL,
+            ),
+            (
+                "Game art and fonts belong to their owners. FerrisFilter is a free third-party \
+                 tool for Path of Exile 2 players.",
+                pal::MUTED,
+            ),
+        ] {
+            fui.add(
+                egui::Label::new(
+                    egui::RichText::new(text)
+                        .font(fonts::regular(13.5))
+                        .color(color),
+                )
+                .halign(Align::Center)
+                .wrap(),
+            );
+        }
     }
 }
 
@@ -812,39 +1359,84 @@ fn fake_rules() -> Vec<Rule> {
         .collect()
 }
 
-fn fake_styles() -> Vec<StyleRow> {
-    let bg = Color32::from_rgb(40, 42, 54);
-    let style = |name, rgb: (u8, u8, u8), visible| StyleRow {
-        name,
-        visible,
-        text: Color32::from_rgb(rgb.0, rgb.1, rgb.2),
-        border: Color32::from_rgb(rgb.0, rgb.1, rgb.2),
-        bg,
+/// The committed default styles, read at compile time (never from disk at run time, never
+/// written).
+const STYLES_DEFAULT: &str = include_str!("../../styles-default.json");
+
+/// The fake style list: `styles-default.json` parsed in memory, in file order.
+fn fake_styles() -> Vec<Style> {
+    let map: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(STYLES_DEFAULT).expect("styles-default.json is valid JSON");
+    // serde_json's map may sort its keys; recover the file order from the raw text.
+    let mut names: Vec<&String> = map.keys().collect();
+    names.sort_by_key(|n| {
+        STYLES_DEFAULT
+            .find(&format!("\"{n}\":"))
+            .unwrap_or(usize::MAX)
+    });
+    names
+        .into_iter()
+        .map(|name| parse_style(name, &map[name.as_str()]))
+        .collect()
+}
+
+fn parse_style(name: &str, v: &serde_json::Value) -> Style {
+    let rgb = |key: &str| -> Option<Color32> {
+        let a = v.get(key)?.as_array()?;
+        let c = |i: usize| a.get(i).and_then(|x| x.as_u64()).unwrap_or(0).min(255) as u8;
+        Some(Color32::from_rgb(c(0), c(1), c(2)))
     };
-    vec![
-        style("S", (255, 121, 198), true),
-        style("A", (189, 147, 249), true),
-        style("B", (255, 85, 85), true),
-        style("C", (241, 250, 140), true),
-        style("D", (139, 233, 253), true),
-        style("E", (248, 248, 242), true),
-        style("F", (248, 248, 242), false),
-        style("Recycle", (80, 250, 123), true),
-        style("kite", (255, 184, 108), true),
-        style("exceptional", (255, 121, 198), true),
-        StyleRow {
-            name: "unchanged",
-            visible: true,
-            text: Color32::from_rgb(200, 200, 200),
-            border: Color32::from_gray(70),
-            bg: Color32::from_rgb(20, 20, 20),
+    let colors = [rgb("text"), rgb("border"), rgb("background")];
+    let fallback = [
+        Color32::from_rgb(248, 248, 242),
+        Color32::from_rgb(248, 248, 242),
+        Color32::from_rgb(40, 42, 54),
+    ];
+    let remembered = [0, 1, 2].map(|k| colors[k].unwrap_or(fallback[k]));
+    let str_at = |obj: &str, key: &str| -> Option<String> {
+        Some(v.get(obj)?.get(key)?.as_str()?.to_owned())
+    };
+    let mm = v.get("minimap").filter(|m| !m.is_null());
+    let colour_index = |name: Option<String>| {
+        name.and_then(|n| minimap::index_of(&COLOURS, &n))
+            .unwrap_or(4)
+    };
+    let sound = v.get("sound").filter(|s| !s.is_null());
+    Style {
+        name: name.to_owned(),
+        builtin: v
+            .get("id")
+            .and_then(|i| i.as_str())
+            .is_some_and(|i| i.starts_with("builtin:")),
+        show: v.get("action").and_then(|a| a.as_str()) != Some("Hide"),
+        colors,
+        remembered,
+        font: v.get("font").and_then(|f| f.as_f64()),
+        mm_size: mm
+            .and_then(|m| m.get("size"))
+            .and_then(|s| s.as_u64())
+            .map(|s| s.min(2) as usize),
+        mm_colour: colour_index(str_at("minimap", "color")),
+        mm_shape: str_at("minimap", "shape")
+            .and_then(|s| minimap::index_of(&SHAPES, &s))
+            .unwrap_or(0),
+        beam: str_at("beam", "color").and_then(|c| minimap::index_of(&COLOURS, &c)),
+        beam_temp: v
+            .get("beam")
+            .and_then(|b| b.get("temp"))
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false),
+        sound: match sound {
+            Some(s) if s.get("custom").is_some() => 17,
+            Some(s) => s
+                .get("id")
+                .and_then(|i| i.as_u64())
+                .map_or(0, |i| i.clamp(1, 16) as usize),
+            None => 0,
         },
-        StyleRow {
-            name: "hidden",
-            visible: false,
-            text: Color32::from_gray(150),
-            border: Color32::from_gray(50),
-            bg: Color32::from_rgb(12, 12, 12),
-        },
-    ]
+        volume: sound
+            .and_then(|s| s.get("vol"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(100.0),
+    }
 }

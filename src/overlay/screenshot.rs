@@ -1,6 +1,6 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
 //! [--filter f] [--expand n] [--search text] [--rename-section n] [--expand-style name]
-//! [--picker text|border|background|rule]` renders the shell once, saves the frame as a PNG and exits.
+//! [--picker text|border|background|rule] [--tier-text TIER=TEXT]` renders the shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
 //! the hotkey and the tray, never applies, reloads or syncs, and refuses to run unless
@@ -51,6 +51,8 @@ pub(crate) struct ShotArgs {
     pub expand_style: Option<String>,
     /// Open the colour picker with this tag (one of [`PICKERS`]).
     pub picker: Option<String>,
+    /// Seed this tier cutoff text on ECONOMY, e.g. `S=abc`, to show the inline validation.
+    pub tier_text: Option<(String, String)>,
 }
 
 /// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent: a
@@ -71,6 +73,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut rename_section = None;
     let mut expand_style = None;
     let mut picker = None;
+    let mut tier_text = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -116,6 +119,15 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                 }
                 picker = Some(p);
             }
+            "--tier-text" => {
+                let t = value("--tier-text")?;
+                tier_text = match t.split_once('=') {
+                    Some((tier, text)) if !tier.is_empty() => {
+                        Some((tier.to_string(), text.to_string()))
+                    }
+                    _ => return Err(format!("--tier-text needs TIER=TEXT, got `{t}`")),
+                };
+            }
             "--search" => search = Some(value("--search")?),
             other => return Err(format!("unknown argument `{other}`")),
         }
@@ -131,6 +143,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         rename_section,
         expand_style,
         picker,
+        tier_text,
     }))
 }
 
@@ -351,6 +364,19 @@ mod tests {
         assert!(p(&["--screenshot", "o.png", "--picker", "foo"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--picker"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand-style"]).is_err());
+        let e = p(&["--screenshot", "o.png", "--tier-text", "noequals"]).unwrap_err();
+        assert!(e.contains("--tier-text needs TIER=TEXT"), "{e}");
+        assert!(p(&["--screenshot", "o.png", "--tier-text", "=x"]).is_err());
+    }
+
+    #[test]
+    fn tier_text_is_read() {
+        let a = p(&["--screenshot", "o.png", "--tier-text", "S=abc"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.tier_text, Some(("S".into(), "abc".into())));
+        let b = p(&["--screenshot", "o.png"]).unwrap().unwrap();
+        assert_eq!(b.tier_text, None);
     }
 
     #[test]

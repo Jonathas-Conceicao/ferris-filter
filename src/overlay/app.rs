@@ -1025,6 +1025,9 @@ impl OverlayApp {
             app.config_ui.expanded = Some(name.clone());
             app.config_ui.scroll_to = Some(name.clone());
         }
+        if let (Some((tier, text)), Ok(state)) = (&shot.tier_text, &mut app.config) {
+            state.set_tier_text(tier, text);
+        }
         app.shot = Some(ShotState {
             args: shot,
             frames: 0,
@@ -2743,7 +2746,7 @@ impl eframe::App for OverlayApp {
                 cui.ctx()
                     .request_repaint_after(std::time::Duration::from_secs(60));
             }
-            ShellTab::About => shell::about_tab(&mut cui, &skin),
+            ShellTab::About => super::about_view::about_tab(&mut cui, &skin),
         }
 
         // Bottom bar: the one status line plus Revert / Reload / Apply.

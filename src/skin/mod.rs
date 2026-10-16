@@ -38,6 +38,11 @@ pub mod window;
 
 pub use textures::Skin;
 
+/// The FerrisFilter repository, linked from the ABOUT tab.
+pub const REPO_URL: &str = "https://github.com/Jonathas-Conceicao/poe2-myfilter";
+/// The link text shown for [`REPO_URL`].
+pub const REPO_LINK_TEXT: &str = "github.com/Jonathas-Conceicao/poe2-myfilter";
+
 /// One-call setup: installs the fonts and the skin's style on `ctx` and loads the textures.
 /// Call once, before the first frame paints, and keep the returned [`Skin`].
 pub fn install(ctx: &egui::Context) -> Skin {
@@ -71,6 +76,11 @@ pub fn of(ctx: &egui::Context) -> Skin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_link_text_is_the_url_without_scheme() {
+        assert!(REPO_URL.ends_with(REPO_LINK_TEXT));
+    }
 
     #[test]
     fn skin_of_returns_the_installed_skin() {

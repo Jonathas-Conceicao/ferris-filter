@@ -29,8 +29,6 @@ use ferrisfilter::skin::{self, Skin, fonts, palette as pal, widgets as w};
 /// The window's fixed width, in logical points.
 const WIDTH: f32 = 660.0;
 const TABS: [&str; 4] = ["Rules", "Config", "Economy", "About"];
-/// The repository, shown on the ABOUT tab.
-const REPO_URL: &str = "https://github.com/Jonathas-Conceicao/poe2-myfilter";
 
 /// The long messages the bottom-bar buttons set, to exercise the one-line status truncation.
 const MSG_OK: &str = "Reverted to the last applied filter: 3 rule edits and 1 style edit were \
@@ -1086,7 +1084,7 @@ impl Proto {
                 egui::RichText::new("github.com/Jonathas-Conceicao/poe2-myfilter")
                     .font(fonts::regular(16.0))
                     .color(pal::GOLD),
-                REPO_URL,
+                ferrisfilter::skin::REPO_URL,
             );
         });
         ui.add_space(10.0);

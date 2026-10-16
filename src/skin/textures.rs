@@ -98,6 +98,8 @@ pub struct Skin {
     pub button: [ThreeSlice; 3],
     /// The static background drawing (Ferris as pale line art, 2x resolution).
     pub ferris_bg: TextureHandle,
+    /// The orange Ferris on the ABOUT tab (original colours, 3x of 112pt).
+    pub ferris_about: TextureHandle,
     /// The item-filter minimap icons: one row per colour, one column per shape (see
     /// [`super::minimap`]).
     pub minimap_icons: TextureHandle,
@@ -168,6 +170,7 @@ impl Skin {
                 ),
             ],
             ferris_bg: tex!(ctx, "ui/ferris-bg.png"),
+            ferris_about: tex!(ctx, "ui/ferris-about.png"),
             minimap_icons: tex!(ctx, "poe2/minimap/icons.png"),
         }
     }
@@ -187,6 +190,8 @@ mod tests {
         assert!(skin.title_bar.size()[0] > skin.title_bar.size()[1]);
         // 12 shapes x 11 colours of 64px cells.
         assert_eq!(skin.minimap_icons.size(), [12 * 64, 11 * 64]);
+        assert_eq!(skin.ferris_about.size()[0], 336);
+        assert!(skin.ferris_about.size()[1] > 0);
     }
 
     #[test]

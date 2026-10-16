@@ -30,40 +30,18 @@ prefer_4k = true
 trim = true
 clear = [[104, 150, 1106, 1232]]
 
-# Tabs: a tab is left + centre (stretched) + right; the tab bar strip runs under them.
-[[image]]
-path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutableft.dds"
-out = "options/tab_left.png"
-prefer_4k = true
-trim = true
-[[image]]
-path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutabcenter.dds"
-out = "options/tab_center.png"
-prefer_4k = true
-trim = true
-[[image]]
-path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutabright.dds"
-out = "options/tab_right.png"
-prefer_4k = true
-trim = true
-[[image]]
-path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionsmenutexture.dds"
-out = "options/tab_bar.png"
-prefer_4k = true
-trim = true
-
-# The lighter, stone-coloured tab shape (older "Options Menu" art) used for the selected tab.
+# Tabs: the stone tab shape (left + centre stretched + right) from the "Options Menu" art.
 [[image]]
 path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/left.dds"
-out = "options/tab_sel_left.png"
+out = "options/tab_left.png"
 trim = true
 [[image]]
 path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/centre.dds"
-out = "options/tab_sel_center.png"
+out = "options/tab_center.png"
 trim = true
 [[image]]
 path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/right.dds"
-out = "options/tab_sel_right.png"
+out = "options/tab_right.png"
 trim = true
 
 # Slider: track (bg) and gold fill as left cap + stretched middle + right cap, diamond thumb.
@@ -242,7 +220,7 @@ svg = "assets/ferris/rustacean-flat-happy.svg"
 out = "assets/ui/ferris-bg.png"
 width = 1200
 height = 2000
-crab_fraction = 0.92
+crab_fraction = 0.8
 crab_center_y = 0.5
 line_alpha = 34
 line_radius = 2

@@ -20,6 +20,11 @@ path = "src/bin/ff.rs"
 name = "ff-cli"
 path = "src/bin/ff-cli.rs"
 
+# Look-only prototype of the PoE2-styled UI (src/skin) on fake data. Not default-run.
+[[bin]]
+name = "ff-proto"
+path = "src/bin/ff-proto.rs"
+
 [dependencies]
 clap    = { version = "4.6", features = ["derive"] }
 serde   = { version = "1.0", features = ["derive"] }

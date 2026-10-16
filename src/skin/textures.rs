@@ -48,12 +48,8 @@ pub struct Skin {
     /// The Options page: stone frame, thin gold inner border, recessed button bar. Its middle
     /// (the game's gear drawing) is transparent.
     pub pages_frame: TextureHandle,
-    /// Unselected tab (dark).
+    /// A tab (stone shape; the selected one is drawn brighter).
     pub tab: ThreeSlice,
-    /// Selected tab (light stone).
-    pub tab_selected: ThreeSlice,
-    /// The strip under the tab row.
-    pub tab_bar: TextureHandle,
     /// Slider track.
     pub slider_track: ThreeSlice,
     /// Slider gold fill (left of the thumb).
@@ -64,7 +60,7 @@ pub struct Skin {
     pub box_9slice: TextureHandle,
     /// Scrollbar track (a thin vertical line).
     pub scroll_track: TextureHandle,
-    /// Scrollbar thumb: top cap, stretched centre, bottom cap.
+    /// Scrollbar thumb: top cap (`left`), stretched centre, bottom cap (`right`).
     pub scroll_thumb: ThreeSlice,
     /// Thin gold rule under section titles.
     pub title_underline: TextureHandle,
@@ -99,12 +95,6 @@ impl Skin {
                 tex!(ctx, "poe2/options/tab_center.png"),
                 tex!(ctx, "poe2/options/tab_right.png"),
             ),
-            tab_selected: three(
-                tex!(ctx, "poe2/options/tab_sel_left.png"),
-                tex!(ctx, "poe2/options/tab_sel_center.png"),
-                tex!(ctx, "poe2/options/tab_sel_right.png"),
-            ),
-            tab_bar: tex!(ctx, "poe2/options/tab_bar.png"),
             slider_track: three(
                 tex!(ctx, "poe2/options/slider_bg_left.png"),
                 tex!(ctx, "poe2/options/slider_bg_middle.png"),

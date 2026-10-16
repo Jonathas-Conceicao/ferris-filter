@@ -168,8 +168,8 @@ pub fn ff_close(ui: &mut Ui, skin: &Skin, center: egui::Pos2, size: f32) -> Resp
     resp
 }
 
-/// A row of tabs centred in `rect`, the game's tab art behind each label. The selected tab uses
-/// the light stone shape with dark text; the others are dark with tan text. Returns the union
+/// A row of tabs centred in `rect`, the game's stone tab shape behind each label. The selected
+/// tab is drawn at full brightness with pale gold text; the others are dimmed. Returns the union
 /// of the tab responses, marked changed when the selection changed.
 pub fn ff_tabs(
     ui: &mut Ui,
@@ -210,15 +210,13 @@ pub fn ff_tabs(
             changed = true;
         }
         let is_sel = *selected == i;
-        let art = if is_sel {
-            &skin.tab_selected
-        } else {
-            &skin.tab
-        };
-        let tint = if is_sel || resp.hovered() {
+        let art = &skin.tab;
+        let tint = if is_sel {
             Color32::WHITE
-        } else {
+        } else if resp.hovered() {
             Color32::from_gray(200)
+        } else {
+            Color32::from_gray(150)
         };
         let rects = slice::three_h_rects(
             tab,
@@ -228,19 +226,22 @@ pub fn ff_tabs(
         );
         slice::paint_three(&painter, [&art.left, &art.middle, &art.right], rects, tint);
         let color = if is_sel {
-            pal::ON_GOLD
-        } else if resp.hovered() {
             pal::HEADING
-        } else {
+        } else if resp.hovered() {
             pal::LABEL
+        } else {
+            pal::MUTED
         };
+        // Cream letters with a dark drop shadow, as the game draws its tab captions.
+        let center = pos2(tab.center().x, tab.center().y + h * 0.06);
         painter.text(
-            pos2(tab.center().x, tab.center().y + h * 0.06),
+            center + vec2(1.0, 1.0),
             Align2::CENTER_CENTER,
             *label,
             font.clone(),
-            color,
+            Color32::from_black_alpha(220),
         );
+        painter.text(center, Align2::CENTER_CENTER, *label, font.clone(), color);
         union = Some(match union {
             Some(u) => u | resp,
             None => resp,
@@ -315,15 +316,30 @@ pub fn ff_row<R>(
     let (rect, resp) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::hover());
     row_background(ui, index, rect);
-    ui.painter().text(
-        pos2(rect.min.x + ROW_PAD, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        small_caps(17.0),
-        pal::LABEL,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), small_caps(17.0), pal::LABEL);
+    let label_end = rect.min.x + ROW_PAD + galley.size().x;
+    // The control column starts at the usual place, or after a label too long for it (a lone
+    // checkbox then sits right after its label instead of on top of it).
+    let control_min = (rect.max.x - ROW_PAD - CONTROL_WIDTH)
+        .max(label_end + 12.0)
+        .min(rect.max.x - ROW_PAD - 24.0);
+    ui.painter()
+        .with_clip_rect(Rect::from_min_max(
+            rect.min,
+            pos2(control_min - 4.0, rect.max.y),
+        ))
+        .galley(
+            pos2(
+                rect.min.x + ROW_PAD,
+                rect.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            pal::LABEL,
+        );
     let control = Rect::from_min_max(
-        pos2(rect.max.x - ROW_PAD - CONTROL_WIDTH, rect.min.y),
+        pos2(control_min, rect.min.y),
         pos2(rect.max.x - ROW_PAD, rect.max.y),
     );
     let mut child = ui.new_child(
@@ -404,7 +420,17 @@ pub fn ff_slider(
     format: impl Fn(f64) -> String,
 ) -> Response {
     let width = ui.available_width().max(120.0);
-    let value_w = 52.0;
+    // Room for the widest value text the range can produce, so it never overlaps the track.
+    let value_w = [*range.start(), *range.end(), *value]
+        .iter()
+        .map(|v| {
+            ui.painter()
+                .layout_no_wrap(format(*v), regular(16.0), pal::VALUE)
+                .size()
+                .x
+        })
+        .fold(0.0_f32, f32::max)
+        + 12.0;
     let (rect, mut resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click_and_drag());
     let track = Rect::from_min_max(
         pos2(rect.min.x + 4.0, rect.center().y - 6.0),
@@ -772,7 +798,7 @@ pub fn ff_scroll_area<R>(
     let travel = (track.height() - thumb_h).max(1.0);
     let offset = out.state.offset.y.clamp(0.0, max_offset);
     let thumb_top = track.min.y + offset / max_offset * travel;
-    let thumb = Rect::from_min_size(pos2(track.center().x - 5.0, thumb_top), vec2(10.0, thumb_h));
+    let thumb = Rect::from_min_size(pos2(track.center().x - 6.0, thumb_top), vec2(12.0, thumb_h));
 
     let bar = ui.interact(track, out.id.with("ff_scrollbar"), Sense::click_and_drag());
     let mut new_offset = None;
@@ -795,7 +821,7 @@ pub fn ff_scroll_area<R>(
     let tint = if bar.hovered() || bar.dragged() {
         Color32::WHITE
     } else {
-        Color32::from_gray(205)
+        Color32::from_gray(225)
     };
     slice::paint_three(
         ui.painter(),
@@ -911,15 +937,15 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert_eq!(v, 10.0);
-        // Click at the far right of the track: the value goes to the top of the range.
-        let target = pos2(rect.max.x - 52.0 - 6.0, rect.center().y);
+        // Click a little left of the track's right end: the value goes near the top.
+        let target = pos2(rect.max.x - 60.0, rect.center().y);
         ctx.run_ui(click_at(target), |ui| {
             ff_slider(ui, &skin, &mut v, 0.0..=100.0, 1.0, "x", |v| format!("{v}"));
         })
         .drop_without_applying_deltas();
         assert!(
-            v > 95.0,
-            "clicking the right end must move the value there, got {v}"
+            v > 85.0,
+            "clicking near the right end must move the value there, got {v}"
         );
     }
 

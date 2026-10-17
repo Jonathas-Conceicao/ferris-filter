@@ -593,44 +593,100 @@ fn migrate_legacy_tags(doc: &mut Document, olds: &[&StyleSet], new: &StyleSet) -
     changed
 }
 
-/// A read-only row for one generated economy block: searchable, never editable.
-fn economy_row(doc: &Document, b: &Block) -> RuleRow {
-    let x = extract(doc, b);
-    let name = doc.meta_get(b.id(), "name").map(str::to_string);
-    let kw = keyword_word(b.keyword());
-    let label = match &name {
-        Some(n) => format!("{kw} - {n}"),
-        None => kw.to_string(),
-    };
-    let mut hay = label.clone();
-    for v in x.class.iter().chain(x.base_type.iter()) {
-        hay.push('\n');
-        hay.push_str(v);
+impl WorkingFilter {
+    /// The style state and chip of a block: its `# ff:style` tag resolved against the loaded
+    /// styles, or (untagged) the effective `MinimapIcon` line. Shared by user and economy rows.
+    fn style_of(
+        &self,
+        id: BlockId,
+        b: &Block,
+    ) -> (StyleState, Option<(usize, usize)>, Option<String>) {
+        let mut chip = None;
+        let style = match self.doc.meta_get(id, "style") {
+            None => {
+                // Untagged: the effective (last) MinimapIcon line the Custom style lines
+                // bind, when it is a shown icon (`MinimapIcon -1` shows none).
+                let has_icon = b
+                    .body()
+                    .iter()
+                    .any(|bl| bl.keyword.is_some_and(|k| k.name == "MinimapIcon"));
+                if has_icon {
+                    let entries = self.body_view(id);
+                    chip = super::body::rule_style_view(&entries, b.keyword())
+                        .0
+                        .minimap
+                        .as_ref()
+                        .and_then(Cancelable::value)
+                        .and_then(chip_icon_of);
+                }
+                StyleState::None
+            }
+            Some(n) => match &self.styles {
+                Some(set) => match set.resolve_tag(n) {
+                    Some(m) => {
+                        chip = m
+                            .style
+                            .minimap
+                            .as_ref()
+                            .and_then(Cancelable::value)
+                            .and_then(chip_icon_of);
+                        StyleState::Known(m.name.to_string())
+                    }
+                    None => StyleState::Unknown(n.to_string()),
+                },
+                None => StyleState::Unchecked(n.to_string()),
+            },
+        };
+        let (chip_icon, chip_icon_desc) = chip.map_or((None, None), |(i, d)| (Some(i), Some(d)));
+        (style, chip_icon, chip_icon_desc)
     }
-    RuleRow {
-        id: b.id(),
-        index: 0,
-        enabled: b.is_enabled(),
-        keyword: b.keyword(),
-        has_continue: b.has_continue(),
-        name,
-        style: StyleState::None,
-        label,
-        haystack: hay.to_lowercase(),
-        errors: Vec::new(),
-        warnings: Vec::new(),
-        cannot_enable: false,
-        can_move_up: false,
-        can_move_down: false,
-        moved_across_continue: false,
-        summary: row_summary(&x.conditions),
-        conditions: x.conditions,
-        group_size: 1,
-        group_broken: false,
-        simple_mask: None,
-        section: None,
-        chip_icon: None,
-        chip_icon_desc: None,
+
+    /// A read-only row for one generated economy block: searchable, never editable.
+    fn economy_row(&self, b: &Block) -> RuleRow {
+        let doc = &self.doc;
+        let x = extract(doc, b);
+        let name = doc.meta_get(b.id(), "name").map(str::to_string);
+        let (style, chip_icon, chip_icon_desc) = self.style_of(b.id(), b);
+        let kw = keyword_word(b.keyword());
+        let label = match &name {
+            Some(n) => format!("{kw} - {n}"),
+            None => kw.to_string(),
+        };
+        let mut hay = String::new();
+        if let Some(n) = &name {
+            hay.push_str(n);
+            hay.push('\n');
+        }
+        hay.push_str(&label);
+        for v in x.class.iter().chain(x.base_type.iter()) {
+            hay.push('\n');
+            hay.push_str(v);
+        }
+        RuleRow {
+            id: b.id(),
+            index: 0,
+            enabled: b.is_enabled(),
+            keyword: b.keyword(),
+            has_continue: b.has_continue(),
+            name,
+            style,
+            label,
+            haystack: hay.to_lowercase(),
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            cannot_enable: false,
+            can_move_up: false,
+            can_move_down: false,
+            moved_across_continue: false,
+            summary: row_summary(&x.conditions),
+            conditions: x.conditions,
+            group_size: 1,
+            group_broken: false,
+            simple_mask: None,
+            section: None,
+            chip_icon,
+            chip_icon_desc,
+        }
     }
 }
 
@@ -691,7 +747,7 @@ impl WorkingFilter {
         let mut index = 0usize;
         for (b, econ, side) in &order {
             if *econ {
-                economy_rows.push(economy_row(&self.doc, b));
+                economy_rows.push(self.economy_row(b));
                 continue;
             }
             if groups.is_follower(b.id()) {
@@ -712,44 +768,7 @@ impl WorkingFilter {
                 extract(&self.doc, b)
             };
             let name = self.doc.meta_get(id, "name").map(str::to_string);
-            let mut chip = None;
-            let style = match self.doc.meta_get(id, "style") {
-                None => {
-                    // Untagged: the effective (last) MinimapIcon line the Custom style lines
-                    // bind, when it is a shown icon (`MinimapIcon -1` shows none).
-                    let has_icon = b
-                        .body()
-                        .iter()
-                        .any(|bl| bl.keyword.is_some_and(|k| k.name == "MinimapIcon"));
-                    if has_icon {
-                        let entries = self.body_view(id);
-                        chip = super::body::rule_style_view(&entries, b.keyword())
-                            .0
-                            .minimap
-                            .as_ref()
-                            .and_then(Cancelable::value)
-                            .and_then(chip_icon_of);
-                    }
-                    StyleState::None
-                }
-                Some(n) => match &self.styles {
-                    Some(set) => match set.resolve_tag(n) {
-                        Some(m) => {
-                            chip = m
-                                .style
-                                .minimap
-                                .as_ref()
-                                .and_then(Cancelable::value)
-                                .and_then(chip_icon_of);
-                            StyleState::Known(m.name.to_string())
-                        }
-                        None => StyleState::Unknown(n.to_string()),
-                    },
-                    None => StyleState::Unchecked(n.to_string()),
-                },
-            };
-            let (chip_icon, chip_icon_desc) =
-                chip.map_or((None, None), |(i, d)| (Some(i), Some(d)));
+            let (style, chip_icon, chip_icon_desc) = self.style_of(id, b);
             let kw = keyword_word(b.keyword());
             let label = match &name {
                 Some(n) => format!("{index}  {kw} - {n}"),
@@ -1941,6 +1960,45 @@ Show
         assert_eq!(users.get("kite"), Some(&2));
         assert_eq!(users.get("S"), Some(&1));
         assert_eq!(users.len(), 2);
+    }
+
+    #[test]
+    fn tagged_economy_rows_show_name_and_style() {
+        let text = format!(
+            "Show
+  Class \"Rings\"
+
+{RULE_LINE}
+{BEGIN_LINE}
+{RULE_LINE}
+# ff:name S tier Currency
+# ff:style builtin:S S
+Show # Currency S
+  Class == \"Stackable Currency\"
+  BaseType == \"Divine Orb\"
+  MinimapIcon 0 Pink Circle
+
+# ff:name A tier Uniques
+Show # Unique A
+  Rarity == Unique
+  BaseType == \"Infernal Sword\"
+  SetBackgroundColor 175 96 37 240
+"
+        );
+        let mut wf = WorkingFilter::from_text(&text);
+        wf.set_styles(Ok(StyleSet::committed_for_tests()));
+        let rows = wf.economy_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name.as_deref(), Some("S tier Currency"));
+        assert!(rows[0].label.contains("S tier Currency"));
+        assert_eq!(rows[0].style, StyleState::Known("S".into()));
+        assert!(rows[0].chip_icon.is_some());
+        assert_eq!(rows[1].name.as_deref(), Some("A tier Uniques"));
+        assert_eq!(rows[1].style, StyleState::None);
+        // Search finds an economy row by its name; style users ignore economy blocks.
+        let hits = wf.entries("tier currency", |_| false);
+        assert!(hits.iter().any(|e| matches!(e, ListEntry::EconomyRule(_))));
+        assert!(wf.style_users().get("S").is_none());
     }
 
     #[test]

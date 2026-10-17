@@ -602,6 +602,16 @@ mod tests {
             economy_body_with(&paths, PriceSourcePolicy::Auto, &restyled, &tiers).unwrap();
         assert_ne!(changed.0, on_disk.0);
 
+        // Tier blocks carry their built-in style tag.
+        assert!(on_disk.0.contains(
+            "# ff:style builtin:S S
+"
+        ));
+        assert!(on_disk.0.contains(
+            "# ff:name S tier Currency
+"
+        ));
+
         // Without live prices the fallback pair is used whatever tiers are passed.
         let empty = tempfile::tempdir().unwrap();
         fs::copy(

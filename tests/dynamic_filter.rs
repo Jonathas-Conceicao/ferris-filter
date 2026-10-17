@@ -146,6 +146,12 @@ fn economy_section_matches_generate() {
     let f = gfs(&dir);
     apply(&dir, &["--filter", &f, "--add-economy"]).success();
     let body = normalize(&section_body(&read(&gf(&dir))));
+    // Only the economy section carries `# ff:name` / `# ff:style` lines; generate has none.
+    let body: String = body
+        .lines()
+        .filter(|l| !l.starts_with("# ff:"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert_eq!(body.trim_matches('\n'), expected.trim_matches('\n'));
 }
 

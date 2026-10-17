@@ -865,10 +865,46 @@ fn draw_economy_row(
     );
     right.spacing_mut().item_spacing.x = FLAG_GAP;
     let mut flagged = false;
+    let skin = crate::skin::of(ui.ctx());
     for f in flags_for(row) {
-        if let FlagKind::Icon(icon @ (FlagIcon::GrammarError | FlagIcon::GrammarWarning)) = f.kind {
-            flag_icon(&mut right, icon, f.color, &f.text, &f.tip);
-            flagged = true;
+        match &f.kind {
+            FlagKind::Icon(icon @ (FlagIcon::GrammarError | FlagIcon::GrammarWarning)) => {
+                flag_icon(&mut right, *icon, f.color, &f.text, &f.tip);
+                flagged = true;
+            }
+            // The style chip (minimap icon and/or style name), muted and non-interactive.
+            FlagKind::Styled { name, icon } => {
+                let w = chip_width(
+                    icon.is_some(),
+                    name.as_ref().map(|n| text_width(&right, n, regular(15.0))),
+                );
+                let (r, resp) = right.allocate_exact_size(vec2(w, FLAG_ICON_SIZE), Sense::hover());
+                let mut x = r.min.x;
+                if let Some((shape, colour)) = *icon {
+                    crate::skin::editor::paint_minimap_icon(
+                        right.painter(),
+                        &skin,
+                        egui::pos2(x + FLAG_ICON_SIZE / 2.0, r.center().y),
+                        shape,
+                        colour,
+                        FLAG_ICON_SIZE,
+                        Color32::WHITE,
+                    );
+                    x += FLAG_ICON_SIZE + CHIP_ICON_GAP;
+                }
+                if let Some(name) = name {
+                    right.painter().text(
+                        egui::pos2(x, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        name,
+                        regular(15.0),
+                        pal::MUTED,
+                    );
+                }
+                resp.on_hover_text(f.tip.clone());
+                flagged = true;
+            }
+            _ => {}
         }
     }
     let used_left = if flagged {

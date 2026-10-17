@@ -105,8 +105,8 @@ pub fn generate_as(
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
-    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks)?;
-    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks)?;
+    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks, false)?;
+    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks, false)?;
     debug_assert!(
         out.ends_with('\n'),
         "generate() output must end with exactly one newline"
@@ -117,14 +117,15 @@ pub fn generate_as(
 /// Render only the economy body (currency/category sections, then price-tiered uniques) from a
 /// [`StyleSet`] and priced data - no `Config` needed.
 ///
-/// This is the text Apply splices between the `# ff:economy-*` markers. It equals the tail of
-/// [`generate`] from the first [`SECTION_BANNER`] line. With empty priced data it yields the banner
+/// This is the text Apply splices under the `# ff:economy-begin` banner. It equals the tail of
+/// [`generate`] from the first [`SECTION_BANNER`] line with every `# ff:` line removed: here (and
+/// only here) each block carries `# ff:name <T> tier <Group>` and tier blocks `# ff:style <id> <T>`. With empty priced data it yields the banner
 /// block only; callers must refuse `PriceSource::Absent` before writing it.
 pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String, GenerateError> {
     styles.validate()?;
     let mut out = String::with_capacity(32_000);
-    emit_currency_sections(&mut out, styles, &priced.category_blocks)?;
-    emit_unique_sections(&mut out, styles, &priced.unique_blocks)?;
+    emit_currency_sections(&mut out, styles, &priced.category_blocks, true)?;
+    emit_unique_sections(&mut out, styles, &priced.unique_blocks, true)?;
     debug_assert!(
         out.ends_with('\n'),
         "generate_economy() output must end with a newline"
@@ -504,6 +505,7 @@ fn emit_currency_sections(
     out: &mut String,
     styles: &StyleSet,
     blocks: &[CategoryBlock],
+    tags: bool,
 ) -> Result<(), GenerateError> {
     writeln!(out, "{SECTION_BANNER}").unwrap();
     writeln!(
@@ -544,6 +546,13 @@ fn emit_currency_sections(
                 .collect::<Vec<_>>()
                 .join(" ");
 
+            if tags {
+                writeln!(out, "# ff:name {} tier {}", tier_group.tier, category.name).unwrap();
+                match styles.id_of(&tier_group.tier) {
+                    Some(id) => writeln!(out, "# ff:style {} {}", id, tier_group.tier).unwrap(),
+                    None => writeln!(out, "# ff:style {}", tier_group.tier).unwrap(),
+                }
+            }
             writeln!(out, "Show # {}", label).unwrap();
             // Multi-class support: use the typed `is_multi_class` signal from the pricer
             // (set for the Uncut Gems merge group) to emit the pre-formatted multi-class
@@ -592,6 +601,7 @@ fn emit_unique_sections(
     out: &mut String,
     styles: &StyleSet,
     blocks: &[UniqueBlock],
+    tags: bool,
 ) -> Result<(), GenerateError> {
     // Per Open Questions resolution: omit the header entirely when unique_blocks is empty.
     if blocks.is_empty() {
@@ -614,6 +624,9 @@ fn emit_unique_sections(
             .collect::<Vec<_>>()
             .join(" ");
 
+        if tags {
+            writeln!(out, "# ff:name {} tier Uniques", block.tier).unwrap();
+        }
         writeln!(out, "Show # Unique {}", block.tier).unwrap();
         writeln!(out, "  Rarity == Unique").unwrap();
         writeln!(out, "  BaseType == {}", base_type_str).unwrap();
@@ -1213,7 +1226,7 @@ mod tests {
         let econ = generate_economy(&config.styles, &priced).expect("generate_economy failed");
         assert!(econ.starts_with(BANNER));
         assert!(econ.ends_with('\n') && !econ.ends_with("\n\n"));
-        assert_eq!(econ, economy_tail(&full));
+        assert_eq!(strip_ff(&econ), economy_tail(&full));
     }
 
     #[test]
@@ -1226,7 +1239,48 @@ mod tests {
         let full = generate(&config, &priced).expect("generate failed");
         let econ = generate_economy(&config.styles, &priced).expect("generate_economy failed");
         assert!(econ.contains("Show # Unique A"));
-        assert_eq!(econ, economy_tail(&full));
+        assert_eq!(strip_ff(&econ), economy_tail(&full));
+    }
+
+    fn strip_ff(s: &str) -> String {
+        let mut o: String = s
+            .lines()
+            .filter(|l| !l.starts_with("# ff:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        o.push('\n');
+        o
+    }
+
+    #[test]
+    fn economy_blocks_carry_ff_name_and_style_lines() {
+        let (config, mut priced) = load_inputs();
+        priced.unique_blocks.push(crate::pricer::UniqueBlock {
+            tier: "A".to_string(),
+            base_types: vec!["Infernal Sword".to_string()],
+        });
+        let econ = generate_economy(&config.styles, &priced).unwrap();
+        let lines: Vec<&str> = econ.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("Show # Currency S"))
+            .expect("currency S block");
+        assert_eq!(lines[i - 2], "# ff:name S tier Currency");
+        assert_eq!(lines[i - 1], "# ff:style builtin:S S");
+        let u = lines.iter().position(|l| *l == "Show # Unique A").unwrap();
+        assert_eq!(lines[u - 1], "# ff:name A tier Uniques");
+        assert!(!lines[u - 2].starts_with("# ff:style"));
+        // generate() has no ff lines at all.
+        let full = generate(&config, &priced).unwrap();
+        assert!(!full.lines().any(|l| l.starts_with("# ff:")));
+        // A style set without ids uses the legacy name form.
+        let mut idless = config.styles.clone();
+        let names: Vec<String> = idless.iter().map(|(n, _)| n.to_string()).collect();
+        for n in names {
+            idless.get_mut(&n).unwrap().id = None;
+        }
+        let e = generate_economy(&idless, &priced).unwrap();
+        assert!(e.lines().any(|l| l == "# ff:style S"));
     }
 
     #[test]

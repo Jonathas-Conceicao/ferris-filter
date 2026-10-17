@@ -107,7 +107,7 @@ pub fn signal_message(outcome: Wait) -> Option<String> {
             };
             Some(format!(
                 "FerrisFilter is already running, but this launch could not ask it to show its \
-                 stripe ({reason}). Use its tray icon or Ctrl+Shift+Z instead."
+                 window ({reason}). Use its tray icon or Ctrl+Shift+Z instead."
             ))
         }
     }
@@ -118,7 +118,7 @@ pub fn signal_message(outcome: Wait) -> Option<String> {
 pub fn check_failed_message(code: u32) -> String {
     format!(
         "FerrisFilter could not check whether it is already running (Windows error {code}), so \
-         it did not start, to avoid opening a second stripe. Try again; if this keeps \
+         it did not start, to avoid opening a second window. Try again; if this keeps \
          happening, sign out and back in."
     )
 }

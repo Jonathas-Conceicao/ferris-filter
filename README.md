@@ -6,22 +6,26 @@ to date from poe.ninja.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/rules.png" width="270" alt="Rules tab"></td>
-    <td align="center"><img src="docs/screenshots/rule-editing.png" width="270" alt="A rule's conditions being edited"></td>
-    <td align="center"><img src="docs/screenshots/rule-style.png" width="270" alt="A rule using a shared style"></td>
+    <td align="center"><img src="docs/screenshots/rules.png" width="405" alt="Rules tab"></td>
+    <td align="center"><img src="docs/screenshots/rule-editing.png" width="405" alt="A rule's conditions being edited"></td>
   </tr>
   <tr>
     <td align="center">General rule view</td>
     <td align="center">Rule editing</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/rule-style.png" width="405" alt="A rule using a shared style"></td>
+    <td align="center"><img src="docs/screenshots/config-style.png" width="405" alt="Style editor"></td>
+  </tr>
+  <tr>
     <td align="center">Styles on rules</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/config-style.png" width="270" alt="Style editor"></td>
-    <td align="center"><img src="docs/screenshots/economy.png" width="270" alt="Economy tab"></td>
-    <td align="center"><img src="docs/screenshots/economy-rule.png" width="270" alt="A generated economy rule"></td>
-  </tr>
-  <tr>
     <td align="center">Shared style support</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/economy.png" width="405" alt="Economy tab"></td>
+    <td align="center"><img src="docs/screenshots/economy-rule.png" width="405" alt="A generated economy rule"></td>
+  </tr>
+  <tr>
     <td align="center">Economy sync</td>
     <td align="center">Generated economy rules</td>
   </tr>
@@ -68,8 +72,14 @@ This produces `target/release/ff.exe`. `rust-toolchain.toml` selects the nightly
 
 ## References
 
-- Filter syntax: <https://www.pathofexile.com/item-filter/about>
-- Exact item names / values: <https://poe2db.tw/us/>
+- Prices: [poe.ninja](https://poe.ninja/poe2/economy), where the economy sync gets item prices
+- Filter syntax: <https://www.pathofexile.com/item-filter/about> (written for PoE1; PoE2 uses the
+  same grammar with its own classes and base types)
+- Exact item names / values: [poe2db](https://poe2db.tw/us/)
+- [poe2filter.com](https://poe2filter.com/): the filter editor the early-league fallback tiers
+  were taken from
+- [FilterBlade](https://www.filterblade.xyz/?game=Poe2): NeverSink's filters, which load in the
+  overlay as they are
 
 ## Credits and disclaimer
 

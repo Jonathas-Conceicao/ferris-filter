@@ -7279,7 +7279,9 @@ mod tests {
     fn untouched_custom_rule_renders_idle_and_byte_identical() {
         let all = "Show\n    SetTextColor 1 2 3\n    PlayAlertSound 5\n    DisableDropSound\n    MinimapIcon 1 Blue Star\n    PlayEffect Red\n    SetBackgroundColor 0 0 0 128\n";
         let clamped = "Show\n    SetFontSize 60\n    PlayAlertSound 3 400\n    MinimapIcon -1\n    EnableDropSound False\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6 7\n";
-        for src in [all, LEFTOVERS, clamped] {
+        let cancel = "Show\n    MinimapIcon -1 Red Star\n    PlayEffect None\n    PlayAlertSound None\n    EnableDropSound\n";
+        let positional = "Show\n    PlayAlertSoundPositional 6 # loud\n    CustomAlertSound \"x.mp3\"\n    CustomAlertSound \"gone.mp3\" 90\n";
+        for src in [all, LEFTOVERS, clamped, cancel, positional] {
             let wf = WorkingFilter::from_text(src);
             let ctx = headless_ctx();
             let mut list = ListUi {
@@ -7340,19 +7342,59 @@ mod tests {
     }
 
     #[test]
-    fn picking_a_minimap_size_over_a_hidden_icon_rewrites_that_line() {
+    fn picking_a_colour_over_a_hidden_icon_rewrites_that_line() {
         let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1\n");
         let ctx = headless_ctx();
         let mut list = ListUi {
             expanded: Some(wf.rows()[0].id),
             ..Default::default()
         };
-        let r = style_probes(&ctx, &wf, &mut list, "ed-minimap")[0];
-        // None | Large | Medium | Small: the second quarter is Large.
-        let large = egui::pos2(r.left() + r.width() * 0.375, r.center().y);
-        let a = frame_of(&ctx, input(click_events(large)), &wf, &mut list, None);
+        // `MinimapIcon -1` is the cancel value: the size switch is drawn but inert.
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-size")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        assert!(a.is_empty(), "{a:?}");
+        let pink = crate::skin::minimap::index_of(&crate::skin::minimap::COLOURS, "Pink").unwrap();
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
         mirror_apply(&mut wf, &mut list, a);
-        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 White Circle\n");
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 Pink Circle\n");
+        // The / tile writes the cancel value back on the same line.
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-cancel")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    MinimapIcon -1\n");
+    }
+
+    #[test]
+    fn rule_group_checks_add_and_remove_one_line() {
+        let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        for tag in ["ed-sound-check", "ed-beam-check"] {
+            let r = style_probes(&ctx, &wf, &mut list, tag)[0];
+            let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+            mirror_apply(&mut wf, &mut list, a);
+            frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        }
+        assert_eq!(
+            wf.text(),
+            "Show\n    Rarity Rare\n    PlayAlertSound 1 100\n    PlayEffect White\n"
+        );
+        let r = style_probes(&ctx, &wf, &mut list, "ed-sound-positional")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(
+            wf.text(),
+            "Show\n    Rarity Rare\n    PlayAlertSoundPositional 1 100\n    PlayEffect White\n"
+        );
+        assert_eq!(leftover_rows(&ctx, &wf), 0);
+        let r = style_probes(&ctx, &wf, &mut list, "ed-sound-check")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    Rarity Rare\n    PlayEffect White\n");
     }
 
     #[test]

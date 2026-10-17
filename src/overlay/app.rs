@@ -220,6 +220,10 @@ pub struct OverlayApp {
 
     /// A filter picked while the rules have unapplied edits, awaiting confirmation.
     pending_switch: Option<String>,
+
+    /// The sound-file listing of the filter folder needs re-reading (startup, reload, switch);
+    /// done on the next frame, where the egui context is at hand.
+    sound_dir_stale: bool,
 }
 
 /// Progress of the debug screenshot run.
@@ -1198,6 +1202,7 @@ impl OverlayApp {
             game_dir,
             filters_cache: None,
             pending_switch: None,
+            sound_dir_stale: true,
         };
         app.refresh_inputs();
         app.refresh_economy_info();
@@ -1344,6 +1349,16 @@ impl OverlayApp {
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
         self.pending_switch = None;
+        self.sound_dir_stale = true;
+    }
+
+    /// The folder the style editor lists sound files from: the loaded filter's folder, else the
+    /// game folder.
+    fn sound_dir(&self) -> Option<std::path::PathBuf> {
+        filter_target(self.game_dir.as_deref(), self.settings.filter_name())
+            .ok()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+            .or_else(|| self.game_dir.clone())
     }
 
     /// Makes `name` the active filter now and remembers it. A failed save still switches for
@@ -2483,6 +2498,10 @@ impl eframe::App for OverlayApp {
         // (RESEARCH Pattern 1). Retried every frame until it succeeds.
         if self.window.is_none() {
             self.window = win::from_frame(frame);
+        }
+        if self.sound_dir_stale {
+            self.sound_dir_stale = false;
+            super::sound_files::set_dir(ui.ctx(), self.sound_dir());
         }
 
         // Dock on the game's monitor (the primary one without the game): once as soon as the

@@ -26,6 +26,7 @@ pub mod rules;
 #[cfg(debug_assertions)]
 pub(crate) mod screenshot;
 pub(crate) mod shell;
+pub mod sound_files;
 pub mod style_lines;
 pub mod text_entry;
 pub mod theme;

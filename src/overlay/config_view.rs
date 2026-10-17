@@ -1077,8 +1077,7 @@ mod tests {
     use super::*;
     use crate::models::config::{Beam, FilterColor, Minimap, MinimapShape, Sound};
     use crate::overlay::style_lines::{
-        SOUND_CUSTOM, SOUND_FILE_DEFAULT, SOUND_OPTIONS, SoundMemo, safe_file_name,
-        sound_for_choice, switch_sound,
+        FOLDER_HEADER, MINIMAP_SIZES, SoundItem, safe_file_name, sound_for_item, sound_menu,
     };
     use std::fs;
 
@@ -2245,19 +2244,15 @@ mod tests {
     }
 
     #[test]
-    fn minimap_large_from_none_seeds_white_circle() {
+    fn minimap_off_is_one_line_and_ticking_seeds_white_circle() {
         let (_d, state) = loaded();
         let (ctx, _) = headless();
         let mut cfg = expanded("E");
-        assert!(render_probes(&state, &mut cfg, "ed-mm-colour").is_empty());
-        assert!(render_probes(&state, &mut cfg, "ed-mm-shape").is_empty());
-        let r = render_probes(&state, &mut cfg, "ed-minimap")[0];
-        let acts = click_styles(
-            &ctx,
-            &state,
-            &mut cfg,
-            r.center() + vec2(segment_dx(r, 1, 4), 0.0),
-        );
+        assert_eq!(render_probes(&state, &mut cfg, "ed-mm-check").len(), 1);
+        for tag in ["ed-mm-cancel", "ed-mm-colour", "ed-mm-shape", "ed-mm-size"] {
+            assert!(render_probes(&state, &mut cfg, tag).is_empty(), "{tag}");
+        }
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-check", 0, 0.0);
         assert_eq!(
             edits_of(&acts),
             [mm(0, FilterColor::White, MinimapShape::Circle)]
@@ -2265,29 +2260,18 @@ mod tests {
     }
 
     #[test]
-    fn minimap_none_then_back_restores_the_last_values() {
+    fn minimap_off_then_on_restores_the_last_values() {
         let (_d, mut state) = loaded();
         let (ctx, _) = headless();
         let mut cfg = expanded("kite");
-        let r = render_probes(&state, &mut cfg, "ed-minimap")[0];
-        let acts = click_styles(
-            &ctx,
-            &state,
-            &mut cfg,
-            r.center() + vec2(segment_dx(r, 0, 4), 0.0),
-        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-check", 0, 0.0);
         assert_eq!(edits_of(&acts), [StyleEdit::Minimap(None)]);
         assert!(state.edit_style("kite", StyleEdit::Minimap(None)));
         assert!(render_probes(&state, &mut cfg, "ed-mm-colour").is_empty());
-        let acts = click_styles(
-            &ctx,
-            &state,
-            &mut cfg,
-            r.center() + vec2(segment_dx(r, 1, 4), 0.0),
-        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-check", 0, 0.0);
         assert_eq!(
             edits_of(&acts),
-            [mm(0, FilterColor::Orange, MinimapShape::Kite)]
+            [mm(2, FilterColor::Orange, MinimapShape::Kite)]
         );
     }
 
@@ -2304,6 +2288,13 @@ mod tests {
             colours.iter().all(|r| r.min.y == colours[0].min.y),
             "one row"
         );
+        let cancel = render_probes(&state, &mut cfg, "ed-mm-cancel");
+        assert_eq!(cancel.len(), 1);
+        assert_eq!(
+            cancel[0].min.y, colours[0].min.y,
+            "the / tile leads the colours"
+        );
+        assert!(cancel[0].max.x <= colours[0].min.x);
         let pink = colour_index("Pink");
         let acts = click_styles(&ctx, &state, &mut cfg, colours[pink].center());
         assert_eq!(
@@ -2321,12 +2312,71 @@ mod tests {
     }
 
     #[test]
-    fn beam_none_colour_and_temp() {
+    fn minimap_size_is_large_medium_small() {
         let (_d, state) = loaded();
         let (ctx, _) = headless();
         let mut cfg = expanded("kite");
-        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-none", 0, 0.0);
+        assert_eq!(MINIMAP_SIZES, ["Large", "Medium", "Small"]);
+        let r = render_probes(&state, &mut cfg, "ed-mm-size")[0];
+        for (i, size) in [(0, 0u8), (1, 1)] {
+            let acts = click_styles(
+                &ctx,
+                &state,
+                &mut cfg,
+                r.center() + vec2(segment_dx(r, i, 3), 0.0),
+            );
+            assert_eq!(
+                edits_of(&acts),
+                [mm(size, FilterColor::Orange, MinimapShape::Kite)]
+            );
+        }
+        // Small is the current size: no edit.
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 2, 3), 0.0),
+        );
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn minimap_cancel_greys_the_pickers_and_a_colour_leaves_it() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-cancel", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Minimap(Some(Cancelable::Cancel))]
+        );
+        assert!(state.edit_style("kite", StyleEdit::Minimap(Some(Cancelable::Cancel))));
+        // Shapes and sizes are drawn but inert.
+        let kite = minimap::index_of(&minimap::SHAPES, "Kite").unwrap();
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-shape", kite + 1, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-size", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        // Clicking / again changes nothing; a colour restores the remembered icon with it.
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-cancel", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let pink = colour_index("Pink");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-colour", pink, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Pink, MinimapShape::Kite)]
+        );
+    }
+
+    #[test]
+    fn beam_off_cancel_colour_and_temp() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-check", 0, 0.0);
         assert_eq!(edits_of(&acts), [StyleEdit::Beam(None)]);
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-cancel", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Beam(Some(Cancelable::Cancel))]);
         let pink = colour_index("Pink");
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-colour", pink, 0.0);
         assert_eq!(
@@ -2344,117 +2394,82 @@ mod tests {
                 temp: true
             })))]
         );
+        // Under / the Temp chip is inert.
+        assert!(state.edit_style("kite", StyleEdit::Beam(Some(Cancelable::Cancel))));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
     }
 
     #[test]
-    fn beam_temp_is_disabled_without_a_beam_and_a_colour_seeds_one() {
+    fn beam_off_is_one_line_and_ticking_seeds_white() {
         let (_d, state) = loaded();
         let (ctx, _) = headless();
         let mut cfg = expanded("E");
-        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
-        assert!(edits_of(&acts).is_empty(), "{acts:?}");
-        let acts = click_probe(
-            &ctx,
-            &state,
-            &mut cfg,
-            "ed-beam-colour",
-            colour_index("Pink"),
-            0.0,
-        );
+        for tag in ["ed-beam-cancel", "ed-beam-colour", "ed-beam-temp"] {
+            assert!(render_probes(&state, &mut cfg, tag).is_empty(), "{tag}");
+        }
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-check", 0, 0.0);
         assert_eq!(
             edits_of(&acts),
             [StyleEdit::Beam(Some(Cancelable::Set(Beam {
-                color: FilterColor::Pink,
+                color: FilterColor::White,
                 temp: false
             })))]
         );
     }
 
-    #[test]
-    fn sound_choices_keep_the_volume_and_default_to_100() {
-        let kite = Sound {
-            id: Some(2),
-            custom: None,
-            vol: 200,
-            positional: false,
-        };
-        assert_eq!(sound_for_choice(0, Some(&kite), None), None);
-        assert_eq!(
-            sound_for_choice(3, Some(&kite), None),
-            Some(Sound {
-                id: Some(3),
-                custom: None,
-                vol: 200,
-                positional: false
-            })
-        );
-        assert_eq!(
-            sound_for_choice(3, None, None),
-            Some(Sound {
-                id: Some(3),
-                custom: None,
-                vol: 100,
-                positional: false
-            })
-        );
-        assert_eq!(
-            sound_for_choice(SOUND_CUSTOM, None, None),
-            Some(Sound {
-                id: None,
-                custom: Some("uwu.mp3".to_string()),
-                vol: 100,
-                positional: false
-            })
-        );
-        assert_eq!(SOUND_OPTIONS[SOUND_CUSTOM], "Custom file");
-        assert_eq!(SOUND_OPTIONS[16], "Alert 16");
-    }
-
-    /// WR-02: the custom file survives a switch through an Alert, with or without a None first.
-    #[test]
-    fn switching_back_to_custom_keeps_the_file() {
-        let boss = || Sound {
-            id: None,
-            custom: Some("boss.mp3".to_string()),
-            vol: 150,
-            positional: false,
-        };
-        let alert = |vol| Sound {
-            id: Some(3),
+    fn alert(id: u8, vol: u16, positional: bool) -> Sound {
+        Sound {
+            id: Some(id),
             custom: None,
             vol,
+            positional,
+        }
+    }
+
+    fn file(name: &str, vol: u16) -> Sound {
+        Sound {
+            id: None,
+            custom: Some(name.to_string()),
+            vol,
             positional: false,
-        };
-        // Custom -> Alert 3 -> Custom.
-        let mut memo = SoundMemo::default();
-        let cur = boss();
-        let next = switch_sound(3, Some(&cur), &mut memo);
-        assert_eq!(next, Some(alert(150)));
-        let back = switch_sound(SOUND_CUSTOM, next.as_ref(), &mut memo);
-        assert_eq!(back, Some(boss()));
+        }
+    }
 
-        // Custom -> None -> Alert 3 -> Custom.
-        let mut memo = SoundMemo::default();
-        let cur = boss();
-        let none = switch_sound(0, Some(&cur), &mut memo);
-        assert_eq!(none, None);
-        let next = switch_sound(3, None, &mut memo);
-        assert_eq!(next, Some(alert(150)));
-        let back = switch_sound(SOUND_CUSTOM, next.as_ref(), &mut memo);
-        assert_eq!(back, Some(boss()));
+    #[test]
+    fn sound_menu_lists_alerts_then_the_folder_and_flags_a_missing_file() {
+        let files = vec!["a.mp3".to_string(), "uwu.mp3".to_string()];
+        let (items, sel) = sound_menu(&files, &alert(6, 200, false));
+        assert_eq!(items.len(), 16 + 1 + 2);
+        assert_eq!(items[0], SoundItem::Alert(1));
+        assert_eq!(items[15], SoundItem::Alert(16));
+        assert_eq!(items[16], SoundItem::Header);
+        assert_eq!(items[18], SoundItem::File("uwu.mp3".to_string()));
+        assert_eq!(sel, 5);
+        let (_, sel) = sound_menu(&files, &file("UWU.mp3", 300));
+        assert_eq!(sel, 18, "matched case-insensitively");
+        let (items, sel) = sound_menu(&files, &file("gone.wav", 300));
+        assert_eq!(items.len(), 20);
+        assert_eq!(items[sel], SoundItem::Missing("gone.wav".to_string()));
+        assert_eq!(FOLDER_HEADER, "Filter folder");
+    }
 
-        // Never custom: Custom falls back to the default file.
-        let mut memo = SoundMemo::default();
-        let cur = alert(100);
+    #[test]
+    fn sound_picks_keep_the_volume_and_files_drop_positional() {
+        let base = alert(2, 200, true);
         assert_eq!(
-            switch_sound(SOUND_CUSTOM, Some(&cur), &mut memo),
-            Some(Sound {
-                id: None,
-                custom: Some(SOUND_FILE_DEFAULT.to_string()),
-                vol: 100,
-                positional: false
-            })
+            sound_for_item(&SoundItem::Alert(3), &base),
+            Some(alert(3, 200, true))
         );
+        assert_eq!(
+            sound_for_item(&SoundItem::File("b.wav".to_string()), &base),
+            Some(file("b.wav", 200))
+        );
+        assert_eq!(
+            sound_for_item(&SoundItem::Alert(4), &file("b.wav", 90)),
+            Some(alert(4, 90, false))
+        );
+        assert_eq!(sound_for_item(&SoundItem::Header, &base), None);
     }
 
     #[test]
@@ -2465,15 +2480,87 @@ mod tests {
     }
 
     #[test]
-    fn volume_and_file_lines_follow_the_sound() {
+    fn sound_group_lines_follow_the_sound() {
         let (_d, state) = loaded();
+        let (ctx, _) = headless();
         let mut cfg = expanded("E");
-        assert!(render_probes(&state, &mut cfg, "ed-volume").is_empty());
+        for tag in [
+            "ed-sound",
+            "ed-sound-cancel",
+            "ed-volume",
+            "ed-sound-positional",
+        ] {
+            assert!(render_probes(&state, &mut cfg, tag).is_empty(), "{tag}");
+        }
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-check", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Sound(Some(Cancelable::Set(alert(
+                1, 100, false
+            ))))]
+        );
         let mut cfg = expanded("kite");
-        assert_eq!(render_probes(&state, &mut cfg, "ed-volume").len(), 1);
+        for tag in [
+            "ed-sound",
+            "ed-sound-cancel",
+            "ed-volume",
+            "ed-sound-positional",
+        ] {
+            assert_eq!(render_probes(&state, &mut cfg, tag).len(), 1, "{tag}");
+        }
         assert!(render_probes(&state, &mut cfg, "ed-sound-file").is_empty());
+        assert!(render_probes(&state, &mut cfg, "ed-sound-missing").is_empty());
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Sound(Some(Cancelable::Set(alert(2, 200, true))))]
+        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-cancel", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Sound(Some(Cancelable::Cancel))]
+        );
+        // S plays a file that is not in the (here empty) filter folder: flagged, no Positional.
         let mut cfg = expanded("S");
-        assert_eq!(render_probes(&state, &mut cfg, "ed-sound-file").len(), 1);
+        assert_eq!(render_probes(&state, &mut cfg, "ed-sound-missing").len(), 1);
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn sound_cancel_greys_volume_and_positional() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        assert!(state.edit_style("kite", StyleEdit::Sound(Some(Cancelable::Cancel))));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-volume", 0, 40.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn drop_sound_on_is_a_silent_normal_switch() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        assert!(render_probes(&state, &mut cfg, "ed-drop").is_empty());
+        let mut cfg = expanded("hidden");
+        let r = render_probes(&state, &mut cfg, "ed-drop")[0];
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 1, 2), 0.0),
+        );
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::DropSound(Some(
+                crate::models::config::DropSound::Normal
+            ))]
+        );
+        let check = render_probes(&state, &mut cfg, "ed-drop-check")[0];
+        assert_eq!(check.center().y, r.center().y, "one line");
     }
 
     #[test]

@@ -816,15 +816,144 @@ pub fn ff_dropdown_ex(
     width: f32,
     caption_color: Option<Color32>,
 ) -> Response {
+    let current = options.get(*selected).copied().unwrap_or("");
+    let mut picked = None;
+    let sel = *selected;
+    let (mut resp, _) = dropdown_shell(
+        ui,
+        skin,
+        id_salt,
+        width,
+        current,
+        caption_color,
+        options.len(),
+        |ui, row_w| {
+            for (i, opt) in options.iter().enumerate() {
+                dropdown_row(ui, row_w, i, opt, sel, &mut picked);
+            }
+        },
+    );
+    if let Some(i) = picked
+        && i != *selected
+    {
+        *selected = i;
+        resp.mark_changed();
+    }
+    resp
+}
+
+/// One entry of [`ff_dropdown_items`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropItem<'a> {
+    /// A pickable option.
+    Option(&'a str),
+    /// A muted section header; never picked.
+    Header(&'a str),
+    /// A pickable option painted in the warning colour with the amber warning flag.
+    Warn(&'a str),
+}
+
+impl DropItem<'_> {
+    pub fn label(&self) -> &str {
+        match self {
+            DropItem::Option(s) | DropItem::Header(s) | DropItem::Warn(s) => s,
+        }
+    }
+}
+
+/// What [`ff_dropdown_items`] reports for one frame.
+pub struct DropPick {
+    pub response: Response,
+    /// The item clicked this frame (headers never are), even when it is the selected one.
+    pub picked: Option<usize>,
+    /// The list opened this frame (a closed-to-open click).
+    pub opened: bool,
+}
+
+/// [`ff_dropdown`] over sectioned items: options, muted headers and warning options. The closed
+/// box shows `items[selected]` (or nothing), in `caption_color` when given; every click on an
+/// option is reported, so the caller decides what picking the selected one means.
+pub fn ff_dropdown_items(
+    ui: &mut Ui,
+    skin: &Skin,
+    id_salt: impl Hash + std::fmt::Debug,
+    selected: Option<usize>,
+    items: &[DropItem],
+    width: f32,
+    caption_color: Option<Color32>,
+) -> DropPick {
+    let current = selected.and_then(|i| items.get(i));
+    let caption = current.map_or("", |c| c.label());
+    let caption_color =
+        caption_color.or_else(|| matches!(current, Some(DropItem::Warn(_))).then_some(pal::WARN));
+    let mut picked = None;
+    let sel = selected.unwrap_or(usize::MAX);
+    let (response, opened) = dropdown_shell(
+        ui,
+        skin,
+        id_salt,
+        width,
+        caption,
+        caption_color,
+        items.len(),
+        |ui, row_w| {
+            for (i, item) in items.iter().enumerate() {
+                match item {
+                    DropItem::Option(opt) => dropdown_row(ui, row_w, i, opt, sel, &mut picked),
+                    DropItem::Warn(opt) => {
+                        dropdown_row_ex(ui, row_w, i, opt, sel, &mut picked, true)
+                    }
+                    DropItem::Header(text) => {
+                        let (r, _) =
+                            ui.allocate_exact_size(vec2(row_w, DROPDOWN_ROW_H), Sense::hover());
+                        ui.painter().text(
+                            pos2(r.min.x + 6.0, r.center().y + 2.0),
+                            Align2::LEFT_CENTER,
+                            *text,
+                            small_caps(14.0),
+                            pal::MUTED,
+                        );
+                        ui.painter().line_segment(
+                            [
+                                pos2(r.min.x + 4.0, r.max.y - 3.0),
+                                pos2(r.max.x - 4.0, r.max.y - 3.0),
+                            ],
+                            Stroke::new(1.0, Color32::from_black_alpha(160)),
+                        );
+                    }
+                }
+            }
+        },
+    );
+    DropPick {
+        response,
+        picked,
+        opened,
+    }
+}
+
+/// The closed box and the popup list shared by the dropdowns; `rows` draws the `row_count`
+/// list rows at a given row width. Returns the box's response and whether the list opened.
+#[allow(clippy::too_many_arguments)]
+fn dropdown_shell(
+    ui: &mut Ui,
+    skin: &Skin,
+    id_salt: impl Hash + std::fmt::Debug,
+    width: f32,
+    caption: &str,
+    caption_color: Option<Color32>,
+    row_count: usize,
+    mut rows: impl FnMut(&mut Ui, f32),
+) -> (Response, bool) {
     let width = if width > 0.0 {
         width
     } else {
         ui.available_width()
     };
     let id = ui.make_persistent_id(id_salt);
-    let (rect, mut resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
-    let current = options.get(*selected).copied().unwrap_or("");
-    resp.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, current));
+    let was_open = egui::Popup::is_id_open(ui.ctx(), id);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, caption));
     let open = egui::Popup::is_id_open(ui.ctx(), id);
     let hot = resp.hovered() || open;
     let painter = ui.painter();
@@ -832,7 +961,7 @@ pub fn ff_dropdown_ex(
     painter.with_clip_rect(rect.shrink(2.0)).text(
         pos2(rect.min.x + 10.0, rect.center().y),
         Align2::LEFT_CENTER,
-        current,
+        caption,
         regular(15.0),
         caption_color.unwrap_or(pal::VALUE),
     );
@@ -853,9 +982,8 @@ pub fn ff_dropdown_ex(
     let max_h = (DROPDOWN_MAX_ROWS * DROPDOWN_ROW_H)
         .min(room)
         .max(3.0 * DROPDOWN_ROW_H);
-    let scroll = options.len() as f32 * DROPDOWN_ROW_H > max_h;
+    let scroll = row_count as f32 * DROPDOWN_ROW_H > max_h;
 
-    let mut picked = None;
     egui::Popup::from_toggle_button_response(&resp)
         .id(id)
         .width(width)
@@ -864,11 +992,6 @@ pub fn ff_dropdown_ex(
         .show(|ui| {
             let bg = ui.painter().add(Shape::Noop);
             ui.spacing_mut().item_spacing.y = 0.0;
-            let mut rows = |ui: &mut Ui, row_w: f32| {
-                for (i, opt) in options.iter().enumerate() {
-                    dropdown_row(ui, row_w, i, opt, *selected, &mut picked);
-                }
-            };
             if scroll {
                 ui.allocate_ui(vec2(width - 12.0, max_h), |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
@@ -894,13 +1017,8 @@ pub fn ff_dropdown_ex(
             }
             ui.painter().set(bg, Shape::mesh(mesh));
         });
-    if let Some(i) = picked
-        && i != *selected
-    {
-        *selected = i;
-        resp.mark_changed();
-    }
-    resp
+    let opened = !was_open && egui::Popup::is_id_open(ui.ctx(), id);
+    (resp, opened)
 }
 
 /// Height of one option row in [`ff_dropdown_ex`]'s popup.
@@ -917,12 +1035,28 @@ fn dropdown_row(
     selected: usize,
     picked: &mut Option<usize>,
 ) {
+    dropdown_row_ex(ui, row_w, i, opt, selected, picked, false);
+}
+
+/// [`dropdown_row`], optionally as a warning row: caption in the warning colour and the amber
+/// warning flag at its right end.
+fn dropdown_row_ex(
+    ui: &mut Ui,
+    row_w: f32,
+    i: usize,
+    opt: &str,
+    selected: usize,
+    picked: &mut Option<usize>,
+    warn: bool,
+) {
     let (r, o) = ui.allocate_exact_size(vec2(row_w, DROPDOWN_ROW_H), Sense::click());
     o.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, i == selected, opt));
     if o.hovered() {
         ui.painter().rect_filled(r, 0.0, pal::ROW_HOVER);
     }
-    let color = if i == selected {
+    let color = if warn {
+        pal::WARN
+    } else if i == selected {
         pal::HEADING
     } else if o.hovered() {
         pal::VALUE
@@ -936,6 +1070,14 @@ fn dropdown_row(
         regular(15.0),
         color,
     );
+    if warn {
+        super::icons::paint_flag_icon(
+            ui.painter(),
+            Rect::from_center_size(pos2(r.max.x - 14.0, r.center().y), Vec2::splat(16.0)),
+            super::icons::FlagIcon::GrammarWarning,
+            pal::WARN,
+        );
+    }
     if o.clicked() {
         *picked = Some(i);
     }

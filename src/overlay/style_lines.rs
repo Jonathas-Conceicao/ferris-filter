@@ -720,6 +720,9 @@ pub(crate) enum SoundItem {
     File(String),
     /// The current file, not found in the filter folder.
     Missing(String),
+    /// The current file when the filter folder could not be listed: nothing is known about it,
+    /// so it is not flagged.
+    Unlisted(String),
 }
 
 impl SoundItem {
@@ -727,14 +730,20 @@ impl SoundItem {
         match self {
             SoundItem::Alert(k) => format!("Alert {k}"),
             SoundItem::Header => FOLDER_HEADER.to_string(),
-            SoundItem::File(f) | SoundItem::Missing(f) => f.clone(),
+            SoundItem::File(f) | SoundItem::Missing(f) | SoundItem::Unlisted(f) => f.clone(),
         }
     }
 }
 
 /// The dropdown rows (Alert 1-16, the Filter folder header, the folder's `files`, and the
-/// `current` file when it is not among them) and the row `current` is.
-pub(crate) fn sound_menu(files: &[String], current: &Sound) -> (Vec<SoundItem>, usize) {
+/// `current` file when it is not among them) and the row `current` is. `listed` is whether the
+/// folder was read: a file absent from an unlisted folder is [`SoundItem::Unlisted`], not
+/// [`SoundItem::Missing`].
+pub(crate) fn sound_menu(
+    files: &[String],
+    listed: bool,
+    current: &Sound,
+) -> (Vec<SoundItem>, usize) {
     let mut items: Vec<SoundItem> = (1..=16).map(SoundItem::Alert).collect();
     items.push(SoundItem::Header);
     items.extend(files.iter().cloned().map(SoundItem::File));
@@ -742,7 +751,11 @@ pub(crate) fn sound_menu(files: &[String], current: &Sound) -> (Vec<SoundItem>, 
         Some(f) => match files.iter().position(|x| x.eq_ignore_ascii_case(f)) {
             Some(i) => 17 + i,
             None => {
-                items.push(SoundItem::Missing(f.clone()));
+                items.push(if listed {
+                    SoundItem::Missing(f.clone())
+                } else {
+                    SoundItem::Unlisted(f.clone())
+                });
                 items.len() - 1
             }
         },
@@ -761,7 +774,7 @@ pub(crate) fn sound_for_item(item: &SoundItem, base: &Sound) -> Option<Sound> {
             vol: base.vol,
             positional: base.custom.is_none() && base.positional,
         }),
-        SoundItem::File(f) | SoundItem::Missing(f) => Some(Sound {
+        SoundItem::File(f) | SoundItem::Missing(f) | SoundItem::Unlisted(f) => Some(Sound {
             id: None,
             custom: Some(f.clone()),
             vol: base.vol,
@@ -837,7 +850,7 @@ fn sound_group(
             egui::Popup::open_id(ui.ctx(), ui.make_persistent_id("sound"));
         }
         let folder = super::sound_files::get(ui.ctx());
-        let (items, selected) = sound_menu(&folder.files, &shown);
+        let (items, selected) = sound_menu(&folder.files, folder.listed, &shown);
         let labels: Vec<String> = items.iter().map(SoundItem::label).collect();
         let drop_items: Vec<crate::skin::widgets::DropItem> = items
             .iter()
@@ -883,6 +896,11 @@ fn sound_group(
                 ),
             );
             probe("ed-sound-missing", r.rect);
+        }
+        if !cancel && let Some(SoundItem::Unlisted(file)) = items.get(selected) {
+            pick.response.clone().on_hover_text(format!(
+                "The filter folder could not be listed, so whether {file} is there is unknown"
+            ));
         }
     });
     let indent = tile + 4.0;

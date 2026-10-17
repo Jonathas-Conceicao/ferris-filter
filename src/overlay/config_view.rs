@@ -1339,10 +1339,23 @@ mod tests {
 
     /// The probe rects of one tag from a single rendering of the styles section.
     fn render_probes(state: &ConfigState, cfg: &mut ConfigUi, tag: &str) -> Vec<egui::Rect> {
+        render_probes_with_folder(state, cfg, tag, None)
+    }
+
+    /// [`render_probes`] with the sound folder listing cached from `folder` first.
+    fn render_probes_with_folder(
+        state: &ConfigState,
+        cfg: &mut ConfigUi,
+        tag: &str,
+        folder: Option<&std::path::Path>,
+    ) -> Vec<egui::Rect> {
         let users = HashMap::new();
         let refs = BTreeSet::new();
         let vctx = view_ctx(None, &users, &refs);
         let (ctx, _) = headless();
+        if let Some(dir) = folder {
+            crate::overlay::sound_files::set_dir(&ctx, Some(dir.to_path_buf()));
+        }
         let mut actions = Vec::new();
         drain_probes();
         ctx.run_ui(tall_input(), |ui| {
@@ -2439,19 +2452,31 @@ mod tests {
     #[test]
     fn sound_menu_lists_alerts_then_the_folder_and_flags_a_missing_file() {
         let files = vec!["a.mp3".to_string(), "uwu.mp3".to_string()];
-        let (items, sel) = sound_menu(&files, &alert(6, 200, false));
+        let (items, sel) = sound_menu(&files, true, &alert(6, 200, false));
         assert_eq!(items.len(), 16 + 1 + 2);
         assert_eq!(items[0], SoundItem::Alert(1));
         assert_eq!(items[15], SoundItem::Alert(16));
         assert_eq!(items[16], SoundItem::Header);
         assert_eq!(items[18], SoundItem::File("uwu.mp3".to_string()));
         assert_eq!(sel, 5);
-        let (_, sel) = sound_menu(&files, &file("UWU.mp3", 300));
+        let (_, sel) = sound_menu(&files, true, &file("UWU.mp3", 300));
         assert_eq!(sel, 18, "matched case-insensitively");
-        let (items, sel) = sound_menu(&files, &file("gone.wav", 300));
+        let (items, sel) = sound_menu(&files, true, &file("gone.wav", 300));
         assert_eq!(items.len(), 20);
         assert_eq!(items[sel], SoundItem::Missing("gone.wav".to_string()));
         assert_eq!(FOLDER_HEADER, "Filter folder");
+    }
+
+    #[test]
+    fn sound_menu_never_flags_a_file_when_the_folder_was_not_listed() {
+        let (items, sel) = sound_menu(&[], false, &file("uwu.mp3", 300));
+        assert_eq!(items.len(), 16 + 1 + 1);
+        assert_eq!(items[sel], SoundItem::Unlisted("uwu.mp3".to_string()));
+        assert!(!items.iter().any(|i| matches!(i, SoundItem::Missing(_))));
+        assert_eq!(
+            sound_for_item(&items[sel], &file("uwu.mp3", 300)),
+            Some(file("uwu.mp3", 300))
+        );
     }
 
     #[test]
@@ -2520,9 +2545,23 @@ mod tests {
             edits_of(&acts),
             [StyleEdit::Sound(Some(Cancelable::Cancel))]
         );
-        // S plays a file that is not in the (here empty) filter folder: flagged, no Positional.
+        // S plays a file. With no folder known nothing can be said about it: not flagged (WR-01).
         let mut cfg = expanded("S");
-        assert_eq!(render_probes(&state, &mut cfg, "ed-sound-missing").len(), 1);
+        assert!(render_probes(&state, &mut cfg, "ed-sound-missing").is_empty());
+        let gone = tempfile::tempdir().unwrap();
+        let unreadable = gone.path().join("nope");
+        assert!(
+            render_probes_with_folder(&state, &mut cfg, "ed-sound-missing", Some(&unreadable))
+                .is_empty(),
+            "an unreadable folder flags nothing"
+        );
+        // A listed (here empty) folder without the file: flagged, no Positional.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            render_probes_with_folder(&state, &mut cfg, "ed-sound-missing", Some(empty.path()))
+                .len(),
+            1
+        );
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
         assert!(edits_of(&acts).is_empty(), "{acts:?}");
     }

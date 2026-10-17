@@ -16,6 +16,10 @@ use super::style_lines::safe_file_name;
 pub struct SoundFolder {
     pub dir: Option<PathBuf>,
     pub files: Vec<String>,
+    /// The folder was read. `false` when there is no folder or it is missing or unreadable: then
+    /// `files` is empty and nothing is known about which files are there, so none is flagged
+    /// missing.
+    pub listed: bool,
 }
 
 /// Extensions the game plays for `CustomAlertSound`.
@@ -26,11 +30,10 @@ fn cache_id() -> egui::Id {
 }
 
 /// The sound files directly in `dir`: regular files ending `.mp3` / `.wav` (any case) whose names
-/// can be written into a filter line. A missing or unreadable folder lists nothing.
-pub fn list(dir: &Path) -> Vec<String> {
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
+/// can be written into a filter line. `None` when the folder is missing or unreadable (an empty
+/// folder is `Some(vec![])`).
+pub fn list(dir: &Path) -> Option<Vec<String>> {
+    let read = std::fs::read_dir(dir).ok()?;
     let mut files: Vec<String> = read
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
@@ -44,13 +47,17 @@ pub fn list(dir: &Path) -> Vec<String> {
         .filter(|name| safe_file_name(name))
         .collect();
     files.sort_by_key(|f| f.to_lowercase());
-    files
+    Some(files)
 }
 
-/// Lists `dir` and caches it (`None` caches an empty listing).
+/// Lists `dir` and caches it (`None`, or a folder that cannot be read, caches an unlisted
+/// folder).
 pub fn set_dir(ctx: &egui::Context, dir: Option<PathBuf>) {
-    let files = dir.as_deref().map(list).unwrap_or_default();
-    let folder = Arc::new(SoundFolder { dir, files });
+    let (files, listed) = dir
+        .as_deref()
+        .and_then(list)
+        .map_or((Vec::new(), false), |f| (f, true));
+    let folder = Arc::new(SoundFolder { dir, files, listed });
     ctx.data_mut(|d| d.insert_temp(cache_id(), folder));
 }
 
@@ -79,13 +86,18 @@ mod tests {
         std::fs::create_dir(dir.path().join("e.mp3")).unwrap();
         // Quotes are not allowed in Windows file names; elsewhere such a file is skipped.
         let _ = std::fs::write(dir.path().join("q\"x.mp3"), b"");
-        assert_eq!(list(dir.path()), ["a.MP3", "b.wav", "Z.mp3"]);
+        assert_eq!(list(dir.path()).unwrap(), ["a.MP3", "b.wav", "Z.mp3"]);
     }
 
     #[test]
     fn a_missing_folder_lists_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(list(&dir.path().join("nope")).is_empty());
+        assert_eq!(list(&dir.path().join("nope")), None, "unknown, not empty");
+        assert_eq!(
+            list(dir.path()),
+            Some(Vec::new()),
+            "an empty folder is listed"
+        );
     }
 
     #[test]
@@ -96,11 +108,15 @@ mod tests {
         std::fs::write(dir.path().join("a.mp3"), b"").unwrap();
         set_dir(&ctx, Some(dir.path().to_path_buf()));
         assert_eq!(get(&ctx).files, ["a.mp3"]);
+        assert!(get(&ctx).listed);
         std::fs::write(dir.path().join("b.wav"), b"").unwrap();
         assert_eq!(get(&ctx).files, ["a.mp3"], "no re-read until asked");
         refresh(&ctx);
         assert_eq!(get(&ctx).files, ["a.mp3", "b.wav"]);
         set_dir(&ctx, None);
         assert!(get(&ctx).files.is_empty());
+        assert!(!get(&ctx).listed, "no folder is not an empty folder");
+        set_dir(&ctx, Some(dir.path().join("nope")));
+        assert!(!get(&ctx).listed, "an unreadable folder is not listed");
     }
 }

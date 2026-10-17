@@ -579,3 +579,18 @@ reconsider where + Add rule inserts (v0.6 inserts at the top of the file). Raise
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.17: League picker and price source in the overlay (BACKLOG)
+
+**Goal:** The ECONOMY tab gets a UI to choose the league instead of the pinned
+`sync::OVERLAY_LEAGUE`: list and search poe.ninja's current leagues (new leagues show up without a
+code change), switch the league used by Sync economy, and choose to price with the committed
+default/fallback prices (`prices-fallback.json` + `tiers-fallback.json`) instead of a synced
+`prices.json`. Keep the "wrong side of a league transition" safety the pin gives today (the
+choice is explicit and visible). Raised by the author during v0.6 UAT on 2026-10-17.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

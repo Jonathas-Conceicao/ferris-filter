@@ -142,6 +142,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   economy section add/remove, which ECONOMY Revert owns. ECONOMY Revert also asks when only a
   staged economy section add/remove is pending. Debug screenshot mode gains
   `--popup discard-rules`.
+- **Economy rules can be inspected (quick 261017-2rf).** In RULES the economy section is now
+  headed **FF Economy Section** (display only; the banner written in the file is unchanged), and a
+  click on one of its rules expands it read-only: every condition and style line in the same
+  editor UI, all controls disabled (no picker opens, nothing takes focus, quoted lists show every
+  entry), with no Section above / Duplicate / Delete, check or arrows. The section stays locked;
+  search still finds its rules. Debug screenshot mode gains `--expand-economy <n>`.
+- **Narrower tier boxes (quick 261017-2rf).** The ECONOMY tier cutoff boxes are 88pt (about 8
+  digits), start at the value column of the rows above and keep a 10pt gap before the unit, so
+  `chaos` no longer clips.
+- **Style editor nits (quick 261017-2rf).** Every `/` tile (Minimap, Beam, Alert sound) has the
+  same framed box; a colour card whose `<Label> (none)` caption does not fit (Background at 660pt)
+  shows the bare dim label with the full text on hover; leaving `/` on a loaded
+  `MinimapIcon -1 <colour> <shape>` keeps that line's shape, and its colour tints the shapes
+  meanwhile.
 
 ### Removed
 

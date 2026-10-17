@@ -1460,7 +1460,9 @@ fn search_row_rects(
             // The buttons are at least 124 / 140pt, wider if a caption needs it (see `ff_button_ex`).
             let add_w = (text_width(ui, "+ Add rule", small_caps(17.0)) + 44.0).max(124.0);
             let sec_w = (text_width(ui, "+ Add section", small_caps(17.0)) + 44.0).max(140.0);
-            let width = (ui.available_width() - add_w - sec_w - 16.0).max(40.0);
+            let width =
+                (ui.available_width() - add_w - sec_w - 8.0 - crate::skin::widgets::FIELD_GAP)
+                    .max(40.0);
             let start_x = ui.next_widget_position().x;
             let resp = ff_text_field(ui, query, &hint, width);
             // The field is 30pt high and `width` wide, centred on the edit.
@@ -2290,7 +2292,7 @@ Show
             .drop_without_applying_deltas();
             let (_, field, add, section) = rects;
             let gap = add.min.x - field.max.x;
-            assert!((gap - 8.0).abs() < 0.6, "query {q:?}: gap {gap}");
+            assert!((gap - crate::skin::widgets::FIELD_GAP).abs() < 0.6, "query {q:?}: gap {gap}");
             let gap2 = section.min.x - add.max.x;
             assert!((gap2 - 8.0).abs() < 0.6, "query {q:?}: gap {gap2}");
             assert!(add.width() >= 124.0 - 0.6, "add {}", add.width());
@@ -2301,7 +2303,7 @@ Show
                 section.width()
             );
             assert!(
-                (field.width() - (avail - add.width() - section.width() - 16.0)).abs() < 0.6,
+                (field.width() - (avail - add.width() - section.width() - 18.0)).abs() < 0.6,
                 "field {} of {avail}",
                 field.width()
             );

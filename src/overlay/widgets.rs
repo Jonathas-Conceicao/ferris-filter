@@ -746,11 +746,23 @@ fn add_field(ui: &mut egui::Ui, id: egui::Id, hint: &str) -> (Vec<String>, Optio
     let mut enter = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let width = (ui.available_width() - 84.0 - 8.0).max(60.0);
+        // The button is at least 84pt, wider when its caption needs it (see `ff_button_ex`).
+        let caption_w = ui.fonts_mut(|f| {
+            f.layout_no_wrap(
+                "+ Add".to_owned(),
+                crate::skin::fonts::small_caps(17.0),
+                egui::Color32::WHITE,
+            )
+            .size()
+            .x
+        });
+        let button_w = (caption_w + 44.0).max(84.0);
+        let width =
+            (ui.available_width() - button_w - crate::skin::widgets::FIELD_GAP).max(60.0);
         let response =
             crate::skin::widgets::ff_text_field_id(ui, field_id, &mut draft, hint, width);
         enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if crate::skin::widgets::ff_button(ui, &skin, "+ Add", 84.0).clicked() {
+        if crate::skin::widgets::ff_button(ui, &skin, "+ Add", button_w).clicked() {
             commit = true;
         }
     });
@@ -813,6 +825,23 @@ mod tests {
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
         ctx
+    }
+
+    #[test]
+    fn add_field_row_fits_its_available_width() {
+        let ctx = headless_ctx();
+        let mut right = 0.0_f32;
+        let mut limit = 0.0_f32;
+        ctx.run_ui(RawInput::default(), |ui| {
+            ui.set_max_width(300.0);
+            let left = ui.cursor().min.x;
+            limit = left + 300.0;
+            let before = ui.min_rect().max.x;
+            let _ = add_field(ui, egui::Id::new("fit-add-field"), "hint");
+            right = ui.min_rect().max.x.max(before);
+        })
+        .drop_without_applying_deltas();
+        assert!(right <= limit + 0.01, "row ends at {right}, limit {limit}");
     }
 
     #[test]

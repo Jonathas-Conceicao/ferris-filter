@@ -1,6 +1,6 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
 //! [--filter f] [--expand n] [--expand-economy n] [--search text] [--rename-section n] [--expand-style name]
-//! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT]` renders the
+//! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT] [--stage-economy add|remove]` renders the
 //! shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
@@ -51,6 +51,9 @@ pub(crate) struct ShotArgs {
     pub expand: Option<usize>,
     /// Open the economy section and expand its n-th rule (1-based), shown read-only.
     pub expand_economy: Option<usize>,
+    /// Stage the economy section add or remove (`add` or `remove`) before the first frame, as the
+    /// Economy tab button does; nothing is written.
+    pub stage_economy: Option<String>,
     /// Text for the RULES search box.
     pub search: Option<String>,
     /// Open the n-th user section header (1-based, economy skipped) in rename mode.
@@ -80,6 +83,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut filter = None;
     let mut expand = None;
     let mut expand_economy = None;
+    let mut stage_economy = None;
     let mut search = None;
     let mut rename_section = None;
     let mut expand_style = None;
@@ -122,6 +126,13 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                         ));
                     }
                 };
+            }
+            "--stage-economy" => {
+                let v = value("--stage-economy")?;
+                if v != "add" && v != "remove" {
+                    return Err(format!("--stage-economy needs add or remove, got `{v}`"));
+                }
+                stage_economy = Some(v);
             }
             "--rename-section" => {
                 let n = value("--rename-section")?;
@@ -170,6 +181,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         filter,
         expand,
         expand_economy,
+        stage_economy,
         search,
         rename_section,
         expand_style,
@@ -354,6 +366,8 @@ mod tests {
             "3",
             "--expand-economy",
             "2",
+            "--stage-economy",
+            "add",
             "--search",
             "ring",
             "--rename-section",
@@ -380,6 +394,7 @@ mod tests {
         }
         assert_eq!(a.expand, Some(3));
         assert_eq!(a.expand_economy, Some(2));
+        assert_eq!(a.stage_economy.as_deref(), Some("add"));
         assert_eq!(a.search.as_deref(), Some("ring"));
         assert_eq!(a.png, PathBuf::from("out.png"));
         assert_eq!(a.tab, ShellTab::Economy);
@@ -410,6 +425,8 @@ mod tests {
         assert!(p(&["--screenshot", "o.png", "--expand", "0"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand-economy", "0"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand-economy"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--stage-economy", "x"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--stage-economy"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--search"]).is_err());

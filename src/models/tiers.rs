@@ -28,7 +28,7 @@ impl Unit {
 }
 
 /// A single lower-bound entry in `tiers.json`.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct TierEntry {
     pub tier: String,
     pub min: f64,

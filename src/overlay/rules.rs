@@ -19,7 +19,7 @@ use crate::filter::section::{self, SectionSpan};
 use crate::filter::tokenize::Operator;
 use crate::filter::{
     Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, RuleStep,
-    Severity, parse as parse_filter,
+    Severity, parse as parse_filter, parse_with_id_base,
 };
 use crate::models::config::{Cancelable, Style, StyleSet};
 use crate::styled::{self, StyleReport};
@@ -392,6 +392,9 @@ pub struct WorkingFilter {
     shadowing: HashSet<BlockId>,
     base_economy: EconomyView,
     pending: Option<Pending>,
+    /// While an economy add is staged: the economy section as Apply will write it, parsed on its
+    /// own with block ids disjoint from `doc`, so its rows can be browsed read-only.
+    preview: Option<Box<WorkingFilter>>,
     projected: EconomyView,
     blocking: Vec<BlockingError>,
     /// Grouped rules (several blocks written as one rule), recomputed on every rebuild.
@@ -410,6 +413,30 @@ pub struct WorkingFilter {
     styles_rev: u64,
     pending_cache: Option<(u64, u64, bool)>,
 }
+
+/// An economy body of `n` named blocks, for tests that stage an add.
+#[cfg(test)]
+pub fn tests_econ_body(n: usize) -> String {
+    (0..n)
+        .map(|k| {
+            format!(
+                "# ff:name Block {k}
+Show
+  Class \"Rings\"
+
+"
+            )
+        })
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+        + "
+"
+}
+
+/// First block id of the staged-economy preview document: far above any id the working document
+/// hands out, so the two never collide.
+const PREVIEW_ID_BASE: u64 = 1 << 48;
 
 fn refused(msg: String) -> ActionOutcome {
     ActionOutcome {
@@ -692,8 +719,12 @@ impl WorkingFilter {
 
 impl WorkingFilter {
     pub fn from_text(text: &str) -> Self {
+        Self::from_text_based(text, 0)
+    }
+
+    fn from_text_based(text: &str, id_base: u64) -> Self {
         let mut wf = WorkingFilter {
-            doc: parse_text(text),
+            doc: parse_with_id_base(text.as_bytes(), id_base).unwrap_or_default(),
             applied_text: text.to_string(),
             rows: Vec::new(),
             economy_rows: Vec::new(),
@@ -703,6 +734,7 @@ impl WorkingFilter {
             shadowing: HashSet::new(),
             base_economy: EconomyView::Absent,
             pending: None,
+            preview: None,
             projected: EconomyView::Absent,
             blocking: Vec::new(),
             groups: GroupIndex::default(),
@@ -981,6 +1013,10 @@ impl WorkingFilter {
         }
         self.styles_rev += 1;
         self.rebuild();
+        // The staged-economy preview judges its tags against the same set.
+        if let (Some(p), Some(set)) = (&mut self.preview, &self.styles) {
+            p.set_styles(Ok(set.clone()));
+        }
     }
 
     /// A legacy name-only tag (`# ff:style kite`) links by name, so renaming that style would
@@ -1124,10 +1160,11 @@ impl WorkingFilter {
 
     /// The generated economy blocks as read-only rows (empty while a remove is staged).
     pub fn economy_rows(&self) -> &[RuleRow] {
-        if self.pending == Some(Pending::Remove) {
-            &[]
-        } else {
-            &self.economy_rows
+        match (&self.pending, &self.preview) {
+            (Some(Pending::Remove), _) => &[],
+            (Some(Pending::Add { .. }), Some(p)) => &p.economy_rows,
+            (Some(Pending::Add { .. }), None) => &[],
+            _ => &self.economy_rows,
         }
     }
 
@@ -1168,7 +1205,7 @@ impl WorkingFilter {
                 }
             }
             if econ_shown && let Some(p) = econ_pos {
-                counts[p] = self.economy_rows.iter().filter(|r| econ_hit(r)).count();
+                counts[p] = self.economy_rows().iter().filter(|r| econ_hit(r)).count();
             }
         }
         let header = |p: usize| ListEntry::Header {
@@ -1201,7 +1238,7 @@ impl WorkingFilter {
                         out.push(header(p));
                     }
                     if searching || !folded[p] {
-                        for (k, r) in self.economy_rows.iter().enumerate() {
+                        for (k, r) in self.economy_rows().iter().enumerate() {
                             if econ_hit(r) {
                                 out.push(ListEntry::EconomyRule(k));
                             }
@@ -1212,10 +1249,18 @@ impl WorkingFilter {
         }
         // A staged economy add has no banner in the file yet: its header closes the list.
         if matches!(self.pending, Some(Pending::Add { .. }))
-            && !searching
-            && let Some(p) = self.sections.len().checked_sub(1)
+            && let Some(p) = econ_pos
         {
-            out.push(header(p));
+            if !searching || counts[p] > 0 {
+                out.push(header(p));
+            }
+            if searching || !folded[p] {
+                for (k, r) in self.economy_rows().iter().enumerate() {
+                    if econ_hit(r) {
+                        out.push(ListEntry::EconomyRule(k));
+                    }
+                }
+            }
         }
         out
     }
@@ -1253,19 +1298,60 @@ impl WorkingFilter {
     }
 
     /// Stage adding the economy section (only from Absent); the opposite staged op cancels.
-    pub fn stage_add_economy(&mut self, blocks: usize) {
-        match (self.pending, &self.base_economy) {
-            (Some(Pending::Remove), _) => self.pending = None,
-            (None, EconomyView::Absent) => self.pending = Some(Pending::Add { blocks }),
+    pub fn stage_add_economy(&mut self, body: &str) {
+        match (&self.pending, &self.base_economy) {
+            (Some(Pending::Remove), _) => self.clear_pending(),
+            (None, EconomyView::Absent) => {
+                let preview = self.build_preview(body);
+                let blocks = preview.as_ref().map_or(0, |p| p.economy_rows.len());
+                self.preview = preview;
+                self.pending = Some(Pending::Add { blocks });
+            }
             _ => return,
         }
         self.refresh_projection();
     }
 
+    /// Replace the staged add's preview with a re-priced `body` (pending styles or tiers
+    /// changed). A no-op unless an economy add is staged.
+    pub fn set_staged_economy_body(&mut self, body: &str) {
+        if !matches!(self.pending, Some(Pending::Add { .. })) {
+            return;
+        }
+        let preview = self.build_preview(body);
+        let blocks = preview.as_ref().map_or(0, |p| p.economy_rows.len());
+        self.preview = preview;
+        self.pending = Some(Pending::Add { blocks });
+        self.refresh_projection();
+    }
+
+    fn build_preview(&self, body: &str) -> Option<Box<WorkingFilter>> {
+        let text = section::add("", body).ok()?;
+        let mut p = Self::from_text_based(&text, PREVIEW_ID_BASE);
+        if let Some(s) = &self.styles {
+            p.set_styles(Ok(s.clone()));
+        }
+        Some(Box::new(p))
+    }
+
+    fn clear_pending(&mut self) {
+        self.pending = None;
+        self.preview = None;
+    }
+
+    /// The filter the economy rows' bodies are read from: the staged add's preview while one is
+    /// staged, else this filter.
+    pub fn economy_source(&self) -> &WorkingFilter {
+        match (&self.pending, &self.preview) {
+            (Some(Pending::Add { .. }), Some(p)) => p,
+            _ => self,
+        }
+    }
+
     /// Stage removing the economy section (only from Present); the opposite staged op cancels.
     pub fn stage_remove_economy(&mut self) {
         match (self.pending, &self.base_economy) {
-            (Some(Pending::Add { .. }), _) => self.pending = None,
+            (Some(Pending::Add { .. }), _) => self.clear_pending(),
             (None, EconomyView::Present { .. }) => self.pending = Some(Pending::Remove),
             _ => return,
         }
@@ -1280,7 +1366,7 @@ impl WorkingFilter {
     /// Drop a staged economy add/remove without touching other edits (ECONOMY tab Revert).
     pub fn unstage_economy(&mut self) {
         if self.pending.is_some() {
-            self.pending = None;
+            self.clear_pending();
             self.refresh_projection();
         }
     }
@@ -1906,7 +1992,7 @@ impl WorkingFilter {
 
     /// Discard every in-memory edit and staged economy op.
     pub fn revert(&mut self) {
-        self.pending = None;
+        self.clear_pending();
         self.revert_rules();
     }
 
@@ -1923,7 +2009,7 @@ impl WorkingFilter {
     pub fn on_applied(&mut self, applied_text: &str) {
         self.applied_text = applied_text.to_string();
         self.doc = parse_text(applied_text);
-        self.pending = None;
+        self.clear_pending();
         self.moved.clear();
         self.rebuild();
     }
@@ -1933,6 +2019,10 @@ impl WorkingFilter {
 mod tests {
     use super::*;
     use crate::filter::section::{BEGIN_LINE, RULE_LINE};
+
+    fn econ_body(n: usize) -> String {
+        tests_econ_body(n)
+    }
 
     const THREE: &str =
         "Show\n  Class \"Rings\"\n\nHide\n  Rarity Normal\n\nShow\n  ItemLevel >= 82\n";
@@ -2684,7 +2774,7 @@ Show
     fn unstage_economy_keeps_other_edits() {
         let mut wf = WorkingFilter::from_text(THREE);
         assert!(!wf.economy_staged());
-        wf.stage_add_economy(5);
+        wf.stage_add_economy(&econ_body(5));
         assert!(wf.economy_staged());
         assert_eq!(*wf.economy(), EconomyView::Present { blocks: 5 });
         wf.unstage_economy();
@@ -2692,7 +2782,7 @@ Show
         assert_eq!(*wf.economy(), EconomyView::Absent);
         assert!(!wf.is_dirty());
 
-        wf.stage_add_economy(5);
+        wf.stage_add_economy(&econ_body(5));
         let id = wf.rows()[0].id;
         wf.apply_action(RowAction::Delete(id));
         wf.unstage_economy();
@@ -2703,7 +2793,7 @@ Show
     #[test]
     fn a_staged_economy_op_is_not_a_rules_edit() {
         let mut wf = WorkingFilter::from_text(THREE);
-        wf.stage_add_economy(5);
+        wf.stage_add_economy(&econ_body(5));
         assert!(wf.is_dirty());
         assert!(!wf.rules_edited());
         let id = wf.rows()[0].id;
@@ -2729,7 +2819,7 @@ Show
         assert!(wf.is_dirty());
 
         let mut wf = WorkingFilter::from_text(THREE);
-        wf.stage_add_economy(5);
+        wf.stage_add_economy(&econ_body(5));
         wf.apply_action(RowAction::AddRule);
         wf.revert_rules();
         assert_eq!(wf.text(), THREE);
@@ -2740,7 +2830,7 @@ Show
     fn economy_staging_revert_and_applied() {
         let mut wf = WorkingFilter::from_text(THREE);
         let before = wf.text();
-        wf.stage_add_economy(5);
+        wf.stage_add_economy(&econ_body(5));
         assert_eq!(*wf.economy(), EconomyView::Present { blocks: 5 });
         assert_eq!(wf.economy_plan(), EconomyPlan::Add);
         assert_eq!(wf.text(), before);
@@ -2753,7 +2843,7 @@ Show
         wf.stage_remove_economy();
         assert_eq!(*wf.economy(), EconomyView::Absent);
         assert_eq!(wf.economy_plan(), EconomyPlan::Remove);
-        wf.stage_add_economy(1);
+        wf.stage_add_economy(&econ_body(1));
         assert_eq!(wf.economy_plan(), EconomyPlan::Refresh);
 
         wf.stage_remove_economy();
@@ -3500,12 +3590,57 @@ Show
     fn staged_economy_ops_project_into_sections() {
         let mut wf = WorkingFilter::from_text(THREE);
         assert!(wf.sections().is_empty());
-        wf.stage_add_economy(7);
+        wf.stage_add_economy(&econ_body(7));
         assert_eq!(wf.sections().len(), 1);
         assert!(wf.sections()[0].economy);
         assert_eq!(wf.sections()[0].rules, 7);
+        assert_eq!(wf.economy_rows().len(), 7);
+        assert_eq!(wf.economy_rows()[2].name.as_deref(), Some("Block 2"));
+        // Collapsed: just the header; expanded: the header, then the preview rows.
+        let folded = wf.entries("", |_| true);
+        assert!(matches!(
+            folded.last(),
+            Some(ListEntry::Header {
+                collapsed: true,
+                ..
+            })
+        ));
+        assert_eq!(folded.len(), 3 + 1);
+        let open = wf.entries("", |_| false);
+        assert_eq!(open.len(), 3 + 1 + 7);
+        assert_eq!(open[open.len() - 7], ListEntry::EconomyRule(0));
+        // Search reaches the preview rows.
+        let hit = wf.entries("block 3", |_| true);
+        assert!(hit.contains(&ListEntry::EconomyRule(3)));
+        // Preview ids never collide with the document's.
+        let doc_ids: Vec<_> = wf.rows().iter().map(|r| r.id).collect();
+        assert!(wf.economy_rows().iter().all(|r| !doc_ids.contains(&r.id)));
+        assert!(
+            wf.economy_source()
+                .doc
+                .block(wf.economy_rows()[0].id)
+                .is_some()
+        );
+        assert!(wf.doc.block(wf.economy_rows()[0].id).is_none());
+        // The body view reads from the preview (ids are not in the working document, so the model
+        // refuses any action aimed at them).
+        assert!(
+            !wf.economy_source()
+                .body_view(wf.economy_rows()[0].id)
+                .is_empty()
+        );
+        // Re-pricing replaces the preview; Remove cancels the Add.
+        wf.set_staged_economy_body(&econ_body(2));
+        assert_eq!(wf.sections()[0].rules, 2);
+        assert_eq!(wf.economy_rows().len(), 2);
+        wf.stage_remove_economy();
         assert!(wf.economy_rows().is_empty());
-        assert_eq!(wf.entries("", |_| false).last(), Some(&header(0)));
+        assert!(!wf.economy_staged());
+        wf.stage_add_economy(&econ_body(3));
+        wf.unstage_economy();
+        assert!(wf.economy_rows().is_empty());
+        wf.set_staged_economy_body(&econ_body(4));
+        assert!(wf.economy_rows().is_empty());
         let mut wf = WorkingFilter::from_text(&sectioned());
         wf.stage_remove_economy();
         assert!(wf.sections().iter().all(|s| !s.economy));

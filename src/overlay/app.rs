@@ -178,6 +178,10 @@ pub struct OverlayApp {
     /// The latest row-operation status (refusals, revert, hidden add).
     list_status: Option<String>,
 
+    /// The pending styles and tiers the staged economy-add preview was priced with, so it is
+    /// re-priced only when they change (never per frame).
+    staged_econ_inputs: Option<(StyleSet, Vec<crate::models::tiers::TierEntry>)>,
+
     /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
     applied_this_session: bool,
 
@@ -263,6 +267,22 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     }
     working.set_styles_over(config.pending_styles().clone(), config.applied_styles());
     true
+}
+
+/// The economy body a staged **Add economy section** previews: priced with the CONFIG tab's pending
+/// styles and tiers when loaded (what `apply_all::prepare` will write), else from disk.
+fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<String, String> {
+    let paths = InputPaths::relative_to(root);
+    let priced = match config {
+        Some(c) => dynamic::economy_body_with(
+            &paths,
+            PriceSourcePolicy::Auto,
+            c.pending_styles(),
+            c.pending_tiers(),
+        ),
+        None => dynamic::economy_body(&paths, PriceSourcePolicy::Auto),
+    };
+    priced.map(|(body, _)| body).map_err(|e| e.to_string())
 }
 
 /// The styles under `root`: `styles.json`, else `styles-default.json` (DEF-03). Never writes.
@@ -1025,6 +1045,11 @@ impl OverlayApp {
         if let Some(q) = &shot.search {
             app.query = q.clone();
         }
+        match shot.stage_economy.as_deref() {
+            Some("add") => app.stage_add_economy(),
+            Some("remove") => app.stage_remove_economy(),
+            _ => {}
+        }
         if let Some(n) = shot.expand {
             let id = app.working.as_ref().and_then(|w| nth_row_id(w.rows(), n));
             if id.is_some() {
@@ -1201,6 +1226,7 @@ impl OverlayApp {
             list: ListUi::default(),
             query: String::new(),
             list_status: None,
+            staged_econ_inputs: None,
             applied_this_session: false,
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
@@ -2016,12 +2042,42 @@ impl OverlayApp {
         let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
             return;
         };
-        match dynamic::economy_body(&InputPaths::relative_to(root), PriceSourcePolicy::Auto) {
-            Ok((body, _)) => {
-                working.stage_add_economy(rules::count_blocks(&body));
+        let config = self.config.as_ref().ok();
+        match staged_economy_body(root, config) {
+            Ok(body) => {
+                working.stage_add_economy(&body);
+                self.staged_econ_inputs =
+                    config.map(|c| (c.pending_styles().clone(), c.pending_tiers().to_vec()));
                 self.apply_state = ApplyState::Unapplied;
             }
-            Err(err) => self.list_status = Some(err.to_string()),
+            Err(err) => self.list_status = Some(err),
+        }
+    }
+
+    /// Re-prices the staged economy-add preview when the pending styles or tiers changed since it
+    /// was built. On a pricing error the previous preview stays and the error is shown.
+    fn refresh_staged_economy(&mut self) {
+        let (Ok(root), Ok(config), Some(working)) =
+            (&self.root, &self.config, self.working.as_mut())
+        else {
+            return;
+        };
+        if working.economy_plan() != rules::EconomyPlan::Add {
+            self.staged_econ_inputs = None;
+            return;
+        }
+        let (styles, tiers) = (config.pending_styles(), config.pending_tiers());
+        if self
+            .staged_econ_inputs
+            .as_ref()
+            .is_some_and(|(s, t)| s == styles && t.as_slice() == tiers)
+        {
+            return;
+        }
+        self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec()));
+        match staged_economy_body(root, Some(config)) {
+            Ok(body) => working.set_staged_economy_body(&body),
+            Err(err) => self.list_status = Some(err),
         }
     }
 
@@ -2740,6 +2796,7 @@ impl eframe::App for OverlayApp {
         if let (Ok(config), Some(working)) = (&self.config, self.working.as_mut()) {
             sync_working_styles(config, working);
         }
+        self.refresh_staged_economy();
         let state = self.filter_state();
         // A changed styles.json makes the written filter stale even with no rule edited.
         let style_pending = self
@@ -4197,7 +4254,7 @@ mod tests {
         )
         .unwrap()
         .0;
-        working.stage_add_economy(crate::overlay::rules::count_blocks(&body));
+        working.stage_add_economy(&body);
         let (outcome, _, _) = apply_working(&root, &mut loaded, &mut working);
         assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
         let written = std::fs::read_to_string(&path).unwrap();
@@ -5128,6 +5185,44 @@ Hide
         assert!(matches!(w.economy(), EconomyView::Present { .. }));
         assert!(w.economy_staged());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), RULES);
+        // The staged section is browsable before Apply: named rows, header count to match.
+        assert!(!w.economy_rows().is_empty());
+        assert!(
+            w.economy_rows()[0]
+                .name
+                .as_deref()
+                .unwrap()
+                .contains(" tier ")
+        );
+        let sec = w.sections().iter().find(|s| s.economy).unwrap();
+        assert_eq!(sec.rules, w.economy_rows().len());
+    }
+
+    #[test]
+    fn staged_economy_preview_follows_pending_tier_edits() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        let Ok(_) = &app.config else {
+            panic!("rig has no CONFIG state");
+        };
+        app.stage_add_economy();
+        let before = app.working.as_ref().unwrap().economy_rows().len();
+        // A huge S cutoff empties tier S: the preview is re-priced from the pending tiers.
+        app.config.as_mut().unwrap().set_tier_text("S", "100000000");
+        app.refresh_staged_economy();
+        let after = app.working.as_ref().unwrap().economy_rows().len();
+        assert_ne!(before, after);
+        assert_eq!(
+            app.working
+                .as_ref()
+                .unwrap()
+                .sections()
+                .iter()
+                .find(|s| s.economy)
+                .unwrap()
+                .rules,
+            after
+        );
     }
 
     #[test]
@@ -5166,7 +5261,10 @@ Hide
                 text: "31".to_string(),
             }],
         );
-        app.working.as_mut().unwrap().stage_add_economy(3);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
         // Revert opens the popup and drops nothing yet.
         app.economy_revert_pressed();
         assert!(app.config_ui.revert_armed);
@@ -5186,7 +5284,10 @@ Hide
     fn economy_revert_without_tier_edits_asks_before_dropping_the_staged_op() {
         use crate::overlay::shell::{self, Popup};
         let (mut app, ctx) = popup_app(RULES);
-        app.working.as_mut().unwrap().stage_add_economy(3);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
         app.economy_revert_pressed();
         assert!(app.config_ui.revert_armed, "the popup is armed");
         assert!(
@@ -5272,7 +5373,10 @@ Hide
     fn rules_revert_button_and_popup_share_one_predicate() {
         use crate::overlay::shell::{self, Popup};
         let (mut app, ctx) = popup_app(RULES);
-        app.working.as_mut().unwrap().stage_add_economy(3);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
         assert!(app.working.as_ref().unwrap().is_dirty());
         app.revert_rules_armed = true;
         assert!(!app.rules_revert_live());
@@ -5314,7 +5418,10 @@ Hide
             crate::overlay::rules::EconomyView::Absent
         );
         app.run_row_actions(vec![RowAction::AddRule]);
-        app.working.as_mut().unwrap().stage_add_economy(3);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
         assert!(app.working.as_ref().unwrap().economy_staged());
         app.unstage_economy_pressed();
         let w = app.working.as_ref().unwrap();

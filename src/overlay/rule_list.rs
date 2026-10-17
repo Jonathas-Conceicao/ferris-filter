@@ -586,8 +586,14 @@ pub fn show_list(
                         ui.push_id(("economy-rule", row.id, list.epoch), |ui| {
                             // Read-only: whatever the body's editor functions recorded is
                             // dropped here, never returned to the caller.
-                            let _discarded =
-                                draw_economy_row(ui, working, classes, row, rule_no[vi], list);
+                            let _discarded = draw_economy_row(
+                                ui,
+                                working.economy_source(),
+                                classes,
+                                row,
+                                rule_no[vi],
+                                list,
+                            );
                         });
                     }
                     None => continue,

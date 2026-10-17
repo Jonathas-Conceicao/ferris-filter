@@ -471,13 +471,6 @@ fn section_refusal(e: &crate::filter::EditError) -> String {
     }
 }
 
-/// Number of blocks in a filter text (0 when it does not parse).
-pub fn count_blocks(text: &str) -> usize {
-    parse_filter(text.as_bytes())
-        .map(|d| d.blocks().count())
-        .unwrap_or(0)
-}
-
 fn parse_text(text: &str) -> Document {
     // `&str` is always valid UTF-8, so parsing cannot fail; the default is a safe empty fallback.
     parse_filter(text.as_bytes()).unwrap_or_default()
@@ -2889,12 +2882,6 @@ Show
         assert!(!wf.is_dirty());
         wf.revert();
         assert_eq!(wf.text(), new_text);
-    }
-
-    #[test]
-    fn count_blocks_counts() {
-        assert_eq!(count_blocks(THREE), 3);
-        assert_eq!(count_blocks(""), 0);
     }
 
     // ---- body view and line actions ----

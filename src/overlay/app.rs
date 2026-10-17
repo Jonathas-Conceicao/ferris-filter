@@ -271,6 +271,10 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
 
 /// The economy body a staged **Add economy section** previews: priced with the CONFIG tab's pending
 /// styles and tiers when loaded (what `apply_all::prepare` will write), else from disk.
+/// Shown when the priced economy body cannot be previewed as a section (nothing is staged).
+const PREVIEW_FAILED_STATUS: &str =
+    "Could not build the economy section preview. Nothing was staged.";
+
 fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<String, String> {
     let paths = InputPaths::relative_to(root);
     let priced = match config {
@@ -2052,10 +2056,13 @@ impl OverlayApp {
         let config = self.config.as_ref().ok();
         match staged_economy_body(root, config) {
             Ok(body) => {
-                working.stage_add_economy(&body);
-                self.staged_econ_inputs =
-                    config.map(|c| (c.pending_styles().clone(), c.pending_tiers().to_vec()));
-                self.apply_state = ApplyState::Unapplied;
+                if working.stage_add_economy(&body) {
+                    self.staged_econ_inputs =
+                        config.map(|c| (c.pending_styles().clone(), c.pending_tiers().to_vec()));
+                    self.apply_state = ApplyState::Unapplied;
+                } else {
+                    self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
+                }
             }
             Err(err) => self.list_status = Some(err),
         }
@@ -2083,7 +2090,11 @@ impl OverlayApp {
         }
         self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec()));
         match staged_economy_body(root, Some(config)) {
-            Ok(body) => working.set_staged_economy_body(&body),
+            Ok(body) => {
+                if !working.set_staged_economy_body(&body) {
+                    self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
+                }
+            }
             Err(err) => self.list_status = Some(err),
         }
     }

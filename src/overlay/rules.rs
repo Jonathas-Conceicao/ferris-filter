@@ -1298,31 +1298,40 @@ impl WorkingFilter {
     }
 
     /// Stage adding the economy section (only from Absent); the opposite staged op cancels.
-    pub fn stage_add_economy(&mut self, body: &str) {
+    /// Returns `false` when `body` cannot be previewed (nothing is staged then), so the caller can
+    /// say so instead of showing an empty section (WR-03).
+    pub fn stage_add_economy(&mut self, body: &str) -> bool {
         match (&self.pending, &self.base_economy) {
             (Some(Pending::Remove), _) => self.clear_pending(),
             (None, EconomyView::Absent) => {
-                let preview = self.build_preview(body);
-                let blocks = preview.as_ref().map_or(0, |p| p.economy_rows.len());
-                self.preview = preview;
+                let Some(preview) = self.build_preview(body) else {
+                    return false;
+                };
+                let blocks = preview.economy_rows.len();
+                self.preview = Some(preview);
                 self.pending = Some(Pending::Add { blocks });
             }
-            _ => return,
+            _ => return true,
         }
         self.refresh_projection();
+        true
     }
 
     /// Replace the staged add's preview with a re-priced `body` (pending styles or tiers
     /// changed). A no-op unless an economy add is staged.
-    pub fn set_staged_economy_body(&mut self, body: &str) {
+    /// Returns `false` when `body` cannot be previewed; the previous preview then stays (WR-03).
+    pub fn set_staged_economy_body(&mut self, body: &str) -> bool {
         if !matches!(self.pending, Some(Pending::Add { .. })) {
-            return;
+            return true;
         }
-        let preview = self.build_preview(body);
-        let blocks = preview.as_ref().map_or(0, |p| p.economy_rows.len());
-        self.preview = preview;
+        let Some(preview) = self.build_preview(body) else {
+            return false;
+        };
+        let blocks = preview.economy_rows.len();
+        self.preview = Some(preview);
         self.pending = Some(Pending::Add { blocks });
         self.refresh_projection();
+        true
     }
 
     fn build_preview(&self, body: &str) -> Option<Box<WorkingFilter>> {
@@ -2768,6 +2777,19 @@ Show
         wf.apply_action(RowAction::SetName(id, "x".into()));
         wf.apply_action(RowAction::ClearName(id));
         assert!(!wf.text().contains("ff:name"));
+    }
+
+    #[test]
+    fn a_body_that_cannot_be_previewed_stages_nothing() {
+        let mut wf = WorkingFilter::from_text(THREE);
+        // A body holding a section banner marker is refused by the section writer.
+        assert!(!wf.stage_add_economy("# ff:section Oops\nShow\n"));
+        assert!(!wf.economy_staged());
+        assert_eq!(*wf.economy(), EconomyView::Absent);
+        // A failed re-price keeps the previous preview.
+        assert!(wf.stage_add_economy(&econ_body(2)));
+        assert!(!wf.set_staged_economy_body("# ff:section Oops\nShow\n"));
+        assert_eq!(*wf.economy(), EconomyView::Present { blocks: 2 });
     }
 
     #[test]

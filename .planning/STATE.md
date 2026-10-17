@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-10-16)
 
 Phase: 34 (economy-about-tabs) — COMPLETE, awaiting verification
 Plan: 4 of 4 (Phase 34)
-Last activity: 2026-10-17 - Completed quick task 261017-2rf: browsable read-only economy rules (FF Economy Section), narrower tier inputs, style-editor nits
+Last activity: 2026-10-17 - Completed quick task 261017-7lp: economy rules carry ff:name/ff:style headers, staged economy add browsable, tab marker on selected tab, text field gap
 Last activity: 2026-10-16
 
 Progress (v0.6): [█░░░░░░░░░] 14%
@@ -227,6 +227,7 @@ None open.
 | 261016-qi7 | Custom rule styling uses the style editor lines, minimap-icon style chip, Revert confirm on every tab | 2026-10-16 | 890673d | [261016-qi7-custom-rule-styling-uses-the-style-edito](./quick/261016-qi7-custom-rule-styling-uses-the-style-edito/) |
 | 261017-0wl | Style editor groups: off / cancel / value for minimap, beam, alert sound, drop sound; folder sound picker; positional toggle | 2026-10-17 | 1afed2c | [261017-0wl-style-editor-groups-off-cancel-value-for](./quick/261017-0wl-style-editor-groups-off-cancel-value-for/) |
 | 261017-2rf | UAT feedback: browsable read-only economy rules (FF Economy Section), narrower tier inputs, style-editor nits | 2026-10-17 | ef0e534 | [261017-2rf-uat-feedback-browsable-read-only-economy](./quick/261017-2rf-uat-feedback-browsable-read-only-economy/) |
+| 261017-7lp | UAT feedback: economy rules get FF name/style headers, staged economy add browsable, tab * on the selected tab, text field gap | 2026-10-17 | 83107ad | [261017-7lp-uat-feedback-economy-headers-staged-rows](./quick/261017-7lp-uat-feedback-economy-headers-staged-rows/) |
 
 ## Phase 15 Source Material — the author's two requests
 

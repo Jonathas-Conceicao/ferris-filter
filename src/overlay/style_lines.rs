@@ -52,6 +52,9 @@ pub struct StyleView {
     pub font: Option<i64>,
     /// `None` = off (no line), `Cancel` = `MinimapIcon -1`.
     pub minimap: Option<Cancelable<Minimap>>,
+    /// Under `/`: the icon a loaded `MinimapIcon -1 <colour> <shape>` line names, which the
+    /// pickers show and leaving `/` brings back (after one remembered this session).
+    pub minimap_hint: Option<Minimap>,
     /// `None` = off (no line), `Cancel` = `PlayEffect None`.
     pub beam: Option<Cancelable<Beam>>,
     /// `None` = off (no line), `Cancel` = `PlayAlertSound None`. A set sound's `vol` is the shown
@@ -82,6 +85,7 @@ impl StyleView {
             background: style.background.map(rgba),
             font: style.font.map(i64::from),
             minimap: style.minimap.clone(),
+            minimap_hint: None,
             beam: style.beam.clone(),
             sound: style.sound.clone(),
             sound_volume_written: true,
@@ -560,6 +564,7 @@ fn minimap_group(
         .value()
         .cloned()
         .or_else(|| recall(ui, memo, "minimap-set"))
+        .or_else(|| view.minimap_hint.clone())
         .unwrap_or_else(default_minimap);
     let colour = minimap::index_of(&minimap::COLOURS, shown.color.as_str()).unwrap_or(0);
     let shape = minimap::index_of(&minimap::SHAPES, shown.shape.as_str()).unwrap_or(0);

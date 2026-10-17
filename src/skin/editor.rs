@@ -133,6 +133,10 @@ pub fn ff_swatch(
         (pal::HEADING, 2.0)
     } else if resp.hovered() {
         (pal::INPUT_BORDER_HOT, 1.0)
+    } else if color.is_none() {
+        // The dark "none" tile needs a visible frame: a black one vanishes on the darker zebra
+        // band, which made the `/` tile of one group look boxless next to another's.
+        (pal::INPUT_BORDER, 1.0)
     } else {
         (Color32::from_black_alpha(200), 1.0)
     };
@@ -186,7 +190,7 @@ pub fn ff_colour_card_ex(
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 34.0), Sense::click());
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
     let painter = ui.painter();
-    let (text, text_color) = match color {
+    let (text, text_color, none) = match color {
         Some(c) => {
             painter.rect_filled(rect, CornerRadius::same(1), c);
             painter.rect_filled(
@@ -194,11 +198,11 @@ pub fn ff_colour_card_ex(
                 CornerRadius::same(1),
                 Color32::from_white_alpha(14),
             );
-            (label.to_owned(), on_color(c))
+            (label.to_owned(), on_color(c), false)
         }
         None => {
             painter.rect_filled(rect, CornerRadius::same(1), pal::INPUT_FILL);
-            (format!("{label} (none)"), pal::DISABLED)
+            (format!("{label} (none)"), pal::DISABLED, true)
         }
     };
     let stroke = if open {
@@ -209,14 +213,48 @@ pub fn ff_colour_card_ex(
         Stroke::new(1.0, pal::INPUT_BORDER)
     };
     painter.rect_stroke(rect, CornerRadius::same(1), stroke, StrokeKind::Inside);
-    painter.with_clip_rect(rect.shrink(2.0)).text(
-        pos2(rect.min.x + 10.0, rect.center().y + 1.0),
-        Align2::LEFT_CENTER,
-        text,
-        small_caps(15.0),
+    // 10pt before the caption (as drawn) and 4pt kept clear of the right edge.
+    let room = rect.width() - 14.0;
+    let shown = card_caption(ui, &text, label, none, room);
+    let cut = shown != text;
+    let mut job = egui::text::LayoutJob::simple_singleline(shown, small_caps(15.0), text_color);
+    job.wrap = egui::text::TextWrapping {
+        max_width: room.max(1.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let cut = cut || galley.elided;
+    let painter = ui.painter();
+    painter.with_clip_rect(rect.shrink(2.0)).galley(
+        pos2(
+            rect.min.x + 10.0,
+            rect.center().y + 1.0 - galley.size().y / 2.0,
+        ),
+        galley,
         text_color,
     );
-    resp
+    // A shortened caption shows its full text on hover.
+    if cut { resp.on_hover_text(text) } else { resp }
+}
+
+/// The caption a colour card shows in `room` points: `text` when it fits, else (for a "none"
+/// card) the bare `label`, which the dim colour already marks as none. Whatever is returned is
+/// still cut with "…" by the caller if it does not fit either.
+fn card_caption(ui: &Ui, text: &str, label: &str, none: bool, room: f32) -> String {
+    let width = |t: &str| {
+        ui.fonts_mut(|f| {
+            f.layout_no_wrap(t.to_owned(), small_caps(15.0), Color32::WHITE)
+                .size()
+                .x
+        })
+    };
+    if !none || width(text) <= room {
+        text.to_owned()
+    } else {
+        label.to_owned()
+    }
 }
 
 /// What the item-label preview draws.
@@ -471,6 +509,52 @@ mod tests {
         }
         full.drop_without_applying_deltas();
         out
+    }
+
+    /// The painted stroke colours of one unselected swatch.
+    fn swatch_strokes(color: Option<Color32>) -> Vec<Color32> {
+        let ctx = egui::Context::default();
+        let full = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ff_swatch(ui, color, false, vec2(24.0, 24.0), "x");
+        });
+        let mut out = Vec::new();
+        for c in &full.shapes {
+            if let egui::Shape::Rect(r) = &c.shape {
+                out.push(r.stroke.color);
+            }
+        }
+        full.drop_without_applying_deltas();
+        out
+    }
+
+    #[test]
+    fn an_unselected_none_tile_has_a_visible_frame() {
+        // The `/` tile of every group (Minimap, Beam, Alert sound) looks the same on either band.
+        assert!(swatch_strokes(None).contains(&pal::INPUT_BORDER));
+        assert!(!swatch_strokes(Some(Color32::RED)).contains(&pal::INPUT_BORDER));
+    }
+
+    #[test]
+    fn a_none_card_caption_drops_none_when_it_does_not_fit() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let mut got = Vec::new();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            for (none, room) in [(true, 400.0), (true, 90.0), (false, 90.0)] {
+                got.push(card_caption(
+                    ui,
+                    "Background (none)",
+                    "Background",
+                    none,
+                    room,
+                ));
+            }
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(
+            got,
+            ["Background (none)", "Background", "Background (none)"]
+        );
     }
 
     #[test]

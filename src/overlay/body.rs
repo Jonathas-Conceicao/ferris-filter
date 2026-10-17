@@ -2633,6 +2633,19 @@ fn decoded(e: &BodyEntry) -> Option<(&'static str, Value)> {
     Some((kw.name, grammar::decode(kw, &tokens)))
 }
 
+/// The colour and shape written after the `-1` of a `MinimapIcon -1 <colour> <shape>` line
+/// (`tokens` starts at `-1`), as a Large icon; `None` when they are absent or not valid names.
+fn cancelled_minimap_hint(tokens: &[String]) -> Option<mc::Minimap> {
+    let [_, colour, shape] = tokens else {
+        return None;
+    };
+    Some(mc::Minimap {
+        size: 0,
+        color: FilterColor::from_name(colour)?,
+        shape: MinimapShape::from_name(shape)?,
+    })
+}
+
 /// The style view of a rule's action lines and the line each style line is bound to (the last
 /// line of its family, see the binding rule above).
 pub(crate) fn rule_style_view(
@@ -2650,6 +2663,7 @@ pub(crate) fn rule_style_view(
         background: None,
         font: None,
         minimap: None,
+        minimap_hint: None,
         beam: None,
         sound: None,
         sound_volume_written: false,
@@ -2734,8 +2748,10 @@ pub(crate) fn rule_style_view(
                 ),
                 _ => (None, false),
             },
-            // `-1` cancels the icon; trailing colour/shape tokens are kept but not shown.
+            // `-1` cancels the icon; trailing colour/shape tokens are kept in the file and only
+            // seed what the pickers show, so leaving `/` brings them back (review IN-04).
             Some((_, Value::Minimap(Minimap::Hidden(t)))) => {
+                view.minimap_hint = cancelled_minimap_hint(&t);
                 (Some(Cancelable::Cancel), t.len() == 1)
             }
             _ => (None, false),
@@ -6805,8 +6821,37 @@ mod tests {
             entries_of("Show\n    MinimapIcon -1 Red Star\n    PlayAlertSoundPositional None\n");
         let (view, b) = rule_style_view(&e, BlockKeyword::Show);
         assert_eq!(view.minimap, Some(Cancelable::Cancel));
+        // Its colour and shape are what leaving `/` brings back (IN-04).
+        assert_eq!(
+            view.minimap_hint,
+            Some(mc::Minimap {
+                size: 0,
+                color: FilterColor::Red,
+                shape: MinimapShape::Star,
+            })
+        );
         assert_eq!(view.sound, Some(Cancelable::Cancel));
         assert_eq!(style_leftovers(&e, &b).len(), 2);
+        // A bare `-1` or unknown names give no hint.
+        for src in [
+            "Show
+    MinimapIcon -1
+",
+            "Show
+    MinimapIcon -1 Mauve Star
+",
+            "Show
+    MinimapIcon -1 Red Blob
+",
+            "Show
+    MinimapIcon -1 Red
+",
+        ] {
+            let (_, _, e) = entries_of(src);
+            let (view, _) = rule_style_view(&e, BlockKeyword::Show);
+            assert_eq!(view.minimap, Some(Cancelable::Cancel), "{src}");
+            assert_eq!(view.minimap_hint, None, "{src}");
+        }
         // The bare `PlayAlertSound None` is exact, and so is `DisableDropSound`.
         let (_, _, e) = entries_of("Show\n    PlayAlertSound None\n    DisableDropSound\n");
         let (view, b) = rule_style_view(&e, BlockKeyword::Show);
@@ -7401,6 +7446,52 @@ mod tests {
         let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
         mirror_apply(&mut wf, &mut list, a);
         assert_eq!(wf.text(), "Show\n    MinimapIcon -1\n");
+    }
+
+    #[test]
+    fn leaving_a_hidden_icon_keeps_the_colour_and_shape_it_names() {
+        let mut wf = WorkingFilter::from_text(
+            "Show
+    MinimapIcon -1 Red Star
+",
+        );
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        // Under `/` the shapes are tinted with the line's colour: picking a colour keeps its shape.
+        let pink = crate::skin::minimap::index_of(&crate::skin::minimap::COLOURS, "Pink").unwrap();
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(
+            wf.text(),
+            "Show
+    MinimapIcon 0 Pink Star
+"
+        );
+        // Its own colour leaves `/` as written.
+        let mut wf = WorkingFilter::from_text(
+            "Show
+    MinimapIcon -1 Red Star
+",
+        );
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let ctx = headless_ctx();
+        let red = crate::skin::minimap::index_of(&crate::skin::minimap::COLOURS, "Red").unwrap();
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[red];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(
+            wf.text(),
+            "Show
+    MinimapIcon 0 Red Star
+"
+        );
     }
 
     #[test]

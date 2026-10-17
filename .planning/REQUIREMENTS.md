@@ -142,10 +142,10 @@ retired. Every v0.5 editor capability survives the move.
 
 ### Cleanup (CLEAN)
 
-- [ ] **CLEAN-01**: `ff-proto` and the old `overlay::theme` stripe styling are removed; the skin
+- [x] **CLEAN-01**: `ff-proto` and the old `overlay::theme` stripe styling are removed; the skin
   module is the only overlay look. `ff-art` and the committed `assets/` stay.
 
-- [ ] **CLEAN-02**: README, CLAUDE.md and CHANGELOG describe the new UI, dividers, workspace and the
+- [x] **CLEAN-02**: README, CLAUDE.md and CHANGELOG describe the new UI, dividers, workspace and the
   asset tool; the Cargo version is bumped to `0.6.0` when the milestone is tagged.
 
 ## Future Requirements (deferred)
@@ -195,8 +195,8 @@ retired. Every v0.5 editor capability survives the move.
 | ECO-01 | Phase 34 | Pending |
 | ECO-02 | Phase 34 | Pending |
 | ABOUT-01 | Phase 34 | Pending |
-| CLEAN-01 | Phase 35 | Pending |
-| CLEAN-02 | Phase 35 | Pending |
+| CLEAN-01 | Phase 35 | Complete |
+| CLEAN-02 | Phase 35 | Complete |
 
 **Coverage:** 28/28 v1 requirements mapped, no orphans, no duplicates.
 

@@ -92,7 +92,7 @@ fixtures stay byte-identical; the only file-format change is the divider / econo
 - [x] **Phase 32: Rule Dividers & Economy Banner** - `# ff:section` banners become named, collapsible sections; the economy section becomes the locked last divider with banner markers (completed 2026-10-16)
 - [x] **Phase 33: Style Table & Line-by-Line Style Editor** - CONFIG style table with column headers, a rule-editor-like style editor and a skinned colour picker (completed 2026-10-16)
 - [ ] **Phase 34: ECONOMY & ABOUT Tabs** - League / sync info, SYNC ECONOMY, add/remove economy section and the tiers editor on ECONOMY; identity and credits on ABOUT
-- [ ] **Phase 35: Prototype Retirement & Docs** - `ff-proto` and `overlay::theme` removed; README / CLAUDE.md / CHANGELOG updated; version 0.6.0
+- [x] **Phase 35: Prototype Retirement & Docs** - `ff-proto` and `overlay::theme` removed; README / CLAUDE.md / CHANGELOG updated; version 0.6.0 (completed 2026-10-17)
 
 ## Phase Details
 
@@ -311,11 +311,11 @@ Plans:
 
 **Wave 1**
 
-- [ ] 35-01-PLAN.md — Remove ff-proto, overlay::theme (constants moved into src/skin/) and Cinzel; before/after screenshot pixel diff; gates
+- [x] 35-01-PLAN.md — Remove ff-proto, overlay::theme (constants moved into src/skin/) and Cinzel; before/after screenshot pixel diff; gates
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 35-02-PLAN.md — Version 0.6.0, README general page with docs/screenshots/, CLAUDE.md corrections, CHANGELOG [Unreleased] cleanup
+- [x] 35-02-PLAN.md — Version 0.6.0, README general page with docs/screenshots/, CLAUDE.md corrections, CHANGELOG [Unreleased] cleanup
 
 ## Progress
 
@@ -328,8 +328,8 @@ Plans:
 | 31. RULES Tab on the Skin | v0.6 | 7/7 | Complete   | 2026-10-16 |
 | 32. Rule Dividers & Economy Banner | v0.6 | 6/6 | Complete   | 2026-10-16 |
 | 33. Style Table & Line-by-Line Style Editor | v0.6 | 5/5 | Complete   | 2026-10-16 |
-| 34. ECONOMY & ABOUT Tabs | v0.6 | 0/TBD | Not started | - |
-| 35. Prototype Retirement & Docs | v0.6 | 0/TBD | Not started | - |
+| 34. ECONOMY & ABOUT Tabs | v0.6 | 4/4 | Complete   | 2026-10-16 |
+| 35. Prototype Retirement & Docs | v0.6 | 2/2 | Complete    | 2026-10-17 |
 
 ## Backlog
 
@@ -413,7 +413,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 5/5 plans complete
+**Plans:** 2/2 plans complete
 
 Plans:
 

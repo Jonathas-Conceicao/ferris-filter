@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
-status: verifying
-stopped_at: Phase 34 complete, UI review done
-last_updated: "2026-10-16T18:30:07.819Z"
-last_activity: 2026-10-16 -- Phase 34 executed, reviewed, UI-audited
+status: Milestone phases complete, awaiting review
+stopped_at: Phase 35 complete (human_needed); next: user review, then milestone audit and completion
+last_updated: "2026-10-17T10:08:10.986Z"
+last_activity: 2026-10-17
 progress:
   total_phases: 7
-  completed_phases: 5
-  total_plans: 28
-  completed_plans: 28
-  percent: 22
+  completed_phases: 7
+  total_plans: 30
+  completed_plans: 30
+  percent: 100
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-16)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 34 — economy-about-tabs
+**Current focus:** v0.6 phases 29-35 built; user review, then /gsd-complete-milestone
 
 ## Current Position
 
-Phase: 34 (economy-about-tabs) — COMPLETE, awaiting verification
-Plan: 4 of 4 (Phase 34)
-Last activity: 2026-10-17 - Completed quick task 261017-7lp: economy rules carry ff:name/ff:style headers, staged economy add browsable, tab marker on selected tab, text field gap
+Phase: 35 (complete) — all v0.6 phases built
+Plan: 2/2
+Last activity: 2026-10-17
 Last activity: 2026-10-16
 
 Progress (v0.6): [█░░░░░░░░░] 14%
@@ -36,7 +36,7 @@ Progress (v0.6): [█░░░░░░░░░] 14%
 
 **Velocity:**
 
-- Total plans completed: 118 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
+- Total plans completed: 120 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
 
 **By Milestone:**
 

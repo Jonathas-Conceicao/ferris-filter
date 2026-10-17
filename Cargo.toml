@@ -1,8 +1,13 @@
 [package]
 name = "ferrisfilter"
-version = "0.1.0"
+version = "0.6.0"
 edition = "2024"
 default-run = "ff"
+
+[workspace]
+members = [".", "tools/ff-art"]
+default-members = ["."]
+resolver = "3"
 
 [lib]
 name = "ferrisfilter"
@@ -39,9 +44,15 @@ image   = { version = "0.25", default-features = false, features = ["png"] }
 indexmap = { version = "2", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_DataExchange", "Win32_System_Memory"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_System_Time"] }
 
 [dev-dependencies]
 assert_cmd  = "2.2"
 predicates  = "3.1"
 insta       = "1.47.2"
+
+# Optimise dependencies (egui/epaint/ab_glyph font rasterising) in debug and test builds:
+# the overlay tests render with the real Fontin fonts, which is very slow unoptimised.
+# Our own crate stays at opt-level 0 for debugging.
+[profile.dev.package."*"]
+opt-level = 2

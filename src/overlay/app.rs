@@ -1,6 +1,6 @@
-//! `OverlayApp` -- the `eframe::App` implementation for the stripe window.
+//! `OverlayApp` -- the `eframe::App` implementation for the overlay window.
 //!
-//! What this file owns: docking the stripe to the right screen edge on the first frame where a
+//! What this file owns: docking the window to the right screen edge on the first frame where a
 //! monitor size is known; polling the tray and the global hotkey for their events; turning those
 //! events into an actual show/hide of the window that does not steal keyboard focus from the game,
 //! by delegating the decision to [`super::visibility`] and the OS call to [`super::win`]; and the
@@ -19,7 +19,7 @@
 //! [`dynamic::apply_edited`] (grammar gate, guarded atomic write) and is refused while an enabled
 //! rule has a grammar error. REVERT re-parses the last applied text. The economy section is a
 //! pinned footer row whose Add/Remove are staged and written by the next APPLY. When the guarded
-//! write refuses because the file changed on disk, the stripe offers RELOAD, which re-reads the
+//! write refuses because the file changed on disk, the window offers RELOAD, which re-reads the
 //! file and discards unapplied edits, and OVERWRITE, which writes the edits over the outside change.
 //!
 //! The decisions (which button is live, what the status says) are pure functions in
@@ -43,25 +43,43 @@ use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::apply_all::{self, ApplyAllError, DiskFile, FilterInput};
 use super::chat;
 use super::classes::ClassCatalog;
-use super::config_state::{self, ConfigState};
+use super::config_state::{self, ConfigState, RevertScope};
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
 use super::instance;
-use super::layout;
 use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
-use super::theme;
+use super::shell::{self, ConfigBarInputs, Popup, PopupData, ShellTab, StatusInputs, StatusLine};
 use super::tray::{self, OverlayCommand, TrayHandles};
 use super::visibility::{self, Visibility};
-use super::widgets;
 use super::win::{self, OverlayWindow};
+use crate::skin::Skin;
+use crate::skin::fonts;
+use crate::skin::palette as pal;
+use crate::skin::widgets as w;
+use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
 
-/// The eframe application state for the overlay stripe.
+/// The eframe application state for the overlay window.
 pub struct OverlayApp {
     /// Latches `true` once the first-frame docking has run, so it never runs
     /// again (position/width are not persisted or re-derived per frame).
     docked: bool,
+
+    /// The `native_pixels_per_point` seen at the last dock; a different value later (the window
+    /// crossed to a monitor of another scale) re-docks once so the width stays 660pt.
+    dock_ppp: Option<f32>,
+
+    /// The PoE2 skin: every texture, uploaded once at startup.
+    skin: Skin,
+
+    /// The debug screenshot state (`None` in a normal run; absent from release builds).
+    #[cfg(debug_assertions)]
+    shot: Option<ShotState>,
+
+    /// What the ECONOMY tab shows about prices.json; re-read on switching to ECONOMY, at start
+    /// and after a sync.
+    economy_info: EconomyInfo,
 
     /// The tray icon, menu, and id->command mapping. Kept alive here until tray Quit, which
     /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
@@ -79,7 +97,7 @@ pub struct OverlayApp {
     /// The single-instance guard (INST-01); dropping it releases the instance name so the next
     /// `ff` launch becomes the running one. Polled once per frame for a show request from a
     /// second launch. Held until tray Quit, which drops it at once (`None`), not when eframe
-    /// finally drops the app: a relaunch right after Quit then starts a new stripe instead of
+    /// finally drops the app: a relaunch right after Quit then starts a new window instead of
     /// signalling a process that is going away (review iteration 2, WR-01).
     instance: Option<instance::Guard>,
 
@@ -90,6 +108,9 @@ pub struct OverlayApp {
     /// The tray-Quit confirm ("Unapplied changes") is showing.
     quit_confirm: bool,
 
+    /// The RULES Revert was clicked: the "Discard rule changes?" popup asks first.
+    revert_rules_armed: bool,
+
     /// Apply & quit succeeded; the shutdown runs once any in-game reload worker has finished.
     quit_after_apply: bool,
 
@@ -99,13 +120,13 @@ pub struct OverlayApp {
     /// The show/hide decision -- see `super::visibility` for why this is three states, not two.
     visibility: Visibility,
 
-    /// The stripe's own cached window handle (see `super::win`), populated
+    /// The overlay's own cached window handle (see `super::win`), populated
     /// on the first frame one is available. `None` on the very first few
     /// frames, and always `None` off Windows.
     window: Option<OverlayWindow>,
 
     /// The resolved FerrisFilter folder (styles.json, tiers.json, prices.json live here). `Err`
-    /// holds the rendered message; the stripe shows it instead of panicking (STORE-05).
+    /// holds the rendered message; the window shows it instead of panicking (STORE-05).
     root: Result<std::path::PathBuf, String>,
 
     /// The loaded game-folder filter. `Err` holds the rendered load failure.
@@ -115,15 +136,25 @@ pub struct OverlayApp {
     /// RELOAD or a successful OVERWRITE clears it.
     changed_on_disk: Vec<DiskFile>,
 
+    /// Whether Overwrite is live this frame (the bar slot's decision), so the changed-on-disk
+    /// popup offers it exactly when the bar does (review WR-03).
+    overwrite_live: bool,
+
+    /// The changed-on-disk popup is open. `changed_on_disk` stays non-empty until a reload or an
+    /// overwrite, so "Keep editing" closes the popup through this flag alone; the bottom-bar
+    /// Overwrite slot opens it again.
+    changed_popup: bool,
+
     /// Whether the filter on disk matches what the last Apply wrote, as far as this session
     /// knows. A failed Apply leaves it exactly as it was.
     apply_state: ApplyState,
 
     /// The most recent Apply outcome's rendered text -- a success message naming the reload path,
-    /// or an error's display string.
-    apply_message: Option<String>,
+    /// or an error's display string -- with the colour class it was produced with: a failure is
+    /// always `Error`, whatever the apply state (review CR-02).
+    apply_message: Option<(String, w::StatusKind)>,
 
-    /// The economy-sync affordance: a `prices.json` refresh run on a worker thread so a stripe
+    /// The economy-sync affordance: a `prices.json` refresh run on a worker thread so a window
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
@@ -147,6 +178,14 @@ pub struct OverlayApp {
     /// The latest row-operation status (refusals, revert, hidden add).
     list_status: Option<String>,
 
+    /// The pending styles and tiers the economy preview (a staged add, or a pending refresh of the
+    /// section in the file) was priced with, so it is re-priced only when they change (never per
+    /// frame).
+    staged_econ_inputs: Option<(StyleSet, Vec<crate::models::tiers::TierEntry>)>,
+    /// The last economy preview for `staged_econ_inputs` could not be built; not retried until
+    /// the inputs or the prices change.
+    econ_preview_failed: bool,
+
     /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
     applied_this_session: bool,
 
@@ -163,7 +202,7 @@ pub struct OverlayApp {
     styles_checked: f64,
 
     /// Which top-level tab is showing. Switching never applies or discards anything.
-    tab: Tab,
+    tab: ShellTab,
 
     /// The CONFIG tab's model (styles + tiers edits). `Err` holds the rendered load failure.
     config: Result<ConfigState, String>,
@@ -189,17 +228,35 @@ pub struct OverlayApp {
 
     /// A filter picked while the rules have unapplied edits, awaiting confirmation.
     pending_switch: Option<String>,
+
+    /// The sound-file listing of the filter folder needs re-reading (startup, reload, switch);
+    /// done on the next frame, where the egui context is at hand.
+    sound_dir_stale: bool,
 }
 
-/// The two top-level tabs of the stripe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    Rules,
-    Config,
+/// Progress of the debug screenshot run.
+#[cfg(debug_assertions)]
+struct ShotState {
+    args: super::screenshot::ShotArgs,
+    frames: u32,
+    requested: bool,
 }
 
-/// Seconds between `styles.json` modification-time polls while the stripe runs.
+/// Seconds between `styles.json` modification-time polls while the window runs.
 const STYLES_POLL_SECS: f64 = 2.0;
+
+/// The id of the `n`-th row (1-based), for the debug screenshot `--expand`.
+#[cfg(debug_assertions)]
+fn nth_row_id(rows: &[rules::RuleRow], n: usize) -> Option<BlockId> {
+    n.checked_sub(1).and_then(|i| rows.get(i)).map(|r| r.id)
+}
+
+/// The `n`-th user section (1-based, the economy section skipped), for `--rename-section`.
+#[cfg(debug_assertions)]
+fn nth_user_section(sections: &[rules::SectionRow], n: usize) -> Option<&rules::SectionRow> {
+    n.checked_sub(1)
+        .and_then(|i| sections.iter().filter(|s| !s.economy).nth(i))
+}
 
 /// Point the rules at the CONFIG tab's in-memory style set. A no-op (false) when they already
 /// hold exactly that set, so it is cheap to call every frame.
@@ -214,6 +271,26 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     }
     working.set_styles_over(config.pending_styles().clone(), config.applied_styles());
     true
+}
+
+/// The economy body a staged **Add economy section** previews: priced with the CONFIG tab's pending
+/// styles and tiers when loaded (what `apply_all::prepare` will write), else from disk.
+/// Shown when the priced economy body cannot be previewed as a section (nothing is staged).
+const PREVIEW_FAILED_STATUS: &str =
+    "Could not build the economy section preview. Nothing was staged.";
+
+fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<String, String> {
+    let paths = InputPaths::relative_to(root);
+    let priced = match config {
+        Some(c) => dynamic::economy_body_with(
+            &paths,
+            PriceSourcePolicy::Auto,
+            c.pending_styles(),
+            c.pending_tiers(),
+        ),
+        None => dynamic::economy_body(&paths, PriceSourcePolicy::Auto),
+    };
+    priced.map(|(body, _)| body).map_err(|e| e.to_string())
 }
 
 /// The styles under `root`: `styles.json`, else `styles-default.json` (DEF-03). Never writes.
@@ -241,82 +318,6 @@ fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<Str
         )
     })
     .map_err(|e| e.to_string())
-}
-
-/// Draws the RULES | CONFIG strip and returns the tab the user picked this frame.
-/// `*` on a label means the OTHER tab holds unapplied edits.
-fn tab_strip(
-    ui: &mut egui::Ui,
-    active: Tab,
-    rules_marker: bool,
-    config_marker: bool,
-) -> Option<Tab> {
-    let mut picked = None;
-    let seg_w = ((ui.available_width() - 4.0) / 2.0).max(0.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (tab, name, marker) in [
-            (Tab::Rules, "RULES", rules_marker),
-            (Tab::Config, "CONFIG", config_marker),
-        ] {
-            let (rect, resp) =
-                ui.allocate_exact_size(egui::vec2(seg_w, 28.0), egui::Sense::click());
-            let is_active = tab == active;
-            let colour = if is_active || resp.hovered() {
-                theme::SECTION_CREAM
-            } else {
-                theme::TAB_ACTIVE
-            };
-            let fill = if is_active {
-                theme::HEADER_PLATE
-            } else {
-                theme::ROW_BASE
-            };
-            let mut job = theme::row_label(&apply::tab_label(name, marker));
-            for section in &mut job.sections {
-                section.format.color = colour;
-            }
-            let painter = ui.painter();
-            painter.rect_filled(rect, 0.0, fill);
-            let galley = painter.layout_job(job);
-            painter.galley(rect.center() - galley.size() / 2.0, galley, colour);
-            if is_active {
-                painter.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(rect.left(), rect.bottom() - 2.0),
-                        rect.right_bottom(),
-                    ),
-                    0.0,
-                    theme::SECTION_CREAM,
-                );
-            }
-            let resp = if marker {
-                resp.on_hover_text(apply::OTHER_TAB_DIRTY_TIP)
-            } else {
-                resp
-            };
-            resp.widget_info(|| {
-                egui::WidgetInfo::selected(egui::WidgetType::Button, true, is_active, name)
-            });
-            if resp.clicked() && !is_active {
-                picked = Some(tab);
-            }
-            if resp.has_focus() {
-                let (left, right) = ui.input(|i| {
-                    (
-                        i.key_pressed(egui::Key::ArrowLeft),
-                        i.key_pressed(egui::Key::ArrowRight),
-                    )
-                });
-                if tab == Tab::Rules && right {
-                    picked = Some(Tab::Config);
-                } else if tab == Tab::Config && left {
-                    picked = Some(Tab::Rules);
-                }
-            }
-        }
-    });
-    picked
 }
 
 /// The effective styles source under `root` and its modification time; `None` when neither
@@ -431,6 +432,28 @@ fn config_reload_plan(config_failed: bool, changed: &[DiskFile]) -> ConfigReload
         ConfigReload::ConfigOnly
     } else {
         ConfigReload::Changed
+    }
+}
+
+/// Where a bottom-bar Reload click goes (review CR-01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarReload {
+    /// The CONFIG tab after a changed-on-disk refusal: the shared re-read of what changed
+    /// (`ConfigAction::Reload`).
+    ConfigRefusal,
+    /// Everything else, the CONFIG tab included: the RULES reload (`reload_pressed`), which
+    /// re-reads the filter and keeps CONFIG edits unless the root moved or the config had failed
+    /// to load. Without a refusal the bar's Reload is only live because of the filter (damaged
+    /// markers, a load failure, no app root), so it must re-read the filter and must not drop
+    /// CONFIG edits.
+    Shared,
+}
+
+fn bar_reload_target(tab: ShellTab, changed: &[DiskFile]) -> BarReload {
+    if tab == ShellTab::Config && !changed.is_empty() {
+        BarReload::ConfigRefusal
+    } else {
+        BarReload::Shared
     }
 }
 
@@ -562,18 +585,135 @@ fn line_keyword(text: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// The settings after the section actions of one batch: a rename moves the folded flag to the new
+/// name, a removed section's flag is dropped, and a new section starts expanded. A flag is only
+/// touched when no other section shares its name (duplicate names share one flag).
+fn section_state_after(
+    working: &WorkingFilter,
+    settings: &Settings,
+    actions: &[RowAction],
+) -> Settings {
+    let filter = settings.filter_name().to_string();
+    let mut next = settings.clone();
+    let shared = |name: &str, except: Option<usize>| {
+        working
+            .sections()
+            .iter()
+            .any(|s| !s.economy && s.name == name && Some(s.ordinal) != except)
+    };
+    let user = |ordinal: usize| {
+        working
+            .sections()
+            .iter()
+            .find(|s| s.ordinal == ordinal && !s.economy)
+    };
+    for action in actions {
+        match action {
+            RowAction::RenameSection { ordinal, name } => {
+                let Some(sec) = user(*ordinal) else { continue };
+                let to = crate::filter::section::sanitize_name(name);
+                if to == sec.name {
+                    continue;
+                }
+                let (from_key, to_key) = (
+                    settings::section_key(&sec.name, false),
+                    settings::section_key(&to, false),
+                );
+                if !shared(&to, Some(*ordinal)) {
+                    next = next
+                        .forget_section_state(&filter, &to_key)
+                        .copy_section_state(&filter, &from_key, &to_key);
+                }
+                if !shared(&sec.name, Some(*ordinal)) {
+                    next = next.forget_section_state(&filter, &from_key);
+                }
+            }
+            RowAction::RemoveSection(ordinal) => {
+                if let Some(sec) = user(*ordinal)
+                    && !shared(&sec.name, Some(*ordinal))
+                {
+                    next = next
+                        .forget_section_state(&filter, &settings::section_key(&sec.name, false));
+                }
+            }
+            RowAction::AddSection | RowAction::AddSectionAbove(_) => {
+                let name = crate::overlay::rules::DEFAULT_SECTION_NAME;
+                if !shared(name, None) {
+                    next = next.forget_section_state(&filter, &settings::section_key(name, false));
+                }
+            }
+            _ => {}
+        }
+    }
+    next
+}
+
+/// Name of the collapsed user section that holds rule `id`, if any.
+fn section_to_reveal(working: &WorkingFilter, settings: &Settings, id: BlockId) -> Option<String> {
+    let ordinal = working.rows().iter().find(|r| r.id == id)?.section?;
+    let sec = working
+        .sections()
+        .iter()
+        .find(|s| s.ordinal == ordinal && !s.economy)?;
+    settings
+        .section_collapsed(
+            settings.filter_name(),
+            &settings::section_key(&sec.name, false),
+            false,
+        )
+        .then(|| sec.name.clone())
+}
+
 /// Applies the frame's collected row actions once, after the list rendered. Returns whether the
 /// document changed and the last status worth showing.
+#[cfg(test)]
 fn apply_row_actions(
     working: &mut WorkingFilter,
     list: &mut ListUi,
-    query: &str,
+    query: &mut String,
     actions: Vec<RowAction>,
+) -> (bool, Option<String>) {
+    apply_row_actions_folding(working, list, query, actions, None)
+}
+
+/// [`apply_row_actions`], also keeping the stored folded state of the sections in `fold` in step
+/// (WR-04). Each section action's fold change is computed against the document just before it
+/// runs and kept only when the action changed the document, so a refused rename or remove leaves
+/// the flags alone and a batch of structural actions follows the shifting ordinals (WR-06).
+fn apply_row_actions_folding(
+    working: &mut WorkingFilter,
+    list: &mut ListUi,
+    query: &mut String,
+    actions: Vec<RowAction>,
+    mut fold: Option<&mut Settings>,
 ) -> (bool, Option<String>) {
     let mut changed = false;
     let mut status = None;
     for action in rules::coalesce_edits(actions) {
+        let fold_next = match (&fold, &action) {
+            (
+                Some(settings),
+                RowAction::RenameSection { .. }
+                | RowAction::RemoveSection(_)
+                | RowAction::AddSection
+                | RowAction::AddSectionAbove(_),
+            ) => Some(section_state_after(
+                working,
+                settings,
+                std::slice::from_ref(&action),
+            )),
+            _ => None,
+        };
         let is_add = matches!(action, RowAction::AddRule);
+        let is_add_section = matches!(action, RowAction::AddSection);
+        let section_above = match &action {
+            RowAction::AddSectionAbove(id) => Some(*id),
+            _ => None,
+        };
+        let drops_rename = matches!(
+            action,
+            RowAction::RemoveSection(_) | RowAction::MoveSection(..)
+        );
         let is_duplicate = matches!(action, RowAction::Duplicate(_));
         let is_move = matches!(action, RowAction::Move(..));
         let deleted = match &action {
@@ -584,7 +724,8 @@ fn apply_row_actions(
             RowAction::EditLine { id, .. }
             | RowAction::AddLine { id, .. }
             | RowAction::InsertLineAfter { id, .. }
-            | RowAction::RemoveLine { id, .. } => Some(*id),
+            | RowAction::RemoveLine { id, .. }
+            | RowAction::SetDefenceSelection { id, .. } => Some(*id),
             _ => None,
         };
         let added_in = match &action {
@@ -596,10 +737,11 @@ fn apply_row_actions(
         let shifts_ordinals = match &action {
             RowAction::RemoveLine { .. }
             | RowAction::AddLine { .. }
-            | RowAction::InsertLineAfter { .. } => true,
+            | RowAction::InsertLineAfter { .. }
+            | RowAction::SetDefenceSelection { .. } => true,
             RowAction::EditLine {
                 expect,
-                patch: LinePatch::Whole(text),
+                patch: LinePatch::Whole(text) | LinePatch::Content(text),
                 ..
             } => line_keyword(expect) != line_keyword(text),
             _ => false,
@@ -607,7 +749,13 @@ fn apply_row_actions(
         let refused_edit = match &action {
             RowAction::EditLine {
                 id, line, patch, ..
-            } if matches!(patch, LinePatch::Whole(_) | LinePatch::Values(_)) => Some((*id, *line)),
+            } if matches!(
+                patch,
+                LinePatch::Whole(_) | LinePatch::Values(_) | LinePatch::Content(_)
+            ) =>
+            {
+                Some((*id, *line))
+            }
             _ => None,
         };
         let outcome = working.apply_action(action);
@@ -618,6 +766,27 @@ fn apply_row_actions(
         }
         if outcome.changed {
             changed = true;
+            if let (Some(settings), Some(next)) = (fold.as_deref_mut(), fold_next) {
+                *settings = next;
+            }
+            if is_add_section {
+                // The new divider is at the very top: clear the search so it shows, scroll
+                // there and put the cursor in its name box.
+                query.clear();
+                list.scroll_top = true;
+            }
+            if drops_rename {
+                list.editing_section = None;
+            }
+            if let Some(ordinal) = outcome.section {
+                list.editing_section = Some(ordinal);
+                list.section_draft = "Section".to_string();
+                list.section_focus = true;
+            }
+            if let Some(id) = section_above {
+                // The rule stays open and in view next to its new header.
+                list.pending_scroll = Some(id);
+            }
             if let Some(b) = edited_block {
                 if list.line_error.as_ref().is_some_and(|(e, _, _)| *e == b) {
                     list.line_error = None;
@@ -640,15 +809,15 @@ fn apply_row_actions(
                 }
             }
             if let Some(focus) = outcome.focus {
-                // A rule the search hides cannot be expanded or scrolled to: the list resets
-                // both on the next frame because the row is not in the filtered slice.
-                let hidden =
-                    is_add && !query.trim().is_empty() && !working.row_matches(focus, query);
-                if hidden {
-                    if let Some(row) = working.row(focus) {
-                        status = Some(apply::added_hidden_message(row.index));
-                    }
-                } else if is_add || is_duplicate {
+                if is_add {
+                    // The new rule is row 1: clear the search so it is visible, open it and
+                    // put the cursor in its NAME field.
+                    query.clear();
+                    list.expanded = Some(focus);
+                    list.pending_scroll = Some(focus);
+                    list.focus_name = Some(focus);
+                    status = Some(apply::RULE_ADDED_MESSAGE.to_string());
+                } else if is_duplicate {
                     list.expanded = Some(focus);
                     list.pending_scroll = Some(focus);
                 } else if is_move {
@@ -663,25 +832,55 @@ fn apply_row_actions(
     (changed, status)
 }
 
-/// The rule count beside the FILTER header: `142 rules`, `1 rule`, or `7 of 142 rules` while a
-/// search is active.
-fn rule_count_text(total: usize, shown: usize, filtering: bool) -> String {
-    let noun = if total == 1 { "rule" } else { "rules" };
-    if filtering {
-        format!("{shown} of {total} {noun}")
-    } else {
-        format!("{total} {noun}")
-    }
-}
-
-/// A heading plus a wrapped explanation, used for the empty and error states of the list.
-fn centered_notice(ui: &mut egui::Ui, heading: &str, body: &str) {
+/// A heading only, used for the empty and error states (detail lives in tooltips and the status line).
+fn centered_notice(ui: &mut egui::Ui, heading: &str) {
     ui.add_space(16.0);
     ui.vertical_centered(|ui| {
-        ui.label(theme::section_header(heading));
-        ui.add_space(8.0);
-        ui.add(egui::Label::new(egui::RichText::new(body).color(theme::TAB_ACTIVE)).wrap());
+        ui.label(
+            egui::RichText::new(heading)
+                .font(fonts::small_caps(21.0))
+                .color(pal::HEADING),
+        );
     });
+}
+
+/// What the ECONOMY tab shows about prices.json; re-read on switching to ECONOMY, at start and
+/// after a sync.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct EconomyInfo {
+    mtime_secs: Option<u64>,
+    priced_items: usize,
+    live: bool,
+    /// Why an existing prices.json is unusable (unreadable, malformed or without items). The
+    /// file's mtime is then not a sync time, so `mtime_secs` is `None`.
+    problem: Option<String>,
+}
+
+impl EconomyInfo {
+    /// Reads `<root>/prices.json`. A missing, empty or malformed file is not live (never panics).
+    fn read(root: &std::path::Path) -> EconomyInfo {
+        let path = root.join("prices.json");
+        let mtime_secs = std::fs::metadata(&path)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        let (priced_items, problem) =
+            match crate::loader::load_prices_optional(&path.to_string_lossy()) {
+                Ok(Some(p)) if p.items.is_empty() => {
+                    (0, Some("prices.json has no priced items.".to_string()))
+                }
+                Ok(Some(p)) => (p.items.len(), None),
+                Ok(None) => (0, None),
+                Err(err) => (0, Some(err.to_string())),
+            };
+        EconomyInfo {
+            mtime_secs: if problem.is_some() { None } else { mtime_secs },
+            priced_items,
+            live: priced_items > 0,
+            problem,
+        }
+    }
 }
 
 /// What picking a filter in the dropdown should do.
@@ -724,8 +923,7 @@ fn filter_target(
 fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     Settings {
         filter: Some(name.to_string()),
-        reload_after_apply: current.reload_after_apply,
-        extra: current.extra.clone(),
+        ..current.clone()
     }
 }
 
@@ -735,7 +933,7 @@ fn settings_with_filter(current: &Settings, name: &str) -> Settings {
 /// warned keeps the in-memory filter and unknown keys (a momentarily unreadable file must not
 /// reset them), but an "off" from the file is still honoured: `settings::load` reports a broken
 /// or wrongly typed file as reload-off, and the warning says so, so keeping the old "on" would
-/// send keystrokes the stripe has just said it won't send.
+/// send keystrokes the window has just said it won't send.
 fn settings_after_reload(
     current: &Settings,
     loaded: Settings,
@@ -769,9 +967,9 @@ struct PendingReload {
     interim: String,
 }
 
-/// The Apply status line after the stripe is concealed. Hiding normally clears it, but not while
+/// The Apply status line after the window is concealed. Hiding normally clears it, but not while
 /// a reload is in flight and its interim line is still showing: the reload's own focus change is
-/// what hides the stripe (the click-away rule sees the game take focus), so clearing here would
+/// what hides the window (the click-away rule sees the game take focus), so clearing here would
 /// drop every reload result, success or failure, before it could land (review CR-01). The kept
 /// interim line is replaced by [`landed_reload_message`] and read on the next reveal.
 fn apply_message_after_conceal(
@@ -787,7 +985,7 @@ fn apply_message_after_conceal(
 /// The status line once the reload worker reports, or `None` when the interim line is gone
 /// (an edit, a RELOAD/switch or a later message replaced it) and the later message stays. A
 /// conceal does not remove the interim line ([`apply_message_after_conceal`]), so a result that
-/// lands while the stripe is hidden is still shown on the next reveal.
+/// lands while the window is hidden is still shown on the next reveal.
 fn landed_reload_message(
     current: Option<&str>,
     pending: &PendingReload,
@@ -802,6 +1000,12 @@ fn landed_reload_message(
         apply::reload_result_message(&pending.path, result),
         pending.extras
     ))
+}
+
+/// A successful Apply's status line, with its colour class decided now (review CR-02).
+fn applied_message(text: String) -> Option<(String, w::StatusKind)> {
+    let kind = shell::apply_success_kind(&text);
+    Some((text, kind))
 }
 
 /// The status line when no reload was sent: the success line, the reason and the Refresh reminder.
@@ -824,6 +1028,157 @@ impl OverlayApp {
         hotkey_manager: Option<GlobalHotKeyManager>,
         hotkey_status: HotkeyStatus,
         instance: instance::Guard,
+        skin: Skin,
+    ) -> Self {
+        Self::build(tray, hotkey_manager, hotkey_status, Some(instance), skin)
+    }
+
+    /// The debug screenshot app: an inert tray, no hotkey, no instance guard, the requested tab
+    /// shown and the window kept visible until the frame is saved.
+    #[cfg(debug_assertions)]
+    pub(crate) fn new_screenshot(skin: Skin, shot: super::screenshot::ShotArgs) -> Self {
+        let mut app = Self::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("screenshot mode".to_string()),
+            None,
+            skin,
+        );
+        app.tab = shot.tab;
+        app.visibility = Visibility::ShownFocused;
+        if shot.tab == ShellTab::Config {
+            app.refresh_filters();
+        }
+        app.open_shot_popup(shot.popup.as_deref());
+        if let Some(q) = &shot.search {
+            app.query = q.clone();
+        }
+        match shot.stage_economy.as_deref() {
+            Some("add") => app.stage_add_economy(),
+            Some("remove") => app.stage_remove_economy(),
+            _ => {}
+        }
+        if let Some(n) = shot.expand {
+            let id = app.working.as_ref().and_then(|w| nth_row_id(w.rows(), n));
+            if id.is_some() {
+                app.list.expanded = id;
+                app.list.pending_scroll = id;
+            }
+        }
+        if let Some(n) = shot.expand_economy {
+            let id = app
+                .working
+                .as_ref()
+                .and_then(|w| w.economy_rows().get(n - 1).map(|r| r.id));
+            if id.is_some() {
+                let name = crate::overlay::rules::ECONOMY_DISPLAY_NAME;
+                app.set_section_collapsed(name, true, false);
+                app.list.expanded = id;
+                app.list.pending_scroll = id;
+            }
+        }
+        if let Some(n) = shot.rename_section {
+            let found = app
+                .working
+                .as_ref()
+                .and_then(|w| nth_user_section(w.sections(), n).cloned());
+            if let Some(sec) = found {
+                app.list.editing_section = Some(sec.ordinal);
+                app.list.section_draft = sec.name;
+                app.list.section_focus = true;
+            }
+        }
+        if let Some(name) = &shot.expand_style {
+            app.config_ui.expanded = Some(name.clone());
+            app.config_ui.scroll_to = Some(name.clone());
+        }
+        if let (Some((tier, text)), Ok(state)) = (&shot.tier_text, &mut app.config) {
+            state.set_tier_text(tier, text);
+        }
+        app.shot = Some(ShotState {
+            args: shot,
+            frames: 0,
+            requested: false,
+        });
+        app
+    }
+
+    /// Opens the popup named by `--popup` with harmless sample data. Choices are never
+    /// dispatched in screenshot mode (no input arrives).
+    #[cfg(debug_assertions)]
+    fn open_shot_popup(&mut self, name: Option<&str>) {
+        match name {
+            Some("changed") => {
+                self.changed_on_disk = vec![DiskFile::Filter];
+                self.changed_popup = true;
+            }
+            Some("switch") => self.pending_switch = Some("other.filter".to_string()),
+            Some("quit") => self.quit_confirm = true,
+            Some("delete-rule") => {
+                // The row is expanded too: the list drops a pending delete of a collapsed row.
+                let id = self
+                    .working
+                    .as_ref()
+                    .and_then(|w| w.rows().first().map(|r| r.id));
+                self.list.confirm_delete = id;
+                self.list.expanded = id;
+            }
+            Some("delete-style") => {
+                let name = self.config.as_ref().ok().and_then(|c| {
+                    c.style_names()
+                        .into_iter()
+                        .find(|n| !c.badges(n).builtin)
+                        .map(|n| n.to_string())
+                });
+                self.config_ui.delete_armed = Some(name.unwrap_or_else(|| "kite".to_string()));
+            }
+            Some("remove-economy") => self.list.confirm_economy_remove = true,
+            Some("discard-config") => {
+                if let Ok(state) = &mut self.config {
+                    state.edit_style("S", config_state::StyleEdit::Font(Some(41)));
+                }
+                self.config_ui.revert_armed = true;
+            }
+            Some("discard-rules") => {
+                // A harmless in-memory edit (never applied in this mode) so the popup has
+                // something to discard.
+                let row = self
+                    .working
+                    .as_ref()
+                    .and_then(|w| w.rows().first().map(|r| (r.id, r.has_continue)));
+                if let Some((id, cont)) = row {
+                    self.run_row_actions(vec![RowAction::SetContinue(id, !cont)]);
+                }
+                if !self.rules_revertible() {
+                    eprintln!(
+                        "--popup discard-rules: could not stage a rule edit (no filter, no rules, \
+                         or the first rule is not editable); the popup will not open"
+                    );
+                }
+                self.revert_rules_armed = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// True in the debug screenshot mode (never in release builds).
+    fn is_shot(&self) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            self.shot.is_some()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            false
+        }
+    }
+
+    fn build(
+        tray: TrayHandles,
+        hotkey_manager: Option<GlobalHotKeyManager>,
+        hotkey_status: HotkeyStatus,
+        instance: Option<instance::Guard>,
+        skin: Skin,
     ) -> Self {
         let root = crate::paths::app_root().map_err(|e| e.to_string());
         let game_dir = dynamic::default_destination();
@@ -842,12 +1197,18 @@ impl OverlayApp {
 
         let mut app = Self {
             docked: false,
+            dock_ppp: None,
+            skin,
+            economy_info: EconomyInfo::default(),
             tray,
             hotkey_manager,
             hotkey_status,
-            instance: Some(instance),
+            instance,
+            #[cfg(debug_assertions)]
+            shot: None,
             toggle_requested: false,
             quit_confirm: false,
+            revert_rules_armed: false,
             quit_after_apply: false,
             quit_next_frame: false,
             // The window created in `overlay::launch` starts visible
@@ -855,13 +1216,15 @@ impl OverlayApp {
             // visibility) and has never been focused -- `ShownUnfocused` is
             // the state that matches that physical reality. Starting here
             // (rather than `Hidden`) is what makes the very first `Ctrl+Shift+Z`
-            // press after launch hide the stripe, matching the checkpoint
+            // press after launch hide the window, matching the checkpoint
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
             window: None,
             root,
             filter,
             changed_on_disk: Vec::new(),
+            changed_popup: false,
+            overwrite_live: false,
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
@@ -871,11 +1234,13 @@ impl OverlayApp {
             list: ListUi::default(),
             query: String::new(),
             list_status: None,
+            staged_econ_inputs: None,
+            econ_preview_failed: false,
             applied_this_session: false,
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
             styles_checked: 0.0,
-            tab: Tab::Rules,
+            tab: ShellTab::Rules,
             config,
             config_ui: ConfigUi::default(),
             config_message: None,
@@ -884,12 +1249,72 @@ impl OverlayApp {
             game_dir,
             filters_cache: None,
             pending_switch: None,
+            sound_dir_stale: true,
         };
         app.refresh_inputs();
+        app.refresh_economy_info();
         if settings_warning.is_some() {
             app.list_status = settings_warning;
         }
         app
+    }
+
+    /// One frame of the screenshot run. Returns true when the process should leave.
+    #[cfg(debug_assertions)]
+    fn shot_step(&mut self, ctx: &egui::Context) -> bool {
+        let docked = self.docked;
+        let Some(shot) = self.shot.as_mut() else {
+            return false;
+        };
+        shot.frames += 1;
+        ctx.request_repaint();
+        if let Some(tag) = &shot.args.picker
+            && (3..=5).contains(&shot.frames)
+        {
+            crate::skin::colour_picker::request_open(ctx, tag);
+        }
+        if let Some(tag) = &shot.args.dropdown
+            && (3..=5).contains(&shot.frames)
+        {
+            crate::skin::widgets::request_dropdown_open(ctx, tag);
+        }
+        let image = ctx.input(|i| {
+            i.raw.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            match super::screenshot::save_png(&image, &shot.args.png) {
+                Ok(()) => eprintln!("ff: saved {}", shot.args.png.display()),
+                Err(message) => eprintln!("ff: {message}"),
+            }
+            return true;
+        }
+        if docked && shot.frames >= 20 && !shot.requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            shot.requested = true;
+        } else if shot.frames > 600 {
+            eprintln!("ff: no screenshot arrived; exiting");
+            return true;
+        }
+        false
+    }
+
+    /// A sync landed new prices: re-read the ECONOMY tab info and forget which inputs the staged
+    /// economy-add preview was priced with, so `refresh_staged_economy` re-prices it (WR-02).
+    fn prices_changed(&mut self) {
+        self.refresh_economy_info();
+        self.staged_econ_inputs = None;
+        self.econ_preview_failed = false;
+    }
+
+    /// Re-reads `prices.json` info (modified time, priced items, live/fallback) for the ECONOMY tab.
+    fn refresh_economy_info(&mut self) {
+        self.economy_info = match self.root.as_ref() {
+            Ok(root) => EconomyInfo::read(root),
+            Err(_) => EconomyInfo::default(),
+        };
     }
 
     /// Re-reads the game folder's filter list into the cache.
@@ -984,6 +1409,16 @@ impl OverlayApp {
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
         self.pending_switch = None;
+        self.sound_dir_stale = true;
+    }
+
+    /// The folder the style editor lists sound files from: the loaded filter's folder, else the
+    /// game folder.
+    fn sound_dir(&self) -> Option<std::path::PathBuf> {
+        filter_target(self.game_dir.as_deref(), self.settings.filter_name())
+            .ok()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+            .or_else(|| self.game_dir.clone())
     }
 
     /// Makes `name` the active filter now and remembers it. A failed save still switches for
@@ -1000,6 +1435,42 @@ impl OverlayApp {
         self.refresh_filters();
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Saves `next` as the settings now in force. A failed save still applies it for this
+    /// session and says so, like the other view preferences.
+    fn store_settings(&mut self, next: Settings) {
+        // Only the fold key is written; an unusable file is left alone (WR-03, WR-05).
+        let save_error = match &self.root {
+            Ok(root) => settings::save_section_state(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Remember that a section of the active filter is folded or open. A view preference: it
+    /// never touches the loaded filter, the dirty flag or the CONFIG pending state.
+    fn set_section_collapsed(&mut self, name: &str, economy: bool, collapsed: bool) {
+        let key = settings::section_key(name, economy);
+        let next =
+            self.settings
+                .set_section_collapsed(self.settings.filter_name(), &key, collapsed);
+        self.store_settings(next);
+    }
+
+    /// Open the collapsed section holding rule `id`, so a jump or a move that targets it shows
+    /// something (WR-02).
+    fn reveal_rule(&mut self, id: BlockId) {
+        let Some(working) = &self.working else {
+            return;
+        };
+        let name = section_to_reveal(working, &self.settings, id);
+        if let Some(name) = name {
+            self.set_section_collapsed(&name, false, false);
         }
     }
 
@@ -1073,10 +1544,11 @@ impl OverlayApp {
         } = result;
         let applied_path = match outcome {
             AllOutcome::Failed(message) => {
-                self.apply_message = Some(message);
+                self.apply_message = Some((message, w::StatusKind::Error));
                 self.apply_state = self.apply_state.on_apply_failure();
                 if !changed.is_empty() {
                     self.changed_on_disk = changed;
+                    self.changed_popup = true;
                 }
                 return false;
             }
@@ -1093,7 +1565,7 @@ impl OverlayApp {
                     self.reload.is_running(),
                     win::find_game_window,
                 );
-                // No cached stripe window means no clipboard owner: skip rather than fall back
+                // No cached overlay window means no clipboard owner: skip rather than fall back
                 // to an ownerless clipboard, whose write fails after emptying it (review WR-02).
                 let decision =
                     chat::with_owner(decision, self.window.as_ref().map(win::clipboard_owner));
@@ -1101,7 +1573,7 @@ impl OverlayApp {
                     Some(chat::Decision::Send((game, owner))) => {
                         let interim =
                             format!("{prefix}{}{extras}", apply::reloading_message(&path));
-                        self.apply_message = Some(interim.clone());
+                        self.apply_message = applied_message(interim.clone());
                         let repaint = ctx.clone();
                         let started = self.reload.start(
                             move || {
@@ -1118,27 +1590,29 @@ impl OverlayApp {
                                 interim,
                             });
                         } else {
-                            self.apply_message = Some(format!(
+                            self.apply_message = applied_message(format!(
                                 "{prefix}{}",
                                 skipped_reload_message(&path, &extras, chat::SkipReason::Busy)
                             ));
                         }
                     }
                     Some(chat::Decision::Skip(reason)) => {
-                        self.apply_message = Some(format!(
+                        self.apply_message = applied_message(format!(
                             "{prefix}{}",
                             skipped_reload_message(&path, &extras, reason)
                         ));
                     }
                     None => {
-                        self.apply_message =
-                            Some(format!("{prefix}{}{extras}", apply::success_message(&path)));
+                        self.apply_message = applied_message(format!(
+                            "{prefix}{}{extras}",
+                            apply::success_message(&path)
+                        ));
                     }
                 }
             }
             // No filter part: the config files alone, nothing to reload in game.
             None => {
-                self.apply_message = Some(format!(
+                self.apply_message = applied_message(format!(
                     "{}{extras}",
                     apply::config_only_message(styles_written, tiers_written)
                 ));
@@ -1155,8 +1629,354 @@ impl OverlayApp {
         true
     }
 
-    /// Anything waiting for an Apply, judged with the same inputs as the per-frame indicator:
-    /// rule edits (a staged economy op is part of `is_dirty`), a pending style rewrite, CONFIG edits.
+    /// Applies deferred row operations to the working filter and updates the status the way a
+    /// list click does.
+    fn run_row_actions(&mut self, row_actions: Vec<RowAction>) {
+        let mut fold = self.settings.clone();
+        if let Some(working) = &mut self.working {
+            let (changed, status) = apply_row_actions_folding(
+                working,
+                &mut self.list,
+                &mut self.query,
+                row_actions,
+                Some(&mut fold),
+            );
+            if changed {
+                // An action can report `changed` without altering the bytes (clearing an
+                // absent name, moving a rule and back); only a real difference from the
+                // applied text makes the indicator stale.
+                if working.is_dirty() {
+                    self.apply_state = ApplyState::Unapplied;
+                }
+                // An event is cleared by the next edit, a CONFIG message included (WR-01).
+                self.clear_events_on_edit();
+            }
+            if status.is_some() {
+                self.list_status = status;
+            }
+        }
+        // Keeps the stored folded state in step with the section actions that ran (WR-04).
+        if fold != self.settings {
+            self.store_settings(fold);
+        }
+        // A rule moved into a collapsed neighbour stays in view (WR-02).
+        if let Some(id) = self.list.pending_scroll {
+            self.reveal_rule(id);
+        }
+    }
+
+    /// Hiding the window clears every event message (the Apply outcome, the CONFIG message, the
+    /// list status, a finished sync), so a stale report never outlives its question or hides the
+    /// standing lines behind it (grammar gate, load error, the out-of-date indicator; review
+    /// WR-01). The one exception is a reload's interim line ([`apply_message_after_conceal`]).
+    fn clear_events_on_conceal(&mut self) {
+        self.apply_message = self.apply_message.take().and_then(|(text, kind)| {
+            apply_message_after_conceal(Some(text), self.reload_pending.as_ref())
+                .map(|text| (text, kind))
+        });
+        self.config_message = None;
+        self.list_status = None;
+        self.economy.clear_message();
+    }
+
+    /// An edit or a revert on either tab clears every event message (the Apply outcome, the list
+    /// status, the CONFIG message) before setting its own, so a stale report never hides the
+    /// standing lines or the action's own message (review WR-01, iterations 1 and 2).
+    fn clear_events_on_edit(&mut self) {
+        self.apply_message = None;
+        self.list_status = None;
+        self.config_message = None;
+    }
+
+    /// Whether Overwrite is live: the filter's own decision, or a refusal only the config files
+    /// can resolve, which stays overwritable even when the filter part is not writable (WR-03).
+    fn overwrite_decision(&mut self) -> bool {
+        let state = self.filter_state();
+        let style_pending = self
+            .working
+            .as_mut()
+            .is_some_and(|w| w.style_rewrite_pending());
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
+        let changed = !self.changed_on_disk.is_empty();
+        let filter_overwrite = apply::footer_actions_combined(
+            self.root.is_ok(),
+            state,
+            changed,
+            rules_dirty || style_pending,
+            config_dirty,
+            blocking,
+        )
+        .overwrite;
+        apply::overwrite_enabled(
+            filter_overwrite,
+            self.root.is_ok(),
+            self.config.as_ref().is_ok_and(|c| c.validate().is_ok()),
+            self.config_invalid(),
+            state,
+            changed,
+            apply::combined_dirty(rules_dirty, style_pending, config_dirty),
+            blocking,
+        )
+    }
+
+    /// A loaded config that fails validation: every Apply (Overwrite included) would refuse it.
+    fn config_invalid(&self) -> bool {
+        self.config.as_ref().is_ok_and(|c| c.validate().is_err())
+    }
+
+    /// Why Overwrite is unavailable, for the changed-on-disk popup (WR-02, iteration 2); the
+    /// same reason chain as the bar slot's tooltip.
+    fn overwrite_block(&self) -> shell::OverwriteBlock {
+        shell::OverwriteBlock::from_inputs(ConfigBarInputs {
+            tier_errors: self.config.as_ref().is_ok_and(|c| c.has_tier_errors()),
+            config_invalid: self.config_invalid(),
+            rules_blocking: self
+                .working
+                .as_ref()
+                .is_some_and(|w| !w.blocking().is_empty()),
+            damaged: self.filter_state() == FilterState::Damaged,
+            ..ConfigBarInputs::default()
+        })
+    }
+
+    /// Which popups want to be open this frame.
+    fn popup_flags(&self, quit_requested: bool) -> shell::PopupFlags {
+        shell::PopupFlags {
+            quit: self.quit_confirm && !quit_requested,
+            changed: self.changed_popup && !self.changed_on_disk.is_empty(),
+            switch: self.pending_switch.is_some(),
+            delete_rule: self.list.confirm_delete.is_some(),
+            delete_style: self.config_ui.delete_armed.is_some(),
+            remove_economy: self.list.confirm_economy_remove,
+            discard_config: self.config_ui.revert_armed && self.config_discard_count() > 0,
+            discard_rules: self.revert_rules_armed && self.rules_revertible(),
+        }
+    }
+
+    /// What the armed Discard-config popup would discard: the scope's config edits, plus one
+    /// for a staged economy add/remove on the ECONOMY scope.
+    fn config_discard_count(&self) -> usize {
+        let scope = self.config_ui.revert_scope;
+        let edits = self
+            .config
+            .as_ref()
+            .map_or(0, |c| c.scope_dirty_count(scope));
+        edits + usize::from(scope == RevertScope::Tiers && self.economy_staged())
+    }
+
+    fn economy_staged(&self) -> bool {
+        self.working.as_ref().is_some_and(|w| w.economy_staged())
+    }
+
+    /// Whether the RULES Revert has anything to discard: rule edits only. A staged economy
+    /// add/remove belongs to the ECONOMY Revert, and a pending style rewrite comes from
+    /// `styles.json`, which a rule revert cannot undo. The one predicate behind both the bar's
+    /// RULES Revert enablement and the Discard-rule-changes popup, so a click always opens it.
+    fn rules_revertible(&self) -> bool {
+        self.working.as_ref().is_some_and(|w| w.rules_edited())
+    }
+
+    /// The RULES bar Revert enablement: [`Self::rules_revertible`], except in the states where no
+    /// Revert applies (a changed-on-disk refusal, a filter that failed to load).
+    fn rules_revert_live(&self) -> bool {
+        apply::footer_actions(
+            self.root.is_ok(),
+            self.filter_state(),
+            !self.changed_on_disk.is_empty(),
+            self.rules_revertible(),
+            0,
+        )
+        .revert
+    }
+
+    /// The text and buttons of an open popup, from the current state.
+    fn popup_spec_for(&self, popup: Popup) -> shell::PopupSpec {
+        match popup {
+            Popup::Quit => shell::popup_spec(PopupData::Quit),
+            Popup::ChangedOnDisk => {
+                let fallback = Path::new("the filter");
+                let path = self.filter.as_ref().ok().map_or(fallback, |l| l.path());
+                let files: Vec<String> =
+                    self.changed_on_disk.iter().map(|f| f.label(path)).collect();
+                shell::popup_spec(PopupData::ChangedOnDisk {
+                    files: &files,
+                    overwrite: self.overwrite_live,
+                    block: self.overwrite_block(),
+                })
+            }
+            Popup::SwitchFilter => shell::popup_spec(PopupData::SwitchFilter {
+                target: self.pending_switch.as_deref().unwrap_or(""),
+            }),
+            Popup::DeleteRule => {
+                let row = self
+                    .list
+                    .confirm_delete
+                    .and_then(|id| self.working.as_ref().and_then(|w| w.row(id)));
+                match row {
+                    Some(row) => {
+                        let label = row.name.clone().unwrap_or_else(|| {
+                            row.label
+                                .trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ')
+                                .to_string()
+                        });
+                        shell::popup_spec(PopupData::DeleteRule {
+                            index: row.index,
+                            label: &label,
+                            blocks: row.group_size,
+                        })
+                    }
+                    None => shell::popup_spec(PopupData::DeleteRule {
+                        index: 0,
+                        label: "",
+                        blocks: 1,
+                    }),
+                }
+            }
+            Popup::DeleteStyle => {
+                let name = self.config_ui.delete_armed.as_deref().unwrap_or("");
+                let users = self
+                    .working
+                    .as_ref()
+                    .and_then(|w| w.style_users().get(name).copied())
+                    .unwrap_or(0);
+                let mut prompt = config_state::delete_confirm_text(name, users);
+                if self.config_refs.contains(name) {
+                    prompt.push('\n');
+                    prompt.push_str(&config_state::config_warning(name));
+                }
+                shell::popup_spec(PopupData::DeleteStyle { prompt })
+            }
+            Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
+            Popup::DiscardConfig => {
+                let scope = self.config_ui.revert_scope;
+                let economy = scope == RevertScope::Tiers;
+                shell::popup_spec(PopupData::DiscardConfig {
+                    count: self
+                        .config
+                        .as_ref()
+                        .map_or(0, |c| c.scope_dirty_count(scope)),
+                    economy,
+                    staged: economy && self.economy_staged(),
+                })
+            }
+            Popup::DiscardRules => {
+                let name = self
+                    .filter
+                    .as_ref()
+                    .ok()
+                    .and_then(|l| l.path().file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                shell::popup_spec(PopupData::DiscardRules { filter: &name })
+            }
+        }
+    }
+
+    /// Acts on a popup button (its index in the spec). Every popup closes on any choice; only
+    /// the explicit destructive or confirming button runs the v0.5 handler.
+    fn dispatch_popup(&mut self, ctx: &egui::Context, popup: Popup, choice: usize) {
+        let on_config = self.tab == ShellTab::Config;
+        match popup {
+            Popup::Quit => {
+                let quit_choice = match choice {
+                    0 => apply::QuitChoice::ApplyAndQuit,
+                    1 => apply::QuitChoice::QuitWithoutApplying,
+                    _ => apply::QuitChoice::Cancel,
+                };
+                let dirty = self.quit_dirty();
+                match apply::quit_step(dirty, true, apply::QuitEvent::Choice(quit_choice)) {
+                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
+                    apply::QuitStep::QuitNow => {
+                        // Deferred to the top of the next frame so the Phase 22 order holds:
+                        // shutdown before that frame's instance show-request poll (WR-08).
+                        self.quit_confirm = false;
+                        self.quit_next_frame = true;
+                        ctx.request_repaint();
+                    }
+                    apply::QuitStep::RunApply => {
+                        self.quit_confirm = false;
+                        let ok = self.run_apply(ctx, false);
+                        // A refusal leaves the window open showing it (Overwrite/Reload as today).
+                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
+                            == apply::QuitStep::QuitWhenIdle
+                        {
+                            self.quit_after_apply = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Popup::ChangedOnDisk => {
+                self.changed_popup = false;
+                let choice = shell::changed_on_disk_choice(self.overwrite_live, choice);
+                match (choice, on_config) {
+                    (0, true) => self.handle_config_actions(ctx, vec![ConfigAction::Reload]),
+                    (0, false) => self.reload_pressed(),
+                    (1, true) => self.handle_config_actions(ctx, vec![ConfigAction::Overwrite]),
+                    (1, false) => {
+                        self.run_apply(ctx, true);
+                    }
+                    _ => {}
+                }
+            }
+            Popup::SwitchFilter => {
+                let action = if choice == 0 {
+                    ConfigAction::ConfirmSwitch
+                } else {
+                    ConfigAction::CancelSwitch
+                };
+                self.handle_config_actions(ctx, vec![action]);
+            }
+            Popup::DeleteRule => {
+                if let Some(id) = self.list.confirm_delete.take()
+                    && choice == 0
+                {
+                    self.run_row_actions(vec![RowAction::Delete(id)]);
+                }
+            }
+            Popup::DeleteStyle => {
+                if let Some(name) = self.config_ui.delete_armed.take()
+                    && choice == 0
+                {
+                    self.handle_config_actions(ctx, vec![ConfigAction::DeleteStyle(name)]);
+                }
+            }
+            Popup::RemoveEconomy => {
+                self.list.confirm_economy_remove = false;
+                if choice == 0 {
+                    self.stage_remove_economy();
+                }
+            }
+            Popup::DiscardConfig => {
+                self.config_ui.revert_armed = false;
+                if choice == 0 {
+                    let scope = self.config_ui.revert_scope;
+                    // ECONOMY with only a staged op has no tier edits to revert (and no tier
+                    // message to show).
+                    let scoped_dirty = self
+                        .config
+                        .as_ref()
+                        .is_ok_and(|c| c.scope_dirty_count(scope) > 0);
+                    if scope == RevertScope::Styles || scoped_dirty {
+                        self.handle_config_actions(ctx, vec![ConfigAction::RevertScoped(scope)]);
+                    }
+                    // The ECONOMY Revert owns a staged economy op too; it goes with the tiers.
+                    if scope == RevertScope::Tiers && self.economy_staged() {
+                        self.unstage_economy_pressed();
+                    }
+                }
+            }
+            Popup::DiscardRules => {
+                self.revert_rules_armed = false;
+                if choice == 0 {
+                    self.revert();
+                }
+            }
+        }
+    }
+
     fn quit_dirty(&mut self) -> bool {
         let style_pending = self
             .working
@@ -1183,35 +2003,148 @@ impl OverlayApp {
         self.instance = None;
     }
 
-    /// REVERT: discard every in-memory edit and staged economy op.
+    /// RULES REVERT: discard the rule edits. A staged economy add/remove is the ECONOMY tab's and
+    /// survives (WR-04).
     fn revert(&mut self) {
+        if self.working.is_none() {
+            return;
+        }
+        self.clear_events_on_edit();
         let Some(working) = &mut self.working else {
             return;
         };
-        working.revert();
+        working.revert_rules();
+        let still_dirty = working.is_dirty();
         self.list.clear_ids();
         self.list_status = Some(apply::REVERTED_MESSAGE.to_string());
-        // Per tab: CONFIG edits survive a RULES revert, so the state may stay out of date.
+        // Per tab: CONFIG edits and a staged economy op survive a RULES revert, so the state may
+        // stay out of date.
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        self.apply_state = apply::state_after_revert(self.applied_this_session, config_dirty);
+        self.apply_state =
+            apply::state_after_revert(self.applied_this_session, config_dirty || still_dirty);
+    }
+
+    /// The ECONOMY bar Revert: opens the Discard popup whenever there are tier edits or a staged
+    /// economy add/remove; both go together when the user confirms. Nothing is dropped unasked.
+    fn economy_revert_pressed(&mut self) {
+        let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
+        if tiers_dirty || self.economy_staged() {
+            self.config_ui.revert_scope = RevertScope::Tiers;
+            self.config_ui.revert_armed = true;
+        }
+    }
+
+    /// ECONOMY Revert, staged part: drops a staged economy add/remove only.
+    fn unstage_economy_pressed(&mut self) {
+        self.clear_events_on_edit();
+        let Some(working) = &mut self.working else {
+            return;
+        };
+        working.unstage_economy();
+        let rules_dirty = working.is_dirty();
+        let style_pending = working.style_rewrite_pending();
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        self.apply_state = apply::state_after_revert(
+            self.applied_this_session,
+            rules_dirty || config_dirty || style_pending,
+        );
     }
 
     /// Stages adding the economy section; it is written by the next APPLY.
     fn stage_add_economy(&mut self) {
+        if self.root.is_err() || self.working.is_none() {
+            return;
+        }
+        self.clear_events_on_edit();
         let (Ok(root), Some(working)) = (&self.root, &mut self.working) else {
             return;
         };
-        match dynamic::economy_body(&InputPaths::relative_to(root), PriceSourcePolicy::Auto) {
-            Ok((body, _)) => {
-                working.stage_add_economy(rules::count_blocks(&body));
-                self.apply_state = ApplyState::Unapplied;
+        let config = self.config.as_ref().ok();
+        match staged_economy_body(root, config) {
+            Ok(body) => {
+                if working.stage_add_economy(&body) {
+                    self.staged_econ_inputs =
+                        config.map(|c| (c.pending_styles().clone(), c.pending_tiers().to_vec()));
+                    self.apply_state = ApplyState::Unapplied;
+                } else {
+                    self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
+                }
             }
-            Err(err) => self.list_status = Some(err.to_string()),
+            Err(err) => self.list_status = Some(err),
+        }
+    }
+
+    /// Re-prices the staged economy-add preview when the pending styles or tiers changed since it
+    /// was built. On a pricing error the previous preview stays and the error is shown.
+    fn refresh_staged_economy(&mut self) {
+        let (Ok(root), Ok(config), Some(working)) =
+            (&self.root, &self.config, self.working.as_mut())
+        else {
+            return;
+        };
+        let plan = working.economy_plan();
+        // A section already in the file is shown re-priced only while CONFIG has style or tier
+        // edits; without them it is exactly the file's blocks.
+        let refresh = plan == rules::EconomyPlan::Refresh;
+        let wanted = match plan {
+            rules::EconomyPlan::Add => true,
+            rules::EconomyPlan::Refresh => config.styles_dirty() || config.tiers_dirty(),
+            _ => false,
+        };
+        if !wanted {
+            self.staged_econ_inputs = None;
+            self.econ_preview_failed = false;
+            if refresh && working.has_economy_preview() {
+                let econ_open = self.list.expanded.is_some_and(rules::is_preview_id);
+                working.set_economy_refresh(None);
+                if econ_open {
+                    self.list.expanded = None;
+                }
+            }
+            return;
+        }
+        let (styles, tiers) = (config.pending_styles(), config.pending_tiers());
+        if (working.has_economy_preview() || self.econ_preview_failed)
+            && self
+                .staged_econ_inputs
+                .as_ref()
+                .is_some_and(|(s, t)| s == styles && t.as_slice() == tiers)
+        {
+            return;
+        }
+        self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec()));
+        // Rows switch documents (file to preview, or one preview to the next, whose ids restart):
+        // an open economy row would point elsewhere.
+        let econ_open = self.list.expanded.is_some_and(|id| {
+            rules::is_preview_id(id) || working.economy_rows().iter().any(|r| r.id == id)
+        });
+        let shown = match staged_economy_body(root, Some(config)) {
+            Ok(body) if refresh => working.set_economy_refresh(Some(&body)),
+            Ok(body) => working.set_staged_economy_body(&body),
+            Err(err) => {
+                // Refresh: the file's blocks keep showing.
+                if refresh {
+                    working.set_economy_refresh(None);
+                }
+                self.econ_preview_failed = true;
+                self.list_status = Some(err);
+                return;
+            }
+        };
+        self.econ_preview_failed = !shown;
+        if !shown {
+            self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
+        }
+        if econ_open {
+            self.list.expanded = None;
         }
     }
 
     /// Stages removing the economy section; it is written by the next APPLY.
     fn stage_remove_economy(&mut self) {
+        if self.working.is_some() {
+            self.clear_events_on_edit();
+        }
         if let Some(working) = &mut self.working {
             working.stage_remove_economy();
             self.apply_state = ApplyState::Unapplied;
@@ -1219,7 +2152,7 @@ impl OverlayApp {
     }
 
     /// RELOAD: re-resolves the app root, re-reads the filter and discards in-memory state (D-08).
-    /// Re-resolving the root here is what lets a stripe launched before the FerrisFilter folder
+    /// Re-resolving the root here is what lets a window launched before the FerrisFilter folder
     /// was in place recover without a restart.
     fn reload(&mut self) {
         let old_root = self.root.clone();
@@ -1313,9 +2246,12 @@ impl OverlayApp {
                     | ConfigAction::RenameStyle { .. }
                     | ConfigAction::MoveStyle { .. }
                     | ConfigAction::TierText { .. }
+                    | ConfigAction::Revert
+                    | ConfigAction::RevertScoped(_)
             )
         }) {
-            self.apply_message = None;
+            // A revert sets its own CONFIG message below, after this clear.
+            self.clear_events_on_edit();
         }
         for action in actions {
             match action {
@@ -1323,7 +2259,8 @@ impl OverlayApp {
                     if let Ok(state) = &mut self.config {
                         match state.add_style(&input) {
                             Ok(name) => {
-                                self.config_ui.set_expanded(&name);
+                                // Not the toggle: a new style always opens its editor (WR-01).
+                                self.config_ui.expand(&name);
                                 self.config_ui.scroll_to = Some(name);
                                 self.config_ui.style_draft = None;
                                 self.config_message = None;
@@ -1397,6 +2334,25 @@ impl OverlayApp {
                     self.apply_state =
                         apply::state_after_revert(self.applied_this_session, rules_dirty);
                 }
+                ConfigAction::RevertScoped(scope) => {
+                    if let Ok(state) = &mut self.config {
+                        state.revert_scope(scope);
+                        let text = match scope {
+                            RevertScope::Styles => {
+                                self.config_ui.reset_for_new_styles();
+                                "Reverted config changes."
+                            }
+                            RevertScope::Tiers => "Reverted tier changes.",
+                        };
+                        self.config_message = Some((text.to_string(), false));
+                    }
+                    let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+                    let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+                    self.apply_state = apply::state_after_revert(
+                        self.applied_this_session,
+                        rules_dirty || config_dirty,
+                    );
+                }
                 ConfigAction::Apply => {
                     self.run_apply(ctx, false);
                 }
@@ -1461,8 +2417,13 @@ impl OverlayApp {
         }
     }
 
-    /// Draws the CONFIG tab below the tab strip and returns what the user asked for.
-    fn config_body(&mut self, ui: &mut egui::Ui, footer: ConfigFooterState) -> Vec<ConfigAction> {
+    /// Draws the CONFIG tab inside the shell's scroll area and returns what the user asked for.
+    fn config_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        skin: &Skin,
+        footer: ConfigFooterState,
+    ) -> Vec<ConfigAction> {
         let mut actions = Vec::new();
         // Fresh every frame: it must be right after a switch or a reload.
         let users = self
@@ -1475,7 +2436,6 @@ impl OverlayApp {
             filters: filters.as_deref(),
             active_filter: self.settings.filter_name(),
             game_dir: self.game_dir.as_deref(),
-            pending_switch: self.pending_switch.as_deref(),
             rule_users: &users,
             config_refs: &self.config_refs,
             changed_on_disk: !self.changed_on_disk.is_empty(),
@@ -1484,64 +2444,114 @@ impl OverlayApp {
             filter_damaged: footer.filter_damaged,
             indicator: apply::indicator(self.apply_state),
             reload_after_apply: self.settings.reload_after_apply(),
+            skin: Some(skin),
         };
-        // The footer is claimed first so it keeps its height whatever the sections hold; the
-        // view's own scroll area then takes the rest (no ScrollArea nested around it).
-        egui::Panel::bottom(egui::Id::new("ff-config-footer"))
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::PANEL_GROUND)
-                    .inner_margin(egui::Margin {
-                        left: 8,
-                        right: 8,
-                        top: 0,
-                        bottom: 8,
-                    }),
-            )
-            .show(ui, |ui| {
-                // The shared Apply result shows on whichever tab is open.
-                let apply_line = self.apply_message.as_ref().map(|m| {
-                    let ok =
-                        self.apply_state == ApplyState::Applied && self.changed_on_disk.is_empty();
-                    (m.clone(), !ok)
-                });
-                let lines: Vec<OutcomeLine> = self
-                    .config_message
-                    .iter()
-                    .cloned()
-                    .chain(apply_line)
-                    .map(|(text, accent)| OutcomeLine {
-                        text,
-                        accent,
-                        jump: None,
-                    })
-                    .collect();
-                outcome_area(ui, "config-outcome", &lines);
-                if let Ok(state) = &self.config {
-                    actions.extend(config_view::show_footer(
-                        ui,
-                        state,
-                        &mut self.config_ui,
-                        &ctx,
-                    ));
-                }
-            });
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(8, 0))
-            .show(ui, |ui| match &self.config {
-                Ok(state) => {
-                    actions.extend(config_view::show_sections(
-                        ui,
-                        state,
-                        &mut self.config_ui,
-                        &ctx,
-                    ));
-                }
-                Err(message) => {
-                    actions.extend(config_view::show_load_error(ui, message));
-                }
-            });
+        w::ff_scroll_area(ui, skin, "config", |ui| match &self.config {
+            Ok(state) => {
+                actions.extend(config_view::show_sections(
+                    ui,
+                    state,
+                    &mut self.config_ui,
+                    &ctx,
+                ));
+            }
+            Err(message) => {
+                actions.extend(config_view::show_load_error(ui, message));
+            }
+        });
         actions
+    }
+
+    /// Draws the RULES tab: the search row and the rule list (or its notice).
+    fn rules_content(
+        &mut self,
+        ui: &mut egui::Ui,
+        skin: &Skin,
+        actions: apply::FooterActions,
+        row_actions: &mut Vec<RowAction>,
+    ) {
+        if let Some(working) = &self.working {
+            let total = working.rows().len();
+            match rule_list::search_row(ui, skin, &mut self.query, actions.add_rule, total) {
+                rule_list::ToolbarClick::AddRule => row_actions.push(RowAction::AddRule),
+                rule_list::ToolbarClick::AddSection => row_actions.push(RowAction::AddSection),
+                rule_list::ToolbarClick::None => {}
+            }
+            ui.add_space(8.0);
+        }
+        let avail = ui.available_rect_before_wrap();
+        let list_rect = avail;
+        let mut lui = ui.new_child(
+            UiBuilder::new()
+                .max_rect(list_rect)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        lui.set_clip_rect(list_rect.intersect(ui.clip_rect()));
+        let filter_name = self.settings.filter_name().to_string();
+        let mut toggled: Vec<(String, bool, bool)> = Vec::new();
+        match (&mut self.working, &self.filter) {
+            (Some(working), _) => {
+                let settings = &self.settings;
+                let entries = working.entries(&self.query, |sec| {
+                    let key = settings::section_key(&sec.name, sec.economy);
+                    settings.section_collapsed(&filter_name, &key, sec.economy)
+                });
+                let searching = !self.query.trim().is_empty();
+                let has_rules = entries.iter().any(|e| {
+                    matches!(
+                        e,
+                        rules::ListEntry::Rule(_) | rules::ListEntry::EconomyRule(_)
+                    )
+                });
+                if entries.is_empty() && !searching {
+                    centered_notice(&mut lui, "No rules yet");
+                } else if !has_rules && searching {
+                    centered_notice(
+                        &mut lui,
+                        &format!("No rules match \"{}\"", self.query.trim()),
+                    );
+                } else if working.rows().is_empty() && !searching {
+                    // Only dividers (and maybe the economy section): list them, then say so.
+                    let h = rule_list::entries_height(&entries).min(lui.available_height());
+                    let w = lui.available_width();
+                    let frame = lui
+                        .allocate_ui(vec2(w, h), |ui| {
+                            rule_list::show_list(
+                                ui,
+                                working,
+                                &entries,
+                                &mut self.list,
+                                true,
+                                self.classes.as_ref().ok(),
+                            )
+                        })
+                        .inner;
+                    row_actions.extend(frame.actions);
+                    toggled = frame.toggled;
+                    if lui.available_height() > 60.0 {
+                        centered_notice(&mut lui, "No rules yet");
+                    }
+                } else {
+                    let frame = rule_list::show_list(
+                        &mut lui,
+                        working,
+                        &entries,
+                        &mut self.list,
+                        !searching,
+                        self.classes.as_ref().ok(),
+                    );
+                    row_actions.extend(frame.actions);
+                    toggled = frame.toggled;
+                }
+            }
+            (None, Err(_)) => {
+                centered_notice(&mut lui, "The filter could not be loaded.");
+            }
+            (None, Ok(_)) => {}
+        }
+        for (name, economy, collapsed) in toggled {
+            self.set_section_collapsed(&name, economy, collapsed);
+        }
     }
 }
 
@@ -1553,120 +2563,90 @@ struct ConfigFooterState {
     filter_damaged: bool,
 }
 
-/// One message in the footer's outcome area.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct OutcomeLine {
-    pub text: String,
-    pub accent: bool,
-    pub jump: Option<BlockId>,
+/// What a frame of the bottom bar reported.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BarClicks {
+    pub revert: bool,
+    pub reload: bool,
+    pub apply: bool,
+    /// The status line was clicked (jump to its rule, when it has one).
+    pub status: bool,
+    /// The Revert, Reload and Apply button rectangles.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub rects: [Rect; 3],
 }
 
-/// Height cap of the outcome area; longer content scrolls inside it.
-pub(crate) const OUTCOME_MAX_HEIGHT: f32 = 96.0;
-
-/// The present footer messages, in display order: list status, Apply outcome, sync status, then
-/// the persistent grammar-gate and unknown-style lines.
-pub(crate) fn outcome_lines(
-    list_status: Option<String>,
-    apply_message: Option<(String, bool)>,
-    sync_status: Option<(String, bool)>,
-    grammar_gate: Option<(String, BlockId)>,
-    unknown_summary: Option<(String, BlockId)>,
-) -> Vec<OutcomeLine> {
-    let mut out = Vec::new();
-    if let Some(text) = list_status {
-        out.push(OutcomeLine {
-            text,
-            accent: false,
-            jump: None,
-        });
-    }
-    for (text, accent) in [apply_message, sync_status].into_iter().flatten() {
-        out.push(OutcomeLine {
-            text,
-            accent,
-            jump: None,
-        });
-    }
-    for (text, id) in [grammar_gate, unknown_summary].into_iter().flatten() {
-        out.push(OutcomeLine {
-            text,
-            accent: true,
-            jump: Some(id),
-        });
-    }
-    out
-}
-
-/// Draws the outcome lines inside one capped scroll area. Returns the rule a clicked line jumps to.
-pub(crate) fn outcome_area(
+/// Draws the bottom bar inside `bar`: Revert, Reload and the Apply slot right to left, then the
+/// one status line in the room left of them.
+pub(crate) fn bottom_bar(
     ui: &mut egui::Ui,
-    id_salt: &str,
-    lines: &[OutcomeLine],
-) -> Option<BlockId> {
-    if lines.is_empty() {
-        return None;
+    skin: &Skin,
+    bar: Rect,
+    state: &shell::BarState,
+    status: &StatusLine,
+) -> BarClicks {
+    let inner = bar.shrink2(vec2(10.0, 0.0));
+    let mut bui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(inner)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    bui.spacing_mut().item_spacing.x = 8.0;
+    let slot = &state.apply;
+    let mut apply = w::ff_button_ex(&mut bui, skin, slot.label, 84.0, slot.enabled, slot.danger);
+    if let Some(tip) = slot.tip {
+        apply = apply.on_hover_text(tip);
     }
-    let mut jump = None;
-    egui::ScrollArea::vertical()
-        .id_salt(id_salt)
-        .max_height(OUTCOME_MAX_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for line in lines {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(8.0);
-                    let color = if line.accent {
-                        theme::WARM_ACCENT_TEXT
-                    } else {
-                        theme::TAB_ACTIVE
-                    };
-                    let mut label =
-                        egui::Label::new(egui::RichText::new(&line.text).size(13.0).color(color))
-                            .wrap();
-                    if line.jump.is_some() {
-                        label = label.sense(egui::Sense::click());
-                    }
-                    let resp = ui.add(label);
-                    if let Some(target) = line.jump
-                        && resp
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                    {
-                        jump = Some(target);
-                    }
-                });
-            }
-        });
-    jump
+    let reload = w::ff_button_ex(&mut bui, skin, "Reload", 84.0, state.reload, false)
+        .on_hover_text(state.reload_tip);
+    let revert = w::ff_button_ex(&mut bui, skin, "Revert", 84.0, state.revert, false);
+    let status_rect = Rect::from_min_max(
+        inner.min,
+        pos2((bui.min_rect().min.x - 10.0).max(inner.min.x), inner.max.y),
+    );
+    let line = w::ff_status_ex(
+        ui,
+        status_rect,
+        &status.text,
+        status.kind,
+        status.jump.is_some(),
+    );
+    let line = match status.tip {
+        Some(tip) => line.on_hover_text(tip),
+        None => line,
+    };
+    BarClicks {
+        revert: state.revert && revert.clicked(),
+        reload: state.reload && reload.clicked(),
+        apply: slot.enabled && apply.clicked(),
+        status: status.jump.is_some() && line.clicked(),
+        rects: [revert.rect, reload.rect, apply.rect],
+    }
 }
 
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        if !self.docked {
-            // The work area (screen minus taskbar) when Windows will tell us, falling back to
-            // the raw monitor size elsewhere. Docking against the monitor put the APPLY row
-            // behind the taskbar (screenshot poe2_print008).
-            let monitor_size = ui.ctx().input(|i| i.viewport().monitor_size);
-            if let Some(monitor_size) = monitor_size {
-                let rect = match win::work_area() {
-                    Some(area) => layout::dock_rect_in(area, layout::STRIPE_WIDTH),
-                    None => layout::dock_rect(monitor_size, layout::STRIPE_WIDTH),
-                };
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::OuterPosition(rect.min));
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::InnerSize(rect.size()));
-                self.docked = true;
-            }
-            // When monitor_size is None, leave the builder defaults in place —
-            // never guess a monitor size. Retried on a later frame.
-        }
-
-        // Cache the stripe's own HWND the first frame one is available
+        // Cache the overlay's own HWND the first frame one is available
         // (RESEARCH Pattern 1). Retried every frame until it succeeds.
         if self.window.is_none() {
             self.window = win::from_frame(frame);
+        }
+        if self.sound_dir_stale {
+            self.sound_dir_stale = false;
+            super::sound_files::set_dir(ui.ctx(), self.sound_dir());
+        }
+
+        // Dock on the game's monitor (the primary one without the game): once as soon as the
+        // window handle exists, again on every summon (below), and once more when the window's
+        // scale changes after a move between monitors.
+        if let Some(window) = &self.window {
+            let ppp = ui.ctx().input(|i| i.viewport().native_pixels_per_point);
+            if (!self.docked || (ppp.is_some() && ppp != self.dock_ppp))
+                && win::dock_left(window, shell::WIDTH)
+            {
+                self.docked = true;
+                self.dock_ppp = ppp;
+            }
         }
 
         // Poll the global hotkey (D-09). Accept only our own registered id
@@ -1675,7 +2655,7 @@ impl eframe::App for OverlayApp {
         if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
             if let HotkeyStatus::Registered { id } = &self.hotkey_status {
                 if event.id == *id && event.state == global_hotkey::HotKeyState::Pressed {
-                    // Only while the user is actually in the game — or in the stripe itself, so
+                    // Only while the user is actually in the game — or in the window itself, so
                     // the same key can dismiss it once it has focus. The binding is registered
                     // system-wide, which is what lets it reach a fullscreen game, but a key that
                     // also fires in a browser or an editor is a key the user cannot use for
@@ -1708,10 +2688,11 @@ impl eframe::App for OverlayApp {
         }
 
         // Collect a finished economy sync. The state machine only advances here, so this must
-        // run every frame. A landed result also forces a repaint: the stripe is drawn over a game
+        // run every frame. A landed result also forces a repaint: the window is drawn over a game
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
         if self.economy.poll() {
+            self.prices_changed();
             ui.ctx().request_repaint();
         }
 
@@ -1740,7 +2721,7 @@ impl eframe::App for OverlayApp {
                         self.begin_shutdown();
                     } else if apply::quit_step_shows_confirm(step) {
                         self.quit_confirm = true;
-                        // Reveal the stripe the way tray Show does (also when the stripe was
+                        // Reveal the window the way tray Show does (also when the window was
                         // hidden while the confirm was already up).
                         if self.visibility == Visibility::Hidden {
                             self.toggle_requested = true;
@@ -1769,10 +2750,10 @@ impl eframe::App for OverlayApp {
 
         // INST-01 (CONTEXT "Behaviour"): a second launch is a reveal, never a toggle (same rule
         // as the tray's Show, D-17). It deliberately bypasses the hotkey's foreground gate
-        // because the signal comes from outside the game and the stripe. The reveal itself goes
+        // because the signal comes from outside the game and the window. The reveal itself goes
         // through `visibility::advance` and `win::reveal` (`SW_SHOWNOACTIVATE`, no focus steal).
         // The existing `request_repaint_after(50ms)` plus eframe's hidden-window heartbeat is
-        // what wakes a stripe hidden to the tray, so no extra waker thread is needed.
+        // what wakes a window hidden to the tray, so no extra waker thread is needed.
         //
         // The first frame is where polling starts, so it is also where the instance tells a
         // waiting launcher it is ready (WR-02). Until then a launch during startup waits up to
@@ -1784,7 +2765,7 @@ impl eframe::App for OverlayApp {
                 if self.visibility == Visibility::Hidden {
                     self.toggle_requested = true;
                 }
-                // An already-shown stripe is still an answer.
+                // An already-shown window is still an answer.
                 guard.ack();
             }
         }
@@ -1793,16 +2774,25 @@ impl eframe::App for OverlayApp {
         // call to translate the transition into the single effect to
         // perform. No branching of our own.
         let focused = ui.ctx().input(|i| i.viewport().focused).unwrap_or(false);
-        let next = visibility::advance(self.visibility, focused, self.toggle_requested);
+        // The screenshot mode keeps the window shown: nothing may hide it before the frame is saved.
+        let next = if self.is_shot() {
+            Visibility::ShownFocused
+        } else {
+            visibility::advance(self.visibility, focused, self.toggle_requested)
+        };
         if let Some(effect) = visibility::effect_for(self.visibility, next) {
             if let Some(window) = &self.window {
                 match effect {
-                    visibility::Effect::Reveal => win::reveal(window),
+                    visibility::Effect::Reveal => {
+                        // Every summon re-docks first: the game may have moved monitors.
+                        let _ = win::dock_left(window, shell::WIDTH);
+                        win::reveal(window)
+                    }
                     visibility::Effect::Conceal => win::conceal(window),
                 }
             }
         }
-        // Concealing the stripe clears both status lines, so the next reveal starts clean.
+        // Concealing the window clears every event message, so the next reveal starts clean.
         //
         // They are reports on an action the player has already seen the result of: "Wrote
         // <path>…" and "Economy prices refreshed from <league>" answer a question asked minutes
@@ -1811,20 +2801,16 @@ impl eframe::App for OverlayApp {
         // question is worse than no message.
         //
         // Conceal, not Reveal: clearing on the way out means the result stays readable for as
-        // long as the player keeps the stripe open, which is the whole point of showing it.
+        // long as the player keeps the window open, which is the whole point of showing it.
         //
         // The one exception is a reload in flight: sending it focuses the game, which is itself
-        // the click-away that hides the stripe. Its interim line is kept so the result can
+        // the click-away that hides the window. Its interim line is kept so the result can
         // replace it below and be read on the next reveal (review CR-01).
         if matches!(
             visibility::effect_for(self.visibility, next),
             Some(visibility::Effect::Conceal)
         ) {
-            self.apply_message = apply_message_after_conceal(
-                self.apply_message.take(),
-                self.reload_pending.as_ref(),
-            );
-            self.economy.clear_message();
+            self.clear_events_on_conceal();
         }
 
         self.visibility = next;
@@ -1832,13 +2818,17 @@ impl eframe::App for OverlayApp {
 
         // The reload result lands after the worker's last step; the line is only replaced if it
         // is still the interim one. Polled after the conceal above, so a result and a hide in the
-        // same frame cannot clear the result it just wrote: it lands into a hidden stripe and is
+        // same frame cannot clear the result it just wrote: it lands into a hidden window and is
         // shown on the next reveal.
         if let Some(result) = self.reload.poll() {
             if let Some(p) = self.reload_pending.take()
-                && let Some(msg) = landed_reload_message(self.apply_message.as_deref(), &p, &result)
+                && let Some(msg) = landed_reload_message(
+                    self.apply_message.as_ref().map(|(text, _)| text.as_str()),
+                    &p,
+                    &result,
+                )
             {
-                self.apply_message = Some(msg);
+                self.apply_message = applied_message(msg);
             }
             ui.ctx().request_repaint();
         }
@@ -1851,9 +2841,12 @@ impl eframe::App for OverlayApp {
         // explicit in our own code.
         ui.ctx().request_repaint_after(Duration::from_millis(50));
 
-        let panel_frame = egui::Frame::central_panel(&ui.style())
-            .fill(theme::PANEL_GROUND)
-            .inner_margin(egui::Margin::ZERO);
+        // Debug screenshot mode: wait for the dock and a few frames, ask for one capture, save it,
+        // then leave through the one Close send site below.
+        #[cfg(debug_assertions)]
+        if self.shot.is_some() && self.shot_step(ui.ctx()) {
+            quit_requested = true;
+        }
 
         // Computed once per frame; every button below is shown/enabled strictly from it.
         self.poll_styles(ui.ctx().input(|i| i.time));
@@ -1862,6 +2855,7 @@ impl eframe::App for OverlayApp {
         if let (Ok(config), Some(working)) = (&self.config, self.working.as_mut()) {
             sync_working_styles(config, working);
         }
+        self.refresh_staged_economy();
         let state = self.filter_state();
         // A changed styles.json makes the written filter stale even with no rule edited.
         let style_pending = self
@@ -1869,7 +2863,10 @@ impl eframe::App for OverlayApp {
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let styles_dirty = self.config.as_ref().is_ok_and(|c| c.styles_dirty());
+        let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let economy_staged = self.working.as_ref().is_some_and(|w| w.economy_staged());
         // One unapplied state for both tabs: rule edits, a pending style rewrite or CONFIG edits.
         let combined_dirty = apply::combined_dirty(rules_dirty, style_pending, config_dirty);
         if combined_dirty && self.apply_state == ApplyState::Applied {
@@ -1886,7 +2883,7 @@ impl eframe::App for OverlayApp {
             .and_then(|w| w.blocking().first().cloned());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
         let changed = !self.changed_on_disk.is_empty();
-        let actions = apply::footer_actions_combined(
+        let mut actions = apply::footer_actions_combined(
             self.root.is_ok(),
             state,
             changed,
@@ -1894,6 +2891,10 @@ impl eframe::App for OverlayApp {
             config_dirty,
             blocking,
         );
+        actions.revert = self.rules_revert_live();
+        // One Overwrite decision for the bar slot and the popup (WR-03).
+        actions.overwrite = self.overwrite_decision();
+        self.overwrite_live = actions.overwrite;
         let config_footer = ConfigFooterState {
             apply_enabled: apply::config_apply_enabled(
                 self.root.is_ok(),
@@ -1910,309 +2911,256 @@ impl eframe::App for OverlayApp {
         // Everything the panels want to change is collected here and applied once, after both have
         // rendered (deferred-action rule): row operations, the economy footer and the jump.
         let mut row_actions: Vec<RowAction> = Vec::new();
-        let mut economy_action: Option<rule_list::EconomyFooterAction> = None;
         let mut jump_to: Option<BlockId> = None;
         let mut config_actions: Vec<ConfigAction> = Vec::new();
-        let mut picked_tab: Option<Tab> = None;
+        let mut picked_tab: Option<ShellTab> = None;
+        let mut economy_clicks = shell::EconomyClicks::default();
 
-        egui::CentralPanel::default()
-            .frame(panel_frame)
-            .show(ui, |ui| {
-                // The header's close control hides the stripe; it is never the way the process exits
-                // (that is tray -> Quit alone). widgets::header_plate does the painting; this file
-                // only decides what a click on it does.
-                let header = widgets::header_plate(ui, "FERRISFILTER");
-                if header.close_clicked && self.visibility != Visibility::Hidden {
-                    if let Some(window) = &self.window {
-                        win::conceal(window);
-                    }
-                    self.visibility = Visibility::Hidden;
-                }
+        // ---- The shell: background, frame, header, tabs, content, bottom bar ----
+        let skin = self.skin.clone();
+        let win_rect = ui.max_rect();
+        let painter = ui.painter().clone();
+        w::ff_background(&painter, &skin, win_rect);
+        let header_h = w::header_height(&skin, win_rect.width());
+        let frame_outer = Rect::from_min_max(
+            pos2(win_rect.min.x, win_rect.min.y + header_h - 14.0),
+            win_rect.max,
+        );
+        let shell_frame = w::ff_frame(&painter, &skin, frame_outer);
 
-                picked_tab = tab_strip(
-                    ui,
-                    self.tab,
-                    self.tab == Tab::Config && rules_dirty,
-                    self.tab == Tab::Rules && config_dirty,
-                );
-                ui.add_space(4.0);
-                if self.tab == Tab::Config {
-                    config_actions = self.config_body(ui, config_footer);
-                    return;
-                }
+        // The header's close control hides the window; it is never the way the process exits
+        // (that is tray -> Quit alone).
+        let header = Rect::from_min_size(win_rect.min, vec2(win_rect.width(), header_h));
+        let close = w::ff_header(ui, &skin, header, shell::header_art(&skin), "FerrisFilter")
+            .on_hover_text("Hide (Ctrl+Shift+Z)");
+        if let Ok(loaded) = &self.filter {
+            // The loaded filter's full path, where the old status block used to print it.
+            ui.interact(
+                w::header_plate_rect(header),
+                egui::Id::new("ff-title-plate"),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(loaded.path().display().to_string());
+        }
+        if close.clicked() && self.visibility != Visibility::Hidden {
+            if let Some(window) = &self.window {
+                win::conceal(window);
+            }
+            self.visibility = Visibility::Hidden;
+        }
 
-                // The footer is a bottom panel, claimed BEFORE the central content is laid out, so it
-                // reserves its height first and is always on screen however much the content above
-                // it holds. Called after the content, the panel would find the space already taken
-                // and APPLY could be pushed off the bottom edge, unreachable (author, 2026-09-10).
-                egui::Panel::bottom(egui::Id::new("ff-footer"))
-                    // An inner margin so the APPLY row is not flush against the window's bottom
-                    // edge, where it read as clipped (screenshot poe2_print008).
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(theme::PANEL_GROUND)
-                            .inner_margin(egui::Margin {
-                                left: 0,
-                                right: 0,
-                                top: 0,
-                                bottom: 8,
-                            }),
-                    )
-                    .show(ui, |ui| {
-                        // The pinned economy summary row: a locked block count, with Add/Remove
-                        // staged in memory and written by the next APPLY.
-                        if let Some(working) = &self.working {
-                            let can_edit_economy =
-                                self.root.is_ok() && self.changed_on_disk.is_empty();
-                            economy_action = rule_list::economy_footer(
-                                ui,
-                                working.economy(),
-                                &mut self.list,
-                                can_edit_economy,
-                            );
-                        }
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new(apply::indicator(self.apply_state))
-                                    .size(14.0)
-                                    .color(theme::TAB_ACTIVE),
-                            );
-                        });
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(8.0);
-                            if ui
-                                .add_enabled(actions.add_rule, egui::Button::new("+ ADD RULE"))
-                                .clicked()
-                            {
-                                row_actions.push(RowAction::AddRule);
-                            }
-                            if actions.reload
-                                && ui
-                                    .button("RELOAD")
-                                    .on_hover_text(apply::RELOAD_TOOLTIP)
-                                    .clicked()
-                            {
-                                self.reload_pressed();
-                            }
-                            // Beside RELOAD after a changed-on-disk refusal: the other way out,
-                            // keeping the edits. Accent fill like CONFIG's Overwrite.
-                            if actions.overwrite
-                                && ui
-                                    .add(egui::Button::new("OVERWRITE").fill(theme::WARM_ACCENT))
-                                    .on_hover_text(apply::OVERWRITE_TOOLTIP)
-                                    .clicked()
-                            {
-                                let egui_ctx = ui.ctx().clone();
-                                self.run_apply(&egui_ctx, true);
-                            }
-                            // Economy sync sits beside Apply because that is the order it is used in:
-                            // refresh prices, then apply them. It is deliberately NOT part of Apply --
-                            // a sync is dozens of network round trips and can fail, and folding that
-                            // into the action that writes the game's filter would make a routine Apply
-                            // slow and failure-prone (author, 2026-09-10).
-                            //
-                            // No --standard/--hc/--league/--tiers switches here: the GUI syncs with the
-                            // tiers file already in place, unlike the CLI.
-                            let syncing = self.economy.is_running();
-                            let sync_label = if syncing {
-                                "SYNCING\u{2026}"
-                            } else {
-                                "SYNC ECONOMY"
-                            };
-                            if ui
-                                .add_enabled(
-                                    actions.sync && !syncing,
-                                    egui::Button::new(sync_label),
-                                )
-                                .clicked()
-                            {
-                                // The app root, not the process working directory: the overlay can be
-                                // launched from anywhere, and prices.json must land where Apply will
-                                // read it from.
-                                if let Ok(root) = &self.root {
-                                    let base_dir = root.clone();
-                                    self.economy.start(move || {
-                                        crate::sync::sync_economy_blocking(&base_dir)
-                                            .map_err(|e| e.to_string())
-                                    });
-                                }
-                            }
-                            if ui
-                                .add_enabled(actions.revert, egui::Button::new("REVERT"))
-                                .clicked()
-                            {
-                                self.revert();
-                            }
-                            let apply_button =
-                                ui.add_enabled(actions.apply, egui::Button::new("APPLY"));
-                            let apply_button = if blocking > 0 {
-                                apply_button.on_disabled_hover_text(apply::APPLY_BLOCKED_TOOLTIP)
-                            } else {
-                                apply_button
-                            };
-                            if apply_button.clicked() {
-                                let egui_ctx = ui.ctx().clone();
-                                self.run_apply(&egui_ctx, false);
-                            }
-                        });
-                        // Every message lives in one capped area so a long one can never push
-                        // the buttons or the list off screen.
-                        let sync_status = match self.economy.state() {
-                            economy::SyncState::Idle => None,
-                            economy::SyncState::Running => {
-                                Some(("Fetching economy prices\u{2026}".to_string(), false))
-                            }
-                            economy::SyncState::Finished(outcome) => {
-                                Some((outcome.message().to_string(), outcome.is_failure()))
-                            }
-                        };
-                        let apply_line = self.apply_message.as_ref().map(|m| {
-                            let ok = self.apply_state == ApplyState::Applied
-                                && self.changed_on_disk.is_empty();
-                            (m.clone(), !ok)
-                        });
-                        let gate = first_blocking.as_ref().map(|first| {
-                            (
-                                apply::invalid_blocks_message(
-                                    blocking,
-                                    first.rule_index,
-                                    first.diagnostic.line,
-                                ),
-                                first.block,
-                            )
-                        });
-                        let unknown = unknown_styles.first().map(|(rule, id)| {
-                            (
-                                apply::unknown_styles_message(unknown_styles.len(), *rule),
-                                *id,
-                            )
-                        });
-                        let lines = outcome_lines(
-                            self.list_status.clone(),
-                            apply_line,
-                            sync_status,
-                            gate,
-                            unknown,
-                        );
-                        if let Some(target) = outcome_area(ui, "outcome", &lines) {
-                            jump_to = Some(target);
-                        }
-                    });
+        // Tabs: ` *` marks a tab when it holds unapplied edits (the selected tab included).
+        // A staged economy add/remove belongs to ECONOMY, not to the RULES marker.
+        let rules_edited = self.working.as_ref().is_some_and(|w| w.rules_edited());
+        let markers = shell::tab_markers(rules_edited, styles_dirty, tiers_dirty, economy_staged);
+        let labels: Vec<String> = ShellTab::ALL
+            .iter()
+            .map(|t| apply::tab_label(t.label(), markers[t.index()]))
+            .collect();
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let tips: Vec<Option<&str>> = markers
+            .iter()
+            .map(|m| m.then_some(apply::OTHER_TAB_DIRTY_TIP))
+            .collect();
+        let mut selected = self.tab.index();
+        w::ff_tabs_ex(
+            ui,
+            &skin,
+            w::tab_strip(&shell_frame),
+            &label_refs,
+            &mut selected,
+            &tips,
+        );
+        if selected != self.tab.index() {
+            picked_tab = ShellTab::from_index(selected);
+        }
 
-                ui.add_space(8.0);
-                // Status block: root, filter path and state, v0.4 notice.
-                let migrated = self.filter.as_ref().map(|f| f.migrated()).unwrap_or(false);
-                let mut lines: Vec<(egui::Color32, String)> = Vec::new();
-                if let Err(message) = &self.root {
-                    lines.push((theme::WARM_ACCENT_TEXT, message.clone()));
-                }
-                if let Ok(loaded) = &self.filter {
-                    lines.push((theme::LABEL_TAN, loaded.path().display().to_string()));
-                    let text = match (state, loaded.has_section()) {
-                        (FilterState::Damaged, Err(err)) => err.to_string(),
-                        _ => apply::filter_state_message(state, false),
-                    };
-                    let colour = if state == FilterState::Damaged {
-                        theme::WARM_ACCENT_TEXT
-                    } else {
-                        theme::LABEL_TAN
-                    };
-                    lines.push((colour, text));
-                }
-                if migrated {
-                    lines.push((
-                        theme::LABEL_TAN,
-                        "This is a v0.4 dynamic.filter. It will be converted on the next APPLY (a \
-                         .ffbak backup of the original is kept)."
-                            .to_string(),
-                    ));
-                }
-                for (colour, text) in lines {
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).wrap());
-                    });
-                    ui.add_space(4.0);
-                }
-                ui.add_space(4.0);
-                let total_rules = self.working.as_ref().map_or(0, |w| w.rows().len());
-                let shown_rules = match &mut self.working {
-                    Some(w) => w.matches(&self.query).len(),
-                    None => 0,
+        // Content, clipped to the area inside the gold line.
+        let content = shell_frame.content.shrink2(vec2(10.0, 8.0));
+        let mut cui = ui.new_child(
+            UiBuilder::new()
+                .max_rect(content)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        cui.set_clip_rect(shell_frame.content);
+        match self.tab {
+            ShellTab::Rules => self.rules_content(&mut cui, &skin, actions, &mut row_actions),
+            ShellTab::Config => {
+                config_actions = self.config_body(&mut cui, &skin, config_footer);
+            }
+            ShellTab::Economy => {
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                let inputs = shell::EconomyTabInputs {
+                    league: crate::sync::OVERLAY_LEAGUE,
+                    mtime_secs: self.economy_info.mtime_secs,
+                    now_secs,
+                    utc_offset_minutes: win::utc_offset_minutes(),
+                    priced_items: self.economy_info.priced_items,
+                    live: self.economy_info.live,
+                    problem: self.economy_info.problem.as_deref(),
+                    syncing: self.economy.is_running(),
+                    sync_enabled: actions.sync,
+                    sync_disabled_tip: self.root.as_ref().err().map(String::as_str),
+                    section: shell::section_button(
+                        self.working.as_ref().map(|w| w.economy()),
+                        self.root.is_ok(),
+                        !self.changed_on_disk.is_empty(),
+                    ),
                 };
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.label(theme::section_header("FILTER"));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(rule_count_text(
-                                total_rules,
-                                shown_rules,
-                                !self.query.trim().is_empty(),
-                            ))
-                            .color(theme::LABEL_TAN),
-                        );
-                    });
-                });
-                ui.add_space(8.0);
-
-                match (&mut self.working, &self.filter) {
-                    (Some(working), _) => {
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            rule_list::search_bar(ui, &mut self.query);
-                        });
-                        ui.add_space(8.0);
-                        let visible = working.matches(&self.query);
-                        if working.rows().is_empty() {
-                            centered_notice(
-                                ui,
-                                "No rules in this filter yet",
-                                "Press + ADD RULE to write your first one. Blocks you add are \
-                                 saved with the filter when you press APPLY.",
-                            );
-                        } else if visible.is_empty() {
-                            centered_notice(
-                                ui,
-                                &format!("No rules match \"{}\"", self.query.trim()),
-                                "Check the spelling, or press Clear to see every rule.",
-                            );
-                        } else {
-                            let frame = rule_list::show_list(
-                                ui,
-                                working,
-                                &visible,
-                                &mut self.list,
-                                self.query.trim().is_empty(),
-                                self.classes.as_ref().ok(),
-                            );
-                            row_actions.extend(frame.actions);
+                let mut tier_actions: Vec<ConfigAction> = Vec::new();
+                economy_clicks =
+                    shell::economy_tab(&mut cui, &skin, &inputs, |ui| match &self.config {
+                        Ok(state) => {
+                            tier_actions = config_view::show_tiers_section(ui, &skin, state);
                         }
-                    }
-                    (None, Err(message)) => {
-                        centered_notice(ui, "The filter could not be loaded.", message);
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new("Fix the file and press RELOAD.")
-                                    .color(theme::LABEL_TAN),
-                            );
-                        });
-                    }
-                    (None, Ok(_)) => {}
+                        Err(message) => {
+                            tier_actions.extend(config_view::show_load_error(ui, message));
+                        }
+                    });
+                config_actions.extend(tier_actions);
+                cui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(60));
+            }
+            ShellTab::About => super::about_view::about_tab(&mut cui, &skin),
+        }
+
+        // Bottom bar: the one status line plus Revert / Reload / Apply.
+        let bar_state = shell::bar_state(
+            self.tab,
+            actions,
+            ConfigBarInputs {
+                styles_dirty,
+                tiers_dirty,
+                economy_staged,
+                apply_enabled: config_footer.apply_enabled,
+                tier_errors: self.config.as_ref().is_ok_and(|c| c.has_tier_errors()),
+                load_error: self.config.is_err()
+                    || self
+                        .config
+                        .as_ref()
+                        .is_ok_and(|c| c.styles_error().is_some() || c.tiers_error().is_some()),
+                rules_blocking: blocking > 0,
+                damaged: state == FilterState::Damaged,
+                config_invalid: self.config_invalid(),
+            },
+            changed,
+        );
+        let sync_outcome = match self.economy.state() {
+            economy::SyncState::Finished(outcome) => {
+                Some((outcome.message().to_string(), outcome.is_failure()))
+            }
+            _ => None,
+        };
+        let event = shell::event_from(
+            self.apply_message.clone(),
+            self.config_message.clone(),
+            sync_outcome,
+            self.list_status.clone(),
+        );
+        #[cfg(debug_assertions)]
+        let event = match self.shot.as_ref().and_then(|s| s.args.status.clone()) {
+            Some(text) => Some((text, w::StatusKind::Warning)),
+            None => event,
+        };
+        let filter_error = match (&self.filter, state) {
+            (Err(message), _) => Some(shell::load_failed_status(message)),
+            (Ok(loaded), FilterState::Damaged) => Some(match loaded.has_section() {
+                Err(err) => err.to_string(),
+                Ok(_) => apply::DAMAGED_MARKERS_MESSAGE.to_string(),
+            }),
+            _ => None,
+        };
+        let status = shell::status_for(StatusInputs {
+            root_error: self.root.as_ref().err().cloned(),
+            event,
+            grammar_gate: first_blocking.as_ref().map(|first| {
+                (
+                    apply::invalid_blocks_message(
+                        blocking,
+                        first.rule_index,
+                        first.diagnostic.line,
+                    ),
+                    first.block,
+                )
+            }),
+            filter_error,
+            syncing: self.economy.is_running(),
+            unknown: unknown_styles.first().map(|(rule, id)| {
+                (
+                    apply::unknown_styles_message(unknown_styles.len(), *rule),
+                    *id,
+                )
+            }),
+            migrated: self.filter.as_ref().is_ok_and(|f| f.migrated()),
+            absent: state == FilterState::Absent,
+            indicator: (
+                apply::indicator(self.apply_state),
+                shell::indicator_kind(self.apply_state),
+            ),
+        });
+        let clicks = bottom_bar(ui, &skin, shell_frame.button_bar, &bar_state, &status);
+        if clicks.status {
+            jump_to = status.jump;
+        }
+
+        // Bar clicks run before the tab switch, against the tab they were drawn for.
+        let egui_ctx = ui.ctx().clone();
+        if clicks.revert {
+            match self.tab {
+                // The Discard-rules popup opens from this flag.
+                ShellTab::Rules => self.revert_rules_armed = true,
+                // The Discard-config popup opens from this flag.
+                ShellTab::Config => {
+                    self.config_ui.revert_scope = RevertScope::Styles;
+                    self.config_ui.revert_armed = true;
                 }
+                ShellTab::Economy => self.economy_revert_pressed(),
+                ShellTab::About => {}
+            }
+        }
+        if clicks.reload {
+            match bar_reload_target(self.tab, &self.changed_on_disk) {
+                BarReload::ConfigRefusal => config_actions.push(ConfigAction::Reload),
+                BarReload::Shared => self.reload_pressed(),
+            }
+        }
+        if clicks.apply {
+            // The Apply slot reads Overwrite while a file changed on disk; it re-opens the
+            // popup, whose Overwrite button runs the guarded write.
+            if bar_state.apply.overwrite {
+                self.changed_popup = true;
+            } else {
+                self.run_apply(&egui_ctx, false);
+            }
+        }
+        if economy_clicks.sync
+            && let Ok(root) = &self.root
+        {
+            // The app root, not the process working directory: the overlay can be launched from
+            // anywhere, and prices.json must land where Apply will read it from. A sync is not
+            // part of Apply (dozens of network round trips that can fail); it only refreshes
+            // prices, and the game sees them on the next Apply (author, 2026-09-10).
+            let base_dir = root.clone();
+            self.economy.start(move || {
+                crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
             });
+        }
 
         // Tab switch and CONFIG actions come first. Switching never applies or discards anything.
         if let Some(tab) = picked_tab {
             self.tab = tab;
-            if tab == Tab::Config {
-                self.config_ui.disarm_all();
-                self.refresh_filters();
+            match tab {
+                ShellTab::Config => {
+                    self.config_ui.disarm_all();
+                    self.refresh_filters();
+                }
+                ShellTab::Economy => {
+                    self.config_ui.disarm_all();
+                    self.refresh_economy_info();
+                }
+                _ => {}
             }
         }
         if !config_actions.is_empty() {
@@ -2223,85 +3171,59 @@ impl eframe::App for OverlayApp {
         // Deferred mutations: jump from the grammar line, then row operations, then the economy
         // footer. Quit stays last.
         if let (Some(target), Some(working)) = (jump_to, &self.working) {
+            // The line is clickable on every tab; the rule it names lives on RULES (WR-02).
+            self.tab = ShellTab::Rules;
             if !working.row_matches(target, &self.query) {
                 self.query.clear();
             }
             self.list.expanded = Some(target);
             self.list.pending_scroll = Some(target);
+            self.reveal_rule(target);
         }
         if !row_actions.is_empty() {
-            if let Some(working) = &mut self.working {
-                let (changed, status) =
-                    apply_row_actions(working, &mut self.list, &self.query, row_actions);
-                if changed {
-                    // An action can report `changed` without altering the bytes (clearing an
-                    // absent name, moving a rule and back); only a real difference from the
-                    // applied text makes the indicator stale.
-                    if working.is_dirty() {
-                        self.apply_state = ApplyState::Unapplied;
-                    }
-                    self.apply_message = None;
-                    self.list_status = None;
-                }
-                if status.is_some() {
-                    self.list_status = status;
-                }
-            }
+            self.run_row_actions(row_actions);
         }
-        match economy_action {
-            Some(rule_list::EconomyFooterAction::Add) => self.stage_add_economy(),
-            Some(rule_list::EconomyFooterAction::Remove) => self.stage_remove_economy(),
-            None => {}
+        if economy_clicks.add {
+            self.stage_add_economy();
+        }
+        if economy_clicks.remove {
+            self.list.confirm_economy_remove = true;
         }
 
-        if self.quit_confirm && !quit_requested {
-            let mut choice = None;
-            let modal = egui::Modal::new(egui::Id::new("quit_confirm")).show(ui.ctx(), |ui| {
-                ui.heading(apply::QUIT_CONFIRM_TITLE);
-                ui.horizontal(|ui| {
-                    if ui.button(apply::QUIT_APPLY_LABEL).clicked() {
-                        choice = Some(apply::QuitChoice::ApplyAndQuit);
-                    }
-                    if ui
-                        .button(apply::QUIT_DISCARD_LABEL)
-                        .on_hover_text(apply::QUIT_DISCARD_TIP)
-                        .clicked()
-                    {
-                        choice = Some(apply::QuitChoice::QuitWithoutApplying);
-                    }
-                    if ui.button(apply::QUIT_CANCEL_LABEL).clicked() {
-                        choice = Some(apply::QuitChoice::Cancel);
-                    }
-                });
-            });
-            // Escape or a click outside counts as Cancel.
-            if choice.is_none() && modal.should_close() {
-                choice = Some(apply::QuitChoice::Cancel);
-            }
+        // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
+        // survive hiding and re-summoning the window, so an open popup is still there.
+        // An armed Revert with nothing left to discard disarms itself.
+        if self.config_ui.revert_armed && self.config_discard_count() == 0 {
+            self.config_ui.revert_armed = false;
+        }
+        if self.revert_rules_armed && !self.rules_revertible() {
+            self.revert_rules_armed = false;
+        }
+        // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
+        self.overwrite_live = self.overwrite_decision();
+        if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
+            let spec = self.popup_spec_for(popup);
+            let buttons: Vec<crate::skin::popup::PopupButton> = spec
+                .buttons
+                .iter()
+                .map(|(label, danger, tip)| crate::skin::popup::PopupButton {
+                    label,
+                    danger: *danger,
+                    tip: *tip,
+                })
+                .collect();
+            let choice = crate::skin::popup::ff_modal(
+                ui.ctx(),
+                &skin,
+                egui::Id::new(("ff-popup", format!("{popup:?}"))),
+                &spec.title,
+                &spec.body,
+                &buttons,
+            );
             if let Some(choice) = choice {
-                let dirty = self.quit_dirty();
-                match apply::quit_step(dirty, true, apply::QuitEvent::Choice(choice)) {
-                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
-                    apply::QuitStep::QuitNow => {
-                        // Deferred to the top of the next frame so the Phase 22 order holds:
-                        // shutdown before that frame's instance show-request poll (WR-08).
-                        self.quit_confirm = false;
-                        self.quit_next_frame = true;
-                        ui.ctx().request_repaint();
-                    }
-                    apply::QuitStep::RunApply => {
-                        self.quit_confirm = false;
-                        let egui_ctx = ui.ctx().clone();
-                        let ok = self.run_apply(&egui_ctx, false);
-                        // A refusal leaves the stripe open showing it (OVERWRITE/RELOAD as today).
-                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
-                            == apply::QuitStep::QuitWhenIdle
-                        {
-                            self.quit_after_apply = true;
-                        }
-                    }
-                    _ => {}
-                }
+                let egui_ctx = ui.ctx().clone();
+                self.dispatch_popup(&egui_ctx, popup, choice);
+                egui_ctx.request_repaint();
             }
         }
 
@@ -2314,210 +3236,6 @@ impl eframe::App for OverlayApp {
 
 #[cfg(test)]
 mod tests {
-    /// A stripe-sized headless context.
-    fn stripe_ctx() -> egui::Context {
-        let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
-        ctx
-    }
-
-    fn stripe_input() -> egui::RawInput {
-        egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(460.0, 600.0),
-            )),
-            ..Default::default()
-        }
-    }
-
-    /// Renders a long scrolling list plus a footer, in the two possible orders, and reports where
-    /// the footer landed. `footer_first` is the bottom-panel arrangement `ui()` uses.
-    fn footer_bottom_edge(footer_first: bool) -> (f32, f32) {
-        let ctx = stripe_ctx();
-        let mut footer_rect = egui::Rect::NOTHING;
-        let mut screen_bottom = 0.0_f32;
-
-        ctx.run_ui(stripe_input(), |ui| {
-            // The viewport we handed in via RawInput.screen_rect.
-            screen_bottom = ui.max_rect().max.y;
-            egui::CentralPanel::default().show(ui, |ui| {
-                let list = |ui: &mut egui::Ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            // Far more rows than fit. Allocated geometry rather than labels: the
-                            // headless context has no fonts, so text would measure zero-height
-                            // and the list would never grow.
-                            for _ in 0..60 {
-                                ui.allocate_space(egui::vec2(400.0, 30.0));
-                            }
-                        });
-                };
-                if footer_first {
-                    egui::Panel::bottom(egui::Id::new("test-footer")).show(ui, |ui| {
-                        footer_rect = ui.button("APPLY").rect;
-                    });
-                    list(ui);
-                } else {
-                    list(ui);
-                    footer_rect = ui.button("APPLY").rect;
-                }
-            });
-        })
-        .drop_without_applying_deltas();
-
-        (footer_rect.max.y, screen_bottom)
-    }
-
-    /// APPLY must stay on screen however much content the stripe holds.
-    ///
-    /// The second assertion gives the first its meaning: it shows the old arrangement (footer
-    /// laid out after an `auto_shrink([false, true])` `ScrollArea`) really does push the button
-    /// off-screen with this much content, so the test would have failed before the fix.
-    #[test]
-    fn the_apply_button_stays_on_screen_however_long_the_rule_list_is() {
-        let (footer_bottom, screen_bottom) = footer_bottom_edge(true);
-        assert!(
-            footer_bottom <= screen_bottom,
-            "APPLY is below the stripe's bottom edge ({footer_bottom} > {screen_bottom}) -- \
-             it cannot be clicked at any scroll position"
-        );
-
-        let (old_bottom, screen_bottom) = footer_bottom_edge(false);
-        assert!(
-            old_bottom > screen_bottom,
-            "the pre-fix arrangement was expected to push APPLY off-screen, but it did not \
-             ({old_bottom} <= {screen_bottom}) -- this test is no longer exercising the defect"
-        );
-    }
-
-    #[test]
-    fn outcome_lines_order_and_jump_targets() {
-        use crate::overlay::app::outcome_lines;
-        let a = WorkingFilter::from_text(
-            "Show
-",
-        )
-        .rows()[0]
-            .id;
-        let lines = outcome_lines(
-            Some("list".into()),
-            Some(("apply".into(), false)),
-            Some(("sync".into(), true)),
-            Some(("gate".into(), a)),
-            Some(("unknown".into(), a)),
-        );
-        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
-        assert_eq!(texts, ["list", "apply", "sync", "gate", "unknown"]);
-        assert!(lines[3].jump.is_some() && lines[4].jump.is_some());
-        assert!(lines[0].jump.is_none() && !lines[0].accent && lines[2].accent);
-        assert!(outcome_lines(None, None, None, None, None).is_empty());
-    }
-
-    /// Long messages scroll inside the capped outcome area; APPLY stays on screen below it.
-    #[test]
-    fn outcome_area_is_capped_and_keeps_apply_on_screen() {
-        use crate::overlay::app::{OUTCOME_MAX_HEIGHT, OutcomeLine, outcome_area};
-        let long = "x ".repeat(95);
-        let lines: Vec<OutcomeLine> = (0..6)
-            .map(|_| OutcomeLine {
-                text: long.clone(),
-                accent: true,
-                jump: None,
-            })
-            .collect();
-        let ctx = egui::Context::default();
-        let mut area_h = 0.0_f32;
-        let mut apply_bottom = 0.0_f32;
-        let mut screen_bottom = 0.0_f32;
-        for _ in 0..4 {
-            ctx.run_ui(stripe_input(), |ui| {
-                screen_bottom = ui.max_rect().max.y;
-                egui::CentralPanel::default().show(ui, |ui| {
-                    egui::Panel::bottom(egui::Id::new("f")).show(ui, |ui| {
-                        let top = ui.cursor().min.y;
-                        outcome_area(ui, "outcome", &lines);
-                        area_h = ui.cursor().min.y - top;
-                        apply_bottom = ui.button("APPLY").rect.max.y;
-                    });
-                });
-            })
-            .drop_without_applying_deltas();
-        }
-        assert!(area_h > 0.0, "outcome area drew nothing");
-        assert!(area_h <= OUTCOME_MAX_HEIGHT + 8.0, "area {area_h}");
-        assert!(
-            apply_bottom <= screen_bottom,
-            "{apply_bottom} {screen_bottom} {area_h}"
-        );
-    }
-
-    /// The CONFIG footer is pinned in its own bottom panel: Apply stays on screen however long the
-    /// styles list above it grows.
-    #[test]
-    fn the_config_footer_keeps_apply_on_screen_with_a_long_styles_list() {
-        use crate::overlay::app::{OutcomeLine, outcome_area};
-        use crate::overlay::config_state::ConfigState;
-        use crate::overlay::config_view::{self, ConfigUi, ConfigViewCtx};
-        use std::collections::{BTreeSet, HashMap};
-
-        let state = ConfigState::load(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
-        let ctx = ConfigViewCtx {
-            filters: None,
-            active_filter: "dynamic.filter",
-            game_dir: None,
-            pending_switch: None,
-            rule_users: &users,
-            config_refs: &refs,
-            changed_on_disk: false,
-            apply_enabled: true,
-            rules_blocking: false,
-            filter_damaged: false,
-            indicator: "Filter out of date",
-            reload_after_apply: true,
-        };
-        let mut cfg = ConfigUi::default();
-        let long = "x ".repeat(95);
-        let lines: Vec<OutcomeLine> = (0..6)
-            .map(|_| OutcomeLine {
-                text: long.clone(),
-                accent: true,
-                jump: None,
-            })
-            .collect();
-        let rctx = egui::Context::default();
-        let mut footer_bottom = 0.0_f32;
-        let mut screen_bottom = 0.0_f32;
-        for _ in 0..4 {
-            rctx.run_ui(stripe_input(), |ui| {
-                screen_bottom = ui.max_rect().max.y;
-                egui::CentralPanel::default().show(ui, |ui| {
-                    egui::Panel::bottom(egui::Id::new("ff-config-footer")).show(ui, |ui| {
-                        outcome_area(ui, "config-outcome", &lines);
-                        config_view::show_footer(ui, &state, &mut cfg, &ctx);
-                        footer_bottom = ui.min_rect().max.y;
-                    });
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for _ in 0..80 {
-                                ui.allocate_space(egui::vec2(400.0, 30.0));
-                            }
-                        });
-                });
-            })
-            .drop_without_applying_deltas();
-        }
-        assert!(footer_bottom > 0.0, "footer drew nothing");
-        assert!(
-            footer_bottom <= screen_bottom,
-            "{footer_bottom} > {screen_bottom}"
-        );
-    }
-
     #[test]
     fn filter_target_refuses_traversal_and_a_missing_folder() {
         use super::filter_target;
@@ -2605,7 +3323,7 @@ mod tests {
     fn conceal_keeps_only_an_in_flight_reload_line() {
         use super::apply_message_after_conceal;
         let p = pending("interim");
-        // A reload in flight with its interim line showing: the focus change hides the stripe,
+        // A reload in flight with its interim line showing: the focus change hides the window,
         // and the line must survive for the result to replace it (review CR-01).
         assert_eq!(
             apply_message_after_conceal(Some("interim".into()), Some(&p)),
@@ -2638,9 +3356,9 @@ mod tests {
             ),
         ] {
             let p = pending("interim");
-            // Apply sets the interim line; focusing the game conceals the stripe.
+            // Apply sets the interim line; focusing the game conceals the window.
             let after_hide = apply_message_after_conceal(Some("interim".into()), Some(&p));
-            // The worker reports while the stripe is hidden.
+            // The worker reports while the window is hidden.
             let landed = landed_reload_message(after_hide.as_deref(), &p, &result)
                 .expect("the result must replace the kept interim line");
             assert!(landed.contains(want), "{landed}");
@@ -2740,20 +3458,17 @@ mod tests {
         }
     }
 
+    /// The shell layout at its real size over a 511-block filter: the three bar buttons lie
+    /// inside the frame's button bar however long the list is, and only a bounded window of rows
+    /// is drawn (EDIT-07).
     #[test]
-    fn rule_count_copy() {
-        assert_eq!(super::rule_count_text(142, 142, false), "142 rules");
-        assert_eq!(super::rule_count_text(1, 1, false), "1 rule");
-        assert_eq!(super::rule_count_text(0, 0, false), "0 rules");
-        assert_eq!(super::rule_count_text(142, 7, true), "7 of 142 rules");
-    }
-
-    /// EDIT-07 at stripe scale: a 511-block filter in the real list keeps the footer on screen
-    /// and draws only a bounded window of rows.
-    #[test]
-    fn a_511_block_filter_keeps_the_footer_on_screen_and_draws_a_bounded_window() {
+    fn shell_bar_stays_inside_the_button_bar_with_a_long_list() {
+        use crate::overlay::apply::FooterActions;
         use crate::overlay::rule_list::{self, ListUi};
         use crate::overlay::rules::WorkingFilter;
+        use crate::overlay::shell::{self, ConfigBarInputs, ShellTab, StatusLine};
+        use crate::skin::widgets as w;
+        use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
 
         let bytes = include_bytes!("../../tests/fixtures/parser/filterblade.filter");
         let text = String::from_utf8_lossy(bytes).into_owned();
@@ -2762,33 +3477,65 @@ mod tests {
             working.rows().len() > 400,
             "fixture has a few hundred rules"
         );
-        let visible = working.matches("");
+        let visible = working.entries("", |_| false);
         let mut list = ListUi::default();
 
-        let ctx = stripe_ctx();
-        let mut input = stripe_input();
-        input.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(460.0, 1000.0),
-        ));
-        let mut footer_bottom = 0.0_f32;
-        let mut screen_bottom = 0.0_f32;
+        let ctx = egui::Context::default();
+        let skin = crate::skin::install(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(660.0, 1000.0))),
+            ..Default::default()
+        };
+        let actions = FooterActions {
+            sync: true,
+            apply: true,
+            revert: true,
+            add_rule: true,
+            reload: true,
+            overwrite: false,
+        };
+        let bar_state =
+            shell::bar_state(ShellTab::Rules, actions, ConfigBarInputs::default(), false);
+        let status = StatusLine {
+            text: "a very long status message ".repeat(20),
+            kind: w::StatusKind::Warning,
+            jump: None,
+            tip: None,
+        };
         let mut drawn = 0usize;
-        ctx.run_ui(input, |ui| {
-            screen_bottom = ui.max_rect().max.y;
-            egui::CentralPanel::default().show(ui, |ui| {
-                egui::Panel::bottom(egui::Id::new("test-footer")).show(ui, |ui| {
-                    footer_bottom = ui.button("APPLY").rect.max.y;
-                });
-                drawn = rule_list::show_list(ui, &working, &visible, &mut list, true, None).drawn;
-            });
-        })
-        .drop_without_applying_deltas();
-
-        assert!(
-            footer_bottom <= screen_bottom,
-            "{footer_bottom} > {screen_bottom}"
-        );
+        let mut button_bar = Rect::NOTHING;
+        let mut rects = [Rect::NOTHING; 3];
+        for _ in 0..3 {
+            ctx.run_ui(input.clone(), |ui| {
+                let win_rect = ui.max_rect();
+                let painter = ui.painter().clone();
+                w::ff_background(&painter, &skin, win_rect);
+                let header_h = w::header_height(&skin, win_rect.width());
+                let outer = Rect::from_min_max(
+                    pos2(win_rect.min.x, win_rect.min.y + header_h - 14.0),
+                    win_rect.max,
+                );
+                let frame = w::ff_frame(&painter, &skin, outer);
+                button_bar = frame.button_bar;
+                let content = frame.content.shrink2(vec2(10.0, 8.0));
+                let mut cui = ui.new_child(
+                    UiBuilder::new()
+                        .max_rect(content)
+                        .layout(Layout::top_down(Align::Min)),
+                );
+                cui.set_clip_rect(frame.content);
+                drawn =
+                    rule_list::show_list(&mut cui, &working, &visible, &mut list, true, None).drawn;
+                rects = super::bottom_bar(ui, &skin, frame.button_bar, &bar_state, &status).rects;
+            })
+            .drop_without_applying_deltas();
+        }
+        for r in rects {
+            assert!(
+                button_bar.contains_rect(r) && r.width() > 0.0,
+                "button {r:?} outside the button bar {button_bar:?}"
+            );
+        }
         assert!(drawn > 0, "something must be drawn");
         assert!(
             drawn < 80,
@@ -3247,6 +3994,26 @@ mod tests {
     }
 
     #[test]
+    fn bar_reload_on_config_reloads_the_filter_unless_a_refusal_is_pending() {
+        use super::{BarReload, ShellTab, bar_reload_target};
+        // CR-01: without a changed-on-disk refusal the bar's Reload is live only because of the
+        // filter (damaged, failed, no root); on CONFIG it must re-read the filter, which keeps
+        // CONFIG edits, rather than reload the config and drop them.
+        assert_eq!(bar_reload_target(ShellTab::Config, &[]), BarReload::Shared);
+        assert_eq!(
+            bar_reload_target(ShellTab::Config, &[DiskFile::Styles]),
+            BarReload::ConfigRefusal
+        );
+        for tab in [ShellTab::Rules, ShellTab::Economy, ShellTab::About] {
+            assert_eq!(bar_reload_target(tab, &[]), BarReload::Shared);
+            assert_eq!(
+                bar_reload_target(tab, &[DiskFile::Filter]),
+                BarReload::Shared
+            );
+        }
+    }
+
+    #[test]
     fn clean_config_follows_outside_edits_and_never_writes_them_back() {
         let mut rig = rig(S_RULE);
         rig.working.apply_action(RowAction::AddRule);
@@ -3497,6 +4264,37 @@ mod tests {
     }
 
     #[test]
+    fn browsing_economy_rules_then_apply_writes_the_same_bytes() {
+        use crate::overlay::rule_list::economy_browse;
+        // The repo root is read-only input here (styles, tiers, prices).
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let text = economy_browse::rich_economy_text();
+        let apply_once = |browse: bool| {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, mut loaded) = loaded_in(&dir, &text);
+            let mut working = WorkingFilter::from_text(loaded.text());
+            if browse {
+                let report = economy_browse::browse(&working);
+                assert_eq!(report.rules, 2);
+                assert!(report.actions.is_empty(), "{:?}", report.actions);
+                // Through the list as the RULES tab draws it: whatever its frames report is
+                // applied, as the app does after each frame.
+                let (actions, clicked) = economy_browse::browse_list(&mut working);
+                assert!(clicked > 40, "{clicked}");
+                assert!(actions.is_empty(), "{actions:?}");
+                for a in actions {
+                    working.apply_action(a);
+                }
+                assert!(!working.is_dirty());
+            }
+            let (outcome, _, _) = apply_working(&root, &mut loaded, &mut working);
+            assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+            std::fs::read(&path).unwrap()
+        };
+        assert_eq!(apply_once(true), apply_once(false));
+    }
+
+    #[test]
     fn apply_working_adds_the_economy_section_from_the_repo_inputs() {
         let dir = tempfile::tempdir().unwrap();
         let (path, mut loaded) = loaded_in(&dir, RULES);
@@ -3509,7 +4307,7 @@ mod tests {
         )
         .unwrap()
         .0;
-        working.stage_add_economy(crate::overlay::rules::count_blocks(&body));
+        working.stage_add_economy(&body);
         let (outcome, _, _) = apply_working(&root, &mut loaded, &mut working);
         assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
         let written = std::fs::read_to_string(&path).unwrap();
@@ -3517,18 +4315,23 @@ mod tests {
     }
 
     #[test]
-    fn adding_a_rule_the_search_hides_says_so_and_does_not_expand_it() {
+    fn adding_a_rule_clears_the_search_expands_and_focuses_it() {
         let mut working = WorkingFilter::from_text(RULES);
         let mut list = ListUi::default();
-        let (changed, status) =
-            apply_row_actions(&mut working, &mut list, "zzz", vec![RowAction::AddRule]);
-        assert!(changed);
-        assert_eq!(
-            status.as_deref(),
-            Some("Rule added at position 3 (hidden by the current search)")
+        let mut query = String::from("zzz");
+        let (changed, status) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut query,
+            vec![RowAction::AddRule],
         );
-        assert_eq!(list.expanded, None);
-        assert_eq!(list.pending_scroll, None);
+        assert!(changed);
+        assert_eq!(status.as_deref(), Some(apply::RULE_ADDED_MESSAGE));
+        assert!(query.is_empty());
+        let new = working.rows()[0].id;
+        assert_eq!(list.expanded, Some(new));
+        assert_eq!(list.pending_scroll, Some(new));
+        assert_eq!(list.focus_name, Some(new));
     }
 
     #[test]
@@ -3537,8 +4340,12 @@ mod tests {
         let mut list = ListUi::default();
         let id = working.rows()[0].id;
         list.expanded = Some(id);
-        let (changed, _) =
-            apply_row_actions(&mut working, &mut list, "", vec![RowAction::Delete(id)]);
+        let (changed, _) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut String::new(),
+            vec![RowAction::Delete(id)],
+        );
         assert!(changed);
         assert!(list.expanded.is_none());
     }
@@ -3677,6 +4484,184 @@ mod tests {
     }
 
     #[test]
+    fn a_fold_click_does_not_overwrite_an_unusable_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = "{ \"filter\": \"x.filter\", }";
+        std::fs::write(crate::settings::path(dir.path()), bad).unwrap();
+        let (loaded, warning) = crate::settings::load(dir.path());
+        assert!(warning.is_some());
+        let next = loaded.set_section_collapsed("dynamic.filter", "Gear", true);
+        assert!(!crate::settings::save_section_state(dir.path(), &next).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(crate::settings::path(dir.path())).unwrap(),
+            bad
+        );
+    }
+
+    #[test]
+    fn a_refused_section_edit_keeps_its_fold_flag() {
+        let r = crate::filter::section::RULE_LINE;
+        // "After" directly follows the economy section, so removing it is refused.
+        let mut working = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section Old
+{r}
+
+Show
+
+{r}
+{}
+{r}
+
+Hide
+
+             {r}
+# ff:section After
+{r}
+
+Show
+",
+            crate::filter::section::BEGIN_LINE
+        ));
+        assert!(working.sections()[1].economy);
+        let f = "dynamic.filter";
+        let mut fold = crate::settings::Settings::default().set_section_collapsed(f, "After", true);
+        let before = fold.clone();
+        let (changed, _) = super::apply_row_actions_folding(
+            &mut working,
+            &mut ListUi::default(),
+            &mut String::new(),
+            vec![RowAction::RemoveSection(2)],
+            Some(&mut fold),
+        );
+        assert!(!changed);
+        assert_eq!(fold, before, "a refused remove must not drop the flag");
+        // A rename that is refused (the economy banner is locked) moves nothing either.
+        let (changed, _) = super::apply_row_actions_folding(
+            &mut working,
+            &mut ListUi::default(),
+            &mut String::new(),
+            vec![RowAction::RenameSection {
+                ordinal: 1,
+                name: "After".into(),
+            }],
+            Some(&mut fold),
+        );
+        assert!(!changed);
+        assert_eq!(fold, before);
+    }
+
+    #[test]
+    fn a_batch_of_removes_drops_the_flags_of_the_sections_it_removed() {
+        let r = crate::filter::section::RULE_LINE;
+        let mut working = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section A
+{r}
+
+Show
+
+{r}
+# ff:section B
+{r}
+
+Show
+
+             {r}
+# ff:section C
+{r}
+
+Show
+"
+        ));
+        let f = "dynamic.filter";
+        let mut fold = crate::settings::Settings::default()
+            .set_section_collapsed(f, "A", true)
+            .set_section_collapsed(f, "B", true)
+            .set_section_collapsed(f, "C", true);
+        let (changed, _) = super::apply_row_actions_folding(
+            &mut working,
+            &mut ListUi::default(),
+            &mut String::new(),
+            vec![RowAction::RemoveSection(0), RowAction::RemoveSection(0)],
+            Some(&mut fold),
+        );
+        assert!(changed);
+        assert!(!fold.section_collapsed(f, "A", false));
+        assert!(!fold.section_collapsed(f, "B", false));
+        assert!(fold.section_collapsed(f, "C", false), "C still exists");
+    }
+
+    #[test]
+    fn section_state_follows_rename_remove_and_add() {
+        let r = crate::filter::section::RULE_LINE;
+        let working = WorkingFilter::from_text(&format!(
+            "{r}
+# ff:section Old
+{r}
+
+Show
+
+{r}
+# ff:section ff:economy
+{r}
+
+Hide
+"
+        ));
+        let f = "dynamic.filter";
+        let base = crate::settings::Settings::default()
+            .set_section_collapsed(f, "Old", true)
+            .set_section_collapsed(f, "Section", true);
+        let rename = RowAction::RenameSection {
+            ordinal: 0,
+            name: "New".into(),
+        };
+        let n = super::section_state_after(&working, &base, &[rename]);
+        assert!(n.section_collapsed(f, "New", false));
+        assert!(!n.section_collapsed(f, "Old", false), "no stale flag left");
+        let n = super::section_state_after(&working, &base, &[RowAction::RemoveSection(0)]);
+        assert!(!n.section_collapsed(f, "Old", false));
+        let n = super::section_state_after(&working, &base, &[RowAction::AddSection]);
+        assert!(
+            !n.section_collapsed(f, "Section", false),
+            "new starts expanded"
+        );
+        // A user section named like the economy key does not share its state.
+        let key = crate::settings::section_key(&working.sections()[1].name, false);
+        assert_ne!(key, crate::settings::ECONOMY_SECTION_KEY);
+    }
+
+    #[test]
+    fn a_rule_in_a_collapsed_section_is_revealed() {
+        let r = crate::filter::section::RULE_LINE;
+        let working = WorkingFilter::from_text(&format!(
+            "Show
+
+{r}
+# ff:section Gear
+{r}
+
+Hide
+"
+        ));
+        let settings = crate::settings::Settings::default().set_section_collapsed(
+            "dynamic.filter",
+            "Gear",
+            true,
+        );
+        let top = working.rows()[0].id;
+        let inner = working.rows()[1].id;
+        assert_eq!(super::section_to_reveal(&working, &settings, top), None);
+        assert_eq!(
+            super::section_to_reveal(&working, &settings, inner).as_deref(),
+            Some("Gear")
+        );
+        let open = crate::settings::Settings::default();
+        assert_eq!(super::section_to_reveal(&working, &open, inner), None);
+    }
+
+    #[test]
     fn apply_row_actions_coalesces_repeated_line_edits() {
         let mut working = WorkingFilter::from_text("Show\n  ItemLevel >= 70\n");
         let id = working.rows()[0].id;
@@ -3687,11 +4672,53 @@ mod tests {
             patch: crate::filter::LinePatch::Values(v.into()),
         };
         let mut list = ListUi::default();
-        let (changed, status) =
-            apply_row_actions(&mut working, &mut list, "", vec![ed("71"), ed("72")]);
+        let (changed, status) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut String::new(),
+            vec![ed("71"), ed("72")],
+        );
         assert!(changed);
         assert_eq!(status, None, "the stale first edit must not run");
         assert_eq!(working.text(), "Show\n  ItemLevel >= 72\n");
+    }
+
+    #[test]
+    fn add_section_opens_its_name_box_and_scrolls_to_the_top() {
+        let mut working = WorkingFilter::from_text(
+            "Show
+  Class \"Rings\"
+",
+        );
+        let mut list = ListUi::default();
+        let mut query = "rings".to_string();
+        let (changed, status) = apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut query,
+            vec![RowAction::AddSection],
+        );
+        assert!(changed);
+        assert!(
+            query.is_empty(),
+            "the search is cleared so the divider shows"
+        );
+        assert!(list.scroll_top && list.section_focus);
+        assert_eq!(list.section_draft, "Section");
+        assert_eq!(list.editing_section, Some(working.sections()[0].ordinal));
+        assert_eq!(
+            status.as_deref(),
+            Some("Section added at the top. Press Apply to save it.")
+        );
+        // Removing it ends the rename.
+        let ord = working.sections()[0].ordinal;
+        apply_row_actions(
+            &mut working,
+            &mut list,
+            &mut query,
+            vec![RowAction::RemoveSection(ord)],
+        );
+        assert!(list.editing_section.is_none());
     }
 
     /// WR-07: a removed line re-keys the cards after it, so their egui temp state is orphaned;
@@ -3708,14 +4735,14 @@ mod tests {
             expect: "  BaseType \"B\"".into(),
             patch: crate::filter::LinePatch::Values("\"C\"".into()),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![ed]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![ed]).0);
         assert_eq!(list.epoch, epoch);
         let rm = RowAction::RemoveLine {
             id,
             line: 1,
             expect: "  BaseType \"A\"".into(),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![rm]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![rm]).0);
         assert_ne!(list.epoch, epoch);
     }
 
@@ -3734,10 +4761,10 @@ mod tests {
         };
         let epoch = list.epoch;
         let same = whole(2, "  BaseType \"B\"", "basetype \"C\"");
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![same]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![same]).0);
         assert_eq!(list.epoch, epoch, "same keyword, ordinals unchanged");
         let fix = whole(1, "  BaseTyp \"A\"", "BaseType \"A\"");
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![fix]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![fix]).0);
         assert_ne!(list.epoch, epoch, "a changed keyword shifts ordinals");
         let epoch = list.epoch;
         let add = RowAction::AddLine {
@@ -3745,7 +4772,7 @@ mod tests {
             kind: crate::overlay::rules::LineKind::Condition,
             text: "ItemLevel >= 70".into(),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![add]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![add]).0);
         assert_ne!(list.epoch, epoch, "an added line can shift ordinals");
         let epoch = list.epoch;
         let insert = RowAction::InsertLineAfter {
@@ -3754,8 +4781,876 @@ mod tests {
             expect: "  BaseType \"A\"".into(),
             text: "ItemLevel <= 80".into(),
         };
-        assert!(apply_row_actions(&mut working, &mut list, "", vec![insert]).0);
+        assert!(apply_row_actions(&mut working, &mut list, &mut String::new(), vec![insert]).0);
         assert_ne!(list.epoch, epoch, "an inserted line can shift ordinals");
         assert_eq!(list.focus_line.map(|(_, l)| l), Some(2));
+    }
+
+    // ---- popups (Phase 30-03) ----
+
+    /// An app on temp-free in-memory state: built only to drive `dispatch_popup`, which touches
+    /// nothing on disk for the choices tested here.
+    fn popup_app(filter_text: &str) -> (super::OverlayApp, egui::Context) {
+        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let mut app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("test".to_string()),
+            None,
+            skin,
+        );
+        app.working = Some(WorkingFilter::from_text(filter_text));
+        (app, ctx)
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn expand_seeds_the_nth_row() {
+        let (app, _ctx) = popup_app(RULES);
+        let rows = app.working.as_ref().unwrap().rows();
+        assert_eq!(super::nth_row_id(rows, 1), Some(rows[0].id));
+        assert_eq!(super::nth_row_id(rows, 2), Some(rows[1].id));
+        assert_eq!(super::nth_row_id(rows, 0), None);
+        assert_eq!(super::nth_row_id(rows, rows.len() + 1), None);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn rename_section_picks_the_nth_user_section_and_skips_economy() {
+        let sec = |ordinal: usize, name: &str, economy: bool| crate::overlay::rules::SectionRow {
+            ordinal,
+            name: name.to_string(),
+            economy,
+            rules: 1,
+            can_move_up: false,
+            can_move_down: false,
+            can_remove: !economy,
+        };
+        let all = [sec(0, "A", false), sec(1, "B", false), sec(2, "Eco", true)];
+        assert_eq!(super::nth_user_section(&all, 1).unwrap().name, "A");
+        assert_eq!(super::nth_user_section(&all, 2).unwrap().ordinal, 1);
+        assert!(super::nth_user_section(&all, 3).is_none());
+        assert!(super::nth_user_section(&all, 0).is_none());
+    }
+
+    #[test]
+    fn delete_popup_choice_deletes_the_rule_and_keep_does_not() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let id = app.working.as_ref().unwrap().rows()[0].id;
+        app.list.confirm_delete = Some(id);
+        assert_eq!(
+            crate::overlay::shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DeleteRule)
+        );
+        app.dispatch_popup(&ctx, Popup::DeleteRule, 1);
+        assert_eq!(app.working.as_ref().unwrap().rows().len(), 2);
+        assert!(app.list.confirm_delete.is_none());
+
+        app.list.confirm_delete = Some(id);
+        app.dispatch_popup(&ctx, Popup::DeleteRule, 0);
+        assert_eq!(app.working.as_ref().unwrap().rows().len(), 1);
+        assert!(app.list.confirm_delete.is_none());
+        assert!(app.working.as_ref().unwrap().is_dirty());
+    }
+
+    /// CR-02: a failed Apply while the state is still `Applied` (from an earlier success) is
+    /// shown as an Error, never in the success colour.
+    #[test]
+    fn apply_failure_after_a_success_is_an_error() {
+        use crate::overlay::apply::ApplyState;
+        use crate::skin::widgets::StatusKind;
+        let (mut app, ctx) = popup_app(RULES);
+        let Rig {
+            root,
+            _game,
+            path,
+            loaded,
+            working,
+            config,
+        } = rig(S_RULE);
+        app.root = Ok(root.path().to_path_buf());
+        app.config = Ok(config);
+        app.filter = Ok(loaded);
+        app.working = Some(working);
+        app.apply_state = ApplyState::Applied;
+        // Someone else changes the filter: the Apply is refused.
+        std::fs::write(&path, "Show\n").unwrap();
+        assert!(!app.run_apply(&ctx, false));
+        assert_eq!(
+            app.apply_state,
+            ApplyState::Applied,
+            "a failure keeps the state"
+        );
+        let (text, kind) = app.apply_message.clone().unwrap();
+        assert_eq!(kind, StatusKind::Error, "{text}");
+        let event = crate::overlay::shell::event_from(app.apply_message.clone(), None, None, None);
+        assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
+    }
+
+    /// WR-02 (iteration 2): tier errors keep Overwrite off during a styles.json refusal, and the
+    /// popup says how to get it back.
+    #[test]
+    fn tier_errors_block_overwrite_and_the_popup_says_why() {
+        use crate::overlay::shell::{OverwriteBlock, Popup};
+        let (mut app, _ctx) = popup_app(RULES);
+        let Rig {
+            root,
+            _game,
+            path: _,
+            loaded,
+            working,
+            config,
+        } = rig(S_RULE);
+        app.root = Ok(root.path().to_path_buf());
+        app.config = Ok(config);
+        app.filter = Ok(loaded);
+        app.working = Some(working);
+        app.changed_on_disk = vec![DiskFile::Styles];
+        assert!(app.overwrite_decision(), "a valid config is overwritable");
+
+        app.config
+            .as_mut()
+            .unwrap()
+            .set_tier_text("S", "not a number");
+        assert!(app.config.as_ref().unwrap().has_tier_errors());
+        assert!(!app.overwrite_decision());
+        assert_eq!(app.overwrite_block(), OverwriteBlock::TierErrors);
+        app.overwrite_live = app.overwrite_decision();
+        let spec = app.popup_spec_for(Popup::ChangedOnDisk);
+        assert!(
+            spec.body
+                .contains("Fix the tier errors to overwrite instead."),
+            "{}",
+            spec.body
+        );
+        assert!(spec.buttons.iter().all(|b| b.0 != "Overwrite"));
+    }
+
+    /// 32 UI review: a fresh list event (`Section added…`) wins over the standing out-of-date
+    /// indicator until the next real edit; committing the new section's name box unchanged is
+    /// not an edit.
+    #[test]
+    fn a_section_added_message_beats_the_out_of_date_indicator() {
+        use crate::overlay::shell::{self, StatusInputs};
+        let (mut app, _ctx) = popup_app(RULES);
+        app.run_row_actions(vec![RowAction::AddSection]);
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+        let added = "Section added at the top. Press Apply to save it.";
+        assert_eq!(app.list_status.as_deref(), Some(added));
+        // The name box commits its default name on Enter or a click away.
+        app.run_row_actions(vec![RowAction::RenameSection {
+            ordinal: 0,
+            name: "Section".into(),
+        }]);
+        assert_eq!(app.list_status.as_deref(), Some(added), "not an edit");
+        let status = shell::status_for(StatusInputs {
+            root_error: None,
+            event: shell::event_from(
+                app.apply_message.clone(),
+                app.config_message.clone(),
+                None,
+                app.list_status.clone(),
+            ),
+            grammar_gate: None,
+            filter_error: None,
+            syncing: false,
+            unknown: None,
+            migrated: false,
+            absent: false,
+            indicator: (
+                crate::overlay::apply::indicator(app.apply_state),
+                shell::indicator_kind(app.apply_state),
+            ),
+        });
+        assert_eq!(status.text, added);
+        // A real rename is the next edit: the event gives way to the indicator.
+        app.run_row_actions(vec![RowAction::RenameSection {
+            ordinal: 0,
+            name: "Gear".into(),
+        }]);
+        assert_eq!(app.list_status, None);
+    }
+
+    /// WR-01: hiding clears the CONFIG message and the list status too, so neither hides the
+    /// grammar gate, the load error or the out-of-date indicator indefinitely; a rule edit clears
+    /// the CONFIG message.
+    #[test]
+    fn conceal_and_rule_edits_clear_stale_event_messages() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.config_message = Some(("Reverted config changes.".to_string(), false));
+        app.list_status = Some("Class groups unavailable (config.json): x".to_string());
+        app.clear_events_on_conceal();
+        assert_eq!(app.config_message, None);
+        assert_eq!(app.list_status, None);
+
+        app.config_message = Some(("Reverted config changes.".to_string(), false));
+        app.run_row_actions(vec![RowAction::AddRule]);
+        assert_eq!(app.config_message, None);
+    }
+
+    /// WR-01 (iteration 2): a refused Apply's Error line gives way to each tab's revert message,
+    /// economy staging clears a stale success, and a CONFIG edit clears the list status.
+    #[test]
+    fn reverts_staging_and_config_edits_clear_stale_events() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::skin::widgets::StatusKind;
+        let (mut app, ctx) = popup_app(RULES);
+        let refused = || {
+            Some((
+                "Apply refused: 1 invalid block".to_string(),
+                StatusKind::Error,
+            ))
+        };
+
+        // RULES Revert.
+        app.apply_message = refused();
+        app.revert();
+        assert_eq!(app.apply_message, None);
+        assert_eq!(
+            app.list_status.as_deref(),
+            Some(crate::overlay::apply::REVERTED_MESSAGE)
+        );
+
+        // CONFIG Revert (the config may be absent in this rig; the clear still runs).
+        app.apply_message = refused();
+        app.handle_config_actions(&ctx, vec![ConfigAction::Revert]);
+        assert_eq!(app.apply_message, None);
+        assert_eq!(app.list_status, None, "the RULES revert line is stale too");
+
+        // Economy staging hides neither the out-of-date indicator nor its own state.
+        app.apply_message = Some(("Wrote x.".to_string(), StatusKind::Ok));
+        app.list_status = Some(crate::overlay::apply::REVERTED_MESSAGE.to_string());
+        app.stage_remove_economy();
+        assert_eq!(app.apply_message, None);
+        assert_eq!(app.list_status, None);
+
+        // A CONFIG edit clears a RULES-side list status.
+        app.list_status = Some(crate::overlay::apply::REVERTED_MESSAGE.to_string());
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::TierText {
+                tier: "S".to_string(),
+                text: "1".to_string(),
+            }],
+        );
+        assert_eq!(app.list_status, None);
+    }
+
+    #[test]
+    fn style_editor_edits_stay_in_memory_until_apply_and_revert_restores() {
+        use crate::models::config::{Beam, Cancelable, FilterColor, Minimap, MinimapShape, Sound};
+        use crate::overlay::config_state::{ColourSlot, ConfigState, StyleEdit};
+        use crate::overlay::config_view::ConfigAction;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        let styles_path = dir.path().join("styles.json");
+        let before_bytes = std::fs::read(&styles_path).unwrap();
+        app.config = ConfigState::load(dir.path());
+        let original = app.config.as_ref().unwrap().style("S").unwrap().clone();
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+
+        let edit = |edit: StyleEdit| ConfigAction::EditStyle {
+            name: "S".to_string(),
+            edit,
+        };
+        app.handle_config_actions(
+            &ctx,
+            vec![
+                edit(StyleEdit::Colour {
+                    slot: ColourSlot::Text,
+                    value: Some([1, 2, 3]),
+                }),
+                edit(StyleEdit::Font(Some(20))),
+                edit(StyleEdit::Minimap(Some(Cancelable::Set(Minimap {
+                    size: 0,
+                    color: FilterColor::Cyan,
+                    shape: MinimapShape::Star,
+                })))),
+                edit(StyleEdit::Beam(Some(Cancelable::Set(Beam {
+                    color: FilterColor::Red,
+                    temp: true,
+                })))),
+                edit(StyleEdit::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(4),
+                    custom: None,
+                    vol: 50,
+                    positional: false,
+                })))),
+            ],
+        );
+        let state = app.config.as_ref().unwrap();
+        assert!(state.is_dirty(), "edits make CONFIG unapplied");
+        let edited = state.style("S").unwrap();
+        assert_eq!(edited.text, Some([1, 2, 3]));
+        assert_eq!(edited.font, Some(20));
+        assert_eq!(
+            std::fs::read(&styles_path).unwrap(),
+            before_bytes,
+            "nothing is written before Apply"
+        );
+
+        let epoch = app.config_ui.epoch;
+        app.handle_config_actions(&ctx, vec![ConfigAction::Revert]);
+        let state = app.config.as_ref().unwrap();
+        assert!(!state.is_dirty());
+        assert_eq!(state.style("S").unwrap(), &original);
+        assert_ne!(app.config_ui.epoch, epoch, "Revert orphans open pickers");
+        assert_eq!(std::fs::read(&styles_path).unwrap(), before_bytes);
+    }
+
+    /// WR-01: + Add style opens the new style's editor, even when the row was already marked
+    /// expanded (the handler used a toggle, which collapsed it again).
+    #[test]
+    fn adding_a_style_expands_it() {
+        use crate::overlay::config_state::ConfigState;
+        use crate::overlay::config_view::ConfigAction;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        app.config = ConfigState::load(dir.path());
+        for (name, pre) in [("glow", None), ("shine", Some("shine"))] {
+            app.config_ui.expanded = pre.map(str::to_string);
+            app.handle_config_actions(&ctx, vec![ConfigAction::AddStyle(name.to_string())]);
+            assert!(app.config.as_ref().unwrap().style(name).is_some());
+            assert_eq!(app.config_ui.expanded.as_deref(), Some(name));
+            assert_eq!(app.config_ui.scroll_to.as_deref(), Some(name));
+        }
+    }
+
+    fn config_with_defaults(app: &mut super::OverlayApp) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("styles-default.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+        ] {
+            std::fs::copy(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        app.config = crate::overlay::config_state::ConfigState::load(dir.path());
+        dir
+    }
+
+    #[test]
+    fn economy_revert_discards_only_tier_edits() {
+        use crate::overlay::config_state::StyleEdit;
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.handle_config_actions(
+            &ctx,
+            vec![
+                ConfigAction::TierText {
+                    tier: "S".to_string(),
+                    text: "31".to_string(),
+                },
+                ConfigAction::EditStyle {
+                    name: "S".to_string(),
+                    edit: StyleEdit::Font(Some(20)),
+                },
+            ],
+        );
+        // What the ECONOMY bar Revert click does.
+        app.config_ui.revert_scope = crate::overlay::config_state::RevertScope::Tiers;
+        app.config_ui.revert_armed = true;
+        let spec = app.popup_spec_for(Popup::DiscardConfig);
+        assert!(!spec.buttons.is_empty());
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        let c = app.config.as_ref().unwrap();
+        assert!(!c.tiers_dirty(), "tier edit reverted");
+        assert!(c.styles_dirty(), "style edit kept");
+    }
+
+    #[test]
+    fn config_revert_discards_only_style_edits() {
+        use crate::overlay::config_state::StyleEdit;
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.handle_config_actions(
+            &ctx,
+            vec![
+                ConfigAction::TierText {
+                    tier: "S".to_string(),
+                    text: "31".to_string(),
+                },
+                ConfigAction::EditStyle {
+                    name: "S".to_string(),
+                    edit: StyleEdit::Font(Some(20)),
+                },
+            ],
+        );
+        app.config_ui.revert_scope = crate::overlay::config_state::RevertScope::Styles;
+        app.config_ui.revert_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        let c = app.config.as_ref().unwrap();
+        assert!(!c.styles_dirty(), "style edit reverted");
+        assert!(c.tiers_dirty(), "tier edit kept");
+    }
+
+    #[test]
+    fn economy_add_click_stages_in_memory_and_writes_nothing() {
+        use crate::overlay::rules::EconomyView;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.filter");
+        std::fs::write(&path, RULES).unwrap();
+        let (mut app, _ctx) = popup_app(RULES);
+        // The repo root is read-only input here (styles, tiers, fallback prices).
+        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        assert_eq!(
+            *app.working.as_ref().unwrap().economy(),
+            EconomyView::Absent
+        );
+        app.stage_add_economy();
+        let w = app.working.as_ref().unwrap();
+        assert!(matches!(w.economy(), EconomyView::Present { .. }));
+        assert!(w.economy_staged());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), RULES);
+        // The staged section is browsable before Apply: named rows, header count to match.
+        assert!(!w.economy_rows().is_empty());
+        assert!(
+            w.economy_rows()[0]
+                .name
+                .as_deref()
+                .unwrap()
+                .contains(" tier ")
+        );
+        let sec = w.sections().iter().find(|s| s.economy).unwrap();
+        assert_eq!(sec.rules, w.economy_rows().len());
+    }
+
+    #[test]
+    fn staged_economy_preview_follows_pending_tier_edits() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        let Ok(_) = &app.config else {
+            panic!("rig has no CONFIG state");
+        };
+        app.stage_add_economy();
+        let before = app.working.as_ref().unwrap().economy_rows().len();
+        // A huge S cutoff empties tier S: the preview is re-priced from the pending tiers.
+        app.config.as_mut().unwrap().set_tier_text("S", "100000000");
+        app.refresh_staged_economy();
+        let after = app.working.as_ref().unwrap().economy_rows().len();
+        assert_ne!(before, after);
+        // An expanded preview row is collapsed by a re-price (its id would point elsewhere).
+        let id = app.working.as_ref().unwrap().economy_rows()[0].id;
+        app.list.expanded = Some(id);
+        app.config.as_mut().unwrap().set_tier_text("S", "90000000");
+        app.refresh_staged_economy();
+        assert_eq!(app.list.expanded, None);
+        assert_eq!(
+            app.working
+                .as_ref()
+                .unwrap()
+                .sections()
+                .iter()
+                .find(|s| s.economy)
+                .unwrap()
+                .rules,
+            after
+        );
+    }
+
+    /// An economy section already in the file follows the pending styles before Apply: a style
+    /// turned to Hide shows its economy rows as Hide, and dropping the edit shows the file again.
+    #[test]
+    fn economy_in_the_file_follows_pending_style_visibility() {
+        use crate::models::config::StyleAction;
+        use crate::overlay::config_state::StyleEdit;
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let body = super::staged_economy_body(&root, None).unwrap();
+        let text = crate::filter::section::add(RULES, &body).unwrap();
+        let (mut app, _ctx) = popup_app(&text);
+        app.root = Ok(root);
+        let s_row = |app: &super::OverlayApp| {
+            app.working
+                .as_ref()
+                .unwrap()
+                .economy_rows()
+                .iter()
+                .find(|r| r.name.as_deref() == Some("S tier Currency"))
+                .map(|r| (r.keyword, r.label.clone()))
+                .unwrap()
+        };
+        app.refresh_staged_economy();
+        assert!(!app.working.as_ref().unwrap().has_economy_preview());
+        assert_eq!(s_row(&app).0, crate::filter::BlockKeyword::Show);
+
+        let config = app.config.as_mut().unwrap();
+        assert!(config.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
+        super::sync_working_styles(app.config.as_ref().unwrap(), app.working.as_mut().unwrap());
+        app.refresh_staged_economy();
+        assert!(app.working.as_ref().unwrap().has_economy_preview());
+        let (kw, label) = s_row(&app);
+        assert_eq!(kw, crate::filter::BlockKeyword::Hide);
+        assert!(label.starts_with("Hide"), "{label}");
+        let w = app.working.as_ref().unwrap();
+        let sec = w.sections().iter().find(|s| s.economy).unwrap();
+        assert_eq!(sec.rules, w.economy_rows().len());
+        // Nothing is written by the preview.
+        assert!(!w.is_dirty());
+
+        app.config.as_mut().unwrap().revert();
+        super::sync_working_styles(app.config.as_ref().unwrap(), app.working.as_mut().unwrap());
+        app.refresh_staged_economy();
+        assert!(!app.working.as_ref().unwrap().has_economy_preview());
+        assert_eq!(s_row(&app).0, crate::filter::BlockKeyword::Show);
+    }
+
+    #[test]
+    fn staged_economy_preview_is_re_priced_after_a_sync() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = tempfile::tempdir().unwrap();
+        for f in [
+            "styles-default.json",
+            "tiers-default.json",
+            "prices-fallback.json",
+            "tiers-fallback.json",
+        ] {
+            std::fs::copy(repo.join(f), dir.path().join(f)).unwrap();
+        }
+        app.root = Ok(dir.path().to_path_buf());
+        app.stage_add_economy();
+        app.refresh_staged_economy();
+        let before = app.working.as_ref().unwrap().economy_rows().len();
+        // A sync lands live prices (the seed fixture) where only the fallback pair existed.
+        std::fs::copy(
+            repo.join("tests/fixtures/seed-prices.json"),
+            dir.path().join("prices.json"),
+        )
+        .unwrap();
+        app.prices_changed();
+        app.refresh_staged_economy();
+        let after = app.working.as_ref().unwrap().economy_rows().len();
+        assert_ne!(before, after, "the preview must follow the new prices");
+    }
+
+    #[test]
+    fn economy_remove_click_asks_and_the_popup_stages_the_removal() {
+        use crate::overlay::rules::EconomyView;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        app.stage_add_economy();
+        // Keep: nothing changes.
+        app.list.confirm_economy_remove = true;
+        app.dispatch_popup(&ctx, Popup::RemoveEconomy, 1);
+        assert!(matches!(
+            app.working.as_ref().unwrap().economy(),
+            EconomyView::Present { .. }
+        ));
+        // Remove: staged (the add is undone, so the section is absent again).
+        app.list.confirm_economy_remove = true;
+        app.dispatch_popup(&ctx, Popup::RemoveEconomy, 0);
+        assert_eq!(
+            *app.working.as_ref().unwrap().economy(),
+            EconomyView::Absent
+        );
+    }
+
+    #[test]
+    fn economy_revert_with_tier_edits_keeps_the_staged_op_until_confirmed() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::TierText {
+                tier: "S".to_string(),
+                text: "31".to_string(),
+            }],
+        );
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
+        // Revert opens the popup and drops nothing yet.
+        app.economy_revert_pressed();
+        assert!(app.config_ui.revert_armed);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        // Keep editing: both edits survive.
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        assert!(app.config.as_ref().unwrap().tiers_dirty());
+        // Discard: tiers and the staged op go together.
+        app.economy_revert_pressed();
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        assert!(!app.working.as_ref().unwrap().economy_staged());
+        assert!(!app.config.as_ref().unwrap().tiers_dirty());
+    }
+
+    #[test]
+    fn economy_revert_without_tier_edits_asks_before_dropping_the_staged_op() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
+        app.economy_revert_pressed();
+        assert!(app.config_ui.revert_armed, "the popup is armed");
+        assert!(
+            app.working.as_ref().unwrap().economy_staged(),
+            "nothing dropped yet"
+        );
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardConfig)
+        );
+        let spec = app.popup_spec_for(Popup::DiscardConfig);
+        assert_eq!(spec.title, "Discard economy changes?");
+        assert_eq!(spec.body, "Discard the staged economy section change?");
+        // Keep editing keeps it.
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
+        assert!(!app.config_ui.revert_armed);
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        // Discard drops it, with no tier message.
+        app.economy_revert_pressed();
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        assert!(!app.working.as_ref().unwrap().economy_staged());
+        assert!(app.config_message.is_none(), "{:?}", app.config_message);
+    }
+
+    #[test]
+    fn economy_revert_with_nothing_to_discard_does_not_arm() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.economy_revert_pressed();
+        assert!(!app.config_ui.revert_armed);
+    }
+
+    #[test]
+    fn rules_revert_asks_first_and_discard_reverts() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.run_row_actions(vec![RowAction::AddRule]);
+        let before = app.working.as_ref().unwrap().rows().len();
+        // What the RULES bar Revert click does: arm only.
+        app.revert_rules_armed = true;
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardRules)
+        );
+        let spec = app.popup_spec_for(Popup::DiscardRules);
+        assert_eq!(spec.title, "Discard rule changes?");
+        assert_eq!(spec.buttons.len(), 2);
+        assert!(
+            app.working.as_ref().unwrap().is_dirty(),
+            "nothing reverted yet"
+        );
+        // Keep editing (also Escape / click outside: the last button) keeps the edit.
+        app.dispatch_popup(&ctx, Popup::DiscardRules, 1);
+        assert!(!app.revert_rules_armed);
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        assert_eq!(app.working.as_ref().unwrap().rows().len(), before);
+        // Discard runs the revert.
+        app.revert_rules_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardRules, 0);
+        assert!(!app.revert_rules_armed);
+        let w = app.working.as_ref().unwrap();
+        assert!(!w.is_dirty());
+        assert_eq!(w.rows().len(), before - 1);
+        assert_eq!(
+            app.list_status.as_deref(),
+            Some(crate::overlay::apply::REVERTED_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn discard_rules_flag_needs_something_to_revert() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.revert_rules_armed = true;
+        assert!(!app.popup_flags(false).discard_rules);
+        assert!(!app.rules_revert_live());
+        app.run_row_actions(vec![RowAction::AddRule]);
+        assert!(app.popup_flags(false).discard_rules);
+        assert!(app.rules_revert_live());
+    }
+
+    /// WR-03 / WR-04: the RULES Revert button is live exactly when its popup opens. A staged
+    /// economy op alone (ECONOMY's) leaves both off, and Discard keeps it.
+    #[test]
+    fn rules_revert_button_and_popup_share_one_predicate() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        app.revert_rules_armed = true;
+        assert!(!app.rules_revert_live());
+        assert!(!app.popup_flags(false).discard_rules);
+        app.revert_rules_armed = false;
+
+        app.run_row_actions(vec![RowAction::AddRule]);
+        assert!(app.rules_revert_live());
+        app.revert_rules_armed = true;
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardRules)
+        );
+        app.dispatch_popup(&ctx, Popup::DiscardRules, 0);
+        let w = app.working.as_ref().unwrap();
+        assert!(!w.rules_edited());
+        assert!(w.economy_staged(), "the ECONOMY tab's staged op survives");
+        assert!(!app.rules_revert_live());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn shot_popup_discard_rules_opens_the_popup() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, _ctx) = popup_app(RULES);
+        app.open_shot_popup(Some("discard-rules"));
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::DiscardRules)
+        );
+    }
+
+    #[test]
+    fn economy_revert_unstages_only_the_economy_op() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert_eq!(
+            *app.working.as_ref().unwrap().economy(),
+            crate::overlay::rules::EconomyView::Absent
+        );
+        app.run_row_actions(vec![RowAction::AddRule]);
+        app.working
+            .as_mut()
+            .unwrap()
+            .stage_add_economy(&crate::overlay::rules::tests_econ_body(3));
+        assert!(app.working.as_ref().unwrap().economy_staged());
+        app.unstage_economy_pressed();
+        let w = app.working.as_ref().unwrap();
+        assert!(!w.economy_staged());
+        assert_eq!(*w.economy(), crate::overlay::rules::EconomyView::Absent);
+        assert!(w.is_dirty(), "the added rule survives");
+    }
+
+    #[test]
+    fn economy_info_reads_prices_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = super::EconomyInfo::read(dir.path());
+        assert_eq!(empty, super::EconomyInfo::default());
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/seed-prices.json");
+        std::fs::copy(&seed, dir.path().join("prices.json")).unwrap();
+        let expected = crate::loader::load_prices_optional(&seed.to_string_lossy())
+            .unwrap()
+            .unwrap()
+            .items
+            .len();
+        let info = super::EconomyInfo::read(dir.path());
+        assert_eq!(info.priced_items, expected);
+        assert!(info.live && info.mtime_secs.is_some());
+        std::fs::write(dir.path().join("prices.json"), "{ not json").unwrap();
+        let bad = super::EconomyInfo::read(dir.path());
+        assert!(!bad.live && bad.priced_items == 0);
+        assert!(bad.problem.is_some(), "the parse error is kept");
+        assert_eq!(bad.mtime_secs, None, "a broken file is not a sync time");
+        // An empty file is also unusable, not a fresh sync.
+        std::fs::write(dir.path().join("prices.json"), "").unwrap();
+        let blank = super::EconomyInfo::read(dir.path());
+        assert!(!blank.live && blank.problem.is_some() && blank.mtime_secs.is_none());
+        // A missing file is simply absent: no problem to report.
+        std::fs::remove_file(dir.path().join("prices.json")).unwrap();
+        assert_eq!(super::EconomyInfo::read(dir.path()).problem, None);
+    }
+
+    #[test]
+    fn changed_on_disk_popup_keep_editing_closes_but_overwrite_slot_reopens() {
+        use crate::overlay::shell::{Popup, active_popup};
+        let (mut app, ctx) = popup_app(RULES);
+        app.changed_on_disk = vec![DiskFile::Filter];
+        app.changed_popup = true;
+        app.overwrite_live = true;
+        assert_eq!(
+            active_popup(app.popup_flags(false)),
+            Some(Popup::ChangedOnDisk)
+        );
+        // Quit outranks it.
+        app.quit_confirm = true;
+        assert_eq!(active_popup(app.popup_flags(false)), Some(Popup::Quit));
+        app.quit_confirm = false;
+        // Keep editing: the popup closes, the refusal stays.
+        app.dispatch_popup(&ctx, Popup::ChangedOnDisk, 2);
+        assert_eq!(active_popup(app.popup_flags(false)), None);
+        assert_eq!(app.changed_on_disk, vec![DiskFile::Filter]);
+        // The bottom-bar Overwrite slot sets the flag again.
+        app.changed_popup = true;
+        assert_eq!(
+            active_popup(app.popup_flags(false)),
+            Some(Popup::ChangedOnDisk)
+        );
+    }
+
+    #[test]
+    fn quit_popup_cancel_keeps_running_and_discard_defers_one_frame() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 2);
+        assert!(!app.quit_confirm && !app.quit_next_frame);
+
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(!app.quit_confirm);
+        assert!(app.quit_next_frame, "shutdown waits for the next frame");
+        assert!(!app.quit_after_apply);
+    }
+
+    #[test]
+    fn remaining_popups_close_on_the_safe_choice_without_acting() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        app.pending_switch = Some("other.filter".to_string());
+        app.dispatch_popup(&ctx, Popup::SwitchFilter, 1);
+        assert!(app.pending_switch.is_none());
+        app.list.confirm_economy_remove = true;
+        app.dispatch_popup(&ctx, Popup::RemoveEconomy, 1);
+        assert!(!app.list.confirm_economy_remove);
+        app.config_ui.delete_armed = Some("kite".to_string());
+        app.dispatch_popup(&ctx, Popup::DeleteStyle, 1);
+        assert!(app.config_ui.delete_armed.is_none());
+        app.config_ui.revert_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
+        assert!(!app.config_ui.revert_armed);
     }
 }

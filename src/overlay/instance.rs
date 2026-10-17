@@ -1,7 +1,7 @@
 //! Single-instance gate for the `ff` overlay (INST-01, Phase 22).
 //!
-//! A second `ff` launch reveals the running stripe and exits; it never opens a
-//! second stripe.
+//! A second `ff` launch reveals the running window and exits; it never opens a
+//! second window.
 //!
 //! Mechanism: a named mutex in the `Local\` namespace is held for the process
 //! lifetime and released by the OS on exit or crash, so there is no stale-lock
@@ -17,7 +17,7 @@
 //!
 //! Failure policy (WR-03): if the mutex itself cannot be created, the launch fails
 //! closed with a MessageBox naming the Win32 error, because the same failure would
-//! repeat on every launch and each would open another stripe. If the first instance
+//! repeat on every launch and each would open another window. If the first instance
 //! cannot create its events it keeps running (it holds the mutex) with no events at
 //! all, and a later launch sees the missing `-ready` event and says it cannot reach
 //! the running instance instead of reporting it "not responding".
@@ -107,25 +107,25 @@ pub fn signal_message(outcome: Wait) -> Option<String> {
             };
             Some(format!(
                 "FerrisFilter is already running, but this launch could not ask it to show its \
-                 stripe ({reason}). Use its tray icon or Ctrl+Shift+Z instead."
+                 window ({reason}). Use its tray icon or Ctrl+Shift+Z instead."
             ))
         }
     }
 }
 
 /// The message box shown when the single-instance check itself fails (WR-03): the launch
-/// fails closed rather than risk a second stripe.
+/// fails closed rather than risk a second window.
 pub fn check_failed_message(code: u32) -> String {
     format!(
         "FerrisFilter could not check whether it is already running (Windows error {code}), so \
-         it did not start, to avoid opening a second stripe. Try again; if this keeps \
+         it did not start, to avoid opening a second window. Try again; if this keeps \
          happening, sign out and back in."
     )
 }
 
 /// Map a `WaitForSingleObject` code. Anything but WAIT_OBJECT_0 (timeout,
 /// failure, abandoned) is "not responding", which only ever leads to the message
-/// box, never to a second stripe.
+/// box, never to a second window.
 pub fn classify_wait(code: u32) -> Wait {
     if code == WAIT_OBJECT_0_CODE {
         Wait::Signaled
@@ -287,13 +287,13 @@ mod imp {
             close_all(&[show, ack, ready]);
             // An elevated first instance denies access to the object: treat as
             // running (the signal path then reports it as unreachable, never a
-            // second stripe).
+            // second window).
             if err == ERROR_ACCESS_DENIED {
                 return Acquired::AlreadyRunning;
             }
             // Fail closed (WR-03): any other failure (e.g. ERROR_INVALID_HANDLE when
             // another object type holds the name) would repeat on every launch, so
-            // starting anyway would open a new stripe each time.
+            // starting anyway would open a new window each time.
             return Acquired::Failed(err);
         }
         if err == ERROR_ALREADY_EXISTS {
@@ -304,7 +304,7 @@ mod imp {
         }
 
         let (show, ack, ready) = if show.is_null() || ack.is_null() || ready.is_null() {
-            // Keep running (this process holds the mutex, so it is the one stripe),
+            // Keep running (this process holds the mutex, so it is the one window),
             // but with no events at all, so the next launch reports that it cannot
             // reach this instance instead of a false "not responding".
             eprintln!("single-instance: CreateEventW failed; show requests disabled");
@@ -384,14 +384,14 @@ mod imp {
         let result = request_until_acked(show, ack, ack_ms);
         if result == Wait::TimedOut {
             // SAFETY: `show` is a live event handle owned by the caller. Withdraw the
-            // request so an instance that recovers later does not reveal the stripe after
+            // request so an instance that recovers later does not reveal the window after
             // the user was told it is not responding (IN-02).
             unsafe { ResetEvent(show) };
         }
         result
     }
 
-    /// Ask the running instance to show its stripe. First wait up to `startup_ms` for it to
+    /// Ask the running instance to show its window. First wait up to `startup_ms` for it to
     /// be ready (WR-02: a launch during its startup is not "not responding"); no request is
     /// sent before then, so a never-ready instance is not left holding one. Then request and
     /// wait up to `ack_ms` for the ack.
@@ -440,7 +440,7 @@ mod imp {
 
     /// The decision of one launch, before any message box is shown.
     pub enum Launch {
-        /// This process is the single instance: run the stripe.
+        /// This process is the single instance: run the window.
         Run(Guard),
         /// Exit; show this message first, if any.
         Exit(Option<String>),
@@ -451,7 +451,7 @@ mod imp {
     /// When asking the running instance fails, the name is checked once more before any
     /// message (review iteration 2, WR-01): the instance may have quit, or crashed, while this
     /// launch was asking, and then this launch is the one that should run. The mutex is still
-    /// the arbiter, so this can never open a second stripe.
+    /// the arbiter, so this can never open a second window.
     pub fn launch_named(names: &InstanceNames, startup_ms: u32, ack_ms: u32) -> Launch {
         match acquire_named(names) {
             Acquired::First(g) => Launch::Run(g),
@@ -472,7 +472,7 @@ mod imp {
         }
     }
 
-    /// Composed entry for `launch()`: `Some(guard)` = run the stripe, `None` =
+    /// Composed entry for `launch()`: `Some(guard)` = run the window, `None` =
     /// exit 0. Call before creating the hotkey or the tray, and keep the Guard
     /// alive until exit (or until tray Quit, which drops it early).
     pub fn acquire() -> Option<Guard> {
@@ -661,7 +661,7 @@ mod windows_tests {
 
     /// A polling first instance on its own thread: it waits `startup` (the window, GPU
     /// context and filter load), marks itself ready, then answers every show request at
-    /// a hidden stripe's ~50 ms frame rate until `stop` is set. Returns the number of
+    /// a hidden overlay's ~50 ms frame rate until `stop` is set. Returns the number of
     /// requests it answered.
     fn spawn_responder(
         n: &InstanceNames,
@@ -729,7 +729,7 @@ mod windows_tests {
     #[test]
     fn a_timed_out_request_is_withdrawn() {
         // IN-02: after the launcher gives up, a late-recovering instance must not
-        // reveal the stripe the user was just told is not responding.
+        // reveal the window the user was just told is not responding.
         let n = test_names("withdrawn");
         let mut g = first(&n);
         g.mark_ready();
@@ -836,7 +836,7 @@ mod windows_tests {
     #[test]
     fn a_launch_to_a_still_running_unresponsive_instance_reports_it() {
         // The re-check only runs a launch whose instance is really gone; one that still
-        // holds the name keeps the "not responding" message and never a second stripe.
+        // holds the name keeps the "not responding" message and never a second window.
         let n = test_names("launchstuck");
         let mut g = first(&n);
         g.mark_ready();
@@ -851,7 +851,7 @@ mod windows_tests {
     #[test]
     fn a_never_ready_instance_times_out_without_leaving_a_request() {
         // WR-02: no request is sent before ready, so an instance that finishes
-        // starting after the launcher gave up does not reveal the stripe late.
+        // starting after the launcher gave up does not reveal the window late.
         let n = test_names("neverready");
         let mut g = first(&n);
         assert_eq!(signal_running(&n, 150, 100), Wait::TimedOut);
@@ -899,7 +899,7 @@ mod windows_tests {
 
     #[test]
     fn an_instance_whose_event_creation_failed_keeps_running_and_is_unreachable() {
-        // WR-03: the first instance keeps the mutex (it is still the one stripe),
+        // WR-03: the first instance keeps the mutex (it is still the one window),
         // and a later launch reports the failure instead of opening a second one.
         let n = test_names("eventfail");
         let squatter = Hold::mutex(&n.ready);

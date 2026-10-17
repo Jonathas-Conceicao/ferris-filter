@@ -3,7 +3,6 @@ reference-old-filters/
 
 # Rust build artifacts
 /target/
-Cargo.lock
 
 # OS / editor cruft
 Thumbs.db
@@ -36,3 +35,6 @@ desktop.ini
 # tiers-default.json (committed) are read instead. Delete one to reset it to the defaults.
 /styles.json
 /tiers.json
+
+# My personal notes
+human_notes.org

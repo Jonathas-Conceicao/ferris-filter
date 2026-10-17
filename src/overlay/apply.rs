@@ -18,12 +18,9 @@ use std::path::{Path, PathBuf};
 /// D-16's exact reload instruction. Its wording matters — this is the one string in this phase a
 /// player standing in front of the game reads literally, so it is a named constant rather than
 /// inlined at each use site.
-/// Deliberately ASCII. The stripe renders this in the Cinzel display family, which has no
-/// arrow glyph, so a → came out as a tofu box in the confirmation line (reported from live use
-/// 2026-09-07, screenshot poe2_print005). `install_fonts` now gives that family a fallback
-/// chain, but the fallback fonts are not guaranteed to carry U+2192 either — and this is the
-/// one string whose job is to tell the player how to make their filter take effect, so it does
-/// not get to depend on glyph coverage.
+/// Deliberately ASCII: a -> arrow is not guaranteed to be in the fonts, and this is the one
+/// string whose job is to tell the player how to make their filter take effect, so it does not
+/// get to depend on glyph coverage (an arrow came out as a tofu box in live use, 2026-09-07).
 pub const RELOAD_INSTRUCTION: &str = "Options > Game > Item Filter > Refresh";
 
 /// Whether the filter on disk matches what the last Apply wrote, as far as this overlay session
@@ -65,7 +62,7 @@ pub enum ApplyOutcome {
     Failed(String),
 }
 
-/// The message rendered in the stripe after a successful Apply: names the written file and
+/// The message rendered in the window after a successful Apply: names the written file and
 /// states how to make the game read it. The exact substring `Options > Game > Item Filter >
 /// Refresh` is asserted verbatim below — PoE2 never re-reads a filter on its own
 /// (`PITFALLS.md` §1), so a tool that writes silently reads as broken.
@@ -88,7 +85,7 @@ pub const REASON_GAME_NOT_RUNNING: &str = "game not running";
 pub const REASON_SETTING_OFF: &str = "reload setting is off";
 /// Reason shown when no reload was sent because another one is still in flight.
 pub const REASON_BUSY: &str = "a reload is already in progress";
-/// Reason shown when no reload was sent because the stripe's window handle is not available, so
+/// Reason shown when no reload was sent because the overlay window handle is not available, so
 /// the clipboard could not be used safely.
 pub const REASON_NO_WINDOW: &str = "the overlay window is not ready";
 
@@ -199,7 +196,7 @@ pub const OVERWRITE_TOOLTIP: &str = "Replace the file with your edits.";
 pub const REVERTED_MESSAGE: &str = "Reverted to the last applied filter.";
 
 /// Tooltip on the disabled APPLY button while an enabled rule has a grammar error.
-pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix or disable the rules marked \"grammar error\" first.";
+pub const APPLY_BLOCKED_TOOLTIP: &str = "Fix or disable the rules marked with the red ! first.";
 
 /// The status shown when Apply is refused by the grammar gate.
 pub fn invalid_blocks_message(count: usize, first_rule: usize, first_line: usize) -> String {
@@ -213,10 +210,8 @@ pub fn invalid_blocks_message(count: usize, first_rule: usize, first_line: usize
     )
 }
 
-/// The status after adding a rule the current search hides.
-pub fn added_hidden_message(position: usize) -> String {
-    format!("Rule added at position {position} (hidden by the current search)")
-}
+/// The status after + Add rule: the new rule is the first block of the file.
+pub const RULE_ADDED_MESSAGE: &str = "Rule added at the top of the file. Press Apply to save it.";
 
 /// The footer's button rules. A missing app root disables everything that touches files; after a
 /// changed-on-disk refusal only RELOAD, OVERWRITE (gated like APPLY) and SYNC remain.
@@ -254,12 +249,12 @@ pub fn footer_actions(
 
 /// The status line for damaged economy markers; also the disabled CONFIG Apply tooltip.
 pub const DAMAGED_MARKERS_MESSAGE: &str =
-    "The economy section markers are damaged. Fix them by hand, then RELOAD.";
+    "The economy section markers are damaged. Fix them by hand, then Reload.";
 
-/// The stripe's status text for the filter file.
+/// The overlay's status text for the filter file.
 pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     let mut text = match state {
-        FilterState::Absent => "The filter does not exist yet. APPLY creates it once it has rules \
+        FilterState::Absent => "The filter does not exist yet. Apply creates it once it has rules \
              or an economy section."
             .to_string(),
         FilterState::NoSection => "The filter has no economy section.".to_string(),
@@ -269,7 +264,7 @@ pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     };
     if migrated {
         text.push_str(
-            " This is a v0.4 dynamic.filter. It will be converted on the next APPLY \
+            " This is a v0.4 dynamic.filter. It will be converted on the next Apply \
              (a .ffbak backup of the original is kept).",
         );
     }
@@ -280,13 +275,25 @@ pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
 /// written filter does not match these rules" — and `Applied` reads differently in wording, not
 /// just colour, so the signal survives a colourblind or monochrome render (a colour-only signal
 /// is not an indicator).
+/// Short enough to fit the status line at 660pt; [`indicator_tip`] carries the explanation.
 pub fn indicator(state: ApplyState) -> &'static str {
     match state {
-        ApplyState::NeverApplied | ApplyState::Unapplied => {
-            "Filter out of date — press Apply, then reload in-game"
-        }
+        ApplyState::NeverApplied | ApplyState::Unapplied => UNAPPLIED_INDICATOR,
         ApplyState::Applied => "Filter matches saved rules",
     }
+}
+
+/// The unapplied indicator's text.
+pub const UNAPPLIED_INDICATOR: &str = "Unapplied changes";
+
+/// Hover text of the unapplied indicator: what the short message means and what to do.
+pub const UNAPPLIED_INDICATOR_TIP: &str = "The filter on disk does not match these edits yet. \
+     Press Apply to write it; it is then reloaded in game (or use Options > Game > Item Filter > \
+     Refresh).";
+
+/// The hover explanation for an indicator text, if it has one.
+pub fn indicator_tip(text: &str) -> Option<&'static str> {
+    (text == UNAPPLIED_INDICATOR).then_some(UNAPPLIED_INDICATOR_TIP)
 }
 
 /// Status after REMOVE STYLE: the rule keeps its actions.
@@ -367,7 +374,7 @@ pub enum QuitEvent {
 pub enum QuitStep {
     /// Run the shutdown sequence now.
     QuitNow,
-    /// Show the stripe with the confirm.
+    /// Show the window with the confirm.
     OpenConfirm,
     /// Confirm already open: nothing to do.
     KeepConfirm,
@@ -393,8 +400,8 @@ pub fn quit_step(dirty: bool, confirm_open: bool, event: QuitEvent) -> QuitStep 
     }
 }
 
-/// True when the step leaves the confirm open, so a hidden stripe must be revealed to show it.
-/// A second tray Quit counts too: the stripe may have been hidden while the confirm was up.
+/// True when the step leaves the confirm open, so a hidden window must be revealed to show it.
+/// A second tray Quit counts too: the window may have been hidden while the confirm was up.
 pub fn quit_step_shows_confirm(step: QuitStep) -> bool {
     matches!(step, QuitStep::OpenConfirm | QuitStep::KeepConfirm)
 }
@@ -445,6 +452,32 @@ pub fn config_apply_enabled(
         && (!has_filter || (blocking == 0 && state != FilterState::Damaged))
 }
 
+/// Whether OVERWRITE is live after a changed-on-disk refusal, for the bottom bar and the popup
+/// alike (review WR-03): the filter's own decision (`filter_overwrite`, i.e.
+/// `FooterActions::overwrite`), or -- for a refusal that only the config files can resolve, such as
+/// a filter that failed to load or an absent, clean one -- the CONFIG Apply decision with the
+/// changed-on-disk guard lifted, so a config-only refusal stays overwritable.
+///
+/// `config_blocks` is a loaded config that fails validation (tier errors, an invalid
+/// styles.json/tiers.json): every Apply validates it, so Overwrite is off then, as v0.5's CONFIG
+/// OVERWRITE was gated on validity like its Apply (review WR-02, iteration 2).
+#[allow(clippy::too_many_arguments)]
+pub fn overwrite_enabled(
+    filter_overwrite: bool,
+    root_ok: bool,
+    config_valid: bool,
+    config_blocks: bool,
+    state: FilterState,
+    needs_reload: bool,
+    dirty: bool,
+    blocking: usize,
+) -> bool {
+    needs_reload
+        && !config_blocks
+        && (filter_overwrite
+            || config_apply_enabled(root_ok, config_valid, state, false, dirty, blocking))
+}
+
 /// The indicator after one tab's REVERT: still out of date when the other tab holds edits.
 pub fn state_after_revert(applied_this_session: bool, other_dirty: bool) -> ApplyState {
     if other_dirty {
@@ -456,9 +489,9 @@ pub fn state_after_revert(applied_this_session: bool, other_dirty: bool) -> Appl
     }
 }
 
-/// A tab's label, with ` *` when the OTHER tab holds unapplied edits.
-pub fn tab_label(name: &str, other_dirty: bool) -> String {
-    if other_dirty {
+/// A tab's label, with ` *` when that tab holds unapplied edits.
+pub fn tab_label(name: &str, dirty: bool) -> String {
+    if dirty {
         format!("{name} *")
     } else {
         name.to_string()
@@ -572,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_labels_mark_the_other_tab_only_when_dirty() {
+    fn tab_labels_mark_a_dirty_tab() {
         assert_eq!(tab_label("RULES", true), "RULES *");
         assert_eq!(tab_label("CONFIG", false), "CONFIG");
     }
@@ -623,6 +656,23 @@ mod tests {
             indicator(ApplyState::NeverApplied),
             indicator(ApplyState::Unapplied)
         );
+    }
+
+    #[test]
+    fn indicator_is_short_and_explained_on_hover() {
+        // The status slot left of Revert / Reload / Apply holds ~30 characters at 660pt.
+        for state in [ApplyState::Unapplied, ApplyState::Applied] {
+            assert!(
+                indicator(state).chars().count() <= 26,
+                "{}",
+                indicator(state)
+            );
+        }
+        assert_eq!(
+            indicator_tip(indicator(ApplyState::Unapplied)),
+            Some(UNAPPLIED_INDICATOR_TIP)
+        );
+        assert_eq!(indicator_tip(indicator(ApplyState::Applied)), None);
     }
 
     #[test]
@@ -730,6 +780,51 @@ mod tests {
     }
 
     #[test]
+    fn overwrite_covers_config_only_refusals() {
+        use FilterState::*;
+        // Arguments: filter_overwrite, root_ok, config_valid, config_blocks, state,
+        // needs_reload, dirty, blocking.
+        // The filter's own Overwrite stands.
+        assert!(overwrite_enabled(
+            true, true, true, false, HasSection, true, false, 0
+        ));
+        // A failed or absent-and-clean filter: a config edit is still overwritable.
+        for st in [LoadFailed, Absent] {
+            assert!(
+                overwrite_enabled(false, true, true, false, st, true, true, 0),
+                "{st:?}"
+            );
+            assert!(
+                !overwrite_enabled(false, true, true, false, st, true, false, 0),
+                "{st:?}"
+            );
+            assert!(
+                !overwrite_enabled(false, true, false, true, st, true, true, 0),
+                "{st:?}"
+            );
+        }
+        // Grammar errors or damaged markers still keep a filter write from happening.
+        assert!(!overwrite_enabled(
+            false, true, true, false, HasSection, true, true, 1
+        ));
+        assert!(!overwrite_enabled(
+            false, true, true, false, Damaged, true, true, 0
+        ));
+        // An invalid config (tier errors) blocks even the filter's own Overwrite (WR-02).
+        assert!(!overwrite_enabled(
+            true, true, false, true, HasSection, true, true, 0
+        ));
+        // A config that failed to load is not validated, so it does not block.
+        assert!(overwrite_enabled(
+            true, true, false, false, HasSection, true, true, 0
+        ));
+        // Never outside a refusal.
+        assert!(!overwrite_enabled(
+            true, true, true, false, HasSection, false, true, 0
+        ));
+    }
+
+    #[test]
     fn revert_follows_dirty() {
         assert!(!footer_actions(true, FilterState::HasSection, false, false, 0).revert);
         assert!(footer_actions(true, FilterState::HasSection, false, true, 0).revert);
@@ -768,10 +863,10 @@ mod tests {
             "Config already up to date."
         );
         assert!(RELOAD_TOOLTIP.contains("Discard") && OVERWRITE_TOOLTIP.contains("Replace"));
-        assert!(APPLY_BLOCKED_TOOLTIP.contains("grammar error"));
+        assert!(APPLY_BLOCKED_TOOLTIP.contains("red !"));
         assert_eq!(
-            added_hidden_message(7),
-            "Rule added at position 7 (hidden by the current search)"
+            RULE_ADDED_MESSAGE,
+            "Rule added at the top of the file. Press Apply to save it."
         );
     }
 

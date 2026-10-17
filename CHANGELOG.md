@@ -11,6 +11,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-17
+
+**New PoE2-based Tool UI** — `ff` is redrawn in Path of Exile 2's own Options-window style
+(docked shell, four tabs, one-line status, skinned popups), filters gain collapsible sections with
+the economy section as the locked last one, styles get a table and a line-by-line editor shared
+with Custom rules, ECONOMY and ABOUT become tabs, and the `ff-proto` prototype is retired.
+
+### Added
+
+- **PoE2-style UI prototype (`ff-proto`).** Added to try the game-styled look on fake data (quick
+  261015-tz2, 261016-1de), then removed in Phase 35 once `ff` carried the same skin. It introduced
+  the shared skin (`src/skin/`), the game art and Fontin fonts in `assets/poe2/` extracted by the
+  new `tools/ff-art` dev tool (reads the install read-only, manifest in
+  `assets/poe2/manifest.toml`), a 0.5 MB minimap atlas, and the README credits section with the
+  Grinding Gear Games disclaimer.
+- **Rule sections (Phase 32).** A filter can be split into named, collapsible sections written
+  as `# ff:section <name>` banners (three lines: 80 `#`, the marker, 80 `#`). The RULES tab shows
+  each as a header with chevron, name, rule count, rename, up / down and remove; **+ Add section**
+  and **Section above** create them, rules hop dividers with their arrows, search finds rules
+  inside collapsed sections. Collapsed state is saved per filter in `ff-settings.json`
+  (`collapsed_sections`) and never marks the filter unapplied. A condition-less enabled rule
+  followed by more rules gets a warning marker. Debug screenshot mode gains `--rename-section <n>`.
+- **Economy and About tabs (Phase 34).** ECONOMY shows League, Last sync (relative, exact time on
+  hover), Priced items and Price source (Live / Fallback prices) with **Sync economy**, one **Add
+  economy section / Remove economy section** button (Remove asks first; both are written by Apply and
+  undone by Revert) and the tiers editor. ABOUT is a page with the name, description, an orange Ferris
+  (`assets/ui/ferris-about.png`, rendered by `ff-art ferris`), version, GitHub link, and the GGG
+  disclaimer and credits at the bottom. The debug screenshot mode gains `--tier-text TIER=TEXT`.
+- **Custom header art.** The window header is now FerrisFilter's own art (the game title bar redrawn
+  with three Ferris crabs), kept in the new `assets/custom/` folder for hand-made art with its
+  Aseprite sources (`titlebar.ase`, `base-palette.ase`) beside the PNG.
+- **Style editor groups: off / cancel / value, a folder sound picker, Positional (quick
+  261017-0wl).** In the CONFIG style editor and a Custom rule's STYLE section (one shared UI),
+  Minimap, Beam, Alert sound and Drop sound are each a group on one tinted band: label + on/off
+  check (off writes nothing). On, Minimap / Beam / Alert sound start with a `/` tile for the
+  filter's cancel value (`MinimapIcon -1`, `PlayEffect None`, `PlayAlertSound None`) that greys the
+  other pickers; Minimap sizes are Large / Medium / Small; Alert sound gets Volume and a
+  **Positional** toggle (`PlayAlertSoundPositional`); Drop sound is `Silent | Normal`
+  (`DisableDropSound` / `EnableDropSound`). The sound dropdown lists Alert 1-16 and a **Filter
+  folder** section with the `.mp3` / `.wav` files of the loaded filter's folder (read-only, cached,
+  refreshed on load / reload / switch and when it opens); a named file missing from the folder is
+  kept and flagged in amber (only when the folder could be listed; an unknown or unreadable folder
+  flags nothing); switching a rule's volumeless sound line between an alert and a file writes the
+  old kind's default volume, so the loudness stays.
+  `styles.json` stores the new states (`"None"` for minimap / beam / sound,
+  `sound.positional`, `enableDropSound`; existing files unchanged) and `generate`, the
+  economy section and styled rules emit them. The label preview, CONFIG Icon column and style chip
+  show no icon for an off or `/` minimap. Debug screenshot mode gains `--dropdown sound`.
+- **Economy rows read like rules (quick 261017-7lp).** Apply now writes `# ff:name <T> tier <Group>`
+  above every economy block and `# ff:style <id> <name>` on tier blocks (unique blocks: name only;
+  `generate` output is unchanged), so the read-only economy rows show their name, a style chip and the
+  preset. A staged **Add economy section** lists its rows (read-only, priced with the pending styles
+  and tiers) before Apply. Debug screenshot mode gains `--stage-economy add|remove`.
+
+### Changed
+
+- The ` *` unapplied marker now also shows on the selected tab.
+- **Style table and editor (Phase 33).** The CONFIG style tables get a header row (Visibility, Name,
+  Icon, Preview, Order) with the minimap icon per style and greyed built-in arrows; a style opens into
+  a line-by-line editor without boxed panels (visibility, label, colours, font size, minimap, beam,
+  sound, volume, drop sound) with Delete style at the bottom. A **skinned colour picker** (hue bar,
+  saturation square, hex, RGB, Dracula quick picks, alpha for rule colours, None for style slots)
+  is shared by style colours and rule colour actions. The debug screenshot mode gains
+  `--expand-style` and `--picker`.
+- **Phase 33 polish.** Long editor labels are cut with "…" (full label on hover); the standing
+  status reads `Unapplied changes` with its explanation on hover; Font size off keeps a dimmed slider
+  reading `Default`; the colour picker's game-box frame sits around the whole popup like the modals.
+- **Tiers moved to ECONOMY; RULES economy divider is display-only (Phase 34).** The tiers editor
+  left CONFIG (now Filter and Styles only). The RULES Economy divider has no remove x and there is
+  no Add economy section footer; the ECONOMY tab does both. Revert is per tab: Config discards style
+  edits, Economy discards tier edits and a staged economy add/remove.
+- **The economy section is a begin-only banner and a locked last section (Phase 32).** It is now
+  the three-line `# ff:economy-begin Economy (generated by FerrisFilter, do not edit)` banner and
+  runs to the end of the file; the RULES tab shows it as a locked Economy header (collapsed by
+  default, read-only rows) instead of the `+ N locked rule blocks (economy)` footer row.
+  **The old one-line `# ff:economy-begin` / `# ff:economy-end` markers are no longer recognised**
+  (breaking for existing filters: replace the pair by hand with the banner, or remove the old
+  section and use `ff-cli apply --add-economy`). `--add-economy` writes and `--remove-economy`
+  removes the banner with its blocks. The locked-padlock icon is drawn closed.
+
+- **RULES tab on the skin (Phase 31).** The rule list, the rule editor and the toolbar are drawn with the PoE2 skin (fixed two-line rows, game scrollbar, two-column editor, skin dropdowns, switches, chips and buttons); every v0.5 editing capability is kept. The colour picker keeps its old look until Phase 33.
+- **+ Add rule inserts at the top of the file** (it used to append before the economy section).
+- **Cargo workspace (Phase 29).** The repo root is one Cargo workspace with `ff` as the default
+  member. `tools/ff-art` now runs from the root via `cargo ff-art <cmd>` / `cargo run -p ff-art`
+  from any directory and writes into the repo's `assets/`; root `cargo build`/`cargo test` do not
+  build it. `Cargo.lock` is now committed (one lock for the workspace) and `rust-toolchain.toml`
+  selects the nightly channel (not a specific compiler).
+- **The Cargo package version follows the release tags.** It was still `0.1.0`; it is now `0.6.0`
+  (it was `0.5.0` at the `v0.5` tag) and moves with each milestone tag from here on.
+- **README rewritten as an overlay page (Phase 35)**: a grid of overlay screenshots in
+  `docs/screenshots/`, no CLI or dev-tool sections; the `ff-art` usage moved to
+  `tools/ff-art/README.md`. CLAUDE.md corrected to match what ships.
+
+- **Simple Defences picks base types (quick 261015-nbp).** The card is one line of seven
+  multi-select chips (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES) instead of the
+  AR / EV / ES `Any | Has | No` rows and the combination strip; the selection is exactly what the rule
+  matches. A pick one filter block cannot express is written as the minimum number of blocks (at most
+  four) that are identical apart from their zero-based defence lines, each tagged
+  `# ff:group <id> <k>/<n>`. The overlay shows such a group as one rule (one row, index, search hit and
+  summary) and every edit (conditions, actions, style, name, Show/Hide, Continue, enable/disable,
+  move, duplicate, delete) acts on all of its blocks and keeps them identical; the grammar gate and the
+  styled-rule report count it once. Untouched groups stay byte-identical. A group whose blocks no
+  longer match is shown as separate rules flagged `group broken` and is left as written.
+
+- **Skinned overlay shell (Phase 30).** `ff` opens the game-styled window instead of the stripe:
+  660pt wide, flush to the left edge at the full work-area height, on the monitor the game is on
+  (the primary monitor when it is not running), docked again on every summon (hotkey, tray, second
+  launch) and correct at 100-200% display scale. The header and four stone tabs (Rules, Config,
+  Economy, About) use the game's art. The bottom bar holds Revert, Reload and Apply with one
+  status line that replaces the scrolling outcome area (one message at a time, cut with … and shown
+  whole on hover, clicking a grammar or unknown-style message jumps to the rule). Every confirmation
+  (quit, file changed on disk, switch filter, delete rule, delete style, remove economy section,
+  discard config changes) is a skinned popup; the inline confirms and the Reload / Overwrite footer
+  buttons are gone (the Apply slot reads Overwrite while a file changed on disk). Row flags are
+  small icons with tooltips, standing captions are tooltips, and the empty states are a heading.
+  Sync economy moved to the Economy tab. Debug builds gain `ff --screenshot <png>` (with `--tab`,
+  `--popup`, `--status`, `--filter`) that renders one frame from a temp home and exits.
+- **Faster dev and test builds.** `Cargo.toml` sets `[profile.dev.package."*"] opt-level = 2`
+  (dependencies only). The overlay tests now render with the real fonts, and unoptimised font
+  rasterising had pushed `cargo test --lib` to about 1000 s; it is now about 57 s.
+- **Custom rule styling uses the style editor lines (quick 261016-qi7).** A Custom rule's STYLE
+  section shows the same lines as the CONFIG style editor (visibility, label preview, colours with
+  alpha, font size, minimap, beam, sound, volume, drop sound), written to the rule's own action
+  lines one line at a time (untouched lines stay byte-identical). Each line edits the last action
+  line of its kind, the one the game uses, and never adds a second one: a line it cannot show
+  exactly (`MinimapIcon -1`, `PlayEffect None`, a named sound, an out-of-range font size or volume)
+  shows its nearest state, is rewritten in place by an edit and is also listed as a row below with
+  its exact text, like every other action line the editor cannot represent; the `+ style` button
+  is gone.
+- **Style chip shows the minimap icon (quick 261016-qi7).** A collapsed rule's style chip draws the
+  style's minimap icon (game art, its colour) instead of a gold diamond; a Custom rule with a
+  minimap icon shows that icon.
+- **Every Revert asks first (quick 261016-qi7).** RULES Revert opens a new **Discard rule
+  changes?** popup (Discard / Keep editing); it is live only with rule edits and keeps a staged
+  economy section add/remove, which ECONOMY Revert owns. ECONOMY Revert also asks when only a
+  staged economy section add/remove is pending. Debug screenshot mode gains
+  `--popup discard-rules`.
+- **Economy rules can be inspected (quick 261017-2rf).** In RULES the economy section is now
+  headed **FF Economy Section** (display only; the banner written in the file is unchanged), and a
+  click on one of its rules expands it read-only: every condition and style line in the same
+  editor UI, all controls disabled (no picker opens, nothing takes focus, quoted lists show every
+  entry), with no Section above / Duplicate / Delete, check or arrows. The section stays locked;
+  search still finds its rules. Debug screenshot mode gains `--expand-economy <n>`.
+- **Narrower tier boxes (quick 261017-2rf).** The ECONOMY tier cutoff boxes are 88pt (about 8
+  digits), start at the value column of the rows above and keep a 10pt gap before the unit, so
+  `chaos` no longer clips.
+- **Style editor nits (quick 261017-2rf).** Every `/` tile (Minimap, Beam, Alert sound) has the
+  same framed box; a colour card whose `<Label> (none)` caption does not fit (Background at 660pt)
+  shows the bare dim label with the full text on hover; leaving `/` on a loaded
+  `MinimapIcon -1 <colour> <shape>` keeps that line's shape, and its colour tints the shapes
+  meanwhile.
+
+### Removed
+
+- **Adding actions the style lines cannot express (quick 261016-qi7).** With the RULES `+ style`
+  picker gone, `CustomAlertSoundOptional`, `DisableDropSoundIfAlertSound` and
+  `EnableDropSoundIfAlertSound` can no longer be added from the overlay. Lines already in a filter
+  are kept, shown and editable. (`PlayAlertSoundPositional`, `EnableDropSound`, `MinimapIcon -1`
+  and `PlayEffect None` are written by the style editor groups again since quick 261017-0wl.)
+- **The free-text sound file field (quick 261017-0wl).** Custom sound files are picked from the
+  filter folder listing in the Alert sound dropdown instead.
+- **`ff-proto`, `overlay::theme` and the Cinzel font (Phase 35).** The prototype binary, the
+  stripe-era theme module (its colours and sizes now come from `src/skin/`) and `assets/Cinzel-*`
+  are gone; the overlay looks the same.
+
+### Fixed
+
+- **Style visibility before Apply.** Turning a style to Hide (or back) now shows on the RULES tab at once: rules using that style read Hide, and the economy section is shown re-priced with the pending styles and tiers. Economy blocks also follow their style's visibility when written (they were always `Show`).
+- Text fields leave a visible gap before the next widget on the row (quoted-list field and **+ Add** no longer touch).
+- RULES tab: the search field no longer touches **+ Add rule**; `◆ A CONTINUE` reads as a styled chip plus the Continue word; the group-broken and padlock icons are legible (the broken link no longer reads as "0/0"); the operator dropdown fits "Matches exactly".
+- **Docking used the wrong monitor and mixed units.** The stripe took the primary monitor's work
+  area and mixed physical and logical units, so it was wrong at 125% and above and on a second
+  monitor. It now docks on the game's monitor with that monitor's own scale.
+- The CONFIG styles table header no longer overlaps its Visibility and Name captions.
+
 ## [0.5.0] - 2026-10-15
 
 **Generic Filter Editor & Initial App Configuration** — the overlay opens, edits and saves any
@@ -425,7 +600,8 @@ Exile 2 loot filter and prices currency from poe.ninja. Tagged `v0.1`.
   --early-game` is passed. Cutoffs are exalt-denominated (`Unit::Exalt`) so currency tiers like
   the poe2filter.com export; cross-rates are derived from the anchor orbs (no stored rates).
 
-[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.5...HEAD
+[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.6...HEAD
+[0.6.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.5...v0.6
 [0.5.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.4...v0.5
 [0.4.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.3...v0.4
 [0.3.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.2...v0.3

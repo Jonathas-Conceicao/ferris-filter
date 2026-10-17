@@ -11,15 +11,23 @@ use egui::{Align, Color32, Layout, RichText, Sense, UiBuilder, vec2};
 
 use crate::filter::keywords::Keyword;
 use crate::filter::tokenize::Operator;
-use crate::filter::{BlockId, FilterDiagnostic};
+use crate::filter::{BlockId, BlockKeyword, FilterDiagnostic};
 
 use super::body::{self, BodyCtx};
 use super::classes::ClassCatalog;
 
-use super::rules::{Dir, EconomyView, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
-use super::theme;
-use super::virtual_list::{build_offsets, scroll_offset_for, visible_range};
-use super::widgets::{self, ArrowDirection};
+use super::rules::{
+    Dir, LineKind, ListEntry, RowAction, RuleRow, SectionRow, StyleState, WorkingFilter,
+};
+use super::virtual_list::{build_offsets_mixed, scroll_offset_for, visible_range};
+use crate::skin::Skin;
+use crate::skin::fonts::{regular, small_caps};
+use crate::skin::icons::{FLAG_ICON_SIZE, FlagIcon, flag_icon, paint_flag_icon};
+use crate::skin::palette as pal;
+use crate::skin::widgets::{
+    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_text_field,
+    ff_text_field_id, ff_x_button, row_background,
+};
 
 const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so this rule cannot be turned on. You can still move or delete it.";
 
@@ -57,6 +65,9 @@ pub struct ListUi {
     /// Blocks whose Simple Defences card was picked from `+ condition` with every row on Any
     /// (nothing is written until a row is set to Has or No).
     pub pending_simple_defences: HashSet<BlockId>,
+    /// Pending Simple Defences cards whose pick was every combination (which, like no pick,
+    /// writes no defence line), so the card keeps showing every chip selected.
+    pub simple_all: HashSet<BlockId>,
     /// Blocks that show the Defences card (picked, or rendered once), so zero-based lines written
     /// by it (`BaseArmour >= 1`) never turn it into a Simple Defences card while editing. Carried
     /// across an Apply by row position ([`ListUi::rekey_after_apply`]); cleared by
@@ -66,6 +77,16 @@ pub struct ListUi {
     /// A card to scroll to, focus and briefly highlight: set when a picker entry that is already
     /// on the rule is clicked (UAT3-06). Line-backed keyword cards use `focus_line` instead.
     pub focus_card: Option<(BlockId, FocusTarget)>,
+    /// One-shot request to focus the NAME field of that rule (set when a rule is added).
+    pub focus_name: Option<BlockId>,
+    /// The section (banner ordinal) whose name is being edited in its header.
+    pub editing_section: Option<usize>,
+    /// The text of the section name box.
+    pub section_draft: String,
+    /// One-shot: focus the section name box and select its text.
+    pub section_focus: bool,
+    /// One-shot: scroll the list to the top (set when a section is added at the top).
+    pub scroll_top: bool,
 }
 
 /// A card without a line of its own to point at.
@@ -103,8 +124,14 @@ impl Default for ListUi {
             row_epoch: 0,
             pending_defences: HashSet::new(),
             pending_simple_defences: HashSet::new(),
+            simple_all: HashSet::new(),
             advanced_defences: HashSet::new(),
             focus_card: None,
+            focus_name: None,
+            editing_section: None,
+            section_draft: String::new(),
+            section_focus: false,
+            scroll_top: false,
         }
     }
 }
@@ -121,8 +148,12 @@ impl ListUi {
         self.pending.clear();
         self.pending_defences.clear();
         self.pending_simple_defences.clear();
+        self.simple_all.clear();
         self.advanced_defences.clear();
         self.focus_card = None;
+        self.focus_name = None;
+        self.editing_section = None;
+        self.section_focus = false;
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
@@ -184,32 +215,46 @@ pub struct KeptPositions {
 pub struct ListFrame {
     pub actions: Vec<RowAction>,
     pub drawn: usize,
+    /// Section headers clicked this frame: (section name, economy, now collapsed). The caller
+    /// saves the flag; it never touches the filter.
+    pub toggled: Vec<(String, bool, bool)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EconomyFooterAction {
-    Add,
-    Remove,
+/// Fixed height of a collapsed row (and of an expanded row's header): two lines.
+pub const ROW_H: f32 = 52.0;
+
+/// Fixed height of a collapsed row.
+pub fn row_height() -> f32 {
+    ROW_H
 }
 
-/// Height of a row's header line (the part that stays when the row is expanded).
-pub fn header_height(ui: &egui::Ui) -> f32 {
-    ui.spacing().interact_size.y + 4.0
-}
+/// Width of the round check, and the slots after it: index, Show/Hide.
+const CHECK_W: f32 = 22.0;
+const INDEX_W: f32 = 28.0;
+const SHOW_W: f32 = 44.0;
+/// Gap between flags.
+const FLAG_GAP: f32 = 4.0;
 
-/// Height of the one-line condition summary under a collapsed row's header.
-pub const SUMMARY_LINE_H: f32 = 16.0;
-
-/// Left indent of the summary line, lining it up under the rule label (past the toggle).
-const SUMMARY_INDENT: f32 = 40.0;
-
-/// Fixed height of a collapsed row: header plus the summary line.
-pub fn row_height(ui: &egui::Ui) -> f32 {
-    header_height(ui) + SUMMARY_LINE_H
+/// How a flag is drawn in a collapsed row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FlagKind {
+    /// A painted icon with a tooltip.
+    Icon(FlagIcon),
+    /// The word `Continue`, kept as text.
+    ContinueWord,
+    /// The style chip: the minimap icon (shape, colour indices into `skin::minimap`), drawn
+    /// from the game atlas in its colour, then the (truncated) style name. A known style without
+    /// a minimap icon has a name only; an untagged rule with a `MinimapIcon` has an icon only.
+    Styled {
+        name: Option<String>,
+        icon: Option<(usize, usize)>,
+    },
 }
 
 struct Flag {
+    /// Accessible name and test handle.
     text: String,
+    kind: FlagKind,
     color: Color32,
     tip: String,
 }
@@ -223,111 +268,211 @@ fn diag_tip(diags: &[FilterDiagnostic]) -> String {
 }
 
 /// Characters of a style name shown in the collapsed-row flag.
-const STYLE_FLAG_CHARS: usize = 12;
+const STYLE_FLAG_CHARS: usize = 10;
 /// Width reserved for the `+N` overflow badge.
 const BADGE_W: f32 = 24.0;
 /// Total width flags may take in a collapsed row.
 const FLAG_BUDGET: f32 = 120.0;
 /// The label always keeps at least this much.
 const LABEL_MIN_W: f32 = 140.0;
+/// Gap between the style chip's icon and its name.
+const CHIP_ICON_GAP: f32 = 4.0;
+
+/// Width of a style chip: the icon, the gap when both are present, and the name.
+fn chip_width(icon: bool, name_w: Option<f32>) -> f32 {
+    let icon_w = if icon { FLAG_ICON_SIZE } else { 0.0 };
+    let gap = if icon && name_w.is_some() {
+        CHIP_ICON_GAP
+    } else {
+        0.0
+    };
+    icon_w + gap + name_w.unwrap_or(0.0)
+}
+
+/// Width the flags may take in a row `content_w` wide whose arrows (with their gap) take
+/// `arrows_w`: [`FLAG_BUDGET`], less whatever the label would otherwise lose below
+/// [`LABEL_MIN_W`]. Left to right the row holds the padding, check, index, Show/Hide, three 8pt
+/// gaps, the label, an 8pt gap, the flags, the arrows and the padding.
+pub fn flag_budget(content_w: f32, arrows_w: f32) -> f32 {
+    let fixed = 2.0 * ROW_PAD + CHECK_W + INDEX_W + SHOW_W + 3.0 * 8.0 + arrows_w + 8.0;
+    (content_w - fixed - LABEL_MIN_W).clamp(0.0, FLAG_BUDGET)
+}
 
 /// How many leading flags fit in `budget` (with a `+N` badge when some do not), and how many
-/// are hidden.
-pub fn fit_flags(widths: &[f32], budget: f32) -> (usize, usize) {
-    let total: f32 = widths.iter().sum();
+/// are hidden. `gap` is the space between two shown items.
+pub fn fit_flags(widths: &[f32], budget: f32, gap: f32) -> (usize, usize) {
+    let total: f32 = widths.iter().sum::<f32>() + gap * widths.len().saturating_sub(1) as f32;
     if total <= budget {
         return (widths.len(), 0);
     }
     let mut shown = 0;
     let mut used = BADGE_W;
     for w in widths {
-        if used + w > budget {
+        if used + gap + w > budget {
             break;
         }
-        used += w;
+        used += gap + w;
         shown += 1;
     }
     (shown, widths.len() - shown)
 }
 
+/// The flags of a row in painting order, right to left: the first entry sits closest to the
+/// reorder arrows, so errors are never the ones folded into the `+N` badge.
 fn flags_for(row: &RuleRow) -> Vec<Flag> {
     let mut out = Vec::new();
     if !row.enabled && row.cannot_enable {
         out.push(Flag {
             text: "can't enable".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
-            tip: CANNOT_ENABLE_LONG.to_string(),
+            kind: FlagKind::Icon(FlagIcon::Padlock),
+            color: pal::WARN,
+            tip: "Can't enable: these lines are not valid filter grammar. You can still move or delete it.".to_string(),
         });
         return out;
-    }
-    if row.has_continue {
-        out.push(Flag {
-            text: "Continue".to_string(),
-            color: theme::LABEL_TAN,
-            tip: "Matching goes on to the rules below".to_string(),
-        });
-    }
-    match &row.style {
-        StyleState::Known(tag) => {
-            let short: String = if tag.chars().count() > STYLE_FLAG_CHARS {
-                let head: String = tag.chars().take(STYLE_FLAG_CHARS).collect();
-                format!("{head}…")
-            } else {
-                tag.clone()
-            };
-            out.push(Flag {
-                text: format!("styled: {short}"),
-                color: theme::LABEL_TAN,
-                tip: format!("Style \"{tag}\" sets this rule's actions on Apply"),
-            });
-        }
-        StyleState::Unknown(_) => out.push(Flag {
-            text: "unknown style".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
-            tip: "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.".to_string(),
-        }),
-        StyleState::None | StyleState::Unchecked(_) => {}
     }
     if !row.errors.is_empty() {
         out.push(Flag {
             text: "grammar error".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
+            kind: FlagKind::Icon(FlagIcon::GrammarError),
+            color: pal::ERROR,
             tip: diag_tip(&row.errors),
         });
     }
     if !row.warnings.is_empty() {
         out.push(Flag {
             text: "grammar warning".to_string(),
-            color: theme::LABEL_TAN,
+            kind: FlagKind::Icon(FlagIcon::GrammarWarning),
+            color: pal::WARN,
             tip: diag_tip(&row.warnings),
+        });
+    }
+    if matches!(row.style, StyleState::Unknown(_)) {
+        out.push(Flag {
+            text: "unknown style".to_string(),
+            kind: FlagKind::Icon(FlagIcon::UnknownStyle),
+            color: pal::WARN,
+            tip: "No style with this name exists. This rule keeps its current actions, and its style link is removed on the next Apply.".to_string(),
+        });
+    }
+    if row.group_broken {
+        out.push(Flag {
+            text: "group broken".to_string(),
+            kind: FlagKind::Icon(FlagIcon::GroupBroken),
+            color: pal::WARN,
+            tip: "Group broken: these blocks were one rule (# ff:group) but no longer match, so each is shown on its own. Left as written until you edit it.".to_string(),
         });
     }
     if row.moved_across_continue {
         out.push(Flag {
             text: "moved across Continue".to_string(),
-            color: theme::WARM_ACCENT_TEXT,
+            kind: FlagKind::Icon(FlagIcon::MovedAcrossContinue),
+            color: pal::WARN,
             tip: "This move changes which rules still apply after a Continue. Check the order."
                 .to_string(),
+        });
+    }
+    if row.has_continue {
+        out.push(Flag {
+            text: "Continue".to_string(),
+            kind: FlagKind::ContinueWord,
+            color: pal::GOLD,
+            tip: "Matching goes on to the rules below".to_string(),
+        });
+    }
+    if let StyleState::Known(tag) = &row.style {
+        let short: String = if tag.chars().count() > STYLE_FLAG_CHARS {
+            let head: String = tag.chars().take(STYLE_FLAG_CHARS).collect();
+            format!("{head}…")
+        } else {
+            tag.clone()
+        };
+        out.push(Flag {
+            text: format!("styled: {short}"),
+            kind: FlagKind::Styled {
+                name: Some(short),
+                icon: row.chip_icon,
+            },
+            color: pal::LABEL,
+            tip: format!("Style \"{tag}\" sets this rule's actions on Apply"),
+        });
+    } else if matches!(row.style, StyleState::None)
+        && let Some(icon) = row.chip_icon
+    {
+        out.push(Flag {
+            text: "minimap icon".to_string(),
+            kind: FlagKind::Styled {
+                name: None,
+                icon: Some(icon),
+            },
+            color: pal::LABEL,
+            tip: format!(
+                "Minimap icon: {}",
+                row.chip_icon_desc.as_deref().unwrap_or_default()
+            ),
         });
     }
     out
 }
 
-/// Draw the virtualized list. `visible` holds indices into `working.rows()`.
+/// Height of a section header row.
+pub const SECTION_HEADER_HEIGHT: f32 = 36.0;
+
+/// Tooltip of the Economy padlock and of the economy rows.
+const ECONOMY_TIP: &str = "Generated by FerrisFilter. Read-only: click a rule to inspect it. Refreshed by Apply; add or remove it in the ECONOMY tab.";
+/// Tooltip of the WR-02 marker.
+const MATCHES_EVERYTHING_TIP: &str =
+    "This rule has no conditions, so it matches every item and the rules below it never apply.";
+
+/// Height of one displayed entry when nothing is expanded.
+pub fn entry_height(entry: &ListEntry) -> f32 {
+    match entry {
+        ListEntry::Header { .. } => SECTION_HEADER_HEIGHT,
+        ListEntry::Rule(_) | ListEntry::EconomyRule(_) => row_height(),
+    }
+}
+
+/// Total height of `entries` with nothing expanded.
+pub fn entries_height(entries: &[ListEntry]) -> f32 {
+    entries.iter().map(entry_height).sum()
+}
+
+/// `3 rules`, `1 rule`, or during a search `2 of 12 rules`.
+pub fn section_count_text(rules: usize, matches: Option<usize>) -> String {
+    match matches {
+        Some(m) => format!("{m} of {rules} rules"),
+        None if rules == 1 => "1 rule".to_string(),
+        None => format!("{rules} rules"),
+    }
+}
+
+/// Accessible name of a section header.
+pub fn section_accessible_name(name: &str, rules: usize, collapsed: bool) -> String {
+    format!(
+        "Section {name}, {}, {}",
+        section_count_text(rules, None),
+        if collapsed { "collapsed" } else { "expanded" }
+    )
+}
+
+/// Draw the virtualized list. `entries` is the displayed list ([`WorkingFilter::entries`]).
 pub fn show_list(
     ui: &mut egui::Ui,
     working: &WorkingFilter,
-    visible: &[usize],
+    entries: &[ListEntry],
     list: &mut ListUi,
     reorder_enabled: bool,
     classes: Option<&ClassCatalog>,
 ) -> ListFrame {
-    let row_h = row_height(ui);
+    let skin = crate::skin::of(ui.ctx());
     let rows = working.rows();
+    let econ_rows = working.economy_rows();
+    // The expanded row may be a user rule or an economy rule (shown read-only).
     let pos_of = |id: BlockId| {
-        visible
-            .iter()
-            .position(|&i| rows.get(i).is_some_and(|r| r.id == id))
+        entries.iter().position(|e| match e {
+            ListEntry::Rule(i) => rows.get(*i).is_some_and(|r| r.id == id),
+            ListEntry::EconomyRule(k) => econ_rows.get(*k).is_some_and(|r| r.id == id),
+            ListEntry::Header { .. } => false,
+        })
     };
     let expanded_vis = list.expanded.and_then(pos_of);
     if list.expanded.is_some() && expanded_vis.is_none() {
@@ -345,6 +490,7 @@ pub fn show_list(
         list.pending.retain(|p| Some(p.block) == keep);
         list.pending_defences.retain(|b| Some(*b) == keep);
         list.pending_simple_defences.retain(|b| Some(*b) == keep);
+        list.simple_all.retain(|b| Some(*b) == keep);
         list.focus_card = None;
         list.line_error = None;
         egui::Popup::close_all(ui.ctx());
@@ -352,24 +498,31 @@ pub fn show_list(
         list.row_epoch = list.row_epoch.wrapping_add(1);
         list.forget_card_state();
     }
-    let offsets = build_offsets(
-        visible.len(),
-        row_h,
-        expanded_vis.map(|i| (i, list.expanded_h)),
-    );
+    let heights: Vec<f32> = entries.iter().map(entry_height).collect();
+    let offsets = build_offsets_mixed(&heights, expanded_vis.map(|i| (i, list.expanded_h)));
     let total = offsets.last().copied().unwrap_or(0.0);
+    // Rule rows alternate by their place among the rule rows; a header does not count.
+    let mut rule_no = Vec::with_capacity(entries.len());
+    let mut n = 0usize;
+    for e in entries {
+        rule_no.push(n);
+        if !matches!(e, ListEntry::Header { .. }) {
+            n += 1;
+        }
+    }
 
-    let mut area = egui::ScrollArea::vertical()
-        .id_salt("ff-rule-list")
-        .auto_shrink([false, false]);
+    let mut offset = None;
+    if std::mem::take(&mut list.scroll_top) {
+        offset = Some(0.0);
+    }
     if let Some(target) = list.pending_scroll.take()
         && let Some(vi) = pos_of(target)
     {
-        area = area.vertical_scroll_offset(scroll_offset_for(&offsets, vi, ui.available_height()));
+        offset = Some(scroll_offset_for(&offsets, vi, ui.available_height()));
     }
 
     let mut frame = ListFrame::default();
-    area.show_viewport(ui, |ui, viewport| {
+    ff_scroll_area_viewport(ui, &skin, "ff-rule-list", offset, |ui, viewport| {
         ui.set_height(total);
         let range = visible_range(&offsets, viewport.min.y, viewport.max.y);
         if range.is_empty() {
@@ -385,22 +538,65 @@ pub fn show_list(
         ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for vi in range.clone() {
-                let Some(row) = visible.get(vi).and_then(|&i| rows.get(i)) else {
-                    continue;
-                };
-                ui.push_id(("rule", row.id, list.epoch), |ui| {
-                    draw_row(
-                        ui,
-                        working,
-                        classes,
-                        row,
-                        vi,
-                        row_h,
-                        list,
-                        reorder_enabled,
-                        &mut frame.actions,
-                    );
-                });
+                match entries.get(vi) {
+                    Some(&ListEntry::Header {
+                        section,
+                        collapsed,
+                        matches,
+                    }) => {
+                        let Some(sec) = working.sections().get(section) else {
+                            continue;
+                        };
+                        ui.push_id(("section", sec.ordinal, sec.economy, list.epoch), |ui| {
+                            draw_section_header(
+                                ui,
+                                &skin,
+                                sec,
+                                collapsed,
+                                matches,
+                                list,
+                                reorder_enabled,
+                                &mut frame,
+                            );
+                        });
+                    }
+                    Some(&ListEntry::Rule(i)) => {
+                        let Some(row) = rows.get(i) else {
+                            continue;
+                        };
+                        ui.push_id(("rule", row.id, list.epoch), |ui| {
+                            draw_row(
+                                ui,
+                                &skin,
+                                working,
+                                classes,
+                                row,
+                                rule_no[vi],
+                                list,
+                                reorder_enabled,
+                                &mut frame.actions,
+                            );
+                        });
+                    }
+                    Some(&ListEntry::EconomyRule(k)) => {
+                        let Some(row) = econ_rows.get(k) else {
+                            continue;
+                        };
+                        ui.push_id(("economy-rule", row.id, list.epoch), |ui| {
+                            // Read-only: whatever the body's editor functions recorded is
+                            // dropped here, never returned to the caller.
+                            let _discarded = draw_economy_row(
+                                ui,
+                                working.economy_source(),
+                                classes,
+                                row,
+                                rule_no[vi],
+                                list,
+                            );
+                        });
+                    }
+                    None => continue,
+                }
                 frame.drawn += 1;
             }
         });
@@ -408,49 +604,501 @@ pub fn show_list(
     frame
 }
 
-fn draw_row(
+/// A clickable 18x18 painted icon (hover tinted) with an accessible name and a tooltip.
+fn icon_button(ui: &mut egui::Ui, icon: FlagIcon, name: &str, tip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(FLAG_ICON_SIZE, FLAG_ICON_SIZE), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    let colour = if resp.hovered() || resp.has_focus() {
+        pal::HEADING
+    } else {
+        pal::LABEL
+    };
+    paint_flag_icon(ui.painter(), rect.shrink(1.0), icon, colour);
+    resp.on_hover_text(tip)
+}
+
+/// Opens the inline name box of `sec`.
+fn start_rename(list: &mut ListUi, sec: &SectionRow) {
+    list.editing_section = Some(sec.ordinal);
+    list.section_draft = sec.name.clone();
+    list.section_focus = true;
+}
+
+/// One section header (36pt): chevron, name, rule line, count and the right-hand controls.
+#[allow(clippy::too_many_arguments)]
+fn draw_section_header(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    sec: &SectionRow,
+    collapsed: bool,
+    matches: Option<usize>,
+    list: &mut ListUi,
+    reorder_enabled: bool,
+    frame: &mut ListFrame,
+) {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, SECTION_HEADER_HEIGHT), Sense::click());
+    let accessible = section_accessible_name(&sec.name, sec.rules, collapsed);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &accessible));
+    let was_editing = list.editing_section == Some(sec.ordinal) && !sec.economy;
+
+    let ground = if ui.rect_contains_pointer(rect) {
+        pal::ROW_HOVER
+    } else {
+        pal::PANEL
+    };
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.rect_filled(rect, 0.0, ground);
+    let line = egui::Stroke::new(1.0, pal::INPUT_BORDER);
+    painter.rect_filled(
+        egui::Rect::from_min_size(rect.min, vec2(rect.width(), 1.0)),
+        0.0,
+        line.color,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - 1.0), rect.max),
+        0.0,
+        line.color,
+    );
+    if resp.has_focus() {
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(1.0, pal::INPUT_BORDER_HOT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let inner = rect.shrink2(vec2(ROW_PAD, 0.0));
+    let mid_y = rect.center().y;
+
+    // Right cluster first, so the count and the name take what remains.
+    let mut right = ui.new_child(
+        UiBuilder::new()
+            .id_salt("ff-section-right")
+            .max_rect(inner)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    right.spacing_mut().item_spacing.x = 4.0;
+    if sec.economy {
+        flag_icon(
+            &mut right,
+            FlagIcon::Padlock,
+            pal::MUTED,
+            "locked",
+            ECONOMY_TIP,
+        );
+    } else {
+        if sec.can_remove && ff_x_button(&mut right, "Remove section (its rules stay)").clicked() {
+            frame.actions.push(RowAction::RemoveSection(sec.ordinal));
+            list.editing_section = None;
+        }
+        let can_down = reorder_enabled && sec.can_move_down;
+        let can_up = reorder_enabled && sec.can_move_up;
+        let down = ff_arrow(&mut right, skin, false, can_down);
+        let up = ff_arrow(&mut right, skin, true, can_up);
+        if !reorder_enabled {
+            down.on_hover_text("Clear the search to reorder");
+            up.on_hover_text("Clear the search to reorder");
+        } else {
+            if can_down {
+                if down.clicked() {
+                    frame
+                        .actions
+                        .push(RowAction::MoveSection(sec.ordinal, Dir::Down));
+                    list.editing_section = None;
+                }
+                down.on_hover_text("Move section down");
+            }
+            if can_up {
+                if up.clicked() {
+                    frame
+                        .actions
+                        .push(RowAction::MoveSection(sec.ordinal, Dir::Up));
+                    list.editing_section = None;
+                }
+                up.on_hover_text("Move section up");
+            }
+        }
+        if icon_button(&mut right, FlagIcon::Rename, "rename", "Rename section").clicked() {
+            start_rename(list, sec);
+        }
+    }
+    let used_left = right.min_rect().left();
+
+    // Left: the chevron (a second click target for the same toggle).
+    let chev_rect = egui::Rect::from_min_size(
+        egui::pos2(inner.min.x, mid_y - FLAG_ICON_SIZE / 2.0),
+        vec2(FLAG_ICON_SIZE, FLAG_ICON_SIZE),
+    );
+    let chev = ui.interact(chev_rect, ui.id().with("chevron"), Sense::click());
+    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "chevron"));
+    let chev_colour = if chev.hovered() {
+        pal::HEADING
+    } else {
+        pal::LABEL
+    };
+    paint_flag_icon(
+        ui.painter(),
+        chev_rect.shrink(1.0),
+        if collapsed {
+            FlagIcon::ChevronRight
+        } else {
+            FlagIcon::ChevronDown
+        },
+        chev_colour,
+    );
+    let chev_clicked = chev.clicked();
+    chev.on_hover_text(if collapsed { "Expand" } else { "Collapse" });
+
+    let name_x = chev_rect.max.x + 8.0;
+    let count = section_count_text(sec.rules, matches);
+    let count_w = text_width(ui, &count, regular(15.0));
+    let count_right = used_left - 8.0;
+    let count_left = count_right - count_w;
+    let slot_w = (count_left - 8.0 - name_x).max(20.0);
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.text(
+        egui::pos2(count_right, mid_y),
+        egui::Align2::RIGHT_CENTER,
+        &count,
+        regular(15.0),
+        pal::MUTED,
+    );
+
+    // The name (or its edit box) and the rule line after it.
+    let mut name_rect = egui::Rect::NOTHING;
+    let name_end;
+    let mut name_cut = false;
+    let editing = list.editing_section == Some(sec.ordinal) && !sec.economy;
+    if editing {
+        let w = slot_w.min(220.0);
+        let field_rect = egui::Rect::from_min_size(egui::pos2(name_x, mid_y - 15.0), vec2(w, 30.0));
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .id_salt("ff-section-name")
+                .max_rect(field_rect)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        let id = child.id().with("name-box");
+        let r = ff_text_field_id(&mut child, id, &mut list.section_draft, "Section name", w);
+        if std::mem::take(&mut list.section_focus) {
+            r.request_focus();
+            let n = list.section_draft.chars().count();
+            if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), r.id) {
+                st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(n),
+                )));
+                st.store(ui.ctx(), r.id);
+            }
+        }
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        if escape && (r.has_focus() || r.lost_focus()) {
+            list.editing_section = None;
+        } else if r.lost_focus() {
+            frame.actions.push(RowAction::RenameSection {
+                ordinal: sec.ordinal,
+                name: list.section_draft.clone(),
+            });
+            list.editing_section = None;
+        }
+        name_end = field_rect.max.x;
+    } else {
+        let g = cut_galley(ui, &sec.name, small_caps(17.0), pal::HEADING, slot_w);
+        name_cut = g.elided;
+        name_end = name_x + g.size().x;
+        name_rect =
+            egui::Rect::from_min_size(egui::pos2(name_x, mid_y - g.size().y / 2.0), g.size());
+        painter.galley(name_rect.min, g, Color32::PLACEHOLDER);
+    }
+    let line_from = name_end + 8.0;
+    let line_to = count_left - 8.0;
+    if !name_cut && line_to - line_from >= 16.0 {
+        painter.line_segment(
+            [egui::pos2(line_from, mid_y), egui::pos2(line_to, mid_y)],
+            line,
+        );
+    }
+
+    // Header interaction: a click toggles (not while its name is being typed, nor during a
+    // search, where the display ignores the saved state); a double click on the name renames.
+    let double_on_name = resp.double_clicked()
+        && !sec.economy
+        && resp
+            .interact_pointer_pos()
+            .is_some_and(|p| name_rect.expand(4.0).contains(p));
+    if double_on_name {
+        start_rename(list, sec);
+    }
+    if (resp.clicked() || chev_clicked) && !was_editing && matches.is_none() {
+        frame
+            .toggled
+            .push((sec.name.clone(), sec.economy, !collapsed));
+    }
+    if name_cut {
+        resp.on_hover_text(sec.name.clone());
+    }
+}
+
+/// An economy row: the collapsed-row look without a check or arrows, in muted text. A click
+/// expands it (one row at a time, shared with the user rules) into the same editor body, drawn
+/// read-only by [`economy_body`]. Returns the body's discarded actions (always empty; the tests
+/// hold that).
+fn draw_economy_row(
     ui: &mut egui::Ui,
     working: &WorkingFilter,
     classes: Option<&ClassCatalog>,
     row: &RuleRow,
     vi: usize,
-    row_h: f32,
+    list: &mut ListUi,
+) -> Vec<RowAction> {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let is_expanded = list.expanded == Some(row.id);
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Economy rule (read-only)")
+    });
+    row_background(ui, vi, rect);
+    let inner = rect.shrink2(vec2(ROW_PAD, 0.0));
+    let mut right = ui.new_child(
+        UiBuilder::new()
+            .id_salt("ff-economy-right")
+            .max_rect(inner)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    right.spacing_mut().item_spacing.x = FLAG_GAP;
+    let mut flagged = false;
+    let skin = crate::skin::of(ui.ctx());
+    for f in flags_for(row) {
+        match &f.kind {
+            FlagKind::Icon(icon @ (FlagIcon::GrammarError | FlagIcon::GrammarWarning)) => {
+                flag_icon(&mut right, *icon, f.color, &f.text, &f.tip);
+                flagged = true;
+            }
+            // The style chip (minimap icon and/or style name), muted and non-interactive.
+            FlagKind::Styled { name, icon } => {
+                let w = chip_width(
+                    icon.is_some(),
+                    name.as_ref().map(|n| text_width(&right, n, regular(15.0))),
+                );
+                let (r, resp) = right.allocate_exact_size(vec2(w, FLAG_ICON_SIZE), Sense::hover());
+                let mut x = r.min.x;
+                if let Some((shape, colour)) = *icon {
+                    crate::skin::editor::paint_minimap_icon(
+                        right.painter(),
+                        &skin,
+                        egui::pos2(x + FLAG_ICON_SIZE / 2.0, r.center().y),
+                        shape,
+                        colour,
+                        FLAG_ICON_SIZE,
+                        Color32::WHITE,
+                    );
+                    x += FLAG_ICON_SIZE + CHIP_ICON_GAP;
+                }
+                if let Some(name) = name {
+                    right.painter().text(
+                        egui::pos2(x, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        name,
+                        regular(15.0),
+                        pal::MUTED,
+                    );
+                }
+                resp.on_hover_text(f.tip.clone());
+                flagged = true;
+            }
+            _ => {}
+        }
+    }
+    let used_left = if flagged {
+        right.min_rect().left()
+    } else {
+        inner.max.x
+    };
+    let painter = ui.painter().with_clip_rect(rect);
+    let sx = inner.min.x + CHECK_W + 8.0 + INDEX_W + 8.0;
+    let name_x = sx + SHOW_W + 8.0;
+    let line1_y = rect.min.y + 18.0;
+    let line2_y = rect.min.y + 38.0;
+    painter.text(
+        egui::pos2(sx, line1_y),
+        egui::Align2::LEFT_CENTER,
+        keyword_text(row.keyword),
+        small_caps(17.0),
+        pal::MUTED,
+    );
+    if let Some(name) = &row.name {
+        let g = cut_galley(
+            ui,
+            name,
+            small_caps(17.0),
+            pal::MUTED,
+            (used_left - 8.0 - name_x).max(LABEL_MIN_W.min(inner.max.x - name_x)),
+        );
+        let pos = egui::pos2(name_x, line1_y - g.size().y / 2.0);
+        painter.galley(pos, g, Color32::PLACEHOLDER);
+    }
+    if !is_expanded && !row.summary.is_empty() {
+        let g = cut_galley(
+            ui,
+            &row.summary,
+            regular(15.0),
+            pal::DISABLED,
+            (used_left - 8.0 - sx).max(40.0),
+        );
+        let pos = egui::pos2(sx, line2_y - g.size().y / 2.0);
+        painter.galley(pos, g, Color32::PLACEHOLDER);
+    }
+    if resp.clicked() {
+        list.expanded = if is_expanded { None } else { Some(row.id) };
+        list.confirm_delete = None;
+    }
+    resp.on_hover_text(ECONOMY_TIP);
+
+    let mut discarded = Vec::new();
+    if is_expanded {
+        let body = egui::Frame::new()
+            .fill(pal::ROW_EVEN)
+            .inner_margin(egui::Margin::symmetric(0, 4))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                discarded = economy_body(ui, working, classes, row, list);
+            });
+        let h = ROW_H + body.response.rect.height();
+        if (h - list.expanded_h).abs() > 0.5 {
+            list.expanded_h = h;
+            ui.ctx().request_repaint();
+        }
+        let whole = egui::Rect::from_min_max(rect.min, body.response.rect.max);
+        ui.painter().rect_stroke(
+            whole,
+            0.0,
+            egui::Stroke::new(1.0, pal::INPUT_BORDER_HOT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    discarded
+}
+
+/// Opacity of the read-only economy body (egui's default disabled fade is 0.5, too faint to read
+/// a long list of base types by).
+const ECONOMY_BODY_ALPHA: f32 = 0.6;
+
+/// The body of an expanded economy rule: the same NAME (only when it has one), CONDITIONS and
+/// STYLE lines as a user rule, every control drawn in a disabled `Ui` (egui gives a disabled
+/// widget no clicks, drags, focus or keys, so no picker or popup can open), and no Section above /
+/// Duplicate / Delete row. The editor functions run against a throwaway copy of the list state
+/// and a throwaway action list, both dropped, so nothing they could record reaches the filter or
+/// the view (and the model refuses any action aimed at an economy block anyway, T-32-13).
+/// Returns the discarded actions (always empty; the tests hold that).
+fn economy_body(
+    ui: &mut egui::Ui,
+    working: &WorkingFilter,
+    classes: Option<&ClassCatalog>,
+    row: &RuleRow,
+    list: &ListUi,
+) -> Vec<RowAction> {
+    let mut scratch = list.clone();
+    let mut sink: Vec<RowAction> = Vec::new();
+    ui.scope(|ui| {
+        ui.visuals_mut().disabled_alpha = ECONOMY_BODY_ALPHA;
+        ui.disable();
+        if let Some(name) = &row.name {
+            let mut text = name.clone();
+            crate::skin::widgets::ff_field_row(ui, 0, "Name", None, |ui| {
+                let w = ui.available_width();
+                let id = ui.id().with(("economy-name", row.id));
+                crate::skin::widgets::ff_text_field_id(ui, id, &mut text, "Name", w)
+            });
+        }
+        let entries = working.body_view(row.id);
+        let bctx = BodyCtx {
+            row,
+            entries: &entries,
+            editable: working.body_editable(row.id),
+            classes,
+            working,
+        };
+        body::conditions_group(ui, &bctx, &mut scratch, &mut sink);
+        ui.add_space(16.0);
+        body::style_section(ui, &bctx, &mut scratch, &mut sink);
+        ui.add_space(8.0);
+    });
+    sink
+}
+
+/// `text` laid out on one line in `font`, cut with "…" past `max_w`.
+fn cut_galley(
+    ui: &egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    max_w: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+    job.wrap = egui::text::TextWrapping {
+        max_width: max_w.max(1.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    ui.fonts_mut(|f| f.layout_job(job))
+}
+
+fn keyword_text(k: BlockKeyword) -> &'static str {
+    match k {
+        BlockKeyword::Show => "Show",
+        BlockKeyword::Hide => "Hide",
+        BlockKeyword::Minimal => "Minimal",
+    }
+}
+
+fn text_width(ui: &egui::Ui, text: &str, font: egui::FontId) -> f32 {
+    ui.fonts_mut(|fo| {
+        fo.layout_no_wrap(text.to_string(), font, Color32::WHITE)
+            .size()
+            .x
+    })
+}
+
+fn draw_row(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    working: &WorkingFilter,
+    classes: Option<&ClassCatalog>,
+    row: &RuleRow,
+    vi: usize,
     list: &mut ListUi,
     reorder_enabled: bool,
     actions: &mut Vec<RowAction>,
 ) {
-    // The virtual list's offsets assume a row spans exactly `row_h` (collapsed) or
+    // The virtual list's offsets assume a row spans exactly `ROW_H` (collapsed) or
     // `list.expanded_h` (expanded). That only holds with no spacing between the stacked
     // allocations, so the row enforces it itself instead of relying on the caller.
     ui.spacing_mut().item_spacing.y = 0.0;
     let is_expanded = list.expanded == Some(row.id);
     let width = ui.available_width();
-    let header_h = header_height(ui);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, header_h), Sense::hover());
-    let fill = if vi % 2 == 0 {
-        theme::ROW_BASE
-    } else {
-        theme::ROW_ALT
-    };
-    ui.painter().rect_filled(rect, 0.0, fill);
-    let inner = rect.shrink2(vec2(8.0, 0.0));
+    // The row itself is the click sink; the check and arrows are registered after it, so they
+    // sit on top.
+    let (rect, row_resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
+    row_background(ui, vi, rect);
+    let inner = rect.shrink2(vec2(ROW_PAD, 0.0));
+    let mid_y = rect.center().y;
 
     // Right side first: arrows, then flags, so the label can take what remains.
     let mut right = ui.new_child(
         UiBuilder::new()
+            .id_salt("ff-row-right")
             .max_rect(inner)
             .layout(Layout::right_to_left(Align::Center)),
     );
-    let down = widgets::arrow_button(
-        &mut right,
-        ArrowDirection::Down,
-        reorder_enabled && row.can_move_down,
-    );
-    let up = widgets::arrow_button(
-        &mut right,
-        ArrowDirection::Up,
-        reorder_enabled && row.can_move_up,
-    );
+    right.spacing_mut().item_spacing.x = 4.0;
+    let can_down = reorder_enabled && row.can_move_down;
+    let can_up = reorder_enabled && row.can_move_up;
+    let down = ff_arrow(&mut right, skin, false, can_down);
+    let up = ff_arrow(&mut right, skin, true, can_up);
     if !reorder_enabled {
         down.on_hover_text("Clear the search to reorder");
         up.on_hover_text("Clear the search to reorder");
@@ -464,61 +1112,118 @@ fn draw_row(
             list.pending_scroll = Some(row.id);
         }
     }
-    right.spacing_mut().item_spacing.x = 4.0;
+    let mut arrows_w = right.min_rect().width();
+    right.add_space(4.0);
+    // WR-02: a rule that matches every item but is followed by more rules. It sits next to the
+    // arrows, outside the flag fold, and takes its width out of the flag budget.
+    if working.shadowing().contains(&row.id) {
+        flag_icon(
+            &mut right,
+            FlagIcon::GrammarWarning,
+            pal::WARN,
+            "matches every item",
+            MATCHES_EVERYTHING_TIP,
+        );
+        arrows_w += FLAG_ICON_SIZE + FLAG_GAP;
+    }
+
     let flags = flags_for(row);
-    let font = egui::FontId::proportional(theme::ROW_SUMMARY_SIZE);
     let widths: Vec<f32> = flags
         .iter()
-        .map(|f| {
-            ui.fonts_mut(|fo| {
-                fo.layout_no_wrap(f.text.clone(), font.clone(), Color32::WHITE)
-                    .size()
-                    .x
-            }) + 4.0
+        .map(|f| match &f.kind {
+            FlagKind::Icon(_) => FLAG_ICON_SIZE,
+            FlagKind::ContinueWord => text_width(ui, &f.text, small_caps(17.0)) + 4.0,
+            FlagKind::Styled { name, icon } => chip_width(
+                icon.is_some(),
+                name.as_ref().map(|n| text_width(ui, n, regular(15.0))),
+            ),
         })
         .collect();
-    let arrows_w = right.min_rect().width();
-    let budget = FLAG_BUDGET.min((inner.width() - arrows_w - 24.0 - 8.0 - LABEL_MIN_W).max(0.0));
-    let (shown, hidden) = fit_flags(&widths, budget);
-    if hidden > 0 {
-        let tip = flags
+    let budget = flag_budget(width, arrows_w);
+    let (shown, hidden) = fit_flags(&widths, budget, FLAG_GAP);
+    let badge_tip = (hidden > 0).then(|| {
+        flags[shown..]
             .iter()
             .map(|f| format!("{}: {}", f.text, f.tip))
             .collect::<Vec<_>>()
-            .join(
-                "
-",
-            );
-        right
-            .add(egui::Label::new(
-                RichText::new(format!("+{hidden}"))
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(theme::LABEL_TAN),
-            ))
-            .on_hover_text(tip);
+            .join("\n")
+    });
+    // The first flag is painted closest to the arrows (errors first); the badge goes last, at
+    // the far left, so it only ever stands in for the least important flags.
+    for (i, flag) in flags.into_iter().take(shown).enumerate() {
+        match &flag.kind {
+            FlagKind::Icon(icon) => {
+                flag_icon(&mut right, *icon, flag.color, &flag.text, &flag.tip);
+            }
+            FlagKind::ContinueWord => {
+                let (r, resp) =
+                    right.allocate_exact_size(vec2(widths[i], FLAG_ICON_SIZE), Sense::hover());
+                right.painter().text(
+                    egui::pos2(r.max.x, r.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    &flag.text,
+                    small_caps(17.0),
+                    flag.color,
+                );
+                resp.on_hover_text(flag.tip.clone());
+            }
+            FlagKind::Styled { name, icon } => {
+                let (r, resp) =
+                    right.allocate_exact_size(vec2(widths[i], FLAG_ICON_SIZE), Sense::hover());
+                let mut x = r.min.x;
+                if let Some((shape, colour)) = *icon {
+                    crate::skin::editor::paint_minimap_icon(
+                        right.painter(),
+                        skin,
+                        egui::pos2(x + FLAG_ICON_SIZE / 2.0, r.center().y),
+                        shape,
+                        colour,
+                        FLAG_ICON_SIZE,
+                        Color32::WHITE,
+                    );
+                    x += FLAG_ICON_SIZE + CHIP_ICON_GAP;
+                }
+                if let Some(name) = name {
+                    right.painter().text(
+                        egui::pos2(x, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        name,
+                        regular(15.0),
+                        pal::MUTED,
+                    );
+                }
+                resp.on_hover_text(flag.tip.clone());
+            }
+        }
     }
-    for flag in flags.into_iter().take(shown).rev() {
-        right
-            .add(egui::Label::new(
-                RichText::new(flag.text)
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(flag.color),
-            ))
-            .on_hover_text(flag.tip);
+    if let Some(tip) = badge_tip {
+        let text = format!("+{hidden}");
+        let w = text_width(&right, &text, regular(15.0));
+        let (r, resp) = right.allocate_exact_size(vec2(w, FLAG_ICON_SIZE), Sense::hover());
+        right.painter().text(
+            r.left_center(),
+            egui::Align2::LEFT_CENTER,
+            text,
+            regular(15.0),
+            pal::MUTED,
+        );
+        resp.on_hover_text(tip);
     }
     let used_left = right.min_rect().left();
 
-    let left_rect = egui::Rect::from_min_max(
-        inner.min,
-        egui::pos2((used_left - 4.0).max(inner.min.x), inner.max.y),
+    // Left: the round check, centred across both lines.
+    let check_rect = egui::Rect::from_min_size(
+        egui::pos2(inner.min.x, mid_y - CHECK_W / 2.0),
+        vec2(CHECK_W, CHECK_W),
     );
     let mut left = ui.new_child(
         UiBuilder::new()
-            .max_rect(left_rect)
+            .id_salt("ff-row-check")
+            .max_rect(check_rect)
             .layout(Layout::left_to_right(Align::Center)),
     );
     let mut enabled = row.enabled;
-    let toggle = widgets::circular_toggle(&mut left, &mut enabled);
+    let toggle = ff_check(&mut left, skin, &mut enabled, "Enabled");
     if toggle.changed() {
         actions.push(RowAction::SetEnabled(row.id, enabled));
     }
@@ -527,109 +1232,91 @@ fn draw_row(
     } else {
         toggle.on_hover_text(if row.enabled { "Enabled" } else { "Disabled" });
     }
-    left.add_space(8.0);
-    let color = if is_expanded {
-        theme::SECTION_CREAM
-    } else if row.enabled {
-        theme::TAB_ACTIVE
-    } else {
-        theme::DISABLED_TEXT
-    };
-    let label = left.add(
-        egui::Label::new(
-            RichText::new(&row.label)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(color),
-        )
-        .truncate()
-        .sense(Sense::click()),
+
+    // Text: index, Show/Hide and name on line 1, the summary on line 2.
+    let painter = ui.painter().with_clip_rect(rect);
+    let index_right = inner.min.x + CHECK_W + 8.0 + INDEX_W;
+    let kw_x = index_right + 8.0;
+    let name_x = kw_x + SHOW_W + 8.0;
+    let dim = !row.enabled;
+    let line1_y = rect.min.y + 18.0;
+    let line2_y = rect.min.y + 38.0;
+    painter.text(
+        egui::pos2(index_right, line1_y),
+        egui::Align2::RIGHT_CENTER,
+        row.index.to_string(),
+        regular(15.0),
+        if dim { pal::DISABLED } else { pal::MUTED },
     );
-    // The whole space from the label to the flags expands the row, not just the text extent.
-    let click_rect = egui::Rect::from_min_max(
-        egui::pos2(label.rect.min.x, inner.min.y),
-        egui::pos2(left_rect.max.x.max(label.rect.max.x), inner.max.y),
+    painter.text(
+        egui::pos2(kw_x, line1_y),
+        egui::Align2::LEFT_CENTER,
+        keyword_text(row.keyword),
+        small_caps(17.0),
+        if dim { pal::DISABLED } else { pal::LABEL },
     );
-    let row_click = ui.interact(
-        click_rect,
-        ui.id().with(("ff-row-click", row.id)),
-        Sense::click(),
-    );
-    if label.clicked() || row_click.clicked() {
+    let label_w = (used_left - 8.0 - name_x).max(LABEL_MIN_W.min(inner.max.x - name_x));
+    let mut cut = false;
+    if let Some(name) = &row.name {
+        let g = cut_galley(
+            ui,
+            name,
+            small_caps(17.0),
+            if dim { pal::DISABLED } else { pal::HEADING },
+            label_w,
+        );
+        cut |= g.elided;
+        let pos = egui::pos2(name_x, line1_y - g.size().y / 2.0);
+        painter.galley(pos, g, Color32::PLACEHOLDER);
+    }
+    if !is_expanded && !row.summary.is_empty() {
+        // The flags and arrows are centred across both lines, so the summary stops where they
+        // start, like the name (WR-06).
+        let g = cut_galley(
+            ui,
+            &row.summary,
+            regular(15.0),
+            if dim { pal::DISABLED } else { pal::MUTED },
+            (used_left - 8.0 - (index_right + 8.0)).max(40.0),
+        );
+        cut |= g.elided;
+        let pos = egui::pos2(index_right + 8.0, line2_y - g.size().y / 2.0);
+        painter.galley(pos, g, Color32::PLACEHOLDER);
+    }
+    if row_resp.clicked() {
         list.expanded = if is_expanded { None } else { Some(row.id) };
         list.confirm_delete = None;
     }
-    label.on_hover_text(&row.label);
-    // The click area sits on top of the label, so it carries the full-label tooltip too.
-    row_click.on_hover_text(&row.label);
-
-    if !is_expanded {
-        // The summary comes from the row (built once at rebuild); only the paint happens here.
-        debug_assert!((row_h - header_h - SUMMARY_LINE_H).abs() < 0.5);
-        let (srect, _) = ui.allocate_exact_size(vec2(width, SUMMARY_LINE_H), Sense::hover());
-        ui.painter().rect_filled(srect, 0.0, fill);
-        if !row.summary.is_empty() {
-            let color = if row.enabled {
-                theme::LABEL_TAN
-            } else {
-                theme::DISABLED_TEXT
-            };
-            let mut sui = ui.new_child(
-                UiBuilder::new()
-                    .max_rect(egui::Rect::from_min_max(
-                        egui::pos2(srect.min.x + SUMMARY_INDENT, srect.min.y),
-                        egui::pos2(srect.max.x - 8.0, srect.max.y),
-                    ))
-                    .layout(Layout::left_to_right(Align::Center)),
-            );
-            sui.add(
-                egui::Label::new(
-                    RichText::new(&row.summary)
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(color),
-                )
-                .truncate()
-                .selectable(false),
-            );
-        }
-        // Registered after the label so it is the topmost hit: a click on the text expands the
-        // row instead of starting a text selection (same pattern as the header's `row_click`).
-        let sresp = ui.interact(
-            srect,
-            ui.id().with(("ff-summary-click", row.id)),
-            Sense::click(),
-        );
-        if !row.summary.is_empty() {
-            sresp.clone().on_hover_text(&row.summary);
-        }
-        if sresp.clicked() {
-            list.expanded = Some(row.id);
-            list.confirm_delete = None;
-        }
+    if cut {
+        let full = match &row.name {
+            Some(n) if !row.summary.is_empty() => format!("{n}\n{}", row.summary),
+            Some(n) => n.clone(),
+            None => row.summary.clone(),
+        };
+        row_resp.on_hover_text(full);
     }
 
     if is_expanded {
         let body = egui::Frame::new()
-            .fill(theme::PANEL_GROUND)
-            .inner_margin(egui::Margin::same(8))
+            .fill(pal::ROW_EVEN)
+            .inner_margin(egui::Margin::symmetric(0, 4))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 expanded_body(ui, working, classes, row, list, actions);
             });
-        let h = header_h + body.response.rect.height();
+        let h = ROW_H + body.response.rect.height();
         if (h - list.expanded_h).abs() > 0.5 {
             list.expanded_h = h;
             ui.ctx().request_repaint();
         }
+        let whole = egui::Rect::from_min_max(rect.min, body.response.rect.max);
+        ui.painter().rect_stroke(
+            whole,
+            0.0,
+            egui::Stroke::new(1.0, pal::INPUT_BORDER_HOT),
+            egui::StrokeKind::Inside,
+        );
     }
-}
-
-/// A row-action button at the 13px body-small size (UI-SPEC: 11px is for captions only).
-fn small_button(ui: &mut egui::Ui, text: impl Into<RichText>) -> egui::Response {
-    ui.add(egui::Button::new(text.into().size(theme::ROW_SUMMARY_SIZE)))
-}
-
-fn caption(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
 }
 
 /// What the name box emits for its current text: an empty box removes the `# ff:name` line.
@@ -652,22 +1339,26 @@ fn expanded_body(
     let id = row.id;
 
     // NAME
-    caption(ui, "NAME");
+    let skin = crate::skin::of(ui.ctx());
     // The draft outlives `row.name`: emptying the box clears the meta line, and the box must
     // keep its focus while the author retypes.
     let draft = list
         .name_drafts
         .entry(id)
         .or_insert_with(|| row.name.clone().unwrap_or_default());
-    let resp = ui.add(
-        egui::TextEdit::singleline(draft)
-            .hint_text("name")
-            .desired_width(f32::INFINITY),
-    );
+    let name_id = ui.id().with(("name-box", id));
+    let resp = crate::skin::widgets::ff_field_row(ui, 0, "Name", None, |ui| {
+        let w = ui.available_width();
+        crate::skin::widgets::ff_text_field_id(ui, name_id, draft, "Name", w)
+    })
+    .inner;
     if resp.changed() {
         actions.push(name_action(id, draft));
     }
-    ui.add_space(8.0);
+    if list.focus_name == Some(id) {
+        resp.request_focus();
+        list.focus_name = None;
+    }
 
     let entries = working.body_view(row.id);
     let bctx = BodyCtx {
@@ -681,16 +1372,17 @@ fn expanded_body(
     // CONDITIONS
     body::conditions_group(ui, &bctx, list, actions);
     if row.cannot_enable {
-        ui.add(
-            egui::Label::new(RichText::new(CANNOT_ENABLE_LONG).color(theme::WARM_ACCENT_TEXT))
-                .wrap(),
-        );
+        ui.add(egui::Label::new(
+            RichText::new("Can't enable")
+                .font(regular(15.0))
+                .color(pal::WARN),
+        ))
+        .on_hover_text(CANNOT_ENABLE_LONG);
     }
     for d in &row.errors {
         ui.add(
             egui::Label::new(
-                RichText::new(format!("Line {}: {}", d.line, d.message))
-                    .color(theme::WARM_ACCENT_TEXT),
+                RichText::new(format!("Line {}: {}", d.line, d.message)).color(pal::WARN),
             )
             .wrap(),
         );
@@ -702,160 +1394,460 @@ fn expanded_body(
     ui.add_space(8.0);
 
     // Duplicate / Delete
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        if list.confirm_delete == Some(id) {
-            ui.label(RichText::new("Delete this rule?").color(theme::LABEL_TAN));
-            if small_button(
-                ui,
-                RichText::new("Yes, delete").color(theme::WARM_ACCENT_TEXT),
-            )
+        // Explicit 8pt gaps between the three buttons.
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.add_space(crate::skin::widgets::ROW_PAD - 8.0);
+        if ff_button_ex(ui, &skin, "Section above", 128.0, true, false)
+            .on_hover_text("Inserts a section divider directly above this rule.")
             .clicked()
-            {
-                actions.push(RowAction::Delete(id));
-                list.confirm_delete = None;
-            }
-            if small_button(ui, "Keep").clicked() {
-                list.confirm_delete = None;
-            }
-        } else {
-            if small_button(ui, "Duplicate").clicked() {
-                actions.push(RowAction::Duplicate(id));
-            }
-            if small_button(ui, "Delete").clicked() {
-                list.confirm_delete = Some(id);
-            }
-        }
-    });
-}
-
-/// Full-width search field with a Clear button; true when the query changed this frame.
-pub fn search_bar(ui: &mut egui::Ui, query: &mut String) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        let reserve = if query.is_empty() { 0.0 } else { 56.0 };
-        let resp = ui.add(
-            egui::TextEdit::singleline(query)
-                .hint_text("Search rules, classes, base types\u{2026}")
-                .desired_width((ui.available_width() - reserve).max(40.0)),
-        );
-        if resp.changed() {
-            changed = true;
-        }
-        if (resp.has_focus() || resp.lost_focus())
-            && !query.is_empty()
-            && ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
-            query.clear();
-            changed = true;
+            actions.push(RowAction::AddSectionAbove(id));
         }
-        if !query.is_empty() && small_button(ui, "Clear").clicked() {
-            query.clear();
-            changed = true;
+        if crate::skin::widgets::ff_button(ui, &skin, "Duplicate", 112.0).clicked() {
+            actions.push(RowAction::Duplicate(id));
+        }
+        if crate::skin::widgets::ff_button_ex(ui, &skin, "Delete", 112.0, true, true).clicked() {
+            list.confirm_delete = Some(id);
         }
     });
-    changed
 }
 
-/// The footer line for an economy state.
-pub fn economy_footer_text(view: &EconomyView) -> String {
-    match view {
-        EconomyView::Present { blocks: 1 } => "+ 1 locked rule block (economy)".to_string(),
-        EconomyView::Present { blocks } => format!("+ {blocks} locked rule blocks (economy)"),
-        EconomyView::Absent => "No economy section".to_string(),
-        EconomyView::Damaged(_) => "Economy markers are damaged".to_string(),
-    }
+/// What the toolbar reported this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarClick {
+    None,
+    AddRule,
+    AddSection,
 }
 
-/// The pinned economy footer row. `enabled` gates the buttons.
-pub fn economy_footer(
+/// The toolbar of the RULES tab: the recessed search field (hint names the rule count), a small
+/// Clear while a query is typed, `+ Add rule` and `+ Add section`. Escape clears the query.
+pub fn search_row(
     ui: &mut egui::Ui,
-    view: &EconomyView,
-    list: &mut ListUi,
-    enabled: bool,
-) -> Option<EconomyFooterAction> {
-    let mut result = None;
-    let text = economy_footer_text(view);
-    egui::Frame::new()
-        .fill(theme::HEADER_PLATE)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            match view {
-                EconomyView::Present { .. } => {
-                    ui.horizontal(|ui| {
-                        if list.confirm_economy_remove {
-                            ui.label(
-                                RichText::new("Remove the economy section?")
-                                    .color(theme::LABEL_TAN),
-                            );
-                            if small_button(ui, RichText::new("Yes, remove").color(theme::WARM_ACCENT_TEXT))
-                                .clicked()
-                            {
-                                result = Some(EconomyFooterAction::Remove);
-                                list.confirm_economy_remove = false;
-                            }
-                            if small_button(ui, "Keep").clicked() {
-                                list.confirm_economy_remove = false;
-                            }
-                        } else {
-                            ui.label(RichText::new(&text).color(theme::LABEL_TAN))
-                                .on_hover_text(
-                                    "Generated from prices.json by SYNC ECONOMY and APPLY. Not editable here.",
-                                );
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if ui
-                                    .add_enabled(enabled, egui::Button::new(RichText::new("Remove").size(theme::ROW_SUMMARY_SIZE)))
-                                    .clicked()
-                                {
-                                    list.confirm_economy_remove = true;
-                                }
-                            });
-                        }
-                    });
-                    if list.confirm_economy_remove {
-                        ui.label(
-                            RichText::new("Your own rules are kept. Add the section back any time.")
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::TAB_ACTIVE),
-                        );
-                    }
-                }
-                EconomyView::Absent => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&text).color(theme::DISABLED_TEXT));
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .add_enabled(enabled, egui::Button::new(RichText::new("Add economy section").size(theme::ROW_SUMMARY_SIZE)))
-                                .clicked()
-                            {
-                                result = Some(EconomyFooterAction::Add);
-                            }
-                        });
-                    });
-                }
-                EconomyView::Damaged(msg) => {
-                    ui.label(RichText::new(&text).color(theme::WARM_ACCENT_TEXT))
-                        .on_hover_text(msg);
+    skin: &Skin,
+    query: &mut String,
+    add_enabled: bool,
+    total: usize,
+) -> ToolbarClick {
+    search_row_rects(ui, skin, query, add_enabled, total).0
+}
+
+/// [`search_row`], also returning the rects of the search field, `+ Add rule` and
+/// `+ Add section`.
+fn search_row_rects(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    query: &mut String,
+    add_enabled: bool,
+    total: usize,
+) -> (ToolbarClick, egui::Rect, egui::Rect, egui::Rect) {
+    let mut out = (
+        ToolbarClick::None,
+        egui::Rect::NOTHING,
+        egui::Rect::NOTHING,
+        egui::Rect::NOTHING,
+    );
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 34.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let hint = format!("Search {total} rules, classes, base types…");
+            // The buttons are at least 124 / 140pt, wider if a caption needs it (see `ff_button_ex`).
+            let add_w = (text_width(ui, "+ Add rule", small_caps(17.0)) + 44.0).max(124.0);
+            let sec_w = (text_width(ui, "+ Add section", small_caps(17.0)) + 44.0).max(140.0);
+            let width =
+                (ui.available_width() - add_w - sec_w - 8.0 - crate::skin::widgets::FIELD_GAP)
+                    .max(40.0);
+            let start_x = ui.next_widget_position().x;
+            let resp = ff_text_field(ui, query, &hint, width);
+            // The field is 30pt high and `width` wide, centred on the edit.
+            let field = egui::Rect::from_min_max(
+                egui::pos2(start_x, resp.rect.center().y - 15.0),
+                egui::pos2(start_x + width, resp.rect.center().y + 15.0),
+            );
+            if (resp.has_focus() || resp.lost_focus())
+                && !query.is_empty()
+                && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                query.clear();
+            }
+            if !query.is_empty() {
+                // Clear sits inside the field's right edge, so the row never grows.
+                let clear = egui::Rect::from_min_max(
+                    egui::pos2(field.max.x - 52.0, field.min.y),
+                    egui::pos2(field.max.x - 2.0, field.max.y),
+                );
+                let r = ui.interact(clear, ui.id().with("ff-search-clear"), Sense::click());
+                ui.painter().text(
+                    egui::pos2(clear.max.x - 6.0, clear.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    "Clear",
+                    regular(15.0),
+                    if r.hovered() {
+                        pal::HEADING
+                    } else {
+                        pal::MUTED
+                    },
+                );
+                if r.clicked() {
+                    query.clear();
                 }
             }
+            // The buttons are placed from the row's right edge, so their position does not depend
+            // on where the field leaves the cursor; the field is sized to leave `FIELD_GAP`.
+            let row = ui.max_rect();
+            let sec_btn =
+                egui::Rect::from_min_max(egui::pos2(row.max.x - sec_w, row.min.y), row.max);
+            let add_btn = egui::Rect::from_min_max(
+                egui::pos2(sec_btn.min.x - 8.0 - add_w, row.min.y),
+                egui::pos2(sec_btn.min.x - 8.0, row.max.y),
+            );
+            let add = ui
+                .scope_builder(UiBuilder::new().max_rect(add_btn), |ui| {
+                    ff_button_ex(ui, skin, "+ Add rule", add_w, add_enabled, false)
+                })
+                .inner
+                .on_hover_text(ADD_RULE_TIP);
+            let section = ui
+                .scope_builder(UiBuilder::new().max_rect(sec_btn), |ui| {
+                    ff_button_ex(ui, skin, "+ Add section", sec_w, add_enabled, false)
+                })
+                .inner
+                .on_hover_text(ADD_SECTION_TIP);
+            let click = if add_enabled && add.clicked() {
+                ToolbarClick::AddRule
+            } else if add_enabled && section.clicked() {
+                ToolbarClick::AddSection
+            } else {
+                ToolbarClick::None
+            };
+            out = (click, field, add.rect, section.rect);
+        },
+    );
+    out
+}
+
+/// Tooltip on `+ Add section`.
+pub const ADD_SECTION_TIP: &str = "Adds a section divider at the top of the list.";
+
+/// Tooltip on `+ Add rule` (it replaces the standing empty-state paragraph).
+pub const ADD_RULE_TIP: &str = "Adds a new rule at the top of the file.";
+
+/// Test support shared with the app tests: browse every economy rule as a user would (expand it,
+/// click every widget of its body, press keys at it) and report what that produced.
+#[cfg(test)]
+pub(crate) mod economy_browse {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    /// A filter with one user rule and a two-block economy section whose blocks use list,
+    /// comparison, boolean, defence and every style line, so the read-only body draws nearly
+    /// every editor control.
+    pub(crate) fn rich_economy_text() -> String {
+        let r = crate::filter::section::RULE_LINE;
+        let b = crate::filter::section::BEGIN_LINE;
+        let bases = [
+            "Chaos Orb",
+            "Divine Orb",
+            "Exalted Orb",
+            "Orb of Annulment",
+            "Orb of Chance",
+            "Regal Orb",
+            "Vaal Orb",
+            "Gemcutter's Prism",
+            "Glassblower's Bauble",
+            "Mirror of Kalandra",
+        ]
+        .map(|n| format!("\"{n}\""))
+        .join(" ");
+        let first = [
+            "Show".to_string(),
+            format!("  BaseType == {bases}"),
+            "  Class \"Stackable Currency\"".into(),
+            "  Rarity Normal".into(),
+            "  ItemLevel >= 70".into(),
+            "  AreaLevel >= 60".into(),
+            "  SetTextColor 255 121 198 255".into(),
+            "  SetBorderColor 255 121 198 255".into(),
+            "  SetBackgroundColor 40 42 54 255".into(),
+            "  SetFontSize 37".into(),
+            "  MinimapIcon 0 Pink Circle".into(),
+            "  PlayEffect Pink".into(),
+            "  PlayAlertSound 2 200".into(),
+            "  DisableDropSound".into(),
+            "  Continue".into(),
+        ]
+        .join("\n");
+        let second = [
+            "Hide",
+            "  Class \"Body Armours\"",
+            "  BaseArmour > 0",
+            "  BaseEvasion 0",
+            "  Sockets >= 2",
+            "  Corrupted False",
+            "  SetFontSize 21",
+            "  MinimapIcon -1 Red Star",
+            "  PlayEffect None",
+        ]
+        .join("\n");
+        format!("Show\n  Class \"Rings\"\n\n{r}\n{b}\n{r}\n\n{first}\n\n{second}\n")
+    }
+
+    /// What browsing produced.
+    #[derive(Debug, Default)]
+    pub(crate) struct Report {
+        /// Every action any frame recorded, including the ones the body discards.
+        pub actions: Vec<RowAction>,
+        /// Enabled interactive widgets found inside an expanded body (must be none).
+        pub enabled_in_body: Vec<Rect>,
+        /// Disabled interactive widgets found inside the bodies (the drawn controls).
+        pub disabled_in_body: usize,
+        /// Frames that ended with a popup open or a widget focused.
+        pub popups_or_focus: usize,
+        /// Frames after which the list state changed (anything but the measured height).
+        pub list_changed: usize,
+        /// The tallest expanded height measured.
+        pub max_expanded_h: f32,
+        /// Economy rules browsed.
+        pub rules: usize,
+    }
+
+    fn input(events: Vec<Event>) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(535.0, 2400.0))),
+            events,
+            ..Default::default()
+        }
+    }
+
+    fn click(pos: Pos2) -> Vec<Vec<Event>> {
+        let button = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::default(),
+        };
+        vec![
+            vec![Event::PointerMoved(pos)],
+            vec![button(true)],
+            vec![button(false)],
+        ]
+    }
+
+    fn key(k: egui::Key) -> Vec<Event> {
+        [true, false]
+            .into_iter()
+            .map(|pressed| Event::Key {
+                key: k,
+                physical_key: Some(k),
+                pressed,
+                repeat: false,
+                modifiers: Modifiers::default(),
+            })
+            .collect()
+    }
+
+    /// The parts of the list state a read-only body must never touch (`expanded` is left out:
+    /// the row header, which may hold keyboard focus, expands and collapses the row).
+    fn snapshot(list: &ListUi) -> String {
+        format!(
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {}",
+            list.confirm_delete,
+            list.name_drafts,
+            list.pending,
+            list.focus_line,
+            list.line_error,
+            list.pending_defences,
+            list.pending_simple_defences,
+            list.simple_all,
+            list.focus_card,
+            list.focus_name,
+            list.editing_section,
+            list.confirm_economy_remove,
+            list.section_draft,
+        )
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        events: Vec<Event>,
+        wf: &WorkingFilter,
+        row: &RuleRow,
+        list: &mut ListUi,
+        report: &mut Report,
+    ) {
+        let before = snapshot(list);
+        ctx.run_ui(input(events), |ui| {
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 2400.0));
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            // The actions the body records (and the list drops).
+            report
+                .actions
+                .extend(draw_economy_row(&mut child, wf, None, row, 0, list));
+        })
+        .drop_without_applying_deltas();
+        if snapshot(list) != before {
+            report.list_changed += 1;
+        }
+        // The row header itself may take keyboard focus (it expands and collapses the row);
+        // nothing inside the body may.
+        let body_focus = ctx.memory(|m| m.focused()).is_some_and(|id| {
+            ctx.viewport(|v| v.prev_pass.widgets.get(id).map(|w| w.rect.min.y))
+                .is_none_or(|y| y >= ROW_H)
         });
-    result
+        if egui::Popup::is_any_open(ctx) || body_focus {
+            report.popups_or_focus += 1;
+        }
+        report.max_expanded_h = report.max_expanded_h.max(list.expanded_h);
+    }
+
+    /// [`browse`] through the whole list, as the RULES tab draws it: every economy rule expanded in
+    /// turn inside [`show_list`], every disabled widget (the body's controls) clicked and keys
+    /// pressed. Returns what the list frames reported, which the app applies to the filter.
+    pub(crate) fn browse_list(wf: &mut WorkingFilter) -> (Vec<RowAction>, usize) {
+        let entries = wf.entries("", |_| false);
+        let wf: &WorkingFilter = wf;
+        let mut actions = Vec::new();
+        let mut clicked = 0;
+        for row in wf.economy_rows() {
+            let ctx = egui::Context::default();
+            crate::skin::fonts::install(&ctx);
+            let mut list = ListUi {
+                expanded: Some(row.id),
+                last_expanded: Some(row.id),
+                ..Default::default()
+            };
+            let run = |events: Vec<Event>, list: &mut ListUi, actions: &mut Vec<RowAction>| {
+                ctx.run_ui(input(events), |ui| {
+                    let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 2400.0));
+                    let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                    actions.extend(show_list(&mut child, wf, &entries, list, true, None).actions);
+                })
+                .drop_without_applying_deltas();
+            };
+            for _ in 0..3 {
+                run(vec![], &mut list, &mut actions);
+            }
+            let body: Vec<Rect> = ctx.viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, w)| w.iter())
+                    .filter(|w| w.sense.interactive() && !w.enabled)
+                    .map(|w| w.rect)
+                    .collect()
+            });
+            for r in body {
+                clicked += 1;
+                for events in click(r.center()) {
+                    run(events, &mut list, &mut actions);
+                }
+                list.expanded = Some(row.id);
+            }
+            for k in [
+                egui::Key::Tab,
+                egui::Key::Enter,
+                egui::Key::Space,
+                egui::Key::Delete,
+            ] {
+                run(key(k), &mut list, &mut actions);
+            }
+        }
+        (actions, clicked)
+    }
+
+    /// Expand each economy rule of `wf`, click the centre of every interactive widget of its body
+    /// and press keys at it (type, Enter, Space, Delete, arrows, Escape, Tab through it).
+    pub(crate) fn browse(wf: &WorkingFilter) -> Report {
+        let mut report = Report::default();
+        for row in wf.economy_rows() {
+            report.rules += 1;
+            let ctx = egui::Context::default();
+            crate::skin::fonts::install(&ctx);
+            let mut list = ListUi {
+                expanded: Some(row.id),
+                last_expanded: Some(row.id),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                frame(&ctx, vec![], wf, row, &mut list, &mut report);
+            }
+            let widgets: Vec<egui::WidgetRect> = ctx.viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, w)| w.iter().copied())
+                    .filter(|w| w.sense.interactive() && w.rect.min.y >= ROW_H)
+                    .collect()
+            });
+            for w in &widgets {
+                if w.enabled {
+                    report.enabled_in_body.push(w.rect);
+                } else {
+                    report.disabled_in_body += 1;
+                }
+            }
+            for w in &widgets {
+                for events in click(w.rect.center()) {
+                    frame(&ctx, events, wf, row, &mut list, &mut report);
+                }
+            }
+            let mut keys = vec![vec![Event::Text("x".into())]];
+            for k in [
+                egui::Key::Enter,
+                egui::Key::Space,
+                egui::Key::Delete,
+                egui::Key::Backspace,
+                egui::Key::ArrowDown,
+                egui::Key::ArrowUp,
+                egui::Key::Escape,
+            ] {
+                keys.push(key(k));
+            }
+            keys.extend(std::iter::repeat_with(|| key(egui::Key::Tab)).take(40));
+            keys.push(key(egui::Key::Enter));
+            keys.push(vec![Event::Text("1".into())]);
+            for events in keys {
+                frame(&ctx, events, wf, row, &mut list, &mut report);
+            }
+        }
+        report
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::virtual_list::build_offsets;
     use super::*;
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
 
+    /// Every user rule as a plain entry (no sections).
+    fn rule_entries(wf: &WorkingFilter) -> Vec<ListEntry> {
+        (0..wf.rows().len()).map(ListEntry::Rule).collect()
+    }
+
     fn headless_ctx() -> egui::Context {
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         ctx
     }
 
     fn input(events: Vec<Event>) -> RawInput {
         RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(460.0, 600.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0))),
+            events,
+            ..Default::default()
+        }
+    }
+
+    /// [`input`] on a 1200pt-tall screen: an expanded Custom rule's style lines push the rule's
+    /// buttons below the 600pt one.
+    fn tall_input(events: Vec<Event>) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(535.0, 1200.0))),
             events,
             ..Default::default()
         }
@@ -890,11 +1882,12 @@ mod tests {
         list: &mut ListUi,
         reorder: bool,
     ) -> (ListFrame, f32) {
-        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let visible = rule_entries(wf);
+        let area_h = raw.screen_rect.map_or(600.0, |r| r.height());
         let mut out = (ListFrame::default(), 0.0);
         ctx.run_ui(raw, |ui| {
-            let h = row_height(ui);
-            let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 600.0));
+            let h = row_height();
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, area_h));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
             out = (show_list(&mut child, wf, &visible, list, reorder, None), h);
         })
@@ -924,6 +1917,25 @@ Show
     }
 
     #[test]
+    fn broken_group_blocks_carry_the_flag() {
+        let wf = WorkingFilter::from_text(
+            "# ff:group abc 1/2\nShow\n  BaseArmour > 0\n\n# ff:group abc 2/2\nHide\n  BaseArmour 0\n\nShow\n",
+        );
+        assert_eq!(wf.rows().len(), 3);
+        for r in &wf.rows()[..2] {
+            let f = flags_for(r);
+            let g = f.iter().find(|f| f.text == "group broken").expect("flag");
+            assert_eq!(g.color, pal::WARN);
+            assert!(g.tip.contains("# ff:group"));
+        }
+        assert!(
+            !flags_for(&wf.rows()[2])
+                .iter()
+                .any(|f| f.text == "group broken")
+        );
+    }
+
+    #[test]
     fn style_flags_known_truncated_unknown_and_none() {
         let wf = styled_filter("S");
         let f = flags_for(&wf.rows()[0]);
@@ -931,7 +1943,7 @@ Show
         let wf = styled_filter("Nope");
         let f = flags_for(&wf.rows()[0]);
         let u = f.iter().find(|f| f.text == "unknown style").unwrap();
-        assert_eq!(u.color, theme::WARM_ACCENT_TEXT);
+        assert_eq!(u.color, pal::WARN);
         assert!(u.tip.starts_with("No style with this name exists"));
         assert!(
             !flags_for(&wf.rows()[1])
@@ -942,16 +1954,387 @@ Show
         row.style = StyleState::Known("Exalted Showcase".into());
         let f = flags_for(&row);
         let k = f.iter().find(|f| f.text.starts_with("styled:")).unwrap();
-        assert_eq!(k.text, "styled: Exalted Show…");
+        assert_eq!(k.text, "styled: Exalted Sh…");
+        assert_eq!(
+            k.kind,
+            FlagKind::Styled {
+                name: Some("Exalted Sh…".into()),
+                icon: row.chip_icon,
+            }
+        );
         assert!(k.tip.contains("Exalted Showcase"));
         row.style = StyleState::Unchecked("S".into());
         assert!(!flags_for(&row).iter().any(|f| f.text.contains("style")));
     }
 
+    fn chip_flag(row: &RuleRow) -> Option<Flag> {
+        flags_for(row)
+            .into_iter()
+            .find(|f| matches!(f.kind, FlagKind::Styled { .. }))
+    }
+
+    #[test]
+    fn known_style_chip_draws_its_minimap_icon_then_the_name() {
+        // B: Small Red Circle.
+        let wf = styled_filter("B");
+        let row = &wf.rows()[0];
+        assert_eq!(row.chip_icon, Some((0, 0)));
+        let f = chip_flag(row).expect("chip");
+        assert_eq!(f.text, "styled: B");
+        assert_eq!(
+            f.kind,
+            FlagKind::Styled {
+                name: Some("B".into()),
+                icon: Some((0, 0)),
+            }
+        );
+        assert_eq!(f.tip, "Style \"B\" sets this rule's actions on Apply");
+        // The untagged second rule has no MinimapIcon: no chip.
+        assert!(chip_flag(&wf.rows()[1]).is_none());
+    }
+
+    #[test]
+    fn known_style_without_minimap_chip_is_name_only() {
+        let wf = styled_filter("E");
+        let f = chip_flag(&wf.rows()[0]).expect("chip");
+        assert_eq!(
+            f.kind,
+            FlagKind::Styled {
+                name: Some("E".into()),
+                icon: None,
+            }
+        );
+    }
+
+    #[test]
+    fn untagged_rule_chip_is_its_minimap_icon_alone() {
+        let wf = WorkingFilter::from_text(
+            "Show\n  Class \"Rings\"\n  MinimapIcon -1\n  MinimapIcon 0 Red Circle\n  \
+             MinimapIcon 1 Blue Star\n\nShow\n  MinimapIcon -1\n\n\
+             Show\n  MinimapIcon 3 Blue Star\n\nShow\n  Class \"Belts\"\n\n\
+             Show\n  MinimapIcon 1 Blue Star\n  MinimapIcon -1\n",
+        );
+        let f = chip_flag(&wf.rows()[0]).expect("chip");
+        assert_eq!(f.text, "minimap icon");
+        assert_eq!(f.tip, "Minimap icon: Medium Blue Star");
+        // Star is shape 4, Blue colour 2; the last line wins, as it does in game.
+        assert_eq!(
+            f.kind,
+            FlagKind::Styled {
+                name: None,
+                icon: Some((4, 2)),
+            }
+        );
+        // MinimapIcon -1, an out-of-range size, no MinimapIcon, or a shown icon overridden by a
+        // later `MinimapIcon -1`: no chip.
+        for row in &wf.rows()[1..] {
+            assert!(chip_flag(row).is_none(), "{}", row.label);
+        }
+    }
+
+    #[test]
+    fn unknown_or_unchecked_style_has_no_chip() {
+        let src = "#ff:style Nope\nShow\n  MinimapIcon 1 Blue Star\n";
+        let wf = WorkingFilter::from_text(src);
+        // No styles loaded: Unchecked, no chip.
+        assert!(matches!(wf.rows()[0].style, StyleState::Unchecked(_)));
+        assert!(chip_flag(&wf.rows()[0]).is_none());
+        let mut wf = wf;
+        wf.set_styles(Ok(crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles-default.json"
+        ))
+        .unwrap()));
+        let f = flags_for(&wf.rows()[0]);
+        assert!(f.iter().any(|f| f.text == "unknown style"));
+        assert!(chip_flag(&wf.rows()[0]).is_none());
+    }
+
+    #[test]
+    fn chip_icon_follows_the_loaded_styles() {
+        // Rows rebuild on set_styles, so a style set arriving later lights the icon.
+        let mut wf = WorkingFilter::from_text("#ff:style S\nShow\n");
+        assert_eq!(wf.rows()[0].chip_icon, None);
+        wf.set_styles(Ok(crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/styles-default.json"
+        ))
+        .unwrap()));
+        assert_eq!(wf.rows()[0].chip_icon, Some((0, 9)));
+    }
+
+    #[test]
+    fn chip_width_is_icon_gap_and_name() {
+        assert_eq!(chip_width(true, Some(30.0)), FLAG_ICON_SIZE + 4.0 + 30.0);
+        assert_eq!(chip_width(true, None), FLAG_ICON_SIZE);
+        assert_eq!(chip_width(false, Some(30.0)), 30.0);
+    }
+
     #[test]
     fn fit_flags_collapses_overflow_into_a_badge() {
-        assert_eq!(fit_flags(&[50.0, 50.0, 50.0], 120.0), (1, 2));
-        assert_eq!(fit_flags(&[40.0, 40.0], 120.0), (2, 0));
+        assert_eq!(fit_flags(&[50.0, 50.0, 50.0], 120.0, 4.0), (1, 2));
+        assert_eq!(fit_flags(&[40.0, 40.0], 120.0, 4.0), (2, 0));
+        assert_eq!(fit_flags(&[18.0; 5], 120.0, 4.0), (5, 0));
+        let (shown, hidden) = fit_flags(&[18.0; 8], 120.0, 4.0);
+        assert!(shown < 8 && shown + hidden == 8 && hidden > 0);
+    }
+
+    #[test]
+    fn flag_budget_keeps_label_minimum() {
+        assert!(flag_budget(517.0, 36.0) >= 120.0);
+        assert_eq!(flag_budget(2000.0, 36.0), FLAG_BUDGET);
+        assert!(flag_budget(300.0, 36.0) < 120.0);
+        assert_eq!(flag_budget(100.0, 36.0), 0.0);
+        // At any width the label keeps its minimum: width - fixed parts - budget >= LABEL_MIN_W
+        // whenever the budget was cut.
+        let w = 400.0;
+        let fixed = 2.0 * ROW_PAD + CHECK_W + INDEX_W + SHOW_W + 24.0 + 36.0 + 8.0;
+        assert!(w - fixed - flag_budget(w, 36.0) >= LABEL_MIN_W - 0.01);
+    }
+
+    #[test]
+    fn flags_carry_kinds_tips_and_paint_order() {
+        let wf = styled_filter("S");
+        let mut row = wf.rows()[0].clone();
+        row.has_continue = true;
+        row.group_broken = true;
+        row.moved_across_continue = true;
+        let diag = |severity| FilterDiagnostic {
+            line: 1,
+            severity,
+            message: "bad".into(),
+        };
+        row.errors = vec![diag(crate::filter::diag::Severity::Error)];
+        row.warnings = vec![diag(crate::filter::diag::Severity::Warning)];
+        let f = flags_for(&row);
+        let texts: Vec<&str> = f.iter().map(|f| f.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "grammar error",
+                "grammar warning",
+                "group broken",
+                "moved across Continue",
+                "Continue",
+                "styled: S"
+            ]
+        );
+        assert_eq!(f[0].kind, FlagKind::Icon(FlagIcon::GrammarError));
+        assert_eq!(f[2].kind, FlagKind::Icon(FlagIcon::GroupBroken));
+        assert!(
+            f[2].tip
+                .starts_with("Group broken: these blocks were one rule (# ff:group)")
+        );
+        assert_eq!(f[4].kind, FlagKind::ContinueWord);
+        // S: Pink Circle (shape 0, colour 9).
+        assert_eq!(
+            f[5].kind,
+            FlagKind::Styled {
+                name: Some("S".into()),
+                icon: Some((0, 9)),
+            }
+        );
+
+        let mut dis = row.clone();
+        dis.enabled = false;
+        dis.cannot_enable = true;
+        let f = flags_for(&dis);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].kind, FlagKind::Icon(FlagIcon::Padlock));
+        assert_eq!(
+            f[0].tip,
+            "Can't enable: these lines are not valid filter grammar. You can still move or delete it."
+        );
+    }
+
+    fn text_rects(mut full: egui::FullOutput) -> Vec<(String, Rect)> {
+        full.textures_delta.clear();
+        full.shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::epaint::Shape::Text(t) => Some((
+                    t.galley.text().to_string(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn continue_word_is_8pt_from_styled_chip() {
+        let wf = styled_filter("S");
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        let visible = rule_entries(&wf);
+        let mut found = None;
+        for _ in 0..3 {
+            let full = ctx.run_ui(input(vec![]), |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                show_list(&mut child, &wf, &visible, &mut list, true, None);
+            });
+            let texts = text_rects(full);
+            let cont = texts.iter().find(|(t, _)| t == "Continue").map(|(_, r)| *r);
+            let name = texts.iter().find(|(t, _)| t == "S").map(|(_, r)| *r);
+            found = cont.zip(name);
+        }
+        let (cont, name) = found.expect("Continue word and style name painted");
+        assert!(
+            cont.min.x - name.max.x >= 8.0 - 0.01,
+            "gap {}",
+            cont.min.x - name.max.x
+        );
+    }
+
+    /// Bounds of every mesh drawn with texture `tex`.
+    fn meshes_with(shape: &egui::Shape, tex: egui::TextureId, out: &mut Vec<Rect>) {
+        match shape {
+            egui::Shape::Mesh(m) if m.texture_id == tex => out.push(m.calc_bounds()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| meshes_with(s, tex, out)),
+            _ => {}
+        }
+    }
+
+    /// The style chip paints the atlas icon (18pt) left of the style name; a style without a
+    /// minimap paints no atlas icon.
+    #[test]
+    fn style_chip_paints_the_atlas_icon_left_of_the_name() {
+        for (tag, want_icon) in [("S", true), ("E", false)] {
+            let wf = styled_filter(tag);
+            let ctx = headless_ctx();
+            let mut list = ListUi::default();
+            let visible = rule_entries(&wf);
+            let mut last = None;
+            for _ in 0..3 {
+                let mut full = ctx.run_ui(input(vec![]), |ui| {
+                    let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                    let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                    show_list(&mut child, &wf, &visible, &mut list, true, None);
+                });
+                let tex = crate::skin::of(&ctx).minimap_icons.id();
+                let mut icons = Vec::new();
+                for c in &full.shapes {
+                    meshes_with(&c.shape, tex, &mut icons);
+                }
+                full.textures_delta.clear();
+                let name = text_rects(full)
+                    .into_iter()
+                    .find(|(t, _)| t == tag)
+                    .map(|(_, r)| r);
+                last = Some((icons, name));
+            }
+            let (icons, name) = last.unwrap();
+            let name = name.expect("style name painted");
+            if want_icon {
+                assert_eq!(icons.len(), 1, "{tag}");
+                let icon = icons[0];
+                assert!((icon.width() - FLAG_ICON_SIZE).abs() < 1.0, "{icon:?}");
+                assert!(icon.max.x <= name.min.x + 0.01, "{icon:?} {name:?}");
+            } else {
+                assert!(icons.is_empty(), "{tag}");
+            }
+        }
+    }
+
+    /// WR-06: a long collapsed-row summary is cut before the flags and arrows, not painted under
+    /// them.
+    #[test]
+    fn long_summary_stops_before_the_flags() {
+        let src = "Show\n  Class \"Body Armours\" \"Helmets\"\n  AreaLevel >= 65\n  \
+                   ItemLevel >= 80\n  Quality >= 10\n  Sockets >= 2\n  DropLevel >= 50\n  \
+                   Rarity >= Rare\n  Corrupted False\n  Continue\n";
+        let wf = WorkingFilter::from_text(src);
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        let visible = rule_entries(&wf);
+        let mut found = None;
+        for _ in 0..3 {
+            let full = ctx.run_ui(input(vec![]), |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                show_list(&mut child, &wf, &visible, &mut list, true, None);
+            });
+            let texts = text_rects(full);
+            let cont = texts.iter().find(|(t, _)| t == "Continue").map(|(_, r)| *r);
+            let summary = texts
+                .iter()
+                .find(|(t, _)| t.starts_with("Class"))
+                .map(|(_, r)| *r);
+            found = cont.zip(summary);
+        }
+        let (cont, summary) = found.expect("Continue flag and summary painted");
+        assert!(
+            summary.max.x <= cont.min.x - 8.0 + 0.5,
+            "summary {summary:?} runs into the flags at {cont:?}"
+        );
+    }
+
+    #[test]
+    fn search_field_and_add_button_do_not_touch() {
+        let ctx = headless_ctx();
+        let skin = crate::skin::install(&ctx);
+        for q in ["", "rings"] {
+            let mut query = q.to_string();
+            let mut rects = (
+                ToolbarClick::None,
+                Rect::NOTHING,
+                Rect::NOTHING,
+                Rect::NOTHING,
+            );
+            let mut avail = 0.0;
+            ctx.run_ui(input(vec![]), |ui| {
+                avail = ui.available_width();
+                rects = search_row_rects(ui, &skin, &mut query, true, 5);
+            })
+            .drop_without_applying_deltas();
+            let (_, field, add, section) = rects;
+            let gap = add.min.x - field.max.x;
+            assert!(
+                (gap - crate::skin::widgets::FIELD_GAP).abs() < 0.6,
+                "query {q:?}: gap {gap}"
+            );
+            let gap2 = section.min.x - add.max.x;
+            assert!((gap2 - 8.0).abs() < 0.6, "query {q:?}: gap {gap2}");
+            assert!(add.width() >= 124.0 - 0.6, "add {}", add.width());
+            // The caption needs more than the 140pt minimum (ff_button_ex adds 44pt of padding).
+            assert!(
+                section.width() >= 140.0 - 0.6,
+                "section {}",
+                section.width()
+            );
+            assert!(
+                (field.width() - (avail - add.width() - section.width() - 18.0)).abs() < 0.6,
+                "field {} of {avail}",
+                field.width()
+            );
+            assert_eq!(query, q);
+        }
+    }
+
+    #[test]
+    fn pending_scroll_brings_a_far_row_into_view() {
+        let wf = filter_of(511);
+        let ctx = headless_ctx();
+        let visible = rule_entries(&wf);
+        let mut list = ListUi::default();
+        let frame = |list: &mut ListUi| {
+            ctx.run_ui(input(vec![]), |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                show_list(&mut child, &wf, &visible, list, true, None);
+            })
+        };
+        let first = text_rects(frame(&mut list));
+        assert!(first.iter().any(|(t, _)| t == "1"));
+        list.pending_scroll = Some(wf.rows()[300].id);
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = text_rects(frame(&mut list));
+        }
+        assert!(list.pending_scroll.is_none());
+        assert!(texts.iter().any(|(t, _)| t == "301"), "row 301 not visible");
+        assert!(!texts.iter().any(|(t, _)| t == "1"));
     }
 
     #[test]
@@ -982,14 +2365,9 @@ Show
     }
 
     #[test]
-    fn collapsed_row_height_includes_summary_line() {
-        let ctx = headless_ctx();
-        let mut hs = (0.0, 0.0);
-        ctx.run_ui(input(vec![]), |ui| {
-            hs = (row_height(ui), header_height(ui));
-        })
-        .drop_without_applying_deltas();
-        assert_eq!(hs.0, hs.1 + SUMMARY_LINE_H);
+    fn collapsed_row_is_52() {
+        assert_eq!(row_height(), 52.0);
+        assert_eq!(ROW_H, 52.0);
     }
 
     #[test]
@@ -998,12 +2376,8 @@ Show
         let ctx = headless_ctx();
         let mut list = ListUi::default();
         list.expanded = Some(wf.rows()[1].id);
-        let mut header = 0.0;
+        let header = ROW_H;
         for _ in 0..3 {
-            ctx.run_ui(input(vec![]), |ui| {
-                header = header_height(ui);
-            })
-            .drop_without_applying_deltas();
             run_frame(&ctx, input(vec![]), &wf, &mut list, true);
         }
         assert!(list.expanded_h > header, "{} <= {header}", list.expanded_h);
@@ -1030,16 +2404,17 @@ Show
             let mut out = (0.0, 0.0);
             ctx.run_ui(input(vec![]), |ui| {
                 assert!(ui.spacing().item_spacing.y > 0.0, "test needs real spacing");
-                let row_h = row_height(ui);
+                let row_h = row_height();
+                let skin = crate::skin::of(ui.ctx());
                 let mut actions = Vec::new();
                 let drawn = ui.push_id(("rule", i), |ui| {
                     draw_row(
                         ui,
+                        &skin,
                         &wf,
                         None,
                         &wf.rows()[i],
                         i,
-                        row_h,
                         list,
                         true,
                         &mut actions,
@@ -1071,27 +2446,44 @@ Show
     fn clicking_the_summary_text_expands_the_row() {
         let wf = filter_of(3);
         assert!(!wf.rows()[0].summary.is_empty());
-        let ctx = egui::Context::default();
+        let ctx = headless_ctx();
         let mut list = ListUi::default();
         let (_, row_h) = run_frame(&ctx, input(vec![]), &wf, &mut list, true);
-        let mut header = 0.0;
-        ctx.run_ui(input(vec![]), |ui| header = header_height(ui))
-            .drop_without_applying_deltas();
         let click = |list: &mut ListUi, pos: Pos2| {
             // Hover first so the press lands on last frame's hit-test, then press and release.
             for events in click_events(pos).into_iter().map(|e| vec![e]) {
                 run_frame(&ctx, input(events), &wf, list, true);
             }
         };
-        let y = row_h + header + SUMMARY_LINE_H / 2.0;
+        let y = row_h + 38.0;
         // Control: the blank area far past the text has always expanded the row.
-        click(&mut list, Pos2::new(440.0, y));
+        click(&mut list, Pos2::new(500.0, y));
         assert_eq!(list.expanded, Some(wf.rows()[1].id), "blank-area click");
         list.expanded = None;
         run_frame(&ctx, input(vec![]), &wf, &mut list, true);
         // Second row, a few pixels into the summary text (past the indent).
-        click(&mut list, Pos2::new(SUMMARY_INDENT + 12.0, y));
+        click(
+            &mut list,
+            Pos2::new(10.0 + CHECK_W + 8.0 + INDEX_W + 8.0 + 12.0, y),
+        );
         assert_eq!(list.expanded, Some(wf.rows()[1].id), "summary-text click");
+    }
+
+    #[test]
+    fn focus_name_is_consumed_by_the_expanded_body() {
+        let wf = filter_of(2);
+        let id = wf.rows()[0].id;
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(id),
+            focus_name: Some(id),
+            ..ListUi::default()
+        };
+        for _ in 0..3 {
+            run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        }
+        assert_eq!(list.focus_name, None);
+        assert!(ctx.memory(|m| m.focused()).is_some());
     }
 
     #[test]
@@ -1103,8 +2495,8 @@ Show
             let (_, row_h) = run_frame(&ctx, input(vec![]), &wf, &mut list, reorder);
             let y = row_h / 2.0;
             let mut any_move = false;
-            let mut x = 300.0;
-            while x < 458.0 {
+            let mut x = 380.0;
+            while x < 533.0 {
                 let (frame, _) = run_frame(
                     &ctx,
                     input(click_events(Pos2::new(x, y))),
@@ -1133,12 +2525,12 @@ Show
     fn collapsing_a_row_orphans_card_state() {
         let wf = filter_of(2);
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         let mut list = ListUi {
             expanded: Some(wf.rows()[0].id),
             ..Default::default()
         };
-        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let visible = rule_entries(&wf);
         let frame = |list: &mut ListUi| {
             ctx.run_ui(egui::RawInput::default(), |ui| {
                 show_list(ui, &wf, &visible, list, true, None);
@@ -1239,33 +2631,13 @@ Show
     }
 
     #[test]
-    fn economy_footer_text_strings() {
-        assert_eq!(
-            economy_footer_text(&EconomyView::Present { blocks: 1 }),
-            "+ 1 locked rule block (economy)"
-        );
-        assert_eq!(
-            economy_footer_text(&EconomyView::Present { blocks: 12 }),
-            "+ 12 locked rule blocks (economy)"
-        );
-        assert_eq!(
-            economy_footer_text(&EconomyView::Absent),
-            "No economy section"
-        );
-        assert_eq!(
-            economy_footer_text(&EconomyView::Damaged("x".into())),
-            "Economy markers are damaged"
-        );
-    }
-
-    #[test]
     fn expanded_body_orders_name_conditions_style() {
         let src = include_str!("rule_list.rs");
         let start = src.find("fn expanded_body(").unwrap();
         // `\n}` (not `\n}\n`) so a CRLF checkout (core.autocrlf) still finds the function end.
         let end = start + src[start..].find("\n}").unwrap();
         let f = &src[start..end];
-        let name = f.find("caption(ui, \"NAME\")").unwrap();
+        let name = f.find("\"Name\", None").unwrap();
         let cond = f.find("body::conditions_group").unwrap();
         let style = f.find("body::style_section").unwrap();
         assert!(name < cond && cond < style);
@@ -1369,18 +2741,515 @@ Show
     }
 
     #[test]
-    fn economy_footer_renders_every_state() {
+    fn duplicate_and_delete_are_skin_buttons() {
+        let wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        let id = wf.rows()[0].id;
+        let (mut dup, mut del) = (false, false);
+        for y in (20..1200).step_by(4) {
+            for x in [30.0f32, 150.0, 200.0, 300.0] {
+                let ctx = headless_ctx();
+                let mut list = ListUi::default();
+                list.expanded = Some(id);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
+                let (f, _) = run_frame(
+                    &ctx,
+                    tall_input(click_events(Pos2::new(x, y as f32))),
+                    &wf,
+                    &mut list,
+                    true,
+                );
+                assert!(
+                    !f.actions.iter().any(|a| matches!(a, RowAction::Delete(_))),
+                    "Delete only asks, the popup deletes"
+                );
+                dup |= f.actions.contains(&RowAction::Duplicate(id));
+                del |= list.confirm_delete == Some(id);
+            }
+        }
+        assert!(dup, "Duplicate emits RowAction::Duplicate");
+        assert!(del, "Delete arms confirm_delete");
+        let src = include_str!("rule_list.rs");
+        assert!(src.contains("\"Duplicate\", 112.0") && src.contains("\"Delete\", 112.0"));
+    }
+
+    // ---- sections (Phase 32) ----
+
+    fn banner(name: &str) -> String {
+        let r = crate::filter::section::RULE_LINE;
+        format!("{r}\n# ff:section {name}\n{r}\n\n")
+    }
+
+    /// One headerless rule, then Leveling (1 rule) and Gear (1 rule).
+    fn sectioned_text() -> String {
+        format!(
+            "Show # r1\n  Class == \"Rings\"\n\n{}Show # r2\n  Class == \"Belts\"\n\n{}Show # r3\n  Class == \"Amulets\"\n\n",
+            banner("Leveling"),
+            banner("Gear")
+        )
+    }
+
+    fn with_economy_text() -> String {
+        let r = crate::filter::section::RULE_LINE;
+        let b = crate::filter::section::BEGIN_LINE;
+        format!(
+            "{}{r}\n{b}\n{r}\n\nShow # Currency S\n  Class == \"Stackable Currency\"\n\n",
+            sectioned_text()
+        )
+    }
+
+    fn section_frame(
+        ctx: &egui::Context,
+        raw: RawInput,
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        reorder: bool,
+        collapsed: &dyn Fn(&SectionRow) -> bool,
+    ) -> ListFrame {
+        let entries = wf.entries("", collapsed);
+        let mut out = ListFrame::default();
+        ctx.run_ui(raw, |ui| {
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            out = show_list(&mut child, wf, &entries, list, reorder, None);
+        })
+        .drop_without_applying_deltas();
+        out
+    }
+
+    /// Click pos on a fresh context (warm-up frames first) and return everything the click
+    /// frames produced.
+    fn click_at(
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        pos: Pos2,
+        reorder: bool,
+        collapsed: &dyn Fn(&SectionRow) -> bool,
+    ) -> (Vec<RowAction>, Vec<(String, bool, bool)>) {
+        let ctx = headless_ctx();
+        for _ in 0..2 {
+            section_frame(&ctx, input(vec![]), wf, list, reorder, collapsed);
+        }
+        let mut actions = Vec::new();
+        let mut toggled = Vec::new();
+        for e in click_events(pos).into_iter().map(|e| vec![e]) {
+            let f = section_frame(&ctx, input(e), wf, list, reorder, collapsed);
+            actions.extend(f.actions);
+            toggled.extend(f.toggled);
+        }
+        (actions, toggled)
+    }
+
+    /// Sweep a click across the right part of the header row at y.
+    fn sweep_header(
+        text: &str,
+        y: f32,
+        reorder: bool,
+        collapsed: &dyn Fn(&SectionRow) -> bool,
+    ) -> (Vec<RowAction>, bool, bool) {
+        let mut all = Vec::new();
+        let (mut renamed, mut confirm) = (false, false);
+        let mut x = 330.0;
+        while x < 530.0 {
+            let mut wf = WorkingFilter::from_text(text);
+            let mut list = ListUi::default();
+            let (a, _) = click_at(&mut wf, &mut list, Pos2::new(x, y), reorder, collapsed);
+            all.extend(a);
+            renamed |= list.editing_section.is_some();
+            confirm |= list.confirm_economy_remove;
+            x += 2.0;
+        }
+        (all, renamed, confirm)
+    }
+
+    #[test]
+    fn section_count_and_accessible_name() {
+        assert_eq!(section_count_text(3, None), "3 rules");
+        assert_eq!(section_count_text(1, None), "1 rule");
+        assert_eq!(section_count_text(0, None), "0 rules");
+        assert_eq!(section_count_text(12, Some(2)), "2 of 12 rules");
+        assert_eq!(
+            section_accessible_name("Leveling", 3, true),
+            "Section Leveling, 3 rules, collapsed"
+        );
+        assert_eq!(
+            section_accessible_name("Leveling", 1, false),
+            "Section Leveling, 1 rule, expanded"
+        );
+        assert_eq!(SECTION_HEADER_HEIGHT, 36.0);
+    }
+
+    #[test]
+    fn rules_above_the_first_divider_have_no_header() {
+        let mut wf = WorkingFilter::from_text(&sectioned_text());
+        let entries = wf.entries("", |_| false);
+        assert!(matches!(entries[0], ListEntry::Rule(0)));
+        assert!(matches!(entries[1], ListEntry::Header { .. }));
         let ctx = headless_ctx();
         let mut list = ListUi::default();
-        for view in [
-            EconomyView::Absent,
-            EconomyView::Present { blocks: 3 },
-            EconomyView::Damaged("bad".into()),
-        ] {
+        let f = section_frame(&ctx, input(vec![]), &mut wf, &mut list, true, &|_| false);
+        assert_eq!(f.drawn, entries.len());
+    }
+
+    #[test]
+    fn clicking_a_header_toggles_without_touching_the_filter() {
+        let mut wf = WorkingFilter::from_text(&sectioned_text());
+        let mut list = ListUi::default();
+        // Row 1 is 52pt, so the Leveling header spans y 52..88; x 200 is clear of the cluster.
+        let (actions, toggled) =
+            click_at(&mut wf, &mut list, Pos2::new(200.0, 70.0), true, &|_| false);
+        assert_eq!(toggled, [("Leveling".to_string(), false, true)]);
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(!wf.is_dirty());
+        // A collapsed header expands.
+        let (_, toggled) = click_at(&mut wf, &mut list, Pos2::new(200.0, 70.0), true, &|s| {
+            s.name == "Leveling"
+        });
+        assert_eq!(toggled, [("Leveling".to_string(), false, false)]);
+    }
+
+    #[test]
+    fn collapsed_sections_hide_their_rules_and_headers_do_not_alternate() {
+        let mut wf = WorkingFilter::from_text(&sectioned_text());
+        let all = wf.entries("", |_| false).len();
+        let folded = wf.entries("", |s| s.name == "Leveling").len();
+        assert_eq!(all, 5);
+        assert_eq!(folded, 4);
+    }
+
+    #[test]
+    fn user_header_cluster_emits_remove_move_and_rename() {
+        let text = sectioned_text();
+        let wf = WorkingFilter::from_text(&text);
+        let sec = wf.sections()[0].clone();
+        assert_eq!(sec.name, "Leveling");
+        let (actions, renamed, _) = sweep_header(&text, 70.0, true, &|_| false);
+        assert!(actions.contains(&RowAction::RemoveSection(sec.ordinal)));
+        assert_eq!(
+            actions.contains(&RowAction::MoveSection(sec.ordinal, Dir::Up)),
+            sec.can_move_up
+        );
+        assert_eq!(
+            actions.contains(&RowAction::MoveSection(sec.ordinal, Dir::Down)),
+            sec.can_move_down
+        );
+        assert!(sec.can_move_up && sec.can_move_down);
+        assert!(renamed, "the pencil opens the name box");
+        // With the search active the arrows do nothing.
+        let (actions, _, _) = sweep_header(&text, 70.0, false, &|_| false);
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, RowAction::MoveSection(..)))
+        );
+        assert!(actions.contains(&RowAction::RemoveSection(sec.ordinal)));
+    }
+
+    fn rename_frames(keys: Vec<Vec<Event>>) -> (Vec<RowAction>, ListUi) {
+        let mut wf = WorkingFilter::from_text(&sectioned_text());
+        let ord = wf.sections()[0].ordinal;
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            editing_section: Some(ord),
+            section_draft: "Leveling".into(),
+            section_focus: true,
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        for _ in 0..3 {
+            let f = section_frame(&ctx, input(vec![]), &mut wf, &mut list, true, &|_| false);
+            actions.extend(f.actions);
+        }
+        for ev in keys {
+            let f = section_frame(&ctx, input(ev), &mut wf, &mut list, true, &|_| false);
+            actions.extend(f.actions);
+        }
+        (actions, list)
+    }
+
+    fn key(k: egui::Key) -> Vec<Event> {
+        vec![
+            Event::Key {
+                key: k,
+                physical_key: Some(k),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::default(),
+            },
+            Event::Key {
+                key: k,
+                physical_key: Some(k),
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::default(),
+            },
+        ]
+    }
+
+    #[test]
+    fn rename_mode_commits_on_enter_and_cancels_on_escape() {
+        let (actions, list) = rename_frames(vec![
+            vec![Event::Text("Gear".into())],
+            key(egui::Key::Enter),
+            vec![],
+        ]);
+        let renames: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, RowAction::RenameSection { .. }))
+            .collect();
+        assert_eq!(renames.len(), 1, "{actions:?}");
+        assert!(
+            matches!(renames[0], RowAction::RenameSection { name, .. } if name == "Gear"),
+            "typing replaces the selected text: {renames:?}"
+        );
+        assert!(list.editing_section.is_none());
+
+        let (actions, list) = rename_frames(vec![
+            vec![Event::Text("Nope".into())],
+            key(egui::Key::Escape),
+            vec![],
+        ]);
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, RowAction::RenameSection { .. })),
+            "{actions:?}"
+        );
+        assert!(list.editing_section.is_none());
+    }
+
+    #[test]
+    fn economy_header_is_locked_and_its_rows_only_expand() {
+        let text = with_economy_text();
+        let mut wf = WorkingFilter::from_text(&text);
+        let econ = wf.sections().iter().position(|s| s.economy).unwrap();
+        assert_eq!(wf.sections().len(), 3);
+        let folded = |s: &SectionRow| s.economy;
+        // Collapsed Economy: header only after the user sections' rules.
+        let entries = wf.entries("", folded);
+        assert!(matches!(
+            entries.last(),
+            Some(ListEntry::Header { section, collapsed: true, .. }) if *section == econ
+        ));
+        // Expanded: the economy row follows its header.
+        let entries = wf.entries("", |_| false);
+        assert!(matches!(entries.last(), Some(ListEntry::EconomyRule(0))));
+        // y of the economy header: r1 52 + Leveling 36 + r2 52 + Gear 36 + r3 52.
+        let y = 52.0 + 36.0 + 52.0 + 36.0 + 52.0 + 18.0;
+        let (actions, renamed, confirm) = sweep_header(&text, y, true, &|_| false);
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(!renamed);
+        assert!(!confirm, "the economy header is display-only: no x");
+        // A click on an economy row emits nothing; it only expands the row (read-only).
+        let before = wf.text();
+        let mut list = ListUi {
+            expanded_h: 0.0,
+            ..Default::default()
+        };
+        let (actions, toggled) = click_at(
+            &mut wf,
+            &mut list,
+            Pos2::new(200.0, y + 36.0 + 26.0),
+            true,
+            &|_| false,
+        );
+        assert!(actions.is_empty() && toggled.is_empty(), "{actions:?}");
+        assert_eq!(list.expanded, Some(wf.economy_rows()[0].id));
+        // The next frames draw the body under the row and measure it.
+        let ctx = headless_ctx();
+        for _ in 0..2 {
+            let f = section_frame(&ctx, input(vec![]), &mut wf, &mut list, true, &|_| false);
+            assert!(f.actions.is_empty(), "{:?}", f.actions);
+        }
+        assert!(
+            list.expanded_h > ROW_H + 60.0,
+            "the body was drawn: {}",
+            list.expanded_h
+        );
+        assert_eq!(wf.text(), before);
+        assert!(!wf.is_dirty());
+    }
+
+    #[test]
+    fn browsing_economy_rules_changes_nothing() {
+        let text = economy_browse::rich_economy_text();
+        let wf = WorkingFilter::from_text(&text);
+        let before = wf.text();
+        let report = economy_browse::browse(&wf);
+        assert_eq!(report.rules, 2);
+        assert!(report.actions.is_empty(), "{:?}", report.actions);
+        assert!(
+            report.enabled_in_body.is_empty(),
+            "enabled controls in a read-only body: {:?}",
+            report.enabled_in_body
+        );
+        // Conditions, lists, operators, swatches, sliders, checks and pickers were all drawn.
+        assert!(report.disabled_in_body > 40, "{report:?}");
+        assert_eq!(
+            report.popups_or_focus, 0,
+            "no picker opens, nothing takes focus"
+        );
+        assert_eq!(report.list_changed, 0, "the list state is untouched");
+        // Ten base types, uncapped (a capped list would be 7 rows), plus the style lines.
+        assert!(report.max_expanded_h > ROW_H + 10.0 * 28.0, "{report:?}");
+        assert_eq!(wf.text(), before);
+        assert!(!wf.is_dirty());
+    }
+
+    #[test]
+    fn economy_rule_header_click_collapses_and_search_still_finds_it() {
+        let mut wf = WorkingFilter::from_text(&economy_browse::rich_economy_text());
+        let id = wf.economy_rows()[0].id;
+        let hits = wf.entries("divine orb", |_| true);
+        assert!(hits.contains(&ListEntry::EconomyRule(0)), "{hits:?}");
+        let entries = vec![ListEntry::EconomyRule(0)];
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(id),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let mut frame = |events: Vec<Event>, list: &mut ListUi| {
+            ctx.run_ui(tall_input(events), |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 1200.0));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                actions.extend(show_list(&mut child, &wf, &entries, list, true, None).actions);
+            })
+            .drop_without_applying_deltas();
+        };
+        for _ in 0..2 {
+            frame(vec![], &mut list);
+        }
+        assert_eq!(list.expanded, Some(id));
+        for e in click_events(Pos2::new(200.0, 20.0)) {
+            frame(vec![e], &mut list);
+        }
+        assert!(list.expanded.is_none(), "a header click collapses it");
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
+    fn economy_header_click_toggles_with_the_economy_flag() {
+        let text = with_economy_text();
+        let mut wf = WorkingFilter::from_text(&text);
+        let mut list = ListUi::default();
+        let y = 52.0 + 36.0 + 52.0 + 36.0 + 52.0 + 18.0;
+        let (_, toggled) = click_at(&mut wf, &mut list, Pos2::new(200.0, y), true, &|s| {
+            s.economy
+        });
+        assert_eq!(
+            toggled,
+            [(
+                crate::overlay::rules::ECONOMY_DISPLAY_NAME.to_string(),
+                true,
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn section_above_button_emits_add_section_above() {
+        let wf = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        let id = wf.rows()[0].id;
+        let mut got = false;
+        for y in (20..1200).step_by(4) {
+            for x in [30.0f32, 100.0] {
+                let ctx = headless_ctx();
+                let mut list = ListUi {
+                    expanded: Some(id),
+                    ..Default::default()
+                };
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
+                run_frame(&ctx, tall_input(vec![]), &wf, &mut list, true);
+                let (f, _) = run_frame(
+                    &ctx,
+                    tall_input(click_events(Pos2::new(x, y as f32))),
+                    &wf,
+                    &mut list,
+                    true,
+                );
+                got |= f.actions.contains(&RowAction::AddSectionAbove(id));
+            }
+        }
+        assert!(got, "Section above emits AddSectionAbove");
+        let src = include_str!("rule_list.rs");
+        assert!(src.contains("\"Section above\", 128.0"));
+    }
+
+    #[test]
+    fn toolbar_buttons_click_and_disable() {
+        let ctx = headless_ctx();
+        let skin = crate::skin::install(&ctx);
+        let mut query = String::new();
+        let mut rects = (
+            ToolbarClick::None,
+            Rect::NOTHING,
+            Rect::NOTHING,
+            Rect::NOTHING,
+        );
+        ctx.run_ui(input(vec![]), |ui| {
+            rects = search_row_rects(ui, &skin, &mut query, true, 5);
+        })
+        .drop_without_applying_deltas();
+        let run = |enabled: bool, pos: Pos2| {
+            let ctx = headless_ctx();
+            let skin = crate::skin::install(&ctx);
+            let mut q = String::new();
+            let mut hit = ToolbarClick::None;
+            for e in std::iter::once(vec![]).chain(click_events(pos).into_iter().map(|e| vec![e])) {
+                ctx.run_ui(input(e), |ui| {
+                    let c = search_row(ui, &skin, &mut q, enabled, 5);
+                    if c != ToolbarClick::None {
+                        hit = c;
+                    }
+                })
+                .drop_without_applying_deltas();
+            }
+            hit
+        };
+        assert_eq!(run(true, rects.2.center()), ToolbarClick::AddRule);
+        assert_eq!(run(true, rects.3.center()), ToolbarClick::AddSection);
+        assert_eq!(run(false, rects.2.center()), ToolbarClick::None);
+        assert_eq!(run(false, rects.3.center()), ToolbarClick::None);
+    }
+
+    #[test]
+    fn wr02_marker_shows_on_a_shadowing_rule_only() {
+        let wf = WorkingFilter::from_text("Show\n\nShow\n  Class \"Rings\"\n\nShow\n");
+        assert_eq!(wf.shadowing().len(), 1);
+        assert!(wf.shadowing().contains(&wf.rows()[0].id));
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        for _ in 0..3 {
             ctx.run_ui(input(vec![]), |ui| {
-                assert!(economy_footer(ui, &view, &mut list, true).is_none());
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 600.0));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                let entries = rule_entries(&wf);
+                show_list(&mut child, &wf, &entries, &mut list, true, None);
             })
             .drop_without_applying_deltas();
         }
+        // flags_for never carries it: the marker is computed from shadowing().
+        assert!(
+            !flags_for(&wf.rows()[0])
+                .iter()
+                .any(|f| f.text == "matches every item")
+        );
+    }
+
+    #[test]
+    fn searching_shows_collapsed_matches_under_their_header() {
+        let mut wf = WorkingFilter::from_text(&sectioned_text());
+        let entries = wf.entries("belts", |s| s.name == "Leveling");
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(
+            entries[0],
+            ListEntry::Header {
+                matches: Some(1),
+                collapsed: false,
+                ..
+            }
+        ));
+        assert!(matches!(entries[1], ListEntry::Rule(1)));
     }
 }

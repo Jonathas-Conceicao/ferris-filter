@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use crate::compile::InputPaths;
 use crate::loader::LoadError;
 use crate::models::config::{
-    Beam, Config, Minimap, Sound, Style, StyleAction, StyleNameError, StyleSet,
+    Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
+    StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 
@@ -47,10 +48,11 @@ pub enum StyleEdit {
         value: Option<[u8; 3]>,
     },
     Font(Option<i64>),
-    Sound(Option<Sound>),
-    Minimap(Option<Minimap>),
-    Beam(Option<Beam>),
-    DisableDropSound(bool),
+    /// `None` = off (no line), `Cancel` = the filter's cancel value.
+    Sound(Option<Cancelable<Sound>>),
+    Minimap(Option<Cancelable<Minimap>>),
+    Beam(Option<Cancelable<Beam>>),
+    DropSound(Option<DropSound>),
 }
 
 /// Badges shown on a style row.
@@ -254,7 +256,7 @@ impl ConfigState {
             StyleEdit::Sound(s) => style.sound = s,
             StyleEdit::Minimap(m) => style.minimap = m,
             StyleEdit::Beam(b) => style.beam = b,
-            StyleEdit::DisableDropSound(b) => style.disable_drop_sound = b,
+            StyleEdit::DropSound(d) => style.set_drop_sound(d),
         }
         true
     }
@@ -604,6 +606,43 @@ impl ConfigState {
         self.tiers = self.tiers_applied.clone();
         self.resync_buffers();
     }
+
+    /// Discard one tab's edits only: styles (CONFIG) or tier cutoffs (ECONOMY).
+    pub fn revert_scope(&mut self, scope: RevertScope) {
+        match scope {
+            RevertScope::Styles => self.styles = self.styles_applied.clone(),
+            RevertScope::Tiers => {
+                self.tiers = self.tiers_applied.clone();
+                self.resync_buffers();
+            }
+        }
+    }
+
+    /// Whether any style differs from the applied snapshot.
+    pub fn styles_dirty(&self) -> bool {
+        self.styles_dirty_count() > 0
+    }
+
+    /// Whether any tier cutoff differs from the applied snapshot.
+    pub fn tiers_dirty(&self) -> bool {
+        self.tiers_dirty_count() > 0
+    }
+
+    /// Edit count of one scope.
+    pub fn scope_dirty_count(&self, scope: RevertScope) -> usize {
+        match scope {
+            RevertScope::Styles => self.styles_dirty_count(),
+            RevertScope::Tiers => self.tiers_dirty_count(),
+        }
+    }
+}
+
+/// Which tab's CONFIG edits a Revert discards: Styles (CONFIG tab) or Tiers (ECONOMY tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RevertScope {
+    #[default]
+    Styles,
+    Tiers,
 }
 
 /// Why the CONFIG edits cannot be written: the finished reason.
@@ -726,6 +765,32 @@ mod tests {
         assert!(rows.iter().all(|r| r.unit == "chaos"));
         assert_eq!(s.dirty_count(), 0);
         assert!(!s.can_apply());
+    }
+
+    #[test]
+    fn scoped_dirty_and_revert_keep_the_other_scope() {
+        let (_d, mut s) = loaded();
+        s.set_tier_text("S", "31");
+        assert!(s.tiers_dirty() && !s.styles_dirty());
+        assert_eq!(s.scope_dirty_count(RevertScope::Tiers), 1);
+        assert_eq!(s.scope_dirty_count(RevertScope::Styles), 0);
+
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        assert!(s.styles_dirty());
+        // Reverting styles keeps the tier edit.
+        s.revert_scope(RevertScope::Styles);
+        assert!(!s.styles_dirty() && s.tiers_dirty());
+        // An invalid tier buffer and its error survive a styles revert.
+        s.set_tier_text("A", "abc");
+        assert!(s.has_tier_errors());
+        s.revert_scope(RevertScope::Styles);
+        assert!(s.has_tier_errors());
+
+        // Reverting tiers clears tier edits and errors but keeps a style edit.
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        s.revert_scope(RevertScope::Tiers);
+        assert!(!s.tiers_dirty() && !s.has_tier_errors());
+        assert!(s.styles_dirty());
     }
 
     #[test]
@@ -967,9 +1032,11 @@ mod tests {
         assert_eq!(s.style("S").unwrap().text, Some([1, 2, 3]));
         assert!(s.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
         assert!(s.badges("S").hide);
-        assert!(s.edit_style("S", StyleEdit::DisableDropSound(true)));
+        assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Silent))));
         assert!(s.style("S").unwrap().disable_drop_sound);
-        assert!(!s.edit_style("nope", StyleEdit::DisableDropSound(true)));
+        assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Normal))));
+        assert_eq!(s.style("S").unwrap().drop_sound(), Some(DropSound::Normal));
+        assert!(!s.edit_style("nope", StyleEdit::DropSound(Some(DropSound::Silent))));
     }
 
     #[test]

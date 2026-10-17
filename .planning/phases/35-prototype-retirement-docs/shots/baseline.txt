@@ -1,0 +1,9 @@
+Baseline before any change (CARGO_TARGET_DIR outside the repo)
+- clippy --all-targets: 122 distinct warning lines (lib 75, lib test 119 incl. 75 dup, cli_generate 2); CONTEXT said 126 (different counting)
+  counting command: cargo clippy --all-targets 2>&1 | grep -E "^warning" | grep -v generated | wc -l  -> 122
+- cargo test: lib 1392 passed, 0 failed; integration binaries 12+4+20+19+25+18+4+8+1 passed, 0 failed
+- git status --short -- tests/fixtures: empty
+- Screenshot determinism: captures vary with scroll-animation timing (scroll offset when a rule is expanded).
+  shoot.sh repeats each shot until two consecutive captures are byte-identical. before/ vs before-repeat/
+  then diff identical for all 11 except config-kite (flaky: two settled states seen; both kept,
+  config-kite-before-alt.png is the other one).

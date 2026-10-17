@@ -129,6 +129,76 @@ pub enum StyleAction {
 // ---------------------------------------------------------------------------
 // Style sub-structs
 // ---------------------------------------------------------------------------
+/// A style field that is off (`None` around it), the filter's cancel value, or a value.
+///
+/// `Set(T)` serialises exactly as `T` (an object), `Cancel` as the JSON string `"None"`, the
+/// filter keyword it stands for (`MinimapIcon -1`, `PlayEffect None`, `PlayAlertSound None`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cancelable<T> {
+    Set(T),
+    Cancel,
+}
+
+impl<T> Cancelable<T> {
+    /// The value, or `None` for the cancel value.
+    pub fn value(&self) -> Option<&T> {
+        match self {
+            Cancelable::Set(v) => Some(v),
+            Cancelable::Cancel => None,
+        }
+    }
+
+    pub fn value_mut(&mut self) -> Option<&mut T> {
+        match self {
+            Cancelable::Set(v) => Some(v),
+            Cancelable::Cancel => None,
+        }
+    }
+
+    pub fn is_cancel(&self) -> bool {
+        matches!(self, Cancelable::Cancel)
+    }
+}
+
+impl<T: Serialize> Serialize for Cancelable<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Cancelable::Set(v) => v.serialize(serializer),
+            Cancelable::Cancel => serializer.serialize_str("None"),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Cancelable<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> de::Visitor<'de> for V<T> {
+            type Value = Cancelable<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object or the string \"None\"")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                if v == "None" {
+                    Ok(Cancelable::Cancel)
+                } else {
+                    // The same wording as `expecting` (IN-06).
+                    Err(E::invalid_value(de::Unexpected::Str(v), &self))
+                }
+            }
+            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                T::deserialize(de::value::MapAccessDeserializer::new(map)).map(Cancelable::Set)
+            }
+        }
+        deserializer.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+/// What a style does to the default drop sound: `DisableDropSound` or `EnableDropSound`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropSound {
+    Silent,
+    Normal,
+}
 
 /// Minimap icon specification.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -159,6 +229,10 @@ pub struct Sound {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom: Option<String>,
     pub vol: u16,
+    /// A built-in alert played from the item's position (`PlayAlertSoundPositional`). Written
+    /// only when true; files have no positional form, so it is refused with `custom`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub positional: bool,
 }
 
 /// One tier entry in the `styles` map.
@@ -174,14 +248,36 @@ pub struct Style {
     pub border: Option<[u8; 3]>,
     pub background: Option<[u8; 3]>,
     pub font: Option<u8>,
-    pub minimap: Option<Minimap>,
-    pub beam: Option<Beam>,
-    pub sound: Option<Sound>,
+    /// `null` = off (no line), `"None"` = `MinimapIcon -1`, an object = the icon.
+    pub minimap: Option<Cancelable<Minimap>>,
+    /// `null` = off (no line), `"None"` = `PlayEffect None`, an object = the beam.
+    pub beam: Option<Cancelable<Beam>>,
+    /// `null` = off (no line), `"None"` = `PlayAlertSound None`, an object = the sound.
+    pub sound: Option<Cancelable<Sound>>,
     pub action: StyleAction,
     pub disable_drop_sound: bool,
+    /// `EnableDropSound`. Written only when true; refused together with `disableDropSound`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enable_drop_sound: bool,
 }
 
 impl Style {
+    /// The drop-sound line this style writes, if any.
+    pub fn drop_sound(&self) -> Option<DropSound> {
+        if self.disable_drop_sound {
+            Some(DropSound::Silent)
+        } else if self.enable_drop_sound {
+            Some(DropSound::Normal)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_drop_sound(&mut self, drop: Option<DropSound>) {
+        self.disable_drop_sound = drop == Some(DropSound::Silent);
+        self.enable_drop_sound = drop == Some(DropSound::Normal);
+    }
+
     /// Default for a newly added style: Show, no colours, nothing else set.
     pub fn blank_show() -> Style {
         Style {
@@ -195,6 +291,7 @@ impl Style {
             sound: None,
             action: StyleAction::Show,
             disable_drop_sound: false,
+            enable_drop_sound: false,
         }
     }
 }
@@ -295,6 +392,10 @@ pub enum StyleError {
         style: String,
         problem: &'static str,
     },
+
+    #[error("style \"{style}\" sets both disableDropSound and enableDropSound; set at most one")]
+    #[diagnostic(code(ferrisfilter::styles::conflicting_drop_sound))]
+    ConflictingDropSound { style: String },
 
     #[error(
         "rule {rule_index} (\"{rule_label}\") uses style \"{style}\", which {path} does not define; defined styles: {available}"
@@ -500,7 +601,17 @@ impl StyleSet {
             }
         }
         for (name, style) in &self.0 {
-            if let Some(value) = style.sound.as_ref().and_then(|s| s.custom.as_ref()) {
+            if style.disable_drop_sound && style.enable_drop_sound {
+                return Err(StyleError::ConflictingDropSound {
+                    style: name.clone(),
+                });
+            }
+            if let Some(value) = style
+                .sound
+                .as_ref()
+                .and_then(Cancelable::value)
+                .and_then(|s| s.custom.as_ref())
+            {
                 if value.chars().any(|c| c == '"' || c.is_control()) {
                     return Err(StyleError::InvalidCustomSound {
                         style: name.clone(),
@@ -529,15 +640,18 @@ impl StyleSet {
                 return Err(out_of_range("font", font.into(), "1..=45"));
             }
         }
-        if let Some(mm) = &style.minimap {
+        if let Some(mm) = style.minimap.as_ref().and_then(Cancelable::value) {
             if mm.size > 2 {
                 return Err(out_of_range("minimap.size", mm.size.into(), "0..=2"));
             }
         }
-        if let Some(sound) = &style.sound {
+        if let Some(sound) = style.sound.as_ref().and_then(Cancelable::value) {
             let problem = match (sound.id, &sound.custom) {
                 (Some(_), Some(_)) => Some("both id and custom set"),
                 (None, None) => Some("neither id nor custom set"),
+                (None, Some(_)) if sound.positional => {
+                    Some("positional set for a custom file (there is no positional form for files)")
+                }
                 _ => None,
             };
             if let Some(problem) = problem {
@@ -1321,6 +1435,7 @@ mod tests {
             id: None,
             custom: Some("a.mp3".into()),
             vol: 100,
+            positional: false,
         };
         let j = serde_json::to_string(&custom).unwrap();
         assert!(!j.contains("\"id\""), "{j}");
@@ -1328,6 +1443,7 @@ mod tests {
             id: Some(3),
             custom: None,
             vol: 100,
+            positional: false,
         };
         let j = serde_json::to_string(&builtin).unwrap();
         assert!(!j.contains("custom"), "{j}");
@@ -1874,6 +1990,7 @@ mod tests {
         let mm = exceptional
             .minimap
             .as_ref()
+            .and_then(Cancelable::value)
             .expect("exceptional must have minimap");
         assert_eq!(
             mm.color,
@@ -2102,7 +2219,15 @@ mod tests {
         assert_eq!(set.names().collect::<Vec<_>>(), COMMITTED_ORDER);
         let s = set.get("S").unwrap();
         assert_eq!(s.font, Some(37));
-        assert_eq!(s.sound.as_ref().unwrap().custom.as_deref(), Some("uwu.mp3"));
+        assert_eq!(
+            s.sound
+                .as_ref()
+                .and_then(Cancelable::value)
+                .unwrap()
+                .custom
+                .as_deref(),
+            Some("uwu.mp3")
+        );
         let h = set.get("hidden").unwrap();
         assert_eq!(h.action, StyleAction::Hide);
         assert_eq!(h.font, Some(21));
@@ -2208,19 +2333,35 @@ mod tests {
             ("font", Box::new(|s| s.font = Some(46))),
             (
                 "minimap.size",
-                Box::new(|s| s.minimap.as_mut().unwrap().size = 3),
+                Box::new(|s| {
+                    s.minimap
+                        .as_mut()
+                        .and_then(Cancelable::value_mut)
+                        .unwrap()
+                        .size = 3
+                }),
             ),
             (
                 "sound.id",
-                Box::new(|s| s.sound.as_mut().unwrap().id = Some(0)),
+                Box::new(|s| {
+                    s.sound.as_mut().and_then(Cancelable::value_mut).unwrap().id = Some(0)
+                }),
             ),
             (
                 "sound.id",
-                Box::new(|s| s.sound.as_mut().unwrap().id = Some(17)),
+                Box::new(|s| {
+                    s.sound.as_mut().and_then(Cancelable::value_mut).unwrap().id = Some(17)
+                }),
             ),
             (
                 "sound.vol",
-                Box::new(|s| s.sound.as_mut().unwrap().vol = 301),
+                Box::new(|s| {
+                    s.sound
+                        .as_mut()
+                        .and_then(Cancelable::value_mut)
+                        .unwrap()
+                        .vol = 301
+                }),
             ),
         ];
         for (want, edit) in range_cases {
@@ -2234,12 +2375,19 @@ mod tests {
         for (want, edit) in [
             (
                 "both",
-                Box::new(|s: &mut Style| s.sound.as_mut().unwrap().custom = Some("x.mp3".into()))
-                    as Box<dyn Fn(&mut Style)>,
+                Box::new(|s: &mut Style| {
+                    s.sound
+                        .as_mut()
+                        .and_then(Cancelable::value_mut)
+                        .unwrap()
+                        .custom = Some("x.mp3".into())
+                }) as Box<dyn Fn(&mut Style)>,
             ),
             (
                 "neither",
-                Box::new(|s: &mut Style| s.sound.as_mut().unwrap().id = None),
+                Box::new(|s: &mut Style| {
+                    s.sound.as_mut().and_then(Cancelable::value_mut).unwrap().id = None
+                }),
             ),
         ] {
             match with(edit) {
@@ -2252,8 +2400,12 @@ mod tests {
         // Boundaries are inclusive.
         with(|s| {
             s.font = Some(45);
-            s.minimap.as_mut().unwrap().size = 0;
-            let snd = s.sound.as_mut().unwrap();
+            s.minimap
+                .as_mut()
+                .and_then(Cancelable::value_mut)
+                .unwrap()
+                .size = 0;
+            let snd = s.sound.as_mut().and_then(Cancelable::value_mut).unwrap();
             snd.id = Some(16);
             snd.vol = 300;
         })
@@ -2466,5 +2618,103 @@ mod style_id_tests {
         ));
         assert_eq!(set.rename_custom("kite", "kite"), Ok(()));
         assert!(set.contains("kite"));
+    }
+
+    fn style_json(fields: &str) -> String {
+        format!(
+            r#"{{"text":null,"border":null,"background":null,"font":null,{fields},"action":"Show","disableDropSound":false}}"#
+        )
+    }
+
+    #[test]
+    fn cancel_values_positional_and_enable_drop_sound_round_trip() {
+        let json = style_json(r#""minimap":"None","beam":"None","sound":"None""#);
+        let s: Style = serde_json::from_str(&json).unwrap();
+        assert_eq!(s.minimap, Some(Cancelable::Cancel));
+        assert_eq!(s.beam, Some(Cancelable::Cancel));
+        assert_eq!(s.sound, Some(Cancelable::Cancel));
+        assert_eq!(serde_json::to_string(&s).unwrap(), json);
+
+        let json = style_json(
+            r#""minimap":null,"beam":null,"sound":{"id":3,"vol":100,"positional":true}"#,
+        );
+        let s: Style = serde_json::from_str(&json).unwrap();
+        assert!(
+            s.sound
+                .as_ref()
+                .and_then(Cancelable::value)
+                .unwrap()
+                .positional
+        );
+        assert_eq!(serde_json::to_string(&s).unwrap(), json);
+
+        let json = r#"{"text":null,"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false,"enableDropSound":true}"#;
+        let s: Style = serde_json::from_str(json).unwrap();
+        assert_eq!(s.drop_sound(), Some(DropSound::Normal));
+        assert_eq!(serde_json::to_string(&s).unwrap(), json);
+    }
+
+    #[test]
+    fn cancelable_keeps_field_errors_and_refuses_other_strings() {
+        let json = style_json(
+            r#""minimap":{"size":1,"color":"Pinkk","shape":"Circle"},"beam":null,"sound":null"#,
+        );
+        let err = serde_json::from_str::<Style>(&json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Pinkk"), "{err}");
+        let json = style_json(
+            r#""minimap":{"size":1,"color":"Pink","shape":"Circle","zzbad":1},"beam":null,"sound":null"#,
+        );
+        let err = serde_json::from_str::<Style>(&json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `zzbad`"), "{err}");
+        let json = style_json(r#""minimap":null,"beam":null,"sound":{"id":3,"vol":100,"zzbad":1}"#);
+        let err = serde_json::from_str::<Style>(&json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `zzbad`"), "{err}");
+        // A wrong string and a wrong type say the same thing (IN-06).
+        for value in [r#""none""#, "3"] {
+            let json = style_json(&format!(r#""minimap":{value},"beam":null,"sound":null"#));
+            let err = serde_json::from_str::<Style>(&json)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(r#"expected an object or the string "None""#),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_positional_files_and_both_drop_sounds() {
+        let mut set = StyleSet::committed_for_tests();
+        let s = set.get_mut("S").unwrap();
+        s.sound
+            .as_mut()
+            .and_then(Cancelable::value_mut)
+            .unwrap()
+            .positional = true;
+        assert!(matches!(
+            set.validate(),
+            Err(StyleError::AmbiguousSound { .. })
+        ));
+        let mut set = StyleSet::committed_for_tests();
+        let s = set.get_mut("hidden").unwrap();
+        s.enable_drop_sound = true;
+        match set.validate() {
+            Err(e @ StyleError::ConflictingDropSound { .. }) => {
+                assert!(e.to_string().contains("\"hidden\""), "{e}");
+            }
+            other => panic!("expected ConflictingDropSound, got {other:?}"),
+        }
+        // A cancel value skips the range checks.
+        let mut set = StyleSet::committed_for_tests();
+        let s = set.get_mut("S").unwrap();
+        s.minimap = Some(Cancelable::Cancel);
+        s.sound = Some(Cancelable::Cancel);
+        set.validate().unwrap();
     }
 }

@@ -27,7 +27,7 @@
 //! does **not** set any persistent extended style. Once visible-but-unfocused, the window is
 //! fully normal from Windows' input-routing perspective — a click inside it triggers the OS's
 //! default mouse-activation behavior exactly as any other window, so D-06 (a click activates the
-//! stripe normally) needs no extra code here. This is also why this module must never set the
+//! window normally) needs no extra code here. This is also why this module must never set the
 //! Win32 "never activate this window" extended style: that would suppress activation on *every*
 //! click, not just the reveal, and would break D-06 outright.
 
@@ -93,7 +93,11 @@ mod imp {
     // version-skew hazard).
     use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::GlobalFree;
-    use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
+    use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+        MonitorFromPoint, MonitorFromWindow,
+    };
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
         IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
@@ -105,18 +109,23 @@ mod imp {
         GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
     };
+    use windows_sys::Win32::System::Time::{
+        GetTimeZoneInformation, TIME_ZONE_ID_INVALID, TIME_ZONE_INFORMATION,
+    };
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
         MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_MENU, VK_SHIFT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-        IsWindow, IsWindowVisible, SPI_GETWORKAREA, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE,
-        SetForegroundWindow, ShowWindow, SystemParametersInfoW,
+        EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, HWND_TOPMOST,
+        IsIconic, IsWindow, IsWindowVisible, SPI_GETWORKAREA, SW_HIDE, SW_RESTORE,
+        SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SetForegroundWindow, SetWindowPos,
+        ShowWindow, SystemParametersInfoW,
     };
     use windows_sys::core::BOOL;
 
-    /// The stripe's own window handle, cached once on the first frame it is available. Never
+    /// The overlay's own window handle, cached once on the first frame it is available. Never
     /// obtained for, or applied to, any window other than our own.
     pub struct OverlayWindow(HWND);
 
@@ -128,7 +137,7 @@ mod imp {
     // only passed back to the same Win32 API family that issued it.
     unsafe impl Send for OverlayWindow {}
 
-    /// Caches the stripe's `HWND` from an `eframe::Frame`, once one is available. Returns
+    /// Caches the overlay's `HWND` from an `eframe::Frame`, once one is available. Returns
     /// `None` before the platform window exists yet (the earliest frames) or if the raw handle
     /// is not the `Win32` variant (should not happen under `cfg(windows)`, but never assumed).
     pub fn from_frame(frame: &eframe::Frame) -> Option<OverlayWindow> {
@@ -159,7 +168,7 @@ mod imp {
 
     /// The desktop work area — the screen minus the taskbar and any other appbars.
     ///
-    /// The stripe used to dock against `monitor_size`, which winit reports as the full screen
+    /// The window used to dock against `monitor_size`, which winit reports as the full screen
     /// resolution. On a 1080p screen with a taskbar that put the bottom of the window, and the
     /// APPLY row with it, underneath the taskbar (author, screenshot poe2_print008). Taskbar
     /// height and edge are user settings, so no fixed margin can stand in for asking.
@@ -186,10 +195,110 @@ mod imp {
         (area.width() > 1.0 && area.height() > 1.0).then_some(area)
     }
 
-    /// Whether the window the user is actually working in is the game, or the stripe itself.
+    /// A monitor handle (an opaque `HMONITOR`).
+    pub struct Monitor(HMONITOR);
+
+    // SAFETY: an `HMONITOR` is an opaque handle value; no bytes behind it are dereferenced
+    // here, it is only passed back to the same Win32 API family that issued it.
+    unsafe impl Send for Monitor {}
+
+    /// The monitor the game window is on, else the primary monitor. `None` on a null handle.
+    pub fn target_monitor() -> Option<Monitor> {
+        let handle = match find_game_window() {
+            // SAFETY: `game.0` is a window handle just returned by EnumWindows; the call only
+            // reads it and accepts stale handles (it then answers the nearest monitor).
+            Some(game) => unsafe { MonitorFromWindow(game.0, MONITOR_DEFAULTTONEAREST) },
+            // SAFETY: plain value arguments; the primary default always yields a monitor.
+            None => unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) },
+        };
+        (!handle.is_null()).then_some(Monitor(handle))
+    }
+
+    /// The monitor's work area (screen minus taskbar) in physical pixels.
+    pub fn monitor_work_area_px(m: &Monitor) -> Option<egui::Rect> {
+        // SAFETY: a zeroed MONITORINFO is a valid plain-data value; `cbSize` is set as the API
+        // requires before it is passed.
+        let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        // SAFETY: `info` is a live local of the documented type with `cbSize` set; the result
+        // is checked before the rect is read.
+        if unsafe { GetMonitorInfoW(m.0, &mut info) } == 0 {
+            return None;
+        }
+        let r = info.rcWork;
+        let area = egui::Rect::from_min_max(
+            egui::pos2(r.left as f32, r.top as f32),
+            egui::pos2(r.right as f32, r.bottom as f32),
+        );
+        (area.width() > 1.0 && area.height() > 1.0).then_some(area)
+    }
+
+    /// The monitor's effective DPI over 96 (1.0 when Windows will not say).
+    pub fn monitor_scale(m: &Monitor) -> f32 {
+        let (mut x, mut y) = (0u32, 0u32);
+        // SAFETY: two live u32 locals for the out parameters; HRESULT 0 (S_OK) is checked
+        // before they are read.
+        let hr = unsafe { GetDpiForMonitor(m.0, MDT_EFFECTIVE_DPI, &mut x, &mut y) };
+        if hr == 0 && x > 0 {
+            x as f32 / 96.0
+        } else {
+            1.0
+        }
+    }
+
+    /// Docks our own window to the left edge of the target monitor's work area, full height,
+    /// in physical pixels. Never activates or shows it. Returns whether both placements worked.
+    pub fn dock_left(w: &OverlayWindow, width_pt: f32) -> bool {
+        let Some(m) = target_monitor() else {
+            return false;
+        };
+        let Some(work) = monitor_work_area_px(&m) else {
+            return false;
+        };
+        let d = crate::skin::window::dock_rect_px(work, monitor_scale(&m), width_pt);
+        let mut ok = true;
+        // Twice: moving onto a monitor with another DPI makes winit answer WM_DPICHANGED with
+        // its own suggested rect during the first call; the second pins the physical rect.
+        for _ in 0..2 {
+            // SAFETY: `w.0` is our own window's HWND (see `from_frame`); SWP_NOACTIVATE keeps
+            // focus where it is and no show/hide flag is passed.
+            let r = unsafe {
+                SetWindowPos(
+                    w.0,
+                    HWND_TOPMOST,
+                    d.x,
+                    d.y,
+                    d.w,
+                    d.h,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                )
+            };
+            ok &= r != 0;
+        }
+        ok
+    }
+
+    /// Local time zone offset from UTC in minutes (0 on failure).
+    pub fn utc_offset_minutes() -> i32 {
+        // SAFETY: a zeroed TIME_ZONE_INFORMATION is valid plain data.
+        let mut tz: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: the pointer is to a live local of the documented type.
+        let id = unsafe { GetTimeZoneInformation(&mut tz) };
+        if id == TIME_ZONE_ID_INVALID {
+            return 0;
+        }
+        if id == 2 {
+            // TIME_ZONE_ID_DAYLIGHT
+            -(tz.Bias + tz.DaylightBias)
+        } else {
+            -(tz.Bias + tz.StandardBias)
+        }
+    }
+
+    /// Whether the window the user is actually working in is the game, or the window itself.
     ///
     /// Gates the global hotkey: a system-wide binding that fires in a browser or an editor is a
-    /// key the user cannot use for anything else (author, 2026-09-15). The stripe counts as well
+    /// key the user cannot use for anything else (author, 2026-09-15). The window counts as well
     /// as the game — once it has focus, the same key has to be able to dismiss it, or the only
     /// way out would be the tray.
     ///
@@ -413,9 +522,9 @@ mod imp {
     /// feature.
     const CF_UNICODETEXT: u32 = 13;
 
-    /// The stripe's window, passed to `OpenClipboard`. Microsoft documents that `EmptyClipboard`
+    /// The overlay's window, passed to `OpenClipboard`. Microsoft documents that `EmptyClipboard`
     /// after `OpenClipboard(NULL)` leaves the clipboard ownerless and `SetClipboardData` then
-    /// fails, so there is no null fallback: without a cached stripe window no send is attempted
+    /// fails, so there is no null fallback: without a cached overlay window no send is attempted
     /// at all (review WR-02).
     #[derive(Clone, Copy)]
     pub struct ClipboardOwner(HWND);
@@ -424,7 +533,7 @@ mod imp {
     // argument as `OverlayWindow`.
     unsafe impl Send for ClipboardOwner {}
 
-    /// The clipboard owner for the stripe's window.
+    /// The clipboard owner for the overlay window.
     pub fn clipboard_owner(w: &OverlayWindow) -> ClipboardOwner {
         ClipboardOwner(w.0)
     }
@@ -443,7 +552,7 @@ mod imp {
 
     fn open_clipboard(owner: ClipboardOwner) -> Result<ClipboardGuard, String> {
         for attempt in 0..5 {
-            // SAFETY: `OpenClipboard` takes a window handle (our own stripe's); failure is
+            // SAFETY: `OpenClipboard` takes a window handle (our own overlay's); failure is
             // reported by 0.
             if unsafe { OpenClipboard(owner.0) } != 0 {
                 return Ok(ClipboardGuard);
@@ -574,6 +683,29 @@ mod imp {
         None
     }
 
+    /// Non-Windows stand-in for a monitor handle.
+    pub struct Monitor;
+
+    pub fn target_monitor() -> Option<Monitor> {
+        None
+    }
+
+    pub fn monitor_work_area_px(_m: &Monitor) -> Option<egui::Rect> {
+        None
+    }
+
+    pub fn monitor_scale(_m: &Monitor) -> f32 {
+        1.0
+    }
+
+    pub fn dock_left(_w: &OverlayWindow, _width_pt: f32) -> bool {
+        false
+    }
+
+    pub fn utc_offset_minutes() -> i32 {
+        0
+    }
+
     /// Off Windows there is no foreground-window query here, so the hotkey stays unconditional
     /// rather than silently never firing.
     pub fn foreground_is_game_or_overlay(_overlay: Option<&OverlayWindow>) -> bool {
@@ -649,10 +781,11 @@ mod imp {
 }
 
 pub use imp::{
-    ClipboardOwner, GameWindow, OverlayWindow, clear_clipboard, clipboard_owner,
-    clipboard_sequence, conceal, find_game_window, focus_game, foreground_is_game_or_overlay,
-    from_frame, game_is_foreground, modifiers_held, read_clipboard_text, reveal, send_chord,
-    send_tap, work_area, write_clipboard_text,
+    ClipboardOwner, GameWindow, Monitor, OverlayWindow, clear_clipboard, clipboard_owner,
+    clipboard_sequence, conceal, dock_left, find_game_window, focus_game,
+    foreground_is_game_or_overlay, from_frame, game_is_foreground, modifiers_held, monitor_scale,
+    monitor_work_area_px, read_clipboard_text, reveal, send_chord, send_tap, target_monitor,
+    utc_offset_minutes, work_area, write_clipboard_text,
 };
 
 #[cfg(test)]
@@ -712,6 +845,20 @@ mod tests {
     #[test]
     fn clipboard_sequence_reads_without_panicking() {
         let _ = super::clipboard_sequence();
+    }
+
+    /// Read-only: the target monitor, when there is one, has a plausible work area and scale.
+    #[test]
+    fn target_monitor_has_a_plausible_work_area_and_scale() {
+        let Some(m) = super::target_monitor() else {
+            return;
+        };
+        let Some(area) = super::monitor_work_area_px(&m) else {
+            return;
+        };
+        assert!(area.width() > 100.0 && area.height() > 100.0, "{area:?}");
+        let scale = super::monitor_scale(&m);
+        assert!((0.5..=5.0).contains(&scale), "scale {scale}");
     }
 
     /// A smoke test for the one new Win32 read: it must come back with a plausible desktop, not

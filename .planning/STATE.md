@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.5
-milestone_name: Generic Filter Editor & Initial App Configuration
-status: completed
-stopped_at: v0.5 milestone completed, archived and tagged
-last_updated: "2026-10-15T18:00:00.000Z"
-last_activity: 2026-10-15 -- Milestone v0.5 completed, archived, squash-merged to main and tagged v0.5
+milestone: v0.6
+milestone_name: New PoE2-based Tool UI
+status: Awaiting next milestone
+stopped_at: Milestone v0.6 complete and archived
+last_updated: "2026-10-17T22:20:55.012Z"
+last_activity: 2026-10-17 — Milestone v0.6 completed and archived
 progress:
-  total_phases: 13
-  completed_phases: 13
-  total_plans: 71
-  completed_plans: 71
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 30
+  completed_plans: 30
   percent: 100
 ---
 
@@ -18,23 +18,23 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-15)
+See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Planning next milestone (`/gsd-new-milestone`)
+**Current focus:** Planning the next milestone (/gsd-new-milestone)
 
 ## Current Position
 
-Milestone v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15 (tag `v0.5`).
-Archives: .planning/milestones/v0.5-ROADMAP.md, v0.5-REQUIREMENTS.md, v0.5-MILESTONE-AUDIT.md.
-Status: Between milestones. Next: `/gsd-new-milestone`.
-Progress: [██████████] 100%
+Phase: Milestone v0.6 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-17 — Milestone v0.6 completed and archived
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 117 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
+- Total plans completed: 150 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
 
 **By Milestone:**
 
@@ -45,6 +45,7 @@ Progress: [██████████] 100%
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | 15 days |
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
+| v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | 3 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -78,10 +79,22 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 28 P02 | 25min | 2 tasks | 5 files |
 | Phase 28 P03 | 10min | 2 tasks | 5 files |
 | Phase 28 P04 | 6 min | 2 tasks | 4 files |
+| Phase 30 P01 | 40min | 3 tasks | 8 files |
+| Phase 30 P02 | ~2h | 3 tasks | 12 files |
+| Phase 30 P03 | 60min | 2 tasks | 6 files |
+| Phase 31 P07 | 40min | 3 tasks | 8 files |
+| Phase 33 P01 | 40min | 2 tasks | 5 files |
+| Phase 33 P02 | 50min | 2 tasks | 1 files |
+| Phase 33 P04 | 75min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.6 roadmap created (2026-10-16): Phases 29-35 — workspace + ff-art from the root, skinned
+  shell, RULES on the skin + add-at-top, dividers + economy banner, style table/editor + colour
+  picker, ECONOMY + ABOUT tabs (tiers move; add/remove economy section lives on ECONOMY, after the
+  Phase 32 banner work), prototype retirement + docs. UI phases 30-34 carry `UI hint: yes`.
 
 - Phase 28 added (2026-10-15): **Default config files** — committed `styles-default.json` /
   `tiers-default.json`; live `styles.json` / `tiers.json` git-ignored and falling back to the
@@ -178,6 +191,10 @@ work (carried forward past the v0.3 close):
 - [Phase 28]: 28-02: reads go through InputPaths::styles_source/tiers_source (live, else -default.json); app-root marker is styles-default.json
 - [Phase 28]: 28-03: overlay config files keep two baselines - content (source read) and live (live file bytes or None, the changed-on-disk guard)
 - [Phase 28]: 28-04: styles.json/tiers.json untracked (index only) and git-ignored; committed -default.json files hold the defaults
+- [Phase 30]: Config Revert uses an interim ff_modal Discard confirm until the popup plan
+- [Phase 33]: 33-01: colour picker edits gamma HSV behind the linear Hsva interface; Hex field 72pt without caption to fit one line
+- [Phase 33]: 33-02: Preview column yields below the 110pt Name minimum so all columns end by width-10
+- [Phase 33]: 33-04: style editor lines are one id scope each; tile sizes adapt (14-24pt) so shape rows never wrap; reset_for_new_styles bumps the epoch to orphan pickers and None-memory
 
 ### Pending Todos
 
@@ -192,12 +209,24 @@ work (carried forward past the v0.3 close):
   per-build filters are tracked deliverables or `.gitignore` fodder, and drop the `scratch_*`,
   `foo.filter`, `temptest_gen.filter` scratch artifacts.
 
-- **`Cargo.toml` is still `version = "0.1.0"`** while tags read v0.1/v0.2/v0.3 — confirm whether
-  the crate version is meant to track milestone tags.
+- ~~**`Cargo.toml` version vs milestone tags**~~ — RESOLVED in v0.6: the package version tracks the
+  milestone tags (0.6.0 at v0.6).
 
 ### Blockers/Concerns
 
 None open.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 261015-nbp | Simple Defences: multi-select base types, written as grouped blocks | 2026-10-15 | 52ff64e | [261015-nbp-simple-defences-multi-select-base-types-](./quick/261015-nbp-simple-defences-multi-select-base-types-/) |
+| 261015-tz2 | PoE2-style UI prototype: ff-art asset tool, skin module, ff-proto binary | 2026-10-16 | 206c6bb | [261015-tz2-poe2-style-ui-prototype-ff-art-asset-too](./quick/261015-tz2-poe2-style-ui-prototype-ff-art-asset-too/) |
+| 261016-1de | PoE2 prototype round 2: game-like tabs, style editor, ABOUT tab, one-line status, trimmed minimap atlas | 2026-10-16 | f64cd42 | [261016-1de-poe2-prototype-tab-layout-style-editor-a](./quick/261016-1de-poe2-prototype-tab-layout-style-editor-a/) |
+| 261016-qi7 | Custom rule styling uses the style editor lines, minimap-icon style chip, Revert confirm on every tab | 2026-10-16 | 890673d | [261016-qi7-custom-rule-styling-uses-the-style-edito](./quick/261016-qi7-custom-rule-styling-uses-the-style-edito/) |
+| 261017-0wl | Style editor groups: off / cancel / value for minimap, beam, alert sound, drop sound; folder sound picker; positional toggle | 2026-10-17 | 1afed2c | [261017-0wl-style-editor-groups-off-cancel-value-for](./quick/261017-0wl-style-editor-groups-off-cancel-value-for/) |
+| 261017-2rf | UAT feedback: browsable read-only economy rules (FF Economy Section), narrower tier inputs, style-editor nits | 2026-10-17 | ef0e534 | [261017-2rf-uat-feedback-browsable-read-only-economy](./quick/261017-2rf-uat-feedback-browsable-read-only-economy/) |
+| 261017-7lp | UAT feedback: economy rules get FF name/style headers, staged economy add browsable, tab * on the selected tab, text field gap | 2026-10-17 | 83107ad | [261017-7lp-uat-feedback-economy-headers-staged-rows](./quick/261017-7lp-uat-feedback-economy-headers-staged-rows/) |
 
 ## Phase 15 Source Material — the author's two requests
 
@@ -295,6 +324,16 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
 
 ## Deferred Items
 
+Items acknowledged and deferred at the **v0.6** close on 2026-10-17 (open-artifact audit; no milestone
+audit run, closed on the author's in-game UAT through the feedback rounds):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Phases 30-34: 30..34-HUMAN-UAT.md | partial (83 / 34 / 9 / 9 / 15 scenarios not recorded); walked by hand in the feedback rounds |
+| uat | Phase 35: 35-HUMAN-UAT.md | pending, 0 scenarios recorded |
+| verification | Phases 30-35: *-VERIFICATION.md | human_needed; covered by the author's UAT, files not updated |
+| uat | Phases 14, 16 | carried from v0.5 (see below) |
+
 Items acknowledged and deferred at the **v0.5** close on 2026-10-15 (open-artifact audit):
 
 | Category | Item | Status |
@@ -325,8 +364,12 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-15
-Stopped at: v0.5 milestone complete
-Resume file: None
+Last session: 2026-10-16T18:17:21.821Z
+Stopped at: Milestone v0.6 complete and archived
+Resume file: none
 
 **Next step:** `/gsd-new-milestone`.
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

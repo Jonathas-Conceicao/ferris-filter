@@ -11,26 +11,63 @@
 //! `(block id, keyword, ordinal)`, never by line index, because line indices shift as lines are
 //! added and removed (Pitfall 5).
 
-use egui::{Align, Layout, RichText, vec2};
+use egui::{Align, Align2, Layout, RichText, Sense, pos2, vec2};
 
 use crate::filter::keywords::{COLOURS, Keyword, Kind, RARITIES, SHAPES, ValueShape};
 use crate::filter::tokenize::Operator;
-use crate::filter::{BlockId, BlockKeyword, LinePatch};
+use crate::filter::{BlockId, BlockKeyword, LinePatch, group};
 
 use super::classes::ClassCatalog;
-use super::conditions::{self, CardPlan, DefenceSeg, DefencesKind, Part, SegWrite, SimpleSet};
+use super::conditions::{self, CardPlan, DefencesKind, Part};
+use super::config_state::ColourSlot;
 use super::grammar::{
     self, BoolOrName, ConditionEntry, Effect, EncodeError, Minimap, SoundRef, Value,
 };
 use super::rule_list::{FocusTarget, ListUi, PendingRow};
 use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
-use super::theme;
+use super::style_lines::{self, Rgba, StyleIntent, StyleView, Vis};
 use super::widgets;
 #[cfg(test)]
 use crate::models::config::Style;
+use crate::models::config::{
+    self as mc, Beam, Cancelable, DropSound, FilterColor, MinimapShape, Sound,
+};
+use crate::skin::fonts::{regular, small_caps};
+use crate::skin::palette as pal;
+use crate::skin::widgets as widgets_skin;
 
-const LABEL_W: f32 = 120.0;
-const OP_W: f32 = 104.0;
+/// Left inset of a condition / action card: its value controls start in the control column.
+const CARD_LEFT: f32 = widgets_skin::ROW_PAD + widgets_skin::LABEL_COL_W + widgets_skin::LABEL_GAP;
+const OP_W: f32 = 140.0;
+
+/// A skin dropdown over `(value, label)` choices. Returns `Some(value)` only when the user picks a
+/// different entry than `current`. A current value that is not among the choices is appended as an
+/// extra option with its own label, so what is shown is exact and nothing is normalised.
+fn pick_dropdown<T: PartialEq + Clone>(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &T,
+    current_label: &str,
+    choices: &[(T, String)],
+    width: f32,
+) -> Option<T> {
+    let skin = crate::skin::of(ui.ctx());
+    let mut labels: Vec<&str> = choices.iter().map(|(_, l)| l.as_str()).collect();
+    let start = match choices.iter().position(|(v, _)| v == current) {
+        Some(i) => i,
+        None => {
+            labels.push(current_label);
+            labels.len() - 1
+        }
+    };
+    let mut sel = start;
+    let r = widgets_skin::ff_dropdown(ui, &skin, salt, &mut sel, &labels, width);
+    if r.changed() && sel != start {
+        choices.get(sel).map(|(v, _)| v.clone())
+    } else {
+        None
+    }
+}
 
 const NO_CONDITIONS: &str = "No conditions: this rule matches every item.";
 const BAD_TEXT_HINT: &str = "Values cannot contain quotes or control characters";
@@ -159,15 +196,15 @@ pub(crate) fn raw_line_edit(id: BlockId, entry: &BodyEntry, draft: &str) -> Opti
 // ---------------------------------------------------------------------------------------------
 
 pub(crate) fn caption(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
+    ui.label(RichText::new(text).small().color(pal::LABEL));
 }
 
 pub(crate) fn hint(ui: &mut egui::Ui, text: &str) {
     ui.add(
         egui::Label::new(
             RichText::new(text)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::WARM_ACCENT_TEXT),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::WARN),
         )
         .wrap(),
     );
@@ -191,17 +228,26 @@ fn draft_field(
     list: &mut ListUi,
     key: (BlockId, usize),
 ) -> (egui::Response, Option<String>) {
+    draft_field_ex(ui, tid, current, width, list, key, regular(15.0))
+}
+
+/// [`draft_field`] with an explicit font (raw filter rows use 14pt monospace).
+fn draft_field_ex(
+    ui: &mut egui::Ui,
+    tid: egui::Id,
+    current: &str,
+    width: f32,
+    list: &mut ListUi,
+    key: (BlockId, usize),
+    font: egui::FontId,
+) -> (egui::Response, Option<String>) {
     let focused = ui.memory(|m| m.has_focus(tid));
     let stored = ui.data_mut(|d| d.get_temp::<String>(tid));
     let mut draft = match stored {
         Some(s) if focused => s,
         _ => current.to_string(),
     };
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut draft)
-            .id(tid)
-            .desired_width(width),
-    );
+    let resp = widgets_skin::ff_text_field_ex(ui, Some(tid), &mut draft, "", width, font);
     let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
     if resp.changed()
         && list
@@ -242,14 +288,22 @@ pub(crate) fn raw_row(
 ) {
     let content = line_content(&entry.text).trim_end().to_string();
     if !editable {
-        ui.add(egui::Label::new(RichText::new(&content).color(theme::LABEL_TAN)).wrap());
+        ui.add(egui::Label::new(RichText::new(&content).color(pal::LABEL)).wrap());
         return;
     }
     let tid = ui.make_persistent_id(("raw", id, entry.ordinal));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let width = (ui.available_width() - 32.0).max(80.0);
-        let (_, commit) = draft_field(ui, tid, &content, width, list, (id, entry.line));
+        let (_, commit) = draft_field_ex(
+            ui,
+            tid,
+            &content,
+            width,
+            list,
+            (id, entry.line),
+            egui::FontId::monospace(14.0),
+        );
         if let Some(text) = commit
             && let Some(a) = raw_line_edit(id, entry, &text)
         {
@@ -270,14 +324,55 @@ pub(crate) fn raw_row(
 // The CONDITIONS group
 // ---------------------------------------------------------------------------------------------
 
-fn card_frame(idx: usize) -> egui::Frame {
+fn ground(idx: usize) -> egui::Color32 {
+    if idx.is_multiple_of(2) {
+        pal::ROW_EVEN
+    } else {
+        pal::ROW_ODD
+    }
+}
+
+/// The ground of a condition or action card: alternating row colour, the left inset puts every
+/// control below the header in the control column (the header itself reaches back into it).
+/// (`egui::Margin` is `i8`, too small for the 154pt inset, hence two nested frames.)
+fn card_frame(idx: usize) -> CardFrame {
+    CardFrame(idx)
+}
+
+struct CardFrame(usize);
+
+impl CardFrame {
+    fn show<R>(
+        self,
+        ui: &mut egui::Ui,
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let half = (CARD_LEFT / 2.0) as i8;
+        let outer = egui::Frame::new()
+            .fill(ground(self.0))
+            .inner_margin(egui::Margin {
+                left: half,
+                right: widgets_skin::ROW_PAD as i8,
+                top: 0,
+                bottom: 4,
+            });
+        let r = outer.show(ui, |ui| {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: half,
+                    ..egui::Margin::ZERO
+                })
+                .show(ui, add)
+        });
+        egui::InnerResponse::new(r.inner.inner, r.response)
+    }
+}
+
+/// The ground of a card that is one full-width raw line.
+fn raw_card_frame(idx: usize) -> egui::Frame {
     egui::Frame::new()
-        .fill(if idx.is_multiple_of(2) {
-            theme::ROW_BASE
-        } else {
-            theme::ROW_ALT
-        })
-        .inner_margin(egui::Margin::same(8))
+        .fill(ground(idx))
+        .inner_margin(egui::Margin::symmetric(widgets_skin::ROW_PAD as i8, 4))
 }
 
 fn is_condition_side(e: &BodyEntry) -> bool {
@@ -354,7 +449,7 @@ fn focus_flash(ui: &egui::Ui, rect: egui::Rect, key: egui::Id, start: bool) {
             ui.painter().rect_stroke(
                 rect,
                 2.0,
-                egui::Stroke::new(2.0, theme::WARM_ACCENT_TEXT),
+                egui::Stroke::new(2.0, pal::WARN),
                 egui::StrokeKind::Inside,
             );
             ui.ctx().request_repaint();
@@ -386,22 +481,17 @@ pub fn conditions_group(
     let pending_kws: Vec<&'static Keyword> = pending.iter().map(|p| p.keyword).collect();
     let present = conditions::present_entries(&lines, &pending_kws, any_pending_defences(list, id));
     let mut picked = None;
-    ui.horizontal(|ui| {
-        caption(ui, "CONDITIONS");
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = ui.add_enabled(
-                ctx.editable,
-                egui::Button::new(RichText::new("+ condition").size(theme::ROW_SUMMARY_SIZE)),
-            );
-            picked = picker_popup(
-                ui,
-                &btn,
-                &grammar::condition_picker_groups(),
-                true,
-                &|_| None,
-                &|e| present.contains(e),
-            );
-        });
+    let skin = crate::skin::of(ui.ctx());
+    widgets_skin::ff_field_row(ui, 0, "Conditions", None, |ui| {
+        let btn = widgets_skin::ff_button_ex(ui, &skin, "+ condition", 132.0, ctx.editable, false);
+        picked = picker_popup(
+            ui,
+            &btn,
+            &grammar::condition_picker_groups(),
+            true,
+            &|_| None,
+            &|e| present.contains(e),
+        );
     });
     if let Some(entry) = picked
         && let Some(a) = pick_entry(id, entry, &lines, &present, list)
@@ -413,7 +503,7 @@ pub fn conditions_group(
     if !ctx.editable {
         if lines.is_empty() {
             for line in &ctx.row.conditions {
-                ui.add(egui::Label::new(RichText::new(line).color(theme::LABEL_TAN)).wrap());
+                ui.add(egui::Label::new(RichText::new(line).color(pal::LABEL)).wrap());
             }
         }
         for e in lines {
@@ -429,16 +519,26 @@ pub fn conditions_group(
                 && e.keyword.is_some_and(|k| conditions::is_defence(k.name))
         })
         .collect();
-    let kind = conditions::defences_kind(&defence_lines, list.advanced_defences.contains(&id));
-    let pending_defences = list.pending_defences.contains(&id) && defence_lines.is_empty();
-    let pending_simple =
-        !pending_defences && list.pending_simple_defences.contains(&id) && defence_lines.is_empty();
+    // A grouped rule (several blocks, `# ff:group`) only ever shows the Simple Defences card.
+    let grouped = ctx.row.group_size > 1;
+    let kind = if grouped {
+        None
+    } else {
+        conditions::defences_kind(&defence_lines, list.advanced_defences.contains(&id))
+    };
+    let simple = grouped || matches!(kind, Some(DefencesKind::Simple(_)));
+    let pending_defences =
+        !grouped && list.pending_defences.contains(&id) && defence_lines.is_empty();
+    let pending_simple = !pending_defences
+        && (grouped || list.pending_simple_defences.contains(&id))
+        && defence_lines.is_empty();
     if lines.is_empty() && pending.is_empty() && !pending_defences && !pending_simple {
         ui.label(
-            RichText::new(NO_CONDITIONS)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
+            RichText::new("No conditions")
+                .font(regular(15.0))
+                .color(pal::MUTED),
+        )
+        .on_hover_text(NO_CONDITIONS);
     }
     let single = |ui: &mut egui::Ui,
                   i: usize,
@@ -452,7 +552,7 @@ pub fn conditions_group(
                 condition_card(ui, ctx, e, kw, idx, can_between, list, actions)
             }
             _ => {
-                card_frame(idx).show(ui, |ui| {
+                raw_card_frame(idx).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     raw_row(ui, e, true, list, actions, id);
                 });
@@ -473,15 +573,12 @@ pub fn conditions_group(
                 }
             }
             CardPlan::Defences(_) => {
-                match kind {
-                    Some(DefencesKind::Simple(set)) => {
-                        simple_defences_card(ui, ctx, &defence_lines, set, idx, list, actions)
-                    }
-                    _ => {
-                        // Once shown, the rule keeps the Defences card until a reload (UAT4-03).
-                        list.advanced_defences.insert(id);
-                        defences_card(ui, ctx, &defence_lines, idx, list, actions);
-                    }
+                if simple {
+                    simple_defences_card(ui, ctx, true, idx, list, actions)
+                } else {
+                    // Once shown, the rule keeps the Defences card until a reload (UAT4-03).
+                    list.advanced_defences.insert(id);
+                    defences_card(ui, ctx, &defence_lines, idx, list, actions);
                 }
                 idx += 1;
             }
@@ -492,10 +589,7 @@ pub fn conditions_group(
         defences_card(ui, ctx, &[], idx, list, actions);
         idx += 1;
     } else if pending_simple {
-        let all_any = SimpleSet {
-            rows: [(DefenceSeg::Any, None); 3],
-        };
-        simple_defences_card(ui, ctx, &[], all_any, idx, list, actions);
+        simple_defences_card(ui, ctx, grouped, idx, list, actions);
         idx += 1;
     }
     for (i, p) in pending.iter().enumerate() {
@@ -533,6 +627,7 @@ fn defences_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             let x = condition_header(
                 ui,
+                idx,
                 "Defences",
                 "Armour, Evasion and Energy Shield",
                 |_| {},
@@ -554,74 +649,76 @@ fn defences_card(
                     actions.push(remove(id, e));
                 }
             }
-            for (name, label) in conditions::DEFENCES {
-                let Some(kw) = crate::filter::keywords::lookup(name) else {
-                    continue;
-                };
-                let own: Vec<&BodyEntry> = defence_lines
-                    .iter()
-                    .copied()
-                    .filter(|e| e.keyword.is_some_and(|k| k.name == name))
-                    .collect();
-                let mut on = !own.is_empty();
-                ui.horizontal(|ui| {
-                    let t = widgets::circular_toggle(ui, &mut on);
-                    #[cfg(test)]
-                    probe_rect(ui, ("defences-toggle", id, name), t.rect);
-                    ui.label(RichText::new(label).size(14.0).color(theme::VALUE_TEXT));
-                    if t.changed() {
-                        if on {
-                            if let Some(text) = grammar::default_line(kw) {
-                                actions.push(RowAction::AddLine {
-                                    id,
-                                    kind: LineKind::Condition,
-                                    text,
-                                });
-                            }
-                            list.pending_defences.remove(&id);
-                        } else {
-                            let mut doomed = own.clone();
-                            doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
-                            for e in doomed {
-                                actions.push(remove(id, e));
+            crate::skin::editor::ff_card(ui, "", |ui| {
+                for (name, label) in conditions::DEFENCES {
+                    let Some(kw) = crate::filter::keywords::lookup(name) else {
+                        continue;
+                    };
+                    let own: Vec<&BodyEntry> = defence_lines
+                        .iter()
+                        .copied()
+                        .filter(|e| e.keyword.is_some_and(|k| k.name == name))
+                        .collect();
+                    let mut on = !own.is_empty();
+                    ui.horizontal(|ui| {
+                        let t = widgets::circular_toggle(ui, &mut on);
+                        #[cfg(test)]
+                        probe_rect(ui, ("defences-toggle", id, name), t.rect);
+                        ui.label(RichText::new(label).size(14.0).color(pal::VALUE));
+                        if t.changed() {
+                            if on {
+                                if let Some(text) = grammar::default_line(kw) {
+                                    actions.push(RowAction::AddLine {
+                                        id,
+                                        kind: LineKind::Condition,
+                                        text,
+                                    });
+                                }
+                                list.pending_defences.remove(&id);
+                            } else {
+                                let mut doomed = own.clone();
+                                doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
+                                for e in doomed {
+                                    actions.push(remove(id, e));
+                                }
                             }
                         }
-                    }
-                    if first_toggle.is_none() {
-                        first_toggle = Some(t);
-                    }
-                });
-                let parts = subs
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, p)| p.as_slice())
-                    .unwrap_or(&[]);
-                for part in parts {
-                    match *part {
-                        Part::Single(i) => {
-                            let can_between = conditions::sole_line(defence_lines, i);
-                            defence_line_controls(
+                        if first_toggle.is_none() {
+                            first_toggle = Some(t);
+                        }
+                    });
+                    let parts = subs
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .map(|(_, p)| p.as_slice())
+                        .unwrap_or(&[]);
+                    for part in parts {
+                        match *part {
+                            Part::Single(i) => {
+                                let can_between = conditions::sole_line(defence_lines, i);
+                                defence_line_controls(
+                                    ui,
+                                    ctx,
+                                    defence_lines[i],
+                                    kw,
+                                    can_between,
+                                    list,
+                                    actions,
+                                )
+                            }
+                            Part::Between { lower, upper } => defence_between(
                                 ui,
                                 ctx,
-                                defence_lines[i],
+                                defence_lines[lower],
+                                defence_lines[upper],
                                 kw,
-                                can_between,
                                 list,
                                 actions,
-                            )
+                            ),
                         }
-                        Part::Between { lower, upper } => defence_between(
-                            ui,
-                            ctx,
-                            defence_lines[lower],
-                            defence_lines[upper],
-                            kw,
-                            list,
-                            actions,
-                        ),
                     }
                 }
-            }
+            });
         })
     });
     let rect = framed.inner.response.rect;
@@ -650,123 +747,45 @@ fn probe_rect(ui: &egui::Ui, key: impl std::hash::Hash + std::fmt::Debug, rect: 
     ui.data_mut(|d| d.insert_temp(egui::Id::new(key), rect));
 }
 
-/// The writes one Simple Defences segment change produces for row `row` (in `DEFENCES` order):
-/// at most one action, on that type's line only (PARSE-04). `set` indexes into `defence_lines`.
-fn simple_seg_actions(
-    id: BlockId,
-    defence_lines: &[&BodyEntry],
-    set: &SimpleSet,
-    row: usize,
-    want: DefenceSeg,
-) -> Vec<RowAction> {
-    let (name, _) = conditions::DEFENCES[row];
-    let (current, at) = set.rows[row];
-    let entry = at.and_then(|i| defence_lines.get(i).copied());
-    match conditions::seg_write(name, Some(current), want) {
-        SegWrite::Nothing => Vec::new(),
-        SegWrite::Add(text) => vec![RowAction::AddLine {
-            id,
-            kind: LineKind::Condition,
-            text,
-        }],
-        // Has <-> No patches only the operator and value of the existing line (to the canonical
-        // `X > 0` / `X 0`), so the keyword's spelling and any trailing comment are kept and the
-        // commit is strict, like every other structured card edit (review WR-02).
-        SegWrite::Replace(_) => entry
-            .map(|e| {
-                let op = match want {
-                    DefenceSeg::Has => Some(Operator::Gt),
-                    _ => None,
-                };
-                edit(id, e, LinePatch::Both(op, "0".into()))
-            })
-            .into_iter()
-            .collect(),
-        SegWrite::Remove => entry.map(|e| remove(id, e)).into_iter().collect(),
+/// The Simple Defences selection the card shows: the rule's own (lines, or a group's union), else
+/// the pick that wrote no lines (none, or every combination).
+fn shown_selection(row: &RuleRow, list: &ListUi) -> u8 {
+    row.simple_mask
+        .unwrap_or(if list.simple_all.contains(&row.id) {
+            group::ALL_COMBOS
+        } else {
+            0
+        })
+}
+
+/// What clicking chip `chip` of a card showing `mask` does: the one write (the new selection),
+/// and the card bookkeeping. A selection that writes no defence line (none, or every combination)
+/// keeps the card open as a pending card and remembers which of the two it was.
+fn chip_click(id: BlockId, mask: u8, chip: usize, list: &mut ListUi) -> RowAction {
+    let new = mask ^ (1 << chip);
+    let no_lines = new == 0 || new == group::ALL_COMBOS;
+    if no_lines {
+        list.pending_simple_defences.insert(id);
+    } else {
+        list.pending_simple_defences.remove(&id);
     }
-}
-
-/// The strip chips in `DEFENCE_COMBOS` order, each with whether the settings match it.
-fn combo_chip_states(settings: [DefenceSeg; 3]) -> Vec<(&'static str, bool)> {
-    conditions::DEFENCE_COMBOS
-        .iter()
-        .zip(conditions::lit_combos(settings))
-        .map(|((label, _), lit)| (*label, lit))
-        .collect()
-}
-
-/// The compact `Any | Has | No` control. Returns the segment clicked when it differs from
-/// `current`, and the three segment responses (for focus).
-fn any_has_no(ui: &mut egui::Ui, current: DefenceSeg) -> (Option<DefenceSeg>, Vec<egui::Response>) {
-    let mut picked = None;
-    let mut out = Vec::with_capacity(3);
-    ui.spacing_mut().item_spacing.x = 2.0;
-    for (label, seg, tip) in [
-        ("Any", DefenceSeg::Any, "With or without"),
-        ("Has", DefenceSeg::Has, "More than 0"),
-        ("No", DefenceSeg::No, "Exactly 0"),
-    ] {
-        let mut sel = current == seg;
-        let r = widgets::toggle_chip(ui, label, &mut sel);
-        if r.changed() && seg != current {
-            picked = Some(seg);
-        }
-        out.push(r.on_hover_text(tip));
+    if new == group::ALL_COMBOS {
+        list.simple_all.insert(id);
+    } else {
+        list.simple_all.remove(&id);
     }
-    (picked, out)
+    RowAction::SetDefenceSelection { id, mask: new }
 }
 
-/// The non-clickable strip of the seven defence combinations, lit for the ones the settings
-/// match. Returns the strip's rect.
-fn combo_strip(ui: &mut egui::Ui, settings: [DefenceSeg; 3]) -> egui::Rect {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for (label, lit) in combo_chip_states(settings) {
-            let text_color = if lit {
-                theme::PANEL_GROUND
-            } else {
-                theme::DISABLED_TEXT
-            };
-            let galley = ui.painter().layout_no_wrap(
-                label.to_owned(),
-                egui::FontId::proportional(theme::ROW_SUMMARY_SIZE - 1.0),
-                text_color,
-            );
-            let size = vec2(galley.size().x + 10.0, 18.0);
-            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-            let painter = ui.painter();
-            if lit {
-                painter.rect_filled(rect, 2.0, theme::WARM_ACCENT_TEXT);
-            } else {
-                painter.rect_stroke(
-                    rect,
-                    2.0,
-                    egui::Stroke::new(1.0, theme::HEADER_PLATE),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            painter.galley(
-                egui::pos2(rect.left() + 5.0, rect.center().y - galley.size().y / 2.0),
-                galley,
-                text_color,
-            );
-        }
-    })
-    .response
-    .on_hover_text("Defence combinations these settings match")
-    .rect
-}
-
-/// The Simple Defences card of a rule (UAT4-03): an AR / EV / ES row each with `Any | Has | No`,
-/// and the combination strip below. A segment change writes only that type's line (`X > 0`,
-/// `X 0`, or removes it); loaded zero-based lines keep their bytes until their segment changes
-/// (PARSE-04). With no lines (`defence_lines` empty) this is the pending card, which writes
-/// nothing until a row is set to Has or No.
+/// The Simple Defences card of a rule: one wrapped line of seven chips, one per defence base
+/// type (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES). The selected chips are exactly
+/// what the rule matches; a click writes the new selection, which may need several blocks (a
+/// `# ff:group`). With nothing selected the card writes no line (`has_lines` false: the pending
+/// card), and the X removes every defence line.
 fn simple_defences_card(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
-    defence_lines: &[&BodyEntry],
-    set: SimpleSet,
+    has_lines: bool,
     idx: usize,
     list: &mut ListUi,
     actions: &mut Vec<RowAction>,
@@ -774,20 +793,22 @@ fn simple_defences_card(
     let id = ctx.row.id;
     #[cfg(test)]
     probe_card(ui, id, "simple");
-    let mut first_seg: Option<egui::Response> = None;
+    let mask = shown_selection(ctx.row, list);
+    let mut first_chip: Option<egui::Response> = None;
     let framed = ui.push_id((id, "simple-defences-card"), |ui| {
         card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             let x = condition_header(
                 ui,
+                idx,
                 "Simple Defences",
-                "Armour, Evasion and Energy Shield",
+                "Defence base types",
                 |_| {},
-                if defence_lines.is_empty() {
-                    "Discard this condition"
-                } else {
+                if has_lines {
                     "Remove all defence conditions"
+                } else {
+                    "Discard this condition"
                 },
             );
             #[cfg(test)]
@@ -795,63 +816,34 @@ fn simple_defences_card(
             if x.clicked() {
                 list.pending_simple_defences.remove(&id);
                 list.advanced_defences.remove(&id);
-                // Highest line first, so each removal leaves the indices of the rest valid.
-                let mut doomed: Vec<&BodyEntry> = defence_lines.to_vec();
-                doomed.sort_by_key(|e| std::cmp::Reverse(e.line));
-                for e in doomed {
-                    actions.push(remove(id, e));
+                list.simple_all.remove(&id);
+                if has_lines {
+                    actions.push(RowAction::SetDefenceSelection { id, mask: 0 });
                 }
             }
-            for (row, ((_, long), short)) in conditions::DEFENCES
-                .iter()
-                .zip(conditions::DEFENCE_SHORT)
-                .enumerate()
-            {
-                let current = set.rows[row].0;
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [32.0, 24.0],
-                        egui::Label::new(RichText::new(short).size(14.0).color(theme::VALUE_TEXT)),
-                    )
-                    .on_hover_text(*long);
-                    let (picked, segs) = any_has_no(ui, current);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                for (chip, (label, tip, _)) in group::COMBOS.iter().enumerate() {
+                    let mut sel = mask & (1 << chip) != 0;
+                    let r = widgets::toggle_chip(ui, label, &mut sel).on_hover_text(*tip);
                     #[cfg(test)]
-                    for (s, r) in segs.iter().enumerate() {
-                        probe_rect(ui, ("simple-seg", id, row, s), r.rect);
+                    probe_rect(ui, ("simple-chip", id, chip), r.rect);
+                    if r.changed() {
+                        actions.push(chip_click(id, mask, chip, list));
                     }
-                    if let Some(want) = picked {
-                        let writes = simple_seg_actions(id, defence_lines, &set, row, want);
-                        if !writes.is_empty() {
-                            list.pending_simple_defences.remove(&id);
-                            // Setting the last row back to Any keeps the card open (pending).
-                            let rest_any = set
-                                .rows
-                                .iter()
-                                .enumerate()
-                                .all(|(r, (s, _))| r == row || *s == DefenceSeg::Any);
-                            if want == DefenceSeg::Any && rest_any {
-                                list.pending_simple_defences.insert(id);
-                            }
-                            actions.extend(writes);
-                        }
+                    if first_chip.is_none() {
+                        first_chip = Some(r);
                     }
-                    if first_seg.is_none() {
-                        first_seg = segs.into_iter().next();
-                    }
-                });
-            }
-            let strip = combo_strip(ui, set.settings());
-            #[cfg(test)]
-            probe_rect(ui, ("simple-strip", id), strip);
-            let _ = strip;
+                }
+            });
         })
     });
     let rect = framed.inner.response.rect;
     let focus = list.focus_card == Some((id, FocusTarget::Defences));
     if focus {
         framed.inner.response.scroll_to_me(Some(Align::Center));
-        if let Some(s) = first_seg {
-            s.request_focus();
+        if let Some(c) = first_chip {
+            c.request_focus();
         }
         list.focus_card = None;
     }
@@ -952,19 +944,19 @@ fn numeric_op_combo(ui: &mut egui::Ui, card: &Card) -> Option<conditions::Numeri
     use conditions::NumericOp;
     let entry = card.entry;
     let cur = NumericOp::Single(entry.op);
-    let mut picked = None;
-    egui::ComboBox::from_id_salt(card.salt("op"))
-        .selected_text(grammar::operator_label(card.kw, entry.op, false))
-        .width(OP_W)
-        .show_ui(ui, |ui| {
-            for (c, label) in conditions::numeric_op_choices_for(card.kw, cur, card.can_between) {
-                let sel = c == cur;
-                if ui.selectable_label(sel, label).clicked() && !sel {
-                    picked = Some(c);
-                }
-            }
-        });
-    picked
+    let choices: Vec<(conditions::NumericOp, String)> =
+        conditions::numeric_op_choices_for(card.kw, cur, card.can_between)
+            .into_iter()
+            .map(|(c, l)| (c, l.to_string()))
+            .collect();
+    pick_dropdown(
+        ui,
+        card.salt("op"),
+        &cur,
+        grammar::operator_label(card.kw, entry.op, false),
+        &choices,
+        OP_W,
+    )
 }
 
 /// The operator control of one condition line. Whole-number keywords offer Between; the rest keep
@@ -998,18 +990,18 @@ fn between_op_combo(
     actions: &mut Vec<RowAction>,
 ) {
     use conditions::NumericOp;
-    let mut picked = None;
-    egui::ComboBox::from_id_salt((id, kw.name, lower.ordinal, "op"))
-        .selected_text("Between")
-        .width(OP_W)
-        .show_ui(ui, |ui| {
-            for (c, label) in conditions::numeric_op_choices(kw, NumericOp::Between) {
-                let sel = c == NumericOp::Between;
-                if ui.selectable_label(sel, label).clicked() && !sel {
-                    picked = Some(c);
-                }
-            }
-        });
+    let choices: Vec<(NumericOp, String)> = conditions::numeric_op_choices(kw, NumericOp::Between)
+        .into_iter()
+        .map(|(c, l)| (c, l.to_string()))
+        .collect();
+    let picked = pick_dropdown(
+        ui,
+        (id, kw.name, lower.ordinal, "op"),
+        &NumericOp::Between,
+        "Between",
+        &choices,
+        OP_W,
+    );
     if let Some(NumericOp::Single(op)) = picked {
         actions.extend(from_between_actions(id, lower, upper, op));
     }
@@ -1032,7 +1024,12 @@ fn bound_control(
     ui.horizontal(|ui| {
         let (min, max, log) = grammar::slider_range(kw.name);
         let s = widgets::themed_slider(ui, &mut v, min, max, log);
-        let n = widgets::number_field(ui, (id, kw.name, entry.ordinal, "num"), &mut v, 64.0);
+        let n = widgets::number_field(
+            ui,
+            (id, kw.name, entry.ordinal, "num"),
+            &mut v,
+            widgets::NUMBER_FIELD_W,
+        );
         invalid = n.invalid;
         changed = s.changed() || n.response.changed();
     });
@@ -1051,6 +1048,17 @@ pub(crate) fn clamped_bound(current: i64, new: i64, clamp: (i64, i64)) -> Option
     (v != current).then_some(v)
 }
 
+/// The `Min` / `Max` label that starts a Between slider line, in a fixed 36 pt slot.
+fn bound_label(ui: &mut egui::Ui, text: &str) {
+    ui.allocate_ui_with_layout(
+        vec2(36.0, 30.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.label(RichText::new(text).font(regular(15.0)).color(pal::MUTED));
+        },
+    );
+}
+
 /// The min and max controls of a Between pair, each editing only its own line.
 fn between_sliders(
     ui: &mut egui::Ui,
@@ -1066,11 +1074,11 @@ fn between_sliders(
     // Strict `>` / `<` bounds exclude their own value, so the clamps and the hint account for them.
     let (lo_clamp, hi_clamp) = conditions::bound_clamps(lower.op, lo, upper.op, hi);
     ui.horizontal(|ui| {
-        caption(ui, "min");
+        bound_label(ui, "Min");
         bound_control(ui, id, kw, lower, lo, lo_clamp, actions);
     });
     ui.horizontal(|ui| {
-        caption(ui, "max");
+        bound_label(ui, "Max");
         bound_control(ui, id, kw, upper, hi, hi_clamp, actions);
     });
     if !conditions::between_ok(lower.op, lo, upper.op, hi) {
@@ -1097,6 +1105,7 @@ fn between_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             let x = condition_header(
                 ui,
+                idx,
                 &grammar::display_name(kw.name),
                 kw.name,
                 |ui| between_op_combo(ui, id, kw, lower, upper, actions),
@@ -1191,14 +1200,6 @@ pub(crate) fn picker_entries(query: &str) -> Groups {
     filter_groups(&grammar::condition_picker_groups(), query)
 }
 
-/// Keyword groups as picker entries (the action picker's input).
-fn keyword_entries(groups: Vec<(&'static str, Vec<&'static Keyword>)>) -> Groups {
-    groups
-        .into_iter()
-        .map(|(g, ks)| (g, ks.into_iter().map(ConditionEntry::Keyword).collect()))
-        .collect()
-}
-
 /// Tooltip on a picker entry that is already on the rule.
 const ALREADY_ON_RULE: &str = "Already on this rule";
 
@@ -1211,7 +1212,72 @@ fn picker_section_override(searching: bool) -> Option<bool> {
     searching.then_some(true)
 }
 
-/// A searchable, grouped picker anchored to `button` (shared with `+ style`). Returns the entry
+/// Row height of a picker / class-picker line.
+const PICK_ROW_H: f32 = 28.0;
+/// The picker list never grows beyond this; it scrolls instead.
+const PICKER_MAX_H: f32 = 320.0;
+
+/// A collapsible section head: a small triangle and a small-caps label on a 28pt line.
+fn section_head(ui: &mut egui::Ui, label: &str, open: bool) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), PICK_ROW_H), Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if r.hovered() {
+        ui.painter().rect_filled(rect, 0.0, pal::ROW_HOVER);
+    }
+    let c = pos2(rect.min.x + 12.0, rect.center().y);
+    let pts = if open {
+        vec![
+            c + vec2(-4.5, -2.5),
+            c + vec2(4.5, -2.5),
+            c + vec2(0.0, 3.5),
+        ]
+    } else {
+        vec![
+            c + vec2(-2.5, -4.5),
+            c + vec2(3.5, 0.0),
+            c + vec2(-2.5, 4.5),
+        ]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        pts,
+        pal::LABEL,
+        egui::Stroke::NONE,
+    ));
+    ui.painter().text(
+        pos2(rect.min.x + 26.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        small_caps(17.0),
+        pal::LABEL,
+    );
+    r
+}
+
+/// One full-width 28pt picker entry; greyed entries use the disabled colour. `clickable` is false
+/// for entries that cannot be picked at all.
+fn pick_row(ui: &mut egui::Ui, text: &str, greyed: bool, clickable: bool) -> egui::Response {
+    let sense = if clickable {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), PICK_ROW_H), sense);
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, clickable, text));
+    if clickable && r.hovered() {
+        ui.painter().rect_filled(rect, 0.0, pal::ROW_HOVER);
+    }
+    let color = if greyed { pal::DISABLED } else { pal::VALUE };
+    ui.painter().text(
+        pos2(rect.min.x + 26.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        regular(15.0),
+        color,
+    );
+    r
+}
+
+/// A searchable, grouped picker anchored to `button` (the `+ condition` picker). Returns the entry
 /// the user picked this frame. Entries for which `disabled` gives a reason are shown greyed with
 /// that reason as their tooltip and cannot be clicked. Entries `present` on the rule are also
 /// greyed but stay clickable (the caller focuses the existing card instead of adding another).
@@ -1235,16 +1301,18 @@ pub(crate) fn picker_popup(
     let inner = egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(width)
+        .gap(2.0)
+        .frame(egui::Frame::NONE.inner_margin(6))
         .show(|ui| {
+            let skin = crate::skin::of(ui.ctx());
+            let bg = ui.painter().add(egui::Shape::Noop);
+            ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
             let mut query = ui
                 .data_mut(|d| d.get_temp::<String>(query_id))
                 .unwrap_or_default();
             if searchable {
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut query)
-                        .hint_text(hint_text)
-                        .desired_width(f32::INFINITY),
-                );
+                let w = ui.available_width();
+                let r = widgets_skin::ff_text_field(ui, &mut query, hint_text, w);
                 if !ui.data(|d| d.get_temp::<bool>(focus_id)).unwrap_or(false) {
                     r.request_focus();
                     ui.data_mut(|d| d.insert_temp(focus_id, true));
@@ -1253,63 +1321,77 @@ pub(crate) fn picker_popup(
             ui.data_mut(|d| d.insert_temp(query_id, query.clone()));
             let filtered = filter_groups(groups, &query);
             let searching = !query.trim().is_empty();
+            let forced = picker_section_override(searching);
+            let open_id = |label: &str| popup_id.with(("section-open", label.to_string()));
+            let is_open = |ui: &egui::Ui, label: &str| {
+                forced.unwrap_or_else(|| {
+                    ui.data(|d| d.get_temp::<bool>(open_id(label)))
+                        .unwrap_or(PICKER_SECTION_DEFAULT_OPEN)
+                })
+            };
+            let rows: usize = if filtered.is_empty() {
+                1
+            } else {
+                filtered
+                    .iter()
+                    .map(|(l, es)| 1 + if is_open(ui, l) { es.len() } else { 0 })
+                    .sum()
+            };
+            let list_h = (rows as f32 * PICK_ROW_H).min(PICKER_MAX_H);
             let mut picked: Option<ConditionEntry> = None;
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
+            ui.allocate_ui(vec2(ui.available_width(), list_h), |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                widgets_skin::ff_scroll_area(ui, &skin, (popup_id, "list"), |ui| {
                     if filtered.is_empty() {
-                        caption(ui, "Nothing matches");
+                        let (r, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), PICK_ROW_H),
+                            Sense::hover(),
+                        );
+                        ui.painter().text(
+                            pos2(r.min.x + 8.0, r.center().y),
+                            Align2::LEFT_CENTER,
+                            "Nothing matches",
+                            regular(15.0),
+                            pal::MUTED,
+                        );
                     }
                     for (label, kws) in filtered.iter() {
-                        let mut header = egui::CollapsingHeader::new(
-                            RichText::new(*label)
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::LABEL_TAN),
-                        )
-                        .id_salt((popup_id, *label))
-                        .default_open(PICKER_SECTION_DEFAULT_OPEN);
-                        if let Some(open) = picker_section_override(searching) {
-                            header = header.open(Some(open));
+                        let open = is_open(ui, label);
+                        if section_head(ui, label, open).clicked() && forced.is_none() {
+                            ui.data_mut(|d| d.insert_temp(open_id(label), !open));
+                            ui.ctx().request_repaint();
                         }
-                        header.show(ui, |ui| {
-                            for entry in kws {
-                                let reason = disabled(entry);
-                                let already = reason.is_none() && present(entry);
-                                let text = RichText::new(entry.label()).size(14.0).color(
-                                    if reason.is_some() || already {
-                                        theme::DISABLED_TEXT
+                        if !open {
+                            continue;
+                        }
+                        for entry in kws {
+                            let reason = disabled(entry);
+                            let already = reason.is_none() && present(entry);
+                            let greyed = reason.is_some() || already;
+                            let r = pick_row(ui, &entry.label(), greyed, reason.is_none());
+                            match reason {
+                                Some(msg) => {
+                                    r.on_hover_text(msg);
+                                }
+                                None => {
+                                    let r = if already {
+                                        r.on_hover_text(ALREADY_ON_RULE)
                                     } else {
-                                        theme::VALUE_TEXT
-                                    },
-                                );
-                                let r = ui
-                                    .add_enabled_ui(reason.is_none(), |ui| {
-                                        ui.selectable_label(false, text)
-                                    })
-                                    .inner;
-                                match reason {
-                                    Some(msg) => {
-                                        r.on_disabled_hover_text(msg);
-                                    }
-                                    None => {
-                                        let r = if already {
-                                            r.on_hover_text(ALREADY_ON_RULE)
-                                        } else {
-                                            r
-                                        };
-                                        if r.clicked() {
-                                            picked = Some(*entry);
-                                        }
+                                        r
+                                    };
+                                    if r.clicked() {
+                                        picked = Some(*entry);
                                     }
                                 }
                             }
-                        });
+                        }
                     }
                 });
+            });
             if picked.is_some() {
                 egui::Popup::close_id(ui.ctx(), popup_id);
             }
+            crate::skin::popup::paint_box_behind(ui, &skin, bg);
             picked
         });
     if !egui::Popup::is_id_open(&ctx, popup_id) {
@@ -1437,6 +1519,7 @@ fn pending_card(
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
             discard = condition_header(
                 ui,
+                idx,
                 &grammar::display_name(p.keyword.name),
                 p.keyword.name,
                 |ui| {
@@ -1445,18 +1528,20 @@ fn pending_card(
                     // the author can pick it before any value exists.
                     let choices = grammar::operator_choices(p.keyword, p.op, false);
                     if !choices.is_empty() {
-                        egui::ComboBox::from_id_salt((p.block, p.keyword.name, "pending-op"))
-                            .selected_text(grammar::operator_label(p.keyword, p.op, false))
-                            .width(OP_W)
-                            .show_ui(ui, |ui| {
-                                for c in &choices {
-                                    if ui.selectable_label(c.op == p.op, c.label).clicked()
-                                        && c.op != p.op
-                                    {
-                                        picked_op = Some(c.op);
-                                    }
-                                }
-                            });
+                        let opts: Vec<(Option<Operator>, String)> = choices
+                            .iter()
+                            .map(|c| (c.op, c.label.to_string()))
+                            .collect();
+                        if let Some(op) = pick_dropdown(
+                            ui,
+                            (p.block, p.keyword.name, "pending-op"),
+                            &p.op,
+                            grammar::operator_label(p.keyword, p.op, false),
+                            &opts,
+                            OP_W,
+                        ) {
+                            picked_op = Some(op);
+                        }
                     }
                 },
                 "Discard this condition",
@@ -1597,6 +1682,7 @@ fn condition_card(
             };
             let x = condition_header(
                 ui,
+                idx,
                 &grammar::display_name(kw.name),
                 kw.name,
                 |ui| {
@@ -1639,33 +1725,50 @@ fn condition_card(
     });
 }
 
-/// One condition header row: fixed-width keyword label, the `middle` control, and the remove X
+/// A two-column card header: `label_text` in the 128pt label column, `add_control` from the label
+/// end + 16 to the right edge. The line reaches back over the card's left inset so its label sits
+/// at the row's left edge; the cursor advances by its height only.
+fn card_header<R>(
+    ui: &mut egui::Ui,
+    idx: usize,
+    label_text: &str,
+    label_hover: &str,
+    add_control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let avail = ui.available_rect_before_wrap();
+    let outer = egui::Rect::from_min_max(
+        egui::pos2(avail.min.x - CARD_LEFT, avail.min.y),
+        egui::pos2(avail.max.x + widgets_skin::ROW_PAD, avail.max.y),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(outer)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    let inner =
+        widgets_skin::ff_field_row(&mut child, idx, label_text, Some(label_hover), add_control)
+            .inner;
+    ui.allocate_space(vec2(0.0, child.min_rect().height()));
+    inner
+}
+
+/// One condition header row: the keyword label column, the `middle` control, and the remove X
 /// flush against the right edge so the X buttons line up across rows. Returns the X response.
 fn condition_header(
     ui: &mut egui::Ui,
+    idx: usize,
     label_text: &str,
     label_hover: &str,
     middle: impl FnOnce(&mut egui::Ui),
     remove_tip: &str,
 ) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [LABEL_W, 24.0],
-            egui::Label::new(
-                RichText::new(label_text)
-                    .size(14.0)
-                    .color(theme::VALUE_TEXT),
-            )
-            .truncate(),
-        )
-        .on_hover_text(label_hover);
+    card_header(ui, idx, label_text, label_hover, |ui| {
         middle(ui);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             widgets::remove_x_button(ui, remove_tip)
         })
         .inner
     })
-    .inner
 }
 
 /// The Yes/No a boolean line reads as: negating operators flip the written word; ordering
@@ -1703,17 +1806,11 @@ pub(crate) fn bool_edit(id: BlockId, entry: &BodyEntry, want: bool) -> Option<Ro
 
 /// The compact `Yes | No` control; `Some(want)` when the unselected side was clicked.
 fn bool_yes_no(ui: &mut egui::Ui, effective: bool) -> Option<bool> {
-    let mut picked = None;
-    ui.spacing_mut().item_spacing.x = 2.0;
-    for (label, val) in [("Yes", true), ("No", false)] {
-        let mut sel = effective == val;
-        let r = widgets::toggle_chip(ui, label, &mut sel);
-        if r.changed() && val != effective {
-            picked = Some(val);
-        }
-        r.on_hover_text("Remove the condition to match either.");
-    }
-    picked
+    let skin = crate::skin::of(ui.ctx());
+    let mut idx = if effective { 0 } else { 1 };
+    let r = crate::skin::editor::ff_segmented(ui, &skin, &mut idx, &["Yes", "No"], 132.0)
+        .on_hover_text("Remove the condition to match either.");
+    (r.changed() && (idx == 0) != effective).then_some(idx == 0)
 }
 
 /// The operator dropdown; `Some(new)` only when the user picked a different operator.
@@ -1721,18 +1818,11 @@ fn operator_combo(ui: &mut egui::Ui, card: &Card, list_form: bool) -> Option<Opt
     let entry = card.entry;
     let choices = grammar::operator_choices(card.kw, entry.op, list_form);
     let current = grammar::operator_label(card.kw, entry.op, list_form);
-    let mut picked = None;
-    egui::ComboBox::from_id_salt(card.salt("op"))
-        .selected_text(current)
-        .width(OP_W)
-        .show_ui(ui, |ui| {
-            for c in &choices {
-                if ui.selectable_label(c.op == entry.op, c.label).clicked() && c.op != entry.op {
-                    picked = Some(c.op);
-                }
-            }
-        });
-    picked
+    let opts: Vec<(Option<Operator>, String)> = choices
+        .iter()
+        .map(|c| (c.op, c.label.to_string()))
+        .collect();
+    pick_dropdown(ui, card.salt("op"), &entry.op, current, &opts, OP_W)
 }
 
 /// Dispatch on the decoded value. Returns the primary control, for focus-after-add.
@@ -1793,7 +1883,7 @@ fn int_control(
     ui.horizontal(|ui| {
         let (min, max, log) = grammar::slider_range(card.kw.name);
         let s = widgets::themed_slider(ui, &mut v, min, max, log);
-        let n = widgets::number_field(ui, card.salt("num"), &mut v, 64.0);
+        let n = widgets::number_field(ui, card.salt("num"), &mut v, widgets::NUMBER_FIELD_W);
         invalid = n.invalid;
         changed = s.changed() || n.response.changed();
         primary = Some(n.response);
@@ -1815,19 +1905,12 @@ fn enum_control(ui: &mut egui::Ui, card: &Card, current: &[String], actions: &mu
         return;
     };
     if let [only] = current {
-        let mut picked: Option<&str> = None;
-        egui::ComboBox::from_id_salt(card.salt("enum"))
-            .selected_text(only.as_str())
-            .width(160.0)
-            .show_ui(ui, |ui| {
-                for o in options {
-                    if ui.selectable_label(*o == only, *o).clicked() && *o != only {
-                        picked = Some(o);
-                    }
-                }
-            });
-        if let Some(p) = picked {
-            let res = values_edit(card.id, card.entry, &Value::Enum(vec![p.to_string()]));
+        let opts: Vec<(String, String)> = options
+            .iter()
+            .map(|o| (o.to_string(), o.to_string()))
+            .collect();
+        if let Some(p) = pick_dropdown(ui, card.salt("enum"), only, only.as_str(), &opts, 160.0) {
+            let res = values_edit(card.id, card.entry, &Value::Enum(vec![p]));
             card.commit(ui, res, actions);
         }
         return;
@@ -1900,8 +1983,8 @@ fn rarity_control(
         };
         ui.label(
             RichText::new(note)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::LABEL),
         );
     }
 }
@@ -2014,11 +2097,11 @@ pub(crate) fn ints_edit(id: BlockId, entry: &BodyEntry, xs: &[i64]) -> Option<Ro
 
 fn chip_hint(kw: &Keyword) -> &'static str {
     if kw.name == "BaseType" {
-        "Add a base type\u{2026}"
+        "Type a base type, press Enter"
     } else if kw.name.contains("Mod") {
-        "Add a mod\u{2026}"
+        "Type a mod, press Enter"
     } else {
-        "Add an entry\u{2026}"
+        "Type a name, press Enter"
     }
 }
 
@@ -2077,23 +2160,26 @@ fn class_picker(
         // in use.
         let open_id = egui::Id::new(("ff-class-group-open", row_epoch, salt, *label));
         let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-        let out = egui::CollapsingHeader::new(
-            RichText::new(format!("{label} ({n})"))
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        )
-        .id_salt((salt, *label))
-        .open(Some(open))
-        .show(ui, |ui| {
+        if section_head(ui, &format!("{label} ({n})"), open).clicked() {
+            ui.data_mut(|d| d.insert_temp(open_id, !open));
+        }
+        if open {
             for c in classes {
                 let mut on = selected.contains(c);
-                if ui.checkbox(&mut on, c.as_str()).changed() {
-                    result = Some(class_toggle(selected, c, on));
-                }
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let toggled = widgets::circular_toggle(ui, &mut on).changed();
+                    ui.label(
+                        RichText::new(c.as_str())
+                            .font(regular(15.0))
+                            .color(pal::VALUE),
+                    );
+                    if toggled {
+                        result = Some(class_toggle(selected, c, on));
+                    }
+                });
             }
-        });
-        if out.header_response.clicked() {
-            ui.data_mut(|d| d.insert_temp(open_id, !open));
         }
     }
     let unknown = unknown_classes(selected, catalog);
@@ -2103,8 +2189,8 @@ fn class_picker(
             for c in unknown {
                 ui.label(
                     RichText::new(c.as_str())
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(theme::LABEL_TAN),
+                        .font(regular(15.0))
+                        .color(pal::MUTED),
                 )
                 .on_hover_text("Not in config.json's class list; kept as written.");
                 if widgets::remove_x_button(ui, &format!("Remove {c}")).clicked() {
@@ -2141,7 +2227,7 @@ fn ints_control(ui: &mut egui::Ui, card: &Card, xs: &[i64], actions: &mut Vec<Ro
         ui,
         card.salt("ints"),
         &items,
-        "Add a whole number\u{2026}",
+        "Type a whole number, press Enter",
         160.0,
     );
     let mut next = xs.to_vec();
@@ -2191,16 +2277,24 @@ fn count_names_control(
             } else {
                 "Count"
             };
-            ui.label(RichText::new(lead).size(14.0).color(theme::VALUE_TEXT));
+            ui.label(RichText::new(lead).size(14.0).color(pal::VALUE));
             let (lo, hi, _) = grammar::slider_range("Sockets");
-            let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
-            let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
+            // Leave room for the trailing "of these:" label.
+            let (s, n) = ui
+                .scope(|ui| {
+                    ui.set_max_width((ui.available_width() - 80.0).max(180.0));
+                    let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
+                    let n = widgets::number_field(
+                        ui,
+                        card.salt("count"),
+                        &mut v,
+                        widgets::NUMBER_FIELD_W,
+                    );
+                    (s, n)
+                })
+                .inner;
             changed = s.changed() || n.response.changed();
-            ui.label(
-                RichText::new("of these:")
-                    .size(14.0)
-                    .color(theme::VALUE_TEXT),
-            );
+            ui.label(RichText::new("of these:").size(14.0).color(pal::VALUE));
         });
         if changed && v != c {
             new_count = Some(v);
@@ -2234,7 +2328,7 @@ fn sockets_control(
     ui.horizontal(|ui| {
         let (lo, hi, _) = grammar::slider_range("Sockets");
         let s = widgets::themed_slider(ui, &mut v, lo, hi, false);
-        let n = widgets::number_field(ui, card.salt("count"), &mut v, 40.0);
+        let n = widgets::number_field(ui, card.salt("count"), &mut v, widgets::NUMBER_FIELD_W);
         changed = s.changed() || n.response.changed();
     });
     if changed
@@ -2255,14 +2349,18 @@ fn bool_or_name_control(
     let named_id = ui.make_persistent_id(card.salt("named"));
     let is_name = matches!(current, BoolOrName::Name(_));
     let named = ui.data(|d| d.get_temp::<bool>(named_id)).unwrap_or(is_name);
-    let mut any = !named && matches!(current, BoolOrName::Bool(true));
-    let mut nm = named;
-    let (mut any_changed, mut nm_changed) = (false, false);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        any_changed = widgets::toggle_chip(ui, "Any", &mut any).changed();
-        nm_changed = widgets::toggle_chip(ui, "Named", &mut nm).changed();
-    });
+    let skin = crate::skin::of(ui.ctx());
+    let mut sel = if named {
+        1
+    } else if matches!(current, BoolOrName::Bool(true)) {
+        0
+    } else {
+        2
+    };
+    let changed =
+        crate::skin::editor::ff_segmented(ui, &skin, &mut sel, &["Any", "Named"], 132.0).changed();
+    let (any_changed, nm_changed) = (changed && sel == 0, changed && sel == 1);
+    let (any, nm) = (sel == 0, sel == 1);
     let mut show_name = named;
     if any_changed && any {
         ui.data_mut(|d| d.insert_temp(named_id, false));
@@ -2292,14 +2390,21 @@ fn bool_or_name_control(
 // Pure action edits
 // ---------------------------------------------------------------------------------------------
 
-/// Colour edit. A 3-token line keeps its 3-token form while the alpha stays 255.
-pub(crate) fn rgba_edit(id: BlockId, entry: &BodyEntry, new: [u8; 4]) -> Option<RowAction> {
+/// Colour edit. `had_alpha` is the line's form when the picker opened (4 tokens), not its
+/// current form: a 3-token line keeps its 3-token form while the alpha stays 255, even after a
+/// live alpha edit wrote 4 tokens, so Escape restores the original bytes (CR-02).
+pub(crate) fn rgba_edit(
+    id: BlockId,
+    entry: &BodyEntry,
+    new: [u8; 4],
+    had_alpha: bool,
+) -> Option<RowAction> {
     values_edit(
         id,
         entry,
         &Value::Rgba {
             rgba: new,
-            had_alpha: entry.values.len() >= 4,
+            had_alpha,
         },
     )
     .ok()
@@ -2380,34 +2485,686 @@ pub(crate) fn style_owned(style: &Style, keyword: &str) -> bool {
         .any(|l| l.split_whitespace().next() == Some(keyword))
 }
 
-/// The action keywords already present in the block (each is single-instance).
-pub(crate) fn added_actions(entries: &[BodyEntry]) -> Vec<&'static str> {
-    entries
-        .iter()
-        .filter(|e| e.kind == EntryKind::Action)
-        .filter_map(|e| e.keyword.map(|k| k.name))
-        .collect()
-}
-
 /// The hint under a font size outside the range the game renders readably.
 pub(crate) fn font_hint(size: i64) -> Option<&'static str> {
     (!(18..=45).contains(&size)).then_some("Readable in game: 18-45")
 }
 
-/// What picking an action does: it is added at once with its default value.
-pub(crate) fn pick_action(id: BlockId, kw: &'static Keyword) -> Option<RowAction> {
-    grammar::default_line(kw).map(|text| RowAction::AddLine {
+// ---------------------------------------------------------------------------------------------
+// The Custom STYLE lines: the rule backend of `style_lines`
+// ---------------------------------------------------------------------------------------------
+//
+// A Custom rule's STYLE section draws the same lines as the CONFIG style editor
+// (`style_lines::show`), over the rule's own action lines, losslessly:
+//
+// * Binding. A later action line of the same kind overrides an earlier one in game, so each style
+//   line is bound to the LAST action line of its keyword family, the one the game uses: one
+//   family per colour keyword (`SetTextColor`, `SetBorderColor`, `SetBackgroundColor`),
+//   `SetFontSize`, `MinimapIcon`, `PlayEffect`, Sound (`PlayAlertSound`,
+//   `PlayAlertSoundPositional`, `CustomAlertSound`, `CustomAlertSoundOptional`: one alert sound
+//   per item) and Drop sound (`DisableDropSound`, `EnableDropSound`).
+// * Exact or not. The bound line is shown exactly when the editor can represent it: a decoded
+//   colour; a font size within 1-45; `MinimapIcon` with size 0-2 and a known colour and shape,
+//   or the bare cancel value `MinimapIcon -1`; `PlayEffect` with a known colour or `None`;
+//   `PlayAlertSound` / `PlayAlertSoundPositional` 1-16 or `CustomAlertSound` with a volume absent
+//   or within 0-300, or the bare `PlayAlertSound None`; `DisableDropSound` / `EnableDropSound`
+//   (bare or `True`). Otherwise the line shows the nearest honest state (the cancel value for
+//   `MinimapIcon -1 <colour> <shape>`, `PlayAlertSound None <volume>` or
+//   `PlayAlertSoundPositional None`; off for an unreadable line or another named sound; a font
+//   size or volume clamped into the slider's range; an optional sound as its plain kind; a
+//   `... False` drop-sound line as the opposite state) and is ALSO listed as a leftover row, so
+//   its exact text stays visible. Both places edit the same line.
+// * Leftovers. Every other action line (`DisableDropSoundIfAlertSound`, and every earlier line of
+//   a family, which the game overrides) is kept as written and shown under the lines as the usual
+//   action card (or a read-only raw row).
+// * Edits. An intent rewrites only its bound line (`EditLine` with the line's text as `expect`),
+//   inserts one line after the last action line only when the family has no line at all (so a
+//   family never gets a second line), or removes the bound line when it is cleared (an earlier
+//   line of the family then shows through, as it would in game). A 3-value colour stays 3-value
+//   while its alpha is 255; a volume the line did not write is only written when it is changed;
+//   a sound kind switch rewrites the keyword in place and keeps a trailing comment. Rendering
+//   with no input emits nothing, so an untouched rule is byte-identical on Apply.
+
+/// The action line each style line edits (`None` = the slot is absent).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StyleBinding {
+    pub keyword: BlockKeyword,
+    pub text: Option<BodyEntry>,
+    pub border: Option<BodyEntry>,
+    pub background: Option<BodyEntry>,
+    pub font: Option<BodyEntry>,
+    pub minimap: Option<BodyEntry>,
+    pub beam: Option<BodyEntry>,
+    pub sound: Option<BodyEntry>,
+    pub drop: Option<BodyEntry>,
+    /// The bound sound line's written volume (`None` when the line has none).
+    pub sound_volume: Option<i64>,
+    /// The volume the Volume line shows (the written one clamped to 0-300, or the game default
+    /// for the kind).
+    pub sound_shown: u16,
+    /// Bound lines the editor cannot show exactly (also listed as leftover rows).
+    pub inexact: Vec<usize>,
+}
+
+impl StyleBinding {
+    fn slots(&self) -> [&Option<BodyEntry>; 8] {
+        [
+            &self.text,
+            &self.border,
+            &self.background,
+            &self.font,
+            &self.minimap,
+            &self.beam,
+            &self.sound,
+            &self.drop,
+        ]
+    }
+
+    /// Whether document line `line` is bound to a style line.
+    pub(crate) fn binds(&self, line: usize) -> bool {
+        self.slots()
+            .iter()
+            .any(|s| s.as_ref().is_some_and(|e| e.line == line))
+    }
+
+    /// Whether document line `line` is bound and shown exactly by its style line.
+    fn shows_exactly(&self, line: usize) -> bool {
+        self.binds(line) && !self.inexact.contains(&line)
+    }
+
+    fn colour(&self, slot: ColourSlot) -> &Option<BodyEntry> {
+        match slot {
+            ColourSlot::Text => &self.text,
+            ColourSlot::Border => &self.border,
+            ColourSlot::Background => &self.background,
+        }
+    }
+}
+
+/// Game default volumes of a sound line written without one.
+const ALERT_DEFAULT_VOLUME: u16 = 50;
+const CUSTOM_DEFAULT_VOLUME: u16 = 100;
+
+fn volume_ok(volume: Option<i64>) -> bool {
+    volume.is_none_or(|v| (grammar::VOLUME_RANGE.0..=grammar::VOLUME_RANGE.1).contains(&v))
+}
+
+/// A written volume clamped into the Volume slider's range.
+fn volume_shown(volume: i64) -> u16 {
+    volume.clamp(grammar::VOLUME_RANGE.0, grammar::VOLUME_RANGE.1) as u16
+}
+
+/// The style line (slot) whose keyword family `name` belongs to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Family {
+    Colour(ColourSlot),
+    Font,
+    Minimap,
+    Beam,
+    Sound,
+    Drop,
+}
+
+fn family_of(name: &str) -> Option<Family> {
+    Some(match name {
+        "SetTextColor" => Family::Colour(ColourSlot::Text),
+        "SetBorderColor" => Family::Colour(ColourSlot::Border),
+        "SetBackgroundColor" => Family::Colour(ColourSlot::Background),
+        "SetFontSize" => Family::Font,
+        "MinimapIcon" => Family::Minimap,
+        "PlayEffect" => Family::Beam,
+        "PlayAlertSound"
+        | "PlayAlertSoundPositional"
+        | "CustomAlertSound"
+        | "CustomAlertSoundOptional" => Family::Sound,
+        "DisableDropSound" | "EnableDropSound" => Family::Drop,
+        _ => return None,
+    })
+}
+
+fn decoded(e: &BodyEntry) -> Option<(&'static str, Value)> {
+    let kw = e.keyword?;
+    let tokens: Vec<&str> = e.values.iter().map(String::as_str).collect();
+    Some((kw.name, grammar::decode(kw, &tokens)))
+}
+
+/// The colour and shape written after the `-1` of a `MinimapIcon -1 <colour> <shape>` line
+/// (`tokens` starts at `-1`), as a Large icon; `None` when they are absent or not valid names.
+fn cancelled_minimap_hint(tokens: &[String]) -> Option<mc::Minimap> {
+    let [_, colour, shape] = tokens else {
+        return None;
+    };
+    Some(mc::Minimap {
+        size: 0,
+        color: FilterColor::from_name(colour)?,
+        shape: MinimapShape::from_name(shape)?,
+    })
+}
+
+/// The style view of a rule's action lines and the line each style line is bound to (the last
+/// line of its family, see the binding rule above).
+pub(crate) fn rule_style_view(
+    entries: &[BodyEntry],
+    keyword: BlockKeyword,
+) -> (StyleView, StyleBinding) {
+    let mut view = StyleView {
+        visibility: match keyword {
+            BlockKeyword::Show => Vis::Show,
+            BlockKeyword::Hide => Vis::Hide,
+            BlockKeyword::Minimal => Vis::Minimal,
+        },
+        text: None,
+        border: None,
+        background: None,
+        font: None,
+        minimap: None,
+        minimap_hint: None,
+        beam: None,
+        sound: None,
+        sound_volume_written: false,
+        drop_sound: None,
+        alpha: true,
+    };
+    let mut b = StyleBinding {
+        keyword,
+        text: None,
+        border: None,
+        background: None,
+        font: None,
+        minimap: None,
+        beam: None,
+        sound: None,
+        drop: None,
+        sound_volume: None,
+        sound_shown: ALERT_DEFAULT_VOLUME,
+        inexact: Vec::new(),
+    };
+    // The last line of each family wins.
+    for e in entries.iter().filter(|e| e.kind == EntryKind::Action) {
+        let Some(family) = e.keyword.and_then(|k| family_of(k.name)) else {
+            continue;
+        };
+        let slot = match family {
+            Family::Colour(ColourSlot::Text) => &mut b.text,
+            Family::Colour(ColourSlot::Border) => &mut b.border,
+            Family::Colour(ColourSlot::Background) => &mut b.background,
+            Family::Font => &mut b.font,
+            Family::Minimap => &mut b.minimap,
+            Family::Beam => &mut b.beam,
+            Family::Sound => &mut b.sound,
+            Family::Drop => &mut b.drop,
+        };
+        *slot = Some(e.clone());
+    }
+    let mut inexact = Vec::new();
+    for (slot, shown) in [
+        (&b.text, &mut view.text),
+        (&b.border, &mut view.border),
+        (&b.background, &mut view.background),
+    ] {
+        if let Some(e) = slot {
+            match decoded(e) {
+                Some((_, Value::Rgba { rgba, had_alpha })) => {
+                    *shown = Some(Rgba { rgba, had_alpha });
+                }
+                _ => inexact.push(e.line),
+            }
+        }
+    }
+    if let Some(e) = &b.font {
+        let (lo, hi) = grammar::FONT_SIZE_RANGE;
+        match decoded(e) {
+            Some((_, Value::FontSize(n))) => {
+                view.font = Some(n.clamp(lo, hi));
+                if !(lo..=hi).contains(&n) {
+                    inexact.push(e.line);
+                }
+            }
+            _ => inexact.push(e.line),
+        }
+    }
+    if let Some(e) = &b.minimap {
+        let (shown, exact) = match decoded(e) {
+            Some((
+                _,
+                Value::Minimap(Minimap::Icon {
+                    size,
+                    colour,
+                    shape,
+                }),
+            )) => match (
+                u8::try_from(size),
+                FilterColor::from_name(&colour),
+                MinimapShape::from_name(&shape),
+            ) {
+                (Ok(size @ 0..=2), Some(color), Some(shape)) => (
+                    Some(Cancelable::Set(mc::Minimap { size, color, shape })),
+                    true,
+                ),
+                _ => (None, false),
+            },
+            // `-1` cancels the icon; trailing colour/shape tokens are kept in the file and only
+            // seed what the pickers show, so leaving `/` brings them back (review IN-04).
+            Some((_, Value::Minimap(Minimap::Hidden(t)))) => {
+                view.minimap_hint = cancelled_minimap_hint(&t);
+                (Some(Cancelable::Cancel), t.len() == 1)
+            }
+            _ => (None, false),
+        };
+        if !exact {
+            inexact.push(e.line);
+        }
+        view.minimap = shown;
+    }
+    if let Some(e) = &b.beam {
+        let shown = match decoded(e) {
+            Some((_, Value::Effect(Effect::Colour { colour, temp }))) => {
+                FilterColor::from_name(&colour).map(|color| Cancelable::Set(Beam { color, temp }))
+            }
+            Some((_, Value::Effect(Effect::None))) => Some(Cancelable::Cancel),
+            _ => None,
+        };
+        if shown.is_none() {
+            inexact.push(e.line);
+        }
+        view.beam = shown;
+    }
+    if let Some(e) = &b.sound {
+        let mut exact = false;
+        match decoded(e) {
+            Some((
+                name,
+                Value::Sound {
+                    id: SoundRef::Id(k),
+                    volume,
+                },
+            )) => {
+                if let Ok(k @ 1..=16) = u8::try_from(k) {
+                    let vol = volume.map_or(ALERT_DEFAULT_VOLUME, volume_shown);
+                    b.sound_volume = volume;
+                    b.sound_shown = vol;
+                    view.sound = Some(Cancelable::Set(Sound {
+                        id: Some(k),
+                        custom: None,
+                        vol,
+                        positional: name == "PlayAlertSoundPositional",
+                    }));
+                    view.sound_volume_written = volume.is_some();
+                    exact = volume_ok(volume);
+                }
+            }
+            Some((
+                name,
+                Value::Sound {
+                    id: SoundRef::Named(n),
+                    volume,
+                },
+            )) if n == "None" => {
+                view.sound = Some(Cancelable::Cancel);
+                exact = name == "PlayAlertSound" && volume.is_none();
+            }
+            Some((name, Value::CustomSound { file, volume })) => {
+                let vol = volume.map_or(CUSTOM_DEFAULT_VOLUME, volume_shown);
+                b.sound_volume = volume;
+                b.sound_shown = vol;
+                view.sound = Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some(file),
+                    vol,
+                    positional: false,
+                }));
+                view.sound_volume_written = volume.is_some();
+                exact = name == "CustomAlertSound" && volume_ok(volume);
+            }
+            _ => {}
+        }
+        if !exact {
+            inexact.push(e.line);
+        }
+    }
+    if let Some(e) = &b.drop {
+        match drop_state(e) {
+            Some((state, exact)) => {
+                view.drop_sound = Some(state);
+                if !exact {
+                    inexact.push(e.line);
+                }
+            }
+            None => inexact.push(e.line),
+        }
+    }
+    b.inexact = inexact;
+    (view, b)
+}
+
+/// What a drop-sound line means and whether it is the bare (or `True`) form the editor writes:
+/// `DisableDropSound` is Silent, `EnableDropSound` Normal, and a `False` value the opposite.
+fn drop_state(e: &BodyEntry) -> Option<(DropSound, bool)> {
+    match decoded(e) {
+        Some(("DisableDropSound", Value::OptionalBool(on))) => Some(if on == Some(false) {
+            (DropSound::Normal, false)
+        } else {
+            (DropSound::Silent, true)
+        }),
+        Some(("EnableDropSound", Value::OptionalBool(on))) => Some(if on == Some(false) {
+            (DropSound::Silent, false)
+        } else {
+            (DropSound::Normal, true)
+        }),
+        _ => None,
+    }
+}
+
+/// The action lines no style line shows exactly, in file order: the earlier lines of a family,
+/// the actions outside every family, and a bound line the editor cannot show exactly.
+pub(crate) fn style_leftovers<'a>(
+    entries: &'a [BodyEntry],
+    binding: &StyleBinding,
+) -> Vec<&'a BodyEntry> {
+    entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Action && !binding.shows_exactly(e.line))
+        .collect()
+}
+
+fn add_action(id: BlockId, text: String) -> RowAction {
+    RowAction::AddLine {
         id,
         kind: LineKind::Action,
         text,
-    })
+    }
+}
+
+fn colour_keyword(slot: ColourSlot) -> &'static str {
+    match slot {
+        ColourSlot::Text => "SetTextColor",
+        ColourSlot::Border => "SetBorderColor",
+        ColourSlot::Background => "SetBackgroundColor",
+    }
+}
+
+fn icon_of(m: &mc::Minimap) -> Minimap {
+    Minimap::Icon {
+        size: i64::from(m.size),
+        colour: m.color.as_str().to_string(),
+        shape: m.shape.as_str().to_string(),
+    }
+}
+
+fn effect_of(b: &Beam) -> Effect {
+    Effect::Colour {
+        colour: b.color.as_str().to_string(),
+        temp: b.temp,
+    }
+}
+
+/// ` <v>` when a volume is written, else nothing.
+fn volume_suffix(volume: Option<i64>) -> String {
+    volume.map(|v| format!(" {v}")).unwrap_or_default()
+}
+
+/// The minimal line edits one style-line intent stands for (see the binding rule above).
+pub(crate) fn rule_intent_actions(
+    id: BlockId,
+    binding: &StyleBinding,
+    intent: StyleIntent,
+) -> Vec<RowAction> {
+    let one = |a: Option<RowAction>| a.into_iter().collect::<Vec<_>>();
+    match intent {
+        StyleIntent::Visibility(v) => {
+            let kw = match v {
+                Vis::Hide => BlockKeyword::Hide,
+                Vis::Show | Vis::Minimal => BlockKeyword::Show,
+            };
+            one((kw != binding.keyword).then_some(RowAction::SetKeyword(id, kw)))
+        }
+        StyleIntent::Colour {
+            slot,
+            value,
+            opened_had_alpha,
+        } => one(match (binding.colour(slot), value) {
+            (Some(e), Some(c)) => rgba_edit(id, e, c, opened_had_alpha),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some([r, g, b, a])) => Some(add_action(
+                id,
+                format!("{} {r} {g} {b} {a}", colour_keyword(slot)),
+            )),
+            (None, None) => None,
+        }),
+        StyleIntent::Font(f) => one(match (&binding.font, f) {
+            (Some(e), Some(n)) => font_edit(id, e, n),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some(n)) => Some(add_action(id, format!("SetFontSize {n}"))),
+            (None, None) => None,
+        }),
+        StyleIntent::Minimap(m) => one(match (&binding.minimap, m) {
+            (Some(e), Some(Cancelable::Set(m))) => minimap_edit(id, e, icon_of(&m)),
+            (Some(e), Some(Cancelable::Cancel)) => {
+                minimap_edit(id, e, Minimap::Hidden(vec!["-1".into()]))
+            }
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some(Cancelable::Set(m))) => Some(add_action(
+                id,
+                format!(
+                    "MinimapIcon {}",
+                    grammar::encode_tokens(&Value::Minimap(icon_of(&m))).join(" ")
+                ),
+            )),
+            (None, Some(Cancelable::Cancel)) => Some(add_action(id, "MinimapIcon -1".into())),
+            (None, None) => None,
+        }),
+        StyleIntent::Beam(b) => one(match (&binding.beam, b) {
+            (Some(e), Some(Cancelable::Set(b))) => effect_edit(id, e, effect_of(&b)),
+            (Some(e), Some(Cancelable::Cancel)) => effect_edit(id, e, Effect::None),
+            (Some(e), None) => Some(remove(id, e)),
+            (None, Some(Cancelable::Set(b))) => Some(add_action(
+                id,
+                format!(
+                    "PlayEffect {}",
+                    grammar::encode_tokens(&Value::Effect(effect_of(&b))).join(" ")
+                ),
+            )),
+            (None, Some(Cancelable::Cancel)) => Some(add_action(id, "PlayEffect None".into())),
+            (None, None) => None,
+        }),
+        StyleIntent::Sound(s) => one(sound_intent(id, binding, s)),
+        StyleIntent::DropSound(d) => one(drop_sound_intent(id, binding, d)),
+    }
+}
+
+/// The drop sound switch. The bound line is the last `DisableDropSound` / `EnableDropSound`
+/// line: it is kept when it already means the requested state, else rewritten in place to the
+/// bare keyword (never followed by a contradicting line); off removes it.
+fn drop_sound_intent(
+    id: BlockId,
+    binding: &StyleBinding,
+    want: Option<DropSound>,
+) -> Option<RowAction> {
+    let keyword = |d: DropSound| match d {
+        DropSound::Silent => "DisableDropSound",
+        DropSound::Normal => "EnableDropSound",
+    };
+    match (&binding.drop, want) {
+        (Some(e), None) => Some(remove(id, e)),
+        (None, None) => None,
+        (None, Some(d)) => Some(add_action(id, keyword(d).to_string())),
+        (Some(e), Some(d)) => (drop_state(e).map(|s| s.0) != Some(d))
+            .then(|| edit(id, e, LinePatch::Content(keyword(d).to_string()))),
+    }
+}
+
+fn alert_keyword(positional: bool) -> &'static str {
+    if positional {
+        "PlayAlertSoundPositional"
+    } else {
+        "PlayAlertSound"
+    }
+}
+
+fn sound_intent(
+    id: BlockId,
+    binding: &StyleBinding,
+    sound: Option<Cancelable<Sound>>,
+) -> Option<RowAction> {
+    let s = match sound {
+        None => return binding.sound.as_ref().map(|e| remove(id, e)),
+        Some(Cancelable::Cancel) => {
+            return match &binding.sound {
+                None => Some(add_action(id, "PlayAlertSound None".to_string())),
+                Some(e) => match decoded(e) {
+                    Some((
+                        _,
+                        Value::Sound {
+                            id: SoundRef::Named(n),
+                            ..
+                        },
+                    )) if n == "None" => None,
+                    _ => Some(edit(
+                        id,
+                        e,
+                        LinePatch::Content("PlayAlertSound None".to_string()),
+                    )),
+                },
+            };
+        }
+        Some(Cancelable::Set(s)) => s,
+    };
+    let file = s.custom.as_deref().map(str::trim);
+    if file.is_some_and(|f| f.is_empty() || !style_lines::safe_file_name(f)) {
+        return None;
+    }
+    // A file has no positional form.
+    let positional = s.positional && file.is_none();
+    let alert = i64::from(s.id.unwrap_or(1));
+    let Some(e) = &binding.sound else {
+        let text = match file {
+            Some(f) => format!("CustomAlertSound \"{f}\" {}", s.vol),
+            None => format!("{} {alert} {}", alert_keyword(positional), s.vol),
+        };
+        return Some(add_action(id, text));
+    };
+    let bound = decoded(e);
+    let bound_alert = matches!(
+        bound,
+        Some((
+            _,
+            Value::Sound {
+                id: SoundRef::Id(_),
+                ..
+            }
+        ))
+    );
+    let bound_custom = matches!(bound, Some((_, Value::CustomSound { .. })));
+    if !bound_alert && !bound_custom {
+        // Leaving the cancel value (or an unreadable line): the full line, volume written.
+        let text = match file {
+            Some(f) => format!("CustomAlertSound \"{f}\" {}", s.vol),
+            None => format!("{} {alert} {}", alert_keyword(positional), s.vol),
+        };
+        return Some(edit(id, e, LinePatch::Content(text)));
+    }
+    // A volume is written only once it is changed: a line without one keeps none, and a volume
+    // the slider shows clamped (outside 0-300) is kept as written until the slider moves. A switch
+    // between an alert and a file changes the game default (50 / 100), so a line without a volume
+    // gets the shown one written unless it is the new kind's default: the loudness stays.
+    let kind_switch = bound_custom != file.is_some();
+    let new_default = if file.is_some() {
+        CUSTOM_DEFAULT_VOLUME
+    } else {
+        ALERT_DEFAULT_VOLUME
+    };
+    let volume = if s.vol != binding.sound_shown || (kind_switch && s.vol != new_default) {
+        Some(i64::from(s.vol))
+    } else {
+        binding.sound_volume
+    };
+    let bound_positional = e
+        .keyword
+        .is_some_and(|k| k.name == "PlayAlertSoundPositional");
+    // `CustomAlertSoundOptional` keeps its keyword while the kind stays a file; a kind or
+    // positional switch rewrites the bound line's keyword and values in place, keeping a trailing
+    // comment.
+    match (bound_custom, file) {
+        (false, None) if bound_positional == positional => {
+            sound_edit(id, e, SoundRef::Id(alert), volume)
+        }
+        (true, Some(f)) => custom_sound_edit(id, e, f, volume).ok().flatten(),
+        (false, Some(f)) => Some(edit(
+            id,
+            e,
+            LinePatch::Content(format!("CustomAlertSound \"{f}\"{}", volume_suffix(volume))),
+        )),
+        (_, None) => Some(edit(
+            id,
+            e,
+            LinePatch::Content(format!(
+                "{} {alert}{}",
+                alert_keyword(positional),
+                volume_suffix(volume)
+            )),
+        )),
+    }
+}
+
+/// The Custom STYLE lines plus the action lines they cannot represent.
+fn custom_style_lines(
+    ui: &mut egui::Ui,
+    ctx: &BodyCtx,
+    list: &mut ListUi,
+    actions: &mut Vec<RowAction>,
+    row_idx: &mut usize,
+) {
+    let id = ctx.row.id;
+    let (view, binding) = rule_style_view(ctx.entries, ctx.row.keyword);
+    // A line the editor just added is already in view on its style line.
+    if let Some((b, line)) = list.focus_line
+        && b == id
+        && binding.binds(line)
+    {
+        list.focus_line = None;
+    }
+    let memo = egui::Id::new(("rule-style-last", id));
+    // A scope independent of the row's card epoch, so a picker stays open when its first change
+    // adds the slot's line (adding a line resets the per-card state).
+    let intents = ui
+        .scope_builder(
+            egui::UiBuilder::new().id(egui::Id::new(("rule-style-lines", id))),
+            |ui| {
+                ui.add_enabled_ui(ctx.editable, |ui| {
+                    style_lines::show(ui, &view, memo, row_idx)
+                })
+                .inner
+            },
+        )
+        .inner;
+    if ctx.editable {
+        for intent in intents {
+            actions.extend(rule_intent_actions(id, &binding, intent));
+        }
+    }
+    for (idx, e) in style_leftovers(ctx.entries, &binding)
+        .into_iter()
+        .enumerate()
+    {
+        style_lines::probe("ed-leftover", egui::Rect::NOTHING);
+        match e.keyword {
+            Some(kw) if ctx.editable => {
+                action_card(ui, ctx, e, kw, idx, None, list, actions);
+            }
+            _ => {
+                raw_card_frame(idx).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    raw_row(ui, e, false, list, actions, id);
+                });
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // The ACTIONS group
 // ---------------------------------------------------------------------------------------------
 
-const NO_ACTIONS: &str = "No actions: matching items keep the game's look.";
 pub(crate) const SIZE_CHOICES: [(&str, i64); 4] =
     [("Large", 0), ("Medium", 1), ("Small", 2), ("Hide icon", -1)];
 
@@ -2432,42 +3189,6 @@ pub(crate) fn filter_colour(name: &str) -> egui::Color32 {
 pub(crate) fn dot(ui: &mut egui::Ui, colour: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 6.0, colour);
-}
-
-/// The dispositions the editor offers. `Minimal` is a real header but is never offered; a foreign
-/// Minimal block is displayed as such and left alone until the user picks Show or Hide.
-pub(crate) const DISPOSITION_CHOICES: [BlockKeyword; 2] = [BlockKeyword::Show, BlockKeyword::Hide];
-
-fn disposition_word(kw: BlockKeyword) -> &'static str {
-    match kw {
-        BlockKeyword::Show => "Show",
-        BlockKeyword::Hide => "Hide",
-        BlockKeyword::Minimal => "Minimal",
-    }
-}
-
-/// Segmented Show/Hide control, drawn only for Custom rules (a preset's action decides it).
-fn disposition_control(ui: &mut egui::Ui, ctx: &BodyCtx, actions: &mut Vec<RowAction>) {
-    let row = ctx.row;
-    let id = row.id;
-    if row.keyword == BlockKeyword::Minimal {
-        ui.label(
-            RichText::new(disposition_word(BlockKeyword::Minimal)).color(theme::SECTION_CREAM),
-        );
-    }
-    for kw in DISPOSITION_CHOICES {
-        let selected = row.keyword == kw;
-        let (text_color, fill) = if selected {
-            (theme::SECTION_CREAM, theme::HEADER_PLATE)
-        } else {
-            (theme::LABEL_TAN, theme::ROW_BASE)
-        };
-        let btn =
-            egui::Button::new(RichText::new(disposition_word(kw)).color(text_color)).fill(fill);
-        if ui.add(btn).clicked() && !selected {
-            actions.push(RowAction::SetKeyword(id, kw));
-        }
-    }
 }
 
 /// What the style picker can choose.
@@ -2514,47 +3235,53 @@ fn style_picker(ui: &mut egui::Ui, ctx: &BodyCtx) -> Option<StylePick> {
     let id = ctx.row.id;
     let state = &ctx.row.style;
     let tag = style_tag(state);
-    let (shown, colour, tip) = match state {
-        StyleState::None => ("Custom".to_string(), theme::VALUE_TEXT, None),
-        StyleState::Known(n) => (n.clone(), theme::VALUE_TEXT, Some(STYLE_KNOWN_TIP)),
-        StyleState::Unknown(n) => (n.clone(), theme::WARM_ACCENT_TEXT, Some(STYLE_UNKNOWN_TIP)),
-        StyleState::Unchecked(n) => (
-            n.clone(),
-            theme::WARM_ACCENT_TEXT,
-            Some(STYLE_UNCHECKED_TIP),
-        ),
+    let (colour, tip) = match state {
+        StyleState::None => (None, None),
+        StyleState::Known(_) => (None, Some(STYLE_KNOWN_TIP)),
+        StyleState::Unknown(_) => (Some(pal::WARN), Some(STYLE_UNKNOWN_TIP)),
+        StyleState::Unchecked(_) => (Some(pal::WARN), Some(STYLE_UNCHECKED_TIP)),
     };
-    let mut picked = None;
-    let combo = egui::ComboBox::from_id_salt((id, "style-pick"))
-        .selected_text(RichText::new(shown).color(colour))
-        .width(140.0)
-        .show_ui(ui, |ui| {
-            if ui.selectable_label(tag.is_none(), "Custom").clicked() {
-                picked = Some(StylePick::Custom);
+    let names = ctx.working.style_names();
+    let mut labels: Vec<&str> = vec!["Custom"];
+    labels.extend(names.iter().map(String::as_str));
+    let start = match tag {
+        None => 0,
+        Some(t) => match names.iter().position(|n| n == t) {
+            Some(i) => i + 1,
+            None => {
+                labels.push(t);
+                labels.len() - 1
             }
-            for name in ctx.working.style_names() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    if let Some(t) = ctx.working.style(&name).and_then(|s| s.text) {
-                        dot(ui, egui::Color32::from_rgb(t[0], t[1], t[2]));
-                    }
-                    if ui
-                        .selectable_label(tag == Some(name.as_str()), &name)
-                        .clicked()
-                    {
-                        picked = Some(StylePick::Preset(name.clone()));
-                    }
-                });
-            }
-        });
-    if let Some(t) = tip {
-        combo.response.on_hover_text(t);
+        },
+    };
+    let mut sel = start;
+    let skin = crate::skin::of(ui.ctx());
+    let r = widgets_skin::ff_dropdown_ex(
+        ui,
+        &skin,
+        (id, "style-pick"),
+        &mut sel,
+        &labels,
+        180.0,
+        colour,
+    );
+    let r = if let Some(t) = tip {
+        r.on_hover_text(t)
+    } else {
+        r
+    };
+    if r.changed() && sel != start {
+        if sel == 0 {
+            return Some(StylePick::Custom);
+        }
+        return names.get(sel - 1).map(|n| StylePick::Preset(n.clone()));
     }
-    picked
+    None
 }
 
-/// The STYLE section, last in the rule body: the Custom/preset picker, then (Custom only)
-/// Show/Hide and the action rows, then `Continue` on its own last line.
+/// The STYLE section, last in the rule body: the Custom/preset picker, then (Custom only) the
+/// style editor's lines and the action lines they cannot represent, then `Continue` on its own
+/// last line.
 pub fn style_section(
     ui: &mut egui::Ui,
     ctx: &BodyCtx,
@@ -2562,97 +3289,42 @@ pub fn style_section(
     actions: &mut Vec<RowAction>,
 ) {
     let id = ctx.row.id;
-    let added = added_actions(ctx.entries);
     let show_rows = shows_action_rows(&ctx.row.style);
-    let mut picked_action = None;
-    ui.horizontal(|ui| {
-        caption(ui, "STYLE");
-        if show_rows {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let btn = ui.add_enabled(
-                    ctx.editable,
-                    egui::Button::new(RichText::new("+ style").size(theme::ROW_SUMMARY_SIZE)),
-                );
-                let disabled = |e: &ConditionEntry| match e {
-                    ConditionEntry::Keyword(k) => added.contains(&k.name).then_some("(added)"),
-                    ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
-                };
-                picked_action = picker_popup(
-                    ui,
-                    &btn,
-                    &keyword_entries(grammar::action_groups()),
-                    false,
-                    &disabled,
-                    &|_| false,
-                )
-                .and_then(|e| match e {
-                    ConditionEntry::Keyword(k) => Some(k),
-                    ConditionEntry::Defences | ConditionEntry::SimpleDefences => None,
-                });
-            });
-        }
+    let skin = crate::skin::of(ui.ctx());
+    let mut row_idx = 0;
+    widgets_skin::ff_field_row(ui, row_idx, "Style", None, |ui| {
+        ui.add_enabled_ui(ctx.editable, |ui| {
+            if let Some(p) = style_picker(ui, ctx)
+                && let Some(a) = style_pick_action(id, &ctx.row.style, p)
+            {
+                actions.push(a);
+            }
+        });
     });
-    if let Some(kw) = picked_action
-        && let Some(a) = pick_action(id, kw)
-    {
-        actions.push(a);
-    }
-    ui.spacing_mut().item_spacing.y = 4.0;
-    ui.add_enabled_ui(ctx.editable, |ui| {
-        if let Some(p) = style_picker(ui, ctx)
-            && let Some(a) = style_pick_action(id, &ctx.row.style, p)
-        {
-            actions.push(a);
-        }
-        if show_rows {
-            ui.horizontal(|ui| disposition_control(ui, ctx, actions));
-        }
-    });
+    row_idx += 1;
+    ui.spacing_mut().item_spacing.y = 0.0;
     if show_rows {
-        action_rows(ui, ctx, list, actions);
+        custom_style_lines(ui, ctx, list, actions, &mut row_idx);
     }
-    ui.add_enabled_ui(ctx.editable, |ui| {
-        // A style never owns `Continue`, so the checkbox stays editable on a styled rule.
-        let mut cont = ctx.row.has_continue;
-        let cb = egui::Checkbox::new(
-            &mut cont,
-            RichText::new("Continue to later rules").color(theme::LABEL_TAN),
-        );
-        if ui.add(cb).changed() {
-            actions.push(RowAction::SetContinue(id, cont));
-        }
+    widgets_skin::ff_field_row(ui, row_idx, "", None, |ui| {
+        ui.add_enabled_ui(ctx.editable, |ui| {
+            // A style never owns `Continue`, so the check stays editable on a styled rule.
+            let mut cont = ctx.row.has_continue;
+            let tip = "Matching goes on to the rules below";
+            let changed = widgets_skin::ff_check(ui, &skin, &mut cont, "Continue to later rules")
+                .on_hover_text(tip)
+                .changed();
+            ui.label(
+                RichText::new("Continue to later rules")
+                    .font(crate::skin::fonts::small_caps(17.0))
+                    .color(pal::LABEL),
+            )
+            .on_hover_text(tip);
+            if changed {
+                actions.push(RowAction::SetContinue(id, cont));
+            }
+        });
     });
-}
-
-/// One card per action line (Custom / unstyled rules).
-fn action_rows(ui: &mut egui::Ui, ctx: &BodyCtx, list: &mut ListUi, actions: &mut Vec<RowAction>) {
-    let id = ctx.row.id;
-    let lines: Vec<&BodyEntry> = ctx
-        .entries
-        .iter()
-        .filter(|e| e.kind == EntryKind::Action)
-        .collect();
-    if lines.is_empty() {
-        ui.label(
-            RichText::new(NO_ACTIONS)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
-        return;
-    }
-    for (idx, e) in lines.into_iter().enumerate() {
-        match e.keyword {
-            Some(kw) if ctx.editable => {
-                action_card(ui, ctx, e, kw, idx, None, list, actions);
-            }
-            _ => {
-                card_frame(idx).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    raw_row(ui, e, false, list, actions, id);
-                });
-            }
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2683,21 +3355,7 @@ fn action_card(
         let framed = card_frame(idx).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [LABEL_W, 24.0],
-                    egui::Label::new(
-                        RichText::new(grammar::display_name(kw.name))
-                            .size(14.0)
-                            .color(if lock.is_some() {
-                                theme::DISABLED_TEXT
-                            } else {
-                                theme::VALUE_TEXT
-                            }),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(kw.name);
+            card_header(ui, idx, &grammar::display_name(kw.name), kw.name, |ui| {
                 match lock {
                     Some((name, true)) => {
                         widgets::badge(
@@ -2716,7 +3374,12 @@ fn action_card(
                         );
                     }
                     None => {
-                        if widgets::remove_x_button(ui, "Remove this action").clicked() {
+                        let x = ui
+                            .with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                widgets::remove_x_button(ui, "Remove this action")
+                            })
+                            .inner;
+                        if x.clicked() {
                             actions.push(remove(id, entry));
                         }
                     }
@@ -2726,7 +3389,7 @@ fn action_card(
                 ui.label(
                     RichText::new(current_values(entry))
                         .size(14.0)
-                        .color(theme::DISABLED_TEXT),
+                        .color(pal::DISABLED),
                 );
             } else {
                 primary = action_controls(ui, &card, &value, list, actions);
@@ -2759,9 +3422,9 @@ fn action_controls(
     actions: &mut Vec<RowAction>,
 ) -> Option<egui::Response> {
     match value {
-        Value::Rgba { rgba, .. } => {
-            if let Some(n) = widgets::colour_swatch(ui, *rgba)
-                && let Some(a) = rgba_edit(card.id, card.entry, n)
+        Value::Rgba { rgba, had_alpha } => {
+            if let Some((n, opened_had_alpha)) = widgets::colour_swatch(ui, *rgba, *had_alpha)
+                && let Some(a) = rgba_edit(card.id, card.entry, n, opened_had_alpha)
             {
                 actions.push(a);
             }
@@ -2801,7 +3464,7 @@ pub(crate) fn slider_pair(
 ) -> (Option<i64>, egui::Response) {
     let mut v = current;
     let s = widgets::themed_slider(ui, &mut v, range.0, range.1, false);
-    let n = widgets::number_field(ui, salt, &mut v, 56.0);
+    let n = widgets::number_field(ui, salt, &mut v, widgets::NUMBER_FIELD_W);
     *invalid |= n.invalid;
     let changed = (s.changed() || n.response.changed()) && v != current;
     (changed.then_some(v), n.response)
@@ -2833,8 +3496,8 @@ fn font_control(
     if let Some(msg) = font_hint(new.unwrap_or(current)) {
         ui.label(
             RichText::new(msg)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::TAB_ACTIVE),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::HEADING),
         );
     }
     if let Some(n) = new
@@ -2910,10 +3573,9 @@ fn custom_sound_control(
     ui.horizontal(|ui| {
         caption(ui, "File");
         let (r, c) = draft_field(ui, tid, file, 160.0, list, key);
-        resp = Some(r);
+        resp = Some(r.on_hover_text("The file must be in the game folder."));
         commit = c;
     });
-    caption(ui, "The file must be in the game folder.");
     if let Some(text) = commit {
         match custom_sound_edit(card.id, card.entry, &text, volume) {
             Ok(Some(a)) => {
@@ -2956,38 +3618,13 @@ pub(crate) fn colour_combo(
     current: &str,
     allow_none: bool,
 ) -> Option<String> {
-    let mut picked = None;
     dot(ui, filter_colour(current));
-    egui::ComboBox::from_id_salt(salt)
-        .selected_text(current)
-        .width(104.0)
-        .show_ui(ui, |ui| {
-            let mut names: Vec<&str> = COLOURS.to_vec();
-            if allow_none {
-                names.push("None");
-            }
-            for c in names {
-                // The popup's ScrollArea auto-shrinks to its content width and its floating scroll
-                // bar takes no room, painting over the content's right edge. A plain `horizontal`
-                // row is only as wide as its dot + label, so the area shrank to the longest name and
-                // the bar covered it. The label fills the rest of the row (justified, like the
-                // shape combo's rows), so the content spans the whole popup and the bar sits at
-                // the popup edge.
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    dot(ui, filter_colour(c));
-                    let label = ui
-                        .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                            ui.selectable_label(c == current, c)
-                        })
-                        .inner;
-                    if label.clicked() && c != current {
-                        picked = Some(c.to_string());
-                    }
-                });
-            }
-        });
-    picked
+    let mut names: Vec<String> = COLOURS.iter().map(|c| c.to_string()).collect();
+    if allow_none {
+        names.push("None".to_string());
+    }
+    let opts: Vec<(String, String)> = names.into_iter().map(|n| (n.clone(), n)).collect();
+    pick_dropdown(ui, salt, &current.to_string(), current, &opts, 120.0)
 }
 
 fn minimap_control(ui: &mut egui::Ui, card: &Card, m: &Minimap, actions: &mut Vec<RowAction>) {
@@ -3012,36 +3649,31 @@ fn minimap_control(ui: &mut egui::Ui, card: &Card, m: &Minimap, actions: &mut Ve
             .iter()
             .find(|(_, v)| *v == size)
             .map_or_else(|| size.to_string(), |(l, _)| (*l).to_string());
-        egui::ComboBox::from_id_salt(card.salt("msize"))
-            .selected_text(label)
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for (l, v) in SIZE_CHOICES {
-                    if ui.selectable_label(v == size, l).clicked() && v != size {
-                        next = Some(if v == -1 {
-                            Minimap::Hidden(vec!["-1".to_string()])
-                        } else {
-                            icon(v, &colour, &shape)
-                        });
-                    }
-                }
+        let size_opts: Vec<(i64, String)> = SIZE_CHOICES
+            .iter()
+            .map(|(l, v)| (*v, (*l).to_string()))
+            .collect();
+        if let Some(v) = pick_dropdown(ui, card.salt("msize"), &size, &label, &size_opts, 120.0) {
+            next = Some(if v == -1 {
+                Minimap::Hidden(vec!["-1".to_string()])
+            } else {
+                icon(v, &colour, &shape)
             });
+        }
         if hidden {
             return;
         }
         if let Some(c) = colour_combo(ui, card.salt("mcol"), &colour, false) {
             next = Some(icon(size, &c, &shape));
         }
-        egui::ComboBox::from_id_salt(card.salt("mshape"))
-            .selected_text(shape.as_str())
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for s in SHAPES {
-                    if ui.selectable_label(*s == shape, *s).clicked() && *s != shape {
-                        next = Some(icon(size, &colour, s));
-                    }
-                }
-            });
+        let shape_opts: Vec<(String, String)> = SHAPES
+            .iter()
+            .map(|s| (s.to_string(), s.to_string()))
+            .collect();
+        if let Some(sh) = pick_dropdown(ui, card.salt("mshape"), &shape, &shape, &shape_opts, 120.0)
+        {
+            next = Some(icon(size, &colour, &sh));
+        }
     });
     if let Some(n) = next
         && let Some(a) = minimap_edit(card.id, card.entry, n)
@@ -3070,11 +3702,7 @@ fn effect_control(ui: &mut egui::Ui, card: &Card, e: &Effect, actions: &mut Vec<
         let changed = ui
             .add_enabled_ui(!none, |ui| {
                 let c = widgets::circular_toggle(ui, &mut t).changed();
-                ui.label(
-                    RichText::new("Temporary")
-                        .size(14.0)
-                        .color(theme::VALUE_TEXT),
-                );
+                ui.label(RichText::new("Temporary").size(14.0).color(pal::VALUE));
                 c
             })
             .inner;
@@ -3098,7 +3726,7 @@ fn optional_bool_control(ui: &mut egui::Ui, card: &Card, actions: &mut Vec<RowAc
     let mut changed = false;
     ui.horizontal(|ui| {
         changed = widgets::circular_toggle(ui, &mut on).changed();
-        ui.label(RichText::new("On").size(14.0).color(theme::VALUE_TEXT));
+        ui.label(RichText::new("On").size(14.0).color(pal::VALUE));
     });
     if changed && let Some(a) = optional_bool_edit(card.id, card.entry, on) {
         actions.push(a);
@@ -3120,7 +3748,7 @@ mod tests {
 
     fn headless_ctx() -> egui::Context {
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
+        crate::skin::fonts::install(&ctx);
         ctx
     }
 
@@ -3157,7 +3785,9 @@ mod tests {
         list: &mut ListUi,
         classes: Option<&ClassCatalog>,
     ) -> Vec<RowAction> {
-        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let visible: Vec<crate::overlay::rules::ListEntry> = (0..wf.rows().len())
+            .map(crate::overlay::rules::ListEntry::Rule)
+            .collect();
         let mut actions = Vec::new();
         ctx.run_ui(raw, |ui| {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(460.0, 900.0));
@@ -3589,6 +4219,75 @@ mod tests {
     }
 
     #[test]
+    fn condition_control_starts_after_label_column() {
+        let ctx = headless_ctx();
+        let mut start = 0.0;
+        let mut inner_left = 0.0;
+        ctx.run_ui(input(vec![]), |ui| {
+            let area = Rect::from_min_size(Pos2::new(200.0, 0.0), vec2(500.0, 200.0));
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            inner_left = child.max_rect().left();
+            condition_header(
+                &mut child,
+                0,
+                "Label",
+                "hover",
+                |ui| {
+                    start = ui.min_rect().left().max(ui.cursor().left());
+                },
+                "Remove",
+            );
+        })
+        .drop_without_applying_deltas();
+        // Label at row left + 10, control at label column end + 16: the card's inner left.
+        assert!((start - inner_left).abs() < 1.0, "{start} vs {inner_left}");
+        assert_eq!(CARD_LEFT, 154.0);
+    }
+
+    #[test]
+    fn defences_card_is_an_ff_card_with_three_lines() {
+        // Normalised so a CRLF checkout (core.autocrlf) still finds the function end.
+        let src = include_str!("body.rs").replace("\r\n", "\n");
+        let start = src.find("fn defences_card(").unwrap();
+        let f = &src[start..start + src[start..].find("\n}\n").unwrap()];
+        assert!(f.contains("ff_card("));
+        let wf = WorkingFilter::from_text("Show\n  BaseArmour > 300\n");
+        assert!(
+            wf.rows()[0]
+                .conditions
+                .iter()
+                .any(|c| c.contains("BaseArmour"))
+        );
+        for (name, label) in conditions::DEFENCES {
+            assert!(
+                ["Armour", "Evasion", "Energy Shield"].contains(&label),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn section_heads_use_skin_buttons() {
+        let src = include_str!("body.rs");
+        let prod = &src[..src.find("mod tests").unwrap()];
+        assert!(prod.contains("\"+ condition\", 132.0"));
+        assert!(!prod.contains("\"+ style\""));
+        assert!(!prod.contains("caption(ui, \"CONDITIONS\")"));
+        assert!(!prod.contains("caption(ui, \"STYLE\")"));
+        assert!(!prod.contains("egui::Checkbox::new"));
+    }
+
+    #[test]
+    fn bool_segment_keeps_not_equal_operator() {
+        let (_, id, e) = entries_of("Show\n    Corrupted != True\n");
+        // `!= True` reads as No; picking Yes writes False and keeps the `!=`.
+        assert_eq!(bool_effective(e[0].op, true), Some(false));
+        let a = bool_edit(id, &e[0], true);
+        assert_eq!(values_of(a), Some("False".to_string()));
+        assert_eq!(bool_edit(id, &e[0], false), None);
+    }
+
+    #[test]
     fn condition_x_buttons_line_up() {
         let ctx = headless_ctx();
         let mut rights = Vec::new();
@@ -3597,9 +4296,10 @@ mod tests {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
             edge = child.max_rect().right();
-            let r1 = condition_header(&mut child, "Short", "a", |_| {}, "Remove");
+            let r1 = condition_header(&mut child, 0, "Short", "a", |_| {}, "Remove");
             let r2 = condition_header(
                 &mut child,
+                1,
                 "A longer label",
                 "b",
                 |ui| {
@@ -3694,9 +4394,9 @@ mod tests {
     }
 
     #[test]
-    fn custom_add_button_reads_plus_style() {
+    fn custom_rules_have_no_add_style_button() {
         let production = include_str!("body.rs").split("mod tests {").next().unwrap();
-        assert!(production.contains(&["\"+ ", "style\""].concat()));
+        assert!(!production.contains(&["\"+ ", "style\""].concat()));
         assert!(!production.contains(&["\"+ ", "action\""].concat()));
     }
 
@@ -3960,7 +4660,7 @@ mod tests {
         let production = include_str!("body.rs").split("mod tests {").next().unwrap();
         assert!(production.contains("Already on this rule"));
         // Present entries are only greyed: only a `disabled` reason blocks the click.
-        assert!(production.contains("add_enabled_ui(reason.is_none()"));
+        assert!(production.contains("greyed, reason.is_none())"));
     }
 
     // -- the Defences card --------------------------------------------------------------------
@@ -3994,7 +4694,7 @@ mod tests {
     }
 
     fn scan_clicks(src: &str, pending: bool) -> Vec<(Pos2, Vec<RowAction>, WorkingFilter)> {
-        scan_clicks_at(src, pending, &[30.0, 40.0, 52.0])
+        scan_clicks_at(src, pending, &[170.0, 178.0, 186.0])
     }
 
     fn scan_clicks_at(
@@ -4120,6 +4820,11 @@ mod tests {
 
     const SIMPLE_SRC: &str = "Show\n  BaseArmour >= 1\n  BaseEvasion == 0\n";
 
+    /// Chip order: Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES.
+    const FULL_AR: usize = 0;
+    const FULL_EV: usize = 1;
+    const FULL_ES: usize = 2;
+
     fn simple_session(src: &str, pending: bool) -> (egui::Context, WorkingFilter, ListUi) {
         let (ctx, wf, mut list) = defences_session(src, false);
         if pending {
@@ -4151,35 +4856,30 @@ mod tests {
             .expect("control was drawn")
     }
 
-    fn seg_at(ctx: &egui::Context, id: BlockId, row: usize, seg: usize) -> Pos2 {
-        probed(ctx, ("simple-seg", id, row, seg)).center()
+    fn chip_at(ctx: &egui::Context, id: BlockId, chip: usize) -> Pos2 {
+        probed(ctx, ("simple-chip", id, chip)).center()
     }
 
-    /// Settle, then click segment `seg` (0 Any, 1 Has, 2 No) of row `row`.
-    fn click_seg(
-        src: &str,
-        pending: bool,
-        row: usize,
-        seg: usize,
-    ) -> (WorkingFilter, ListUi, Vec<RowAction>, egui::Context) {
-        let cat = committed_catalog();
-        let (ctx, mut wf, mut list) = simple_session(src, pending);
-        for _ in 0..3 {
-            click_step(&ctx, &mut wf, &mut list, &cat, None);
+    /// Click chip `chip` of the first rule's card (settled first); returns the frame's actions.
+    fn click_chip(
+        ctx: &egui::Context,
+        wf: &mut WorkingFilter,
+        list: &mut ListUi,
+        cat: &ClassCatalog,
+        chip: usize,
+    ) -> Vec<RowAction> {
+        for _ in 0..2 {
+            click_step(ctx, wf, list, cat, None);
         }
         let id = wf.rows()[0].id;
-        let at = seg_at(&ctx, id, row, seg);
-        let a = click_step(&ctx, &mut wf, &mut list, &cat, Some(at));
-        (wf, list, a, ctx)
+        let at = chip_at(ctx, id, chip);
+        let (a, kinds) = step_cards(ctx, wf, list, cat, Some(at));
+        assert_eq!(kinds, ["simple"]);
+        a
     }
 
-    fn simple_set_of(src: &str) -> (WorkingFilter, BlockId, Vec<BodyEntry>, SimpleSet) {
-        let (wf, id, e) = entries_of(src);
-        let refs: Vec<&BodyEntry> = e.iter().collect();
-        let Some(DefencesKind::Simple(set)) = conditions::defences_kind(&refs, false) else {
-            panic!("{src} is not simple");
-        };
-        (wf, id, e, set)
+    fn shown(wf: &WorkingFilter, list: &ListUi) -> u8 {
+        shown_selection(&wf.rows()[0], list)
     }
 
     #[test]
@@ -4193,121 +4893,58 @@ mod tests {
             assert_eq!(kinds, ["simple"]);
         }
         assert_eq!(wf.text(), before);
-        assert!(before.contains("BaseArmour >= 1") && before.contains("BaseEvasion == 0"));
-        let (_, _, _, set) = simple_set_of(SIMPLE_SRC);
-        assert_eq!(
-            set.settings(),
-            [DefenceSeg::Has, DefenceSeg::No, DefenceSeg::Any]
-        );
+        // Has AR, no EV: Full AR and AR/ES.
+        assert_eq!(shown(&wf, &list), 0b001_0001);
+        for chip in 0..7 {
+            probed(&ctx, ("simple-chip", wf.rows()[0].id, chip));
+        }
     }
 
     #[test]
-    fn simple_segment_writes_touch_only_their_own_line() {
-        let (_, id, e, set) = simple_set_of(SIMPLE_SRC);
-        let refs: Vec<&BodyEntry> = e.iter().collect();
-
-        let a = simple_seg_actions(id, &refs, &set, 2, DefenceSeg::Has);
+    fn clicking_a_chip_writes_the_new_selection() {
+        let cat = committed_catalog();
+        let (ctx, mut wf, mut list) = simple_session(SIMPLE_SRC, false);
+        let id = wf.rows()[0].id;
+        // Add Full ES: Full AR, Full ES, AR/ES = "no Evasion", one line.
+        let a = click_chip(&ctx, &mut wf, &mut list, &cat, FULL_ES);
         assert_eq!(
             a,
-            [RowAction::AddLine {
+            [RowAction::SetDefenceSelection {
                 id,
-                kind: LineKind::Condition,
-                text: "BaseEnergyShield > 0".into()
+                mask: 0b001_0101
             }]
         );
-        let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
-        assert_eq!(wf.rows()[0].id, id);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        let t = wf.text();
-        assert!(
-            t.contains("BaseArmour >= 1\n") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
-        );
-        assert!(t.contains("BaseEnergyShield > 0"), "{t}");
-
-        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::No);
-        assert_eq!(a.len(), 1);
-        assert!(matches!(
-            &a[0],
-            RowAction::EditLine { line, patch: LinePatch::Both(None, w), .. }
-                if *line == e[0].line && w == "0"
-        ));
-        let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
-        assert_eq!(wf.rows()[0].id, id);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        let t = wf.text();
-        assert!(
-            t.contains("  BaseArmour 0\n") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
-        );
-
-        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::Any);
-        assert!(matches!(&a[..], [RowAction::RemoveLine { line, .. }] if *line == e[0].line));
-        let mut wf = WorkingFilter::from_text(SIMPLE_SRC);
-        assert_eq!(wf.rows()[0].id, id);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        let t = wf.text();
-        assert!(
-            !t.contains("BaseArmour") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
-        );
-
-        // Re-selecting the current segment writes nothing.
-        assert!(simple_seg_actions(id, &refs, &set, 0, DefenceSeg::Has).is_empty());
-        assert!(simple_seg_actions(id, &refs, &set, 1, DefenceSeg::No).is_empty());
-        assert!(simple_seg_actions(id, &refs, &set, 2, DefenceSeg::Any).is_empty());
-    }
-
-    /// Has <-> No patches the operator and value only: the trailing comment and the keyword's
-    /// spelling survive (review WR-02).
-    #[test]
-    fn simple_has_no_switch_keeps_trailing_comment_and_keyword_spelling() {
-        let src = "Show\n  BaseArmour >= 1 # keep\n  baseevasion == 0 # $tier->ev\n";
-        let (_, id, e, set) = simple_set_of(src);
-        assert_eq!(
-            set.settings(),
-            [DefenceSeg::Has, DefenceSeg::No, DefenceSeg::Any]
-        );
-        let refs: Vec<&BodyEntry> = e.iter().collect();
-
-        let a = simple_seg_actions(id, &refs, &set, 0, DefenceSeg::No);
-        assert_eq!(a.len(), 1, "{a:?}");
-        let mut wf = WorkingFilter::from_text(src);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        assert_eq!(
-            wf.text(),
-            "Show\n  BaseArmour 0 # keep\n  baseevasion == 0 # $tier->ev\n"
-        );
-
-        let a = simple_seg_actions(id, &refs, &set, 1, DefenceSeg::Has);
-        assert_eq!(a.len(), 1, "{a:?}");
-        let mut wf = WorkingFilter::from_text(src);
-        assert!(wf.apply_action(a[0].clone()).changed);
-        assert_eq!(
-            wf.text(),
-            "Show\n  BaseArmour >= 1 # keep\n  baseevasion > 0 # $tier->ev\n"
-        );
+        assert_eq!(wf.text(), "Show\n  BaseEvasion 0\n");
+        assert_eq!(shown(&wf, &list), 0b001_0101);
     }
 
     #[test]
-    fn clicking_a_simple_segment_emits_one_write() {
-        // ES -> Has appends one line.
-        let (wf, _, a, _) = click_seg(SIMPLE_SRC, false, 2, 1);
-        assert_eq!(a.len(), 1, "{a:?}");
-        assert!(matches!(&a[0], RowAction::AddLine { text, .. } if text == "BaseEnergyShield > 0"));
-        let t = wf.text();
-        assert!(
-            t.contains("BaseArmour >= 1\n") && t.contains("BaseEvasion == 0\n"),
-            "{t}"
+    fn a_selection_one_block_cannot_express_becomes_one_grouped_rule() {
+        let cat = committed_catalog();
+        let src = "Show\n  Rarity Rare\n";
+        let (ctx, mut wf, mut list) = simple_session(src, true);
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_AR);
+        assert_eq!(
+            wf.text(),
+            "Show\n  Rarity Rare\n  BaseEvasion 0\n  BaseEnergyShield 0\n"
         );
-        // AR -> No rewrites only the armour line.
-        let (wf, _, a, _) = click_seg(SIMPLE_SRC, false, 0, 2);
-        assert_eq!(a.len(), 1, "{a:?}");
-        assert!(wf.text().contains("  BaseArmour 0\n  BaseEvasion == 0\n"));
-        // Clicking the selected segment writes nothing.
-        let (wf, _, a, _) = click_seg(SIMPLE_SRC, false, 0, 1);
+        assert!(list.pending_simple_defences.is_empty());
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_EV);
+        assert_eq!(wf.rows().len(), 1);
+        assert_eq!(wf.rows()[0].group_size, 2);
+        assert_eq!(shown(&wf, &list), 0b011);
+        assert_eq!(wf.text().matches("# ff:group ").count(), 2);
+        // Still exactly one card, idle.
+        let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
         assert!(a.is_empty(), "{a:?}");
-        assert_eq!(wf.text(), SIMPLE_SRC);
+        assert_eq!(kinds, ["simple"]);
+        // Deselect Full AR: one block again, no group line.
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_AR);
+        assert_eq!(wf.rows()[0].group_size, 1);
+        assert_eq!(
+            wf.text(),
+            "Show\n  Rarity Rare\n  BaseArmour 0\n  BaseEnergyShield 0\n"
+        );
     }
 
     #[test]
@@ -4329,7 +4966,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_simple_card_writes_nothing_then_first_has_adds_one_line() {
+    fn pending_simple_card_writes_nothing_until_a_chip_is_picked() {
         let cat = committed_catalog();
         let src = "Show\n  Rarity Rare\n";
         let (ctx, mut wf, mut list) = simple_session(src, true);
@@ -4339,52 +4976,44 @@ mod tests {
             assert_eq!(kinds, ["simple"]);
         }
         assert_eq!(wf.text(), src);
-        assert_eq!(
-            combo_chip_states([DefenceSeg::Any; 3])
-                .iter()
-                .filter(|(_, lit)| *lit)
-                .count(),
-            7
-        );
-
-        let (wf, list, a, ctx) = click_seg(src, true, 0, 1);
-        assert_eq!(a.len(), 1, "{a:?}");
-        assert!(matches!(&a[0], RowAction::AddLine { text, .. } if text == "BaseArmour > 0"));
-        assert!(list.pending_simple_defences.is_empty());
-        let (mut wf, mut list) = (wf, list);
-        let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
-        assert!(a.is_empty());
-        assert_eq!(kinds, ["simple"]);
-        assert!(wf.text().contains("BaseArmour > 0"));
+        assert_eq!(shown(&wf, &list), 0);
     }
 
     #[test]
-    fn combination_strip_lights_matching_chips_and_is_not_clickable() {
-        let states = combo_chip_states([DefenceSeg::Any, DefenceSeg::No, DefenceSeg::Any]);
-        let labels: Vec<&str> = states.iter().map(|(l, _)| *l).collect();
-        assert_eq!(
-            labels,
-            ["AR", "EV", "ES", "AR+ES", "AR+EV", "EV+ES", "AR+EV+ES"]
-        );
-        let lit: Vec<&str> = states.iter().filter(|(_, b)| *b).map(|(l, _)| *l).collect();
-        assert_eq!(lit, ["AR", "ES", "AR+ES"]);
-
+    fn every_or_no_chip_writes_no_line_and_keeps_the_card() {
         let cat = committed_catalog();
-        let (ctx, mut wf, mut list) = simple_session(SIMPLE_SRC, false);
-        for _ in 0..3 {
-            click_step(&ctx, &mut wf, &mut list, &cat, None);
+        let (ctx, mut wf, mut list) = simple_session("Show\n  Rarity Rare\n", true);
+        let id = wf.rows()[0].id;
+        for chip in 0..7 {
+            click_chip(&ctx, &mut wf, &mut list, &cat, chip);
         }
-        let strip = probed(&ctx, ("simple-strip", wf.rows()[0].id));
-        let a = click_step(&ctx, &mut wf, &mut list, &cat, Some(strip.center()));
-        assert!(a.is_empty(), "{a:?}");
-        assert_eq!(wf.text(), SIMPLE_SRC);
+        // Every combination is no defence line at all, yet the card shows them all selected.
+        assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
+        assert!(list.pending_simple_defences.contains(&id));
+        assert_eq!(shown(&wf, &list), group::ALL_COMBOS);
+        // Deselect one again: lines come back.
+        click_chip(&ctx, &mut wf, &mut list, &cat, 6);
+        assert_eq!(shown(&wf, &list), 0b011_1111);
+        assert!(!list.pending_simple_defences.contains(&id));
+        // Down to the last chip, then off: no line, the card stays open and empty.
+        for chip in 1..6 {
+            click_chip(&ctx, &mut wf, &mut list, &cat, chip);
+        }
+        assert_eq!(shown(&wf, &list), 0b000_0001);
+        click_chip(&ctx, &mut wf, &mut list, &cat, FULL_AR);
+        assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
+        assert!(list.pending_simple_defences.contains(&id));
+        assert_eq!(shown(&wf, &list), 0);
+        let (_, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
+        assert_eq!(kinds, ["simple"]);
     }
 
     #[test]
-    fn simple_card_x_removes_every_defence_line_and_clears_the_flags() {
+    fn simple_card_x_removes_every_defence_line_and_collapses_a_group() {
         let cat = committed_catalog();
-        let src = "Show\n  BaseArmour >= 1\n  Rarity Rare\n  BaseEvasion == 0\n";
+        let src = "# ff:group abc 1/2\nShow\n  BaseArmour > 0\n  Rarity Rare\n  BaseEvasion 0\n  BaseEnergyShield 0\n\n# ff:group abc 2/2\nShow\n  BaseArmour 0\n  Rarity Rare\n  BaseEvasion > 0\n  BaseEnergyShield 0\n";
         let (ctx, mut wf, mut list) = simple_session(src, false);
+        assert_eq!(wf.rows()[0].group_size, 2);
         for _ in 0..3 {
             click_step(&ctx, &mut wf, &mut list, &cat, None);
         }
@@ -4392,15 +5021,7 @@ mod tests {
         list.pending_simple_defences.insert(id);
         let x = probed(&ctx, ("simple-x", id)).center();
         let a = click_step(&ctx, &mut wf, &mut list, &cat, Some(x));
-        assert_eq!(a.len(), 2, "{a:?}");
-        let lines: Vec<usize> = a
-            .iter()
-            .map(|x| match x {
-                RowAction::RemoveLine { line, .. } => *line,
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert!(lines[0] > lines[1], "highest line first: {lines:?}");
+        assert_eq!(a, [RowAction::SetDefenceSelection { id, mask: 0 }]);
         assert!(list.pending_simple_defences.is_empty());
         assert!(list.advanced_defences.is_empty());
         assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
@@ -4420,17 +5041,23 @@ mod tests {
     }
 
     #[test]
-    fn setting_the_last_simple_row_to_any_keeps_the_card_open() {
-        let src = "Show\n  Rarity Rare\n  BaseEvasion 0\n";
-        let (mut wf, mut list, a, ctx) = click_seg(src, false, 1, 0);
-        assert!(matches!(&a[..], [RowAction::RemoveLine { .. }]), "{a:?}");
-        assert_eq!(wf.text(), "Show\n  Rarity Rare\n");
-        let id = wf.rows()[0].id;
-        assert!(list.pending_simple_defences.contains(&id));
+    fn a_loaded_group_shows_one_card_with_the_union_and_stays_byte_identical() {
+        let src = "# ff:name Pure\n# ff:group abc 1/3\nShow\n  Rarity Rare\n  BaseEvasion 0\n  BaseEnergyShield 0\n\n# ff:name Pure\n# ff:group abc 2/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEnergyShield 0\n\n# ff:name Pure\n# ff:group abc 3/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion 0\n";
         let cat = committed_catalog();
-        let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
-        assert!(a.is_empty());
-        assert_eq!(kinds, ["simple"]);
+        let (ctx, mut wf, mut list) = simple_session(src, false);
+        assert_eq!(wf.rows().len(), 1);
+        for _ in 0..3 {
+            let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, None);
+            assert!(a.is_empty(), "{a:?}");
+            assert_eq!(kinds, ["simple"]);
+        }
+        assert_eq!(shown(&wf, &list), 0b111);
+        assert_eq!(wf.text(), src);
+        // The picker offers no second defences card on a group.
+        let id = wf.rows()[0].id;
+        assert_eq!(pick_in(&wf, &mut list, ConditionEntry::Defences), None);
+        assert_eq!(list.focus_card, Some((id, FocusTarget::Defences)));
+        assert!(list.pending_defences.is_empty());
     }
 
     // -- card stability and exclusivity through the UI -------------------------------------------
@@ -4546,17 +5173,19 @@ mod tests {
         let (ctx, mut wf, mut list) = simple_session("Show\n  Rarity Rare\n", true);
         let id = wf.rows()[0].id;
         assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
-        // (row, segment): AR Has, EV No, AR No, ES Has, AR Any, EV Has.
-        for (row, seg) in [(0, 1), (1, 2), (0, 2), (2, 1), (0, 0), (1, 1)] {
-            let at = seg_at(&ctx, id, row, seg);
+        // + Full AR, + Full EV, + AR/EV, - Full AR, + AR/EV/ES, - Full EV.
+        for chip in [FULL_AR, FULL_EV, 3, FULL_AR, 6, FULL_EV] {
+            let at = chip_at(&ctx, id, chip);
             let (a, kinds) = step_cards(&ctx, &mut wf, &mut list, &cat, Some(at));
-            assert_eq!(a.len(), 1, "({row}, {seg}): {a:?}");
+            assert_eq!(a.len(), 1, "{chip}: {a:?}");
             assert_eq!(kinds, ["simple"]);
             assert_eq!(settle(&ctx, &mut wf, &mut list, &cat), ["simple"]);
+            assert_eq!(wf.rows().len(), 1);
         }
+        // AR/EV and AR/EV/ES: has Armour and Evasion.
         assert_eq!(
             wf.text(),
-            "Show\n  Rarity Rare\n  BaseEvasion > 0\n  BaseEnergyShield > 0\n"
+            "Show\n  Rarity Rare\n  BaseArmour > 0\n  BaseEvasion > 0\n"
         );
         assert!(list.advanced_defences.is_empty());
     }
@@ -4845,7 +5474,7 @@ mod tests {
         let id = wf.rows()[0].id;
         let mut opened = false;
         'scan: for y in (20..120).step_by(8) {
-            for x in (300..456).step_by(8) {
+            for x in (150..300).step_by(8) {
                 let ctx = headless_ctx();
                 let mut list = ListUi::default();
                 list.expanded = Some(id);
@@ -4895,20 +5524,41 @@ mod tests {
     #[test]
     fn rgba_edits_keep_form() {
         let (_, id, e) = entries_of("Show\n    SetTextColor 255 121 198\n");
-        assert_eq!(rgba_edit(id, &e[0], [255, 121, 198, 255]), None);
+        assert_eq!(rgba_edit(id, &e[0], [255, 121, 198, 255], false), None);
         assert_eq!(
-            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255])).as_deref(),
+            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255], false)).as_deref(),
             Some("255 0 198")
         );
         assert_eq!(
-            values_of(rgba_edit(id, &e[0], [255, 121, 198, 128])).as_deref(),
+            values_of(rgba_edit(id, &e[0], [255, 121, 198, 128], false)).as_deref(),
             Some("255 121 198 128")
         );
         let (_, id, e) = entries_of("Show\n    SetTextColor 255 121 198 255\n");
         assert_eq!(
-            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255])).as_deref(),
+            values_of(rgba_edit(id, &e[0], [255, 0, 198, 255], true)).as_deref(),
             Some("255 0 198 255")
         );
+    }
+
+    /// CR-02: a 3-token line, a live alpha edit (written as 4 tokens), then Escape restoring the
+    /// opening colour with the opening form gives back the original bytes.
+    #[test]
+    fn escape_after_an_alpha_edit_restores_a_three_token_line() {
+        let src = "Show\n    SetTextColor 1 2 3\n";
+        let (mut wf, id, e) = entries_of(src);
+        let opened_had_alpha = e[0].values.len() >= 4;
+        assert!(!opened_had_alpha);
+        apply_all(
+            &mut wf,
+            vec![rgba_edit(id, &e[0], [1, 2, 3, 128], opened_had_alpha).unwrap()],
+        );
+        assert_eq!(wf.text(), "Show\n    SetTextColor 1 2 3 128\n");
+        let e = wf.body_view(id);
+        apply_all(
+            &mut wf,
+            vec![rgba_edit(id, &e[0], [1, 2, 3, 255], opened_had_alpha).unwrap()],
+        );
+        assert_eq!(wf.text(), src);
     }
 
     #[test]
@@ -4979,18 +5629,24 @@ mod tests {
     }
 
     #[test]
-    fn added_actions_and_picking() {
-        let (_, id, e) =
-            entries_of("Show\n    SetFontSize 30\n    PlayEffect Red\n    Class \"Rings\"\n");
-        assert_eq!(added_actions(&e), vec!["SetFontSize", "PlayEffect"]);
-        let kw = crate::filter::keywords::lookup("SetBackgroundColor").unwrap();
+    fn absent_slots_add_one_line_in_the_default_form() {
+        let (_, id, e) = entries_of("Show\n    Class \"Rings\"\n");
+        let (_, b) = rule_style_view(&e, BlockKeyword::Show);
         assert_eq!(
-            pick_action(id, kw),
-            Some(RowAction::AddLine {
+            rule_intent_actions(
+                id,
+                &b,
+                StyleIntent::Colour {
+                    slot: ColourSlot::Background,
+                    value: Some([40, 42, 54, 255]),
+                    opened_had_alpha: false,
+                }
+            ),
+            [RowAction::AddLine {
                 id,
                 kind: LineKind::Action,
                 text: "SetBackgroundColor 40 42 54 255".into()
-            })
+            }]
         );
     }
 
@@ -5013,8 +5669,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_actions_state_exists() {
-        assert!(include_str!("body.rs").contains(NO_ACTIONS));
+    fn rule_without_actions_renders_the_style_lines_idle() {
+        let prod = include_str!("body.rs").split("mod tests {").next().unwrap();
+        assert!(!prod.contains("No actions"));
         let wf = WorkingFilter::from_text("Show\n    ItemLevel >= 70\n");
         let ctx = headless_ctx();
         let mut list = ListUi::default();
@@ -5042,9 +5699,9 @@ mod tests {
                 .unwrap();
         assert!(style_owned(set.get("S").unwrap(), "SetFontSize"));
         assert!(style_owned(set.get("S").unwrap(), "PlayEffect"));
-        for (_, kw) in grammar::action_groups()
+        for kw in crate::filter::keywords::KEYWORDS
             .iter()
-            .flat_map(|(g, ks)| ks.iter().map(move |k| (*g, k)))
+            .filter(|k| k.kind == Kind::Action)
         {
             assert!(!style_owned(set.get("unchanged").unwrap(), kw.name));
         }
@@ -5072,6 +5729,76 @@ mod tests {
         let mut list = ListUi::default();
         list.expanded = Some(wf.rows()[0].id);
         assert!(frame_of(&ctx, input(vec![]), &wf, &mut list, None).is_empty());
+    }
+
+    /// Runs `draw` for a few frames, clicking at `click_at` on frame 1, and returns the texts
+    /// painted below y = 34 (the open popup's rows) from the last frame, in paint order.
+    fn popup_texts(click_at: Pos2, draw: &dyn Fn(&mut egui::Ui)) -> Vec<String> {
+        let ctx = headless_ctx();
+        let mut texts = Vec::new();
+        for frame in 0..6 {
+            let events = if frame == 1 {
+                click_events(click_at)
+            } else {
+                vec![]
+            };
+            let mut raw = input(events);
+            raw.time = Some(f64::from(frame) * 0.1);
+            let mut out = ctx.run_ui(raw, |ui| draw(ui));
+            out.textures_delta.clear();
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|cs| match &cs.shape {
+                    egui::Shape::Text(t) if t.pos.y > 34.0 => Some(t.galley.text().to_string()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    #[test]
+    fn foreign_operator_is_shown_and_not_normalised() {
+        // `=` is not among the offered choices: it is appended, shown, and nothing is emitted.
+        let choices = vec![
+            (Some(Operator::EqEq), "is exactly".to_string()),
+            (Some(Operator::Ne), "is not".to_string()),
+        ];
+        let cur = Some(Operator::Eq);
+        let texts = popup_texts(Pos2::new(50.0, 16.0), &|ui| {
+            assert_eq!(
+                pick_dropdown(ui, "op", &cur, "equals", &choices, 104.0),
+                None
+            );
+        });
+        assert_eq!(texts, vec!["is exactly", "is not", "equals"]);
+    }
+
+    #[test]
+    fn style_picker_lists_custom_then_presets_in_file_order() {
+        let wf = styled(
+            "Show
+    Class \"Rings\"
+",
+        );
+        let id = wf.rows()[0].id;
+        let entries = wf.body_view(id);
+        let names = wf.style_names();
+        assert!(!names.is_empty());
+        let texts = popup_texts(Pos2::new(50.0, 16.0), &|ui| {
+            let bctx = BodyCtx {
+                row: &wf.rows()[0],
+                entries: &entries,
+                editable: true,
+                classes: None,
+                working: &wf,
+            };
+            assert_eq!(style_picker(ui, &bctx), None);
+        });
+        let mut want = vec!["Custom".to_string()];
+        want.extend(names);
+        assert_eq!(texts, want);
     }
 
     #[test]
@@ -5119,11 +5846,20 @@ mod tests {
     }
 
     #[test]
-    fn disposition_offers_show_and_hide_only() {
+    fn visibility_writes_show_or_hide_only_when_it_differs() {
+        let (_, id, e) = entries_of("Minimal\n    Rarity Rare\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Minimal);
+        assert_eq!(view.visibility, Vis::Minimal);
         assert_eq!(
-            DISPOSITION_CHOICES,
-            [BlockKeyword::Show, BlockKeyword::Hide]
+            rule_intent_actions(id, &b, StyleIntent::Visibility(Vis::Show)),
+            [RowAction::SetKeyword(id, BlockKeyword::Show)]
         );
+        assert_eq!(
+            rule_intent_actions(id, &b, StyleIntent::Visibility(Vis::Hide)),
+            [RowAction::SetKeyword(id, BlockKeyword::Hide)]
+        );
+        let (_, b) = rule_style_view(&e, BlockKeyword::Hide);
+        assert!(rule_intent_actions(id, &b, StyleIntent::Visibility(Vis::Hide)).is_empty());
     }
 
     #[test]
@@ -5203,7 +5939,7 @@ mod tests {
     /// 2. on `changed` + `AddLine`: `list.focus_line = Some((block, outcome.line))`;
     /// 3. on `changed` + (`AddLine` | `RemoveLine`): `list.forget_card_state()` (WR-07).
     ///
-    /// The `list.expanded` / `pending_scroll` resets in app.rs only fire for AddRule, Duplicate,
+    /// The `list.expanded` / `pending_scroll` resets in app.rs only fire for AddRule (adds a rule at the top of the file), Duplicate,
     /// Move and Delete, none of which a value click emits.
     fn mirror_apply(wf: &mut WorkingFilter, list: &mut ListUi, actions: Vec<RowAction>) {
         for action in actions {
@@ -5212,6 +5948,7 @@ mod tests {
                 RowAction::AddLine { .. }
                     | RowAction::RemoveLine { .. }
                     | RowAction::InsertLineAfter { .. }
+                    | RowAction::SetDefenceSelection { .. }
             );
             let added_in = match &action {
                 RowAction::AddLine { id, .. } => Some(*id),
@@ -5246,7 +5983,7 @@ mod tests {
         actions
     }
 
-    const CLASS_HEADER_X: f32 = 40.0;
+    const CLASS_HEADER_X: f32 = 170.0;
 
     /// A fresh session with an expanded rule and a pending Class row, after the group header at
     /// `header` was clicked and (when given) the checkbox at `box_at` was clicked.
@@ -5330,38 +6067,35 @@ mod tests {
     #[test]
     fn pending_class_operator_is_chosen_before_a_value_and_used_by_it() {
         let cat = committed_catalog();
-        // The operator dropdown is on the pending card: some click opens a popup.
-        let mut combo = None;
-        'a: for y in (110..170).step_by(4) {
+        // The operator dropdown is on the pending card: some click opens a popup, and the popup
+        // offers "Not" (other popups, such as the style picker, do not).
+        let mut found = None;
+        'a: for y in (194..300).step_by(4) {
             for x in (150..440).step_by(10) {
                 let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
                 let p = Pos2::new(x as f32, y as f32);
                 play(&ctx, &mut wf, &mut list, &cat, &[p]);
-                if egui::Popup::is_any_open(&ctx) {
-                    combo = Some(p);
-                    break 'a;
+                if !egui::Popup::is_any_open(&ctx) {
+                    continue;
+                }
+                // Choosing "Not" is stored on the pending row and writes nothing.
+                for iy in ((y + 8)..(y + 160)).step_by(4) {
+                    for dx in [-60.0f32, -40.0, -20.0, 0.0, 20.0, 40.0] {
+                        let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
+                        let before = wf.text();
+                        let q = Pos2::new(p.x + dx, iy as f32);
+                        let a = play(&ctx, &mut wf, &mut list, &cat, &[p, q]);
+                        if list.pending.len() == 1 && list.pending[0].op == Some(Operator::Ne) {
+                            assert!(a.is_empty(), "choosing an operator writes nothing: {a:?}");
+                            assert_eq!(wf.text(), before);
+                            found = Some((p, q));
+                            break 'a;
+                        }
+                    }
                 }
             }
         }
-        let combo = combo.expect("a pending Class row shows an operator dropdown");
-
-        // Choosing "Not" is stored on the pending row and writes nothing.
-        let mut item = None;
-        'b: for y in ((combo.y as i32 + 8)..(combo.y as i32 + 120)).step_by(4) {
-            for x in [combo.x - 20.0, combo.x, combo.x + 20.0] {
-                let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
-                let before = wf.text();
-                let p = Pos2::new(x, y as f32);
-                let a = play(&ctx, &mut wf, &mut list, &cat, &[combo, p]);
-                if list.pending.len() == 1 && list.pending[0].op == Some(Operator::Ne) {
-                    assert!(a.is_empty(), "choosing an operator writes nothing: {a:?}");
-                    assert_eq!(wf.text(), before);
-                    item = Some(p);
-                    break 'b;
-                }
-            }
-        }
-        let item = item.expect("the dropdown offers Not");
+        let (combo, item) = found.expect("a pending Class row offers the operator Not");
 
         // An idle frame with the operator set still writes nothing.
         let (ctx, mut wf, mut list, _) = pending_session(&cat, "Class");
@@ -5372,8 +6106,8 @@ mod tests {
 
         // The first class then lands with that operator.
         let mut text = None;
-        'c: for hy in (160..184).step_by(4) {
-            for (cx, cy) in [36.0f32, 90.0, 130.0]
+        'c: for hy in (218..300).step_by(4) {
+            for (cx, cy) in [166.0f32, 220.0, 260.0]
                 .into_iter()
                 .flat_map(|x| ((hy + 16)..(hy + 120)).step_by(4).map(move |y| (x, y)))
             {
@@ -5452,7 +6186,59 @@ mod tests {
         assert_eq!(picker_section_override(true), Some(true));
         let production = include_str!("body.rs").split("mod tests {").next().unwrap();
         assert!(!production.contains(&["default_open(gi", " == 0)"].concat()));
-        assert!(production.contains("default_open(PICKER_SECTION_DEFAULT_OPEN)"));
+        assert!(production.contains(".unwrap_or(PICKER_SECTION_DEFAULT_OPEN)"));
+    }
+
+    #[test]
+    fn rules_editor_has_no_egui_default_widgets() {
+        // Phase 31 contract: only the colour picker keeps its legacy look. Doc and line comments
+        // are skipped so prose may name egui types.
+        let strip = |src: &'static str| -> String {
+            src.split("\nmod tests")
+                .next()
+                .unwrap()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let banned = [
+            "egui::ComboBox::from_id_salt",
+            "egui::TextEdit::singleline",
+            "egui::Button::new",
+            "egui::Checkbox::new",
+            "egui::CollapsingHeader::new",
+            "small_button(",
+            "ui.button(",
+            "egui::Slider::new",
+            "ui.checkbox(",
+            "selectable_label(",
+            "egui::DragValue",
+            "text_edit_singleline",
+            "ScrollArea::vertical",
+        ];
+        for (name, src) in [
+            ("body.rs", strip(include_str!("body.rs"))),
+            ("widgets.rs", strip(include_str!("widgets.rs"))),
+        ] {
+            for b in banned {
+                assert!(!src.contains(b), "{name} still uses {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn picker_popup_uses_skin_search_and_sections() {
+        // Normalised so a CRLF checkout (core.autocrlf) still finds the function end.
+        let src = include_str!("body.rs").replace("\r\n", "\n");
+        let production = src.split("mod tests {").next().unwrap();
+        let start = production.find("pub(crate) fn picker_popup").unwrap();
+        let end = production[start..].find("\n}\n").unwrap() + start;
+        let body = &production[start..end];
+        assert!(body.contains("ff_text_field("));
+        assert!(body.contains("section_head("));
+        assert!(body.contains("paint_box_behind("));
+        assert!(!production.contains("CollapsingHeader"));
     }
 
     #[test]
@@ -5497,8 +6283,8 @@ mod tests {
         // Find a group header y and a checkbox position below it whose click writes the first
         // class.
         let mut found = None;
-        'scan: for hy in (164..188).step_by(4) {
-            for cx in [36.0f32, 60.0, 90.0, 130.0] {
+        'scan: for hy in (218..300).step_by(4) {
+            for cx in [166.0f32, 190.0, 220.0, 260.0] {
                 for cy in ((hy + 16)..(hy + 120)).step_by(4) {
                     let at = Pos2::new(cx, cy as f32);
                     let (_, _, _, _, got) = pending_class_session(&cat, hy as f32, Some(at));
@@ -5557,7 +6343,9 @@ mod tests {
     }
 
     fn rendered_text(ctx: &egui::Context, wf: &WorkingFilter, list: &mut ListUi) -> String {
-        let visible: Vec<usize> = (0..wf.rows().len()).collect();
+        let visible: Vec<crate::overlay::rules::ListEntry> = (0..wf.rows().len())
+            .map(crate::overlay::rules::ListEntry::Rule)
+            .collect();
         let cat = committed_catalog();
         let mut out = String::new();
         let full = ctx.run_ui(input(vec![]), |ui| {
@@ -5604,6 +6392,37 @@ mod tests {
         }
         assert!(seen.contains("Between"), "{seen}");
         assert!(!seen.contains("min > max"), "{seen}");
+    }
+
+    #[test]
+    fn between_card_labels_min_and_max() {
+        let (ctx, wf, mut list) = defences_session(PAIR, false);
+        let mut seen = String::new();
+        for _ in 0..3 {
+            seen = rendered_text(&ctx, &wf, &mut list);
+        }
+        let min = seen.find("Min").expect("Min label");
+        let max = seen.find("Max").expect("Max label");
+        assert!(min < max, "{seen}");
+    }
+
+    #[test]
+    fn int_control_number_field_right_of_slider() {
+        let ctx = headless_ctx();
+        let (mut slider, mut field) = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        let mut v = 30_i64;
+        ctx.run_ui(input(vec![]), |ui| {
+            ui.set_max_width(360.0);
+            ui.horizontal(|ui| {
+                slider = widgets::themed_slider(ui, &mut v, 1, 100, false).rect;
+                field = widgets::number_field(ui, "n", &mut v, widgets::NUMBER_FIELD_W)
+                    .response
+                    .rect;
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(field.min.x >= slider.max.x, "{slider:?} {field:?}");
+        assert!(field.max.x <= 360.0 + 1.0, "{field:?}");
     }
 
     #[test]
@@ -5809,17 +6628,1062 @@ mod tests {
             "Show\n  BaseArmour >= 100\n  BaseArmour <= 1000\n  BaseEvasion > 5\n"
         );
     }
+
+    // ---- Custom STYLE lines: the lossless rule backend (quick 261016-qi7) ----
+
+    /// The text after applying `intent`'s line edits to the first rule of `src`.
+    fn intent_text(src: &str, intent: StyleIntent) -> String {
+        let (mut wf, id, e) = entries_of(src);
+        let (_, b) = rule_style_view(&e, wf.rows()[0].keyword);
+        let acts = rule_intent_actions(id, &b, intent);
+        apply_all(&mut wf, acts);
+        wf.text().to_string()
+    }
+
+    fn leftover_texts(src: &str) -> Vec<String> {
+        let (wf, _, e) = entries_of(src);
+        let (_, b) = rule_style_view(&e, wf.rows()[0].keyword);
+        style_leftovers(&e, &b)
+            .iter()
+            .map(|e| e.text.trim().to_string())
+            .collect()
+    }
+
+    fn colour(slot: ColourSlot, value: Option<[u8; 4]>, had: bool) -> StyleIntent {
+        StyleIntent::Colour {
+            slot,
+            value,
+            opened_had_alpha: had,
+        }
+    }
+
+    const LEFTOVERS: &str = "Show\n    SetFontSize 30\n    PlayAlertSoundPositional 3 100\n    CustomAlertSoundOptional \"x.mp3\"\n    EnableDropSound\n    PlayEffect None\n    PlayAlertSound ShAlchemy\n    MinimapIcon -1\n    FutureKw 3\n    SetFontSize 40\n";
+
+    #[test]
+    fn rule_style_view_binds_the_last_line_of_each_family() {
+        let src = "Hide\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6 7\n    SetBackgroundColor 9 9 9 128\n    PlayAlertSoundPositional 2 50\n    PlayAlertSound 5\n    CustomAlertSound \"a.mp3\" 80\n    MinimapIcon -1\n    MinimapIcon 2 Blue Star\n    PlayEffect None\n    PlayEffect Green Temp\n    DisableDropSound False\n    SetFontSize 60\n";
+        let (_, _, e) = entries_of(src);
+        let (view, b) = rule_style_view(&e, BlockKeyword::Hide);
+        assert_eq!(view.visibility, Vis::Hide);
+        assert!(view.alpha);
+        assert_eq!(
+            view.text,
+            Some(Rgba {
+                rgba: [4, 5, 6, 7],
+                had_alpha: true
+            })
+        );
+        assert_eq!(view.border, None);
+        assert_eq!(
+            view.background,
+            Some(Rgba {
+                rgba: [9, 9, 9, 128],
+                had_alpha: true
+            })
+        );
+        assert_eq!(view.font, Some(45), "60 shows clamped into 1-45");
+        assert_eq!(
+            view.minimap,
+            Some(Cancelable::Set(mc::Minimap {
+                size: 2,
+                color: FilterColor::Blue,
+                shape: MinimapShape::Star
+            }))
+        );
+        assert_eq!(
+            view.beam,
+            Some(Cancelable::Set(Beam {
+                color: FilterColor::Green,
+                temp: true
+            }))
+        );
+        assert_eq!(
+            view.sound,
+            Some(Cancelable::Set(Sound {
+                id: None,
+                custom: Some("a.mp3".to_string()),
+                vol: 80,
+                positional: false
+            })),
+            "one sound family: the last of the four keywords"
+        );
+        assert!(view.sound_volume_written);
+        assert_eq!(
+            view.drop_sound,
+            Some(DropSound::Normal),
+            "DisableDropSound False reads as Normal"
+        );
+        assert!(b.drop.is_some(), "it binds");
+        assert_eq!(
+            style_leftovers(&e, &b)
+                .iter()
+                .map(|e| e.text.trim())
+                .collect::<Vec<_>>(),
+            [
+                "SetTextColor 1 2 3",
+                "PlayAlertSoundPositional 2 50",
+                "PlayAlertSound 5",
+                "MinimapIcon -1",
+                "PlayEffect None",
+                "DisableDropSound False",
+                "SetFontSize 60",
+            ],
+            "earlier lines of a family, and the bound lines it shows inexactly"
+        );
+    }
+
+    #[test]
+    fn an_unrepresentable_last_line_shows_its_nearest_state_and_stays_listed() {
+        let src = "Show\n    MinimapIcon 1 Blue Star\n    MinimapIcon -1\n    PlayEffect Red\n    PlayEffect None\n    PlayAlertSound 3\n    PlayAlertSound ShAlchemy\n    DisableDropSound\n    EnableDropSound\n    SetFontSize 30\n    SetFontSize 0\n";
+        let (_, _, e) = entries_of(src);
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(
+            view.minimap,
+            Some(Cancelable::Cancel),
+            "MinimapIcon -1 is the cancel value"
+        );
+        assert_eq!(
+            view.beam,
+            Some(Cancelable::Cancel),
+            "PlayEffect None is the cancel value"
+        );
+        assert_eq!(view.sound, None, "a named sound has no dropdown entry");
+        assert_eq!(
+            view.drop_sound,
+            Some(DropSound::Normal),
+            "EnableDropSound wins"
+        );
+        assert_eq!(view.font, Some(1));
+        for (slot, line) in [
+            (&b.minimap, "MinimapIcon -1"),
+            (&b.beam, "PlayEffect None"),
+            (&b.sound, "PlayAlertSound ShAlchemy"),
+            (&b.drop, "EnableDropSound"),
+            (&b.font, "SetFontSize 0"),
+        ] {
+            assert_eq!(slot.as_ref().map(|e| e.text.trim()), Some(line));
+        }
+        // Listed: the earlier lines, and the bound ones it cannot show (the named sound and the
+        // clamped font); the cancel values and EnableDropSound are shown exactly.
+        assert_eq!(
+            style_leftovers(&e, &b)
+                .iter()
+                .map(|e| e.text.trim())
+                .collect::<Vec<_>>(),
+            [
+                "MinimapIcon 1 Blue Star",
+                "PlayEffect Red",
+                "PlayAlertSound 3",
+                "PlayAlertSound ShAlchemy",
+                "DisableDropSound",
+                "SetFontSize 30",
+                "SetFontSize 0",
+            ]
+        );
+        // A positional alert is shown exactly with its toggle on.
+        let (_, _, e) = entries_of("Show\n    PlayAlertSoundPositional 4 120\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(
+            view.sound,
+            Some(Cancelable::Set(Sound {
+                id: Some(4),
+                custom: None,
+                vol: 120,
+                positional: true
+            }))
+        );
+        assert!(style_leftovers(&e, &b).is_empty());
+        // An optional sound shows as its plain kind and is listed too.
+        let (_, _, e) = entries_of("Show\n    CustomAlertSoundOptional \"x.mp3\"\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(
+            view.sound,
+            Some(Cancelable::Set(Sound {
+                id: None,
+                custom: Some("x.mp3".to_string()),
+                vol: 100,
+                positional: false
+            }))
+        );
+        assert_eq!(style_leftovers(&e, &b).len(), 1);
+        // `MinimapIcon -1 Red Star` and `PlayAlertSoundPositional None` are the cancel value,
+        // shown inexactly (listed too).
+        let (_, _, e) =
+            entries_of("Show\n    MinimapIcon -1 Red Star\n    PlayAlertSoundPositional None\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(view.minimap, Some(Cancelable::Cancel));
+        // Its colour and shape are what leaving `/` brings back (IN-04).
+        assert_eq!(
+            view.minimap_hint,
+            Some(mc::Minimap {
+                size: 0,
+                color: FilterColor::Red,
+                shape: MinimapShape::Star,
+            })
+        );
+        assert_eq!(view.sound, Some(Cancelable::Cancel));
+        assert_eq!(style_leftovers(&e, &b).len(), 2);
+        // A bare `-1` or unknown names give no hint.
+        for src in [
+            "Show\n    MinimapIcon -1\n",
+            "Show\n    MinimapIcon -1 Mauve Star\n",
+            "Show\n    MinimapIcon -1 Red Blob\n",
+            "Show\n    MinimapIcon -1 Red\n",
+        ] {
+            let (_, _, e) = entries_of(src);
+            let (view, _) = rule_style_view(&e, BlockKeyword::Show);
+            assert_eq!(view.minimap, Some(Cancelable::Cancel), "{src}");
+            assert_eq!(view.minimap_hint, None, "{src}");
+        }
+        // The bare `PlayAlertSound None` is exact, and so is `DisableDropSound`.
+        let (_, _, e) = entries_of("Show\n    PlayAlertSound None\n    DisableDropSound\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(view.sound, Some(Cancelable::Cancel));
+        assert_eq!(view.drop_sound, Some(DropSound::Silent));
+        assert!(style_leftovers(&e, &b).is_empty());
+        assert!(!view.sound_volume_written);
+    }
+
+    #[test]
+    fn an_edit_rewrites_the_last_line_and_never_adds_a_second_one() {
+        let pick = mc::Minimap {
+            size: 0,
+            color: FilterColor::White,
+            shape: MinimapShape::Circle,
+        };
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n    MinimapIcon -1\n",
+                StyleIntent::Minimap(Some(Cancelable::Set(pick.clone())))
+            ),
+            "Show\n    Rarity Rare\n    MinimapIcon 0 White Circle\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    MinimapIcon -1 # hidden\n    SetFontSize 30\n",
+                StyleIntent::Minimap(Some(Cancelable::Set(pick)))
+            ),
+            "Show\n    MinimapIcon 0 White Circle # hidden\n    SetFontSize 30\n"
+        );
+        let two_fonts = "Show\n    SetFontSize 30\n    SetFontSize 40\n";
+        let (_, _, e) = entries_of(two_fonts);
+        assert_eq!(rule_style_view(&e, BlockKeyword::Show).0.font, Some(40));
+        assert_eq!(
+            intent_text(two_fonts, StyleIntent::Font(Some(35))),
+            "Show\n    SetFontSize 30\n    SetFontSize 35\n"
+        );
+        assert_eq!(
+            intent_text(two_fonts, StyleIntent::Font(None)),
+            "Show\n    SetFontSize 30\n",
+            "clearing removes the effective line; the earlier one then shows through"
+        );
+        let two_colours = "Show\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6\n";
+        assert_eq!(
+            intent_text(
+                two_colours,
+                colour(ColourSlot::Text, Some([7, 8, 9, 255]), false)
+            ),
+            "Show\n    SetTextColor 1 2 3\n    SetTextColor 7 8 9\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayEffect None\n",
+                StyleIntent::Beam(Some(Cancelable::Set(Beam {
+                    color: FilterColor::Red,
+                    temp: false
+                })))
+            ),
+            "Show\n    PlayEffect Red\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    SetFontSize 50\n", StyleIntent::Font(Some(44))),
+            "Show\n    SetFontSize 44\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound ShAlchemy\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(2),
+                    custom: None,
+                    vol: 100,
+                    positional: false
+                })))
+            ),
+            "Show\n    PlayAlertSound 2 100\n"
+        );
+        // A different sound keyword is the same family: no second alert sound.
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSoundOptional \"x.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(2),
+                    custom: None,
+                    vol: 100,
+                    positional: false
+                })))
+            ),
+            // The file's default 100 is written so the loudness stays (WR-02).
+            "Show\n    PlayAlertSound 2 100\n"
+        );
+    }
+
+    #[test]
+    fn colour_edits_keep_the_line_form() {
+        let src = "Show\n    SetTextColor 10 20 30\n    SetFontSize 30\n";
+        assert_eq!(
+            intent_text(src, colour(ColourSlot::Text, Some([1, 2, 3, 255]), false)),
+            "Show\n    SetTextColor 1 2 3\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(
+                src,
+                colour(ColourSlot::Text, Some([10, 20, 30, 128]), false)
+            ),
+            "Show\n    SetTextColor 10 20 30 128\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(src, colour(ColourSlot::Text, None, false)),
+            "Show\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(src, colour(ColourSlot::Border, Some([5, 6, 7, 255]), false)),
+            "Show\n    SetTextColor 10 20 30\n    SetFontSize 30\n    SetBorderColor 5 6 7 255\n"
+        );
+    }
+
+    #[test]
+    fn minimap_none_removes_only_the_bound_line() {
+        let src =
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n    MinimapIcon 0 Red Circle\n";
+        assert_eq!(
+            intent_text(src, StyleIntent::Minimap(None)),
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n"
+        );
+        let pink = mc::Minimap {
+            size: 1,
+            color: FilterColor::Pink,
+            shape: MinimapShape::Star,
+        };
+        assert_eq!(
+            intent_text(src, StyleIntent::Minimap(Some(Cancelable::Set(pink)))),
+            "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n    MinimapIcon 1 Pink Star\n"
+        );
+        assert_eq!(
+            leftover_texts(src),
+            ["MinimapIcon -1", "MinimapIcon 1 Blue Star"]
+        );
+        let small = mc::Minimap {
+            size: 2,
+            color: FilterColor::White,
+            shape: MinimapShape::Circle,
+        };
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::Minimap(Some(Cancelable::Set(small)))
+            ),
+            "Show\n    Rarity Rare\n    MinimapIcon 2 White Circle\n"
+        );
+    }
+
+    #[test]
+    fn unrepresentable_lines_survive_other_edits_as_leftovers() {
+        assert_eq!(
+            leftover_texts(LEFTOVERS),
+            [
+                "SetFontSize 30",
+                "PlayAlertSoundPositional 3 100",
+                "CustomAlertSoundOptional \"x.mp3\"",
+                "PlayAlertSound ShAlchemy",
+            ]
+        );
+        assert_eq!(
+            intent_text(LEFTOVERS, StyleIntent::Font(Some(35))),
+            LEFTOVERS.replacen("SetFontSize 40", "SetFontSize 35", 1)
+        );
+        // The bound `EnableDropSound` is rewritten in place, never contradicted by a new line.
+        assert_eq!(
+            intent_text(LEFTOVERS, StyleIntent::DropSound(Some(DropSound::Silent))),
+            LEFTOVERS.replacen("    EnableDropSound\n", "    DisableDropSound\n", 1)
+        );
+    }
+
+    #[test]
+    fn drop_sound_follows_the_last_disable_or_enable_line() {
+        let off = "Show\n    DisableDropSound\n    EnableDropSound False\n";
+        let (_, _, e) = entries_of(off);
+        assert_eq!(
+            rule_style_view(&e, BlockKeyword::Show).0.drop_sound,
+            Some(DropSound::Silent)
+        );
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Normal))),
+            "Show\n    DisableDropSound\n    EnableDropSound\n"
+        );
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Silent))),
+            off
+        );
+        let on = "Show\n    EnableDropSound # loud\n";
+        assert_eq!(
+            intent_text(on, StyleIntent::DropSound(Some(DropSound::Silent))),
+            "Show\n    DisableDropSound # loud\n"
+        );
+        assert_eq!(
+            intent_text(on, StyleIntent::DropSound(Some(DropSound::Normal))),
+            on
+        );
+        assert_eq!(intent_text(on, StyleIntent::DropSound(None)), "Show\n");
+    }
+
+    #[test]
+    fn sound_edits_keep_the_line_and_its_volume_form() {
+        let custom = |vol| Sound {
+            id: None,
+            custom: Some("uwu.mp3".to_string()),
+            vol,
+            positional: false,
+        };
+        let alert = |k, vol| Sound {
+            id: Some(k),
+            custom: None,
+            vol,
+            positional: false,
+        };
+        let src = "Show\n    PlayAlertSound 3 200\n    SetFontSize 30\n";
+        assert_eq!(
+            intent_text(src, StyleIntent::Sound(Some(Cancelable::Set(custom(200))))),
+            "Show\n    CustomAlertSound \"uwu.mp3\" 200\n    SetFontSize 30\n"
+        );
+        assert_eq!(
+            intent_text(src, StyleIntent::Sound(None)),
+            "Show\n    SetFontSize 30\n"
+        );
+        let bare = "Show\n    PlayAlertSound 5\n";
+        assert_eq!(
+            intent_text(
+                bare,
+                StyleIntent::Sound(Some(Cancelable::Set(alert(5, 120))))
+            ),
+            "Show\n    PlayAlertSound 5 120\n"
+        );
+        assert_eq!(
+            intent_text(
+                bare,
+                StyleIntent::Sound(Some(Cancelable::Set(alert(7, 50))))
+            ),
+            "Show\n    PlayAlertSound 7\n"
+        );
+        assert_eq!(
+            intent_text(bare, StyleIntent::Sound(Some(Cancelable::Set(custom(50))))),
+            "Show\n    CustomAlertSound \"uwu.mp3\" 50\n",
+            "WR-02: the alert's default 50 is written, a bare file line would play at 100"
+        );
+        // Switching kind on a volumeless line writes the old kind's default, keeping the loudness.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound 6\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("f".to_string()),
+                    vol: 50,
+                    positional: false,
+                })))
+            ),
+            "Show\n    CustomAlertSound \"f\" 50\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSound \"a.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(alert(4, 100))))
+            ),
+            "Show\n    PlayAlertSound 4 100\n"
+        );
+        // A same-kind pick on a volumeless line still writes no volume.
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSound \"a.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(custom(100))))
+            ),
+            "Show\n    CustomAlertSound \"uwu.mp3\"\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::Sound(Some(Cancelable::Set(alert(2, 100))))
+            ),
+            "Show\n    Rarity Rare\n    PlayAlertSound 2 100\n"
+        );
+        // A bad file name writes nothing.
+        let bad = Sound {
+            id: None,
+            custom: Some("a\"b.mp3".to_string()),
+            vol: 200,
+            positional: false,
+        };
+        assert_eq!(
+            intent_text(src, StyleIntent::Sound(Some(Cancelable::Set(bad)))),
+            src
+        );
+    }
+
+    /// IN-01: a picker opened on an empty slot reports the 4-token form for the whole session
+    /// (`colour_slot_rgba`), so the line it added keeps 4 tokens on every later change.
+    #[test]
+    fn a_colour_added_to_an_empty_slot_stays_four_valued() {
+        let added = intent_text(
+            "Show\n    Rarity Rare\n",
+            colour(ColourSlot::Border, Some([5, 6, 7, 255]), true),
+        );
+        assert_eq!(
+            added,
+            "Show\n    Rarity Rare\n    SetBorderColor 5 6 7 255\n"
+        );
+        assert_eq!(
+            intent_text(
+                &added,
+                colour(ColourSlot::Border, Some([8, 9, 10, 255]), true)
+            ),
+            "Show\n    Rarity Rare\n    SetBorderColor 8 9 10 255\n"
+        );
+    }
+
+    #[test]
+    fn sound_kind_switch_keeps_the_inline_comment() {
+        let custom = Sound {
+            id: None,
+            custom: Some("uwu.mp3".to_string()),
+            vol: 200,
+            positional: false,
+        };
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound 3 200 # loud\n",
+                StyleIntent::Sound(Some(Cancelable::Set(custom)))
+            ),
+            "Show\n    CustomAlertSound \"uwu.mp3\" 200 # loud\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSound \"a.mp3\"  # mine\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(4),
+                    custom: None,
+                    vol: 100,
+                    positional: false
+                })))
+            ),
+            "Show\n    PlayAlertSound 4 100  # mine\n"
+        );
+    }
+
+    #[test]
+    fn positional_optional_and_out_of_range_sound_lines_keep_their_form() {
+        // Same kind: the keyword stays.
+        let alert = |id, vol, positional| {
+            StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                id: Some(id),
+                custom: None,
+                vol,
+                positional,
+            })))
+        };
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSoundPositional 3 100\n",
+                alert(5, 100, true)
+            ),
+            "Show\n    PlayAlertSoundPositional 5 100\n"
+        );
+        // The Positional toggle flips the keyword in place, keeping the volume form and a comment.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSoundPositional 3 100 # a\n",
+                alert(3, 100, false)
+            ),
+            "Show\n    PlayAlertSound 3 100 # a\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    PlayAlertSound 3 # a\n", alert(3, 50, true)),
+            "Show\n    PlayAlertSoundPositional 3 # a\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    Rarity Rare\n", alert(6, 200, true)),
+            "Show\n    Rarity Rare\n    PlayAlertSoundPositional 6 200\n"
+        );
+        // A file never takes the positional form.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSoundPositional 3 100\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("a.mp3".to_string()),
+                    vol: 100,
+                    positional: true,
+                })))
+            ),
+            "Show\n    CustomAlertSound \"a.mp3\" 100\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSoundOptional \"x.mp3\" 90\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("y.mp3".to_string()),
+                    vol: 90,
+                    positional: false
+                })))
+            ),
+            "Show\n    CustomAlertSoundOptional \"y.mp3\" 90\n"
+        );
+        // A volume shown clamped is kept as written until the slider moves.
+        let loud = "Show\n    PlayAlertSound 3 400\n";
+        let (_, _, e) = entries_of(loud);
+        assert_eq!(
+            rule_style_view(&e, BlockKeyword::Show)
+                .0
+                .sound
+                .and_then(|s| s.value().map(|s| s.vol)),
+            Some(300)
+        );
+        assert_eq!(
+            intent_text(
+                loud,
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(6),
+                    custom: None,
+                    vol: 300,
+                    positional: false
+                })))
+            ),
+            "Show\n    PlayAlertSound 6 400\n"
+        );
+        assert_eq!(
+            intent_text(
+                loud,
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(3),
+                    custom: None,
+                    vol: 250,
+                    positional: false
+                })))
+            ),
+            "Show\n    PlayAlertSound 3 250\n"
+        );
+    }
+
+    #[test]
+    fn font_and_drop_sound_add_and_remove_one_line() {
+        assert_eq!(
+            intent_text("Show\n    SetFontSize 30\n", StyleIntent::Font(None)),
+            "Show\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    Rarity Rare\n", StyleIntent::Font(Some(32))),
+            "Show\n    Rarity Rare\n    SetFontSize 32\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::DropSound(Some(DropSound::Silent))
+            ),
+            "Show\n    Rarity Rare\n    DisableDropSound\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::DropSound(Some(DropSound::Normal))
+            ),
+            "Show\n    Rarity Rare\n    EnableDropSound\n"
+        );
+        for line in [
+            "DisableDropSound",
+            "DisableDropSound True",
+            "EnableDropSound",
+        ] {
+            assert_eq!(
+                intent_text(&format!("Show\n    {line}\n"), StyleIntent::DropSound(None)),
+                "Show\n"
+            );
+        }
+        // `DisableDropSound False` means Normal: Silent rewrites it to the bare keyword, Normal
+        // keeps it as written.
+        let off = "Show\n    DisableDropSound False\n";
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Silent))),
+            "Show\n    DisableDropSound\n"
+        );
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Normal))),
+            off
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    DisableDropSound\n",
+                StyleIntent::DropSound(Some(DropSound::Normal))
+            ),
+            "Show\n    EnableDropSound\n"
+        );
+    }
+
+    fn style_probes(
+        ctx: &egui::Context,
+        wf: &WorkingFilter,
+        list: &mut ListUi,
+        tag: &str,
+    ) -> Vec<Rect> {
+        style_lines::drain_probes();
+        frame_of(ctx, input(vec![]), wf, list, None);
+        style_lines::drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == tag)
+            .map(|(_, r)| r)
+            .collect()
+    }
+
+    #[test]
+    fn untouched_custom_rule_renders_idle_and_byte_identical() {
+        let all = "Show\n    SetTextColor 1 2 3\n    PlayAlertSound 5\n    DisableDropSound\n    MinimapIcon 1 Blue Star\n    PlayEffect Red\n    SetBackgroundColor 0 0 0 128\n";
+        let clamped = "Show\n    SetFontSize 60\n    PlayAlertSound 3 400\n    MinimapIcon -1\n    EnableDropSound False\n    SetTextColor 1 2 3\n    SetTextColor 4 5 6 7\n";
+        let cancel = "Show\n    MinimapIcon -1 Red Star\n    PlayEffect None\n    PlayAlertSound None\n    EnableDropSound\n";
+        let positional = "Show\n    PlayAlertSoundPositional 6 # loud\n    CustomAlertSound \"x.mp3\"\n    CustomAlertSound \"gone.mp3\" 90\n";
+        for src in [all, LEFTOVERS, clamped, cancel, positional] {
+            let wf = WorkingFilter::from_text(src);
+            let ctx = headless_ctx();
+            let mut list = ListUi {
+                expanded: Some(wf.rows()[0].id),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                let a = frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+                assert!(a.is_empty(), "idle frame emitted {a:?}");
+            }
+            assert_eq!(wf.text(), src);
+        }
+    }
+
+    #[test]
+    fn custom_rules_get_the_style_lines_presets_do_not() {
+        let ctx = headless_ctx();
+        let custom = WorkingFilter::from_text("Show\n    Class \"Rings\"\n");
+        let mut list = ListUi {
+            expanded: Some(custom.rows()[0].id),
+            ..Default::default()
+        };
+        assert_eq!(
+            style_probes(&ctx, &custom, &mut list, "ed-visibility").len(),
+            1
+        );
+        let preset = styled("# ff:style S\nShow\n    Class \"Rings\"\n    SetFontSize 37\n");
+        let mut list = ListUi {
+            expanded: Some(preset.rows()[0].id),
+            ..Default::default()
+        };
+        assert!(style_probes(&ctx, &preset, &mut list, "ed-visibility").is_empty());
+        assert!(style_probes(&ctx, &preset, &mut list, "ed-drop-check").is_empty());
+    }
+
+    #[test]
+    fn clicking_a_style_line_writes_its_line() {
+        let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let r = style_probes(&ctx, &wf, &mut list, "ed-drop-check")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    Rarity Rare\n    DisableDropSound\n");
+        // The added line is bound to its style line, so the focus request is dropped.
+        frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        assert_eq!(list.focus_line, None);
+        let r = style_probes(&ctx, &wf, &mut list, "ed-font-check")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(
+            wf.text(),
+            "Show\n    Rarity Rare\n    DisableDropSound\n    SetFontSize 32\n"
+        );
+    }
+
+    #[test]
+    fn picking_a_colour_over_a_hidden_icon_rewrites_that_line() {
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        // `MinimapIcon -1` is the cancel value: the size switch is drawn but inert.
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-size")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        assert!(a.is_empty(), "{a:?}");
+        let pink = crate::skin::minimap::index_of(&crate::skin::minimap::COLOURS, "Pink").unwrap();
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 Pink Circle\n");
+        // The / tile writes the cancel value back on the same line.
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-cancel")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    MinimapIcon -1\n");
+    }
+
+    #[test]
+    fn leaving_a_hidden_icon_keeps_the_colour_and_shape_it_names() {
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1 Red Star\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        // Under `/` the shapes are tinted with the line's colour: picking a colour keeps its shape.
+        let pink = crate::skin::minimap::index_of(&crate::skin::minimap::COLOURS, "Pink").unwrap();
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 Pink Star\n");
+        // Its own colour leaves `/` as written.
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1 Red Star\n");
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let ctx = headless_ctx();
+        let red = crate::skin::minimap::index_of(&crate::skin::minimap::COLOURS, "Red").unwrap();
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[red];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 Red Star\n");
+        // Off and on again brings back a bare `-1`, but leaving `/` still keeps the Star (WR-03).
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1 Red Star\n");
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let ctx = headless_ctx();
+        for _ in 0..2 {
+            let r = style_probes(&ctx, &wf, &mut list, "ed-mm-check")[0];
+            let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+            mirror_apply(&mut wf, &mut list, a);
+            frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        }
+        assert_eq!(wf.text(), "Show\n  MinimapIcon -1\n");
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n  MinimapIcon 0 Pink Star\n");
+    }
+
+    #[test]
+    fn rule_group_checks_add_and_remove_one_line() {
+        let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
+        let ctx = headless_ctx();
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        for tag in ["ed-sound-check", "ed-beam-check"] {
+            let r = style_probes(&ctx, &wf, &mut list, tag)[0];
+            let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+            mirror_apply(&mut wf, &mut list, a);
+            frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        }
+        assert_eq!(
+            wf.text(),
+            "Show\n    Rarity Rare\n    PlayAlertSound 1 100\n    PlayEffect White\n"
+        );
+        let r = style_probes(&ctx, &wf, &mut list, "ed-sound-positional")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(
+            wf.text(),
+            "Show\n    Rarity Rare\n    PlayAlertSoundPositional 1 100\n    PlayEffect White\n"
+        );
+        assert_eq!(leftover_rows(&ctx, &wf), 0);
+        let r = style_probes(&ctx, &wf, &mut list, "ed-sound-check")[0];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n    Rarity Rare\n    PlayEffect White\n");
+    }
+
+    #[test]
+    fn cancel_values_rewrite_the_bound_line_or_add_one() {
+        let star = "Show\n    MinimapIcon 1 Blue Star # icon\n    PlayEffect Red Temp\n    PlayAlertSound 3 100\n";
+        assert_eq!(
+            intent_text(star, StyleIntent::Minimap(Some(Cancelable::Cancel))),
+            "Show\n    MinimapIcon -1 # icon\n    PlayEffect Red Temp\n    PlayAlertSound 3 100\n"
+        );
+        assert_eq!(
+            intent_text(star, StyleIntent::Beam(Some(Cancelable::Cancel))),
+            "Show\n    MinimapIcon 1 Blue Star # icon\n    PlayEffect None\n    PlayAlertSound 3 100\n"
+        );
+        assert_eq!(
+            intent_text(star, StyleIntent::Sound(Some(Cancelable::Cancel))),
+            "Show\n    MinimapIcon 1 Blue Star # icon\n    PlayEffect Red Temp\n    PlayAlertSound None\n"
+        );
+        let bare = "Show\n    Rarity Rare\n";
+        for (intent, line) in [
+            (
+                StyleIntent::Minimap(Some(Cancelable::Cancel)),
+                "MinimapIcon -1",
+            ),
+            (
+                StyleIntent::Beam(Some(Cancelable::Cancel)),
+                "PlayEffect None",
+            ),
+            (
+                StyleIntent::Sound(Some(Cancelable::Cancel)),
+                "PlayAlertSound None",
+            ),
+        ] {
+            assert_eq!(intent_text(bare, intent), format!("{bare}    {line}\n"));
+        }
+        // Already the cancel value: nothing to write.
+        for (src, intent) in [
+            (
+                "Show\n    MinimapIcon -1\n",
+                StyleIntent::Minimap(Some(Cancelable::Cancel)),
+            ),
+            (
+                "Show\n    PlayEffect None\n",
+                StyleIntent::Beam(Some(Cancelable::Cancel)),
+            ),
+            (
+                "Show\n    PlayAlertSound None\n",
+                StyleIntent::Sound(Some(Cancelable::Cancel)),
+            ),
+        ] {
+            assert_eq!(intent_text(src, intent), src);
+        }
+        // Leaving the cancel value writes the full line, volume included.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound None\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(6),
+                    custom: None,
+                    vol: 200,
+                    positional: false,
+                })))
+            ),
+            "Show\n    PlayAlertSound 6 200\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayEffect None\n",
+                StyleIntent::Beam(Some(Cancelable::Set(Beam {
+                    color: FilterColor::Pink,
+                    temp: false,
+                })))
+            ),
+            "Show\n    PlayEffect Pink\n"
+        );
+        // Off removes the line, cancel value or not.
+        assert_eq!(
+            intent_text("Show\n    PlayAlertSound None\n", StyleIntent::Sound(None)),
+            "Show\n"
+        );
+    }
+
+    #[test]
+    fn named_and_optional_sounds_stay_leftover_rows() {
+        assert_eq!(
+            leftover_texts("Show\n    PlayAlertSound ShAlchemy\n"),
+            ["PlayAlertSound ShAlchemy"]
+        );
+        assert_eq!(
+            leftover_texts("Show\n    CustomAlertSoundOptional \"x.mp3\"\n"),
+            ["CustomAlertSoundOptional \"x.mp3\""]
+        );
+        // A file edit on an optional line keeps its keyword (never writes a new Optional line).
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSoundOptional \"x.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("y.mp3".to_string()),
+                    vol: 100,
+                    positional: false,
+                })))
+            ),
+            "Show\n    CustomAlertSoundOptional \"y.mp3\"\n"
+        );
+    }
+
+    /// The leftover action cards drawn for the expanded first rule of `wf`.
+    fn leftover_rows(ctx: &egui::Context, wf: &WorkingFilter) -> usize {
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        style_probes(ctx, wf, &mut list, "ed-leftover").len()
+    }
+
+    /// D-06: a Custom rule with one alert-sound line draws it on the Sound line only, never as an
+    /// extra leftover action row; nor does a sound the editor itself just added.
+    #[test]
+    fn single_alert_sound_line_has_no_leftover_row() {
+        let ctx = headless_ctx();
+        for src in [
+            "Show\n    PlayAlertSound 6 200\n",
+            "Show\n    PlayAlertSoundPositional 6 200\n",
+            "Show\n    PlayAlertSound None\n",
+            "Show\n    CustomAlertSound \"uwu.mp3\" 300\n",
+            "Show\n    PlayAlertSound 6\n",
+            "Show\n    CustomAlertSound \"uwu.mp3\"\n",
+        ] {
+            let (wf, _, e) = entries_of(src);
+            let (_, b) = rule_style_view(&e, BlockKeyword::Show);
+            assert!(style_leftovers(&e, &b).is_empty(), "{src}");
+            assert_eq!(leftover_rows(&ctx, &wf), 0, "{src}");
+        }
+        // `CustomAlertSoundOptional` is inexact by design: exactly one leftover row, its own.
+        let (wf, _, _) = entries_of("Show\n    CustomAlertSoundOptional \"x.mp3\"\n");
+        assert_eq!(leftover_rows(&ctx, &wf), 1);
+        for positional in [false, true] {
+            let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
+            let id = wf.rows()[0].id;
+            let (_, b) = rule_style_view(&wf.body_view(id), BlockKeyword::Show);
+            let acts = rule_intent_actions(
+                id,
+                &b,
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(6),
+                    custom: None,
+                    vol: 200,
+                    positional,
+                }))),
+            );
+            apply_all(&mut wf, acts);
+            let e = wf.body_view(id);
+            let sounds = e
+                .iter()
+                .filter(|e| {
+                    e.keyword
+                        .is_some_and(|k| family_of(k.name) == Some(Family::Sound))
+                })
+                .count();
+            assert_eq!(sounds, 1);
+            let (_, b) = rule_style_view(&e, BlockKeyword::Show);
+            assert!(style_leftovers(&e, &b).is_empty());
+            assert_eq!(leftover_rows(&ctx, &wf), 0);
+        }
+        // The probe does count a real leftover.
+        let wf = WorkingFilter::from_text("Show\n    PlayAlertSound 3\n    PlayAlertSound 6 200\n");
+        assert_eq!(leftover_rows(&ctx, &wf), 1);
+    }
 }
 
-/// UAT4-02: a colour dropdown leaves its scroll bar room like the shape dropdown. Driven headless
-/// with real fonts; the bar and the item names are read from the painted output.
+/// The colour dropdown is a skin dropdown (Phase 31): it picks, offers None on request, and leaves
+/// the current colour alone. Driven headless; the item names are read from the painted output.
 #[cfg(test)]
 mod colour_combo_tests {
-    use crate::filter::keywords::{COLOURS, SHAPES};
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, vec2};
 
-    const BUTTON: Pos2 = Pos2::new(72.0, 9.0);
-    const IN_POPUP: Pos2 = Pos2::new(60.0, 100.0);
+    const BUTTON: Pos2 = Pos2::new(72.0, 20.0);
 
     fn raw(events: Vec<Event>) -> RawInput {
         RawInput {
@@ -5839,117 +7703,50 @@ mod colour_combo_tests {
         vec![Event::PointerMoved(pos), button(true), button(false)]
     }
 
-    /// The reference: the minimap shape dropdown's rows (plain selectable labels), laid out the
-    /// same way as a colour dropdown (dot, then a 104px combo).
-    fn shape_combo(ui: &mut egui::Ui) {
-        super::dot(ui, egui::Color32::WHITE);
-        egui::ComboBox::from_id_salt("shape")
-            .selected_text("Circle")
-            .width(104.0)
-            .show_ui(ui, |ui| {
-                for s in SHAPES {
-                    let _ = ui.selectable_label(*s == "Circle", *s);
-                }
-            });
-    }
-
     struct Popup {
-        /// The scroll bar's painted rect (background track), if one was drawn.
-        bar: Option<Rect>,
-        /// Painted item names and their rects, below the combo button.
+        /// Painted item names and their rects, below the dropdown box.
         items: Vec<(String, Rect)>,
-        bar_width: f32,
         picked: Vec<Option<String>>,
     }
 
-    /// Opens the dropdown drawn by `draw`, hovers the popup until the floating bar settles, and
-    /// returns what was painted. `then` events are sent on the last frame (e.g. a click).
+    /// Opens the dropdown drawn by `draw` and returns what was painted. `then` events are sent on
+    /// the last frame (e.g. a click on an entry).
     fn open(
         draw: &dyn Fn(&mut egui::Ui) -> Option<String>,
         then: impl Fn(&Popup) -> Vec<Event>,
     ) -> Popup {
         let ctx = egui::Context::default();
-        crate::overlay::theme::install_fonts(&ctx);
+        crate::skin::fonts::install(&ctx);
         let mut popup = Popup {
-            bar: None,
             items: Vec::new(),
-            bar_width: 0.0,
             picked: Vec::new(),
         };
-        let frames = 16;
+        let frames = 8;
         for frame in 0..frames {
             let events = match frame {
                 1 => click(BUTTON),
                 f if f == frames - 1 => then(&popup),
-                f if f >= 2 => vec![Event::PointerMoved(IN_POPUP)],
                 _ => Vec::new(),
             };
             let mut raw = raw(events);
             raw.time = Some(f64::from(frame) * 0.1);
             let mut picked = None;
             let mut out = ctx.run_ui(raw, |ui| {
-                popup.bar_width = ui.spacing().scroll.bar_width;
                 ui.horizontal(|ui| picked = draw(ui));
             });
             out.textures_delta.clear();
             popup.picked.push(picked);
-            popup.bar = None;
             popup.items.clear();
             for cs in &out.shapes {
-                match &cs.shape {
-                    Shape::Rect(r)
-                        if r.rect.width() <= popup.bar_width + 0.5 && r.rect.height() > 100.0 =>
-                    {
-                        let bar = popup.bar.get_or_insert(r.rect);
-                        *bar = bar.union(r.rect);
-                    }
-                    Shape::Text(t) if t.pos.y > 20.0 => {
-                        let rect = t.galley.rect.translate(t.pos.to_vec2());
-                        popup.items.push((t.galley.text().to_string(), rect));
-                    }
-                    _ => {}
+                if let Shape::Text(t) = &cs.shape
+                    && t.pos.y > 34.0
+                {
+                    let rect = t.galley.rect.translate(t.pos.to_vec2());
+                    popup.items.push((t.galley.text().to_string(), rect));
                 }
             }
         }
         popup
-    }
-
-    fn assert_bar_clears_items(p: &Popup, names: &[&str], what: &str) {
-        let bar = p
-            .bar
-            .unwrap_or_else(|| panic!("{what}: no scroll bar painted"));
-        // At full (hovered) width the bar spans bar_width left of its right edge.
-        let bar_left = bar.right() - p.bar_width;
-        let shown: Vec<_> = p
-            .items
-            .iter()
-            .filter(|(t, _)| names.contains(&t.as_str()))
-            .collect();
-        assert!(shown.len() >= 5, "{what}: items painted {:?}", p.items);
-        for (t, r) in shown {
-            assert!(
-                r.right() <= bar_left,
-                "{what}: {t:?} ends at {} under the bar {bar:?}",
-                r.right()
-            );
-        }
-    }
-
-    #[test]
-    fn colour_combo_rows_leave_scroll_bar_room_like_the_shape_combo() {
-        let shape = open(
-            &|ui| {
-                shape_combo(ui);
-                None
-            },
-            |_| Vec::new(),
-        );
-        assert_bar_clears_items(&shape, SHAPES, "shape combo");
-
-        let colour = open(&|ui| super::colour_combo(ui, "c", "Red", false), |_| {
-            Vec::new()
-        });
-        assert_bar_clears_items(&colour, COLOURS, "colour combo");
     }
 
     #[test]
@@ -5969,16 +7766,13 @@ mod colour_combo_tests {
         assert_eq!(p.picked.last().unwrap().as_deref(), Some("Blue"));
         let p = open(&|ui| super::colour_combo(ui, "c", "Red", false), at("Red"));
         assert_eq!(p.picked.last().unwrap(), &None);
-        // A taller popup so the last entry is painted without scrolling.
-        let tall = |allow_none: bool| {
-            move |ui: &mut egui::Ui| {
-                ui.spacing_mut().combo_height = 600.0;
-                super::colour_combo(ui, "c", "Red", allow_none)
-            }
-        };
-        let p = open(&tall(true), |_| Vec::new());
+        let p = open(&|ui| super::colour_combo(ui, "c", "Red", true), |_| {
+            Vec::new()
+        });
         assert_eq!(p.items.last().map(|(t, _)| t.as_str()), Some("None"));
-        let p = open(&tall(false), |_| Vec::new());
+        let p = open(&|ui| super::colour_combo(ui, "c", "Red", false), |_| {
+            Vec::new()
+        });
         assert!(!p.items.iter().any(|(t, _)| t == "None"));
         assert!(p.items.iter().any(|(t, _)| t == "Purple"));
     }

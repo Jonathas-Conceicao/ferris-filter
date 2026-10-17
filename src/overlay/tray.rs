@@ -15,9 +15,9 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 /// `OverlayApp::update` is the only place that interprets it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayCommand {
-    /// Toggle the stripe's visibility (left-click on the icon, D-17).
+    /// Toggle the overlay's visibility (left-click on the icon, D-17).
     Toggle,
-    /// Show the stripe (tray menu "Show").
+    /// Show the window (tray menu "Show").
     Show,
     /// End the process (tray menu "Quit" -- D-14: the only exit).
     Quit,
@@ -102,6 +102,16 @@ pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tr
 }
 
 impl TrayHandles {
+    /// A tray with no OS icon and fresh menu ids, for the debug screenshot mode.
+    #[cfg(any(debug_assertions, test))]
+    pub(crate) fn inert() -> Self {
+        Self {
+            tray_icon: None,
+            show_id: MenuId::new("screenshot-show"),
+            quit_id: MenuId::new("screenshot-quit"),
+        }
+    }
+
     /// Removes the icon from the notification area now, rather than when the app is dropped.
     ///
     /// Tray Quit calls this before it releases the single-instance name, so a relaunch never

@@ -1,0 +1,25 @@
+test compile::tests::read_source_failed_existence_check_is_an_error_not_a_fallback ... ok
+test overlay::app::tests::apply_working_style_failed_changed_on_disk_leaves_edits_alone ... ok
+test overlay::app::tests::failed_overwrite_keeps_the_old_baseline ... ok
+test overlay::apply::tests::a_failed_apply_never_advances_the_state_to_applied ... ok
+test overlay::apply::tests::footer_damaged_and_load_failed_offer_reload_only ... ok
+test overlay::economy::tests::a_failed_sync_surfaces_the_reason_in_the_stripe ... ok
+test overlay::hotkey::tests::failed_status_carries_non_empty_text ... ok
+test overlay::instance::tests::a_failed_check_names_the_error_and_says_it_did_not_start ... ok
+test overlay::instance::windows_tests::an_instance_whose_event_creation_failed_keeps_running_and_is_unreachable ... ok
+test overlay::shell::tests::load_failed_text ... ok
+test safe_write::tests::failed_backup_write_leaves_no_partial_ffbak ... ok
+test result: ok. 1392 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 71.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.79s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.63s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s

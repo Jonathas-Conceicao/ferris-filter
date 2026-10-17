@@ -1,4 +1,4 @@
-//! The pure show/hide decision for the stripe (D-05, D-06, D-07).
+//! The pure show/hide decision for the window (D-05, D-06, D-07).
 //!
 //! This module has no dependency on any GUI or windowing crate in any signature —
 //! per `PITFALLS.md` §8 ("if a bug can only be found by clicking, it is in the wrong layer"),
@@ -13,7 +13,7 @@
 //! way to satisfy D-05 across repeat summons — see `win.rs`) has **never been focused**. Its
 //! OS-reported
 //! `focused` flag reads `false` (or unset) from the instant it appears. A naive rule of
-//! "hide whenever `focused == false`" would therefore hide the stripe on the very first frame
+//! "hide whenever `focused == false`" would therefore hide the window on the very first frame
 //! after every reveal — it would flash and vanish before the player could ever click into it.
 //!
 //! `ShownUnfocused` is the state that absorbs this: it tolerates any number of consecutive
@@ -29,18 +29,18 @@
 //! `Hidden`), which is how the OS already reports "some other window was activated" without any
 //! system-wide input monitoring.
 
-/// The three states a stripe can be in. Deliberately three, not two ([`Hidden`]/`Shown`) — the
+/// The three states a window can be in. Deliberately three, not two ([`Hidden`]/`Shown`) — the
 /// distinction between "shown but never yet focused" and "shown and was focused" is what
 /// prevents the never-focused hide hazard described in the module docs above.
 ///
 /// [`Hidden`]: Visibility::Hidden
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
-    /// The stripe is not visible.
+    /// The window is not visible.
     Hidden,
-    /// The stripe is visible but has not yet been observed focused since its last reveal.
+    /// The window is visible but has not yet been observed focused since its last reveal.
     ShownUnfocused,
-    /// The stripe is visible and has been focused at least once since its last reveal — a
+    /// The window is visible and has been focused at least once since its last reveal — a
     /// subsequent focus loss now means the user clicked away.
     ShownFocused,
 }
@@ -65,7 +65,7 @@ pub enum Effect {
 ///
 /// A toggle always wins over a focus reading, and always flips to the opposite of "currently
 /// visible": `Hidden` → `ShownUnfocused`, and either shown state → `Hidden`. This makes the
-/// hotkey and tray behave identically whether the stripe is currently focused, unfocused, or
+/// hotkey and tray behave identically whether the window is currently focused, unfocused, or
 /// hidden (D-09/D-17: one shared toggle behavior regardless of source).
 pub fn advance(state: Visibility, focused_this_frame: bool, toggle_requested: bool) -> Visibility {
     use Visibility::{Hidden, ShownFocused, ShownUnfocused};

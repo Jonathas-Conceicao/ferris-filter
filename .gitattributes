@@ -11,3 +11,6 @@ tests/fixtures/v04-dynamic.filter -text
 
 # Treat audio as binary (no EOL conversion, no diff).
 *.mp3 binary
+
+# Aseprite sources (custom art) are binary.
+*.ase binary

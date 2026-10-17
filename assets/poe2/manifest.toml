@@ -1,0 +1,266 @@
+# ff-art manifest: which Path of Exile 2 files are extracted into assets/poe2/.
+#
+# Run `cargo ff-art` (see tools/ff-art/README.md) after a game patch to
+# refresh every file listed here. The art belongs to Grinding Gear Games; see README.md.
+#
+# [[image]] fields:
+#   path       game virtual path of the base-resolution .dds (case does not matter)
+#   out        output PNG, relative to assets/poe2/
+#   prefer_4k  use the `4K/` sibling when the game has one (crisper on high-DPI screens)
+#   trim       drop the transparent right/bottom gutter the game's textures carry
+#   crop       [x, y, w, h] in the pixels of the image actually used (after trim)
+#   clear      [[x, y, w, h], ...] regions made transparent after cropping
+#
+# Find more paths with `ff-art list <pattern>`, eyeball them with `ff-art dump` + `ff-art sheet`.
+
+# --- Options window (Art/Textures/Interface/2D/2DArt/UIImages/InGame/OptionsMenu, "Options Menu")
+
+# The ornate header (angels, hooded figure, gold title plate). No 4K variant exists.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/titlebar.dds"
+out = "options/titlebar.png"
+trim = true
+
+# The whole Options page: stone frame, thin gold inner border, recessed button bar at the
+# bottom. The gear drawing in the middle is cleared; FerrisFilter draws its own background.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionspagesframe.dds"
+out = "options/pages_frame.png"
+prefer_4k = true
+trim = true
+clear = [[104, 150, 1106, 1232]]
+
+# Tabs: the stone tab shape (left + centre stretched + right) from the "Options Menu" art.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/left.dds"
+out = "options/tab_left.png"
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/centre.dds"
+out = "options/tab_center.png"
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/toptabs/gametab/right.dds"
+out = "options/tab_right.png"
+trim = true
+
+# Slider: track (bg) and gold fill as left cap + stretched middle + right cap, diamond thumb.
+# Cropped to the same 28px-high box so the fill stays vertically centred on the track.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderbgleft.dds"
+out = "options/slider_bg_left.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderbgmiddle.dds"
+out = "options/slider_bg_middle.png"
+prefer_4k = true
+crop = [0, 0, 481, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderbgright.dds"
+out = "options/slider_bg_right.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderfillleft.dds"
+out = "options/slider_fill_left.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderfillmiddle.dds"
+out = "options/slider_fill_middle.png"
+prefer_4k = true
+crop = [0, 0, 486, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderfillright.dds"
+out = "options/slider_fill_right.png"
+prefer_4k = true
+crop = [0, 0, 28, 28]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/optionsmenu/optionssliderthumb.dds"
+out = "options/slider_thumb.png"
+prefer_4k = true
+trim = true
+
+# Gold-edged dark square, nine-sliced for dropdown popups and boxes.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/9slicemenu.dds"
+out = "options/box_9slice.png"
+trim = true
+
+# Scrollbar: thin track line and the gold thumb (top cap + stretched centre + bottom cap).
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/scrollbararea.dds"
+out = "options/scroll_track.png"
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/top.dds"
+out = "options/scroll_thumb_top.png"
+crop = [0, 0, 20, 10]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/centre.dds"
+out = "options/scroll_thumb_center.png"
+crop = [0, 0, 20, 12]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/scroller/bottom.dds"
+out = "options/scroll_thumb_bottom.png"
+crop = [0, 0, 20, 10]
+
+# Thin gold rule under section titles.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/underliningfortitles.dds"
+out = "options/title_underline.png"
+trim = true
+
+# --- Common controls (Art/Textures/Interface/2D/2DArt/UIImages/Common)
+
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/checkboxchecked.dds"
+out = "common/check_on.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/checkboxunchecked.dds"
+out = "common/check_off.png"
+prefer_4k = true
+trim = true
+
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonclosenormal.dds"
+out = "common/close_normal.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonclosehover.dds"
+out = "common/close_hover.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonclosedown.dds"
+out = "common/close_down.png"
+prefer_4k = true
+trim = true
+
+# The gold dropdown triangle.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncomboboxnormal.dds"
+out = "common/combo_arrow.png"
+prefer_4k = true
+crop = [0, 0, 46, 46]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncomboboxhover.dds"
+out = "common/combo_arrow_hover.png"
+prefer_4k = true
+crop = [0, 0, 46, 46]
+
+# Generic button, 3-slice (left cap + stretched middle + right cap), three states.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericnormalleft.dds"
+out = "common/button_normal_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericnormalmiddle.dds"
+out = "common/button_normal_middle.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericnormalright.dds"
+out = "common/button_normal_right.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenerichoverleft.dds"
+out = "common/button_hover_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenerichovermiddle.dds"
+out = "common/button_hover_middle.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenerichoverright.dds"
+out = "common/button_hover_right.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericpressedleft.dds"
+out = "common/button_pressed_left.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericpressedmiddle.dds"
+out = "common/button_pressed_middle.png"
+prefer_4k = true
+trim = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttongenericpressedright.dds"
+out = "common/button_pressed_right.png"
+prefer_4k = true
+trim = true
+
+# --- Minimap icons: the 12 item-filter shapes in the 11 item-filter colours.
+#
+# The game sheet (art/2dart/minimap/player.dds, 896x4928) is a grid of 64px cells, 14 per row,
+# numbered left to right, top to bottom from 0. Every coloured filter icon comes as a Large,
+# Medium, Small triplet (cells n, n+1, n+2); the editor only needs Large (the other two are the
+# same art scaled down), so only those are kept:
+#   Circle, Diamond, Hexagon, Square, Star, Triangle (18 cells per shape from cell 46):
+#     Blue, Green, Brown, Red, White, Yellow
+#   the same six shapes, Cyan, Grey, Orange, Pink, Purple (15 cells per shape from cell 212)
+#   Cross, Moon, Raindrop, Kite, Pentagon, UpsideDownHouse (33 cells per shape from cell 302):
+#     Blue, Green, Brown, Red, White, Yellow, Cyan, Grey, Orange, Pink, Purple
+# To look at the whole sheet, dump it to a scratch folder (never the repo):
+#   ff-art dump minimap/player <scratch-dir>
+#
+# [[atlas]] fields: path (game .dds), out (PNG under assets/poe2/), cell (cell size in pixels),
+# columns (cells per row in the source), cells (one array per output row of source cell numbers).
+# Output: one row per colour (Red, Green, Blue, Brown, White, Yellow, Cyan, Grey, Orange, Pink,
+# Purple), one column per shape (Circle, Diamond, Hexagon, Square, Star, Triangle, Cross, Moon,
+# Raindrop, Kite, Pentagon, UpsideDownHouse) -- the order src/skin/minimap.rs indexes it in.
+[[atlas]]
+path = "art/2dart/minimap/player.dds"
+out = "minimap/icons.png"
+cell = 64
+columns = 14
+cells = [
+  [ 55,  73,  91, 109, 127, 145, 311, 344, 377, 410, 443, 476], # Red
+  [ 49,  67,  85, 103, 121, 139, 305, 338, 371, 404, 437, 470], # Green
+  [ 46,  64,  82, 100, 118, 136, 302, 335, 368, 401, 434, 467], # Blue
+  [ 52,  70,  88, 106, 124, 142, 308, 341, 374, 407, 440, 473], # Brown
+  [ 58,  76,  94, 112, 130, 148, 314, 347, 380, 413, 446, 479], # White
+  [ 61,  79,  97, 115, 133, 151, 317, 350, 383, 416, 449, 482], # Yellow
+  [212, 227, 242, 257, 272, 287, 320, 353, 386, 419, 452, 485], # Cyan
+  [215, 230, 245, 260, 275, 290, 323, 356, 389, 422, 455, 488], # Grey
+  [218, 233, 248, 263, 278, 293, 326, 359, 392, 425, 458, 491], # Orange
+  [221, 236, 251, 266, 281, 296, 329, 362, 395, 428, 461, 494], # Pink
+  [224, 239, 254, 269, 284, 299, 332, 365, 398, 431, 464, 497], # Purple
+]
+
+# --- Fonts (by exljbris / Jos Buivenga, shipped with the game).
+[[font]]
+path = "art/2dart/fonts/fontin-smallcaps.ttf"
+out = "fonts/Fontin-SmallCaps.ttf"
+[[font]]
+path = "art/2dart/fonts/fontin-regular.ttf"
+out = "fonts/Fontin-Regular.ttf"
+
+# --- Ferris background (rendered from the committed SVG; no game install needed).
+# A pale white line drawing for a 660px-wide, full-height window, at 2x for crispness.
+[ferris]
+svg = "assets/ferris/rustacean-flat-happy.svg"
+out = "assets/ui/ferris-bg.png"
+width = 1200
+height = 2000
+crab_fraction = 0.8
+crab_center_y = 0.5
+line_alpha = 34
+line_radius = 2
+
+# Orange Ferris for the ABOUT tab (original colours, rendered from the committed SVG; no game
+# install needed). 3x of the 112pt it is drawn at.
+[ferris_about]
+svg = "assets/ferris/rustacean-flat-happy.svg"
+out = "assets/ui/ferris-about.png"
+width = 336

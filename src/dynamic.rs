@@ -332,6 +332,9 @@ pub struct BlockingError {
 pub fn blocking_errors(doc: &crate::filter::Document) -> Vec<BlockingError> {
     use crate::filter::Severity;
     let span = crate::filter::section::find(doc).ok().flatten();
+    // A grouped rule is one rule: its later blocks are copies of the first (only their defence
+    // lines differ), so they neither count nor repeat its errors.
+    let followers = crate::filter::group::analyze(doc).followers();
     let mut out = Vec::new();
     let mut rule_index = 0usize;
     for b in doc.blocks() {
@@ -339,6 +342,9 @@ pub fn blocking_errors(doc: &crate::filter::Document) -> Vec<BlockingError> {
             && s.begin < b.header_line()
             && b.header_line() < s.end
         {
+            continue;
+        }
+        if followers.contains(&b.id()) {
             continue;
         }
         rule_index += 1;
@@ -595,6 +601,10 @@ mod tests {
         let changed =
             economy_body_with(&paths, PriceSourcePolicy::Auto, &restyled, &tiers).unwrap();
         assert_ne!(changed.0, on_disk.0);
+
+        // Tier blocks carry their built-in style tag.
+        assert!(on_disk.0.contains("# ff:style builtin:S S\n"));
+        assert!(on_disk.0.contains("# ff:name S tier Currency\n"));
 
         // Without live prices the fallback pair is used whatever tiers are passed.
         let empty = tempfile::tempdir().unwrap();
@@ -871,7 +881,9 @@ mod tests {
     fn gate_numbering_skips_economy_and_counts_after_end() {
         let base = "Show # first\n\tRarity Rare\n\n";
         let with = crate::filter::section::add(base, "Show # eco\n\tRarity Rare\n").unwrap();
-        let text = format!("{with}\nShow # after\n\tRarity =< Rare\n");
+        let rule = crate::filter::section::RULE_LINE;
+        let text =
+            format!("{with}\n{rule}\n# ff:section After\n{rule}\nShow # after\n\tRarity =< Rare\n");
         let doc = crate::filter::parse(text.as_bytes()).unwrap();
         let e = blocking_errors(&doc);
         assert_eq!(e.len(), 1);
@@ -890,6 +902,8 @@ mod tests {
     #[test]
     fn gate_works_with_damaged_markers() {
         let text = format!("{}\n#ff:economy-begin only begin\n", bad_rule());
+        // A lone begin marker (the old one-line form) is damaged, not a section.
+        assert!(crate::filter::section::has_section(&text).is_err());
         let doc = crate::filter::parse(text.as_bytes()).unwrap();
         assert_eq!(blocking_errors(&doc).len(), 1);
     }
@@ -912,7 +926,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("dynamic.filter");
         let body = seed_body();
-        let legacy = "# my notes\r\n#ff:name Rings\r\n#ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n#Show\r\n#\tClass \"Bows\"\r\n\r\n#ff:economy-begin old text\r\n\r\nShow # old\r\n\r\n# ff:economy-end\r\n";
+        let legacy = "# my notes\r\n#ff:name Rings\r\n#ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n#Show\r\n#\tClass \"Bows\"\r\n\r\n##########\r\n#ff:economy-begin old text\r\n##########\r\n\r\nShow # old\r\n";
         fs::write(&p, legacy).unwrap();
         let mut l = LoadedFilter::load(&p).unwrap();
         // Reading the legacy spelling works: the section is found.
@@ -921,9 +935,9 @@ mod tests {
         let written = fs::read_to_string(&p).unwrap();
         assert!(!written.contains("#ff:"), "{written}");
         assert!(written.starts_with(
-            "# my notes\r\n# ff:name Rings\r\n# ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n#Show\r\n#\tClass \"Bows\"\r\n\r\n# ff:economy-begin old text\r\n"
+            "# my notes\r\n# ff:name Rings\r\n# ff:style S\r\nShow # a\r\n\tRarity Rare\r\n\r\n#Show\r\n#\tClass \"Bows\"\r\n\r\n##########\r\n# ff:economy-begin old text\r\n##########\r\n"
         ));
-        assert!(written.ends_with("# ff:economy-end\r\n"));
+        assert!(!written.contains("economy-end"));
 
         // The overlay's path normalizes too; an all-current file goes out byte-identical.
         let p2 = dir.path().join("other.filter");

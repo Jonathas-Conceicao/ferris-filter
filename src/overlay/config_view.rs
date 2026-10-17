@@ -3,37 +3,30 @@
 //! Layer rule (same as `rule_list.rs`): all model mutations are returned as [`ConfigAction`]s and
 //! applied by the app after the frame; this module never mutates [`ConfigState`] and never touches
 //! the filesystem (the filter list and the style-use counts arrive through [`ConfigViewCtx`]).
-//! The style editor deliberately reuses the Phase 20 action widgets in `body.rs`
-//! (`colour_combo`, `slider_pair`, `SIZE_CHOICES`) so the vocabulary is learnt once.
+//! The style editor's lines are the shared `style_lines` component (also drawn for a Custom
+//! rule's STYLE section); this view maps their intents onto `StyleEdit`s.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use egui::{Align, Layout, RichText, vec2};
 
-use crate::models::config::{
-    Beam, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction, StyleNameError, StyleSet,
-};
+use crate::models::config::{Cancelable, Style, StyleAction, StyleNameError, StyleSet};
 use crate::settings;
 
-use super::apply;
 use super::body;
 use super::config_state::{
-    APPLY_BLOCKED_TOOLTIP, ColourSlot, ConfigState, StyleEdit, config_warning, delete_confirm_text,
+    ConfigState, RevertScope, StyleEdit, config_warning, delete_confirm_text,
 };
-use super::theme;
-use super::widgets::{self, ArrowDirection};
+use super::style_lines::{self, StyleIntent, StyleView, Vis, probe};
+use super::widgets;
+use crate::skin::editor as ed;
+use crate::skin::fonts::{regular, small_caps};
+use crate::skin::minimap;
+use crate::skin::palette as pal;
 
-const WHOLE_NUMBER: &str = "Enter a whole number";
-const NOT_SET: &str = "Not set (game default)";
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
-/// Fixed widths of the styles table columns (Visibility | Name | Preview), shared by the header
-/// and every row so they stay aligned across the Built-in and Custom groups.
-const COL_VISIBILITY: f32 = 48.0;
-const COL_NAME: f32 = 104.0;
-const COL_PREVIEW: f32 = 120.0;
-/// The Order column (custom group only): the up/down arrows.
-const COL_ORDER: f32 = 64.0;
+const ORDER_TIP: &str = "Built-in styles keep their order";
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
 const INVALID_RED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x55, 0x55);
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
@@ -44,8 +37,8 @@ pub const RELOAD_TOGGLE_LABEL: &str = "Reload filter in game after Apply";
 pub const RELOAD_TOGGLE_CAPTION: &str = "Sends /reloaditemfilter to the game after Apply. It reloads the filter selected in game, so select this filter there too. Close the chat box before pressing Apply: text left in an open chat box is sent as a message instead of the command.";
 /// The toggle's hover text: what "Reloaded in game" does and does not certify (review WR-01).
 pub const RELOAD_TOGGLE_TIP: &str = "\"Reloaded in game\" means the command was sent to the game window; ff cannot see whether the game ran it. A game running as administrator ignores the keys unless ff runs as administrator too. If the game did not reload, use Options > Game > Item Filter > Refresh.";
-const APPLY_NOTHING_TIP: &str = "Nothing to apply.";
-const APPLY_LOAD_ERROR_TIP: &str =
+pub(crate) const APPLY_NOTHING_TIP: &str = "Nothing to apply.";
+pub(crate) const APPLY_LOAD_ERROR_TIP: &str =
     "styles.json or tiers.json failed to load. Revert to reload them.";
 
 /// Everything the CONFIG view asks the app to do. Applied after the frame.
@@ -78,6 +71,8 @@ pub enum ConfigAction {
     },
     Apply,
     Revert,
+    /// Revert one tab's CONFIG edits: styles from CONFIG, tiers from ECONOMY.
+    RevertScoped(RevertScope),
     Reload,
     Overwrite,
 }
@@ -90,6 +85,9 @@ pub struct ConfigUi {
     /// Salt of every style row's id scope; bumped when the expanded row changes so per-row egui
     /// state (drafts, combo popups) never leaks to another row.
     pub epoch: u64,
+    /// Salt of the remembered None-values (font, minimap, beam, sound): bumped only when the
+    /// styles are replaced (Revert, Reload, Apply), so folding a row keeps them.
+    pub memo_epoch: u64,
     /// Open `+ ADD STYLE` name draft.
     pub style_draft: Option<String>,
     /// Open `New empty filter...` name draft.
@@ -97,6 +95,8 @@ pub struct ConfigUi {
     /// Style whose inline delete confirm is showing.
     pub delete_armed: Option<String>,
     pub revert_armed: bool,
+    /// What the armed Discard config changes? popup discards.
+    pub revert_scope: RevertScope,
     /// A just-added style to scroll into view.
     pub scroll_to: Option<String>,
     /// A name draft was just opened; its text field takes focus once.
@@ -118,6 +118,14 @@ impl ConfigUi {
         self.epoch = self.epoch.wrapping_add(1);
     }
 
+    /// Expand `name` (never a toggle: a row that is already expanded stays expanded). Drops an
+    /// armed delete confirm and orphans per-row egui state, as [`Self::set_expanded`] does.
+    pub fn expand(&mut self, name: &str) {
+        self.expanded = Some(name.to_string());
+        self.delete_armed = None;
+        self.epoch = self.epoch.wrapping_add(1);
+    }
+
     pub fn arm_delete(&mut self, name: &str) {
         self.delete_armed = Some(name.to_string());
     }
@@ -126,6 +134,7 @@ impl ConfigUi {
     pub fn disarm_all(&mut self) {
         self.delete_armed = None;
         self.revert_armed = false;
+        self.revert_scope = RevertScope::Styles;
     }
 
     /// Called when the styles are replaced (CONFIG Revert, reload, Apply, an outside edit
@@ -134,6 +143,10 @@ impl ConfigUi {
     pub fn reset_for_new_styles(&mut self) {
         self.disarm_all();
         self.rename_drafts.clear();
+        // Open pickers sit under ids salted with the epoch, the remembered None-values under
+        // the memo epoch.
+        self.epoch = self.epoch.wrapping_add(1);
+        self.memo_epoch = self.memo_epoch.wrapping_add(1);
     }
 }
 
@@ -143,8 +156,6 @@ pub struct ConfigViewCtx<'a> {
     pub filters: Option<&'a [String]>,
     pub active_filter: &'a str,
     pub game_dir: Option<&'a Path>,
-    /// A filter the user picked while rules have unapplied edits.
-    pub pending_switch: Option<&'a str>,
     /// Style name -> number of loaded rules using it.
     pub rule_users: &'a HashMap<String, usize>,
     /// Styles `config.json` itself references.
@@ -161,6 +172,8 @@ pub struct ConfigViewCtx<'a> {
     pub indicator: &'a str,
     /// Current value of the reload-after-Apply setting.
     pub reload_after_apply: bool,
+    /// The shell skin for section headings (`None` in headless tests).
+    pub skin: Option<&'a crate::skin::Skin>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -244,67 +257,33 @@ pub fn revert_prompt(n: usize) -> String {
     }
 }
 
-/// The footer's buttons as (label, enabled), left to right. The footer renders from this. After a
-/// changed-on-disk refusal only RELOAD and OVERWRITE remain, the same two as the RULES footer.
-pub fn footer_buttons(
-    state: &ConfigState,
-    cfg: &ConfigUi,
-    changed_on_disk: bool,
-    apply_enabled: bool,
-) -> Vec<(&'static str, bool)> {
-    if changed_on_disk {
-        return vec![("RELOAD", true), ("OVERWRITE", true)];
-    }
-    if cfg.revert_armed && state.is_dirty() {
-        return vec![("Discard", true), ("Cancel", true)];
-    }
-    vec![("Apply", apply_enabled), ("Revert", state.is_dirty())]
-}
-
 // ---------------------------------------------------------------------------------------------
 // Small widgets
 // ---------------------------------------------------------------------------------------------
 
-fn helper(ui: &mut egui::Ui, text: &str) {
-    ui.add(
-        egui::Label::new(
-            RichText::new(text)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::TAB_ACTIVE),
-        )
-        .wrap(),
-    );
+/// A section heading: the skin's gold rule heading, or a plain heading label when no skin is
+/// available (headless tests).
+fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) {
+    match ctx.skin {
+        Some(skin) => {
+            crate::skin::widgets::ff_section(ui, skin, title);
+        }
+        None => {
+            ui.label(RichText::new(title).size(21.0));
+        }
+    }
 }
 
 fn small_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).size(theme::ROW_SUMMARY_SIZE))
-}
-
-fn accent_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).size(theme::ROW_SUMMARY_SIZE))
-        .fill(theme::WARM_ACCENT)
-}
-
-fn segmented(ui: &mut egui::Ui, options: &[&str], current: usize) -> Option<usize> {
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (i, label) in options.iter().enumerate() {
-            let mut selected = i == current;
-            if widgets::toggle_chip(ui, label, &mut selected).changed() && i != current {
-                picked = Some(i);
-            }
-        }
-    });
-    picked
+    egui::Button::new(RichText::new(text.to_string()).size(crate::skin::fonts::SUMMARY_SIZE))
 }
 
 // ---------------------------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------------------------
 
-/// FILTER, STYLES and TIERS inside their own vertical scroll area. The footer is drawn by the
-/// app (pinned, before this call) so Apply stays on screen however long the lists grow.
+/// FILTER and STYLES. The app wraps this in the shell's game-art scroll area; Apply,
+/// Revert and Reload live in the shared bottom bar.
 pub fn show_sections(
     ui: &mut egui::Ui,
     state: &ConfigState,
@@ -312,18 +291,10 @@ pub fn show_sections(
     ctx: &ConfigViewCtx,
 ) -> Vec<ConfigAction> {
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("ff-config-scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.label(theme::section_header("FILTER"));
-            show_filter(ui, cfg, ctx, &mut actions);
-            ui.add_space(16.0);
-            show_styles(ui, state, cfg, ctx, &mut actions);
-            ui.add_space(16.0);
-            ui.label(theme::section_header("TIERS"));
-            show_tiers(ui, state, &mut actions);
-        });
+    section_title(ui, ctx, "Filter");
+    show_filter(ui, cfg, ctx, &mut actions);
+    ui.add_space(16.0);
+    show_styles(ui, state, cfg, ctx, &mut actions);
     actions
 }
 
@@ -334,7 +305,7 @@ fn show_filter(
     actions: &mut Vec<ConfigAction>,
 ) {
     egui::Frame::new()
-        .fill(theme::ROW_BASE)
+        .fill(pal::ROW_EVEN)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -361,16 +332,23 @@ fn show_filter(
                                 }
                             }
                             ui.separator();
-                            if ui.selectable_label(false, "New empty filter\u{2026}").clicked() {
+                            if ui
+                                .selectable_label(false, "New empty filter\u{2026}")
+                                .clicked()
+                            {
                                 open_draft = true;
                             }
                         })
                 })
                 .inner;
+            let saved_note = "Saved on this computer. Default: dynamic.filter.";
             if let Some(dir) = ctx.game_dir {
-                combo
-                    .response
-                    .on_hover_text(dir.join(ctx.active_filter).display().to_string());
+                combo.response.on_hover_text(format!(
+                    "{}\n{saved_note}",
+                    dir.join(ctx.active_filter).display()
+                ));
+            } else {
+                combo.response.on_hover_text(saved_note);
             }
             if open_draft && cfg.filter_draft.is_none() {
                 cfg.filter_draft = Some(String::new());
@@ -381,51 +359,22 @@ fn show_filter(
                 filter_draft_row(ui, cfg, list, draft, actions);
             }
 
-            if let Some(target) = ctx.pending_switch {
-                egui::Frame::new()
-                    .fill(theme::ROW_ALT)
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(
-                                    "You have unapplied rule changes. Switching filters will discard them.",
-                                )
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::VALUE_TEXT),
-                            )
-                            .wrap(),
-                        )
-                        .on_hover_text(format!("Switching to {target}"));
-                        ui.horizontal(|ui| {
-                            if ui.add(accent_button("Switch and discard")).clicked() {
-                                actions.push(ConfigAction::ConfirmSwitch);
-                            }
-                            if ui.add(small_button("Stay")).clicked() {
-                                actions.push(ConfigAction::CancelSwitch);
-                            }
-                        });
-                    });
-            } else {
-                helper(ui, "Saved on this computer. Default: dynamic.filter.");
-            }
-
             ui.add_space(4.0);
             let mut on = ctx.reload_after_apply;
+            let reload_tip = format!("{RELOAD_TOGGLE_CAPTION}\n\n{RELOAD_TOGGLE_TIP}");
             ui.horizontal(|ui| {
                 let toggle =
-                    widgets::circular_toggle(ui, &mut on).on_hover_text(RELOAD_TOGGLE_TIP);
+                    widgets::circular_toggle(ui, &mut on).on_hover_text(reload_tip.clone());
                 if toggle.changed() {
                     actions.push(ConfigAction::SetReloadAfterApply(on));
                 }
                 ui.label(
                     RichText::new(RELOAD_TOGGLE_LABEL)
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(theme::VALUE_TEXT),
-                );
+                        .size(crate::skin::fonts::SUMMARY_SIZE)
+                        .color(pal::VALUE),
+                )
+                .on_hover_text(reload_tip);
             });
-            helper(ui, RELOAD_TOGGLE_CAPTION);
         });
 }
 
@@ -439,12 +388,17 @@ fn filter_draft_row(
     let hint = filter_name_hint(list, &draft);
     let mut commit = false;
     let mut discard = false;
-    let edit = ui.add(
+    let mut edit = ui.add(
         egui::TextEdit::singleline(&mut draft)
             .id_salt("cfg-filter-draft")
             .hint_text("my-filter.filter")
             .desired_width(ui.available_width() - 8.0),
     );
+    if draft.trim().is_empty()
+        && let Some(msg) = &hint
+    {
+        edit = edit.on_hover_text(msg.as_str());
+    }
     if std::mem::take(&mut cfg.focus_draft) {
         edit.request_focus();
     }
@@ -459,8 +413,6 @@ fn filter_draft_row(
         && !draft.trim().is_empty()
     {
         body::hint(ui, msg);
-    } else if let Some(msg) = &hint {
-        helper(ui, msg);
     }
     ui.horizontal(|ui| {
         if ui
@@ -486,170 +438,205 @@ fn filter_draft_row(
     }
 }
 
-fn show_tiers(ui: &mut egui::Ui, state: &ConfigState, actions: &mut Vec<ConfigAction>) {
-    helper(
-        ui,
-        "Minimum price for each tier. Items worth at least this much get the tier.",
-    );
-    ui.horizontal(|ui| {
-        // Same 8px inset as the zebra rows below, so captions sit over their columns.
-        ui.add_space(8.0);
-        ui.add_sized(vec2(24.0, 14.0), egui::Label::new(caption_text("TIER")));
-        ui.add_sized(
-            vec2(112.0, 14.0),
-            egui::Label::new(caption_text("MIN VALUE")),
-        );
-        ui.add_sized(vec2(64.0, 14.0), egui::Label::new(caption_text("UNIT")));
-    });
+/// Width of a tier cutoff box: room for about 8 digits (cutoffs stay under ~6).
+const TIER_FIELD_W: f32 = 88.0;
+/// Gap between a tier cutoff box and its unit.
+const TIER_UNIT_GAP: f32 = crate::skin::widgets::FIELD_GAP;
+
+/// The tier cutoffs editor, drawn on the ECONOMY tab under its Tiers heading.
+pub fn show_tiers_section(
+    ui: &mut egui::Ui,
+    skin: &crate::skin::Skin,
+    state: &ConfigState,
+) -> Vec<ConfigAction> {
+    let _ = skin;
+    let mut actions = Vec::new();
+    let tip = "Minimum price for each tier. Items worth at least this much get the tier.";
     for (i, row) in state.tier_rows().iter().enumerate() {
-        let mut stroke_rect = None;
-        widgets::zebra_row(ui, i, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(24.0);
-                ui.add_sized(
-                    vec2(24.0, 24.0),
-                    egui::Label::new(RichText::new(&row.tier).size(14.0).color(theme::VALUE_TEXT)),
-                );
-                let id = ui.make_persistent_id(("cfg-tier", &row.tier));
-                let mut buf = row.buffer.clone();
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .id(id)
-                        .desired_width(112.0),
-                );
-                if edit.changed() {
-                    actions.push(ConfigAction::TierText {
-                        tier: row.tier.clone(),
-                        text: buf,
-                    });
-                }
-                ui.add_sized(
-                    vec2(64.0, 24.0),
-                    egui::Label::new(
-                        RichText::new(row.unit)
-                            .size(theme::ROW_SUMMARY_SIZE)
-                            .color(theme::DISABLED_TEXT),
-                    )
-                    .sense(egui::Sense::hover()),
-                )
-                .on_hover_text(UNIT_TIP);
-            });
+        let inner = crate::skin::widgets::ff_field_row(ui, i, &row.tier, Some(tip), |ui| {
+            // The box starts at the value column of the ECONOMY rows above (`ff_row` puts its
+            // control `CONTROL_WIDTH` from the right edge), sized for about 8 digits, then a clear
+            // gap before the unit.
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let value_x = ui.max_rect().max.x - crate::skin::widgets::CONTROL_WIDTH;
+            let lead = (value_x - ui.cursor().min.x).max(0.0);
+            ui.add_space(lead);
+            let field_x = ui.cursor().min.x;
+            let id = ui.make_persistent_id(("cfg-tier", &row.tier));
+            let mut buf = row.buffer.clone();
+            let edit = crate::skin::widgets::ff_text_field_id(ui, id, &mut buf, "", TIER_FIELD_W);
+            // The field leaves FIELD_GAP after its frame; this tops up to exactly the same gap
+            // if the row spacing ever changes.
+            let unit_x = field_x + TIER_FIELD_W + TIER_UNIT_GAP;
+            ui.add_space((unit_x - ui.cursor().min.x).max(0.0));
+            if edit.changed() {
+                actions.push(ConfigAction::TierText {
+                    tier: row.tier.clone(),
+                    text: buf,
+                });
+            }
             if let Some(err) = &row.error {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(err)
-                            .size(theme::ROW_SUMMARY_SIZE)
-                            .color(theme::WARM_ACCENT_TEXT),
-                    )
-                    .wrap(),
+                ui.painter().rect_stroke(
+                    edit.rect,
+                    2.0,
+                    egui::Stroke::new(1.0, INVALID_RED),
+                    egui::StrokeKind::Inside,
                 );
+                edit.on_hover_text(err);
             }
-            if row.edge {
-                stroke_rect = Some(ui.min_rect());
-            }
+            ui.label(
+                RichText::new(row.unit)
+                    .font(crate::skin::fonts::regular(14.0))
+                    .color(crate::skin::palette::MUTED),
+            )
+            .on_hover_text(format!(
+                "{UNIT_TIP} Only your live tiers.json is edited; the built-in early-league fallback is never changed."
+            ));
         });
-        if let Some(r) = stroke_rect {
-            let bar = egui::Rect::from_min_max(
-                egui::pos2(r.left() - 8.0, r.top() - 4.0),
-                egui::pos2(r.left() - 4.0, r.bottom() + 4.0),
-            );
-            ui.painter().rect_filled(bar, 0.0, theme::WARM_ACCENT);
+        if row.edge {
+            let r = inner.response.rect;
+            let bar = egui::Rect::from_min_size(r.left_top(), vec2(4.0, r.height()));
+            ui.painter().rect_filled(bar, 0.0, INVALID_RED);
         }
     }
-    ui.add_space(4.0);
-    helper(
-        ui,
-        "Only your live tiers.json is edited. The built-in early-league fallback is never changed.",
-    );
+    actions
 }
 
-fn caption_text(text: &str) -> RichText {
-    RichText::new(text).small().color(theme::LABEL_TAN)
+/// Gap between two columns of the styles table.
+const COL_GAP: f32 = 8.0;
+/// Height of the table's column header strip.
+const HEADER_HEIGHT: f32 = 24.0;
+
+/// One column of the styles table: `x` from the row's left edge, and its width.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Col {
+    x: f32,
+    w: f32,
 }
 
-// Layout probe for tests: records where a named element was drawn. A no-op outside tests.
-#[cfg(test)]
-thread_local! {
-    static PROBE: std::cell::RefCell<Vec<(&'static str, egui::Rect)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+impl Col {
+    /// This column's rect inside `row`.
+    fn rect(self, row: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_size(
+            egui::pos2(row.left() + self.x, row.top()),
+            vec2(self.w, row.height()),
+        )
+    }
 }
 
-#[cfg(test)]
-fn probe(tag: &'static str, rect: egui::Rect) {
-    PROBE.with(|p| p.borrow_mut().push((tag, rect)));
+/// The five columns of the styles table (Visibility | Name | Icon | Preview | Order), shared by
+/// the header and every row so they line up across the Built-in and Custom groups.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TableColumns {
+    vis: Col,
+    name: Col,
+    icon: Col,
+    preview: Col,
+    order: Col,
 }
 
-#[cfg(not(test))]
-fn probe(_tag: &'static str, _rect: egui::Rect) {}
+/// Lays the columns out across `width`: `ROW_PAD` on both sides, `COL_GAP` between columns, the
+/// Name column flexible with a 110pt minimum (the Preview column gives way below that).
+fn table_columns(width: f32) -> TableColumns {
+    const VIS: f32 = 64.0;
+    const ICON: f32 = 32.0;
+    const PREVIEW: f32 = 160.0;
+    const ORDER: f32 = 56.0;
+    const NAME_MIN: f32 = 110.0;
+    const PREVIEW_MIN: f32 = 100.0;
+    let pad = crate::skin::widgets::ROW_PAD;
+    let fixed = 2.0 * pad + VIS + ICON + ORDER + 4.0 * COL_GAP;
+    let mut preview = PREVIEW;
+    let mut name = width - fixed - preview;
+    if name < NAME_MIN {
+        preview = (preview - (NAME_MIN - name)).max(PREVIEW_MIN);
+        name = NAME_MIN;
+    }
+    let vis = Col { x: pad, w: VIS };
+    let name = Col {
+        x: vis.x + vis.w + COL_GAP,
+        w: name,
+    };
+    let icon = Col {
+        x: name.x + name.w + COL_GAP,
+        w: ICON,
+    };
+    let preview = Col {
+        x: icon.x + icon.w + COL_GAP,
+        w: preview,
+    };
+    let order = Col {
+        x: preview.x + preview.w + COL_GAP,
+        w: ORDER,
+    };
+    TableColumns {
+        vis,
+        name,
+        icon,
+        preview,
+        order,
+    }
+}
 
-/// One fixed-width table cell. Header and rows both go through here so their columns line up.
-fn cell<R>(
+/// One table cell: a child ui over `rect` with `layout`.
+/// Where the text starts inside a custom style's name field; built-in names start there too.
+const NAME_TEXT_INSET: f32 = 9.0;
+
+fn cell_at<R>(
     ui: &mut egui::Ui,
     salt: &'static str,
-    width: f32,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> (egui::Rect, R) {
-    cell_with(ui, salt, width, Layout::left_to_right(Align::Center), add)
-}
-
-/// A fixed-width cell whose contents run right to left, so they hug the cell's right edge.
-fn cell_right<R>(
-    ui: &mut egui::Ui,
-    salt: &'static str,
-    width: f32,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> (egui::Rect, R) {
-    cell_with(ui, salt, width, Layout::right_to_left(Align::Center), add)
-}
-
-fn cell_with<R>(
-    ui: &mut egui::Ui,
-    salt: &'static str,
-    width: f32,
+    rect: egui::Rect,
     layout: Layout,
     add: impl FnOnce(&mut egui::Ui) -> R,
-) -> (egui::Rect, R) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::hover());
+) -> R {
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(salt)
             .max_rect(rect)
             .layout(layout),
     );
-    let out = add(&mut child);
-    (rect, out)
+    add(&mut child)
 }
 
-/// The Visibility | Name | Preview (| Order) header of one group.
-fn styles_table_header(ui: &mut egui::Ui, with_order: bool) {
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(8, 0))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let head = |ui: &mut egui::Ui, salt: &'static str, width: f32, text: &str| {
-                    let (rect, _) = cell(ui, salt, width, |ui| {
-                        ui.label(caption_text(text));
-                    });
-                    rect
-                };
-                probe("head-vis", head(ui, "h-vis", COL_VISIBILITY, "Visibility"));
-                probe("head-name", head(ui, "h-name", COL_NAME, "Name"));
-                probe(
-                    "head-preview",
-                    head(ui, "h-preview", COL_PREVIEW, "Preview"),
-                );
-                if with_order {
-                    // Right-aligned over the row arrows, which sit at the table's right edge.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let (rect, _) = cell_right(ui, "h-order", COL_ORDER, |ui| {
-                            ui.label(caption_text("Order"));
-                        });
-                        probe("head-order", rect);
-                    });
-                }
-            });
-        });
+/// The Visibility | Name | Icon | Preview | Order header of one group.
+fn styles_table_header(ui: &mut egui::Ui) {
+    let width = ui.available_width();
+    let cols = table_columns(width);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, HEADER_HEIGHT), egui::Sense::hover());
+    let painter = ui.painter();
+    for (tag, text, col, right) in [
+        ("head-vis", "Visibility", cols.vis, false),
+        ("head-name", "Name", cols.name, false),
+        ("head-icon", "Icon", cols.icon, false),
+        ("head-preview", "Preview", cols.preview, false),
+        // Right-aligned over the arrows, which hug the table's right edge.
+        ("head-order", "Order", cols.order, true),
+    ] {
+        let cell = col.rect(rect);
+        let galley = painter.layout_no_wrap(text.to_owned(), regular(14.0), pal::MUTED);
+        let x = if right {
+            cell.right() - galley.size().x
+        } else {
+            cell.left()
+        };
+        let y = rect.center().y - galley.size().y / 2.0;
+        painter.galley(egui::pos2(x, y), galley, pal::MUTED);
+        probe(tag, cell);
+    }
+    painter.hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        egui::Stroke::new(1.0, pal::INPUT_BORDER),
+    );
+}
+
+/// A group heading ("Built-in" / "Custom") in the skin's small caps.
+fn group_heading(ui: &mut egui::Ui, title: &str) -> egui::Response {
+    ui.label(
+        RichText::new(title)
+            .font(small_caps(15.0))
+            .color(pal::LABEL),
+    )
 }
 
 fn show_styles(
@@ -659,17 +646,23 @@ fn show_styles(
     ctx: &ConfigViewCtx,
     actions: &mut Vec<ConfigAction>,
 ) {
-    ui.label(theme::section_header("STYLES"));
+    section_title(ui, ctx, "Styles");
 
     let (builtin, custom) = style_groups(state);
     if builtin.is_empty() && custom.is_empty() {
-        helper(ui, "No styles loaded. Revert to reload styles.json.");
+        ui.label(
+            RichText::new("No styles loaded")
+                .font(regular(15.0))
+                .color(pal::WARN),
+        )
+        .on_hover_text("Revert to reload styles.json.");
         return;
     }
+    let skin = crate::skin::of(ui.ctx());
     if !builtin.is_empty() {
-        let heading = ui.label(caption_text("Built-in"));
+        let heading = group_heading(ui, "Built-in");
         probe("builtin-heading", heading.rect);
-        styles_table_header(ui, false);
+        styles_table_header(ui);
         for (i, name) in builtin.iter().enumerate() {
             style_row(ui, state, cfg, ctx, i, name, None, actions);
         }
@@ -679,10 +672,10 @@ fn show_styles(
     }
     // Always drawn, so Add style is reachable before the first custom style exists.
     ui.horizontal(|ui| {
-        let heading = ui.label(caption_text("Custom"));
+        let heading = group_heading(ui, "Custom");
         probe("custom-heading", heading.rect);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let add = ui.add(small_button("+ ADD STYLE"));
+            let add = crate::skin::widgets::ff_button(ui, &skin, "+ Add style", 124.0);
             probe("add-style", add.rect);
             if add.clicked() && cfg.style_draft.is_none() {
                 cfg.style_draft = Some(String::new());
@@ -691,8 +684,8 @@ fn show_styles(
         });
     });
     // With no custom styles there is nothing for a header to label.
-    if !custom.is_empty() {
-        styles_table_header(ui, true);
+    if !custom.is_empty() || cfg.style_draft.is_some() {
+        styles_table_header(ui);
     }
     if let Some(draft) = cfg.style_draft.clone() {
         style_draft_row(ui, state, cfg, draft, actions);
@@ -719,6 +712,7 @@ fn rename_field(
     cfg: &mut ConfigUi,
     ctx: &ConfigViewCtx,
     name: &str,
+    width: f32,
     actions: &mut Vec<ConfigAction>,
 ) {
     let key = state.style_id(name).unwrap_or(name).to_string();
@@ -728,10 +722,12 @@ fn rename_field(
         .cloned()
         .unwrap_or_else(|| name.to_string());
     let hint = rename_hint(state, name, &text);
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut text)
-            .id_salt("rename")
-            .desired_width(COL_NAME - 4.0),
+    let resp = crate::skin::widgets::ff_text_field_id(
+        ui,
+        ui.id().with("rename"),
+        &mut text,
+        "Style name",
+        width,
     );
     if hint.is_some() {
         ui.painter().rect_stroke(
@@ -774,7 +770,7 @@ pub fn style_groups(state: &ConfigState) -> (Vec<String>, Vec<String>) {
 }
 
 /// One styles-table row. `reorder` is `Some((can_move_up, can_move_down))` for custom styles and
-/// `None` for built-ins, which draw no arrows.
+/// `None` for built-ins.
 #[allow(clippy::too_many_arguments)]
 fn style_row(
     ui: &mut egui::Ui,
@@ -790,125 +786,162 @@ fn style_row(
         return;
     };
     let epoch = cfg.epoch;
+    let skin = crate::skin::of(ui.ctx());
     ui.push_id(("style", name, epoch), |ui| {
-        widgets::zebra_row(ui, i, |ui| {
-            let is_expanded = cfg.expanded.as_deref() == Some(name);
-            let mut name_left = None;
-            let mut arrows_left = None;
-            let header = ui.horizontal(|ui| {
-                ui.set_min_height(24.0);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let (vis, _) = cell(ui, "vis", COL_VISIBILITY, |ui| {
-                    let mut on = style.action == StyleAction::Show;
-                    let resp = widgets::slide_switch(ui, &mut on).on_hover_text(SWITCH_TIP);
-                    if resp.changed() {
-                        let action = if on {
-                            StyleAction::Show
-                        } else {
-                            StyleAction::Hide
-                        };
-                        edit(actions, name, StyleEdit::Action(action));
-                    }
-                });
-                probe("row-vis", vis);
-                let (label, _) = cell(ui, "name", COL_NAME, |ui| {
-                    if reorder.is_some() {
-                        rename_field(ui, state, cfg, ctx, name, actions);
-                    } else {
-                        ui.add_sized(
-                            vec2(COL_NAME, 20.0),
-                            egui::Label::new(
-                                RichText::new(name).size(14.0).color(theme::VALUE_TEXT),
-                            )
-                            .truncate()
-                            .sense(egui::Sense::hover()),
-                        )
-                        .on_hover_text(name);
-                    }
-                });
-                probe("row-name", label);
-                let (chip, _) = cell(ui, "preview", COL_PREVIEW, |ui| {
-                    widgets::style_preview_chip(ui, name, style);
-                });
-                probe("row-preview", chip);
-                // A custom row's Name cell is a text field, so its click target starts at the
-                // preview column; a built-in row's covers the name too.
-                name_left = Some(if reorder.is_some() {
-                    chip.left()
+        let width = ui.available_width();
+        let cols = table_columns(width);
+        let is_expanded = cfg.expanded.as_deref() == Some(name);
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(width, crate::skin::widgets::ROW_HEIGHT),
+            egui::Sense::hover(),
+        );
+        crate::skin::widgets::row_background(ui, i, rect);
+
+        // The row's click target covers the name (built-in) or icon (custom: the Name cell is a
+        // text field) through the preview column, so it never overlaps the switch or the arrows.
+        let first = if reorder.is_some() {
+            cols.icon
+        } else {
+            cols.name
+        };
+        let click_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + first.x, rect.top()),
+            egui::pos2(
+                (rect.left() + cols.order.x - 2.0).max(rect.left() + first.x),
+                rect.bottom(),
+            ),
+        );
+        let row = ui
+            .interact(
+                click_rect,
+                ui.id().with(("style-row", name)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        row.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, is_expanded, name)
+        });
+
+        let left_to_right = Layout::left_to_right(Align::Center);
+        let vis = cols.vis.rect(rect);
+        cell_at(ui, "vis", vis, left_to_right, |ui| {
+            let mut on = style.action == StyleAction::Show;
+            let resp = widgets::slide_switch(ui, &mut on).on_hover_text(SWITCH_TIP);
+            if resp.changed() {
+                let action = if on {
+                    StyleAction::Show
                 } else {
-                    label.left()
-                });
-                if let Some((can_up, can_down)) = reorder {
-                    // The arrows hug the row's right edge like the RULES rows: right to left,
-                    // Down first (rightmost), so they read Up then Down.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let (order, _) = cell_right(ui, "order", COL_ORDER, |ui| {
-                            let down = widgets::arrow_button(ui, ArrowDirection::Down, can_down);
-                            let up = widgets::arrow_button(ui, ArrowDirection::Up, can_up);
-                            probe("row-up", up.rect);
-                            probe("row-down", down.rect);
-                            if down.clicked() {
-                                actions.push(ConfigAction::MoveStyle {
-                                    name: name.to_string(),
-                                    up: false,
-                                });
-                            }
-                            if up.clicked() {
-                                actions.push(ConfigAction::MoveStyle {
-                                    name: name.to_string(),
-                                    up: true,
-                                });
-                            }
-                        });
-                        probe("row-order", order);
-                        arrows_left = Some(order.left());
-                    });
-                }
-            });
-            // The row's click target covers the name and preview columns only, so it never
-            // overlaps the switch or the arrows.
-            let mut row_rect = header.response.rect;
-            if let Some(left) = name_left {
-                row_rect.min.x = left;
-            }
-            if let Some(left) = arrows_left {
-                row_rect.max.x = (left - 2.0).max(row_rect.min.x);
-            }
-            let row = ui
-                .interact(
-                    row_rect,
-                    ui.id().with(("style-row", name)),
-                    egui::Sense::click(),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            row.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::CollapsingHeader,
-                    true,
-                    is_expanded,
-                    name,
-                )
-            });
-            if cfg.scroll_to.as_deref() == Some(name) {
-                row.scroll_to_me(Some(Align::Center));
-                cfg.scroll_to = None;
-            }
-            if row.clicked() {
-                cfg.set_expanded(name);
-                egui::Popup::close_all(ui.ctx());
-            }
-            if is_expanded {
-                ui.add_space(4.0);
-                egui::Frame::new()
-                    .fill(theme::ROW_BASE)
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        style_editor(ui, state, cfg, ctx, name, style, actions);
-                    });
+                    StyleAction::Hide
+                };
+                edit(actions, name, StyleEdit::Action(action));
             }
         });
+        probe("row-vis", vis);
+
+        let name_cell = cols.name.rect(rect);
+        cell_at(ui, "name", name_cell, left_to_right, |ui| {
+            if reorder.is_some() {
+                rename_field(ui, state, cfg, ctx, name, name_cell.width(), actions);
+            } else {
+                // Left-aligned at the text inset of the custom rows' name fields, so the Name
+                // column reads as one edge in both groups.
+                ui.add_space(NAME_TEXT_INSET);
+                ui.add(
+                    egui::Label::new(RichText::new(name).font(small_caps(17.0)).color(pal::VALUE))
+                        .truncate()
+                        .sense(egui::Sense::hover()),
+                )
+                .on_hover_text(RENAME_TIP);
+            }
+        });
+        probe("row-name", name_cell);
+
+        let icon = cols.icon.rect(rect);
+        // Off and the cancel value (`MinimapIcon -1`) draw no icon.
+        if let Some(m) = style.minimap.as_ref().and_then(Cancelable::value)
+            && let Some(shape) = minimap::index_of(&minimap::SHAPES, m.shape.as_str())
+            && let Some(colour) = minimap::index_of(&minimap::COLOURS, m.color.as_str())
+        {
+            ed::paint_minimap_icon(
+                ui.painter(),
+                &skin,
+                icon.center(),
+                shape,
+                colour,
+                minimap::icon_points(usize::from(m.size), 24.0),
+                egui::Color32::WHITE,
+            );
+        }
+        probe("row-icon", icon);
+
+        let preview = cols.preview.rect(rect);
+        let label = egui::Rect::from_center_size(preview.center(), vec2(preview.width(), 26.0));
+        ed::ff_item_label(ui.painter(), label, "Item Name", label_look(style, false));
+        probe("row-preview", preview);
+
+        let order = cols.order.rect(rect);
+        cell_at(
+            ui,
+            "order",
+            order,
+            Layout::right_to_left(Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                // Built-ins draw both arrows greyed, at the same x as the custom rows' working
+                // ones, so the column reads as one.
+                let (can_up, can_down) = reorder.unwrap_or((false, false));
+                let down = crate::skin::widgets::ff_arrow(ui, &skin, false, can_down);
+                let up = crate::skin::widgets::ff_arrow(ui, &skin, true, can_up);
+                probe("row-up", up.rect);
+                probe("row-down", down.rect);
+                let (down_clicked, up_clicked) = (down.clicked(), up.clicked());
+                if reorder.is_none() {
+                    down.on_hover_text(ORDER_TIP);
+                    up.on_hover_text(ORDER_TIP);
+                }
+                if down_clicked {
+                    actions.push(ConfigAction::MoveStyle {
+                        name: name.to_string(),
+                        up: false,
+                    });
+                }
+                if up_clicked {
+                    actions.push(ConfigAction::MoveStyle {
+                        name: name.to_string(),
+                        up: true,
+                    });
+                }
+            },
+        );
+        probe("row-order", order);
+
+        if cfg.scroll_to.as_deref() == Some(name) {
+            row.scroll_to_me(Some(Align::Center));
+            cfg.scroll_to = None;
+        }
+        if row.clicked() {
+            cfg.set_expanded(name);
+            egui::Popup::close_all(ui.ctx());
+        }
+        if is_expanded {
+            let editor = ui.scope(|ui| {
+                style_editor(ui, state, cfg, name, style, actions);
+            });
+            // A gold outline ties the row to the editor opened under it.
+            ui.painter().rect_stroke(
+                rect.union(editor.response.rect),
+                0.0,
+                egui::Stroke::new(1.0, pal::GOLD),
+                egui::StrokeKind::Inside,
+            );
+        }
     });
+}
+
+/// How a style's item-label preview looks. `with_font` carries the style's font size; the table
+/// previews leave it off so every row is the same height.
+fn label_look(style: &Style, with_font: bool) -> ed::LabelLook {
+    style_lines::label_look(&StyleView::from_style(style), with_font)
 }
 
 fn style_draft_row(
@@ -918,50 +951,55 @@ fn style_draft_row(
     mut draft: String,
     actions: &mut Vec<ConfigAction>,
 ) {
+    use crate::skin::widgets::{ROW_HEIGHT, ROW_PAD, ff_button, ff_button_ex, ff_text_field_id};
+
     let hint = style_name_hint(state, &draft);
+    let skin = crate::skin::of(ui.ctx());
     let mut commit = false;
     let mut discard = false;
-    egui::Frame::new()
-        .fill(theme::ROW_BASE)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 4.0;
-            let edit = ui.add(
-                egui::TextEdit::singleline(&mut draft)
-                    .id_salt("cfg-style-draft")
-                    .hint_text("Style name")
-                    .desired_width(ui.available_width() - 8.0),
-            );
-            if std::mem::take(&mut cfg.focus_draft) {
-                edit.request_focus();
-            }
-            if edit.lost_focus() {
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    commit = hint.is_none();
-                } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    discard = true;
-                }
-            }
-            if let Some(msg) = &hint {
-                helper(ui, msg);
-            }
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(hint.is_none(), small_button("Add style"))
-                    .clicked()
-                {
-                    commit = true;
-                }
-                if ui.add(small_button("Discard new style")).clicked() {
-                    discard = true;
-                }
-            });
-        });
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), egui::Sense::hover());
+    crate::skin::widgets::row_background(ui, 0, rect);
+    let mut row = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("cfg-style-draft-row")
+            .max_rect(rect.shrink2(vec2(ROW_PAD, 0.0)))
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    if ff_button(&mut row, &skin, "Discard new style", 168.0).clicked() {
+        discard = true;
+    }
+    if ff_button_ex(&mut row, &skin, "Add style", 112.0, hint.is_none(), false).clicked() {
+        commit = true;
+    }
+    let width = (row.available_width() - 8.0).max(80.0);
+    let id = row.id().with("cfg-style-draft");
+    let mut edit = ff_text_field_id(&mut row, id, &mut draft, "Style name", width);
+    if draft.trim().is_empty()
+        && let Some(msg) = &hint
+    {
+        edit = edit.on_hover_text(msg.as_str());
+    }
+    if std::mem::take(&mut cfg.focus_draft) {
+        edit.request_focus();
+    }
+    if edit.lost_focus() {
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            commit = hint.is_none();
+        } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            discard = true;
+        }
+    }
+    if let Some(msg) = &hint
+        && !draft.trim().is_empty()
+    {
+        body::hint(ui, msg);
+    }
     if commit && hint.is_none() {
         let name = draft.trim().to_string();
+        // The AddStyle handler expands the new row (WR-01: expanding here too made its toggle
+        // collapse it again).
         actions.push(ConfigAction::AddStyle(name.clone()));
-        cfg.expanded = Some(name.clone());
         cfg.scroll_to = Some(name);
         cfg.style_draft = None;
     } else if discard {
@@ -978,456 +1016,70 @@ fn edit(actions: &mut Vec<ConfigAction>, name: &str, edit: StyleEdit) {
     });
 }
 
+/// The `StyleEdit` a shared style line's intent stands for (styles are opaque: alpha dropped).
+fn style_edit_for(intent: StyleIntent) -> StyleEdit {
+    match intent {
+        StyleIntent::Visibility(Vis::Hide) => StyleEdit::Action(StyleAction::Hide),
+        StyleIntent::Visibility(_) => StyleEdit::Action(StyleAction::Show),
+        StyleIntent::Colour { slot, value, .. } => StyleEdit::Colour {
+            slot,
+            value: value.map(|c| [c[0], c[1], c[2]]),
+        },
+        StyleIntent::Font(f) => StyleEdit::Font(f),
+        StyleIntent::Minimap(m) => StyleEdit::Minimap(m),
+        StyleIntent::Beam(b) => StyleEdit::Beam(b),
+        StyleIntent::Sound(s) => StyleEdit::Sound(s),
+        StyleIntent::DropSound(d) => StyleEdit::DropSound(d),
+    }
+}
+
 fn style_editor(
     ui: &mut egui::Ui,
     state: &ConfigState,
     cfg: &mut ConfigUi,
-    ctx: &ConfigViewCtx,
     name: &str,
     style: &Style,
     actions: &mut Vec<ConfigAction>,
 ) {
-    ui.spacing_mut().item_spacing.y = 8.0;
-    let salt = |field: &'static str| ("cfg-style", name.to_string(), field);
-
-    // Name (read-only).
-    ui.vertical(|ui| {
-        body::caption(ui, "NAME");
-        ui.add(
-            egui::Label::new(RichText::new(name).size(14.0).color(theme::VALUE_TEXT))
-                .sense(egui::Sense::hover()),
-        )
-        .on_hover_text(RENAME_TIP);
-    });
-
-    // Colours.
-    for (label, slot, current, seed) in [
-        ("TEXT", ColourSlot::Text, style.text, [248, 248, 242]),
-        ("BORDER", ColourSlot::Border, style.border, [248, 248, 242]),
-        (
-            "BACKGROUND",
-            ColourSlot::Background,
-            style.background,
-            [40, 42, 54],
-        ),
-    ] {
-        ui.horizontal(|ui| {
-            body::caption(ui, label);
-            let mut on = current.is_some();
-            if widgets::circular_toggle(ui, &mut on).changed() {
-                edit(
-                    actions,
-                    name,
-                    StyleEdit::Colour {
-                        slot,
-                        value: on.then_some(seed),
-                    },
-                );
-            }
-            match current {
-                Some(rgb) => {
-                    if let Some(new) = widgets::colour_swatch_rgb(ui, rgb) {
-                        edit(
-                            actions,
-                            name,
-                            StyleEdit::Colour {
-                                slot,
-                                value: Some(new),
-                            },
-                        );
-                    }
-                }
-                None => body::caption(ui, NOT_SET),
-            }
-        });
+    let skin = crate::skin::of(ui.ctx());
+    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+    let mut n = 0usize;
+    // The remembered None-values outlive a fold (only Revert / Reload / Apply clear them).
+    let memo = egui::Id::new(("cfg-style-last", name, cfg.memo_epoch));
+    let view = StyleView::from_style(style);
+    for intent in style_lines::show(ui, &view, memo, &mut n) {
+        edit(actions, name, style_edit_for(intent));
     }
-
-    // Font size.
-    ui.vertical(|ui| {
-        body::caption(ui, "FONT SIZE");
-        ui.horizontal(|ui| {
-            let mut on = style.font.is_some();
-            if widgets::circular_toggle(ui, &mut on).changed() {
-                edit(actions, name, StyleEdit::Font(on.then_some(32)));
-            }
-            if let Some(font) = style.font {
-                let mut invalid = false;
-                let (new, _) =
-                    body::slider_pair(ui, salt("font"), i64::from(font), (1, 45), &mut invalid);
-                if let Some(v) = new {
-                    edit(actions, name, StyleEdit::Font(Some(v)));
-                }
-                if invalid {
-                    body::hint(ui, WHOLE_NUMBER);
-                }
-            } else {
-                body::caption(ui, NOT_SET);
-            }
-        });
-        if let Some(font) = style.font
-            && let Some(msg) = body::font_hint(i64::from(font))
-        {
-            helper(ui, msg);
-        }
-    });
-
-    sound_editor(ui, name, style, actions);
-
-    // Drop sound.
-    ui.horizontal(|ui| {
-        let mut on = style.disable_drop_sound;
-        if widgets::circular_toggle(ui, &mut on).changed() {
-            edit(actions, name, StyleEdit::DisableDropSound(on));
-        }
-        ui.label(
-            RichText::new("Silence the default drop sound")
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
-        );
-    });
-
-    minimap_editor(ui, name, style, actions);
-    beam_editor(ui, name, style, actions);
 
     if let Some(err) = state.styles_error() {
-        ui.add(
-            egui::Label::new(
-                RichText::new(err)
-                    .size(theme::ROW_SUMMARY_SIZE)
-                    .color(theme::WARM_ACCENT_TEXT),
-            )
-            .wrap(),
-        );
+        ui.add(egui::Label::new(RichText::new(err).font(regular(15.0)).color(pal::WARN)).wrap());
     }
 
-    // Delete.
     if delete_visible(state, name) {
-        if cfg.delete_armed.as_deref() == Some(name) {
-            egui::Frame::new()
-                .fill(theme::ROW_ALT)
-                .inner_margin(egui::Margin::same(8))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(delete_prompt(name, ctx))
-                                .size(theme::ROW_SUMMARY_SIZE)
-                                .color(theme::VALUE_TEXT),
-                        )
-                        .wrap(),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.add(accent_button("Delete style")).clicked() {
-                            actions.push(ConfigAction::DeleteStyle(name.to_string()));
-                            cfg.delete_armed = None;
-                        }
-                        if ui.add(small_button("Keep style")).clicked() {
-                            cfg.delete_armed = None;
-                        }
-                    });
-                });
-        } else {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(small_button("Delete style")).clicked() {
-                    cfg.arm_delete(name);
-                }
-            });
-        }
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.add_space(crate::skin::widgets::ROW_PAD);
+            let r =
+                crate::skin::widgets::ff_button_ex(ui, &skin, "Delete style", 128.0, true, true);
+            probe("delete-style", r.rect);
+            if r.clicked() {
+                cfg.arm_delete(name);
+            }
+        });
     }
-}
-
-fn sound_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<ConfigAction>) {
-    let salt = |field: &'static str| ("cfg-style", name.to_string(), field);
-    ui.vertical(|ui| {
-        body::caption(ui, "SOUND");
-        let mode = match &style.sound {
-            None => 0,
-            Some(s) if s.custom.is_some() => 2,
-            Some(_) => 1,
-        };
-        if let Some(pick) = segmented(ui, &["None", "Alert", "Custom"], mode)
-            && pick != mode
-        {
-            let next = match pick {
-                0 => None,
-                1 => Some(Sound {
-                    id: Some(1),
-                    custom: None,
-                    vol: 100,
-                }),
-                _ => Some(Sound {
-                    id: None,
-                    custom: Some("uwu.mp3".to_string()),
-                    vol: 100,
-                }),
-            };
-            edit(actions, name, StyleEdit::Sound(next));
-        }
-        let Some(sound) = &style.sound else {
-            return;
-        };
-        let mut invalid = false;
-        if let Some(file) = &sound.custom {
-            let mut buf = file.clone();
-            ui.horizontal(|ui| {
-                body::caption(ui, "File");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .id_salt(salt("file"))
-                        .hint_text("uwu.mp3")
-                        .desired_width(160.0),
-                );
-                if resp.changed() {
-                    edit(
-                        actions,
-                        name,
-                        StyleEdit::Sound(Some(Sound {
-                            id: None,
-                            custom: Some(buf.clone()),
-                            vol: sound.vol,
-                        })),
-                    );
-                }
-            });
-            body::caption(ui, "The file must be in the game folder.");
-        } else {
-            let id = sound.id.unwrap_or(1);
-            ui.horizontal(|ui| {
-                body::caption(ui, "ID");
-                let (new, _) =
-                    body::slider_pair(ui, salt("sid"), i64::from(id), (1, 16), &mut invalid);
-                // Values that do not fit the stored type are dropped, never wrapped.
-                if let Some(v) = new.and_then(|v| u8::try_from(v).ok()) {
-                    edit(
-                        actions,
-                        name,
-                        StyleEdit::Sound(Some(Sound {
-                            id: Some(v),
-                            custom: None,
-                            vol: sound.vol,
-                        })),
-                    );
-                }
-            });
-        }
-        ui.horizontal(|ui| {
-            body::caption(ui, "Volume");
-            let (new, _) = body::slider_pair(
-                ui,
-                salt("svol"),
-                i64::from(sound.vol),
-                (0, 300),
-                &mut invalid,
-            );
-            if let Some(v) = new.and_then(|v| u16::try_from(v).ok()) {
-                edit(
-                    actions,
-                    name,
-                    StyleEdit::Sound(Some(Sound {
-                        id: sound.id,
-                        custom: sound.custom.clone(),
-                        vol: v,
-                    })),
-                );
-            }
-        });
-        if invalid {
-            body::hint(ui, WHOLE_NUMBER);
-        }
-    });
-}
-
-fn minimap_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<ConfigAction>) {
-    let salt = |field: &'static str| ("cfg-style", name.to_string(), field);
-    ui.vertical(|ui| {
-        body::caption(ui, "MINIMAP ICON");
-        ui.horizontal(|ui| {
-            let mut on = style.minimap.is_some();
-            if widgets::circular_toggle(ui, &mut on).changed() {
-                let seed = on.then_some(Minimap {
-                    size: 2,
-                    color: FilterColor::White,
-                    shape: MinimapShape::Circle,
-                });
-                edit(actions, name, StyleEdit::Minimap(seed));
-            }
-            if style.minimap.is_none() {
-                body::caption(ui, NOT_SET);
-            }
-        });
-        let Some(m) = &style.minimap else {
-            return;
-        };
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let size_label = body::SIZE_CHOICES
-                .iter()
-                .find(|(_, v)| *v == i64::from(m.size))
-                .map_or_else(|| m.size.to_string(), |(l, _)| (*l).to_string());
-            egui::ComboBox::from_id_salt(salt("msize"))
-                .selected_text(size_label)
-                .width(88.0)
-                .show_ui(ui, |ui| {
-                    for (label, v) in body::SIZE_CHOICES.iter().filter(|(_, v)| *v >= 0) {
-                        let selected = *v == i64::from(m.size);
-                        if ui.selectable_label(selected, *label).clicked()
-                            && !selected
-                            && let Ok(size) = u8::try_from(*v)
-                        {
-                            let mut next = m.clone();
-                            next.size = size;
-                            edit(actions, name, StyleEdit::Minimap(Some(next)));
-                        }
-                    }
-                });
-            if let Some(c) = body::colour_combo(ui, salt("mcol"), m.color.as_str(), false)
-                && let Some(color) = FilterColor::from_name(&c)
-            {
-                let mut next = m.clone();
-                next.color = color;
-                edit(actions, name, StyleEdit::Minimap(Some(next)));
-            }
-            egui::ComboBox::from_id_salt(salt("mshape"))
-                .selected_text(m.shape.as_str())
-                .width(104.0)
-                .show_ui(ui, |ui| {
-                    for shape in MinimapShape::ALL {
-                        let selected = shape == m.shape;
-                        if ui.selectable_label(selected, shape.as_str()).clicked() && !selected {
-                            let mut next = m.clone();
-                            next.shape = shape;
-                            edit(actions, name, StyleEdit::Minimap(Some(next)));
-                        }
-                    }
-                });
-        });
-    });
-}
-
-fn beam_editor(ui: &mut egui::Ui, name: &str, style: &Style, actions: &mut Vec<ConfigAction>) {
-    let salt = |field: &'static str| ("cfg-style", name.to_string(), field);
-    ui.vertical(|ui| {
-        body::caption(ui, "BEAM");
-        ui.horizontal(|ui| {
-            let mut on = style.beam.is_some();
-            if widgets::circular_toggle(ui, &mut on).changed() {
-                let seed = on.then_some(Beam {
-                    color: FilterColor::White,
-                    temp: false,
-                });
-                edit(actions, name, StyleEdit::Beam(seed));
-            }
-            match &style.beam {
-                None => body::caption(ui, NOT_SET),
-                Some(b) => {
-                    if let Some(c) = body::colour_combo(ui, salt("bcol"), b.color.as_str(), false)
-                        && let Some(color) = FilterColor::from_name(&c)
-                    {
-                        let mut next = b.clone();
-                        next.color = color;
-                        edit(actions, name, StyleEdit::Beam(Some(next)));
-                    }
-                    let mut temp = b.temp;
-                    if widgets::circular_toggle(ui, &mut temp).changed() {
-                        let mut next = b.clone();
-                        next.temp = temp;
-                        edit(actions, name, StyleEdit::Beam(Some(next)));
-                    }
-                    body::caption(ui, "Temporary");
-                }
-            }
-        });
-    });
 }
 
 // ---------------------------------------------------------------------------------------------
 // Status, footer, load error
 // ---------------------------------------------------------------------------------------------
 
-/// The pinned button row. The app draws the outcome area above it.
-pub fn show_footer(
-    ui: &mut egui::Ui,
-    state: &ConfigState,
-    cfg: &mut ConfigUi,
-    ctx: &ConfigViewCtx,
-) -> Vec<ConfigAction> {
-    let mut actions = Vec::new();
-    // A revert confirm cannot outlive its edits.
-    if !state.is_dirty() {
-        cfg.revert_armed = false;
-    }
-
-    if cfg.revert_armed && state.is_dirty() && !ctx.changed_on_disk {
-        ui.label(
-            RichText::new(revert_prompt(state.dirty_count()))
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::VALUE_TEXT),
-        );
-    }
-    // The same state line as the RULES footer: one Apply state for both tabs.
-    ui.label(
-        RichText::new(ctx.indicator)
-            .size(theme::ROW_SUMMARY_SIZE)
-            .color(theme::TAB_ACTIVE),
-    );
-
-    let buttons = footer_buttons(state, cfg, ctx.changed_on_disk, ctx.apply_enabled);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        for (label, enabled) in buttons {
-            let accent = matches!(label, "OVERWRITE" | "Discard");
-            let text = RichText::new(label);
-            let mut button = egui::Button::new(text).min_size(vec2(0.0, 28.0));
-            if accent {
-                button = button.fill(theme::WARM_ACCENT);
-            }
-            let mut response = ui.add_enabled(enabled, button);
-            if label == "Apply" && !enabled {
-                let tip = if state.has_tier_errors() {
-                    APPLY_BLOCKED_TOOLTIP
-                } else if state.styles_error().is_some() || state.tiers_error().is_some() {
-                    APPLY_LOAD_ERROR_TIP
-                } else if ctx.rules_blocking {
-                    apply::APPLY_BLOCKED_TOOLTIP
-                } else if ctx.filter_damaged {
-                    apply::DAMAGED_MARKERS_MESSAGE
-                } else {
-                    APPLY_NOTHING_TIP
-                };
-                response = response.on_disabled_hover_text(tip);
-            }
-            match label {
-                "RELOAD" => response = response.on_hover_text(apply::RELOAD_TOOLTIP),
-                "OVERWRITE" => response = response.on_hover_text(apply::OVERWRITE_TOOLTIP),
-                _ => {}
-            }
-            if !response.clicked() {
-                continue;
-            }
-            match label {
-                "Apply" => actions.push(ConfigAction::Apply),
-                "Revert" => cfg.revert_armed = true,
-                "Discard" => {
-                    cfg.revert_armed = false;
-                    actions.push(ConfigAction::Revert);
-                }
-                "RELOAD" => actions.push(ConfigAction::Reload),
-                "OVERWRITE" => actions.push(ConfigAction::Overwrite),
-                "Cancel" => cfg.revert_armed = false,
-                _ => {}
-            }
-        }
-    });
-    actions
-}
-
 /// The load-failure view: the message and a way to retry.
 pub fn show_load_error(ui: &mut egui::Ui, message: &str) -> Option<ConfigAction> {
     ui.add(
         egui::Label::new(
             RichText::new(message)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::WARM_ACCENT_TEXT),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::WARN),
         )
         .wrap(),
     );
@@ -1439,6 +1091,10 @@ pub fn show_load_error(ui: &mut egui::Ui, message: &str) -> Option<ConfigAction>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::config::{Beam, FilterColor, Minimap, MinimapShape, Sound};
+    use crate::overlay::style_lines::{
+        FOLDER_HEADER, MINIMAP_SIZES, SoundItem, safe_file_name, sound_for_item, sound_menu,
+    };
     use std::fs;
 
     #[test]
@@ -1450,7 +1106,12 @@ mod tests {
         };
         cfg.rename_drafts
             .insert("t5hw2k".to_string(), "Recycle".to_string());
+        let epoch = cfg.epoch;
         cfg.reset_for_new_styles();
+        assert_ne!(
+            cfg.epoch, epoch,
+            "open pickers and remembered values are orphaned"
+        );
         assert!(cfg.rename_drafts.is_empty());
         assert!(cfg.delete_armed.is_none() && !cfg.revert_armed);
     }
@@ -1478,7 +1139,7 @@ mod tests {
 
     fn headless() -> (egui::Context, egui::RawInput) {
         let ctx = egui::Context::default();
-        theme::install_fonts(&ctx);
+        crate::skin::fonts::install(&ctx);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1498,7 +1159,6 @@ mod tests {
             filters,
             active_filter: "dynamic.filter",
             game_dir: None,
-            pending_switch: None,
             rule_users: users,
             config_refs: refs,
             changed_on_disk: false,
@@ -1507,6 +1167,7 @@ mod tests {
             filter_damaged: false,
             indicator: "",
             reload_after_apply: true,
+            skin: None,
         }
     }
 
@@ -1638,7 +1299,7 @@ mod tests {
     }
 
     #[test]
-    fn open_drafts_and_a_switch_guard_render() {
+    fn open_drafts_render() {
         let (_d, state) = loaded();
         let users = HashMap::new();
         let refs = BTreeSet::new();
@@ -1649,8 +1310,7 @@ mod tests {
             filter_draft: Some("ssf".to_string()),
             ..Default::default()
         };
-        let mut vctx = view_ctx(Some(&filters), &users, &refs);
-        vctx.pending_switch = Some("ssf.filter");
+        let vctx = view_ctx(Some(&filters), &users, &refs);
         let mut actions = None;
         let out = ctx.run_ui(input, |ui| {
             actions = Some(show_sections(ui, &state, &mut cfg, &vctx));
@@ -1659,6 +1319,72 @@ mod tests {
         assert_eq!(actions, Some(vec![]));
         assert_eq!(cfg.style_draft.as_deref(), Some("Gold"));
         assert_eq!(cfg.filter_draft.as_deref(), Some("ssf"));
+    }
+
+    #[test]
+    fn tiers_section_draws_every_tier_and_an_unchanged_frame_acts_on_nothing() {
+        let (_d, state) = loaded();
+        assert_eq!(state.tier_rows().len(), 7);
+        let (ctx, input) = headless();
+        let skin = crate::skin::textures::load_light(&ctx);
+        let mut actions = None;
+        ctx.run_ui(input, |ui| {
+            actions = Some(show_tiers_section(ui, &skin, &state));
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(actions, Some(vec![]));
+    }
+
+    #[test]
+    fn tier_boxes_are_narrow_and_sit_at_the_value_column() {
+        let (_d, state) = loaded();
+        let (ctx, input) = headless();
+        let skin = crate::skin::textures::load_light(&ctx);
+        let mut area = egui::Rect::NOTHING;
+        ctx.run_ui(input, |ui| {
+            area = ui.max_rect();
+            show_tiers_section(ui, &skin, &state);
+        })
+        .drop_without_applying_deltas();
+        // Per row: the edit inside the field (10pt inner padding each side), then the unit label.
+        let mut rects: Vec<egui::Rect> = ctx.viewport(|v| {
+            v.prev_pass
+                .widgets
+                .layers()
+                .flat_map(|(_, w)| w.iter())
+                .filter(|w| w.sense.senses_click() && w.sense.senses_drag())
+                .map(|w| w.rect)
+                .collect()
+        });
+        // The edit and its unit share a row centre (the unit is as tall as the field frame).
+        rects.sort_by(|a, b| {
+            let key = |r: &egui::Rect| (r.center().y.round(), r.min.x);
+            key(a).partial_cmp(&key(b)).unwrap()
+        });
+        assert_eq!(rects.len(), 14, "{rects:?}");
+        let pad = crate::skin::widgets::ROW_PAD;
+        let value_x = area.max.x - pad - crate::skin::widgets::CONTROL_WIDTH;
+        for pair in rects.chunks(2) {
+            let (field, unit) = (pair[0].expand2(vec2(10.0, 0.0)), pair[1]);
+            assert!((field.width() - TIER_FIELD_W).abs() < 1.0, "{field:?}");
+            assert!(
+                (field.min.x - value_x).abs() < 1.0,
+                "{field:?} vs {value_x}"
+            );
+            assert!(
+                (unit.min.x - field.max.x - TIER_UNIT_GAP).abs() < 1.0,
+                "{field:?} {unit:?}"
+            );
+            assert!(unit.max.x < area.max.x - pad, "the unit fits: {unit:?}");
+        }
+    }
+
+    #[test]
+    fn config_sections_no_longer_draw_tiers() {
+        let src = include_str!("config_view.rs");
+        let body = &src[src.find("pub fn show_sections(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(!body.contains("show_tiers") && !body.contains("\"Tiers\""));
     }
 
     #[test]
@@ -1671,71 +1397,129 @@ mod tests {
         assert_eq!(builtin.len() + custom.len(), state.style_names().len());
     }
 
+    /// The probe rects of one tag from a single rendering of the styles section.
+    fn render_probes(state: &ConfigState, cfg: &mut ConfigUi, tag: &str) -> Vec<egui::Rect> {
+        render_probes_with_folder(state, cfg, tag, None)
+    }
+
+    /// [`render_probes`] with the sound folder listing cached from `folder` first.
+    fn render_probes_with_folder(
+        state: &ConfigState,
+        cfg: &mut ConfigUi,
+        tag: &str,
+        folder: Option<&std::path::Path>,
+    ) -> Vec<egui::Rect> {
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        if let Some(dir) = folder {
+            crate::overlay::sound_files::set_dir(&ctx, Some(dir.to_path_buf()));
+        }
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, state, cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == tag)
+            .map(|(_, r)| r)
+            .collect()
+    }
+
     #[test]
     fn style_switch_click_emits_hide() {
         let (_d, state) = loaded();
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
         let (builtin, _) = style_groups(&state);
         let first = builtin[0].clone();
         assert_eq!(state.style(&first).unwrap().action, StyleAction::Show);
-        let mut found = 0;
-        let mut first_hit = false;
-        for y in (0..140).step_by(3) {
-            for x in (8..56).step_by(4) {
-                let (ctx, base) = headless();
-                let pos = egui::pos2(x as f32, y as f32);
-                let mut input = base;
-                input.events = vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed: true,
-                        modifiers: Default::default(),
-                    },
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed: false,
-                        modifiers: Default::default(),
-                    },
-                ];
-                let mut cfg = ConfigUi::default();
-                let vctx = view_ctx(None, &users, &refs);
-                let mut actions = Vec::new();
-                // Frame 1 settles layout and hover; frame 2 delivers the click.
-                ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: input.screen_rect,
-                        ..Default::default()
-                    },
-                    |ui| {
-                        show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
-                    },
-                )
-                .drop_without_applying_deltas();
-                ctx.run_ui(input, |ui| {
-                    show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
-                })
-                .drop_without_applying_deltas();
-                let hits: Vec<_> = actions
-                    .iter()
-                    .filter(|a| matches!(a, ConfigAction::EditStyle { .. }))
-                    .collect();
-                if let Some(ConfigAction::EditStyle { name, edit }) = hits.first() {
-                    assert_eq!(hits.len(), 1);
-                    assert!(builtin.contains(name));
-                    if name == &first {
-                        first_hit = true;
-                    }
-                    assert_eq!(*edit, StyleEdit::Action(StyleAction::Hide));
-                    assert_eq!(cfg.expanded, None, "switch click must not expand the row");
-                    found += 1;
-                }
-            }
+        let mut cfg = ConfigUi::default();
+        let switches = render_probes(&state, &mut cfg, "row-vis");
+        let (ctx, _) = headless();
+        let actions = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            switches[0].left_center() + vec2(16.0, 0.0),
+        );
+        let edits: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, ConfigAction::EditStyle { .. }))
+            .collect();
+        assert_eq!(
+            edits,
+            [&ConfigAction::EditStyle {
+                name: first,
+                edit: StyleEdit::Action(StyleAction::Hide),
+            }]
+        );
+        assert_eq!(cfg.expanded, None, "switch click must not expand the row");
+    }
+
+    #[test]
+    fn label_look_reads_the_style() {
+        let (_d, state) = loaded();
+        let s = label_look(state.style("S").unwrap(), false);
+        assert_eq!(s.text, Some(egui::Color32::from_rgb(255, 121, 198)));
+        assert_eq!(s.border, Some(egui::Color32::from_rgb(255, 121, 198)));
+        assert_eq!(s.background, Some(egui::Color32::from_rgb(40, 42, 54)));
+        assert_eq!((s.font_size, s.hidden), (None, false));
+        let with_font = label_look(state.style("S").unwrap(), true);
+        assert_eq!(
+            with_font.font_size,
+            state.style("S").unwrap().font.map(f32::from)
+        );
+        assert!(with_font.font_size.is_some());
+        let h = label_look(state.style("hidden").unwrap(), false);
+        assert!(h.hidden);
+        assert_eq!((h.text, h.border, h.background), (None, None, None));
+    }
+
+    fn mesh_rects(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(m) => out.push(m.calc_bounds()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| mesh_rects(s, out)),
+            _ => {}
         }
-        assert!(found > 0 && first_hit, "no click reached the first switch");
+    }
+
+    #[test]
+    fn a_style_with_a_minimap_paints_its_icon_in_the_icon_cell() {
+        let (_d, state) = loaded();
+        assert!(state.style("S").unwrap().minimap.is_some());
+        assert!(state.style("unchanged").unwrap().minimap.is_none());
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let mut actions = Vec::new();
+        drain_probes();
+        let out = ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        });
+        let icons: Vec<_> = drain_probes()
+            .into_iter()
+            .filter(|(t, _)| *t == "row-icon")
+            .map(|(_, r)| r)
+            .collect();
+        let mut meshes = Vec::new();
+        for clipped in &out.shapes {
+            mesh_rects(&clipped.shape, &mut meshes);
+        }
+        out.drop_without_applying_deltas();
+        let painted_in = |cell: egui::Rect| {
+            meshes
+                .iter()
+                .filter(|m| cell.expand(1.0).contains_rect(**m))
+                .count()
+        };
+        let (builtin, _) = style_groups(&state);
+        let row = |n: &str| builtin.iter().position(|x| x == n).unwrap();
+        assert_eq!(painted_in(icons[row("S")]), 1);
+        assert_eq!(painted_in(icons[row("unchanged")]), 0);
     }
 
     #[test]
@@ -1768,42 +1552,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn footer_buttons_follow_the_shared_state() {
-        let (_d, mut state) = loaded();
-        let mut cfg = ConfigUi::default();
-        // Apply follows the combined state the app computes; Revert follows the config edits.
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, true),
-            vec![("Apply", true), ("Revert", false)]
-        );
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, false),
-            vec![("Apply", false), ("Revert", false)]
-        );
-        state.set_tier_text("S", "oops");
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, false),
-            vec![("Apply", false), ("Revert", true)]
-        );
-        assert!(state.has_tier_errors());
-
-        // After a changed-on-disk refusal: the same two buttons as the RULES footer, no guard.
-        let changed = footer_buttons(&state, &cfg, true, true);
-        assert_eq!(changed, vec![("RELOAD", true), ("OVERWRITE", true)]);
-        assert!(changed.iter().all(|(l, _)| *l != "Cancel"));
-
-        // The Revert confirm still works.
-        cfg.revert_armed = true;
-        assert_eq!(
-            footer_buttons(&state, &cfg, false, true),
-            vec![("Discard", true), ("Cancel", true)]
-        );
-        assert_eq!(revert_prompt(3), "Discard 3 unapplied config changes?");
-    }
-
     fn drain_probes() -> Vec<(&'static str, egui::Rect)> {
-        PROBE.with(|p| std::mem::take(&mut *p.borrow_mut()))
+        style_lines::drain_probes()
     }
 
     fn shape_texts(shape: &egui::Shape, out: &mut Vec<String>) {
@@ -1846,6 +1596,10 @@ mod tests {
         for t in &texts {
             assert!(!t.contains("unapplied change"), "{t}");
             assert!(t != "new" && t != "edited", "{t}");
+            assert!(
+                t != "Show" && t != "Hide",
+                "no Show/Hide caption in a row: {t}"
+            );
         }
     }
 
@@ -1891,6 +1645,33 @@ mod tests {
     }
 
     #[test]
+    fn table_columns_follow_the_spec() {
+        let c = table_columns(517.0);
+        assert_eq!((c.vis.x, c.vis.w), (10.0, 64.0));
+        assert_eq!((c.name.x, c.name.w), (82.0, 153.0));
+        assert_eq!((c.icon.x, c.icon.w), (243.0, 32.0));
+        assert_eq!((c.preview.x, c.preview.w), (283.0, 160.0));
+        assert_eq!((c.order.x, c.order.w), (451.0, 56.0));
+        assert_eq!(c.order.x + c.order.w, 517.0 - 10.0);
+        for width in [440.0, 460.0, 480.0, 517.0, 660.0] {
+            let c = table_columns(width);
+            assert!(c.name.w >= 110.0, "{width}: {c:?}");
+            assert!(
+                c.order.x + c.order.w <= width - 10.0 + 0.01,
+                "{width}: {c:?}"
+            );
+            for pair in [
+                (c.vis, c.name),
+                (c.name, c.icon),
+                (c.icon, c.preview),
+                (c.preview, c.order),
+            ] {
+                assert!((pair.1.x - (pair.0.x + pair.0.w) - COL_GAP).abs() < 0.01);
+            }
+        }
+    }
+
+    #[test]
     fn styles_table_header_and_columns() {
         let (_d, mut state) = loaded();
         state.add_style("k1").unwrap();
@@ -1913,57 +1694,37 @@ mod tests {
                 .map(|(_, r)| *r)
                 .collect()
         };
-        // One header per group; the shared columns align across both headers and every row.
-        let (hv, hn, hp) = (of("head-vis"), of("head-name"), of("head-preview"));
-        assert_eq!((hv.len(), hn.len(), hp.len()), (2, 2, 2));
-        assert!(hv[0].left() < hn[0].left() && hn[0].left() < hp[0].left());
-        for (a, b) in [(hv[0], hv[1]), (hn[0], hn[1]), (hp[0], hp[1])] {
-            assert!((a.left() - b.left()).abs() <= 1.0, "{a:?} vs {b:?}");
-        }
         let total = state.style_names().len();
-        for (tag, head) in [
-            ("row-vis", hv[0]),
-            ("row-name", hn[0]),
-            ("row-preview", hp[0]),
-        ] {
-            let rows = of(tag);
-            assert_eq!(rows.len(), total, "{tag}");
-            for r in rows {
+        let n_builtin = style_groups(&state).0.len();
+        // One header per group with all five columns; each lines up with the same column of every
+        // row below it (both groups).
+        for col in ["vis", "name", "icon", "preview", "order"] {
+            let heads = of(&format!("head-{col}"));
+            let rows = of(&format!("row-{col}"));
+            assert_eq!(heads.len(), 2, "head-{col}");
+            assert_eq!(rows.len(), total, "row-{col}");
+            assert!(
+                (heads[0].left() - heads[1].left()).abs() <= 0.5,
+                "head-{col} differs between groups"
+            );
+            for (k, r) in rows.iter().enumerate() {
+                let head = if k < n_builtin { heads[0] } else { heads[1] };
                 assert!(
-                    (r.left() - head.left()).abs() <= 1.0,
-                    "{tag} {r:?} vs header {head:?}"
+                    (r.left() - head.left()).abs() <= 0.5
+                        && (r.right() - head.right()).abs() <= 0.5,
+                    "row-{col} {r:?} vs header {head:?}"
                 );
             }
         }
-        // Only the custom group has an Order column. It sits at the table's right edge (like the
-        // RULES arrows), and the header is right-aligned over the row arrows.
-        let ho = of("head-order");
-        assert_eq!(ho.len(), 1);
-        assert!(hp[1].right() <= ho[0].left() + 1.0);
-        let orders = of("row-order");
-        assert_eq!(orders.len(), style_groups(&state).1.len());
-        let previews = of("row-preview");
-        let n_builtin = style_groups(&state).0.len();
-        for (k, r) in orders.iter().enumerate() {
-            assert!(
-                (r.right() - ho[0].right()).abs() <= 1.0,
-                "{r:?} vs {:?}",
-                ho[0]
-            );
-            assert!((r.right() - orders[0].right()).abs() <= 1.0);
-            assert!(previews[n_builtin + k].right() <= r.left());
-        }
-        // The right edge is the frames' content edge, well right of the shared columns.
-        assert!(
-            ho[0].left() > hp[1].right() + 20.0,
-            "{:?} {:?}",
-            ho[0],
-            hp[1]
-        );
-        // Up then Down, left to right, inside the order cell, Down at its right edge. An enabled
-        // arrow's probed rect is its 4px-padded click target, a disabled one's the 16px glyph.
-        let (ups, downs) = (of("row-up"), of("row-down"));
-        for ((u, d), o) in ups.iter().zip(&downs).zip(&orders) {
+        let h = |c: &str| of(&format!("head-{c}"))[0];
+        assert!(h("vis").right() <= h("name").left());
+        assert!(h("name").right() <= h("icon").left());
+        assert!(h("icon").right() <= h("preview").left());
+        assert!(h("preview").right() <= h("order").left());
+        // Every row's arrows sit inside the Order cell, Up then Down, Down at its right edge.
+        let (orders, ups, downs) = (of("row-order"), of("row-up"), of("row-down"));
+        for ((u, d), k) in ups.iter().zip(&downs).zip(0..) {
+            let o = orders[k];
             assert!(u.center().x < d.center().x);
             assert!(
                 o.contains(u.center()) && o.contains(d.center()),
@@ -2030,7 +1791,7 @@ mod tests {
         assert_eq!(count("custom-heading"), 1);
         assert_eq!(count("add-style"), 1);
         assert_eq!(count("head-vis"), 1, "only the built-in header");
-        assert_eq!(count("head-order"), 0);
+        assert_eq!(count("head-order"), 1, "Built-in also has an Order column");
     }
 
     #[test]
@@ -2078,7 +1839,8 @@ mod tests {
             .filter(|(t, _)| *t == "row-name")
             .map(|(_, r)| r)
             .collect();
-        let target = names[n_builtin].center();
+        // Click near the right end so the caret lands after the text.
+        let target = egui::pos2(names[n_builtin].right() - 14.0, names[n_builtin].center().y);
         let button = |pressed| egui::Event::PointerButton {
             pos: target,
             button: egui::PointerButton::Primary,
@@ -2254,41 +2016,39 @@ mod tests {
     }
 
     #[test]
-    fn custom_arrows_reorder_and_builtins_have_none() {
+    fn custom_arrows_reorder_and_builtin_arrows_are_disabled() {
         let (_d, mut state) = loaded();
         for n in ["k1", "k2", "k3"] {
             state.add_style(n).unwrap();
         }
         let (builtin, custom) = style_groups(&state);
         assert_eq!(custom.last().map(String::as_str), Some("k3"));
-        let users = HashMap::new();
-        let refs = BTreeSet::new();
-        let (ctx, _) = headless();
         let mut cfg = ConfigUi::default();
-        let vctx = view_ctx(None, &users, &refs);
-        let mut actions = Vec::new();
-        drain_probes();
-        ctx.run_ui(tall_input(), |ui| {
-            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
-        })
-        .drop_without_applying_deltas();
-        let probes = drain_probes();
-        let rects = |tag: &str| -> Vec<egui::Rect> {
-            probes
-                .iter()
-                .filter(|(t, _)| *t == tag)
-                .map(|(_, r)| *r)
-                .collect()
-        };
-        let (ups, downs) = (rects("row-up"), rects("row-down"));
-        assert_eq!(ups.len(), custom.len(), "arrows only on custom rows");
-        assert_eq!(downs.len(), custom.len());
+        let ups = render_probes(&state, &mut cfg, "row-up");
+        let downs = render_probes(&state, &mut cfg, "row-down");
+        let n = builtin.len();
+        assert_eq!(ups.len(), n + custom.len(), "every row draws both arrows");
+        assert_eq!(downs.len(), n + custom.len());
 
-        // The ends are disabled: a click on them emits nothing.
+        // Built-in arrows are disabled: a click emits nothing, and they sit at the same x as the
+        // custom rows' working arrows.
+        for target in [ups[0].center(), downs[0].center(), downs[n - 1].center()] {
+            let (ctx, _) = headless();
+            let mut cfg = ConfigUi::default();
+            let clicked = click_styles(&ctx, &state, &mut cfg, target);
+            assert!(moves(&clicked).is_empty(), "built-in arrow at {target:?}");
+        }
+        assert!((ups[0].center().x - ups[n].center().x).abs() <= 0.5);
+        assert!((downs[0].center().x - downs[n].center().x).abs() <= 0.5);
+
+        // The custom ends are disabled too.
         let (ctx, _) = headless();
         let mut cfg = ConfigUi::default();
-        let first_up = click_styles(&ctx, &state, &mut cfg, ups[0].center());
-        assert!(moves(&first_up).is_empty(), "the first Up is disabled");
+        let first_up = click_styles(&ctx, &state, &mut cfg, ups[n].center());
+        assert!(
+            moves(&first_up).is_empty(),
+            "the first custom Up is disabled"
+        );
         let (ctx, _) = headless();
         let mut cfg = ConfigUi::default();
         let last_down = click_styles(&ctx, &state, &mut cfg, downs[downs.len() - 1].center());
@@ -2319,34 +2079,587 @@ mod tests {
         assert!(!state.move_style("S", true), "built-ins never move");
     }
 
+    // ---- style editor (Phase 33 Plan 04) ----
+
+    fn expanded(name: &str) -> ConfigUi {
+        ConfigUi {
+            expanded: Some(name.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn edits_of(actions: &[ConfigAction]) -> Vec<StyleEdit> {
+        actions
+            .iter()
+            .filter_map(|a| match a {
+                ConfigAction::EditStyle { edit, .. } => Some(edit.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Clicks the centre of the `idx`-th probe `tag` (shifted by `dx`) of the expanded editor.
+    fn click_probe(
+        ctx: &egui::Context,
+        state: &ConfigState,
+        cfg: &mut ConfigUi,
+        tag: &str,
+        idx: usize,
+        dx: f32,
+    ) -> Vec<ConfigAction> {
+        let rects = render_probes(state, cfg, tag);
+        assert!(rects.len() > idx, "no probe {tag}[{idx}]");
+        click_styles(ctx, state, cfg, rects[idx].center() + vec2(dx, 0.0))
+    }
+
     #[test]
-    fn the_footer_apply_button_stays_inside_the_stripe() {
+    fn idle_frames_emit_nothing_for_custom_styles_with_every_field() {
         let (_d, state) = loaded();
         let users = HashMap::new();
         let refs = BTreeSet::new();
-        let (ctx, input) = headless();
-        let mut cfg = ConfigUi::default();
-        let vctx = view_ctx(None, &users, &refs);
-        let screen = input.screen_rect.unwrap();
-        let mut footer_rect = egui::Rect::NOTHING;
-        // A few frames: a bottom panel sizes itself from the previous frame's content.
-        for _ in 0..4 {
-            let out = ctx.run_ui(input.clone(), |ui| {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    egui::Panel::bottom(egui::Id::new("cfg-test-footer")).show(ui, |ui| {
-                        show_footer(ui, &state, &mut cfg, &vctx);
-                        footer_rect = ui.min_rect();
-                    });
-                    show_sections(ui, &state, &mut cfg, &vctx);
-                });
-            });
-            out.drop_without_applying_deltas();
+        let (ctx, _) = headless();
+        for name in ["kite", "exceptional", "Recycle", "hidden"] {
+            let mut cfg = expanded(name);
+            let vctx = view_ctx(None, &users, &refs);
+            let mut actions = Vec::new();
+            for _ in 0..2 {
+                ctx.run_ui(tall_input(), |ui| {
+                    show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+                })
+                .drop_without_applying_deltas();
+            }
+            assert!(actions.is_empty(), "{name}: {actions:?}");
         }
+    }
+
+    fn big_fills(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Rect(r) if r.fill == pal::ROW_EVEN => out.push(r.rect),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| big_fills(s, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn expanded_editor_draws_no_frame_fill() {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let mut actions = Vec::new();
+        let out = ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        });
+        let mut fills = Vec::new();
+        for clipped in &out.shapes {
+            big_fills(&clipped.shape, &mut fills);
+        }
+        out.drop_without_applying_deltas();
+        // The zebra grounds are single lines; a boxed editor would be one tall ROW_BASE rect.
+        let tall = crate::skin::widgets::ROW_HEIGHT * 2.0;
         assert!(
-            footer_rect.max.y <= screen.max.y,
-            "footer {footer_rect:?} outside {screen:?}"
+            fills.iter().all(|r| r.height() <= tall),
+            "boxed editor fill: {fills:?}"
         );
-        assert!(footer_rect.height() >= 28.0);
+    }
+
+    #[test]
+    fn visibility_hide_emits_the_action_edit() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        let rects = render_probes(&state, &mut cfg, "ed-visibility");
+        let r = rects[0];
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.right_center() - vec2(r.width() / 4.0, 0.0),
+        );
+        assert_eq!(edits_of(&acts), [StyleEdit::Action(StyleAction::Hide)]);
+    }
+
+    #[test]
+    fn font_check_toggles_between_none_and_32() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(None)]);
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(32))]);
+    }
+
+    /// Font size off keeps a dimmed, inert slider on the line instead of a lone check.
+    #[test]
+    fn font_off_shows_a_dimmed_slider_that_does_nothing() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        assert_eq!(state.style("kite").unwrap().font, None);
+        let off = render_probes(&state, &mut cfg, "ed-font-slider-off");
+        assert_eq!(off.len(), 1, "the off line keeps its slider");
+        assert!(off[0].width() >= 120.0, "{:?}", off[0]);
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-slider-off", 0, 20.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let mut cfg = expanded("S");
+        assert!(render_probes(&state, &mut cfg, "ed-font-slider-off").is_empty());
+        assert_eq!(render_probes(&state, &mut cfg, "ed-font-slider").len(), 1);
+    }
+
+    /// WR-03: off then on again restores the style's own size, not 32.
+    #[test]
+    fn font_off_then_on_restores_the_last_size() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        assert_eq!(state.style("S").unwrap().font, Some(37));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(None)]);
+        assert!(state.edit_style("S", StyleEdit::Font(None)));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(37))]);
+    }
+
+    /// Review iteration 2, WR-02: folding the row and opening it again keeps the remembered
+    /// size; only replacing the styles (Revert / Reload / Apply) forgets it.
+    #[test]
+    fn the_remembered_font_size_survives_a_fold() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(None)]);
+        assert!(state.edit_style("S", StyleEdit::Font(None)));
+        cfg.set_expanded("S");
+        cfg.set_expanded("S");
+        assert_eq!(cfg.expanded.as_deref(), Some("S"));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(37))]);
+        // Replacing the styles forgets it.
+        assert!(state.edit_style("S", StyleEdit::Font(None)));
+        cfg.reset_for_new_styles();
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-font-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Font(Some(32))]);
+    }
+
+    #[test]
+    fn drop_sound_check_emits_the_negation() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-drop-check", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::DropSound(Some(
+                crate::models::config::DropSound::Silent
+            ))]
+        );
+        let mut cfg = expanded("hidden");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-drop-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::DropSound(None)]);
+    }
+
+    #[test]
+    fn only_custom_styles_get_a_delete_line_that_arms_the_popup() {
+        let (_d, state) = loaded();
+        let mut cfg = expanded("S");
+        assert!(render_probes(&state, &mut cfg, "delete-style").is_empty());
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let rects = render_probes(&state, &mut cfg, "delete-style");
+        assert_eq!(rects.len(), 1);
+        let acts = click_styles(&ctx, &state, &mut cfg, rects[0].center());
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        assert_eq!(cfg.delete_armed.as_deref(), Some("kite"));
+    }
+
+    #[test]
+    fn editor_lines_use_the_field_labels() {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let vctx = view_ctx(None, &users, &refs);
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        let mut actions = Vec::new();
+        let out = ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        });
+        let mut texts = Vec::new();
+        for clipped in &out.shapes {
+            shape_texts(&clipped.shape, &mut texts);
+        }
+        out.drop_without_applying_deltas();
+        for label in ["Visibility", "Label", "Font size", "Drop sound"] {
+            assert!(
+                texts.iter().any(|t| t == label),
+                "missing {label}: {texts:?}"
+            );
+        }
+        assert!(!texts.iter().any(|t| t == "NAME" || t.contains("Not set")));
+    }
+
+    fn mm(size: u8, color: FilterColor, shape: MinimapShape) -> StyleEdit {
+        StyleEdit::Minimap(Some(Cancelable::Set(Minimap { size, color, shape })))
+    }
+
+    /// Click offset (from the segmented control's centre) onto segment `i` of `n`.
+    fn segment_dx(rect: egui::Rect, i: usize, n: usize) -> f32 {
+        rect.width() * ((i as f32 + 0.5) / n as f32 - 0.5)
+    }
+
+    fn colour_index(name: &str) -> usize {
+        minimap::index_of(&minimap::COLOURS, name).unwrap()
+    }
+
+    #[test]
+    fn minimap_off_is_one_line_and_ticking_seeds_white_circle() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("E");
+        assert_eq!(render_probes(&state, &mut cfg, "ed-mm-check").len(), 1);
+        for tag in ["ed-mm-cancel", "ed-mm-colour", "ed-mm-shape", "ed-mm-size"] {
+            assert!(render_probes(&state, &mut cfg, tag).is_empty(), "{tag}");
+        }
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-check", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [mm(0, FilterColor::White, MinimapShape::Circle)]
+        );
+    }
+
+    #[test]
+    fn minimap_off_then_on_restores_the_last_values() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Minimap(None)]);
+        assert!(state.edit_style("kite", StyleEdit::Minimap(None)));
+        assert!(render_probes(&state, &mut cfg, "ed-mm-colour").is_empty());
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-check", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Orange, MinimapShape::Kite)]
+        );
+    }
+
+    #[test]
+    fn minimap_colour_and_shape_keep_the_other_fields() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let colours = render_probes(&state, &mut cfg, "ed-mm-colour");
+        let shapes = render_probes(&state, &mut cfg, "ed-mm-shape");
+        assert_eq!((colours.len(), shapes.len()), (11, 12));
+        assert!(shapes.iter().all(|r| r.min.y == shapes[0].min.y), "one row");
+        assert!(
+            colours.iter().all(|r| r.min.y == colours[0].min.y),
+            "one row"
+        );
+        let cancel = render_probes(&state, &mut cfg, "ed-mm-cancel");
+        assert_eq!(cancel.len(), 1);
+        assert_eq!(
+            cancel[0].min.y, colours[0].min.y,
+            "the / tile leads the colours"
+        );
+        assert!(cancel[0].max.x <= colours[0].min.x);
+        let pink = colour_index("Pink");
+        let acts = click_styles(&ctx, &state, &mut cfg, colours[pink].center());
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Pink, MinimapShape::Kite)]
+        );
+        let mut cfg = expanded("exceptional");
+        let kite = minimap::index_of(&minimap::SHAPES, "Kite").unwrap();
+        let shapes = render_probes(&state, &mut cfg, "ed-mm-shape");
+        let acts = click_styles(&ctx, &state, &mut cfg, shapes[kite].center());
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Pink, MinimapShape::Kite)]
+        );
+    }
+
+    #[test]
+    fn minimap_size_is_large_medium_small() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        assert_eq!(MINIMAP_SIZES, ["Large", "Medium", "Small"]);
+        let r = render_probes(&state, &mut cfg, "ed-mm-size")[0];
+        for (i, size) in [(0, 0u8), (1, 1)] {
+            let acts = click_styles(
+                &ctx,
+                &state,
+                &mut cfg,
+                r.center() + vec2(segment_dx(r, i, 3), 0.0),
+            );
+            assert_eq!(
+                edits_of(&acts),
+                [mm(size, FilterColor::Orange, MinimapShape::Kite)]
+            );
+        }
+        // Small is the current size: no edit.
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 2, 3), 0.0),
+        );
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn minimap_cancel_greys_the_pickers_and_a_colour_leaves_it() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-cancel", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Minimap(Some(Cancelable::Cancel))]
+        );
+        assert!(state.edit_style("kite", StyleEdit::Minimap(Some(Cancelable::Cancel))));
+        // Shapes and sizes are drawn but inert.
+        let kite = minimap::index_of(&minimap::SHAPES, "Kite").unwrap();
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-shape", kite + 1, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-size", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        // Clicking / again changes nothing; a colour restores the remembered icon with it.
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-cancel", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let pink = colour_index("Pink");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-mm-colour", pink, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [mm(2, FilterColor::Pink, MinimapShape::Kite)]
+        );
+    }
+
+    #[test]
+    fn beam_off_cancel_colour_and_temp() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-check", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Beam(None)]);
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-cancel", 0, 0.0);
+        assert_eq!(edits_of(&acts), [StyleEdit::Beam(Some(Cancelable::Cancel))]);
+        let pink = colour_index("Pink");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-colour", pink, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Beam(Some(Cancelable::Set(Beam {
+                color: FilterColor::Pink,
+                temp: false
+            })))]
+        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Beam(Some(Cancelable::Set(Beam {
+                color: FilterColor::Orange,
+                temp: true
+            })))]
+        );
+        // Under / the Temp chip is inert.
+        assert!(state.edit_style("kite", StyleEdit::Beam(Some(Cancelable::Cancel))));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn beam_off_is_one_line_and_ticking_seeds_white() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("E");
+        for tag in ["ed-beam-cancel", "ed-beam-colour", "ed-beam-temp"] {
+            assert!(render_probes(&state, &mut cfg, tag).is_empty(), "{tag}");
+        }
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-check", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Beam(Some(Cancelable::Set(Beam {
+                color: FilterColor::White,
+                temp: false
+            })))]
+        );
+    }
+
+    fn alert(id: u8, vol: u16, positional: bool) -> Sound {
+        Sound {
+            id: Some(id),
+            custom: None,
+            vol,
+            positional,
+        }
+    }
+
+    fn file(name: &str, vol: u16) -> Sound {
+        Sound {
+            id: None,
+            custom: Some(name.to_string()),
+            vol,
+            positional: false,
+        }
+    }
+
+    #[test]
+    fn sound_menu_lists_alerts_then_the_folder_and_flags_a_missing_file() {
+        let files = vec!["a.mp3".to_string(), "uwu.mp3".to_string()];
+        let (items, sel) = sound_menu(&files, true, &alert(6, 200, false));
+        assert_eq!(items.len(), 16 + 1 + 2);
+        assert_eq!(items[0], SoundItem::Alert(1));
+        assert_eq!(items[15], SoundItem::Alert(16));
+        assert_eq!(items[16], SoundItem::Header);
+        assert_eq!(items[18], SoundItem::File("uwu.mp3".to_string()));
+        assert_eq!(sel, 5);
+        let (_, sel) = sound_menu(&files, true, &file("UWU.mp3", 300));
+        assert_eq!(sel, 18, "matched case-insensitively");
+        let (items, sel) = sound_menu(&files, true, &file("gone.wav", 300));
+        assert_eq!(items.len(), 20);
+        assert_eq!(items[sel], SoundItem::Missing("gone.wav".to_string()));
+        assert_eq!(FOLDER_HEADER, "Filter folder");
+    }
+
+    #[test]
+    fn sound_menu_never_flags_a_file_when_the_folder_was_not_listed() {
+        let (items, sel) = sound_menu(&[], false, &file("uwu.mp3", 300));
+        assert_eq!(items.len(), 16 + 1 + 1);
+        assert_eq!(items[sel], SoundItem::Unlisted("uwu.mp3".to_string()));
+        assert!(!items.iter().any(|i| matches!(i, SoundItem::Missing(_))));
+        assert_eq!(
+            sound_for_item(&items[sel], &file("uwu.mp3", 300)),
+            Some(file("uwu.mp3", 300))
+        );
+    }
+
+    #[test]
+    fn sound_picks_keep_the_volume_and_files_drop_positional() {
+        let base = alert(2, 200, true);
+        assert_eq!(
+            sound_for_item(&SoundItem::Alert(3), &base),
+            Some(alert(3, 200, true))
+        );
+        assert_eq!(
+            sound_for_item(&SoundItem::File("b.wav".to_string()), &base),
+            Some(file("b.wav", 200))
+        );
+        assert_eq!(
+            sound_for_item(&SoundItem::Alert(4), &file("b.wav", 90)),
+            Some(alert(4, 90, false))
+        );
+        assert_eq!(sound_for_item(&SoundItem::Header, &base), None);
+    }
+
+    #[test]
+    fn custom_sound_file_names_are_checked() {
+        assert!(safe_file_name("uwu.mp3"));
+        assert!(!safe_file_name("a\"b.mp3"));
+        assert!(!safe_file_name("a\nb.mp3"));
+    }
+
+    #[test]
+    fn sound_group_lines_follow_the_sound() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("E");
+        for tag in [
+            "ed-sound",
+            "ed-sound-cancel",
+            "ed-volume",
+            "ed-sound-positional",
+        ] {
+            assert!(render_probes(&state, &mut cfg, tag).is_empty(), "{tag}");
+        }
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-check", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Sound(Some(Cancelable::Set(alert(
+                1, 100, false
+            ))))]
+        );
+        let mut cfg = expanded("kite");
+        for tag in [
+            "ed-sound",
+            "ed-sound-cancel",
+            "ed-volume",
+            "ed-sound-positional",
+        ] {
+            assert_eq!(render_probes(&state, &mut cfg, tag).len(), 1, "{tag}");
+        }
+        assert!(render_probes(&state, &mut cfg, "ed-sound-file").is_empty());
+        assert!(render_probes(&state, &mut cfg, "ed-sound-missing").is_empty());
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Sound(Some(Cancelable::Set(alert(2, 200, true))))]
+        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-cancel", 0, 0.0);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::Sound(Some(Cancelable::Cancel))]
+        );
+        // S plays a file. With no folder known nothing can be said about it: not flagged (WR-01).
+        let mut cfg = expanded("S");
+        assert!(render_probes(&state, &mut cfg, "ed-sound-missing").is_empty());
+        let gone = tempfile::tempdir().unwrap();
+        let unreadable = gone.path().join("nope");
+        assert!(
+            render_probes_with_folder(&state, &mut cfg, "ed-sound-missing", Some(&unreadable))
+                .is_empty(),
+            "an unreadable folder flags nothing"
+        );
+        // A listed (here empty) folder without the file: flagged, no Positional.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            render_probes_with_folder(&state, &mut cfg, "ed-sound-missing", Some(empty.path()))
+                .len(),
+            1
+        );
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn sound_cancel_greys_volume_and_positional() {
+        let (_d, mut state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("kite");
+        assert!(state.edit_style("kite", StyleEdit::Sound(Some(Cancelable::Cancel))));
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-sound-positional", 0, 0.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+        let acts = click_probe(&ctx, &state, &mut cfg, "ed-volume", 0, 40.0);
+        assert!(edits_of(&acts).is_empty(), "{acts:?}");
+    }
+
+    #[test]
+    fn drop_sound_on_is_a_silent_normal_switch() {
+        let (_d, state) = loaded();
+        let (ctx, _) = headless();
+        let mut cfg = expanded("S");
+        assert!(render_probes(&state, &mut cfg, "ed-drop").is_empty());
+        let mut cfg = expanded("hidden");
+        let r = render_probes(&state, &mut cfg, "ed-drop")[0];
+        let acts = click_styles(
+            &ctx,
+            &state,
+            &mut cfg,
+            r.center() + vec2(segment_dx(r, 1, 2), 0.0),
+        );
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::DropSound(Some(
+                crate::models::config::DropSound::Normal
+            ))]
+        );
+        let check = render_probes(&state, &mut cfg, "ed-drop-check")[0];
+        assert_eq!(check.center().y, r.center().y, "one line");
     }
 
     #[test]
@@ -2358,5 +2671,32 @@ mod tests {
         });
         out.drop_without_applying_deltas();
         assert_eq!(action, None);
+    }
+
+    #[test]
+    fn styles_header_captions_fit_their_columns() {
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let cols = table_columns(460.0);
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for (text, col) in [
+                ("Visibility", cols.vis),
+                ("Name", cols.name),
+                ("Icon", cols.icon),
+                ("Preview", cols.preview),
+                ("Order", cols.order),
+            ] {
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(text.to_owned(), regular(14.0), pal::MUTED);
+                let w = galley.size().x;
+                assert!(
+                    w <= col.w,
+                    "{text} is {w}pt wide, its column is {}pt",
+                    col.w
+                );
+            }
+        });
+        out.drop_without_applying_deltas();
     }
 }

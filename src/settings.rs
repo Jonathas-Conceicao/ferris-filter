@@ -5,6 +5,7 @@
 //! a parameter and nothing here prints. A filter name is only ever a bare `*.filter` file name, so
 //! neither a hand-edited settings file nor a typed name can escape the game folder.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
@@ -26,12 +27,81 @@ pub struct Settings {
     /// Send /reloaditemfilter to the game after a RULES Apply that wrote the filter; absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload_after_apply: Option<bool>,
+    /// Collapsed state of the RULES list sections: filter name -> section name -> `true` when
+    /// collapsed. Absent means the default (user sections expanded, the economy section collapsed).
+    /// Display state only: it never marks a filter unapplied.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub collapsed_sections: BTreeMap<String, BTreeMap<String, bool>>,
     /// Unknown top-level keys survive a load/save round trip.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Reserved key of the economy section in [`Settings::collapsed_sections`]. The `ff:` prefix keeps
+/// a user section that happens to be named "Economy" from sharing its state.
+pub const ECONOMY_SECTION_KEY: &str = "ff:economy";
+
+/// The key a section is stored under: the reserved economy key, or the user section name. A name
+/// that starts with `ff:` or `user:` gets a `user:` prefix so it can never equal the reserved key
+/// (or another section's escaped key).
+pub fn section_key(name: &str, economy: bool) -> String {
+    if economy {
+        ECONOMY_SECTION_KEY.to_string()
+    } else if name.starts_with("ff:") || name.starts_with("user:") {
+        format!("user:{name}")
+    } else {
+        name.to_string()
+    }
+}
+
 impl Settings {
+    /// Whether the section `name` of `filter` is collapsed: the stored value, else `economy`
+    /// (the economy section starts collapsed, user sections expanded). Pass
+    /// [`ECONOMY_SECTION_KEY`] as `name` for the economy section.
+    pub fn section_collapsed(&self, filter: &str, name: &str, economy: bool) -> bool {
+        self.collapsed_sections
+            .get(filter)
+            .and_then(|m| m.get(name))
+            .copied()
+            .unwrap_or(economy)
+    }
+
+    /// A copy with the collapsed flag of one section set.
+    pub fn set_section_collapsed(&self, filter: &str, name: &str, collapsed: bool) -> Settings {
+        let mut next = self.clone();
+        next.collapsed_sections
+            .entry(filter.to_string())
+            .or_default()
+            .insert(name.to_string(), collapsed);
+        next
+    }
+
+    /// A copy with the stored flag of section `key` dropped (it falls back to the default).
+    pub fn forget_section_state(&self, filter: &str, key: &str) -> Settings {
+        let mut next = self.clone();
+        if let Some(m) = next.collapsed_sections.get_mut(filter) {
+            m.remove(key);
+        }
+        next
+    }
+
+    /// A copy where section `to` carries the stored flag of section `from` (a rename); `from` is
+    /// kept. Nothing stored for `from` gives an unchanged copy.
+    pub fn copy_section_state(&self, filter: &str, from: &str, to: &str) -> Settings {
+        let mut next = self.clone();
+        if let Some(v) = self
+            .collapsed_sections
+            .get(filter)
+            .and_then(|m| m.get(from))
+        {
+            next.collapsed_sections
+                .entry(filter.to_string())
+                .or_default()
+                .insert(to.to_string(), *v);
+        }
+        next
+    }
+
     /// The stored filter name, or `dynamic.filter`.
     pub fn filter_name(&self) -> &str {
         self.filter.as_deref().unwrap_or(DEFAULT_FILTER)
@@ -107,6 +177,20 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                             Some(false)
                         }
                     };
+                    let collapsed_sections = match extra.remove("collapsed_sections") {
+                        None => BTreeMap::new(),
+                        Some(v) => match serde_json::from_value(v) {
+                            Ok(m) => m,
+                            Err(_) => {
+                                fallbacks.push(
+                                    "`collapsed_sections` is not a map of filter -> section -> true/false, \
+                                     so every section uses its default"
+                                        .to_string(),
+                                );
+                                BTreeMap::new()
+                            }
+                        },
+                    };
                     if fallbacks.is_empty() {
                         fallbacks.push("using the defaults".to_string());
                     }
@@ -114,6 +198,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                         Settings {
                             filter,
                             reload_after_apply,
+                            collapsed_sections,
                             extra,
                         },
                         Some(format!(
@@ -144,6 +229,39 @@ pub fn save(root: &Path, settings: &Settings) -> io::Result<()> {
     t.as_file().sync_all()?;
     t.persist(path(root)).map_err(|e| e.error)?;
     Ok(())
+}
+
+/// Persist only the `collapsed_sections` key (a fold click), leaving every other key of the file
+/// on disk exactly as it is, even one that is wrongly typed. A missing file is created with the
+/// whole of `settings`. A file that cannot be used at all (unreadable, or not a JSON object) is
+/// left alone and `Ok(false)` is returned, so a hand-edited file is never replaced by fallback
+/// defaults. `Ok(true)` means the key was written.
+pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> {
+    let text = match fs::read_to_string(path(root)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            save(root, settings)?;
+            return Ok(true);
+        }
+        Err(_) => return Ok(false),
+    };
+    let Ok(mut map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
+    else {
+        return Ok(false);
+    };
+    if settings.collapsed_sections.is_empty() {
+        map.remove("collapsed_sections");
+    } else {
+        let value = serde_json::to_value(&settings.collapsed_sections).map_err(io::Error::other)?;
+        map.insert("collapsed_sections".to_string(), value);
+    }
+    let mut out = serde_json::to_string_pretty(&map).map_err(io::Error::other)?;
+    out.push('\n');
+    let mut t = tempfile::NamedTempFile::new_in(root)?;
+    t.write_all(out.as_bytes())?;
+    t.as_file().sync_all()?;
+    t.persist(path(root)).map_err(|e| e.error)?;
+    Ok(true)
 }
 
 /// Why a file name was refused.
@@ -467,6 +585,97 @@ mod tests {
     }
 
     #[test]
+    fn collapsed_defaults_and_per_filter_state() {
+        let s = Settings::default();
+        assert!(!s.section_collapsed("dynamic.filter", "Leveling", false));
+        assert!(s.section_collapsed("dynamic.filter", ECONOMY_SECTION_KEY, true));
+        let s = s.set_section_collapsed("a.filter", ECONOMY_SECTION_KEY, false);
+        assert!(!s.section_collapsed("a.filter", ECONOMY_SECTION_KEY, true));
+        assert!(s.section_collapsed("b.filter", ECONOMY_SECTION_KEY, true));
+    }
+
+    #[test]
+    fn section_key_never_equals_the_economy_key() {
+        assert_eq!(section_key("Gear", false), "Gear");
+        assert_eq!(section_key("x", true), ECONOMY_SECTION_KEY);
+        assert_ne!(section_key(ECONOMY_SECTION_KEY, false), ECONOMY_SECTION_KEY);
+        assert_ne!(
+            section_key("user:ff:economy", false),
+            section_key("ff:economy", false)
+        );
+        let s = Settings::default().set_section_collapsed(
+            "a.filter",
+            &section_key(ECONOMY_SECTION_KEY, false),
+            false,
+        );
+        assert!(s.section_collapsed("a.filter", ECONOMY_SECTION_KEY, true));
+    }
+
+    #[test]
+    fn forget_section_state_drops_the_flag() {
+        let s = Settings::default().set_section_collapsed("a.filter", "Old", true);
+        let n = s.forget_section_state("a.filter", "Old");
+        assert!(!n.section_collapsed("a.filter", "Old", false));
+        assert_eq!(n.forget_section_state("b.filter", "Old"), n);
+    }
+
+    #[test]
+    fn copy_section_state_carries_a_rename() {
+        let s = Settings::default().set_section_collapsed("a.filter", "Old", true);
+        let n = s.copy_section_state("a.filter", "Old", "New");
+        assert!(n.section_collapsed("a.filter", "New", false));
+        assert!(n.section_collapsed("a.filter", "Old", false));
+        let empty = Settings::default();
+        assert_eq!(empty.copy_section_state("a.filter", "Old", "New"), empty);
+    }
+
+    #[test]
+    fn collapsed_sections_round_trip_with_other_keys() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"a.filter","reload_after_apply":false,"zzz":[1,2]}"#,
+        )
+        .unwrap();
+        let (s, _) = load(t.path());
+        let s = s.set_section_collapsed("a.filter", "Leveling", true);
+        save(t.path(), &s).unwrap();
+        let (s2, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s2, s);
+        assert!(s2.section_collapsed("a.filter", "Leveling", false));
+        assert_eq!(s2.filter_name(), "a.filter");
+        assert!(!s2.reload_after_apply());
+        assert_eq!(s2.extra["zzz"][1], 2);
+    }
+
+    #[test]
+    fn wrongly_typed_collapsed_sections_keeps_other_keys() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","collapsed_sections":"oops","future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.expect("must warn");
+        assert!(w.contains("collapsed_sections"), "{w}");
+        assert_eq!(s.filter_name(), "ssf.filter");
+        assert!(s.collapsed_sections.is_empty());
+        assert!(s.extra.contains_key("future"));
+        assert!(!s.extra.contains_key("collapsed_sections"));
+    }
+
+    #[test]
+    fn empty_collapsed_sections_is_not_serialized() {
+        assert!(
+            !serde_json::to_string(&Settings::default())
+                .unwrap()
+                .contains("collapsed_sections")
+        );
+    }
+
+    #[test]
     fn wrongly_typed_filter_warning_names_the_filter_fallback_only() {
         let t = tempfile::tempdir().unwrap();
         fs::write(path(t.path()), r#"{"filter":5,"reload_after_apply":false}"#).unwrap();
@@ -476,5 +685,46 @@ mod tests {
         assert!(!s.reload_after_apply());
         assert!(w.contains("using dynamic.filter"), "{w}");
         assert!(!w.contains("reload_after_apply"), "{w}");
+    }
+
+    #[test]
+    fn a_fold_save_writes_only_its_own_key() {
+        let t = tempfile::tempdir().unwrap();
+        // One wrongly typed key: the file is still a JSON object, so a fold click is saved and the
+        // bad key is kept byte-for-byte (not replaced by the in-memory fallback).
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","reload_after_apply":"yes","future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        assert!(w.is_some());
+        let next = s.set_section_collapsed("ssf.filter", "Gear", true);
+        assert!(save_section_state(t.path(), &next).unwrap());
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path(t.path())).unwrap()).unwrap();
+        assert_eq!(v["reload_after_apply"], "yes");
+        assert_eq!(v["future"], 1);
+        assert_eq!(v["collapsed_sections"]["ssf.filter"]["Gear"], true);
+        let (again, _) = load(t.path());
+        assert!(again.section_collapsed("ssf.filter", "Gear", false));
+    }
+
+    #[test]
+    fn a_fold_save_never_overwrites_an_unusable_file() {
+        let t = tempfile::tempdir().unwrap();
+        let bad = "{ \"filter\": \"x.filter\", }";
+        fs::write(path(t.path()), bad).unwrap();
+        let next = Settings::default().set_section_collapsed("dynamic.filter", "Gear", true);
+        assert!(!save_section_state(t.path(), &next).unwrap());
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), bad);
+        // A missing file is created.
+        let fresh = tempfile::tempdir().unwrap();
+        assert!(save_section_state(fresh.path(), &next).unwrap());
+        assert!(
+            load(fresh.path())
+                .0
+                .section_collapsed("dynamic.filter", "Gear", false)
+        );
     }
 }

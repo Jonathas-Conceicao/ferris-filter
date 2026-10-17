@@ -1,0 +1,13 @@
+about.png: identical
+config.png: identical
+config-kite.png: identical
+config-style-S.png: identical
+economy.png: identical
+economy-rule.png: identical
+rule12.png: identical
+rule14.png: identical
+rule16.png: identical
+rule17.png: identical
+rule18.png: identical
+rules.png: identical
+--- (config-kite is scroll-animation flaky: captured 8x with the old and the new exe from the same temp home; old capture 1 and new capture 5 are byte-identical at the same scroll offset, and those are the files kept. config-style-S.png is a stable extra pair, taken with the old exe built from commit 02620e8 in a separate worktree.)

@@ -7,6 +7,7 @@
 - ✅ **v0.3 Economy Items & Exceptional Gear** — Phases 8-10 (shipped 2026-06-27) — [archive](milestones/v0.3-ROADMAP.md)
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
 - ✅ **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-28 (shipped 2026-10-15) — [archive](milestones/v0.5-ROADMAP.md)
+- ✅ **v0.6 New PoE2-based Tool UI** — Phases 29-35 (shipped 2026-10-17) — [archive](milestones/v0.6-ROADMAP.md)
 
 ## Phases
 
@@ -75,6 +76,21 @@ Full detail: [milestones/v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md)
 - [x] Phase 28: Default config files (4/4 plans) — completed 2026-10-15
 
 Full detail: [milestones/v0.5-ROADMAP.md](milestones/v0.5-ROADMAP.md)
+
+</details>
+
+<details>
+<summary>✅ v0.6 New PoE2-based Tool UI (Phases 29-35) — SHIPPED 2026-10-17</summary>
+
+- [x] Phase 29: Workspace & Asset Tool from the Root (1/1 plan) — completed 2026-10-16
+- [x] Phase 30: Skinned Overlay Shell (5/5 plans) — completed 2026-10-16
+- [x] Phase 31: RULES Tab on the Skin (7/7 plans) — completed 2026-10-16
+- [x] Phase 32: Rule Dividers & Economy Banner (6/6 plans) — completed 2026-10-16
+- [x] Phase 33: Style Table & Line-by-Line Style Editor (5/5 plans) — completed 2026-10-16
+- [x] Phase 34: ECONOMY & ABOUT Tabs (4/4 plans) — completed 2026-10-16
+- [x] Phase 35: Prototype Retirement & Docs (2/2 plans) — completed 2026-10-17
+
+Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 
 </details>
 
@@ -160,7 +176,7 @@ FerrisFilter output to the account instead of (or as well as) writing a local fi
    whether there are rate limits, or limits on how many filters an account can hold.
 
 **Requirements:** TBD
-**Plans:** 6/6 plans complete
+**Plans:** 2/2 plans complete
 
 Plans:
 
@@ -303,6 +319,47 @@ with `"action": "Minimal"` fails to load, rejecting the whole file (Phase 24 rev
 the UAT-04 spec "keep loading it"; deferred here 2026-10-15). If
 Minimal is valid in PoE2, allow it as a style action (loader, overlay switch, generator); if not,
 keep rejecting it with a clear message.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.15: Sound preview in the style editor (BACKLOG)
+
+**Goal:** A small play icon beside the style editor's sound control previews the selected sound:
+the game's alert sounds 1-16 (extracted by `ff-art` from the install) and a custom sound file such
+as `uwu.mp3` from the game folder, at the chosen volume. Needs an audio playback dependency in `ff`
+(e.g. rodio). Dropped from v0.6 by the author on 2026-10-16.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.16: Move rules more than a few positions at once (BACKLOG)
+
+**Goal:** Reordering with the up/down arrows is painful past about five positions. Revisit rule
+placement: drag and drop, move to top/bottom, or move into a named section (v0.6 dividers), and
+reconsider where + Add rule inserts (v0.6 inserts at the top of the file). Raised by the author on
+2026-10-16.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.17: League picker and price source in the overlay (BACKLOG)
+
+**Goal:** The ECONOMY tab gets a UI to choose the league instead of the pinned
+`sync::OVERLAY_LEAGUE`: list and search poe.ninja's current leagues (new leagues show up without a
+code change), switch the league used by Sync economy, and choose to price with the committed
+default/fallback prices (`prices-fallback.json` + `tiers-fallback.json`) instead of a synced
+`prices.json`. Keep the "wrong side of a league transition" safety the pin gives today (the
+choice is explicit and visible). Raised by the author during v0.6 UAT on 2026-10-17.
 **Requirements:** TBD
 **Plans:** TBD
 

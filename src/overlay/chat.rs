@@ -99,7 +99,7 @@ pub trait InputSink {
 /// no key can land in another application. The modifier check runs at two points:
 ///
 /// - once first, before any side effect (polling briefly): it reads global key state and does not
-///   need the game focused, so a modifier held at click time aborts while the stripe still has
+///   need the game focused, so a modifier held at click time aborts while the window still has
 ///   focus and can show why (review WR-03);
 /// - again, without waiting, right before each key group (the first Enter, the Ctrl+V paste,
 ///   the final Enter). The game has just come to the front by then, and holding Alt to show
@@ -165,7 +165,7 @@ pub enum SkipReason {
     SettingOff,
     Busy,
     GameNotRunning,
-    /// The stripe's own window handle is not cached, so there is no clipboard owner.
+    /// The overlay's own window handle is not cached, so there is no clipboard owner.
     NoWindow,
 }
 
@@ -319,7 +319,7 @@ pub struct WinSink {
 }
 
 impl WinSink {
-    /// `owner` is the stripe's own window; there is no ownerless fallback (an ownerless
+    /// `owner` is the overlay's own window; there is no ownerless fallback (an ownerless
     /// `EmptyClipboard` makes the following `SetClipboardData` fail), so the caller skips the
     /// send when no window is cached.
     pub fn new(game: win::GameWindow, owner: win::ClipboardOwner) -> Self {
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn modifier_failure_happens_before_focus_moves() {
-        // A held modifier is the first step's failure: the game is never focused, so the stripe
+        // A held modifier is the first step's failure: the game is never focused, so the window
         // keeps focus and shows the reason (review WR-03).
         let mut sink = FailingSink {
             fail_at: 0,

@@ -664,7 +664,7 @@ fn format_utc_timestamp(secs: u64) -> String {
 }
 
 /// Convert days since Unix epoch (1970-01-01) to (year, month, day).
-fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
+pub(crate) fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let mut year = 1970u64;
     loop {
         let days_in_year = if is_leap_year(year) { 366 } else { 365 };

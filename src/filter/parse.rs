@@ -66,22 +66,18 @@ fn flush(items: &mut Vec<Item>, from: usize, to: usize) {
     }
 }
 
-/// True for an economy-section marker line (`# ff:economy-begin` / `# ff:economy-end`).
-fn is_economy_marker(line: &Line) -> bool {
-    matches!(
-        line.ff_marker().map(|(k, _)| k),
-        Some(super::section::BEGIN_KEY | super::section::END_KEY)
-    )
-}
-
 /// Start of the maximal run of comment lines directly above `header`, not reaching below `floor`.
 ///
-/// The run stops at an economy marker: a marker is a fence around the economy section, never a
-/// block's metadata. Attached to the block below it, the marker would travel with any span edit of
-/// that block (delete, move, reorder) and silently break the section.
-fn lead_start(ls: &[Line], floor: usize, header: usize) -> usize {
+/// The run stops at the closing rule line of a banner (`fences` holds the first rule line of every
+/// banner): a banner is a fence around a section, never a block's metadata. Attached to the block
+/// below it, the banner would travel with any span edit of that block (delete, move, reorder) and
+/// silently break the section.
+fn lead_start(ls: &[Line], fences: &[usize], floor: usize, header: usize) -> usize {
     let mut j = header;
-    while j > floor && is_comment_line(ls[j - 1].text()) && !is_economy_marker(&ls[j - 1]) {
+    while j > floor
+        && is_comment_line(ls[j - 1].text())
+        && !fences.contains(&(j - 1).wrapping_sub(2))
+    {
         j -= 1;
     }
     j
@@ -89,6 +85,7 @@ fn lead_start(ls: &[Line], floor: usize, header: usize) -> usize {
 
 pub(crate) fn build(ls: &[Line], next_id: &mut u64) -> (Vec<Item>, Vec<FilterDiagnostic>) {
     let n = ls.len();
+    let fences = super::section::banner_starts(ls);
     let mut items: Vec<Item> = Vec::new();
     let mut diags: Vec<FilterDiagnostic> = Vec::new();
     let mut pending = 0usize;
@@ -117,7 +114,7 @@ pub(crate) fn build(ls: &[Line], next_id: &mut u64) -> (Vec<Item>, Vec<FilterDia
                         }]);
                     }
                 }
-                let start = lead_start(ls, pending, i);
+                let start = lead_start(ls, &fences, pending, i);
                 flush(&mut items, pending, start);
                 if let DisabledState::Invalid(reasons) = &d.state {
                     for r in reasons {
@@ -172,7 +169,7 @@ pub(crate) fn build(ls: &[Line], next_id: &mut u64) -> (Vec<Item>, Vec<FilterDia
                     pending = i;
                 }
                 Some(k) if k.kind == Kind::BlockHeader => {
-                    let start = lead_start(ls, pending, i);
+                    let start = lead_start(ls, &fences, pending, i);
                     flush(&mut items, pending, start);
                     if t.operator.is_some() || !t.values.is_empty() {
                         diags.push(diag(

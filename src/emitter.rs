@@ -9,7 +9,8 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::models::config::{
-    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, StyleError, StyleSet,
+    Cancelable, Config, DropSound, FilterColor, MinimapShape, RarityOp, Style, StyleAction,
+    StyleError, StyleSet,
 };
 use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
@@ -104,8 +105,8 @@ pub fn generate_as(
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
-    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks)?;
-    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks)?;
+    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks, false)?;
+    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks, false)?;
     debug_assert!(
         out.ends_with('\n'),
         "generate() output must end with exactly one newline"
@@ -116,14 +117,16 @@ pub fn generate_as(
 /// Render only the economy body (currency/category sections, then price-tiered uniques) from a
 /// [`StyleSet`] and priced data - no `Config` needed.
 ///
-/// This is the text Apply splices between the `# ff:economy-*` markers. It equals the tail of
-/// [`generate`] from the first [`SECTION_BANNER`] line. With empty priced data it yields the banner
-/// block only; callers must refuse `PriceSource::Absent` before writing it.
+/// This is the text Apply splices under the `# ff:economy-begin` banner. It equals the tail of
+/// [`generate`] from the first [`SECTION_BANNER`] line, except that here (and only here) each
+/// block also carries `# ff:name <T> tier <Group>` and tier blocks `# ff:style <id> <T>`. With
+/// empty priced data it yields the banner block only; callers must refuse `PriceSource::Absent`
+/// before writing it.
 pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String, GenerateError> {
     styles.validate()?;
     let mut out = String::with_capacity(32_000);
-    emit_currency_sections(&mut out, styles, &priced.category_blocks)?;
-    emit_unique_sections(&mut out, styles, &priced.unique_blocks)?;
+    emit_currency_sections(&mut out, styles, &priced.category_blocks, true)?;
+    emit_unique_sections(&mut out, styles, &priced.unique_blocks, true)?;
     debug_assert!(
         out.ends_with('\n'),
         "generate_economy() output must end with a newline"
@@ -200,14 +203,15 @@ impl MinimapShape {
 // Canonical action emitter (D-03)
 //
 // Order (every block goes through this; None/false fields are skipped):
-//   1. PlayEffect {color} [Temp]        — if beam present
-//   2. MinimapIcon {size} {color} {shape} — if minimap present
+//   1. PlayEffect {color} [Temp]        — if beam present (`PlayEffect None` for the cancel value)
+//   2. MinimapIcon {size} {color} {shape} — if minimap present (`MinimapIcon -1` to cancel)
 //   3. SetTextColor R G B 255           — if text present
 //   4. SetBackgroundColor R G B 255     — if background present
 //   5. SetBorderColor R G B 255         — if border present
 //   6. SetFontSize N                    — if font present
-//   7. CustomAlertSound / PlayAlertSound — if sound present
-//   8. DisableDropSound                 — if disable_drop_sound == true
+//   7. CustomAlertSound / PlayAlertSound[Positional] — if sound present (`PlayAlertSound None`
+//      for the cancel value)
+//   8. DisableDropSound / EnableDropSound — if disable_drop_sound / enable_drop_sound
 // ---------------------------------------------------------------------------
 
 /// Filter action lines for a style (no indent), in the canonical order above.
@@ -216,17 +220,23 @@ impl MinimapShape {
 /// styled-rule rewrite (`crate::styled`) splices them into hand-authored rules.
 pub fn style_action_lines(style: &Style) -> Vec<String> {
     let mut lines = Vec::new();
-    if let Some(beam) = &style.beam {
-        let temp = if beam.temp { " Temp" } else { "" };
-        lines.push(format!("PlayEffect {}{}", beam.color.as_filter_str(), temp));
+    match &style.beam {
+        Some(Cancelable::Set(beam)) => {
+            let temp = if beam.temp { " Temp" } else { "" };
+            lines.push(format!("PlayEffect {}{}", beam.color.as_filter_str(), temp));
+        }
+        Some(Cancelable::Cancel) => lines.push("PlayEffect None".to_string()),
+        None => {}
     }
-    if let Some(mm) = &style.minimap {
-        lines.push(format!(
+    match &style.minimap {
+        Some(Cancelable::Set(mm)) => lines.push(format!(
             "MinimapIcon {} {} {}",
             mm.size,
             mm.color.as_filter_str(),
             mm.shape.as_filter_str()
-        ));
+        )),
+        Some(Cancelable::Cancel) => lines.push("MinimapIcon -1".to_string()),
+        None => {}
     }
     if let Some(rgb) = style.text {
         lines.push(format!("SetTextColor {} {} {} 255", rgb[0], rgb[1], rgb[2]));
@@ -246,17 +256,36 @@ pub fn style_action_lines(style: &Style) -> Vec<String> {
     if let Some(font) = style.font {
         lines.push(format!("SetFontSize {}", font));
     }
-    if let Some(sound) = &style.sound {
-        if let Some(custom) = &sound.custom {
-            lines.push(format!("CustomAlertSound \"{}\" {}", custom, sound.vol));
-        } else if let Some(id) = sound.id {
-            lines.push(format!("PlayAlertSound {} {}", id, sound.vol));
+    match &style.sound {
+        Some(Cancelable::Set(sound)) => {
+            if let Some(custom) = &sound.custom {
+                lines.push(format!("CustomAlertSound \"{}\" {}", custom, sound.vol));
+            } else if let Some(id) = sound.id {
+                let keyword = if sound.positional {
+                    "PlayAlertSoundPositional"
+                } else {
+                    "PlayAlertSound"
+                };
+                lines.push(format!("{keyword} {} {}", id, sound.vol));
+            }
         }
+        Some(Cancelable::Cancel) => lines.push("PlayAlertSound None".to_string()),
+        None => {}
     }
-    if style.disable_drop_sound {
-        lines.push("DisableDropSound".to_string());
+    match style.drop_sound() {
+        Some(DropSound::Silent) => lines.push("DisableDropSound".to_string()),
+        Some(DropSound::Normal) => lines.push("EnableDropSound".to_string()),
+        None => {}
     }
     lines
+}
+
+/// The block header keyword a style decides: `Show` or `Hide`.
+fn header_word(style: &Style) -> &'static str {
+    match style.action {
+        StyleAction::Show => "Show",
+        StyleAction::Hide => "Hide",
+    }
 }
 
 fn emit_style_actions(out: &mut String, style: &Style) {
@@ -378,12 +407,7 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
         let label: &str = rule.name.as_deref().unwrap_or(&derived_label);
         let style = resolve_style(&config.styles, &rule.style, idx, label)?;
 
-        // Header line: Show or Hide based on style.action
-        let block_type = match style.action {
-            StyleAction::Show => "Show",
-            StyleAction::Hide => "Hide",
-        };
-        writeln!(out, "{} # {}", block_type, label).unwrap();
+        writeln!(out, "{} # {}", header_word(style), label).unwrap();
 
         // Emit condition lines from rule.when in fixed deterministic order:
         // areaLevel(min then max), class, baseArmour, baseEvasion, baseEnergyShield,
@@ -485,6 +509,7 @@ fn emit_currency_sections(
     out: &mut String,
     styles: &StyleSet,
     blocks: &[CategoryBlock],
+    tags: bool,
 ) -> Result<(), GenerateError> {
     writeln!(out, "{SECTION_BANNER}").unwrap();
     writeln!(
@@ -525,7 +550,14 @@ fn emit_currency_sections(
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            writeln!(out, "Show # {}", label).unwrap();
+            if tags {
+                writeln!(out, "# ff:name {} tier {}", tier_group.tier, category.name).unwrap();
+                match styles.id_of(&tier_group.tier) {
+                    Some(id) => writeln!(out, "# ff:style {} {}", id, tier_group.tier).unwrap(),
+                    None => writeln!(out, "# ff:style {}", tier_group.tier).unwrap(),
+                }
+            }
+            writeln!(out, "{} # {}", header_word(style), label).unwrap();
             // Multi-class support: use the typed `is_multi_class` signal from the pricer
             // (set for the Uncut Gems merge group) to emit the pre-formatted multi-class
             // string verbatim. Single-class values are wrapped in quotes normally.
@@ -573,6 +605,7 @@ fn emit_unique_sections(
     out: &mut String,
     styles: &StyleSet,
     blocks: &[UniqueBlock],
+    tags: bool,
 ) -> Result<(), GenerateError> {
     // Per Open Questions resolution: omit the header entirely when unique_blocks is empty.
     if blocks.is_empty() {
@@ -595,7 +628,10 @@ fn emit_unique_sections(
             .collect::<Vec<_>>()
             .join(" ");
 
-        writeln!(out, "Show # Unique {}", block.tier).unwrap();
+        if tags {
+            writeln!(out, "# ff:name {} tier Uniques", block.tier).unwrap();
+        }
+        writeln!(out, "{} # Unique {}", header_word(style), block.tier).unwrap();
         writeln!(out, "  Rarity == Unique").unwrap();
         writeln!(out, "  BaseType == {}", base_type_str).unwrap();
         // Price-tiered uniques carry a distinct background (bronze, 175 96 37 240) on top
@@ -956,6 +992,7 @@ mod tests {
             sound: None,
             action,
             disable_drop_sound: false,
+            enable_drop_sound: false,
         }
     }
 
@@ -1011,6 +1048,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cancel_values_positional_and_enable_drop_sound_emit_in_canonical_order() {
+        use crate::models::config::{Cancelable, DropSound, Sound, StyleAction};
+        let mut st = bare_style(StyleAction::Show);
+        st.beam = Some(Cancelable::Cancel);
+        st.minimap = Some(Cancelable::Cancel);
+        st.font = Some(30);
+        st.sound = Some(Cancelable::Cancel);
+        st.set_drop_sound(Some(DropSound::Normal));
+        assert_eq!(
+            style_action_lines(&st),
+            [
+                "PlayEffect None",
+                "MinimapIcon -1",
+                "SetFontSize 30",
+                "PlayAlertSound None",
+                "EnableDropSound",
+            ]
+        );
+        st.sound = Some(Cancelable::Set(Sound {
+            id: Some(6),
+            custom: None,
+            vol: 200,
+            positional: true,
+        }));
+        st.set_drop_sound(Some(DropSound::Silent));
+        let lines = style_action_lines(&st);
+        assert_eq!(
+            &lines[3..],
+            ["PlayAlertSoundPositional 6 200", "DisableDropSound"]
+        );
+    }
+
     /// D-09: a Hide style keeps every visual line under its Hide header.
     #[test]
     fn a_hide_style_carries_full_visuals() {
@@ -1021,20 +1091,21 @@ mod tests {
         st.border = Some([40, 50, 60]);
         st.background = Some([70, 80, 90]);
         st.font = Some(33);
-        st.sound = Some(Sound {
+        st.sound = Some(Cancelable::Set(Sound {
             id: Some(3),
             custom: None,
             vol: 100,
-        });
-        st.minimap = Some(Minimap {
+            positional: false,
+        }));
+        st.minimap = Some(Cancelable::Set(Minimap {
             size: 1,
             color: FilterColor::Red,
             shape: MinimapShape::Star,
-        });
-        st.beam = Some(Beam {
+        }));
+        st.beam = Some(Cancelable::Set(Beam {
             color: FilterColor::Red,
             temp: false,
-        });
+        }));
         st.disable_drop_sound = true;
         config.styles.insert("loudhide", st);
         config
@@ -1159,7 +1230,7 @@ mod tests {
         let econ = generate_economy(&config.styles, &priced).expect("generate_economy failed");
         assert!(econ.starts_with(BANNER));
         assert!(econ.ends_with('\n') && !econ.ends_with("\n\n"));
-        assert_eq!(econ, economy_tail(&full));
+        assert_eq!(strip_ff(&econ), economy_tail(&full));
     }
 
     #[test]
@@ -1172,7 +1243,65 @@ mod tests {
         let full = generate(&config, &priced).expect("generate failed");
         let econ = generate_economy(&config.styles, &priced).expect("generate_economy failed");
         assert!(econ.contains("Show # Unique A"));
-        assert_eq!(econ, economy_tail(&full));
+        assert_eq!(strip_ff(&econ), economy_tail(&full));
+    }
+
+    fn strip_ff(s: &str) -> String {
+        let mut o: String = s
+            .lines()
+            .filter(|l| !l.starts_with("# ff:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        o.push('\n');
+        o
+    }
+
+    #[test]
+    fn economy_blocks_carry_ff_name_and_style_lines() {
+        let (config, mut priced) = load_inputs();
+        priced.unique_blocks.push(crate::pricer::UniqueBlock {
+            tier: "A".to_string(),
+            base_types: vec!["Infernal Sword".to_string()],
+        });
+        let econ = generate_economy(&config.styles, &priced).unwrap();
+        let lines: Vec<&str> = econ.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("Show # Currency S"))
+            .expect("currency S block");
+        assert_eq!(lines[i - 2], "# ff:name S tier Currency");
+        assert_eq!(lines[i - 1], "# ff:style builtin:S S");
+        let u = lines.iter().position(|l| *l == "Show # Unique A").unwrap();
+        assert_eq!(lines[u - 1], "# ff:name A tier Uniques");
+        assert!(!lines[u - 2].starts_with("# ff:style"));
+        // generate() has no ff lines at all.
+        let full = generate(&config, &priced).unwrap();
+        assert!(!full.lines().any(|l| l.starts_with("# ff:")));
+        // A style set without ids uses the legacy name form.
+        let mut idless = config.styles.clone();
+        let names: Vec<String> = idless.iter().map(|(n, _)| n.to_string()).collect();
+        for n in names {
+            idless.get_mut(&n).unwrap().id = None;
+        }
+        let e = generate_economy(&idless, &priced).unwrap();
+        assert!(e.lines().any(|l| l == "# ff:style S"));
+    }
+
+    #[test]
+    fn economy_blocks_follow_their_style_visibility() {
+        let (config, mut priced) = load_inputs();
+        priced.unique_blocks.push(crate::pricer::UniqueBlock {
+            tier: "S".to_string(),
+            base_types: vec!["Infernal Sword".to_string()],
+        });
+        let mut styles = config.styles.clone();
+        styles.get_mut("S").unwrap().action = StyleAction::Hide;
+        let econ = generate_economy(&styles, &priced).unwrap();
+        assert!(econ.lines().any(|l| l == "Hide # Currency S"));
+        assert!(econ.lines().any(|l| l == "Hide # Unique S"));
+        assert!(!econ.lines().any(|l| l == "Show # Currency S"));
+        // Other tiers keep Show.
+        assert!(econ.lines().any(|l| l.starts_with("Show # ")));
     }
 
     #[test]

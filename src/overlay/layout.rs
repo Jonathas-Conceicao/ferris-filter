@@ -1,4 +1,4 @@
-//! Pure stripe-docking geometry — no eframe/window state, just numbers in and a
+//! Pure window-docking geometry — no eframe/window state, just numbers in and a
 //! rect out, so it is fully unit-testable without a running event loop.
 //!
 //! `dock_rect` guarantees, as an invariant rather than a coincidence, that the
@@ -6,16 +6,16 @@
 //! (D-12, egui #4458: `always_on_top` renders incorrectly when the window size
 //! equals the screen size).
 
-/// The stripe's nominal width in points, measured from the EE2 reference
+/// The overlay's nominal width in points, measured from the EE2 reference
 /// screenshot (D-23: 460 px of a 1920×1080 screen).
 pub const STRIPE_WIDTH: f32 = 460.0;
 
-/// Clearance kept between the stripe and the screen edges it doesn't dock
+/// Clearance kept between the window and the screen edges it doesn't dock
 /// against (right, top, bottom), and the minimum slack subtracted from the
 /// docked edge so the rect can never equal the monitor size outright.
 pub const EDGE_MARGIN: f32 = 12.0;
 
-/// Returns the stripe's outer rect, docked against the right screen edge with
+/// Returns the overlay's outer rect, docked against the right screen edge with
 /// `EDGE_MARGIN` clearance on the right, top and bottom.
 ///
 /// Clamps rather than trusting its inputs: for any `monitor` with both
@@ -29,7 +29,7 @@ pub const EDGE_MARGIN: f32 = 12.0;
 /// screen.
 ///
 /// [`dock_rect`] is this with the work area assumed to be the full monitor starting at 0,0, which
-/// is what winit's `monitor_size` describes. That assumption put the bottom of the stripe, and
+/// is what winit's `monitor_size` describes. That assumption put the bottom of the window, and
 /// the APPLY row with it, behind the taskbar (author, screenshot poe2_print008, 2026-09-15).
 pub fn dock_rect_in(work_area: egui::Rect, width: f32) -> egui::Rect {
     let local = dock_rect(work_area.size(), width);
@@ -71,7 +71,7 @@ mod work_area_tests {
     #[test]
     fn docking_into_a_work_area_keeps_the_stripe_clear_of_the_taskbar() {
         // 1080p with a 48px taskbar along the bottom: the work area is shorter than the screen
-        // and the stripe must end inside it, not at the screen's own bottom edge.
+        // and the window must end inside it, not at the screen's own bottom edge.
         let screen = egui::vec2(1920.0, 1080.0);
         let work = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1920.0, 1032.0));
 

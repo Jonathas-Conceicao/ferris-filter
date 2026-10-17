@@ -6,7 +6,7 @@
 //! the button and the status line.
 //!
 //! **Why a worker thread.** A price sync is dozens of HTTP round trips against poe.ninja. Running
-//! it on the UI thread would freeze the stripe — and the stripe is drawn over a live game, so a
+//! it on the UI thread would freeze the window — and the window is drawn over a live game, so a
 //! frozen overlay is worse than a slow one. [`EconomySync::start`] hands the work to a thread and
 //! the frame loop collects the result through a channel, in the same poll-once-per-frame place the
 //! tray menu is already read.
@@ -18,7 +18,7 @@
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-/// What the stripe should be showing about the economy data.
+/// What the window should be showing about the economy data.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SyncState {
     /// No sync has run this session.
@@ -30,7 +30,7 @@ pub enum SyncState {
     Finished(SyncOutcome),
 }
 
-/// The result of one completed sync, in the words the stripe will use.
+/// The result of one completed sync, in the words the window will use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncOutcome {
     /// Prices were refreshed and written.
@@ -56,7 +56,7 @@ impl SyncOutcome {
     }
 }
 
-/// What the stripe says after prices are refreshed.
+/// What the window says after prices are refreshed.
 ///
 /// It names Apply explicitly. A player who has just synced has every reason to think the game now
 /// sees new prices, and it does not — the same reasoning that makes Apply repeat the in-game reload
@@ -64,13 +64,13 @@ impl SyncOutcome {
 /// change colour.
 pub fn success_message(league: &str) -> String {
     if league.is_empty() {
-        return "Economy prices refreshed. Press APPLY to compile them into the filter."
+        return "Economy prices refreshed. Press Apply to compile them into the filter."
             .to_string();
     }
-    format!("Economy prices refreshed from {league}. Press APPLY to compile them into the filter.")
+    format!("Economy prices refreshed from {league}. Press Apply to compile them into the filter.")
 }
 
-/// What the stripe says when a sync fails.
+/// What the window says when a sync fails.
 pub fn failure_message(err: &str) -> String {
     format!("Economy sync failed: {err}")
 }
@@ -128,7 +128,7 @@ impl EconomySync {
 
     /// Drop a finished sync's message, returning to [`SyncState::Idle`].
     ///
-    /// Called when the stripe is concealed: the message answers a question the player asked
+    /// Called when the window is concealed: the message answers a question the player asked
     /// before hiding it, and on the next reveal it would read as a report about whatever they are
     /// about to do. A sync still **in flight** is deliberately untouched — hiding the overlay does
     /// not cancel the worker, and the button must stay inert until it reports.
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn hiding_the_stripe_clears_a_finished_message_but_not_a_running_sync() {
-        // Clearing: the message answers a question asked before the stripe was hidden, and would
+        // Clearing: the message answers a question asked before the window was hidden, and would
         // otherwise reappear looking like a report about whatever the player does next.
         let mut sync = EconomySync::new();
         sync.start(|| Ok("Forbidden Rites".to_string()));

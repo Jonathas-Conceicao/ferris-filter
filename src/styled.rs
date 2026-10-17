@@ -16,6 +16,9 @@
 //! which keeps the pass idempotent.
 
 use crate::emitter::style_action_lines;
+use std::collections::HashMap;
+
+use crate::filter::group;
 use crate::filter::keywords::Kind;
 use crate::filter::section::{self, SectionSpan};
 use crate::filter::tokenize::tokenize;
@@ -55,20 +58,31 @@ fn in_economy(span: Option<SectionSpan>, header: usize) -> bool {
     span.is_some_and(|s| header > s.begin && header < s.end)
 }
 
-/// 1-based index among non-economy blocks (same numbering as the overlay's rule rows).
+/// 1-based index among non-economy rules (same numbering as the overlay's rule rows: a grouped
+/// rule counts once).
 pub fn rule_index_of(doc: &Document, id: BlockId) -> Option<usize> {
+    rule_indices(doc).get(&id).copied()
+}
+
+/// [`rule_index_of`] for every non-economy block at once; a later block of a grouped rule maps to
+/// its rule's index. Passes that edit the document compute it first, so a group that is briefly
+/// out of step mid-pass never shifts the numbers (review WR-04).
+fn rule_indices(doc: &Document) -> HashMap<BlockId, usize> {
     let span = economy_span(doc);
+    let groups = group::analyze(doc);
+    let mut out = HashMap::new();
     let mut index = 0usize;
     for b in doc.blocks() {
         if in_economy(span, b.header_line()) {
             continue;
         }
-        index += 1;
-        if b.id() == id {
-            return Some(index);
+        if !groups.is_follower(b.id()) {
+            index += 1;
         }
+        // Blocks come in file order, so a follower's leader is already numbered: `index`.
+        out.insert(b.id(), index);
     }
-    None
+    out
 }
 
 /// `(lowercased keyword, value tokens joined by one space)` for an action line, else `None`.
@@ -150,16 +164,24 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
         .blocks()
         .map(|b| (b.id(), b.is_enabled(), b.header_line()))
         .collect();
+    // Every block of a grouped rule is rewritten (they stay identical), but the rule is reported
+    // once, by its first block.
+    let followers = group::analyze(doc).followers();
+    let indices = rule_indices(doc);
     let mut report = StyleReport::default();
     for (id, enabled, header) in ids {
         if in_economy(span, header) {
             continue;
         }
+        let follower = followers.contains(&id);
         let Some(tag) = doc.meta_get(id, "style").map(str::to_string) else {
             continue;
         };
         let Some(m) = styles.resolve_tag(&tag) else {
-            if enabled && let Some(i) = rule_index_of(doc, id) {
+            if enabled
+                && !follower
+                && let Some(&i) = indices.get(&id)
+            {
                 report.unknown.push((i, tag));
             }
             continue;
@@ -168,6 +190,7 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
             && !m.canonical
             && let Some(canon) = styles.tag_for(m.name)
             && doc.set_meta(id, "style", &canon).is_ok()
+            && !follower
         {
             report.retagged += 1;
         }
@@ -175,10 +198,13 @@ pub fn rewrite_styled_with(doc: &mut Document, styles: &StyleSet, retag: bool) -
             continue;
         }
         match rewrite_block(doc, id, m.style) {
-            Ok(true) => report.rewritten += 1,
-            Ok(false) => {}
+            Ok(true) if !follower => report.rewritten += 1,
+            Ok(_) => {}
             Err(e) => {
-                if let Some(i) = rule_index_of(doc, id) {
+                // A failed later block of a group is reported under its rule, once.
+                if let Some(&i) = indices.get(&id)
+                    && !report.failed.iter().any(|(f, _)| *f == i)
+                {
                     report.failed.push((i, e.to_string()));
                 }
             }
@@ -198,6 +224,8 @@ pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(us
         .map(|b| (b.id(), b.header_line()))
         .filter(|&(_, header)| !in_economy(span, header))
         .collect();
+    let followers = group::analyze(doc).followers();
+    let indices = rule_indices(doc);
     let mut dropped = Vec::new();
     for (id, _) in ids {
         let Some(name) = doc.meta_get(id, "style").map(str::to_string) else {
@@ -206,7 +234,12 @@ pub fn drop_unknown_style_tags(doc: &mut Document, styles: &StyleSet) -> Vec<(us
         if styles.resolve_tag(&name).is_some() {
             continue;
         }
-        let Some(index) = rule_index_of(doc, id) else {
+        if followers.contains(&id) {
+            // A later block of a grouped rule: drop its tag too, report the rule once.
+            let _ = doc.remove_meta(id, "style");
+            continue;
+        }
+        let Some(&index) = indices.get(&id) else {
             continue;
         };
         if doc.remove_meta(id, "style").is_ok() {
@@ -253,6 +286,50 @@ mod tests {
             "#ff:style hidden\nHide\n  Class \"Rings\"\n  SetFontSize 21\n  DisableDropSound\n"
         );
         assert_eq!(rep.rewritten, 1);
+    }
+
+    /// The cancel values, a positional alert and EnableDropSound pass the grammar gate and a
+    /// second run changes nothing.
+    #[test]
+    fn cancel_values_and_enable_drop_sound_rewrite_idempotently() {
+        use crate::models::config::{Cancelable, Sound};
+        let mut set = styles();
+        let s = set.get_mut("S").unwrap();
+        s.minimap = Some(Cancelable::Cancel);
+        s.beam = Some(Cancelable::Cancel);
+        s.sound = Some(Cancelable::Cancel);
+        s.disable_drop_sound = false;
+        s.enable_drop_sound = true;
+        set.validate().unwrap();
+        let src = "#ff:style S\nShow\n  Class \"Rings\"\n  SetFontSize 20\n";
+        let (once, rep) = run_with(src, &set, false);
+        assert_eq!(rep.rewritten, 1);
+        for line in [
+            "PlayEffect None",
+            "MinimapIcon -1",
+            "PlayAlertSound None",
+            "EnableDropSound",
+        ] {
+            assert!(once.contains(&format!("  {line}\n")), "{line} in {once}");
+        }
+        let (twice, rep) = run_with(&once, &set, false);
+        assert_eq!(once, twice);
+        assert_eq!(rep.rewritten, 0);
+        let s = set.get_mut("S").unwrap();
+        s.sound = Some(Cancelable::Set(Sound {
+            id: Some(6),
+            custom: None,
+            vol: 200,
+            positional: true,
+        }));
+        let (once, _) = run_with(src, &set, false);
+        assert!(
+            once.contains("  PlayAlertSoundPositional 6 200\n"),
+            "{once}"
+        );
+        let (twice, rep) = run_with(&once, &set, false);
+        assert_eq!(once, twice);
+        assert_eq!(rep.rewritten, 0);
     }
 
     #[test]
@@ -304,7 +381,11 @@ mod tests {
         // A sound path with an embedded newline makes `splice_body` refuse the action lines
         // after the `hide` -> `Show` switch has already succeeded.
         let mut bad = styles().get("S").unwrap().clone();
-        bad.sound.as_mut().unwrap().custom = Some("a\nb.mp3".into());
+        bad.sound
+            .as_mut()
+            .and_then(crate::models::config::Cancelable::value_mut)
+            .unwrap()
+            .custom = Some("a\nb.mp3".into());
         let src = "#ff:style S\nhide\n  SetFontSize 20\n";
         let mut doc = parse(src.as_bytes()).unwrap();
         let id = doc.blocks().next().unwrap().id();
@@ -327,9 +408,10 @@ mod tests {
     #[test]
     fn economy_block_is_untouched() {
         let src = format!(
-            "{}\n#ff:style S\nHide\n  SetFontSize 20\n{}\n",
+            "{}\n{}\n{}\n#ff:style S\nHide\n  SetFontSize 20\n",
+            section::RULE_LINE,
             section::BEGIN_LINE,
-            section::END_LINE
+            section::RULE_LINE
         );
         let (out, rep) = run(&src);
         assert_eq!(out, src);
@@ -396,9 +478,10 @@ mod tests {
     #[test]
     fn drop_skips_economy_blocks() {
         let src = format!(
-            "{}\n#ff:style Gone\nShow\n  SetFontSize 20\n{}\n",
+            "{}\n{}\n{}\n#ff:style Gone\nShow\n  SetFontSize 20\n",
+            section::RULE_LINE,
             section::BEGIN_LINE,
-            section::END_LINE
+            section::RULE_LINE
         );
         let (out, d) = drop_run(&src);
         assert!(d.is_empty());

@@ -8,7 +8,9 @@
 pub mod block;
 pub mod diag;
 mod disabled;
+mod divider;
 mod edit;
+pub mod group;
 pub mod keywords;
 mod lineedit;
 pub mod lines;
@@ -21,6 +23,7 @@ pub mod tokenize;
 pub use block::{Block, BlockId, BlockKeyword, BodyLine, DisabledState, Item};
 pub use diag::{FilterDiagnostic, LoadError, Severity};
 pub use disabled::{DISABLE_PREFIX, commented_inner};
+pub use divider::RuleStep;
 pub use edit::EditError;
 pub use lineedit::LinePatch;
 pub use lines::{Eol, Line};
@@ -38,11 +41,17 @@ pub struct Document {
 
 /// Parse filter bytes. Fails only if the input is not valid UTF-8.
 pub fn parse(input: &[u8]) -> Result<Document, LoadError> {
+    parse_with_id_base(input, 0)
+}
+
+/// [`parse`] with block ids counted from `id_base`, so the ids of two documents can be kept
+/// disjoint (the overlay's staged-economy preview).
+pub fn parse_with_id_base(input: &[u8], id_base: u64) -> Result<Document, LoadError> {
     let text = std::str::from_utf8(input).map_err(|e| LoadError::InvalidUtf8 {
         valid_up_to: e.valid_up_to(),
     })?;
     let (bom, lines) = lines::split(text);
-    let mut next_id = 0u64;
+    let mut next_id = id_base;
     let (items, diagnostics) = parse::build(&lines, &mut next_id);
     Ok(Document {
         bom,

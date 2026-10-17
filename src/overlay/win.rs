@@ -27,7 +27,7 @@
 //! does **not** set any persistent extended style. Once visible-but-unfocused, the window is
 //! fully normal from Windows' input-routing perspective — a click inside it triggers the OS's
 //! default mouse-activation behavior exactly as any other window, so D-06 (a click activates the
-//! stripe normally) needs no extra code here. This is also why this module must never set the
+//! window normally) needs no extra code here. This is also why this module must never set the
 //! Win32 "never activate this window" extended style: that would suppress activation on *every*
 //! click, not just the reveal, and would break D-06 outright.
 
@@ -125,7 +125,7 @@ mod imp {
     };
     use windows_sys::core::BOOL;
 
-    /// The stripe's own window handle, cached once on the first frame it is available. Never
+    /// The overlay's own window handle, cached once on the first frame it is available. Never
     /// obtained for, or applied to, any window other than our own.
     pub struct OverlayWindow(HWND);
 
@@ -137,7 +137,7 @@ mod imp {
     // only passed back to the same Win32 API family that issued it.
     unsafe impl Send for OverlayWindow {}
 
-    /// Caches the stripe's `HWND` from an `eframe::Frame`, once one is available. Returns
+    /// Caches the overlay's `HWND` from an `eframe::Frame`, once one is available. Returns
     /// `None` before the platform window exists yet (the earliest frames) or if the raw handle
     /// is not the `Win32` variant (should not happen under `cfg(windows)`, but never assumed).
     pub fn from_frame(frame: &eframe::Frame) -> Option<OverlayWindow> {
@@ -168,7 +168,7 @@ mod imp {
 
     /// The desktop work area — the screen minus the taskbar and any other appbars.
     ///
-    /// The stripe used to dock against `monitor_size`, which winit reports as the full screen
+    /// The window used to dock against `monitor_size`, which winit reports as the full screen
     /// resolution. On a 1080p screen with a taskbar that put the bottom of the window, and the
     /// APPLY row with it, underneath the taskbar (author, screenshot poe2_print008). Taskbar
     /// height and edge are user settings, so no fixed margin can stand in for asking.
@@ -295,10 +295,10 @@ mod imp {
         }
     }
 
-    /// Whether the window the user is actually working in is the game, or the stripe itself.
+    /// Whether the window the user is actually working in is the game, or the window itself.
     ///
     /// Gates the global hotkey: a system-wide binding that fires in a browser or an editor is a
-    /// key the user cannot use for anything else (author, 2026-09-15). The stripe counts as well
+    /// key the user cannot use for anything else (author, 2026-09-15). The window counts as well
     /// as the game — once it has focus, the same key has to be able to dismiss it, or the only
     /// way out would be the tray.
     ///
@@ -522,9 +522,9 @@ mod imp {
     /// feature.
     const CF_UNICODETEXT: u32 = 13;
 
-    /// The stripe's window, passed to `OpenClipboard`. Microsoft documents that `EmptyClipboard`
+    /// The overlay's window, passed to `OpenClipboard`. Microsoft documents that `EmptyClipboard`
     /// after `OpenClipboard(NULL)` leaves the clipboard ownerless and `SetClipboardData` then
-    /// fails, so there is no null fallback: without a cached stripe window no send is attempted
+    /// fails, so there is no null fallback: without a cached overlay window no send is attempted
     /// at all (review WR-02).
     #[derive(Clone, Copy)]
     pub struct ClipboardOwner(HWND);
@@ -533,7 +533,7 @@ mod imp {
     // argument as `OverlayWindow`.
     unsafe impl Send for ClipboardOwner {}
 
-    /// The clipboard owner for the stripe's window.
+    /// The clipboard owner for the overlay window.
     pub fn clipboard_owner(w: &OverlayWindow) -> ClipboardOwner {
         ClipboardOwner(w.0)
     }
@@ -552,7 +552,7 @@ mod imp {
 
     fn open_clipboard(owner: ClipboardOwner) -> Result<ClipboardGuard, String> {
         for attempt in 0..5 {
-            // SAFETY: `OpenClipboard` takes a window handle (our own stripe's); failure is
+            // SAFETY: `OpenClipboard` takes a window handle (our own overlay's); failure is
             // reported by 0.
             if unsafe { OpenClipboard(owner.0) } != 0 {
                 return Ok(ClipboardGuard);

@@ -51,11 +51,11 @@ pub fn launch() -> eframe::Result<()> {
         }
     }
 
-    // INST-01 / Phase 22 -- a second `ff` signals the running one to show its stripe (or shows
+    // INST-01 / Phase 22 -- a second `ff` signals the running one to show its window (or shows
     // the not-responding message after `instance::STARTUP_TIMEOUT_MS` for a still-starting
     // instance plus `instance::ACK_TIMEOUT_MS` for the answer) and exits here, before it
     // registers a hotkey or builds a tray icon, so repeated launches never leave a second
-    // stripe, icon or hotkey registration. If the single-instance check itself fails, it also
+    // window, icon or hotkey registration. If the single-instance check itself fails, it also
     // exits here (fail closed, with a message box naming the error). The guard lives in
     // `OverlayApp` until tray Quit, which drops it at once so an immediate relaunch can start.
     // Quit unregisters the hotkey and removes the tray icon first, so that relaunch can

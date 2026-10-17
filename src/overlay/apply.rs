@@ -62,7 +62,7 @@ pub enum ApplyOutcome {
     Failed(String),
 }
 
-/// The message rendered in the stripe after a successful Apply: names the written file and
+/// The message rendered in the window after a successful Apply: names the written file and
 /// states how to make the game read it. The exact substring `Options > Game > Item Filter >
 /// Refresh` is asserted verbatim below — PoE2 never re-reads a filter on its own
 /// (`PITFALLS.md` §1), so a tool that writes silently reads as broken.
@@ -85,7 +85,7 @@ pub const REASON_GAME_NOT_RUNNING: &str = "game not running";
 pub const REASON_SETTING_OFF: &str = "reload setting is off";
 /// Reason shown when no reload was sent because another one is still in flight.
 pub const REASON_BUSY: &str = "a reload is already in progress";
-/// Reason shown when no reload was sent because the stripe's window handle is not available, so
+/// Reason shown when no reload was sent because the overlay window handle is not available, so
 /// the clipboard could not be used safely.
 pub const REASON_NO_WINDOW: &str = "the overlay window is not ready";
 
@@ -251,7 +251,7 @@ pub fn footer_actions(
 pub const DAMAGED_MARKERS_MESSAGE: &str =
     "The economy section markers are damaged. Fix them by hand, then Reload.";
 
-/// The stripe's status text for the filter file.
+/// The overlay's status text for the filter file.
 pub fn filter_state_message(state: FilterState, migrated: bool) -> String {
     let mut text = match state {
         FilterState::Absent => "The filter does not exist yet. Apply creates it once it has rules \
@@ -374,7 +374,7 @@ pub enum QuitEvent {
 pub enum QuitStep {
     /// Run the shutdown sequence now.
     QuitNow,
-    /// Show the stripe with the confirm.
+    /// Show the window with the confirm.
     OpenConfirm,
     /// Confirm already open: nothing to do.
     KeepConfirm,
@@ -400,8 +400,8 @@ pub fn quit_step(dirty: bool, confirm_open: bool, event: QuitEvent) -> QuitStep 
     }
 }
 
-/// True when the step leaves the confirm open, so a hidden stripe must be revealed to show it.
-/// A second tray Quit counts too: the stripe may have been hidden while the confirm was up.
+/// True when the step leaves the confirm open, so a hidden window must be revealed to show it.
+/// A second tray Quit counts too: the window may have been hidden while the confirm was up.
 pub fn quit_step_shows_confirm(step: QuitStep) -> bool {
     matches!(step, QuitStep::OpenConfirm | QuitStep::KeepConfirm)
 }

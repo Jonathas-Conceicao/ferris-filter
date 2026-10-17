@@ -1,6 +1,6 @@
-//! `OverlayApp` -- the `eframe::App` implementation for the stripe window.
+//! `OverlayApp` -- the `eframe::App` implementation for the overlay window.
 //!
-//! What this file owns: docking the stripe to the right screen edge on the first frame where a
+//! What this file owns: docking the window to the right screen edge on the first frame where a
 //! monitor size is known; polling the tray and the global hotkey for their events; turning those
 //! events into an actual show/hide of the window that does not steal keyboard focus from the game,
 //! by delegating the decision to [`super::visibility`] and the OS call to [`super::win`]; and the
@@ -19,7 +19,7 @@
 //! [`dynamic::apply_edited`] (grammar gate, guarded atomic write) and is refused while an enabled
 //! rule has a grammar error. REVERT re-parses the last applied text. The economy section is a
 //! pinned footer row whose Add/Remove are staged and written by the next APPLY. When the guarded
-//! write refuses because the file changed on disk, the stripe offers RELOAD, which re-reads the
+//! write refuses because the file changed on disk, the window offers RELOAD, which re-reads the
 //! file and discards unapplied edits, and OVERWRITE, which writes the edits over the outside change.
 //!
 //! The decisions (which button is live, what the status says) are pure functions in
@@ -60,7 +60,7 @@ use crate::skin::palette as pal;
 use crate::skin::widgets as w;
 use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
 
-/// The eframe application state for the overlay stripe.
+/// The eframe application state for the overlay window.
 pub struct OverlayApp {
     /// Latches `true` once the first-frame docking has run, so it never runs
     /// again (position/width are not persisted or re-derived per frame).
@@ -97,7 +97,7 @@ pub struct OverlayApp {
     /// The single-instance guard (INST-01); dropping it releases the instance name so the next
     /// `ff` launch becomes the running one. Polled once per frame for a show request from a
     /// second launch. Held until tray Quit, which drops it at once (`None`), not when eframe
-    /// finally drops the app: a relaunch right after Quit then starts a new stripe instead of
+    /// finally drops the app: a relaunch right after Quit then starts a new window instead of
     /// signalling a process that is going away (review iteration 2, WR-01).
     instance: Option<instance::Guard>,
 
@@ -120,13 +120,13 @@ pub struct OverlayApp {
     /// The show/hide decision -- see `super::visibility` for why this is three states, not two.
     visibility: Visibility,
 
-    /// The stripe's own cached window handle (see `super::win`), populated
+    /// The overlay's own cached window handle (see `super::win`), populated
     /// on the first frame one is available. `None` on the very first few
     /// frames, and always `None` off Windows.
     window: Option<OverlayWindow>,
 
     /// The resolved FerrisFilter folder (styles.json, tiers.json, prices.json live here). `Err`
-    /// holds the rendered message; the stripe shows it instead of panicking (STORE-05).
+    /// holds the rendered message; the window shows it instead of panicking (STORE-05).
     root: Result<std::path::PathBuf, String>,
 
     /// The loaded game-folder filter. `Err` holds the rendered load failure.
@@ -154,7 +154,7 @@ pub struct OverlayApp {
     /// always `Error`, whatever the apply state (review CR-02).
     apply_message: Option<(String, w::StatusKind)>,
 
-    /// The economy-sync affordance: a `prices.json` refresh run on a worker thread so a stripe
+    /// The economy-sync affordance: a `prices.json` refresh run on a worker thread so a window
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
@@ -238,7 +238,7 @@ struct ShotState {
     requested: bool,
 }
 
-/// Seconds between `styles.json` modification-time polls while the stripe runs.
+/// Seconds between `styles.json` modification-time polls while the window runs.
 const STYLES_POLL_SECS: f64 = 2.0;
 
 /// The id of the `n`-th row (1-based), for the debug screenshot `--expand`.
@@ -929,7 +929,7 @@ fn settings_with_filter(current: &Settings, name: &str) -> Settings {
 /// warned keeps the in-memory filter and unknown keys (a momentarily unreadable file must not
 /// reset them), but an "off" from the file is still honoured: `settings::load` reports a broken
 /// or wrongly typed file as reload-off, and the warning says so, so keeping the old "on" would
-/// send keystrokes the stripe has just said it won't send.
+/// send keystrokes the window has just said it won't send.
 fn settings_after_reload(
     current: &Settings,
     loaded: Settings,
@@ -963,9 +963,9 @@ struct PendingReload {
     interim: String,
 }
 
-/// The Apply status line after the stripe is concealed. Hiding normally clears it, but not while
+/// The Apply status line after the window is concealed. Hiding normally clears it, but not while
 /// a reload is in flight and its interim line is still showing: the reload's own focus change is
-/// what hides the stripe (the click-away rule sees the game take focus), so clearing here would
+/// what hides the window (the click-away rule sees the game take focus), so clearing here would
 /// drop every reload result, success or failure, before it could land (review CR-01). The kept
 /// interim line is replaced by [`landed_reload_message`] and read on the next reveal.
 fn apply_message_after_conceal(
@@ -981,7 +981,7 @@ fn apply_message_after_conceal(
 /// The status line once the reload worker reports, or `None` when the interim line is gone
 /// (an edit, a RELOAD/switch or a later message replaced it) and the later message stays. A
 /// conceal does not remove the interim line ([`apply_message_after_conceal`]), so a result that
-/// lands while the stripe is hidden is still shown on the next reveal.
+/// lands while the window is hidden is still shown on the next reveal.
 fn landed_reload_message(
     current: Option<&str>,
     pending: &PendingReload,
@@ -1212,7 +1212,7 @@ impl OverlayApp {
             // visibility) and has never been focused -- `ShownUnfocused` is
             // the state that matches that physical reality. Starting here
             // (rather than `Hidden`) is what makes the very first `Ctrl+Shift+Z`
-            // press after launch hide the stripe, matching the checkpoint
+            // press after launch hide the window, matching the checkpoint
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
             window: None,
@@ -1559,7 +1559,7 @@ impl OverlayApp {
                     self.reload.is_running(),
                     win::find_game_window,
                 );
-                // No cached stripe window means no clipboard owner: skip rather than fall back
+                // No cached overlay window means no clipboard owner: skip rather than fall back
                 // to an ownerless clipboard, whose write fails after emptying it (review WR-02).
                 let decision =
                     chat::with_owner(decision, self.window.as_ref().map(win::clipboard_owner));
@@ -1659,7 +1659,7 @@ impl OverlayApp {
         }
     }
 
-    /// Hiding the stripe clears every event message (the Apply outcome, the CONFIG message, the
+    /// Hiding the window clears every event message (the Apply outcome, the CONFIG message, the
     /// list status, a finished sync), so a stale report never outlives its question or hides the
     /// standing lines behind it (grammar gate, load error, the out-of-date indicator; review
     /// WR-01). The one exception is a reload's interim line ([`apply_message_after_conceal`]).
@@ -1892,7 +1892,7 @@ impl OverlayApp {
                     apply::QuitStep::RunApply => {
                         self.quit_confirm = false;
                         let ok = self.run_apply(ctx, false);
-                        // A refusal leaves the stripe open showing it (Overwrite/Reload as today).
+                        // A refusal leaves the window open showing it (Overwrite/Reload as today).
                         if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
                             == apply::QuitStep::QuitWhenIdle
                         {
@@ -2114,7 +2114,7 @@ impl OverlayApp {
     }
 
     /// RELOAD: re-resolves the app root, re-reads the filter and discards in-memory state (D-08).
-    /// Re-resolving the root here is what lets a stripe launched before the FerrisFilter folder
+    /// Re-resolving the root here is what lets a window launched before the FerrisFilter folder
     /// was in place recover without a restart.
     fn reload(&mut self) {
         let old_root = self.root.clone();
@@ -2588,7 +2588,7 @@ pub(crate) fn bottom_bar(
 
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // Cache the stripe's own HWND the first frame one is available
+        // Cache the overlay's own HWND the first frame one is available
         // (RESEARCH Pattern 1). Retried every frame until it succeeds.
         if self.window.is_none() {
             self.window = win::from_frame(frame);
@@ -2617,7 +2617,7 @@ impl eframe::App for OverlayApp {
         if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
             if let HotkeyStatus::Registered { id } = &self.hotkey_status {
                 if event.id == *id && event.state == global_hotkey::HotKeyState::Pressed {
-                    // Only while the user is actually in the game — or in the stripe itself, so
+                    // Only while the user is actually in the game — or in the window itself, so
                     // the same key can dismiss it once it has focus. The binding is registered
                     // system-wide, which is what lets it reach a fullscreen game, but a key that
                     // also fires in a browser or an editor is a key the user cannot use for
@@ -2650,7 +2650,7 @@ impl eframe::App for OverlayApp {
         }
 
         // Collect a finished economy sync. The state machine only advances here, so this must
-        // run every frame. A landed result also forces a repaint: the stripe is drawn over a game
+        // run every frame. A landed result also forces a repaint: the window is drawn over a game
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
         if self.economy.poll() {
@@ -2683,7 +2683,7 @@ impl eframe::App for OverlayApp {
                         self.begin_shutdown();
                     } else if apply::quit_step_shows_confirm(step) {
                         self.quit_confirm = true;
-                        // Reveal the stripe the way tray Show does (also when the stripe was
+                        // Reveal the window the way tray Show does (also when the window was
                         // hidden while the confirm was already up).
                         if self.visibility == Visibility::Hidden {
                             self.toggle_requested = true;
@@ -2712,10 +2712,10 @@ impl eframe::App for OverlayApp {
 
         // INST-01 (CONTEXT "Behaviour"): a second launch is a reveal, never a toggle (same rule
         // as the tray's Show, D-17). It deliberately bypasses the hotkey's foreground gate
-        // because the signal comes from outside the game and the stripe. The reveal itself goes
+        // because the signal comes from outside the game and the window. The reveal itself goes
         // through `visibility::advance` and `win::reveal` (`SW_SHOWNOACTIVATE`, no focus steal).
         // The existing `request_repaint_after(50ms)` plus eframe's hidden-window heartbeat is
-        // what wakes a stripe hidden to the tray, so no extra waker thread is needed.
+        // what wakes a window hidden to the tray, so no extra waker thread is needed.
         //
         // The first frame is where polling starts, so it is also where the instance tells a
         // waiting launcher it is ready (WR-02). Until then a launch during startup waits up to
@@ -2727,7 +2727,7 @@ impl eframe::App for OverlayApp {
                 if self.visibility == Visibility::Hidden {
                     self.toggle_requested = true;
                 }
-                // An already-shown stripe is still an answer.
+                // An already-shown window is still an answer.
                 guard.ack();
             }
         }
@@ -2754,7 +2754,7 @@ impl eframe::App for OverlayApp {
                 }
             }
         }
-        // Concealing the stripe clears every event message, so the next reveal starts clean.
+        // Concealing the window clears every event message, so the next reveal starts clean.
         //
         // They are reports on an action the player has already seen the result of: "Wrote
         // <path>…" and "Economy prices refreshed from <league>" answer a question asked minutes
@@ -2763,10 +2763,10 @@ impl eframe::App for OverlayApp {
         // question is worse than no message.
         //
         // Conceal, not Reveal: clearing on the way out means the result stays readable for as
-        // long as the player keeps the stripe open, which is the whole point of showing it.
+        // long as the player keeps the window open, which is the whole point of showing it.
         //
         // The one exception is a reload in flight: sending it focuses the game, which is itself
-        // the click-away that hides the stripe. Its interim line is kept so the result can
+        // the click-away that hides the window. Its interim line is kept so the result can
         // replace it below and be read on the next reveal (review CR-01).
         if matches!(
             visibility::effect_for(self.visibility, next),
@@ -2780,7 +2780,7 @@ impl eframe::App for OverlayApp {
 
         // The reload result lands after the worker's last step; the line is only replaced if it
         // is still the interim one. Polled after the conceal above, so a result and a hide in the
-        // same frame cannot clear the result it just wrote: it lands into a hidden stripe and is
+        // same frame cannot clear the result it just wrote: it lands into a hidden window and is
         // shown on the next reveal.
         if let Some(result) = self.reload.poll() {
             if let Some(p) = self.reload_pending.take()
@@ -2890,7 +2890,7 @@ impl eframe::App for OverlayApp {
         );
         let shell_frame = w::ff_frame(&painter, &skin, frame_outer);
 
-        // The header's close control hides the stripe; it is never the way the process exits
+        // The header's close control hides the window; it is never the way the process exits
         // (that is tray -> Quit alone).
         let header = Rect::from_min_size(win_rect.min, vec2(win_rect.width(), header_h));
         let close = w::ff_header(ui, &skin, header, shell::header_art(&skin), "FerrisFilter")
@@ -3153,7 +3153,7 @@ impl eframe::App for OverlayApp {
         }
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
-        // survive hiding and re-summoning the stripe, so an open popup is still there.
+        // survive hiding and re-summoning the window, so an open popup is still there.
         // An armed Revert with nothing left to discard disarms itself.
         if self.config_ui.revert_armed && self.config_discard_count() == 0 {
             self.config_ui.revert_armed = false;
@@ -3285,7 +3285,7 @@ mod tests {
     fn conceal_keeps_only_an_in_flight_reload_line() {
         use super::apply_message_after_conceal;
         let p = pending("interim");
-        // A reload in flight with its interim line showing: the focus change hides the stripe,
+        // A reload in flight with its interim line showing: the focus change hides the window,
         // and the line must survive for the result to replace it (review CR-01).
         assert_eq!(
             apply_message_after_conceal(Some("interim".into()), Some(&p)),
@@ -3318,9 +3318,9 @@ mod tests {
             ),
         ] {
             let p = pending("interim");
-            // Apply sets the interim line; focusing the game conceals the stripe.
+            // Apply sets the interim line; focusing the game conceals the window.
             let after_hide = apply_message_after_conceal(Some("interim".into()), Some(&p));
-            // The worker reports while the stripe is hidden.
+            // The worker reports while the window is hidden.
             let landed = landed_reload_message(after_hide.as_deref(), &p, &result)
                 .expect("the result must replace the kept interim line");
             assert!(landed.contains(want), "{landed}");

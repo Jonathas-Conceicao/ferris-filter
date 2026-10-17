@@ -192,3 +192,12 @@ skipped: 0
 blocked: 0
 
 ## Gaps
+
+## UAT session 2026-10-17 (author)
+
+Passed: rows, enable/disable, reorder, single expand; + Add rule at the top with the bare-Show
+warning; every flag icon (error, warning, unknown style, group broken, moved across Continue,
+padlock, Continue), checked with `tests/ui/test_ff.filter`; condition editing (operators, sliders,
+Between, Defences, Simple Defences, class picker, quoted lists, raw rows), Duplicate / Delete;
+511-rule scrolling. Style / colour items are superseded by quick tasks 261016-qi7 and the
+style-groups task and are re-checked after them.

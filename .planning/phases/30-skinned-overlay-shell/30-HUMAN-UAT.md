@@ -437,3 +437,9 @@ skipped: 0
 blocked: 0
 
 ## Gaps
+
+## UAT session 2026-10-17 (author)
+
+Passed: docking / DPI / multi-monitor / re-dock (E), v0.5 behaviours (F: hotkey, tray, single
+instance, in-game reload), every popup incl. the new Discard rule changes? (D), status line (C).
+Style-related items (A captions on the style editor) are re-checked after the style-groups quick task.

@@ -58,3 +58,14 @@ skipped: 0
 blocked: 0
 
 ## Gaps
+
+## UAT session 2026-10-17 (author)
+
+Passed: loading sections, + Add section / Section above / rename, moving and removing dividers,
+collapsed state, search into collapsed sections, byte-identical round trip, economy section shown
+last and locked.
+
+Feedback (queued as a follow-up quick task): economy rules stay read-only but every one must be
+expandable so all its conditions and style can be inspected (controls disabled, no Duplicate /
+Delete / Section above); the economy header's display name becomes **FF Economy Section** (the
+banner text in the file is unchanged).

@@ -84,3 +84,13 @@ skipped: 0
 blocked: 0
 
 ## Gaps
+
+## UAT session 2026-10-17 (author)
+
+Passed: ABOUT layout, DPI and link; ECONOMY rows, Sync economy, fallback source; Add / Remove
+economy section with Revert and Apply; tier marker, validation and gated Apply. The pale background
+crab and the description wording are accepted.
+
+Feedback: the tier input boxes are too wide, so the `chaos` unit clips; make them narrower (values
+are not expected past about 6 digits) with a gap before the unit (queued as a follow-up quick task).
+League picker / price source UI went to backlog 999.17.

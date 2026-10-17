@@ -6894,7 +6894,8 @@ mod tests {
                     positional: false
                 })))
             ),
-            "Show\n    PlayAlertSound 2\n"
+            // The file's default 100 is written so the loudness stays (WR-02).
+            "Show\n    PlayAlertSound 2 100\n"
         );
     }
 

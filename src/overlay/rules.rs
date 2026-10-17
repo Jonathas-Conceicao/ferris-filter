@@ -418,20 +418,11 @@ pub struct WorkingFilter {
 #[cfg(test)]
 pub fn tests_econ_body(n: usize) -> String {
     (0..n)
-        .map(|k| {
-            format!(
-                "# ff:name Block {k}
-Show
-  Class \"Rings\"
-
-"
-            )
-        })
+        .map(|k| format!("# ff:name Block {k}\nShow\n  Class \"Rings\"\n\n"))
         .collect::<String>()
         .trim_end()
         .to_string()
-        + "
-"
+        + "\n"
 }
 
 /// First block id of the staged-economy preview document: far above any id the working document

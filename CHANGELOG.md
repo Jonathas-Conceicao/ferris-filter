@@ -56,8 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder** section with the `.mp3` / `.wav` files of the loaded filter's folder (read-only, cached,
   refreshed on load / reload / switch and when it opens); a named file missing from the folder is
   kept and flagged in amber (only when the folder could be listed; an unknown or unreadable folder
-  flags nothing). `styles.json` stores the new states (`"None"` for minimap / beam /
-  sound, `sound.positional`, `enableDropSound`; existing files unchanged) and `generate`, the
+  flags nothing); switching a rule's volumeless sound line between an alert and a file writes the
+  old kind's default volume, so the loudness stays.
+  `styles.json` stores the new states (`"None"` for minimap / beam / sound,
+  `sound.positional`, `enableDropSound`; existing files unchanged) and `generate`, the
   economy section and styled rules emit them. The label preview, CONFIG Icon column and style chip
   show no icon for an off or `/` minimap. Debug screenshot mode gains `--dropdown sound`.
 

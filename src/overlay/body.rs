@@ -3053,8 +3053,16 @@ fn sound_intent(
         return Some(edit(id, e, LinePatch::Content(text)));
     }
     // A volume is written only once it is changed: a line without one keeps none, and a volume
-    // the slider shows clamped (outside 0-300) is kept as written until the slider moves.
-    let volume = if s.vol != binding.sound_shown {
+    // the slider shows clamped (outside 0-300) is kept as written until the slider moves. A switch
+    // between an alert and a file changes the game default (50 / 100), so a line without a volume
+    // gets the shown one written unless it is the new kind's default: the loudness stays.
+    let kind_switch = bound_custom != file.is_some();
+    let new_default = if file.is_some() {
+        CUSTOM_DEFAULT_VOLUME
+    } else {
+        ALERT_DEFAULT_VOLUME
+    };
+    let volume = if s.vol != binding.sound_shown || (kind_switch && s.vol != new_default) {
         Some(i64::from(s.vol))
     } else {
         binding.sound_volume
@@ -7039,6 +7047,35 @@ mod tests {
         );
         assert_eq!(
             intent_text(bare, StyleIntent::Sound(Some(Cancelable::Set(custom(50))))),
+            "Show\n    CustomAlertSound \"uwu.mp3\" 50\n",
+            "WR-02: the alert's default 50 is written, a bare file line would play at 100"
+        );
+        // Switching kind on a volumeless line writes the old kind's default, keeping the loudness.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound 6\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("f".to_string()),
+                    vol: 50,
+                    positional: false,
+                })))
+            ),
+            "Show\n    CustomAlertSound \"f\" 50\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSound \"a.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(alert(4, 100))))
+            ),
+            "Show\n    PlayAlertSound 4 100\n"
+        );
+        // A same-kind pick on a volumeless line still writes no volume.
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSound \"a.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(custom(100))))
+            ),
             "Show\n    CustomAlertSound \"uwu.mp3\"\n"
         );
         assert_eq!(
@@ -7107,7 +7144,7 @@ mod tests {
                     positional: false
                 })))
             ),
-            "Show\n    PlayAlertSound 4  # mine\n"
+            "Show\n    PlayAlertSound 4 100  # mine\n"
         );
     }
 

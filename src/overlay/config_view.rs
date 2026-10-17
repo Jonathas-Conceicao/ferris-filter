@@ -442,7 +442,7 @@ fn filter_draft_row(
 /// Width of a tier cutoff box: room for about 8 digits (cutoffs stay under ~6).
 const TIER_FIELD_W: f32 = 88.0;
 /// Gap between a tier cutoff box and its unit.
-const TIER_UNIT_GAP: f32 = 10.0;
+const TIER_UNIT_GAP: f32 = crate::skin::widgets::FIELD_GAP;
 
 /// The tier cutoffs editor, drawn on the ECONOMY tab under its Tiers heading.
 pub fn show_tiers_section(
@@ -466,8 +466,8 @@ pub fn show_tiers_section(
             let id = ui.make_persistent_id(("cfg-tier", &row.tier));
             let mut buf = row.buffer.clone();
             let edit = crate::skin::widgets::ff_text_field_id(ui, id, &mut buf, "", TIER_FIELD_W);
-            // The field leaves the cursor after its inner edit, not its frame: measure the gap
-            // from the frame's right edge.
+            // The field leaves FIELD_GAP after its frame; this tops up to exactly the same gap
+            // if the row spacing ever changes.
             let unit_x = field_x + TIER_FIELD_W + TIER_UNIT_GAP;
             ui.add_space((unit_x - ui.cursor().min.x).max(0.0));
             if edit.changed() {
@@ -1357,7 +1357,11 @@ mod tests {
                 .map(|w| w.rect)
                 .collect()
         });
-        rects.sort_by(|a, b| (a.min.y, a.min.x).partial_cmp(&(b.min.y, b.min.x)).unwrap());
+        // The edit and its unit share a row centre (the unit is as tall as the field frame).
+        rects.sort_by(|a, b| {
+            let key = |r: &egui::Rect| (r.center().y.round(), r.min.x);
+            key(a).partial_cmp(&key(b)).unwrap()
+        });
         assert_eq!(rects.len(), 14, "{rects:?}");
         let pad = crate::skin::widgets::ROW_PAD;
         let value_x = area.max.x - pad - crate::skin::widgets::CONTROL_WIDTH;

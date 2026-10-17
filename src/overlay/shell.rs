@@ -74,21 +74,20 @@ impl ShellTab {
     }
 }
 
-/// Which tabs show the ` *` marker: a tab is marked when it holds unapplied edits and is not the
-/// active one. RULES owns rule edits, CONFIG owns style edits, ECONOMY owns tier edits and a
+/// Which tabs show the ` *` marker: a tab is marked when it holds unapplied edits, the selected
+/// tab included. RULES owns rule edits, CONFIG owns style edits, ECONOMY owns tier edits and a
 /// staged economy add/remove (its button and Revert live there); About is never marked.
 /// `rules_dirty` must not include the staged economy op.
 pub(crate) fn tab_markers(
-    active: ShellTab,
     rules_dirty: bool,
     styles_dirty: bool,
     tiers_dirty: bool,
     economy_staged: bool,
 ) -> [bool; 4] {
     [
-        active != ShellTab::Rules && rules_dirty,
-        active != ShellTab::Config && styles_dirty,
-        active != ShellTab::Economy && (tiers_dirty || economy_staged),
+        rules_dirty,
+        styles_dirty,
+        tiers_dirty || economy_staged,
         false,
     ]
 }
@@ -1209,53 +1208,31 @@ mod tests {
 
     #[test]
     fn markers() {
-        use ShellTab::*;
         assert_eq!(
-            tab_markers(Rules, false, false, true, false),
+            tab_markers(false, false, true, false),
             [false, false, true, false]
         );
         assert_eq!(
-            tab_markers(Rules, true, true, true, false),
-            [false, true, true, false]
+            tab_markers(true, true, true, false),
+            [true, true, true, false]
         );
         assert_eq!(
-            tab_markers(Config, true, true, true, false),
-            [true, false, true, false]
+            tab_markers(true, false, false, false),
+            [true, false, false, false]
         );
+        // About is never marked; a dirty selected tab is marked like any other.
         assert_eq!(
-            tab_markers(Economy, true, true, true, false),
-            [true, true, false, false]
-        );
-        assert_eq!(
-            tab_markers(About, false, true, false, false),
+            tab_markers(false, true, false, false),
             [false, true, false, false]
-        );
-        assert_eq!(
-            tab_markers(Rules, true, false, false, false),
-            [false, false, false, false]
         );
     }
 
     #[test]
     fn a_staged_economy_op_marks_economy_not_rules() {
-        use ShellTab::*;
         // Only a staged op: rules_dirty is false (the caller passes rule edits only).
         assert_eq!(
-            tab_markers(Rules, false, false, false, true),
+            tab_markers(false, false, false, true),
             [false, false, true, false]
-        );
-        assert_eq!(
-            tab_markers(Config, false, false, false, true),
-            [false, false, true, false]
-        );
-        assert_eq!(
-            tab_markers(About, false, false, false, true),
-            [false, false, true, false]
-        );
-        // On ECONOMY itself the active tab is never marked.
-        assert_eq!(
-            tab_markers(Economy, false, false, false, true),
-            [false, false, false, false]
         );
     }
 

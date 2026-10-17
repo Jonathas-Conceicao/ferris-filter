@@ -62,9 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sound.positional`, `enableDropSound`; existing files unchanged) and `generate`, the
   economy section and styled rules emit them. The label preview, CONFIG Icon column and style chip
   show no icon for an off or `/` minimap. Debug screenshot mode gains `--dropdown sound`.
+- **Economy rows read like rules (quick 261017-7lp).** Apply now writes `# ff:name <T> tier <Group>`
+  above every economy block and `# ff:style <id> <name>` on tier blocks (unique blocks: name only;
+  `generate` output is unchanged), so the read-only economy rows show their name, a style chip and the
+  preset. A staged **Add economy section** lists its rows (read-only, priced with the pending styles
+  and tiers) before Apply. Debug screenshot mode gains `--stage-economy add|remove`.
 
 ### Changed
 
+- The ` *` unapplied marker now also shows on the selected tab.
 - **Style table and editor (Phase 33).** The CONFIG style tables get a header row (Visibility, Name,
   Icon, Preview, Order) with the minimap icon per style and greyed built-in arrows; a style opens into
   a line-by-line editor without boxed panels (visibility, label, colours, font size, minimap, beam,
@@ -169,6 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Text fields leave a visible gap before the next widget on the row (quoted-list field and **+ Add** no longer touch).
 - RULES tab: the search field no longer touches **+ Add rule**; `◆ A CONTINUE` reads as a styled chip plus the Continue word; the group-broken and padlock icons are legible (the broken link no longer reads as "0/0"); the operator dropdown fits "Matches exactly".
 - **Docking used the wrong monitor and mixed units.** The stripe took the primary monitor's work
   area and mixed physical and logical units, so it was wrong at 125% and above and on a second

@@ -2088,7 +2088,7 @@ Show # Unique A
         // Search finds an economy row by its name; style users ignore economy blocks.
         let hits = wf.entries("tier currency", |_| false);
         assert!(hits.iter().any(|e| matches!(e, ListEntry::EconomyRule(_))));
-        assert!(wf.style_users().get("S").is_none());
+        assert!(!wf.style_users().contains_key("S"));
     }
 
     #[test]

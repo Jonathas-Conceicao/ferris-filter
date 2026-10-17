@@ -1285,6 +1285,9 @@ pub fn ff_text_field_id(
     ff_text_field_ex(ui, Some(id), text, hint, width, regular(15.0))
 }
 
+/// The gap left after a text field's frame before the next widget on the same row.
+pub const FIELD_GAP: f32 = 10.0;
+
 /// The single text-field implementation: optional explicit `id`, and the `font` (e.g. monospace
 /// 14 for raw filter rows).
 pub fn ff_text_field_ex(
@@ -1312,6 +1315,16 @@ pub fn ff_text_field_ex(
         edit = edit.id(id);
     }
     let resp = ui.put(rect.shrink2(vec2(10.0, 3.0)), edit);
+    // `put` leaves the cursor at the inner edit's right edge, 10pt inside the frame, which made
+    // the next widget on a row touch (or overlap) it. Put the cursor back past the whole frame and
+    // keep FIELD_GAP before whatever follows, in a horizontal layout and when room is left.
+    ui.advance_cursor_after_rect(rect);
+    if ui.layout().main_dir().is_horizontal() {
+        let extra = FIELD_GAP - ui.spacing().item_spacing.x;
+        if extra > 0.0 && ui.available_width() > FIELD_GAP {
+            ui.add_space(extra);
+        }
+    }
     let hot = resp.hovered() || resp.has_focus();
     let shapes = vec![
         Shape::rect_filled(rect, CornerRadius::same(1), pal::INPUT_FILL),
@@ -1685,6 +1698,24 @@ mod tests {
         assert_eq!(slider_value_at(-50.0, track, 6.0, &range, 1.0), 0.0);
         assert_eq!(slider_value_at(56.0, track, 6.0, &range, 25.0), 50.0);
         assert_eq!(snap_value(0.26, &(0.0..=1.0), 0.05), 0.25);
+    }
+
+    #[test]
+    fn a_text_field_leaves_a_gap_before_the_next_widget_on_the_row() {
+        let (ctx, skin) = setup();
+        let (mut field, mut button) = (Rect::NOTHING, Rect::NOTHING);
+        ctx.run_ui(RawInput::default(), |ui| {
+            ui.horizontal(|ui| {
+                let mut text = String::new();
+                field = ff_text_field(ui, &mut text, "hint", 200.0).rect;
+                button = ff_button(ui, &skin, "Add", 40.0).rect;
+            });
+        })
+        .drop_without_applying_deltas();
+        assert!(
+            button.min.x - field.max.x >= FIELD_GAP - 0.5,
+            "field {field:?} button {button:?}"
+        );
     }
 
     #[test]

@@ -492,9 +492,9 @@ pub fn state_after_revert(applied_this_session: bool, other_dirty: bool) -> Appl
     }
 }
 
-/// A tab's label, with ` *` when the OTHER tab holds unapplied edits.
-pub fn tab_label(name: &str, other_dirty: bool) -> String {
-    if other_dirty {
+/// A tab's label, with ` *` when that tab holds unapplied edits.
+pub fn tab_label(name: &str, dirty: bool) -> String {
+    if dirty {
         format!("{name} *")
     } else {
         name.to_string()
@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_labels_mark_the_other_tab_only_when_dirty() {
+    fn tab_labels_mark_a_dirty_tab() {
         assert_eq!(tab_label("RULES", true), "RULES *");
         assert_eq!(tab_label("CONFIG", false), "CONFIG");
     }

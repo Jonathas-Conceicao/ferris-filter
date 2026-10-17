@@ -13,22 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **PoE2-style UI prototype (quick 261015-tz2).** `ff-proto` (new, not default-run) shows the
-  overlay in Path of Exile 2's own Options-window style on fake data: left-docked, 660pt wide, full
-  height, game header / tabs / frame / round checks / sliders / dropdowns / buttons / scrollbar over
-  a static Ferris line drawing; `--screenshot <png>` saves a frame and exits. Built on a new shared
-  skin module (`src/skin/`) that the `ff` overlay can adopt later; `ff` itself is unchanged. The
-  art and Fontin fonts in `assets/poe2/` come from the game via the new `tools/ff-art` dev tool
-  (reads the install read-only, manifest in `assets/poe2/manifest.toml`). README
-  gains a credits section with the Grinding Gear Games disclaimer.
-- **Prototype round 2 (quick 261016-1de).** `ff-proto` tabs now sit like the game's (captions
-  centred on the stone's flat top, even spacing, overlapping tails) and there are four: RULES /
-  CONFIG / ECONOMY / ABOUT. CONFIG styles open in place into a style editor (Show/Hide, live label
-  preview, Text/Border/Background swatch cards, font size, minimap size / colour / the 12 real game
-  shapes, beam, sound and volume; custom styles get name, reorder and delete, plus `+ Add style`),
-  all on fake data in memory. ABOUT shows the version, repo, credits and the GGG disclaimer. The
-  status line stays one row, cut with an ellipsis, full text on hover, coloured by ok / warning /
-  error. The 4.7 MB minimap sheet is replaced by a 0.5 MB atlas of just the filter icons.
+- **PoE2-style UI prototype (`ff-proto`).** Added to try the game-styled look on fake data (quick
+  261015-tz2, 261016-1de), then removed in Phase 35 once `ff` carried the same skin. It introduced
+  the shared skin (`src/skin/`), the game art and Fontin fonts in `assets/poe2/` extracted by the
+  new `tools/ff-art` dev tool (reads the install read-only, manifest in
+  `assets/poe2/manifest.toml`), a 0.5 MB minimap atlas, and the README credits section with the
+  Grinding Gear Games disclaimer.
 - **Rule sections (Phase 32).** A filter can be split into named, collapsible sections written
   as `# ff:section <name>` banners (three lines: 80 `#`, the marker, 80 `#`). The RULES tab shows
   each as a header with chevron, name, rule count, rename, up / down and remove; **+ Add section**
@@ -101,8 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from any directory and writes into the repo's `assets/`; root `cargo build`/`cargo test` do not
   build it. `Cargo.lock` is now committed (one lock for the workspace) and `rust-toolchain.toml`
   selects the nightly channel (not a specific compiler).
-- **The Cargo package version follows the release tags.** It was still `0.1.0`; it is now `0.5.0`
-  (the last tag, `v0.5`) and moves with each milestone tag from here on.
+- **The Cargo package version follows the release tags.** It was still `0.1.0`; it is now `0.6.0`
+  (it was `0.5.0` at the `v0.5` tag) and moves with each milestone tag from here on.
+- **README rewritten as a general project page (Phase 35)** with screenshots of the overlay in
+  `docs/screenshots/`; CLAUDE.md corrected to match what ships.
 
 - **Simple Defences picks base types (quick 261015-nbp).** The card is one line of seven
   multi-select chips (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES) instead of the
@@ -172,6 +164,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `PlayEffect None` are written by the style editor groups again since quick 261017-0wl.)
 - **The free-text sound file field (quick 261017-0wl).** Custom sound files are picked from the
   filter folder listing in the Alert sound dropdown instead.
+- **`ff-proto`, `overlay::theme` and the Cinzel font (Phase 35).** The prototype binary, the
+  stripe-era theme module (its colours and sizes now come from `src/skin/`) and `assets/Cinzel-*`
+  are gone; the overlay looks the same.
 
 ### Fixed
 

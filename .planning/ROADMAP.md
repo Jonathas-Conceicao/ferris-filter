@@ -306,7 +306,16 @@ Plans:
   2. README, CLAUDE.md and CHANGELOG describe the new window and tabs, dividers and the economy banner, the workspace and running the asset tool from the root
   3. The Cargo version reads `0.6.0` when the milestone is tagged
 
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+
+**Wave 1**
+
+- [ ] 35-01-PLAN.md — Remove ff-proto, overlay::theme (constants moved into src/skin/) and Cinzel; before/after screenshot pixel diff; gates
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 35-02-PLAN.md — Version 0.6.0, README general page with docs/screenshots/, CLAUDE.md corrections, CHANGELOG [Unreleased] cleanup
 
 ## Progress
 

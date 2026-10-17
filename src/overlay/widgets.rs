@@ -757,8 +757,7 @@ fn add_field(ui: &mut egui::Ui, id: egui::Id, hint: &str) -> (Vec<String>, Optio
             .x
         });
         let button_w = (caption_w + 44.0).max(84.0);
-        let width =
-            (ui.available_width() - button_w - crate::skin::widgets::FIELD_GAP).max(60.0);
+        let width = (ui.available_width() - button_w - crate::skin::widgets::FIELD_GAP).max(60.0);
         let response =
             crate::skin::widgets::ff_text_field_id(ui, field_id, &mut draft, hint, width);
         enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

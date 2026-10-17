@@ -2292,7 +2292,10 @@ Show
             .drop_without_applying_deltas();
             let (_, field, add, section) = rects;
             let gap = add.min.x - field.max.x;
-            assert!((gap - crate::skin::widgets::FIELD_GAP).abs() < 0.6, "query {q:?}: gap {gap}");
+            assert!(
+                (gap - crate::skin::widgets::FIELD_GAP).abs() < 0.6,
+                "query {q:?}: gap {gap}"
+            );
             let gap2 = section.min.x - add.max.x;
             assert!((gap2 - 8.0).abs() < 0.6, "query {q:?}: gap {gap2}");
             assert!(add.width() >= 124.0 - 0.6, "add {}", add.width());

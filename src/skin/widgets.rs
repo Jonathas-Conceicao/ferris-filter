@@ -995,13 +995,12 @@ fn dropdown_shell(
         .frame(egui::Frame::NONE.inner_margin(6))
         .show(|ui| {
             let bg = ui.painter().add(Shape::Noop);
-            // True on the first frame the list is shown.
+            // True on the first frame the list is shown (every pass of it).
             let shown_id = id.with("shown");
-            let first = !ui
-                .ctx()
-                .data(|d| d.get_temp::<bool>(shown_id))
-                .unwrap_or(false);
-            ui.ctx().data_mut(|d| d.insert_temp(shown_id, true));
+            let frame = ui.ctx().cumulative_frame_nr();
+            let (state, first) =
+                reveal_state(ui.ctx().data(|d| d.get_temp::<(u64, u64)>(shown_id)), frame);
+            ui.ctx().data_mut(|d| d.insert_temp(shown_id, state));
             ui.spacing_mut().item_spacing.y = 0.0;
             if scroll {
                 ui.allocate_ui(vec2(width - 12.0, max_h), |ui| {
@@ -1030,10 +1029,24 @@ fn dropdown_shell(
         });
     let open_now = egui::Popup::is_id_open(ui.ctx(), id);
     if !open_now {
-        ui.ctx().data_mut(|d| d.remove::<bool>(id.with("shown")));
+        ui.ctx()
+            .data_mut(|d| d.remove::<(u64, u64)>(id.with("shown")));
     }
     let opened = !was_open && open_now;
     (resp, opened)
+}
+
+/// The dropdown list's reveal state: `(opened_at, last_shown)` frame numbers. Drawing the list on
+/// `frame` returns the new state and whether this is the list's first frame (all its passes),
+/// when the selected row is scrolled into view. A list not drawn on the previous frame starts
+/// again, so a state left over from a list that closed while the widget was not drawn (a folded
+/// group, a switched tab) cannot suppress the next reveal (IN-03).
+fn reveal_state(prev: Option<(u64, u64)>, frame: u64) -> ((u64, u64), bool) {
+    let opened_at = match prev {
+        Some((at, last)) if last == frame || last + 1 == frame => at,
+        _ => frame,
+    };
+    ((opened_at, frame), opened_at == frame)
 }
 
 /// Debug-only: asks the dropdown drawn under `tag` (e.g. the style editor's `sound`) to open
@@ -1613,6 +1626,23 @@ pub fn apply_style(ctx: &egui::Context) {
 mod tests {
     use super::*;
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+
+    /// IN-03: the selected row is revealed on the list's first frame (every pass of it), and
+    /// again after the list was not drawn for a frame, even if the old state was never cleared.
+    #[test]
+    fn dropdown_reveal_restarts_after_a_frame_not_drawn() {
+        let (s, first) = reveal_state(None, 10);
+        assert!(first);
+        let (s, first) = reveal_state(Some(s), 10);
+        assert!(first, "a second pass of the opening frame still reveals");
+        let (s, first) = reveal_state(Some(s), 11);
+        assert!(!first);
+        let (s, first) = reveal_state(Some(s), 12);
+        assert!(!first);
+        // Closed while not drawn (state left behind), reopened later.
+        let (_, first) = reveal_state(Some(s), 40);
+        assert!(first, "a stale state does not suppress the reveal");
+    }
 
     fn click_at(pos: Pos2) -> RawInput {
         RawInput {

@@ -30,7 +30,8 @@ fn cache_id() -> egui::Id {
 }
 
 /// The sound files directly in `dir`: regular files ending `.mp3` / `.wav` (any case) whose names
-/// can be written into a filter line. `None` when the folder is missing or unreadable (an empty
+/// can be written into a filter line as they are (no quotes or control characters, no leading or
+/// trailing whitespace). `None` when the folder is missing or unreadable (an empty
 /// folder is `Some(vec![])`).
 pub fn list(dir: &Path) -> Option<Vec<String>> {
     let read = std::fs::read_dir(dir).ok()?;
@@ -44,7 +45,9 @@ pub fn list(dir: &Path) -> Option<Vec<String>> {
                 .and_then(|x| x.to_str())
                 .is_some_and(|x| EXTENSIONS.iter().any(|e| x.eq_ignore_ascii_case(e)))
         })
-        .filter(|name| safe_file_name(name))
+        // The editor trims a picked name, so a name with outer whitespace could not be written
+        // back as listed (IN-02).
+        .filter(|name| safe_file_name(name) && name.trim() == name)
         .collect();
     files.sort_by_key(|f| f.to_lowercase());
     Some(files)
@@ -86,6 +89,8 @@ mod tests {
         std::fs::create_dir(dir.path().join("e.mp3")).unwrap();
         // Quotes are not allowed in Windows file names; elsewhere such a file is skipped.
         let _ = std::fs::write(dir.path().join("q\"x.mp3"), b"");
+        // A leading space is allowed by Windows but would be written trimmed (IN-02).
+        std::fs::write(dir.path().join(" boss.mp3"), b"").unwrap();
         assert_eq!(list(dir.path()).unwrap(), ["a.MP3", "b.wav", "Z.mp3"]);
     }
 

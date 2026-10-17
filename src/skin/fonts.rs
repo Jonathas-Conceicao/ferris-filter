@@ -1,5 +1,5 @@
 //! Font setup: Fontin SmallCaps and Fontin Regular (shipped with PoE2, by exljbris / Jos
-//! Buivenga) plus Cinzel, which the `ff` overlay uses.
+//! Buivenga).
 //!
 //! Fontin SmallCaps draws lowercase letters as small capitals, so mixed-case text such as
 //! "Display Settings" renders the way the game's headings do -- no OpenType `smcp` support
@@ -13,8 +13,6 @@ pub const SMALL_CAPS: &str = "fontin-sc";
 pub const REGULAR: &str = "fontin";
 /// Size of summary text and small captions in the overlay (rule summaries, button captions).
 pub const SUMMARY_SIZE: f32 = 15.0;
-/// Family name of Cinzel, kept registered under the same name the overlay theme uses.
-pub const CINZEL: &str = "cinzel";
 
 /// A Fontin SmallCaps font of `size` points.
 pub fn small_caps(size: f32) -> FontId {
@@ -26,7 +24,7 @@ pub fn regular(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(REGULAR.into()))
 }
 
-/// Installs the fonts: the three named families above, and Fontin Regular as the default
+/// Installs the fonts: the two named families above, and Fontin Regular as the default
 /// proportional face. Every family keeps egui's default chain as a fallback, so symbols the
 /// Fontin faces lack (arrows, `✕`) still render instead of tofu.
 pub fn install(ctx: &egui::Context) {
@@ -39,10 +37,6 @@ pub fn install(ctx: &egui::Context) {
         (
             REGULAR,
             &include_bytes!("../../assets/poe2/fonts/Fontin-Regular.ttf")[..],
-        ),
-        (
-            CINZEL,
-            &include_bytes!("../../assets/Cinzel-Regular.ttf")[..],
         ),
     ];
     let default_chain = fonts

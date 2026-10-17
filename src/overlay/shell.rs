@@ -18,7 +18,7 @@ use super::config_state;
 pub(crate) use super::config_view::{APPLY_LOAD_ERROR_TIP, APPLY_NOTHING_TIP};
 use super::rules::EconomyView;
 
-/// Window width in points (the same as `ff-proto`).
+/// Window width in points.
 pub(crate) const WIDTH: f32 = 660.0;
 
 /// The four stone tabs, left to right.

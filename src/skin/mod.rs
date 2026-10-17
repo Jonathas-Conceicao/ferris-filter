@@ -1,12 +1,11 @@
 //! A Path of Exile 2 look for egui, built from the game's own Options-window art.
 //!
-//! This module is the shared skin for the UI redo: the `ff-proto` binary shows every piece of
-//! it, and the `ff` overlay is built on it (Phase 30). `overlay::theme` survives only until
-//! Phase 35 and now points at the skin palette.
+//! This module is the shared skin of the `ff` overlay: palette, fonts, textures, painting and the
+//! `ff_*` widgets.
 //!
 //! - [`palette`]: PoE2 golds, browns and near-blacks.
 //! - [`fonts`]: Fontin SmallCaps (headings, labels -- the face the game uses) and Fontin Regular
-//!   (body), with Cinzel kept registered because `ff` uses it.
+//!   (body).
 //! - [`Skin`]: every texture, embedded with `include_bytes!` and uploaded once
 //!   (LINEAR filtering with mipmaps, so the 4K art scales down cleanly).
 //! - [`slice`]: pixel-snapped nine-slice / three-slice painting with a half-texel UV inset.

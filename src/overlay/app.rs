@@ -4167,9 +4167,13 @@ mod tests {
                 let report = economy_browse::browse(&working);
                 assert_eq!(report.rules, 2);
                 assert!(report.actions.is_empty(), "{:?}", report.actions);
-                // Even if the view let one through, the model refuses economy targets.
-                for a in report.actions {
-                    assert!(!working.apply_action(a).changed);
+                // Through the list as the RULES tab draws it: whatever its frames report is
+                // applied, as the app does after each frame.
+                let (actions, clicked) = economy_browse::browse_list(&mut working);
+                assert!(clicked > 40, "{clicked}");
+                assert!(actions.is_empty(), "{actions:?}");
+                for a in actions {
+                    working.apply_action(a);
                 }
                 assert!(!working.is_dirty());
             }

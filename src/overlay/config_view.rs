@@ -440,9 +440,9 @@ fn filter_draft_row(
 }
 
 /// Width of a tier cutoff box: room for about 8 digits (cutoffs stay under ~6).
-pub const TIER_FIELD_W: f32 = 88.0;
+const TIER_FIELD_W: f32 = 88.0;
 /// Gap between a tier cutoff box and its unit.
-pub const TIER_UNIT_GAP: f32 = 10.0;
+const TIER_UNIT_GAP: f32 = 10.0;
 
 /// The tier cutoffs editor, drawn on the ECONOMY tab under its Tiers heading.
 pub fn show_tiers_section(

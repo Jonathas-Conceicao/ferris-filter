@@ -1662,6 +1662,61 @@ pub(crate) mod economy_browse {
         report.max_expanded_h = report.max_expanded_h.max(list.expanded_h);
     }
 
+    /// [`browse`] through the whole list, as the RULES tab draws it: every economy rule expanded in
+    /// turn inside [`show_list`], every disabled widget (the body's controls) clicked and keys
+    /// pressed. Returns what the list frames reported, which the app applies to the filter.
+    pub(crate) fn browse_list(wf: &mut WorkingFilter) -> (Vec<RowAction>, usize) {
+        let entries = wf.entries("", |_| false);
+        let wf: &WorkingFilter = wf;
+        let mut actions = Vec::new();
+        let mut clicked = 0;
+        for row in wf.economy_rows() {
+            let ctx = egui::Context::default();
+            crate::skin::fonts::install(&ctx);
+            let mut list = ListUi {
+                expanded: Some(row.id),
+                last_expanded: Some(row.id),
+                ..Default::default()
+            };
+            let run = |events: Vec<Event>, list: &mut ListUi, actions: &mut Vec<RowAction>| {
+                ctx.run_ui(input(events), |ui| {
+                    let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, 2400.0));
+                    let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                    actions.extend(show_list(&mut child, wf, &entries, list, true, None).actions);
+                })
+                .drop_without_applying_deltas();
+            };
+            for _ in 0..3 {
+                run(vec![], &mut list, &mut actions);
+            }
+            let body: Vec<Rect> = ctx.viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, w)| w.iter())
+                    .filter(|w| w.sense.interactive() && !w.enabled)
+                    .map(|w| w.rect)
+                    .collect()
+            });
+            for r in body {
+                clicked += 1;
+                for events in click(r.center()) {
+                    run(events, &mut list, &mut actions);
+                }
+                list.expanded = Some(row.id);
+            }
+            for k in [
+                egui::Key::Tab,
+                egui::Key::Enter,
+                egui::Key::Space,
+                egui::Key::Delete,
+            ] {
+                run(key(k), &mut list, &mut actions);
+            }
+        }
+        (actions, clicked)
+    }
+
     /// Expand each economy rule of `wf`, click the centre of every interactive widget of its body
     /// and press keys at it (type, Enter, Space, Delete, arrows, Escape, Tab through it).
     pub(crate) fn browse(wf: &WorkingFilter) -> Report {
@@ -2942,7 +2997,10 @@ Show
         assert!(!confirm, "the economy header is display-only: no x");
         // A click on an economy row emits nothing; it only expands the row (read-only).
         let before = wf.text();
-        let mut list = ListUi::default();
+        let mut list = ListUi {
+            expanded_h: 0.0,
+            ..Default::default()
+        };
         let (actions, toggled) = click_at(
             &mut wf,
             &mut list,
@@ -2952,7 +3010,17 @@ Show
         );
         assert!(actions.is_empty() && toggled.is_empty(), "{actions:?}");
         assert_eq!(list.expanded, Some(wf.economy_rows()[0].id));
-        assert!(list.expanded_h > ROW_H, "the body was drawn");
+        // The next frames draw the body under the row and measure it.
+        let ctx = headless_ctx();
+        for _ in 0..2 {
+            let f = section_frame(&ctx, input(vec![]), &mut wf, &mut list, true, &|_| false);
+            assert!(f.actions.is_empty(), "{:?}", f.actions);
+        }
+        assert!(
+            list.expanded_h > ROW_H + 60.0,
+            "the body was drawn: {}",
+            list.expanded_h
+        );
         assert_eq!(wf.text(), before);
         assert!(!wf.is_dirty());
     }

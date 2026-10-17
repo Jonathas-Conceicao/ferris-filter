@@ -118,9 +118,10 @@ pub fn generate_as(
 /// [`StyleSet`] and priced data - no `Config` needed.
 ///
 /// This is the text Apply splices under the `# ff:economy-begin` banner. It equals the tail of
-/// [`generate`] from the first [`SECTION_BANNER`] line with every `# ff:` line removed: here (and
-/// only here) each block carries `# ff:name <T> tier <Group>` and tier blocks `# ff:style <id> <T>`. With empty priced data it yields the banner
-/// block only; callers must refuse `PriceSource::Absent` before writing it.
+/// [`generate`] from the first [`SECTION_BANNER`] line, except that here (and only here) each
+/// block also carries `# ff:name <T> tier <Group>` and tier blocks `# ff:style <id> <T>`. With
+/// empty priced data it yields the banner block only; callers must refuse `PriceSource::Absent`
+/// before writing it.
 pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String, GenerateError> {
     styles.validate()?;
     let mut out = String::with_capacity(32_000);

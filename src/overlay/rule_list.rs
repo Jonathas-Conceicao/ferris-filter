@@ -1498,8 +1498,8 @@ fn search_row_rects(
                     query.clear();
                 }
             }
-            // Placed from the row's right edge: the field leaves the cursor 2pt short of its end,
-            // which is what made it touch the button.
+            // The buttons are placed from the row's right edge, so their position does not depend
+            // on where the field leaves the cursor; the field is sized to leave `FIELD_GAP`.
             let row = ui.max_rect();
             let sec_btn =
                 egui::Rect::from_min_max(egui::pos2(row.max.x - sec_w, row.min.y), row.max);

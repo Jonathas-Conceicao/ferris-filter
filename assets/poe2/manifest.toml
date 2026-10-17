@@ -1,6 +1,6 @@
 # ff-art manifest: which Path of Exile 2 files are extracted into assets/poe2/.
 #
-# Run `cargo run --release` in tools/ff-art (see README.md -> "ff-art") after a game patch to
+# Run `cargo ff-art` (see tools/ff-art/README.md) after a game patch to
 # refresh every file listed here. The art belongs to Grinding Gear Games; see README.md.
 #
 # [[image]] fields:

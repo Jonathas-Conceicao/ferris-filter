@@ -93,8 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selects the nightly channel (not a specific compiler).
 - **The Cargo package version follows the release tags.** It was still `0.1.0`; it is now `0.6.0`
   (it was `0.5.0` at the `v0.5` tag) and moves with each milestone tag from here on.
-- **README rewritten as a general project page (Phase 35)** with screenshots of the overlay in
-  `docs/screenshots/`; CLAUDE.md corrected to match what ships.
+- **README rewritten as an overlay page (Phase 35)**: a grid of overlay screenshots in
+  `docs/screenshots/`, no CLI or dev-tool sections; the `ff-art` usage moved to
+  `tools/ff-art/README.md`. CLAUDE.md corrected to match what ships.
 
 - **Simple Defences picks base types (quick 261015-nbp).** The card is one line of seven
   multi-select chips (Full AR, Full EV, Full ES, AR/EV, AR/ES, EV/ES, AR/EV/ES) instead of the

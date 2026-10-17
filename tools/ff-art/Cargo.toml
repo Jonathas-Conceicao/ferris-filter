@@ -6,7 +6,7 @@ publish = false
 description = "Dev tool: extracts Path of Exile 2 UI art into FerrisFilter's assets/ (never a dependency of ff)"
 
 # Member of the repo-root workspace but not a default member, so root `cargo build`/`cargo test`
-# never build it; run it with `cargo ff-art` (see README.md -> "ff-art").
+# never build it; run it with `cargo ff-art` (see tools/ff-art/README.md).
 
 [dependencies]
 # Reads the game's Bundles2 index read-only. Needs a nightly toolchain (the crate uses

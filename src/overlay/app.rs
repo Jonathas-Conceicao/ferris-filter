@@ -1292,6 +1292,13 @@ impl OverlayApp {
         false
     }
 
+    /// A sync landed new prices: re-read the ECONOMY tab info and forget which inputs the staged
+    /// economy-add preview was priced with, so `refresh_staged_economy` re-prices it (WR-02).
+    fn prices_changed(&mut self) {
+        self.refresh_economy_info();
+        self.staged_econ_inputs = None;
+    }
+
     /// Re-reads `prices.json` info (modified time, priced items, live/fallback) for the ECONOMY tab.
     fn refresh_economy_info(&mut self) {
         self.economy_info = match self.root.as_ref() {
@@ -2633,7 +2640,7 @@ impl eframe::App for OverlayApp {
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
         if self.economy.poll() {
-            self.refresh_economy_info();
+            self.prices_changed();
             ui.ctx().request_repaint();
         }
 
@@ -5217,6 +5224,35 @@ Hide
                 .rules,
             after
         );
+    }
+
+    #[test]
+    fn staged_economy_preview_is_re_priced_after_a_sync() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = tempfile::tempdir().unwrap();
+        for f in [
+            "styles-default.json",
+            "tiers-default.json",
+            "prices-fallback.json",
+            "tiers-fallback.json",
+        ] {
+            std::fs::copy(repo.join(f), dir.path().join(f)).unwrap();
+        }
+        app.root = Ok(dir.path().to_path_buf());
+        app.stage_add_economy();
+        app.refresh_staged_economy();
+        let before = app.working.as_ref().unwrap().economy_rows().len();
+        // A sync lands live prices (the seed fixture) where only the fallback pair existed.
+        std::fs::copy(
+            repo.join("tests/fixtures/seed-prices.json"),
+            dir.path().join("prices.json"),
+        )
+        .unwrap();
+        app.prices_changed();
+        app.refresh_staged_economy();
+        let after = app.working.as_ref().unwrap().economy_rows().len();
+        assert_ne!(before, after, "the preview must follow the new prices");
     }
 
     #[test]

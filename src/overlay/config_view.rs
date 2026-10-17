@@ -439,6 +439,11 @@ fn filter_draft_row(
     }
 }
 
+/// Width of a tier cutoff box: room for about 8 digits (cutoffs stay under ~6).
+pub const TIER_FIELD_W: f32 = 88.0;
+/// Gap between a tier cutoff box and its unit.
+pub const TIER_UNIT_GAP: f32 = 10.0;
+
 /// The tier cutoffs editor, drawn on the ECONOMY tab under its Tiers heading.
 pub fn show_tiers_section(
     ui: &mut egui::Ui,
@@ -450,9 +455,21 @@ pub fn show_tiers_section(
     let tip = "Minimum price for each tier. Items worth at least this much get the tier.";
     for (i, row) in state.tier_rows().iter().enumerate() {
         let inner = crate::skin::widgets::ff_field_row(ui, i, &row.tier, Some(tip), |ui| {
+            // The box starts at the value column of the ECONOMY rows above (`ff_row` puts its
+            // control `CONTROL_WIDTH` from the right edge), sized for about 8 digits, then a clear
+            // gap before the unit.
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let value_x = ui.max_rect().max.x - crate::skin::widgets::CONTROL_WIDTH;
+            let lead = (value_x - ui.cursor().min.x).max(0.0);
+            ui.add_space(lead);
+            let field_x = ui.cursor().min.x;
             let id = ui.make_persistent_id(("cfg-tier", &row.tier));
             let mut buf = row.buffer.clone();
-            let edit = crate::skin::widgets::ff_text_field_id(ui, id, &mut buf, "", 112.0);
+            let edit = crate::skin::widgets::ff_text_field_id(ui, id, &mut buf, "", TIER_FIELD_W);
+            // The field leaves the cursor after its inner edit, not its frame: measure the gap
+            // from the frame's right edge.
+            let unit_x = field_x + TIER_FIELD_W + TIER_UNIT_GAP;
+            ui.add_space((unit_x - ui.cursor().min.x).max(0.0));
             if edit.changed() {
                 actions.push(ConfigAction::TierText {
                     tier: row.tier.clone(),
@@ -1317,6 +1334,46 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert_eq!(actions, Some(vec![]));
+    }
+
+    #[test]
+    fn tier_boxes_are_narrow_and_sit_at_the_value_column() {
+        let (_d, state) = loaded();
+        let (ctx, input) = headless();
+        let skin = crate::skin::textures::load_light(&ctx);
+        let mut area = egui::Rect::NOTHING;
+        ctx.run_ui(input, |ui| {
+            area = ui.max_rect();
+            show_tiers_section(ui, &skin, &state);
+        })
+        .drop_without_applying_deltas();
+        // Per row: the edit inside the field (10pt inner padding each side), then the unit label.
+        let mut rects: Vec<egui::Rect> = ctx.viewport(|v| {
+            v.prev_pass
+                .widgets
+                .layers()
+                .flat_map(|(_, w)| w.iter())
+                .filter(|w| w.sense.senses_click() && w.sense.senses_drag())
+                .map(|w| w.rect)
+                .collect()
+        });
+        rects.sort_by(|a, b| (a.min.y, a.min.x).partial_cmp(&(b.min.y, b.min.x)).unwrap());
+        assert_eq!(rects.len(), 14, "{rects:?}");
+        let pad = crate::skin::widgets::ROW_PAD;
+        let value_x = area.max.x - pad - crate::skin::widgets::CONTROL_WIDTH;
+        for pair in rects.chunks(2) {
+            let (field, unit) = (pair[0].expand2(vec2(10.0, 0.0)), pair[1]);
+            assert!((field.width() - TIER_FIELD_W).abs() < 1.0, "{field:?}");
+            assert!(
+                (field.min.x - value_x).abs() < 1.0,
+                "{field:?} vs {value_x}"
+            );
+            assert!(
+                (unit.min.x - field.max.x - TIER_UNIT_GAP).abs() < 1.0,
+                "{field:?} {unit:?}"
+            );
+            assert!(unit.max.x < area.max.x - pad, "the unit fits: {unit:?}");
+        }
     }
 
     #[test]

@@ -30,7 +30,9 @@ use super::theme;
 use super::widgets;
 #[cfg(test)]
 use crate::models::config::Style;
-use crate::models::config::{self as mc, Beam, FilterColor, MinimapShape, Sound};
+use crate::models::config::{
+    self as mc, Beam, Cancelable, DropSound, FilterColor, MinimapShape, Sound,
+};
 use crate::skin::fonts::{regular, small_caps};
 use crate::skin::palette as pal;
 use crate::skin::widgets as widgets_skin;
@@ -2507,12 +2509,15 @@ pub(crate) fn font_hint(size: i64) -> Option<&'static str> {
 //   `PlayAlertSoundPositional`, `CustomAlertSound`, `CustomAlertSoundOptional`: one alert sound
 //   per item) and Drop sound (`DisableDropSound`, `EnableDropSound`).
 // * Exact or not. The bound line is shown exactly when the editor can represent it: a decoded
-//   colour; a font size within 1-45; `MinimapIcon` with size 0-2 and a known colour and shape;
-//   `PlayEffect` with a known colour; `PlayAlertSound` 1-16 or `CustomAlertSound` with a volume
-//   absent or within 0-300; `DisableDropSound`. Otherwise the line shows the nearest honest
-//   state (None for `MinimapIcon -1`, `PlayEffect None` or a named sound; a font size or volume
-//   clamped into the slider's range; a positional or optional sound as its plain kind;
-//   `EnableDropSound` as the drop sound check unticked) and is ALSO listed as a leftover row, so
+//   colour; a font size within 1-45; `MinimapIcon` with size 0-2 and a known colour and shape,
+//   or the bare cancel value `MinimapIcon -1`; `PlayEffect` with a known colour or `None`;
+//   `PlayAlertSound` / `PlayAlertSoundPositional` 1-16 or `CustomAlertSound` with a volume absent
+//   or within 0-300, or the bare `PlayAlertSound None`; `DisableDropSound` / `EnableDropSound`
+//   (bare or `True`). Otherwise the line shows the nearest honest state (the cancel value for
+//   `MinimapIcon -1 <colour> <shape>`, `PlayAlertSound None <volume>` or
+//   `PlayAlertSoundPositional None`; off for an unreadable line or another named sound; a font
+//   size or volume clamped into the slider's range; an optional sound as its plain kind; a
+//   `... False` drop-sound line as the opposite state) and is ALSO listed as a leftover row, so
 //   its exact text stays visible. Both places edit the same line.
 // * Leftovers. Every other action line (`DisableDropSoundIfAlertSound`, and every earlier line of
 //   a family, which the game overrides) is kept as written and shown under the lines as the usual
@@ -2648,7 +2653,7 @@ pub(crate) fn rule_style_view(
         beam: None,
         sound: None,
         sound_volume_written: false,
-        disable_drop_sound: false,
+        drop_sound: None,
         alpha: true,
     };
     let mut b = StyleBinding {
@@ -2710,7 +2715,7 @@ pub(crate) fn rule_style_view(
         }
     }
     if let Some(e) = &b.minimap {
-        let shown = match decoded(e) {
+        let (shown, exact) = match decoded(e) {
             Some((
                 _,
                 Value::Minimap(Minimap::Icon {
@@ -2723,14 +2728,19 @@ pub(crate) fn rule_style_view(
                 FilterColor::from_name(&colour),
                 MinimapShape::from_name(&shape),
             ) {
-                (Ok(size @ 0..=2), Some(color), Some(shape)) => {
-                    Some(mc::Minimap { size, color, shape })
-                }
-                _ => None,
+                (Ok(size @ 0..=2), Some(color), Some(shape)) => (
+                    Some(Cancelable::Set(mc::Minimap { size, color, shape })),
+                    true,
+                ),
+                _ => (None, false),
             },
-            _ => None,
+            // `-1` cancels the icon; trailing colour/shape tokens are kept but not shown.
+            Some((_, Value::Minimap(Minimap::Hidden(t)))) => {
+                (Some(Cancelable::Cancel), t.len() == 1)
+            }
+            _ => (None, false),
         };
-        if shown.is_none() {
+        if !exact {
             inexact.push(e.line);
         }
         view.minimap = shown;
@@ -2738,8 +2748,9 @@ pub(crate) fn rule_style_view(
     if let Some(e) = &b.beam {
         let shown = match decoded(e) {
             Some((_, Value::Effect(Effect::Colour { colour, temp }))) => {
-                FilterColor::from_name(&colour).map(|color| Beam { color, temp })
+                FilterColor::from_name(&colour).map(|color| Cancelable::Set(Beam { color, temp }))
             }
+            Some((_, Value::Effect(Effect::None))) => Some(Cancelable::Cancel),
             _ => None,
         };
         if shown.is_none() {
@@ -2748,53 +2759,89 @@ pub(crate) fn rule_style_view(
         view.beam = shown;
     }
     if let Some(e) = &b.sound {
-        let (sound, volume, exact) = match decoded(e) {
+        let mut exact = false;
+        match decoded(e) {
             Some((
                 name,
                 Value::Sound {
                     id: SoundRef::Id(k),
                     volume,
                 },
-            )) => match u8::try_from(k) {
-                Ok(k @ 1..=16) => (
-                    Some((Some(k), None, ALERT_DEFAULT_VOLUME)),
+            )) => {
+                if let Ok(k @ 1..=16) = u8::try_from(k) {
+                    let vol = volume.map_or(ALERT_DEFAULT_VOLUME, volume_shown);
+                    b.sound_volume = volume;
+                    b.sound_shown = vol;
+                    view.sound = Some(Cancelable::Set(Sound {
+                        id: Some(k),
+                        custom: None,
+                        vol,
+                        positional: name == "PlayAlertSoundPositional",
+                    }));
+                    view.sound_volume_written = volume.is_some();
+                    exact = volume_ok(volume);
+                }
+            }
+            Some((
+                name,
+                Value::Sound {
+                    id: SoundRef::Named(n),
                     volume,
-                    name == "PlayAlertSound" && volume_ok(volume),
-                ),
-                _ => (None, volume, false),
-            },
-            Some((name, Value::CustomSound { file, volume })) => (
-                Some((None, Some(file), CUSTOM_DEFAULT_VOLUME)),
-                volume,
-                name == "CustomAlertSound" && volume_ok(volume),
-            ),
-            _ => (None, None, false),
-        };
-        if let Some((id, custom, default)) = sound {
-            let vol = volume.map_or(default, volume_shown);
-            b.sound_volume = volume;
-            b.sound_shown = vol;
-            view.sound = Some(Sound { id, custom, vol });
-            view.sound_volume_written = volume.is_some();
+                },
+            )) if n == "None" => {
+                view.sound = Some(Cancelable::Cancel);
+                exact = name == "PlayAlertSound" && volume.is_none();
+            }
+            Some((name, Value::CustomSound { file, volume })) => {
+                let vol = volume.map_or(CUSTOM_DEFAULT_VOLUME, volume_shown);
+                b.sound_volume = volume;
+                b.sound_shown = vol;
+                view.sound = Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some(file),
+                    vol,
+                    positional: false,
+                }));
+                view.sound_volume_written = volume.is_some();
+                exact = name == "CustomAlertSound" && volume_ok(volume);
+            }
+            _ => {}
         }
         if !exact {
             inexact.push(e.line);
         }
     }
     if let Some(e) = &b.drop {
-        match decoded(e) {
-            Some(("DisableDropSound", Value::OptionalBool(on))) => {
-                view.disable_drop_sound = on != Some(false);
+        match drop_state(e) {
+            Some((state, exact)) => {
+                view.drop_sound = Some(state);
+                if !exact {
+                    inexact.push(e.line);
+                }
             }
-            Some(("EnableDropSound", Value::OptionalBool(on))) => {
-                view.disable_drop_sound = on == Some(false);
-                inexact.push(e.line);
-            }
-            _ => inexact.push(e.line),
+            None => inexact.push(e.line),
         }
     }
     b.inexact = inexact;
     (view, b)
+}
+
+/// What a drop-sound line means and whether it is the bare (or `True`) form the editor writes:
+/// `DisableDropSound` is Silent, `EnableDropSound` Normal, and a `False` value the opposite.
+fn drop_state(e: &BodyEntry) -> Option<(DropSound, bool)> {
+    match decoded(e) {
+        Some(("DisableDropSound", Value::OptionalBool(on))) => Some(if on == Some(false) {
+            (DropSound::Normal, false)
+        } else {
+            (DropSound::Silent, true)
+        }),
+        Some(("EnableDropSound", Value::OptionalBool(on))) => Some(if on == Some(false) {
+            (DropSound::Silent, false)
+        } else {
+            (DropSound::Normal, true)
+        }),
+        _ => None,
+    }
 }
 
 /// The action lines no style line shows exactly, in file order: the earlier lines of a family,
@@ -2880,81 +2927,131 @@ pub(crate) fn rule_intent_actions(
             (None, None) => None,
         }),
         StyleIntent::Minimap(m) => one(match (&binding.minimap, m) {
-            (Some(e), Some(m)) => minimap_edit(id, e, icon_of(&m)),
+            (Some(e), Some(Cancelable::Set(m))) => minimap_edit(id, e, icon_of(&m)),
+            (Some(e), Some(Cancelable::Cancel)) => {
+                minimap_edit(id, e, Minimap::Hidden(vec!["-1".into()]))
+            }
             (Some(e), None) => Some(remove(id, e)),
-            (None, Some(m)) => Some(add_action(
+            (None, Some(Cancelable::Set(m))) => Some(add_action(
                 id,
                 format!(
                     "MinimapIcon {}",
                     grammar::encode_tokens(&Value::Minimap(icon_of(&m))).join(" ")
                 ),
             )),
+            (None, Some(Cancelable::Cancel)) => Some(add_action(id, "MinimapIcon -1".into())),
             (None, None) => None,
         }),
         StyleIntent::Beam(b) => one(match (&binding.beam, b) {
-            (Some(e), Some(b)) => effect_edit(id, e, effect_of(&b)),
+            (Some(e), Some(Cancelable::Set(b))) => effect_edit(id, e, effect_of(&b)),
+            (Some(e), Some(Cancelable::Cancel)) => effect_edit(id, e, Effect::None),
             (Some(e), None) => Some(remove(id, e)),
-            (None, Some(b)) => Some(add_action(
+            (None, Some(Cancelable::Set(b))) => Some(add_action(
                 id,
                 format!(
                     "PlayEffect {}",
                     grammar::encode_tokens(&Value::Effect(effect_of(&b))).join(" ")
                 ),
             )),
+            (None, Some(Cancelable::Cancel)) => Some(add_action(id, "PlayEffect None".into())),
             (None, None) => None,
         }),
         StyleIntent::Sound(s) => one(sound_intent(id, binding, s)),
-        StyleIntent::DisableDropSound(on) => one(drop_sound_intent(id, binding, on)),
+        StyleIntent::DropSound(d) => one(drop_sound_intent(id, binding, d)),
     }
 }
 
-/// The drop sound check: ticked silences the drop sound. The bound line is the last
-/// `DisableDropSound` / `EnableDropSound` line; an `EnableDropSound` line is rewritten in place
-/// rather than followed by a contradicting `DisableDropSound`.
-fn drop_sound_intent(id: BlockId, binding: &StyleBinding, on: bool) -> Option<RowAction> {
-    let Some(e) = &binding.drop else {
-        return on.then(|| add_action(id, "DisableDropSound".to_string()));
+/// The drop sound switch. The bound line is the last `DisableDropSound` / `EnableDropSound`
+/// line: it is kept when it already means the requested state, else rewritten in place to the
+/// bare keyword (never followed by a contradicting line); off removes it.
+fn drop_sound_intent(
+    id: BlockId,
+    binding: &StyleBinding,
+    want: Option<DropSound>,
+) -> Option<RowAction> {
+    let keyword = |d: DropSound| match d {
+        DropSound::Silent => "DisableDropSound",
+        DropSound::Normal => "EnableDropSound",
     };
-    let decoded = decoded(e);
-    match (decoded, on) {
-        (Some(("DisableDropSound", Value::OptionalBool(_))), true) => {
-            optional_bool_edit(id, e, true)
-        }
-        (Some(("DisableDropSound", Value::OptionalBool(_))), false) => {
-            optional_bool_on(e).then(|| remove(id, e))
-        }
-        // `EnableDropSound False` silences it too: ticking it again keeps the line as written.
-        (Some(("EnableDropSound", Value::OptionalBool(_))), true) => optional_bool_on(e)
-            .then(|| edit(id, e, LinePatch::Content("DisableDropSound".to_string()))),
-        (Some(("EnableDropSound", Value::OptionalBool(_))), false) => {
-            optional_bool_edit(id, e, true)
-        }
-        // A line that does not decode reads as unticked; ticking rewrites it.
-        (_, true) => Some(edit(
-            id,
-            e,
-            LinePatch::Content("DisableDropSound".to_string()),
-        )),
-        (_, false) => None,
+    match (&binding.drop, want) {
+        (Some(e), None) => Some(remove(id, e)),
+        (None, None) => None,
+        (None, Some(d)) => Some(add_action(id, keyword(d).to_string())),
+        (Some(e), Some(d)) => (drop_state(e).map(|s| s.0) != Some(d))
+            .then(|| edit(id, e, LinePatch::Content(keyword(d).to_string()))),
     }
 }
 
-fn sound_intent(id: BlockId, binding: &StyleBinding, sound: Option<Sound>) -> Option<RowAction> {
-    let Some(s) = sound else {
-        return binding.sound.as_ref().map(|e| remove(id, e));
+fn alert_keyword(positional: bool) -> &'static str {
+    if positional {
+        "PlayAlertSoundPositional"
+    } else {
+        "PlayAlertSound"
+    }
+}
+
+fn sound_intent(
+    id: BlockId,
+    binding: &StyleBinding,
+    sound: Option<Cancelable<Sound>>,
+) -> Option<RowAction> {
+    let s = match sound {
+        None => return binding.sound.as_ref().map(|e| remove(id, e)),
+        Some(Cancelable::Cancel) => {
+            return match &binding.sound {
+                None => Some(add_action(id, "PlayAlertSound None".to_string())),
+                Some(e) => match decoded(e) {
+                    Some((
+                        _,
+                        Value::Sound {
+                            id: SoundRef::Named(n),
+                            ..
+                        },
+                    )) if n == "None" => None,
+                    _ => Some(edit(
+                        id,
+                        e,
+                        LinePatch::Content("PlayAlertSound None".to_string()),
+                    )),
+                },
+            };
+        }
+        Some(Cancelable::Set(s)) => s,
     };
     let file = s.custom.as_deref().map(str::trim);
     if file.is_some_and(|f| f.is_empty() || !style_lines::safe_file_name(f)) {
         return None;
     }
+    // A file has no positional form.
+    let positional = s.positional && file.is_none();
     let alert = i64::from(s.id.unwrap_or(1));
     let Some(e) = &binding.sound else {
         let text = match file {
             Some(f) => format!("CustomAlertSound \"{f}\" {}", s.vol),
-            None => format!("PlayAlertSound {alert} {}", s.vol),
+            None => format!("{} {alert} {}", alert_keyword(positional), s.vol),
         };
         return Some(add_action(id, text));
     };
+    let bound = decoded(e);
+    let bound_alert = matches!(
+        bound,
+        Some((
+            _,
+            Value::Sound {
+                id: SoundRef::Id(_),
+                ..
+            }
+        ))
+    );
+    let bound_custom = matches!(bound, Some((_, Value::CustomSound { .. })));
+    if !bound_alert && !bound_custom {
+        // Leaving the cancel value (or an unreadable line): the full line, volume written.
+        let text = match file {
+            Some(f) => format!("CustomAlertSound \"{f}\" {}", s.vol),
+            None => format!("{} {alert} {}", alert_keyword(positional), s.vol),
+        };
+        return Some(edit(id, e, LinePatch::Content(text)));
+    }
     // A volume is written only once it is changed: a line without one keeps none, and a volume
     // the slider shows clamped (outside 0-300) is kept as written until the slider moves.
     let volume = if s.vol != binding.sound_shown {
@@ -2962,25 +3059,30 @@ fn sound_intent(id: BlockId, binding: &StyleBinding, sound: Option<Sound>) -> Op
     } else {
         binding.sound_volume
     };
-    // `PlayAlertSoundPositional` / `CustomAlertSoundOptional` keep their keyword while the kind
-    // stays the same.
-    let bound_custom = e
+    let bound_positional = e
         .keyword
-        .is_some_and(|k| k.name.starts_with("CustomAlertSound"));
+        .is_some_and(|k| k.name == "PlayAlertSoundPositional");
+    // `CustomAlertSoundOptional` keeps its keyword while the kind stays a file; a kind or
+    // positional switch rewrites the bound line's keyword and values in place, keeping a trailing
+    // comment.
     match (bound_custom, file) {
-        (false, None) => sound_edit(id, e, SoundRef::Id(alert), volume),
+        (false, None) if bound_positional == positional => {
+            sound_edit(id, e, SoundRef::Id(alert), volume)
+        }
         (true, Some(f)) => custom_sound_edit(id, e, f, volume).ok().flatten(),
-        // A kind switch rewrites the bound line's keyword and values in place, keeping a
-        // trailing comment.
         (false, Some(f)) => Some(edit(
             id,
             e,
             LinePatch::Content(format!("CustomAlertSound \"{f}\"{}", volume_suffix(volume))),
         )),
-        (true, None) => Some(edit(
+        (_, None) => Some(edit(
             id,
             e,
-            LinePatch::Content(format!("PlayAlertSound {alert}{}", volume_suffix(volume))),
+            LinePatch::Content(format!(
+                "{} {alert}{}",
+                alert_keyword(positional),
+                volume_suffix(volume)
+            )),
         )),
     }
 }
@@ -3025,6 +3127,7 @@ fn custom_style_lines(
         .into_iter()
         .enumerate()
     {
+        style_lines::probe("ed-leftover", egui::Rect::NOTHING);
         match e.keyword {
             Some(kw) if ctx.editable => {
                 action_card(ui, ctx, e, kw, idx, None, list, actions);
@@ -6566,31 +6669,36 @@ mod tests {
         assert_eq!(view.font, Some(45), "60 shows clamped into 1-45");
         assert_eq!(
             view.minimap,
-            Some(mc::Minimap {
+            Some(Cancelable::Set(mc::Minimap {
                 size: 2,
                 color: FilterColor::Blue,
                 shape: MinimapShape::Star
-            })
+            }))
         );
         assert_eq!(
             view.beam,
-            Some(Beam {
+            Some(Cancelable::Set(Beam {
                 color: FilterColor::Green,
                 temp: true
-            })
+            }))
         );
         assert_eq!(
             view.sound,
-            Some(Sound {
+            Some(Cancelable::Set(Sound {
                 id: None,
                 custom: Some("a.mp3".to_string()),
-                vol: 80
-            }),
+                vol: 80,
+                positional: false
+            })),
             "one sound family: the last of the four keywords"
         );
         assert!(view.sound_volume_written);
-        assert!(!view.disable_drop_sound, "False reads as off");
-        assert!(b.drop.is_some(), "but it binds");
+        assert_eq!(
+            view.drop_sound,
+            Some(DropSound::Normal),
+            "DisableDropSound False reads as Normal"
+        );
+        assert!(b.drop.is_some(), "it binds");
         assert_eq!(
             style_leftovers(&e, &b)
                 .iter()
@@ -6602,9 +6710,10 @@ mod tests {
                 "PlayAlertSound 5",
                 "MinimapIcon -1",
                 "PlayEffect None",
+                "DisableDropSound False",
                 "SetFontSize 60",
             ],
-            "earlier lines of a family, and the clamped font line it binds"
+            "earlier lines of a family, and the bound lines it shows inexactly"
         );
     }
 
@@ -6613,10 +6722,22 @@ mod tests {
         let src = "Show\n    MinimapIcon 1 Blue Star\n    MinimapIcon -1\n    PlayEffect Red\n    PlayEffect None\n    PlayAlertSound 3\n    PlayAlertSound ShAlchemy\n    DisableDropSound\n    EnableDropSound\n    SetFontSize 30\n    SetFontSize 0\n";
         let (_, _, e) = entries_of(src);
         let (view, b) = rule_style_view(&e, BlockKeyword::Show);
-        assert_eq!(view.minimap, None, "the game hides the icon");
-        assert_eq!(view.beam, None);
+        assert_eq!(
+            view.minimap,
+            Some(Cancelable::Cancel),
+            "MinimapIcon -1 is the cancel value"
+        );
+        assert_eq!(
+            view.beam,
+            Some(Cancelable::Cancel),
+            "PlayEffect None is the cancel value"
+        );
         assert_eq!(view.sound, None, "a named sound has no dropdown entry");
-        assert!(!view.disable_drop_sound, "EnableDropSound wins");
+        assert_eq!(
+            view.drop_sound,
+            Some(DropSound::Normal),
+            "EnableDropSound wins"
+        );
         assert_eq!(view.font, Some(1));
         for (slot, line) in [
             (&b.minimap, "MinimapIcon -1"),
@@ -6627,30 +6748,63 @@ mod tests {
         ] {
             assert_eq!(slot.as_ref().map(|e| e.text.trim()), Some(line));
         }
-        // Every action line is listed: the earlier ones, and the bound ones it cannot show.
-        assert_eq!(style_leftovers(&e, &b).len(), 10);
-        // Positional and optional sounds show as their plain kind and are listed too.
+        // Listed: the earlier lines, and the bound ones it cannot show (the named sound and the
+        // clamped font); the cancel values and EnableDropSound are shown exactly.
+        assert_eq!(
+            style_leftovers(&e, &b)
+                .iter()
+                .map(|e| e.text.trim())
+                .collect::<Vec<_>>(),
+            [
+                "MinimapIcon 1 Blue Star",
+                "PlayEffect Red",
+                "PlayAlertSound 3",
+                "PlayAlertSound ShAlchemy",
+                "DisableDropSound",
+                "SetFontSize 30",
+                "SetFontSize 0",
+            ]
+        );
+        // A positional alert is shown exactly with its toggle on.
         let (_, _, e) = entries_of("Show\n    PlayAlertSoundPositional 4 120\n");
         let (view, b) = rule_style_view(&e, BlockKeyword::Show);
         assert_eq!(
             view.sound,
-            Some(Sound {
+            Some(Cancelable::Set(Sound {
                 id: Some(4),
                 custom: None,
-                vol: 120
-            })
+                vol: 120,
+                positional: true
+            }))
         );
-        assert_eq!(style_leftovers(&e, &b).len(), 1);
+        assert!(style_leftovers(&e, &b).is_empty());
+        // An optional sound shows as its plain kind and is listed too.
         let (_, _, e) = entries_of("Show\n    CustomAlertSoundOptional \"x.mp3\"\n");
-        let (view, _) = rule_style_view(&e, BlockKeyword::Show);
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
         assert_eq!(
             view.sound,
-            Some(Sound {
+            Some(Cancelable::Set(Sound {
                 id: None,
                 custom: Some("x.mp3".to_string()),
-                vol: 100
-            })
+                vol: 100,
+                positional: false
+            }))
         );
+        assert_eq!(style_leftovers(&e, &b).len(), 1);
+        // `MinimapIcon -1 Red Star` and `PlayAlertSoundPositional None` are the cancel value,
+        // shown inexactly (listed too).
+        let (_, _, e) =
+            entries_of("Show\n    MinimapIcon -1 Red Star\n    PlayAlertSoundPositional None\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(view.minimap, Some(Cancelable::Cancel));
+        assert_eq!(view.sound, Some(Cancelable::Cancel));
+        assert_eq!(style_leftovers(&e, &b).len(), 2);
+        // The bare `PlayAlertSound None` is exact, and so is `DisableDropSound`.
+        let (_, _, e) = entries_of("Show\n    PlayAlertSound None\n    DisableDropSound\n");
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(view.sound, Some(Cancelable::Cancel));
+        assert_eq!(view.drop_sound, Some(DropSound::Silent));
+        assert!(style_leftovers(&e, &b).is_empty());
         assert!(!view.sound_volume_written);
     }
 
@@ -6664,14 +6818,14 @@ mod tests {
         assert_eq!(
             intent_text(
                 "Show\n    Rarity Rare\n    MinimapIcon -1\n",
-                StyleIntent::Minimap(Some(pick.clone()))
+                StyleIntent::Minimap(Some(Cancelable::Set(pick.clone())))
             ),
             "Show\n    Rarity Rare\n    MinimapIcon 0 White Circle\n"
         );
         assert_eq!(
             intent_text(
                 "Show\n    MinimapIcon -1 # hidden\n    SetFontSize 30\n",
-                StyleIntent::Minimap(Some(pick))
+                StyleIntent::Minimap(Some(Cancelable::Set(pick)))
             ),
             "Show\n    MinimapIcon 0 White Circle # hidden\n    SetFontSize 30\n"
         );
@@ -6698,10 +6852,10 @@ mod tests {
         assert_eq!(
             intent_text(
                 "Show\n    PlayEffect None\n",
-                StyleIntent::Beam(Some(Beam {
+                StyleIntent::Beam(Some(Cancelable::Set(Beam {
                     color: FilterColor::Red,
                     temp: false
-                }))
+                })))
             ),
             "Show\n    PlayEffect Red\n"
         );
@@ -6712,11 +6866,12 @@ mod tests {
         assert_eq!(
             intent_text(
                 "Show\n    PlayAlertSound ShAlchemy\n",
-                StyleIntent::Sound(Some(Sound {
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
                     id: Some(2),
                     custom: None,
-                    vol: 100
-                }))
+                    vol: 100,
+                    positional: false
+                })))
             ),
             "Show\n    PlayAlertSound 2 100\n"
         );
@@ -6724,11 +6879,12 @@ mod tests {
         assert_eq!(
             intent_text(
                 "Show\n    CustomAlertSoundOptional \"x.mp3\"\n",
-                StyleIntent::Sound(Some(Sound {
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
                     id: Some(2),
                     custom: None,
-                    vol: 100
-                }))
+                    vol: 100,
+                    positional: false
+                })))
             ),
             "Show\n    PlayAlertSound 2\n"
         );
@@ -6772,7 +6928,7 @@ mod tests {
             shape: MinimapShape::Star,
         };
         assert_eq!(
-            intent_text(src, StyleIntent::Minimap(Some(pink))),
+            intent_text(src, StyleIntent::Minimap(Some(Cancelable::Set(pink)))),
             "Show\n    MinimapIcon -1\n    MinimapIcon 1 Blue Star\n    MinimapIcon 1 Pink Star\n"
         );
         assert_eq!(
@@ -6785,7 +6941,10 @@ mod tests {
             shape: MinimapShape::Circle,
         };
         assert_eq!(
-            intent_text("Show\n    Rarity Rare\n", StyleIntent::Minimap(Some(small))),
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::Minimap(Some(Cancelable::Set(small)))
+            ),
             "Show\n    Rarity Rare\n    MinimapIcon 2 White Circle\n"
         );
     }
@@ -6798,10 +6957,7 @@ mod tests {
                 "SetFontSize 30",
                 "PlayAlertSoundPositional 3 100",
                 "CustomAlertSoundOptional \"x.mp3\"",
-                "EnableDropSound",
-                "PlayEffect None",
                 "PlayAlertSound ShAlchemy",
-                "MinimapIcon -1",
             ]
         );
         assert_eq!(
@@ -6810,7 +6966,7 @@ mod tests {
         );
         // The bound `EnableDropSound` is rewritten in place, never contradicted by a new line.
         assert_eq!(
-            intent_text(LEFTOVERS, StyleIntent::DisableDropSound(true)),
+            intent_text(LEFTOVERS, StyleIntent::DropSound(Some(DropSound::Silent))),
             LEFTOVERS.replacen("    EnableDropSound\n", "    DisableDropSound\n", 1)
         );
     }
@@ -6819,18 +6975,28 @@ mod tests {
     fn drop_sound_follows_the_last_disable_or_enable_line() {
         let off = "Show\n    DisableDropSound\n    EnableDropSound False\n";
         let (_, _, e) = entries_of(off);
-        assert!(rule_style_view(&e, BlockKeyword::Show).0.disable_drop_sound);
         assert_eq!(
-            intent_text(off, StyleIntent::DisableDropSound(false)),
-            "Show\n    DisableDropSound\n    EnableDropSound True\n"
+            rule_style_view(&e, BlockKeyword::Show).0.drop_sound,
+            Some(DropSound::Silent)
         );
-        assert_eq!(intent_text(off, StyleIntent::DisableDropSound(true)), off);
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Normal))),
+            "Show\n    DisableDropSound\n    EnableDropSound\n"
+        );
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Silent))),
+            off
+        );
         let on = "Show\n    EnableDropSound # loud\n";
         assert_eq!(
-            intent_text(on, StyleIntent::DisableDropSound(true)),
+            intent_text(on, StyleIntent::DropSound(Some(DropSound::Silent))),
             "Show\n    DisableDropSound # loud\n"
         );
-        assert_eq!(intent_text(on, StyleIntent::DisableDropSound(false)), on);
+        assert_eq!(
+            intent_text(on, StyleIntent::DropSound(Some(DropSound::Normal))),
+            on
+        );
+        assert_eq!(intent_text(on, StyleIntent::DropSound(None)), "Show\n");
     }
 
     #[test]
@@ -6839,15 +7005,17 @@ mod tests {
             id: None,
             custom: Some("uwu.mp3".to_string()),
             vol,
+            positional: false,
         };
         let alert = |k, vol| Sound {
             id: Some(k),
             custom: None,
             vol,
+            positional: false,
         };
         let src = "Show\n    PlayAlertSound 3 200\n    SetFontSize 30\n";
         assert_eq!(
-            intent_text(src, StyleIntent::Sound(Some(custom(200)))),
+            intent_text(src, StyleIntent::Sound(Some(Cancelable::Set(custom(200))))),
             "Show\n    CustomAlertSound \"uwu.mp3\" 200\n    SetFontSize 30\n"
         );
         assert_eq!(
@@ -6856,21 +7024,27 @@ mod tests {
         );
         let bare = "Show\n    PlayAlertSound 5\n";
         assert_eq!(
-            intent_text(bare, StyleIntent::Sound(Some(alert(5, 120)))),
+            intent_text(
+                bare,
+                StyleIntent::Sound(Some(Cancelable::Set(alert(5, 120))))
+            ),
             "Show\n    PlayAlertSound 5 120\n"
         );
         assert_eq!(
-            intent_text(bare, StyleIntent::Sound(Some(alert(7, 50)))),
+            intent_text(
+                bare,
+                StyleIntent::Sound(Some(Cancelable::Set(alert(7, 50))))
+            ),
             "Show\n    PlayAlertSound 7\n"
         );
         assert_eq!(
-            intent_text(bare, StyleIntent::Sound(Some(custom(50)))),
+            intent_text(bare, StyleIntent::Sound(Some(Cancelable::Set(custom(50))))),
             "Show\n    CustomAlertSound \"uwu.mp3\"\n"
         );
         assert_eq!(
             intent_text(
                 "Show\n    Rarity Rare\n",
-                StyleIntent::Sound(Some(alert(2, 100)))
+                StyleIntent::Sound(Some(Cancelable::Set(alert(2, 100))))
             ),
             "Show\n    Rarity Rare\n    PlayAlertSound 2 100\n"
         );
@@ -6879,8 +7053,12 @@ mod tests {
             id: None,
             custom: Some("a\"b.mp3".to_string()),
             vol: 200,
+            positional: false,
         };
-        assert_eq!(intent_text(src, StyleIntent::Sound(Some(bad))), src);
+        assert_eq!(
+            intent_text(src, StyleIntent::Sound(Some(Cancelable::Set(bad)))),
+            src
+        );
     }
 
     /// IN-01: a picker opened on an empty slot reports the 4-token form for the whole session
@@ -6910,22 +7088,24 @@ mod tests {
             id: None,
             custom: Some("uwu.mp3".to_string()),
             vol: 200,
+            positional: false,
         };
         assert_eq!(
             intent_text(
                 "Show\n    PlayAlertSound 3 200 # loud\n",
-                StyleIntent::Sound(Some(custom))
+                StyleIntent::Sound(Some(Cancelable::Set(custom)))
             ),
             "Show\n    CustomAlertSound \"uwu.mp3\" 200 # loud\n"
         );
         assert_eq!(
             intent_text(
                 "Show\n    CustomAlertSound \"a.mp3\"  # mine\n",
-                StyleIntent::Sound(Some(Sound {
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
                     id: Some(4),
                     custom: None,
-                    vol: 100
-                }))
+                    vol: 100,
+                    positional: false
+                })))
             ),
             "Show\n    PlayAlertSound 4  # mine\n"
         );
@@ -6934,25 +7114,59 @@ mod tests {
     #[test]
     fn positional_optional_and_out_of_range_sound_lines_keep_their_form() {
         // Same kind: the keyword stays.
+        let alert = |id, vol, positional| {
+            StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                id: Some(id),
+                custom: None,
+                vol,
+                positional,
+            })))
+        };
         assert_eq!(
             intent_text(
                 "Show\n    PlayAlertSoundPositional 3 100\n",
-                StyleIntent::Sound(Some(Sound {
-                    id: Some(5),
-                    custom: None,
-                    vol: 100
-                }))
+                alert(5, 100, true)
             ),
             "Show\n    PlayAlertSoundPositional 5 100\n"
+        );
+        // The Positional toggle flips the keyword in place, keeping the volume form and a comment.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSoundPositional 3 100 # a\n",
+                alert(3, 100, false)
+            ),
+            "Show\n    PlayAlertSound 3 100 # a\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    PlayAlertSound 3 # a\n", alert(3, 50, true)),
+            "Show\n    PlayAlertSoundPositional 3 # a\n"
+        );
+        assert_eq!(
+            intent_text("Show\n    Rarity Rare\n", alert(6, 200, true)),
+            "Show\n    Rarity Rare\n    PlayAlertSoundPositional 6 200\n"
+        );
+        // A file never takes the positional form.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSoundPositional 3 100\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("a.mp3".to_string()),
+                    vol: 100,
+                    positional: true,
+                })))
+            ),
+            "Show\n    CustomAlertSound \"a.mp3\" 100\n"
         );
         assert_eq!(
             intent_text(
                 "Show\n    CustomAlertSoundOptional \"x.mp3\" 90\n",
-                StyleIntent::Sound(Some(Sound {
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
                     id: None,
                     custom: Some("y.mp3".to_string()),
-                    vol: 90
-                }))
+                    vol: 90,
+                    positional: false
+                })))
             ),
             "Show\n    CustomAlertSoundOptional \"y.mp3\" 90\n"
         );
@@ -6963,28 +7177,30 @@ mod tests {
             rule_style_view(&e, BlockKeyword::Show)
                 .0
                 .sound
-                .map(|s| s.vol),
+                .and_then(|s| s.value().map(|s| s.vol)),
             Some(300)
         );
         assert_eq!(
             intent_text(
                 loud,
-                StyleIntent::Sound(Some(Sound {
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
                     id: Some(6),
                     custom: None,
-                    vol: 300
-                }))
+                    vol: 300,
+                    positional: false
+                })))
             ),
             "Show\n    PlayAlertSound 6 400\n"
         );
         assert_eq!(
             intent_text(
                 loud,
-                StyleIntent::Sound(Some(Sound {
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
                     id: Some(3),
                     custom: None,
-                    vol: 250
-                }))
+                    vol: 250,
+                    positional: false
+                })))
             ),
             "Show\n    PlayAlertSound 3 250\n"
         );
@@ -7003,25 +7219,45 @@ mod tests {
         assert_eq!(
             intent_text(
                 "Show\n    Rarity Rare\n",
-                StyleIntent::DisableDropSound(true)
+                StyleIntent::DropSound(Some(DropSound::Silent))
             ),
             "Show\n    Rarity Rare\n    DisableDropSound\n"
         );
-        for line in ["DisableDropSound", "DisableDropSound True"] {
+        assert_eq!(
+            intent_text(
+                "Show\n    Rarity Rare\n",
+                StyleIntent::DropSound(Some(DropSound::Normal))
+            ),
+            "Show\n    Rarity Rare\n    EnableDropSound\n"
+        );
+        for line in [
+            "DisableDropSound",
+            "DisableDropSound True",
+            "EnableDropSound",
+        ] {
             assert_eq!(
-                intent_text(
-                    &format!("Show\n    {line}\n"),
-                    StyleIntent::DisableDropSound(false)
-                ),
+                intent_text(&format!("Show\n    {line}\n"), StyleIntent::DropSound(None)),
                 "Show\n"
             );
         }
+        // `DisableDropSound False` means Normal: Silent rewrites it to the bare keyword, Normal
+        // keeps it as written.
         let off = "Show\n    DisableDropSound False\n";
         assert_eq!(
-            intent_text(off, StyleIntent::DisableDropSound(true)),
-            "Show\n    DisableDropSound True\n"
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Silent))),
+            "Show\n    DisableDropSound\n"
         );
-        assert_eq!(intent_text(off, StyleIntent::DisableDropSound(false)), off);
+        assert_eq!(
+            intent_text(off, StyleIntent::DropSound(Some(DropSound::Normal))),
+            off
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    DisableDropSound\n",
+                StyleIntent::DropSound(Some(DropSound::Normal))
+            ),
+            "Show\n    EnableDropSound\n"
+        );
     }
 
     fn style_probes(
@@ -7117,6 +7353,168 @@ mod tests {
         let a = frame_of(&ctx, input(click_events(large)), &wf, &mut list, None);
         mirror_apply(&mut wf, &mut list, a);
         assert_eq!(wf.text(), "Show\n    MinimapIcon 0 White Circle\n");
+    }
+
+    #[test]
+    fn cancel_values_rewrite_the_bound_line_or_add_one() {
+        let star = "Show\n    MinimapIcon 1 Blue Star # icon\n    PlayEffect Red Temp\n    PlayAlertSound 3 100\n";
+        assert_eq!(
+            intent_text(star, StyleIntent::Minimap(Some(Cancelable::Cancel))),
+            "Show\n    MinimapIcon -1 # icon\n    PlayEffect Red Temp\n    PlayAlertSound 3 100\n"
+        );
+        assert_eq!(
+            intent_text(star, StyleIntent::Beam(Some(Cancelable::Cancel))),
+            "Show\n    MinimapIcon 1 Blue Star # icon\n    PlayEffect None\n    PlayAlertSound 3 100\n"
+        );
+        assert_eq!(
+            intent_text(star, StyleIntent::Sound(Some(Cancelable::Cancel))),
+            "Show\n    MinimapIcon 1 Blue Star # icon\n    PlayEffect Red Temp\n    PlayAlertSound None\n"
+        );
+        let bare = "Show\n    Rarity Rare\n";
+        for (intent, line) in [
+            (
+                StyleIntent::Minimap(Some(Cancelable::Cancel)),
+                "MinimapIcon -1",
+            ),
+            (
+                StyleIntent::Beam(Some(Cancelable::Cancel)),
+                "PlayEffect None",
+            ),
+            (
+                StyleIntent::Sound(Some(Cancelable::Cancel)),
+                "PlayAlertSound None",
+            ),
+        ] {
+            assert_eq!(intent_text(bare, intent), format!("{bare}    {line}\n"));
+        }
+        // Already the cancel value: nothing to write.
+        for (src, intent) in [
+            (
+                "Show\n    MinimapIcon -1\n",
+                StyleIntent::Minimap(Some(Cancelable::Cancel)),
+            ),
+            (
+                "Show\n    PlayEffect None\n",
+                StyleIntent::Beam(Some(Cancelable::Cancel)),
+            ),
+            (
+                "Show\n    PlayAlertSound None\n",
+                StyleIntent::Sound(Some(Cancelable::Cancel)),
+            ),
+        ] {
+            assert_eq!(intent_text(src, intent), src);
+        }
+        // Leaving the cancel value writes the full line, volume included.
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayAlertSound None\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(6),
+                    custom: None,
+                    vol: 200,
+                    positional: false,
+                })))
+            ),
+            "Show\n    PlayAlertSound 6 200\n"
+        );
+        assert_eq!(
+            intent_text(
+                "Show\n    PlayEffect None\n",
+                StyleIntent::Beam(Some(Cancelable::Set(Beam {
+                    color: FilterColor::Pink,
+                    temp: false,
+                })))
+            ),
+            "Show\n    PlayEffect Pink\n"
+        );
+        // Off removes the line, cancel value or not.
+        assert_eq!(
+            intent_text("Show\n    PlayAlertSound None\n", StyleIntent::Sound(None)),
+            "Show\n"
+        );
+    }
+
+    #[test]
+    fn named_and_optional_sounds_stay_leftover_rows() {
+        assert_eq!(
+            leftover_texts("Show\n    PlayAlertSound ShAlchemy\n"),
+            ["PlayAlertSound ShAlchemy"]
+        );
+        assert_eq!(
+            leftover_texts("Show\n    CustomAlertSoundOptional \"x.mp3\"\n"),
+            ["CustomAlertSoundOptional \"x.mp3\""]
+        );
+        // A file edit on an optional line keeps its keyword (never writes a new Optional line).
+        assert_eq!(
+            intent_text(
+                "Show\n    CustomAlertSoundOptional \"x.mp3\"\n",
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: None,
+                    custom: Some("y.mp3".to_string()),
+                    vol: 100,
+                    positional: false,
+                })))
+            ),
+            "Show\n    CustomAlertSoundOptional \"y.mp3\"\n"
+        );
+    }
+
+    /// The leftover action cards drawn for the expanded first rule of `wf`.
+    fn leftover_rows(ctx: &egui::Context, wf: &WorkingFilter) -> usize {
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        style_probes(ctx, wf, &mut list, "ed-leftover").len()
+    }
+
+    /// D-06: a Custom rule with one alert-sound line draws it on the Sound line only, never as an
+    /// extra leftover action row; nor does a sound the editor itself just added.
+    #[test]
+    fn single_alert_sound_line_has_no_leftover_row() {
+        let ctx = headless_ctx();
+        for src in [
+            "Show\n    PlayAlertSound 6 200\n",
+            "Show\n    PlayAlertSoundPositional 6 200\n",
+            "Show\n    PlayAlertSound None\n",
+            "Show\n    CustomAlertSound \"uwu.mp3\" 300\n",
+        ] {
+            let (wf, _, e) = entries_of(src);
+            let (_, b) = rule_style_view(&e, BlockKeyword::Show);
+            assert!(style_leftovers(&e, &b).is_empty(), "{src}");
+            assert_eq!(leftover_rows(&ctx, &wf), 0, "{src}");
+        }
+        for positional in [false, true] {
+            let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
+            let id = wf.rows()[0].id;
+            let (_, b) = rule_style_view(&wf.body_view(id), BlockKeyword::Show);
+            let acts = rule_intent_actions(
+                id,
+                &b,
+                StyleIntent::Sound(Some(Cancelable::Set(Sound {
+                    id: Some(6),
+                    custom: None,
+                    vol: 200,
+                    positional,
+                }))),
+            );
+            apply_all(&mut wf, acts);
+            let e = wf.body_view(id);
+            let sounds = e
+                .iter()
+                .filter(|e| {
+                    e.keyword
+                        .is_some_and(|k| family_of(k.name) == Some(Family::Sound))
+                })
+                .count();
+            assert_eq!(sounds, 1);
+            let (_, b) = rule_style_view(&e, BlockKeyword::Show);
+            assert!(style_leftovers(&e, &b).is_empty());
+            assert_eq!(leftover_rows(&ctx, &wf), 0);
+        }
+        // The probe does count a real leftover.
+        let wf = WorkingFilter::from_text("Show\n    PlayAlertSound 3\n    PlayAlertSound 6 200\n");
+        assert_eq!(leftover_rows(&ctx, &wf), 1);
     }
 }
 

@@ -4870,7 +4870,7 @@ Hide
 
     #[test]
     fn style_editor_edits_stay_in_memory_until_apply_and_revert_restores() {
-        use crate::models::config::{Beam, FilterColor, Minimap, MinimapShape, Sound};
+        use crate::models::config::{Beam, Cancelable, FilterColor, Minimap, MinimapShape, Sound};
         use crate::overlay::config_state::{ColourSlot, ConfigState, StyleEdit};
         use crate::overlay::config_view::ConfigAction;
         let (mut app, ctx) = popup_app(RULES);
@@ -4903,20 +4903,21 @@ Hide
                     value: Some([1, 2, 3]),
                 }),
                 edit(StyleEdit::Font(Some(20))),
-                edit(StyleEdit::Minimap(Some(Minimap {
+                edit(StyleEdit::Minimap(Some(Cancelable::Set(Minimap {
                     size: 0,
                     color: FilterColor::Cyan,
                     shape: MinimapShape::Star,
-                }))),
-                edit(StyleEdit::Beam(Some(Beam {
+                })))),
+                edit(StyleEdit::Beam(Some(Cancelable::Set(Beam {
                     color: FilterColor::Red,
                     temp: true,
-                }))),
-                edit(StyleEdit::Sound(Some(Sound {
+                })))),
+                edit(StyleEdit::Sound(Some(Cancelable::Set(Sound {
                     id: Some(4),
                     custom: None,
                     vol: 50,
-                }))),
+                    positional: false,
+                })))),
             ],
         );
         let state = app.config.as_ref().unwrap();

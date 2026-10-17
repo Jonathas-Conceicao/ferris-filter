@@ -288,6 +288,50 @@ mod tests {
         assert_eq!(rep.rewritten, 1);
     }
 
+    /// The cancel values, a positional alert and EnableDropSound pass the grammar gate and a
+    /// second run changes nothing.
+    #[test]
+    fn cancel_values_and_enable_drop_sound_rewrite_idempotently() {
+        use crate::models::config::{Cancelable, Sound};
+        let mut set = styles();
+        let s = set.get_mut("S").unwrap();
+        s.minimap = Some(Cancelable::Cancel);
+        s.beam = Some(Cancelable::Cancel);
+        s.sound = Some(Cancelable::Cancel);
+        s.disable_drop_sound = false;
+        s.enable_drop_sound = true;
+        set.validate().unwrap();
+        let src = "#ff:style S\nShow\n  Class \"Rings\"\n  SetFontSize 20\n";
+        let (once, rep) = run_with(src, &set, false);
+        assert_eq!(rep.rewritten, 1);
+        for line in [
+            "PlayEffect None",
+            "MinimapIcon -1",
+            "PlayAlertSound None",
+            "EnableDropSound",
+        ] {
+            assert!(once.contains(&format!("  {line}\n")), "{line} in {once}");
+        }
+        let (twice, rep) = run_with(&once, &set, false);
+        assert_eq!(once, twice);
+        assert_eq!(rep.rewritten, 0);
+        let s = set.get_mut("S").unwrap();
+        s.sound = Some(Cancelable::Set(Sound {
+            id: Some(6),
+            custom: None,
+            vol: 200,
+            positional: true,
+        }));
+        let (once, _) = run_with(src, &set, false);
+        assert!(
+            once.contains("  PlayAlertSoundPositional 6 200\n"),
+            "{once}"
+        );
+        let (twice, rep) = run_with(&once, &set, false);
+        assert_eq!(once, twice);
+        assert_eq!(rep.rewritten, 0);
+    }
+
     #[test]
     fn second_run_is_idempotent() {
         let src = "#ff:style S\nHide\n  Class \"Rings\"\n  SetFontSize 20\n";
@@ -337,7 +381,11 @@ mod tests {
         // A sound path with an embedded newline makes `splice_body` refuse the action lines
         // after the `hide` -> `Show` switch has already succeeded.
         let mut bad = styles().get("S").unwrap().clone();
-        bad.sound.as_mut().unwrap().custom = Some("a\nb.mp3".into());
+        bad.sound
+            .as_mut()
+            .and_then(crate::models::config::Cancelable::value_mut)
+            .unwrap()
+            .custom = Some("a\nb.mp3".into());
         let src = "#ff:style S\nhide\n  SetFontSize 20\n";
         let mut doc = parse(src.as_bytes()).unwrap();
         let id = doc.blocks().next().unwrap().id();

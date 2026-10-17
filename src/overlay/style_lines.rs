@@ -9,7 +9,9 @@
 
 use egui::{RichText, vec2};
 
-use crate::models::config::{Beam, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction};
+use crate::models::config::{
+    Beam, Cancelable, DropSound, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction,
+};
 use crate::skin::editor as ed;
 use crate::skin::fonts::regular;
 use crate::skin::minimap;
@@ -41,13 +43,17 @@ pub struct StyleView {
     pub border: Option<Rgba>,
     pub background: Option<Rgba>,
     pub font: Option<i64>,
-    pub minimap: Option<Minimap>,
-    pub beam: Option<Beam>,
-    /// `vol` is the shown volume: the written one, or the game default when none is written.
-    pub sound: Option<Sound>,
+    /// `None` = off (no line), `Cancel` = `MinimapIcon -1`.
+    pub minimap: Option<Cancelable<Minimap>>,
+    /// `None` = off (no line), `Cancel` = `PlayEffect None`.
+    pub beam: Option<Cancelable<Beam>>,
+    /// `None` = off (no line), `Cancel` = `PlayAlertSound None`. A set sound's `vol` is the shown
+    /// volume: the written one, or the game default when none is written.
+    pub sound: Option<Cancelable<Sound>>,
     /// Whether the volume is written (a rule line may omit it).
     pub sound_volume_written: bool,
-    pub disable_drop_sound: bool,
+    /// `None` = off (no line), else `DisableDropSound` / `EnableDropSound`.
+    pub drop_sound: Option<DropSound>,
     /// Colour cards with an Alpha slider (rules) or opaque ones (styles store RGB).
     pub alpha: bool,
 }
@@ -72,7 +78,7 @@ impl StyleView {
             beam: style.beam.clone(),
             sound: style.sound.clone(),
             sound_volume_written: true,
-            disable_drop_sound: style.disable_drop_sound,
+            drop_sound: style.drop_sound(),
             alpha: false,
         }
     }
@@ -98,10 +104,10 @@ pub enum StyleIntent {
         opened_had_alpha: bool,
     },
     Font(Option<i64>),
-    Minimap(Option<Minimap>),
-    Beam(Option<Beam>),
-    Sound(Option<Sound>),
-    DisableDropSound(bool),
+    Minimap(Option<Cancelable<Minimap>>),
+    Beam(Option<Cancelable<Beam>>),
+    Sound(Option<Cancelable<Sound>>),
+    DropSound(Option<DropSound>),
 }
 
 pub(crate) const FONT_TIP: &str = "Font size override; off uses the game default";
@@ -318,11 +324,11 @@ pub fn show(
     sound_lines(ui, &skin, view, memo, n, &mut out);
 
     ff_field_row_line(ui, n, "Drop sound", Some(DROP_TIP), |ui| {
-        let mut on = view.disable_drop_sound;
+        let mut on = view.drop_sound == Some(DropSound::Silent);
         let r = crate::skin::widgets::ff_check(ui, &skin, &mut on, "Drop sound");
         probe("ed-drop-check", r.rect);
         if r.changed() {
-            out.push(StyleIntent::DisableDropSound(on));
+            out.push(StyleIntent::DropSound(on.then_some(DropSound::Silent)));
         }
     });
     out
@@ -424,8 +430,9 @@ fn minimap_lines(
     n: &mut usize,
     out: &mut Vec<StyleIntent>,
 ) {
+    let set = view.minimap.as_ref().and_then(Cancelable::value);
     ff_field_row_line(ui, n, "Minimap", None, |ui| {
-        let mut sel = view.minimap.as_ref().map_or(0, |m| usize::from(m.size) + 1);
+        let mut sel = set.map_or(0, |m| usize::from(m.size) + 1);
         let width = 288.0f32.min(ui.available_width());
         let r = ed::ff_segmented(
             ui,
@@ -437,14 +444,13 @@ fn minimap_lines(
         probe("ed-minimap", r.rect);
         if r.changed() {
             let next = if sel == 0 {
-                if let Some(m) = &view.minimap {
+                if let Some(m) = set {
                     remember(ui, memo, "minimap", m);
                 }
                 None
             } else {
-                let mut m = view
-                    .minimap
-                    .clone()
+                let mut m = set
+                    .cloned()
                     .or_else(|| recall(ui, memo, "minimap"))
                     .unwrap_or(Minimap {
                         size: 0,
@@ -452,12 +458,12 @@ fn minimap_lines(
                         shape: MinimapShape::Circle,
                     });
                 m.size = u8::try_from(sel - 1).unwrap_or(0);
-                Some(m)
+                Some(Cancelable::Set(m))
             };
             out.push(StyleIntent::Minimap(next));
         }
     });
-    let Some(m) = &view.minimap else {
+    let Some(m) = set else {
         return;
     };
     let colour = minimap::index_of(&minimap::COLOURS, m.color.as_str()).unwrap_or(0);
@@ -481,7 +487,7 @@ fn minimap_lines(
             {
                 let mut next = m.clone();
                 next.color = color;
-                out.push(StyleIntent::Minimap(Some(next)));
+                out.push(StyleIntent::Minimap(Some(Cancelable::Set(next))));
             }
         }
     });
@@ -497,7 +503,7 @@ fn minimap_lines(
             {
                 let mut next = m.clone();
                 next.shape = s;
-                out.push(StyleIntent::Minimap(Some(next)));
+                out.push(StyleIntent::Minimap(Some(Cancelable::Set(next))));
             }
         }
     });
@@ -510,23 +516,21 @@ fn beam_line(
     n: &mut usize,
     out: &mut Vec<StyleIntent>,
 ) {
+    let beam = view.beam.as_ref().and_then(Cancelable::value);
     ff_field_row_line(ui, n, "Beam", None, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         // Room for the Temp chip after the 12 tiles.
         let tile = tile_size(ui, 12.0, 62.0);
-        let none = ed::ff_swatch(ui, None, view.beam.is_none(), vec2(tile, 24.0), "No beam")
+        let none = ed::ff_swatch(ui, None, beam.is_none(), vec2(tile, 24.0), "No beam")
             .on_hover_text("None");
         probe("ed-beam-none", none.rect);
         if none.clicked()
-            && let Some(b) = &view.beam
+            && let Some(b) = beam
         {
             remember(ui, memo, "beam", b);
             out.push(StyleIntent::Beam(None));
         }
-        let current = view
-            .beam
-            .as_ref()
-            .and_then(|b| minimap::index_of(&minimap::COLOURS, b.color.as_str()));
+        let current = beam.and_then(|b| minimap::index_of(&minimap::COLOURS, b.color.as_str()));
         for (i, label) in minimap::COLOURS.iter().enumerate() {
             let r = ed::ff_swatch(
                 ui,
@@ -541,28 +545,27 @@ fn beam_line(
                 && current != Some(i)
                 && let Some(color) = FilterColor::from_name(label)
             {
-                let mut next = view
-                    .beam
-                    .clone()
+                let mut next = beam
+                    .cloned()
                     .or_else(|| recall(ui, memo, "beam"))
                     .unwrap_or(Beam {
                         color: FilterColor::White,
                         temp: false,
                     });
                 next.color = color;
-                out.push(StyleIntent::Beam(Some(next)));
+                out.push(StyleIntent::Beam(Some(Cancelable::Set(next))));
             }
         }
-        let mut temp = view.beam.as_ref().is_some_and(|b| b.temp);
-        ui.add_enabled_ui(view.beam.is_some(), |ui| {
+        let mut temp = beam.is_some_and(|b| b.temp);
+        ui.add_enabled_ui(beam.is_some(), |ui| {
             let r = ed::ff_chip(ui, "Temp", &mut temp);
             probe("ed-beam-temp", r.rect);
             if r.changed()
-                && let Some(b) = &view.beam
+                && let Some(b) = beam
             {
                 let mut next = b.clone();
                 next.temp = temp;
-                out.push(StyleIntent::Beam(Some(next)));
+                out.push(StyleIntent::Beam(Some(Cancelable::Set(next))));
             }
         });
     });
@@ -588,11 +591,13 @@ pub(crate) fn sound_for_choice(
                     .unwrap_or_else(|| SOUND_FILE_DEFAULT.to_string()),
             ),
             vol,
+            positional: false,
         }),
         k => Some(Sound {
             id: u8::try_from(k).ok(),
             custom: None,
             vol,
+            positional: false,
         }),
     }
 }
@@ -639,9 +644,10 @@ fn sound_lines(
     n: &mut usize,
     out: &mut Vec<StyleIntent>,
 ) {
+    let set = view.sound.as_ref().and_then(Cancelable::value);
     ff_field_row_line(ui, n, "Sound", None, |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let mut sel = match &view.sound {
+        let mut sel = match set {
             None => 0,
             Some(s) if s.custom.is_some() => SOUND_CUSTOM,
             Some(s) => usize::from(s.id.unwrap_or(1)).clamp(1, 16),
@@ -654,16 +660,16 @@ fn sound_lines(
                 last: recall::<Sound>(ui, memo, "sound"),
                 file: recall::<String>(ui, memo, "sound-file"),
             };
-            let next = switch_sound(sel, view.sound.as_ref(), &mut sm);
+            let next = switch_sound(sel, set, &mut sm);
             if let Some(s) = &sm.last {
                 remember(ui, memo, "sound", s);
             }
             if let Some(f) = &sm.file {
                 remember(ui, memo, "sound-file", f);
             }
-            out.push(StyleIntent::Sound(next));
+            out.push(StyleIntent::Sound(next.map(Cancelable::Set)));
         }
-        if let Some(sound) = &view.sound
+        if let Some(sound) = set
             && let Some(file) = &sound.custom
         {
             // Keyed by the editor's memo id so two editors never share a draft.
@@ -683,11 +689,12 @@ fn sound_lines(
             if resp.changed() {
                 ui.data_mut(|d| d.insert_temp(draft_id, buf.clone()));
                 if !bad && !buf.trim().is_empty() {
-                    out.push(StyleIntent::Sound(Some(Sound {
+                    out.push(StyleIntent::Sound(Some(Cancelable::Set(Sound {
                         id: None,
                         custom: Some(buf.trim().to_string()),
                         vol: sound.vol,
-                    })));
+                        positional: false,
+                    }))));
                 }
             } else if !resp.has_focus() && had.is_some() {
                 ui.data_mut(|d| d.remove_temp::<String>(draft_id));
@@ -705,7 +712,7 @@ fn sound_lines(
             }
         }
     });
-    let Some(sound) = &view.sound else {
+    let Some(sound) = set else {
         return;
     };
     ff_field_row_line(ui, n, "Volume", None, |ui| {
@@ -718,11 +725,10 @@ fn sound_lines(
         if r.changed()
             && let Ok(vol) = u16::try_from(v.round() as i64)
         {
-            out.push(StyleIntent::Sound(Some(Sound {
-                id: sound.id,
-                custom: sound.custom.clone(),
+            out.push(StyleIntent::Sound(Some(Cancelable::Set(Sound {
                 vol,
-            })));
+                ..sound.clone()
+            }))));
         }
     });
 }

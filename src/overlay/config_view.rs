@@ -11,7 +11,7 @@ use std::path::Path;
 
 use egui::{Align, Layout, RichText, vec2};
 
-use crate::models::config::{Style, StyleAction, StyleNameError, StyleSet};
+use crate::models::config::{Cancelable, Style, StyleAction, StyleNameError, StyleSet};
 use crate::settings;
 
 use super::body;
@@ -841,7 +841,8 @@ fn style_row(
         probe("row-name", name_cell);
 
         let icon = cols.icon.rect(rect);
-        if let Some(m) = &style.minimap
+        // Off and the cancel value (`MinimapIcon -1`) draw no icon.
+        if let Some(m) = style.minimap.as_ref().and_then(Cancelable::value)
             && let Some(shape) = minimap::index_of(&minimap::SHAPES, m.shape.as_str())
             && let Some(colour) = minimap::index_of(&minimap::COLOURS, m.color.as_str())
         {
@@ -1012,7 +1013,7 @@ fn style_edit_for(intent: StyleIntent) -> StyleEdit {
         StyleIntent::Minimap(m) => StyleEdit::Minimap(m),
         StyleIntent::Beam(b) => StyleEdit::Beam(b),
         StyleIntent::Sound(s) => StyleEdit::Sound(s),
-        StyleIntent::DisableDropSound(on) => StyleEdit::DisableDropSound(on),
+        StyleIntent::DropSound(d) => StyleEdit::DropSound(d),
     }
 }
 
@@ -2179,10 +2180,15 @@ mod tests {
         let (ctx, _) = headless();
         let mut cfg = expanded("S");
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-drop-check", 0, 0.0);
-        assert_eq!(edits_of(&acts), [StyleEdit::DisableDropSound(true)]);
+        assert_eq!(
+            edits_of(&acts),
+            [StyleEdit::DropSound(Some(
+                crate::models::config::DropSound::Silent
+            ))]
+        );
         let mut cfg = expanded("hidden");
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-drop-check", 0, 0.0);
-        assert_eq!(edits_of(&acts), [StyleEdit::DisableDropSound(false)]);
+        assert_eq!(edits_of(&acts), [StyleEdit::DropSound(None)]);
     }
 
     #[test]
@@ -2226,7 +2232,7 @@ mod tests {
     }
 
     fn mm(size: u8, color: FilterColor, shape: MinimapShape) -> StyleEdit {
-        StyleEdit::Minimap(Some(Minimap { size, color, shape }))
+        StyleEdit::Minimap(Some(Cancelable::Set(Minimap { size, color, shape })))
     }
 
     /// Click offset (from the segmented control's centre) onto segment `i` of `n`.
@@ -2325,18 +2331,18 @@ mod tests {
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-colour", pink, 0.0);
         assert_eq!(
             edits_of(&acts),
-            [StyleEdit::Beam(Some(Beam {
+            [StyleEdit::Beam(Some(Cancelable::Set(Beam {
                 color: FilterColor::Pink,
                 temp: false
-            }))]
+            })))]
         );
         let acts = click_probe(&ctx, &state, &mut cfg, "ed-beam-temp", 0, 0.0);
         assert_eq!(
             edits_of(&acts),
-            [StyleEdit::Beam(Some(Beam {
+            [StyleEdit::Beam(Some(Cancelable::Set(Beam {
                 color: FilterColor::Orange,
                 temp: true
-            }))]
+            })))]
         );
     }
 
@@ -2357,10 +2363,10 @@ mod tests {
         );
         assert_eq!(
             edits_of(&acts),
-            [StyleEdit::Beam(Some(Beam {
+            [StyleEdit::Beam(Some(Cancelable::Set(Beam {
                 color: FilterColor::Pink,
                 temp: false
-            }))]
+            })))]
         );
     }
 
@@ -2370,6 +2376,7 @@ mod tests {
             id: Some(2),
             custom: None,
             vol: 200,
+            positional: false,
         };
         assert_eq!(sound_for_choice(0, Some(&kite), None), None);
         assert_eq!(
@@ -2377,7 +2384,8 @@ mod tests {
             Some(Sound {
                 id: Some(3),
                 custom: None,
-                vol: 200
+                vol: 200,
+                positional: false
             })
         );
         assert_eq!(
@@ -2385,7 +2393,8 @@ mod tests {
             Some(Sound {
                 id: Some(3),
                 custom: None,
-                vol: 100
+                vol: 100,
+                positional: false
             })
         );
         assert_eq!(
@@ -2393,7 +2402,8 @@ mod tests {
             Some(Sound {
                 id: None,
                 custom: Some("uwu.mp3".to_string()),
-                vol: 100
+                vol: 100,
+                positional: false
             })
         );
         assert_eq!(SOUND_OPTIONS[SOUND_CUSTOM], "Custom file");
@@ -2407,11 +2417,13 @@ mod tests {
             id: None,
             custom: Some("boss.mp3".to_string()),
             vol: 150,
+            positional: false,
         };
         let alert = |vol| Sound {
             id: Some(3),
             custom: None,
             vol,
+            positional: false,
         };
         // Custom -> Alert 3 -> Custom.
         let mut memo = SoundMemo::default();
@@ -2439,7 +2451,8 @@ mod tests {
             Some(Sound {
                 id: None,
                 custom: Some(SOUND_FILE_DEFAULT.to_string()),
-                vol: 100
+                vol: 100,
+                positional: false
             })
         );
     }

@@ -305,6 +305,8 @@ mod tests {
         assert_eq!(back, set);
         back.validate().unwrap();
         assert_eq!(render_styles(&back), text);
+        // The new optional fields are written only when set: existing styles stay byte-identical.
+        assert!(!text.contains("positional") && !text.contains("enableDropSound"));
         let s_line = text.lines().find(|l| l.starts_with("  \"S\":")).unwrap();
         assert!(
             s_line.contains(r#""sound":{"custom":"uwu.mp3","vol":300}"#),

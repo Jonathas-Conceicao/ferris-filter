@@ -21,7 +21,7 @@ use crate::filter::{
     Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, RuleStep,
     Severity, parse as parse_filter,
 };
-use crate::models::config::{Style, StyleSet};
+use crate::models::config::{Cancelable, Style, StyleSet};
 use crate::styled::{self, StyleReport};
 
 /// Refusal copy for a line edit whose target line changed since the frame started.
@@ -344,7 +344,8 @@ pub struct RuleRow {
     pub chip_icon_desc: Option<String>,
 }
 
-/// The chip icon (shape, colour indices) and its description for a minimap spec.
+/// The chip icon (shape, colour indices) and its description for a minimap spec. Off and the
+/// cancel value (`MinimapIcon -1`) have no icon.
 fn chip_icon_of(m: &crate::models::config::Minimap) -> Option<((usize, usize), String)> {
     use crate::skin::minimap;
     let shape = minimap::index_of(&minimap::SHAPES, m.shape.as_str())?;
@@ -723,6 +724,7 @@ impl WorkingFilter {
                             .0
                             .minimap
                             .as_ref()
+                            .and_then(Cancelable::value)
                             .and_then(chip_icon_of);
                     }
                     StyleState::None
@@ -730,7 +732,12 @@ impl WorkingFilter {
                 Some(n) => match &self.styles {
                     Some(set) => match set.resolve_tag(n) {
                         Some(m) => {
-                            chip = m.style.minimap.as_ref().and_then(chip_icon_of);
+                            chip = m
+                                .style
+                                .minimap
+                                .as_ref()
+                                .and_then(Cancelable::value)
+                                .and_then(chip_icon_of);
                             StyleState::Known(m.name.to_string())
                         }
                         None => StyleState::Unknown(n.to_string()),

@@ -9,7 +9,8 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::models::config::{
-    Config, FilterColor, MinimapShape, RarityOp, Style, StyleAction, StyleError, StyleSet,
+    Cancelable, Config, DropSound, FilterColor, MinimapShape, RarityOp, Style, StyleAction,
+    StyleError, StyleSet,
 };
 use crate::pricer::{CategoryBlock, PricedData, UniqueBlock};
 
@@ -200,14 +201,15 @@ impl MinimapShape {
 // Canonical action emitter (D-03)
 //
 // Order (every block goes through this; None/false fields are skipped):
-//   1. PlayEffect {color} [Temp]        — if beam present
-//   2. MinimapIcon {size} {color} {shape} — if minimap present
+//   1. PlayEffect {color} [Temp]        — if beam present (`PlayEffect None` for the cancel value)
+//   2. MinimapIcon {size} {color} {shape} — if minimap present (`MinimapIcon -1` to cancel)
 //   3. SetTextColor R G B 255           — if text present
 //   4. SetBackgroundColor R G B 255     — if background present
 //   5. SetBorderColor R G B 255         — if border present
 //   6. SetFontSize N                    — if font present
-//   7. CustomAlertSound / PlayAlertSound — if sound present
-//   8. DisableDropSound                 — if disable_drop_sound == true
+//   7. CustomAlertSound / PlayAlertSound[Positional] — if sound present (`PlayAlertSound None`
+//      for the cancel value)
+//   8. DisableDropSound / EnableDropSound — if disable_drop_sound / enable_drop_sound
 // ---------------------------------------------------------------------------
 
 /// Filter action lines for a style (no indent), in the canonical order above.
@@ -216,17 +218,23 @@ impl MinimapShape {
 /// styled-rule rewrite (`crate::styled`) splices them into hand-authored rules.
 pub fn style_action_lines(style: &Style) -> Vec<String> {
     let mut lines = Vec::new();
-    if let Some(beam) = &style.beam {
-        let temp = if beam.temp { " Temp" } else { "" };
-        lines.push(format!("PlayEffect {}{}", beam.color.as_filter_str(), temp));
+    match &style.beam {
+        Some(Cancelable::Set(beam)) => {
+            let temp = if beam.temp { " Temp" } else { "" };
+            lines.push(format!("PlayEffect {}{}", beam.color.as_filter_str(), temp));
+        }
+        Some(Cancelable::Cancel) => lines.push("PlayEffect None".to_string()),
+        None => {}
     }
-    if let Some(mm) = &style.minimap {
-        lines.push(format!(
+    match &style.minimap {
+        Some(Cancelable::Set(mm)) => lines.push(format!(
             "MinimapIcon {} {} {}",
             mm.size,
             mm.color.as_filter_str(),
             mm.shape.as_filter_str()
-        ));
+        )),
+        Some(Cancelable::Cancel) => lines.push("MinimapIcon -1".to_string()),
+        None => {}
     }
     if let Some(rgb) = style.text {
         lines.push(format!("SetTextColor {} {} {} 255", rgb[0], rgb[1], rgb[2]));
@@ -246,15 +254,26 @@ pub fn style_action_lines(style: &Style) -> Vec<String> {
     if let Some(font) = style.font {
         lines.push(format!("SetFontSize {}", font));
     }
-    if let Some(sound) = &style.sound {
-        if let Some(custom) = &sound.custom {
-            lines.push(format!("CustomAlertSound \"{}\" {}", custom, sound.vol));
-        } else if let Some(id) = sound.id {
-            lines.push(format!("PlayAlertSound {} {}", id, sound.vol));
+    match &style.sound {
+        Some(Cancelable::Set(sound)) => {
+            if let Some(custom) = &sound.custom {
+                lines.push(format!("CustomAlertSound \"{}\" {}", custom, sound.vol));
+            } else if let Some(id) = sound.id {
+                let keyword = if sound.positional {
+                    "PlayAlertSoundPositional"
+                } else {
+                    "PlayAlertSound"
+                };
+                lines.push(format!("{keyword} {} {}", id, sound.vol));
+            }
         }
+        Some(Cancelable::Cancel) => lines.push("PlayAlertSound None".to_string()),
+        None => {}
     }
-    if style.disable_drop_sound {
-        lines.push("DisableDropSound".to_string());
+    match style.drop_sound() {
+        Some(DropSound::Silent) => lines.push("DisableDropSound".to_string()),
+        Some(DropSound::Normal) => lines.push("EnableDropSound".to_string()),
+        None => {}
     }
     lines
 }
@@ -956,6 +975,7 @@ mod tests {
             sound: None,
             action,
             disable_drop_sound: false,
+            enable_drop_sound: false,
         }
     }
 
@@ -1011,6 +1031,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cancel_values_positional_and_enable_drop_sound_emit_in_canonical_order() {
+        use crate::models::config::{Cancelable, DropSound, Sound, StyleAction};
+        let mut st = bare_style(StyleAction::Show);
+        st.beam = Some(Cancelable::Cancel);
+        st.minimap = Some(Cancelable::Cancel);
+        st.font = Some(30);
+        st.sound = Some(Cancelable::Cancel);
+        st.set_drop_sound(Some(DropSound::Normal));
+        assert_eq!(
+            style_action_lines(&st),
+            [
+                "PlayEffect None",
+                "MinimapIcon -1",
+                "SetFontSize 30",
+                "PlayAlertSound None",
+                "EnableDropSound",
+            ]
+        );
+        st.sound = Some(Cancelable::Set(Sound {
+            id: Some(6),
+            custom: None,
+            vol: 200,
+            positional: true,
+        }));
+        st.set_drop_sound(Some(DropSound::Silent));
+        let lines = style_action_lines(&st);
+        assert_eq!(
+            &lines[3..],
+            ["PlayAlertSoundPositional 6 200", "DisableDropSound"]
+        );
+    }
+
     /// D-09: a Hide style keeps every visual line under its Hide header.
     #[test]
     fn a_hide_style_carries_full_visuals() {
@@ -1021,20 +1074,21 @@ mod tests {
         st.border = Some([40, 50, 60]);
         st.background = Some([70, 80, 90]);
         st.font = Some(33);
-        st.sound = Some(Sound {
+        st.sound = Some(Cancelable::Set(Sound {
             id: Some(3),
             custom: None,
             vol: 100,
-        });
-        st.minimap = Some(Minimap {
+            positional: false,
+        }));
+        st.minimap = Some(Cancelable::Set(Minimap {
             size: 1,
             color: FilterColor::Red,
             shape: MinimapShape::Star,
-        });
-        st.beam = Some(Beam {
+        }));
+        st.beam = Some(Cancelable::Set(Beam {
             color: FilterColor::Red,
             temp: false,
-        });
+        }));
         st.disable_drop_sound = true;
         config.styles.insert("loudhide", st);
         config

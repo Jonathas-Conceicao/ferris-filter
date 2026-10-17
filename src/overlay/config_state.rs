@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use crate::compile::InputPaths;
 use crate::loader::LoadError;
 use crate::models::config::{
-    Beam, Config, Minimap, Sound, Style, StyleAction, StyleNameError, StyleSet,
+    Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
+    StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 
@@ -47,10 +48,11 @@ pub enum StyleEdit {
         value: Option<[u8; 3]>,
     },
     Font(Option<i64>),
-    Sound(Option<Sound>),
-    Minimap(Option<Minimap>),
-    Beam(Option<Beam>),
-    DisableDropSound(bool),
+    /// `None` = off (no line), `Cancel` = the filter's cancel value.
+    Sound(Option<Cancelable<Sound>>),
+    Minimap(Option<Cancelable<Minimap>>),
+    Beam(Option<Cancelable<Beam>>),
+    DropSound(Option<DropSound>),
 }
 
 /// Badges shown on a style row.
@@ -254,7 +256,7 @@ impl ConfigState {
             StyleEdit::Sound(s) => style.sound = s,
             StyleEdit::Minimap(m) => style.minimap = m,
             StyleEdit::Beam(b) => style.beam = b,
-            StyleEdit::DisableDropSound(b) => style.disable_drop_sound = b,
+            StyleEdit::DropSound(d) => style.set_drop_sound(d),
         }
         true
     }
@@ -1030,9 +1032,11 @@ mod tests {
         assert_eq!(s.style("S").unwrap().text, Some([1, 2, 3]));
         assert!(s.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
         assert!(s.badges("S").hide);
-        assert!(s.edit_style("S", StyleEdit::DisableDropSound(true)));
+        assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Silent))));
         assert!(s.style("S").unwrap().disable_drop_sound);
-        assert!(!s.edit_style("nope", StyleEdit::DisableDropSound(true)));
+        assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Normal))));
+        assert_eq!(s.style("S").unwrap().drop_sound(), Some(DropSound::Normal));
+        assert!(!s.edit_style("nope", StyleEdit::DropSound(Some(DropSound::Silent))));
     }
 
     #[test]

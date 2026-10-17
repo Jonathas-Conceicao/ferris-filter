@@ -178,9 +178,13 @@ pub struct OverlayApp {
     /// The latest row-operation status (refusals, revert, hidden add).
     list_status: Option<String>,
 
-    /// The pending styles and tiers the staged economy-add preview was priced with, so it is
-    /// re-priced only when they change (never per frame).
+    /// The pending styles and tiers the economy preview (a staged add, or a pending refresh of the
+    /// section in the file) was priced with, so it is re-priced only when they change (never per
+    /// frame).
     staged_econ_inputs: Option<(StyleSet, Vec<crate::models::tiers::TierEntry>)>,
+    /// The last economy preview for `staged_econ_inputs` could not be built; not retried until
+    /// the inputs or the prices change.
+    econ_preview_failed: bool,
 
     /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
     applied_this_session: bool,
@@ -1231,6 +1235,7 @@ impl OverlayApp {
             query: String::new(),
             list_status: None,
             staged_econ_inputs: None,
+            econ_preview_failed: false,
             applied_this_session: false,
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
@@ -1301,6 +1306,7 @@ impl OverlayApp {
     fn prices_changed(&mut self) {
         self.refresh_economy_info();
         self.staged_econ_inputs = None;
+        self.econ_preview_failed = false;
     }
 
     /// Re-reads `prices.json` info (modified time, priced items, live/fallback) for the ECONOMY tab.
@@ -2076,29 +2082,61 @@ impl OverlayApp {
         else {
             return;
         };
-        if working.economy_plan() != rules::EconomyPlan::Add {
+        let plan = working.economy_plan();
+        // A section already in the file is shown re-priced only while CONFIG has style or tier
+        // edits; without them it is exactly the file's blocks.
+        let refresh = plan == rules::EconomyPlan::Refresh;
+        let wanted = match plan {
+            rules::EconomyPlan::Add => true,
+            rules::EconomyPlan::Refresh => config.styles_dirty() || config.tiers_dirty(),
+            _ => false,
+        };
+        if !wanted {
             self.staged_econ_inputs = None;
+            self.econ_preview_failed = false;
+            if refresh && working.has_economy_preview() {
+                let econ_open = self.list.expanded.is_some_and(rules::is_preview_id);
+                working.set_economy_refresh(None);
+                if econ_open {
+                    self.list.expanded = None;
+                }
+            }
             return;
         }
         let (styles, tiers) = (config.pending_styles(), config.pending_tiers());
-        if self
-            .staged_econ_inputs
-            .as_ref()
-            .is_some_and(|(s, t)| s == styles && t.as_slice() == tiers)
+        if (working.has_economy_preview() || self.econ_preview_failed)
+            && self
+                .staged_econ_inputs
+                .as_ref()
+                .is_some_and(|(s, t)| s == styles && t.as_slice() == tiers)
         {
             return;
         }
         self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec()));
-        match staged_economy_body(root, Some(config)) {
-            Ok(body) => {
-                if !working.set_staged_economy_body(&body) {
-                    self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
-                } else if self.list.expanded.is_some_and(rules::is_preview_id) {
-                    // Preview ids restart on every re-price: an open row would point elsewhere.
-                    self.list.expanded = None;
+        // Rows switch documents (file to preview, or one preview to the next, whose ids restart):
+        // an open economy row would point elsewhere.
+        let econ_open = self.list.expanded.is_some_and(|id| {
+            rules::is_preview_id(id) || working.economy_rows().iter().any(|r| r.id == id)
+        });
+        let shown = match staged_economy_body(root, Some(config)) {
+            Ok(body) if refresh => working.set_economy_refresh(Some(&body)),
+            Ok(body) => working.set_staged_economy_body(&body),
+            Err(err) => {
+                // Refresh: the file's blocks keep showing.
+                if refresh {
+                    working.set_economy_refresh(None);
                 }
+                self.econ_preview_failed = true;
+                self.list_status = Some(err);
+                return;
             }
-            Err(err) => self.list_status = Some(err),
+        };
+        self.econ_preview_failed = !shown;
+        if !shown {
+            self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
+        }
+        if econ_open {
+            self.list.expanded = None;
         }
     }
 
@@ -5244,6 +5282,52 @@ Hide
                 .rules,
             after
         );
+    }
+
+    /// An economy section already in the file follows the pending styles before Apply: a style
+    /// turned to Hide shows its economy rows as Hide, and dropping the edit shows the file again.
+    #[test]
+    fn economy_in_the_file_follows_pending_style_visibility() {
+        use crate::models::config::StyleAction;
+        use crate::overlay::config_state::StyleEdit;
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let body = super::staged_economy_body(&root, None).unwrap();
+        let text = crate::filter::section::add(RULES, &body).unwrap();
+        let (mut app, _ctx) = popup_app(&text);
+        app.root = Ok(root);
+        let s_row = |app: &super::OverlayApp| {
+            app.working
+                .as_ref()
+                .unwrap()
+                .economy_rows()
+                .iter()
+                .find(|r| r.name.as_deref() == Some("S tier Currency"))
+                .map(|r| (r.keyword, r.label.clone()))
+                .unwrap()
+        };
+        app.refresh_staged_economy();
+        assert!(!app.working.as_ref().unwrap().has_economy_preview());
+        assert_eq!(s_row(&app).0, crate::filter::BlockKeyword::Show);
+
+        let config = app.config.as_mut().unwrap();
+        assert!(config.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
+        super::sync_working_styles(app.config.as_ref().unwrap(), app.working.as_mut().unwrap());
+        app.refresh_staged_economy();
+        assert!(app.working.as_ref().unwrap().has_economy_preview());
+        let (kw, label) = s_row(&app);
+        assert_eq!(kw, crate::filter::BlockKeyword::Hide);
+        assert!(label.starts_with("Hide"), "{label}");
+        let w = app.working.as_ref().unwrap();
+        let sec = w.sections().iter().find(|s| s.economy).unwrap();
+        assert_eq!(sec.rules, w.economy_rows().len());
+        // Nothing is written by the preview.
+        assert!(!w.is_dirty());
+
+        app.config.as_mut().unwrap().revert();
+        super::sync_working_styles(app.config.as_ref().unwrap(), app.working.as_mut().unwrap());
+        app.refresh_staged_economy();
+        assert!(!app.working.as_ref().unwrap().has_economy_preview());
+        assert_eq!(s_row(&app).0, crate::filter::BlockKeyword::Show);
     }
 
     #[test]

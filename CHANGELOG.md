@@ -170,6 +170,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Style visibility before Apply.** Turning a style to Hide (or back) now shows on the RULES tab at once: rules using that style read Hide, and the economy section is shown re-priced with the pending styles and tiers. Economy blocks also follow their style's visibility when written (they were always `Show`).
 - Text fields leave a visible gap before the next widget on the row (quoted-list field and **+ Add** no longer touch).
 - RULES tab: the search field no longer touches **+ Add rule**; `◆ A CONTINUE` reads as a styled chip plus the Continue word; the group-broken and padlock icons are legible (the broken link no longer reads as "0/0"); the operator dropdown fits "Matches exactly".
 - **Docking used the wrong monitor and mixed units.** The stripe took the primary monitor's work

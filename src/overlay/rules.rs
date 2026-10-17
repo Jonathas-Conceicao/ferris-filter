@@ -21,7 +21,7 @@ use crate::filter::{
     Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, RuleStep,
     Severity, parse as parse_filter, parse_with_id_base,
 };
-use crate::models::config::{Cancelable, Style, StyleSet};
+use crate::models::config::{Cancelable, Style, StyleAction, StyleSet};
 use crate::styled::{self, StyleReport};
 
 /// Refusal copy for a line edit whose target line changed since the frame started.
@@ -659,6 +659,23 @@ impl WorkingFilter {
     }
 
     /// A read-only row for one generated economy block: searchable, never editable.
+    /// The keyword a user rule's row shows: an enabled rule styled with a known preset takes the
+    /// preset's Show/Hide from the loaded (pending) styles, as the next Apply will write it;
+    /// anything else shows the keyword in the file.
+    fn shown_keyword(&self, b: &Block, style: &StyleState) -> BlockKeyword {
+        let preset = match style {
+            StyleState::Known(name) if b.is_enabled() => {
+                self.styles.as_ref().and_then(|s| s.get(name))
+            }
+            _ => None,
+        };
+        match preset.map(|s| s.action) {
+            Some(StyleAction::Show) => BlockKeyword::Show,
+            Some(StyleAction::Hide) => BlockKeyword::Hide,
+            None => b.keyword(),
+        }
+    }
+
     fn economy_row(&self, b: &Block) -> RuleRow {
         let doc = &self.doc;
         let x = extract(doc, b);
@@ -791,7 +808,8 @@ impl WorkingFilter {
             };
             let name = self.doc.meta_get(id, "name").map(str::to_string);
             let (style, chip_icon, chip_icon_desc) = self.style_of(id, b);
-            let kw = keyword_word(b.keyword());
+            let keyword = self.shown_keyword(b, &style);
+            let kw = keyword_word(keyword);
             let label = match &name {
                 Some(n) => format!("{index}  {kw} - {n}"),
                 None => format!("{index}  {kw}"),
@@ -830,7 +848,7 @@ impl WorkingFilter {
                 id,
                 index,
                 enabled,
-                keyword: b.keyword(),
+                keyword,
                 has_continue: b.has_continue(),
                 name,
                 style,
@@ -983,7 +1001,14 @@ impl WorkingFilter {
                 can_move_down: false,
                 can_remove: false,
             }),
-            None => {}
+            // A pending refresh: the header counts the re-priced blocks.
+            None => {
+                if let Some(p) = &self.preview {
+                    for s in sections.iter_mut().filter(|s| s.economy) {
+                        s.rules = p.economy_rows.len();
+                    }
+                }
+            }
         }
         self.sections = sections;
     }
@@ -1148,13 +1173,14 @@ impl WorkingFilter {
         &self.sections
     }
 
-    /// The generated economy blocks as read-only rows (empty while a remove is staged).
+    /// The generated economy blocks as read-only rows (empty while a remove is staged): the
+    /// preview's while a staged add or a pending refresh has one, else the file's.
     pub fn economy_rows(&self) -> &[RuleRow] {
         match (&self.pending, &self.preview) {
             (Some(Pending::Remove), _) => &[],
-            (Some(Pending::Add { .. }), Some(p)) => &p.economy_rows,
+            (_, Some(p)) => &p.economy_rows,
             (Some(Pending::Add { .. }), None) => &[],
-            _ => &self.economy_rows,
+            (None, None) => &self.economy_rows,
         }
     }
 
@@ -1324,6 +1350,35 @@ impl WorkingFilter {
         true
     }
 
+    /// With the economy section in the file and nothing staged: `Some(body)` shows the section
+    /// re-priced with the pending styles and tiers (what Apply will write) instead of the file's
+    /// blocks; `None` goes back to the file's blocks. A no-op otherwise.
+    /// Returns `false` when `body` cannot be previewed; the file's blocks then show.
+    pub fn set_economy_refresh(&mut self, body: Option<&str>) -> bool {
+        if self.pending.is_some() || !matches!(self.base_economy, EconomyView::Present { .. }) {
+            return true;
+        }
+        let preview = match body {
+            Some(b) => match self.build_preview(b) {
+                Some(p) => Some(p),
+                None => {
+                    self.preview = None;
+                    self.refresh_projection();
+                    return false;
+                }
+            },
+            None => None,
+        };
+        self.preview = preview;
+        self.refresh_projection();
+        true
+    }
+
+    /// Whether the economy rows come from a preview (a staged add or a pending refresh).
+    pub fn has_economy_preview(&self) -> bool {
+        self.preview.is_some()
+    }
+
     fn build_preview(&self, body: &str) -> Option<Box<WorkingFilter>> {
         let text = section::add("", body).ok()?;
         let mut p = Self::from_text_based(&text, PREVIEW_ID_BASE);
@@ -1338,12 +1393,12 @@ impl WorkingFilter {
         self.preview = None;
     }
 
-    /// The filter the economy rows' bodies are read from: the staged add's preview while one is
-    /// staged, else this filter.
+    /// The filter the economy rows' bodies are read from: the preview while a staged add or a
+    /// pending refresh has one, else this filter.
     pub fn economy_source(&self) -> &WorkingFilter {
         match (&self.pending, &self.preview) {
-            (Some(Pending::Add { .. }), Some(p)) => p,
-            _ => self,
+            (Some(Pending::Remove), _) | (_, None) => self,
+            (_, Some(p)) => p,
         }
     }
 
@@ -2088,6 +2143,30 @@ Show # Unique A
         let hits = wf.entries("tier currency", |_| false);
         assert!(hits.iter().any(|e| matches!(e, ListEntry::EconomyRule(_))));
         assert!(!wf.style_users().contains_key("S"));
+    }
+
+    /// An enabled rule styled with a preset shows the pending style's Show/Hide before Apply; a
+    /// disabled one (never rewritten) and a Custom one keep the file's keyword.
+    #[test]
+    fn styled_rows_show_the_pending_style_visibility() {
+        let text = "# ff:name On\n# ff:style builtin:S S\nShow\n  Class \"Rings\"\n\n\
+                    # ff:name Off\n# ff:style builtin:S S\n# Show\n#   Class \"Rings\"\n\n\
+                    # ff:name Custom\nShow\n  Class \"Belts\"\n";
+        let mut wf = WorkingFilter::from_text(text);
+        let mut styles = StyleSet::committed_for_tests();
+        styles.get_mut("S").unwrap().action = StyleAction::Hide;
+        wf.set_styles(Ok(styles));
+        let rows = wf.rows();
+        assert_eq!(rows[0].keyword, BlockKeyword::Hide);
+        assert_eq!(rows[0].label, "1  Hide - On");
+        assert_eq!(rows[1].keyword, BlockKeyword::Show);
+        assert_eq!(rows[2].keyword, BlockKeyword::Show);
+        // Display only: the file is untouched.
+        assert!(!wf.is_dirty());
+        assert!(
+            wf.text()
+                .starts_with("# ff:name On\n# ff:style builtin:S S\nShow\n")
+        );
     }
 
     #[test]

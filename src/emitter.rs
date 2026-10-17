@@ -280,6 +280,14 @@ pub fn style_action_lines(style: &Style) -> Vec<String> {
     lines
 }
 
+/// The block header keyword a style decides: `Show` or `Hide`.
+fn header_word(style: &Style) -> &'static str {
+    match style.action {
+        StyleAction::Show => "Show",
+        StyleAction::Hide => "Hide",
+    }
+}
+
 fn emit_style_actions(out: &mut String, style: &Style) {
     for line in style_action_lines(style) {
         writeln!(out, "  {}", line).unwrap();
@@ -399,12 +407,7 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
         let label: &str = rule.name.as_deref().unwrap_or(&derived_label);
         let style = resolve_style(&config.styles, &rule.style, idx, label)?;
 
-        // Header line: Show or Hide based on style.action
-        let block_type = match style.action {
-            StyleAction::Show => "Show",
-            StyleAction::Hide => "Hide",
-        };
-        writeln!(out, "{} # {}", block_type, label).unwrap();
+        writeln!(out, "{} # {}", header_word(style), label).unwrap();
 
         // Emit condition lines from rule.when in fixed deterministic order:
         // areaLevel(min then max), class, baseArmour, baseEvasion, baseEnergyShield,
@@ -554,7 +557,7 @@ fn emit_currency_sections(
                     None => writeln!(out, "# ff:style {}", tier_group.tier).unwrap(),
                 }
             }
-            writeln!(out, "Show # {}", label).unwrap();
+            writeln!(out, "{} # {}", header_word(style), label).unwrap();
             // Multi-class support: use the typed `is_multi_class` signal from the pricer
             // (set for the Uncut Gems merge group) to emit the pre-formatted multi-class
             // string verbatim. Single-class values are wrapped in quotes normally.
@@ -628,7 +631,7 @@ fn emit_unique_sections(
         if tags {
             writeln!(out, "# ff:name {} tier Uniques", block.tier).unwrap();
         }
-        writeln!(out, "Show # Unique {}", block.tier).unwrap();
+        writeln!(out, "{} # Unique {}", header_word(style), block.tier).unwrap();
         writeln!(out, "  Rarity == Unique").unwrap();
         writeln!(out, "  BaseType == {}", base_type_str).unwrap();
         // Price-tiered uniques carry a distinct background (bronze, 175 96 37 240) on top
@@ -1282,6 +1285,23 @@ mod tests {
         }
         let e = generate_economy(&idless, &priced).unwrap();
         assert!(e.lines().any(|l| l == "# ff:style S"));
+    }
+
+    #[test]
+    fn economy_blocks_follow_their_style_visibility() {
+        let (config, mut priced) = load_inputs();
+        priced.unique_blocks.push(crate::pricer::UniqueBlock {
+            tier: "S".to_string(),
+            base_types: vec!["Infernal Sword".to_string()],
+        });
+        let mut styles = config.styles.clone();
+        styles.get_mut("S").unwrap().action = StyleAction::Hide;
+        let econ = generate_economy(&styles, &priced).unwrap();
+        assert!(econ.lines().any(|l| l == "Hide # Currency S"));
+        assert!(econ.lines().any(|l| l == "Hide # Unique S"));
+        assert!(!econ.lines().any(|l| l == "Show # Currency S"));
+        // Other tiers keep Show.
+        assert!(econ.lines().any(|l| l.starts_with("Show # ")));
     }
 
     #[test]

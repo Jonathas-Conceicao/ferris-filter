@@ -29,7 +29,7 @@ Runs after quick task 261017 (economy names/styles, staged economy rows, tab `*`
 - **D-05:** Build, full test suite, fmt stay green; clippy no new warnings (baseline 126);
   `tests/fixtures/seed-universal.filter` and `generate` output unchanged.
 
-### Docs (CLAUDE-02)
+### Docs (CLEAN-02)
 - **D-06:** README: a general page with current screenshots and a proper show of the repo (what
   FerrisFilter is, the overlay and its tabs, hotkey, CLI commands, building, `ff-art`, credits /
   GGG disclaimer). The user will fully rewrite it by hand later, so keep it plain and accurate,

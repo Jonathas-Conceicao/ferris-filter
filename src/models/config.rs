@@ -181,10 +181,8 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Cancelable<T> {
                 if v == "None" {
                     Ok(Cancelable::Cancel)
                 } else {
-                    Err(E::invalid_value(
-                        de::Unexpected::Str(v),
-                        &"\"None\" or an object",
-                    ))
+                    // The same wording as `expecting` (IN-06).
+                    Err(E::invalid_value(de::Unexpected::Str(v), &self))
                 }
             }
             fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
@@ -2677,11 +2675,17 @@ mod style_id_tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("unknown field `zzbad`"), "{err}");
-        let json = style_json(r#""minimap":"none","beam":null,"sound":null"#);
-        let err = serde_json::from_str::<Style>(&json)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("None"), "{err}");
+        // A wrong string and a wrong type say the same thing (IN-06).
+        for value in [r#""none""#, "3"] {
+            let json = style_json(&format!(r#""minimap":{value},"beam":null,"sound":null"#));
+            let err = serde_json::from_str::<Style>(&json)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(r#"expected an object or the string "None""#),
+                "{err}"
+            );
+        }
     }
 
     #[test]

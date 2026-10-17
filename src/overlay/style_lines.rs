@@ -553,6 +553,11 @@ fn minimap_group(
             now,
             default_minimap(),
         );
+        // Unticking `MinimapIcon -1 <colour> <shape>` keeps that icon for leaving `/` later: the
+        // tick brings back a bare `-1`, which names none (review WR-03).
+        if !now && let Some(hint) = &view.minimap_hint {
+            remember(ui, memo, "minimap-set", hint);
+        }
         out.push(StyleIntent::Minimap(next));
     }
     let Some(current) = &view.minimap else {
@@ -563,8 +568,8 @@ fn minimap_group(
     let shown = current
         .value()
         .cloned()
-        .or_else(|| recall(ui, memo, "minimap-set"))
         .or_else(|| view.minimap_hint.clone())
+        .or_else(|| recall(ui, memo, "minimap-set"))
         .unwrap_or_else(default_minimap);
     let colour = minimap::index_of(&minimap::COLOURS, shown.color.as_str()).unwrap_or(0);
     let shape = minimap::index_of(&minimap::SHAPES, shown.shape.as_str()).unwrap_or(0);

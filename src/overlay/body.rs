@@ -6834,18 +6834,10 @@ mod tests {
         assert_eq!(style_leftovers(&e, &b).len(), 2);
         // A bare `-1` or unknown names give no hint.
         for src in [
-            "Show
-    MinimapIcon -1
-",
-            "Show
-    MinimapIcon -1 Mauve Star
-",
-            "Show
-    MinimapIcon -1 Red Blob
-",
-            "Show
-    MinimapIcon -1 Red
-",
+            "Show\n    MinimapIcon -1\n",
+            "Show\n    MinimapIcon -1 Mauve Star\n",
+            "Show\n    MinimapIcon -1 Red Blob\n",
+            "Show\n    MinimapIcon -1 Red\n",
         ] {
             let (_, _, e) = entries_of(src);
             let (view, _) = rule_style_view(&e, BlockKeyword::Show);
@@ -7450,11 +7442,7 @@ mod tests {
 
     #[test]
     fn leaving_a_hidden_icon_keeps_the_colour_and_shape_it_names() {
-        let mut wf = WorkingFilter::from_text(
-            "Show
-    MinimapIcon -1 Red Star
-",
-        );
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1 Red Star\n");
         let ctx = headless_ctx();
         let mut list = ListUi {
             expanded: Some(wf.rows()[0].id),
@@ -7465,18 +7453,9 @@ mod tests {
         let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
         let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
         mirror_apply(&mut wf, &mut list, a);
-        assert_eq!(
-            wf.text(),
-            "Show
-    MinimapIcon 0 Pink Star
-"
-        );
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 Pink Star\n");
         // Its own colour leaves `/` as written.
-        let mut wf = WorkingFilter::from_text(
-            "Show
-    MinimapIcon -1 Red Star
-",
-        );
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1 Red Star\n");
         let mut list = ListUi {
             expanded: Some(wf.rows()[0].id),
             ..Default::default()
@@ -7486,12 +7465,25 @@ mod tests {
         let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[red];
         let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
         mirror_apply(&mut wf, &mut list, a);
-        assert_eq!(
-            wf.text(),
-            "Show
-    MinimapIcon 0 Red Star
-"
-        );
+        assert_eq!(wf.text(), "Show\n    MinimapIcon 0 Red Star\n");
+        // Off and on again brings back a bare `-1`, but leaving `/` still keeps the Star (WR-03).
+        let mut wf = WorkingFilter::from_text("Show\n    MinimapIcon -1 Red Star\n");
+        let mut list = ListUi {
+            expanded: Some(wf.rows()[0].id),
+            ..Default::default()
+        };
+        let ctx = headless_ctx();
+        for _ in 0..2 {
+            let r = style_probes(&ctx, &wf, &mut list, "ed-mm-check")[0];
+            let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+            mirror_apply(&mut wf, &mut list, a);
+            frame_of(&ctx, input(vec![]), &wf, &mut list, None);
+        }
+        assert_eq!(wf.text(), "Show\n  MinimapIcon -1\n");
+        let r = style_probes(&ctx, &wf, &mut list, "ed-mm-colour")[pink];
+        let a = frame_of(&ctx, input(click_events(r.center())), &wf, &mut list, None);
+        mirror_apply(&mut wf, &mut list, a);
+        assert_eq!(wf.text(), "Show\n  MinimapIcon 0 Pink Star\n");
     }
 
     #[test]

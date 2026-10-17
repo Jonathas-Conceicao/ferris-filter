@@ -236,7 +236,12 @@ pub fn ff_colour_card_ex(
         text_color,
     );
     // A shortened caption shows its full text on hover.
-    if cut { resp.on_hover_text(text) } else { resp }
+    if cut {
+        // Also in a disabled Ui (a read-only economy rule).
+        resp.on_hover_text(&text).on_disabled_hover_text(text)
+    } else {
+        resp
+    }
 }
 
 /// The caption a colour card shows in `room` points: `text` when it fits, else (for a "none"

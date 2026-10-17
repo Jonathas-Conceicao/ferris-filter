@@ -712,7 +712,9 @@ pub fn string_list(
                         galley,
                         pal::VALUE,
                     );
-                    row.on_hover_text(item);
+                    // Also in a disabled Ui (a read-only economy rule), where the full name is the
+                    // only way to read a cut entry.
+                    row.on_hover_text(item).on_disabled_hover_text(item);
                     let label = format!("Remove {item}");
                     ui.scope_builder(egui::UiBuilder::new().max_rect(x_rect), |ui| {
                         if remove_x_button_with_id(ui, id.with(("x", index)), &label).clicked() {

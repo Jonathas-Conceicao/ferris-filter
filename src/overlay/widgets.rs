@@ -676,6 +676,13 @@ pub fn string_list(
     let mut outcome = ChipListOutcome::default();
     let skin = crate::skin::of(ui.ctx());
 
+    // A disabled scroll area cannot scroll, so a read-only list (an economy rule) shows every
+    // entry instead of capping at `max_rows`.
+    let max_rows = if ui.is_enabled() {
+        max_rows
+    } else {
+        items.len()
+    };
     if !items.is_empty() {
         let height = (items.len() as f32 * ROW_H).min(max_rows as f32 * ROW_H);
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {

@@ -1032,6 +1032,18 @@ impl OverlayApp {
                 app.list.pending_scroll = id;
             }
         }
+        if let Some(n) = shot.expand_economy {
+            let id = app
+                .working
+                .as_ref()
+                .and_then(|w| w.economy_rows().get(n - 1).map(|r| r.id));
+            if id.is_some() {
+                let name = crate::overlay::rules::ECONOMY_DISPLAY_NAME;
+                app.set_section_collapsed(name, true, false);
+                app.list.expanded = id;
+                app.list.pending_scroll = id;
+            }
+        }
         if let Some(n) = shot.rename_section {
             let found = app
                 .working
@@ -4139,6 +4151,33 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "Show\n  Class \"Belts\"\n"
         );
+    }
+
+    #[test]
+    fn browsing_economy_rules_then_apply_writes_the_same_bytes() {
+        use crate::overlay::rule_list::economy_browse;
+        // The repo root is read-only input here (styles, tiers, prices).
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let text = economy_browse::rich_economy_text();
+        let apply_once = |browse: bool| {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, mut loaded) = loaded_in(&dir, &text);
+            let mut working = WorkingFilter::from_text(loaded.text());
+            if browse {
+                let report = economy_browse::browse(&working);
+                assert_eq!(report.rules, 2);
+                assert!(report.actions.is_empty(), "{:?}", report.actions);
+                // Even if the view let one through, the model refuses economy targets.
+                for a in report.actions {
+                    assert!(!working.apply_action(a).changed);
+                }
+                assert!(!working.is_dirty());
+            }
+            let (outcome, _, _) = apply_working(&root, &mut loaded, &mut working);
+            assert!(matches!(outcome, ApplyOutcome::Written(_)), "{outcome:?}");
+            std::fs::read(&path).unwrap()
+        };
+        assert_eq!(apply_once(true), apply_once(false));
     }
 
     #[test]

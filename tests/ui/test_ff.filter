@@ -134,7 +134,7 @@ Show
 	PlayAlertSoundPositional 3 150
 	CustomAlertSoundOptional "missing.mp3" 100
 	EnableDropSound
-	MinimapIcon -1
+	MinimapIcon -1 Red Star
 	PlayEffect None
 
 # ff:name Hidden preset
@@ -153,10 +153,14 @@ Show
 ################################################################################
 
 Show
-	BaseType == "Chaos Orb"
+	BaseType == "Chaos Orb" "Divine Orb" "Exalted Orb" "Orb of Annulment" "Orb of Chance" "Regal Orb" "Vaal Orb" "Gemcutter's Prism" "Glassblower's Bauble" "Mirror of Kalandra"
 	SetTextColor 189 147 249 255
 	SetBorderColor 189 147 249 255
 	SetBackgroundColor 40 42 54 255
+	SetFontSize 37
+	MinimapIcon 0 Purple Circle
+	PlayEffect Purple
+	PlayAlertSound 2 200
 
 Show
 	BaseType == "Exalted Orb"

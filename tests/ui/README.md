@@ -43,8 +43,8 @@ it is running; close it or turn **Reload filter in game after Apply** off.
 | 15 | Defences card | Armour and Energy Shield toggles with their operators. |
 | 16 | Quoted list | Nine bases: the list scrolls after about seven. |
 | 17 | Class outside groups | `Fishing Rods` listed on the compact line outside the grouped picker. |
-| 18 | Extra action rows | Positional and optional sounds, `EnableDropSound`, `MinimapIcon -1`, `PlayEffect None` kept as rows. |
+| 18 | Extra action rows | Positional and optional sounds, `EnableDropSound`, `PlayEffect None`; `MinimapIcon -1 Red Star`: under `/` the shapes are red, and a colour pick keeps the Star. |
 | 19 | Hidden preset | `Hide` header with the hidden style. |
 | 20 | (unnamed) | Header reads just the index and `Show`; the summary line gives the context. |
 | - | Sections | Rules 1-9 have no header; `Leveling` and `Endgame` are sections (rename, move, remove, collapse). |
-| - | Economy | Last, locked, collapsed by default, two read-only rules. |
+| - | Economy | Last, locked, collapsed by default, header **FF Economy Section**. Two read-only rules: a click expands one with every condition and style line drawn disabled (no picker opens, no Duplicate / Delete / Section above); the first lists ten bases with no scroll cap. Apply after browsing changes nothing but the regenerated economy. |

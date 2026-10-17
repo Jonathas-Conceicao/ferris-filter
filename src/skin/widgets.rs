@@ -1151,6 +1151,8 @@ pub fn ff_button_ex(
     enabled: bool,
     danger: bool,
 ) -> Response {
+    // A button in a disabled `Ui` (a read-only economy rule) is drawn disabled too.
+    let enabled = enabled && ui.is_enabled();
     let height = 34.0;
     let caption = if !enabled {
         pal::DISABLED

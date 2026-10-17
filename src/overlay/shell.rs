@@ -630,7 +630,7 @@ pub(crate) fn economy_tab(
             }
         });
         ui.add_space(16.0);
-        w::ff_section(ui, skin, "Economy section");
+        w::ff_section(ui, skin, crate::overlay::rules::ECONOMY_DISPLAY_NAME);
         let (rect, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), w::ROW_HEIGHT), Sense::hover());
         w::row_background(ui, 0, rect);

@@ -1,5 +1,5 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
-//! [--filter f] [--expand n] [--search text] [--rename-section n] [--expand-style name]
+//! [--filter f] [--expand n] [--expand-economy n] [--search text] [--rename-section n] [--expand-style name]
 //! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT]` renders the
 //! shell once, saves the frame as a PNG and exits.
 //!
@@ -49,6 +49,8 @@ pub(crate) struct ShotArgs {
     pub filter: Option<PathBuf>,
     /// Expand the n-th rule (1-based) of the RULES tab.
     pub expand: Option<usize>,
+    /// Open the economy section and expand its n-th rule (1-based), shown read-only.
+    pub expand_economy: Option<usize>,
     /// Text for the RULES search box.
     pub search: Option<String>,
     /// Open the n-th user section header (1-based, economy skipped) in rename mode.
@@ -77,6 +79,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut status = None;
     let mut filter = None;
     let mut expand = None;
+    let mut expand_economy = None;
     let mut search = None;
     let mut rename_section = None;
     let mut expand_style = None;
@@ -107,6 +110,17 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                 expand = match n.parse::<usize>() {
                     Ok(v) if v >= 1 => Some(v),
                     _ => return Err(format!("--expand needs a rule number >= 1, got `{n}`")),
+                };
+            }
+            "--expand-economy" => {
+                let n = value("--expand-economy")?;
+                expand_economy = match n.parse::<usize>() {
+                    Ok(v) if v >= 1 => Some(v),
+                    _ => {
+                        return Err(format!(
+                            "--expand-economy needs a rule number >= 1, got `{n}`"
+                        ));
+                    }
                 };
             }
             "--rename-section" => {
@@ -155,6 +169,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         status,
         filter,
         expand,
+        expand_economy,
         search,
         rename_section,
         expand_style,
@@ -337,6 +352,8 @@ mod tests {
             "f.filter",
             "--expand",
             "3",
+            "--expand-economy",
+            "2",
             "--search",
             "ring",
             "--rename-section",
@@ -362,6 +379,7 @@ mod tests {
             assert!(p(&["--screenshot", "o.png", "--picker", slot]).is_ok());
         }
         assert_eq!(a.expand, Some(3));
+        assert_eq!(a.expand_economy, Some(2));
         assert_eq!(a.search.as_deref(), Some("ring"));
         assert_eq!(a.png, PathBuf::from("out.png"));
         assert_eq!(a.tab, ShellTab::Economy);
@@ -390,6 +408,8 @@ mod tests {
         assert!(p(&["--screenshot", "o.png", "--tab", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--popup", "nope"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand", "0"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--expand-economy", "0"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--expand-economy"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand", "x"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--search"]).is_err());

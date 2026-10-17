@@ -45,6 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom header art.** The window header is now FerrisFilter's own art (the game title bar redrawn
   with three Ferris crabs), kept in the new `assets/custom/` folder for hand-made art with its
   Aseprite sources (`titlebar.ase`, `base-palette.ase`) beside the PNG.
+- **Style editor groups: off / cancel / value, a folder sound picker, Positional (quick
+  261017-0wl).** In the CONFIG style editor and a Custom rule's STYLE section (one shared UI),
+  Minimap, Beam, Alert sound and Drop sound are each a group on one tinted band: label + on/off
+  check (off writes nothing). On, Minimap / Beam / Alert sound start with a `/` tile for the
+  filter's cancel value (`MinimapIcon -1`, `PlayEffect None`, `PlayAlertSound None`) that greys the
+  other pickers; Minimap sizes are Large / Medium / Small; Alert sound gets Volume and a
+  **Positional** toggle (`PlayAlertSoundPositional`); Drop sound is `Silent | Normal`
+  (`DisableDropSound` / `EnableDropSound`). The sound dropdown lists Alert 1-16 and a **Filter
+  folder** section with the `.mp3` / `.wav` files of the loaded filter's folder (read-only, cached,
+  refreshed on load / reload / switch and when it opens); a named file missing from the folder is
+  kept and flagged in amber. `styles.json` stores the new states (`"None"` for minimap / beam /
+  sound, `sound.positional`, `enableDropSound`; existing files unchanged) and `generate`, the
+  economy section and styled rules emit them. The label preview, CONFIG Icon column and style chip
+  show no icon for an off or `/` minimap. Debug screenshot mode gains `--dropdown sound`.
 
 ### Changed
 
@@ -129,10 +143,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **Adding actions the style lines cannot express (quick 261016-qi7).** With the RULES `+ style`
-  picker gone, `PlayAlertSoundPositional`, `CustomAlertSoundOptional`, `EnableDropSound`,
-  `DisableDropSoundIfAlertSound`, `EnableDropSoundIfAlertSound`, `MinimapIcon -1` (hide icon) and
-  `PlayEffect None` can no longer be added from the overlay. Lines already in a filter are kept,
-  shown and editable.
+  picker gone, `CustomAlertSoundOptional`, `DisableDropSoundIfAlertSound` and
+  `EnableDropSoundIfAlertSound` can no longer be added from the overlay. Lines already in a filter
+  are kept, shown and editable. (`PlayAlertSoundPositional`, `EnableDropSound`, `MinimapIcon -1`
+  and `PlayEffect None` are written by the style editor groups again since quick 261017-0wl.)
+- **The free-text sound file field (quick 261017-0wl).** Custom sound files are picked from the
+  filter folder listing in the Alert sound dropdown instead.
 
 ### Fixed
 

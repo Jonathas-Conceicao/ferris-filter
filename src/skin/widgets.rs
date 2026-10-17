@@ -827,7 +827,7 @@ pub fn ff_dropdown_ex(
         current,
         caption_color,
         options.len(),
-        |ui, row_w| {
+        |ui, row_w, _| {
             for (i, opt) in options.iter().enumerate() {
                 dropdown_row(ui, row_w, i, opt, sel, &mut picked);
             }
@@ -896,12 +896,16 @@ pub fn ff_dropdown_items(
         caption,
         caption_color,
         items.len(),
-        |ui, row_w| {
+        |ui, row_w, first| {
             for (i, item) in items.iter().enumerate() {
+                // The selected row is scrolled into view when the list opens.
+                let reveal = first && i == sel;
                 match item {
-                    DropItem::Option(opt) => dropdown_row(ui, row_w, i, opt, sel, &mut picked),
+                    DropItem::Option(opt) => {
+                        dropdown_row_ex(ui, row_w, i, opt, sel, &mut picked, false, reveal)
+                    }
                     DropItem::Warn(opt) => {
-                        dropdown_row_ex(ui, row_w, i, opt, sel, &mut picked, true)
+                        dropdown_row_ex(ui, row_w, i, opt, sel, &mut picked, true, reveal)
                     }
                     DropItem::Header(text) => {
                         let (r, _) =
@@ -943,7 +947,7 @@ fn dropdown_shell(
     caption: &str,
     caption_color: Option<Color32>,
     row_count: usize,
-    mut rows: impl FnMut(&mut Ui, f32),
+    mut rows: impl FnMut(&mut Ui, f32, bool),
 ) -> (Response, bool) {
     let width = if width > 0.0 {
         width
@@ -991,6 +995,13 @@ fn dropdown_shell(
         .frame(egui::Frame::NONE.inner_margin(6))
         .show(|ui| {
             let bg = ui.painter().add(Shape::Noop);
+            // True on the first frame the list is shown.
+            let shown_id = id.with("shown");
+            let first = !ui
+                .ctx()
+                .data(|d| d.get_temp::<bool>(shown_id))
+                .unwrap_or(false);
+            ui.ctx().data_mut(|d| d.insert_temp(shown_id, true));
             ui.spacing_mut().item_spacing.y = 0.0;
             if scroll {
                 ui.allocate_ui(vec2(width - 12.0, max_h), |ui| {
@@ -998,11 +1009,11 @@ fn dropdown_shell(
                     ff_scroll_area(ui, skin, (id, "list"), |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let row_w = ui.available_width();
-                        rows(ui, row_w);
+                        rows(ui, row_w, first);
                     });
                 });
             } else {
-                rows(ui, width - 12.0);
+                rows(ui, width - 12.0, first);
             }
             let frame_rect = ui.min_rect().expand(6.0);
             let mut mesh = egui::Mesh::with_texture(skin.box_9slice.id());
@@ -1017,8 +1028,31 @@ fn dropdown_shell(
             }
             ui.painter().set(bg, Shape::mesh(mesh));
         });
-    let opened = !was_open && egui::Popup::is_id_open(ui.ctx(), id);
+    let open_now = egui::Popup::is_id_open(ui.ctx(), id);
+    if !open_now {
+        ui.ctx().data_mut(|d| d.remove::<bool>(id.with("shown")));
+    }
+    let opened = !was_open && open_now;
     (resp, opened)
+}
+
+/// Debug-only: asks the dropdown drawn under `tag` (e.g. the style editor's `sound`) to open
+/// itself on its next draw (screenshot support). Compiled out of release builds.
+#[cfg(debug_assertions)]
+pub fn request_dropdown_open(ctx: &egui::Context, tag: &str) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("ff-dropdown-shot"), tag.to_owned()));
+}
+
+/// Takes a [`request_dropdown_open`] for `tag`: true once, for the first dropdown that asks.
+#[cfg(debug_assertions)]
+pub fn take_dropdown_request(ctx: &egui::Context, tag: &str) -> bool {
+    let key = egui::Id::new("ff-dropdown-shot");
+    if ctx.data(|d| d.get_temp::<String>(key)).as_deref() == Some(tag) {
+        ctx.data_mut(|d| d.remove::<String>(key));
+        true
+    } else {
+        false
+    }
 }
 
 /// Height of one option row in [`ff_dropdown_ex`]'s popup.
@@ -1035,11 +1069,12 @@ fn dropdown_row(
     selected: usize,
     picked: &mut Option<usize>,
 ) {
-    dropdown_row_ex(ui, row_w, i, opt, selected, picked, false);
+    dropdown_row_ex(ui, row_w, i, opt, selected, picked, false, false);
 }
 
-/// [`dropdown_row`], optionally as a warning row: caption in the warning colour and the amber
-/// warning flag at its right end.
+/// [`dropdown_row`], optionally as a warning row (caption in the warning colour, the amber
+/// warning flag at its right end) and scrolled into view (`reveal`).
+#[allow(clippy::too_many_arguments)]
 fn dropdown_row_ex(
     ui: &mut Ui,
     row_w: f32,
@@ -1048,8 +1083,12 @@ fn dropdown_row_ex(
     selected: usize,
     picked: &mut Option<usize>,
     warn: bool,
+    reveal: bool,
 ) {
     let (r, o) = ui.allocate_exact_size(vec2(row_w, DROPDOWN_ROW_H), Sense::click());
+    if reveal {
+        o.scroll_to_me(Some(egui::Align::Center));
+    }
     o.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, i == selected, opt));
     if o.hovered() {
         ui.painter().rect_filled(r, 0.0, pal::ROW_HOVER);

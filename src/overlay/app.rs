@@ -1226,6 +1226,11 @@ impl OverlayApp {
         {
             crate::skin::colour_picker::request_open(ctx, tag);
         }
+        if let Some(tag) = &shot.args.dropdown
+            && (3..=5).contains(&shot.frames)
+        {
+            crate::skin::widgets::request_dropdown_open(ctx, tag);
+        }
         let image = ctx.input(|i| {
             i.raw.events.iter().find_map(|e| match e {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),

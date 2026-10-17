@@ -1,6 +1,7 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
 //! [--filter f] [--expand n] [--search text] [--rename-section n] [--expand-style name]
-//! [--picker text|border|background|rule] [--tier-text TIER=TEXT]` renders the shell once, saves the frame as a PNG and exits.
+//! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT]` renders the
+//! shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
 //! the hotkey and the tray, never applies, reloads or syncs, and refuses to run unless
@@ -29,6 +30,10 @@ pub(crate) const POPUPS: [&str; 8] = [
 /// The colour pickers `--picker` can open (the `colour_popup` tags).
 pub(crate) const PICKERS: [&str; 4] = ["text", "border", "background", "rule"];
 
+/// The dropdowns `--dropdown` can open: `sound` is the first drawn style editor's Alert sound
+/// list (expand a style or a Custom rule too).
+pub(crate) const DROPDOWNS: [&str; 1] = ["sound"];
+
 /// The parsed command line of the screenshot mode.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ShotArgs {
@@ -52,6 +57,8 @@ pub(crate) struct ShotArgs {
     pub expand_style: Option<String>,
     /// Open the colour picker with this tag (one of [`PICKERS`]).
     pub picker: Option<String>,
+    /// Open this dropdown (one of [`DROPDOWNS`]).
+    pub dropdown: Option<String>,
     /// Seed this tier cutoff text on ECONOMY, e.g. `S=abc`, to show the inline validation.
     pub tier_text: Option<(String, String)>,
 }
@@ -74,6 +81,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut rename_section = None;
     let mut expand_style = None;
     let mut picker = None;
+    let mut dropdown = None;
     let mut tier_text = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -120,6 +128,13 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                 }
                 picker = Some(p);
             }
+            "--dropdown" => {
+                let d = value("--dropdown")?;
+                if !DROPDOWNS.contains(&d.as_str()) {
+                    return Err(format!("unknown dropdown `{d}` ({})", DROPDOWNS.join("|")));
+                }
+                dropdown = Some(d);
+            }
             "--tier-text" => {
                 let t = value("--tier-text")?;
                 tier_text = match t.split_once('=') {
@@ -144,6 +159,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         rename_section,
         expand_style,
         picker,
+        dropdown,
         tier_text,
     }))
 }
@@ -335,6 +351,13 @@ mod tests {
         assert_eq!(a.rename_section, Some(2));
         assert_eq!(a.expand_style.as_deref(), Some("S"));
         assert_eq!(a.picker.as_deref(), Some("text"));
+        assert_eq!(a.dropdown, None);
+        for name in DROPDOWNS {
+            let d = p(&["--screenshot", "o.png", "--dropdown", name])
+                .unwrap()
+                .unwrap();
+            assert_eq!(d.dropdown.as_deref(), Some(name));
+        }
         for slot in PICKERS {
             assert!(p(&["--screenshot", "o.png", "--picker", slot]).is_ok());
         }
@@ -375,6 +398,8 @@ mod tests {
         assert!(p(&["--screenshot", "o.png", "--rename-section"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--picker", "foo"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--picker"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--dropdown", "foo"]).is_err());
+        assert!(p(&["--screenshot", "o.png", "--dropdown"]).is_err());
         assert!(p(&["--screenshot", "o.png", "--expand-style"]).is_err());
         let e = p(&["--screenshot", "o.png", "--tier-text", "noequals"]).unwrap_err();
         assert!(e.contains("--tier-text needs TIER=TEXT"), "{e}");

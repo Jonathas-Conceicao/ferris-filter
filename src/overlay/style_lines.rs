@@ -831,6 +831,11 @@ fn sound_group(
             remember(ui, memo, "sound-set", &shown);
             out.push(StyleIntent::Sound(Some(Cancelable::Cancel)));
         }
+        #[cfg(debug_assertions)]
+        if crate::skin::widgets::take_dropdown_request(ui.ctx(), "sound") {
+            super::sound_files::refresh(ui.ctx());
+            egui::Popup::open_id(ui.ctx(), ui.make_persistent_id("sound"));
+        }
         let folder = super::sound_files::get(ui.ctx());
         let (items, selected) = sound_menu(&folder.files, &shown);
         let labels: Vec<String> = items.iter().map(SoundItem::label).collect();

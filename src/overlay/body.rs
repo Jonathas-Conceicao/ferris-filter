@@ -7557,12 +7557,17 @@ mod tests {
             "Show\n    PlayAlertSoundPositional 6 200\n",
             "Show\n    PlayAlertSound None\n",
             "Show\n    CustomAlertSound \"uwu.mp3\" 300\n",
+            "Show\n    PlayAlertSound 6\n",
+            "Show\n    CustomAlertSound \"uwu.mp3\"\n",
         ] {
             let (wf, _, e) = entries_of(src);
             let (_, b) = rule_style_view(&e, BlockKeyword::Show);
             assert!(style_leftovers(&e, &b).is_empty(), "{src}");
             assert_eq!(leftover_rows(&ctx, &wf), 0, "{src}");
         }
+        // `CustomAlertSoundOptional` is inexact by design: exactly one leftover row, its own.
+        let (wf, _, _) = entries_of("Show\n    CustomAlertSoundOptional \"x.mp3\"\n");
+        assert_eq!(leftover_rows(&ctx, &wf), 1);
         for positional in [false, true] {
             let mut wf = WorkingFilter::from_text("Show\n    Rarity Rare\n");
             let id = wf.rows()[0].id;

@@ -1,5 +1,5 @@
 //! The skin's colours: PoE2 golds and browns over near-black, sampled from the game's Options
-//! window (screenshot `poe2_print009`), plus the overlay theme's values that carry over.
+//! window (screenshot `poe2_print009`).
 
 use egui::Color32;
 
@@ -46,6 +46,12 @@ pub const INPUT_BORDER: Color32 = Color32::from_rgb(0x3E, 0x3B, 0x34);
 /// Input / dropdown box border while hovered or open.
 pub const INPUT_BORDER_HOT: Color32 = Color32::from_rgb(0x7A, 0x68, 0x44);
 
+/// Recessed fill of the slide-switch track and the list chips: a shade lighter than
+/// [`INPUT_FILL`].
+pub const RECESS: Color32 = Color32::from_rgb(0x09, 0x09, 0x09);
+/// Slide-switch knob and edge, and the list-chip outline.
+pub const CONTROL_GLYPH: Color32 = Color32::from_rgb(0xC4, 0xC4, 0xA8);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,5 +63,11 @@ mod tests {
         for c in [HEADING, LABEL, VALUE, MUTED, BUTTON_TEXT, OK, WARN, ERROR] {
             assert!(lum(c) > lum(PANEL) + 300, "{c:?} is too dark to read");
         }
+    }
+
+    #[test]
+    fn recess_and_control_glyph_keep_their_values() {
+        assert_eq!(RECESS, Color32::from_rgb(0x09, 0x09, 0x09));
+        assert_eq!(CONTROL_GLYPH, Color32::from_rgb(0xC4, 0xC4, 0xA8));
     }
 }

@@ -19,7 +19,6 @@ use super::classes::ClassCatalog;
 use super::rules::{
     Dir, LineKind, ListEntry, RowAction, RuleRow, SectionRow, StyleState, WorkingFilter,
 };
-use super::theme;
 use super::virtual_list::{build_offsets_mixed, scroll_offset_for, visible_range};
 use crate::skin::Skin;
 use crate::skin::fonts::{regular, small_caps};
@@ -1383,8 +1382,7 @@ fn expanded_body(
     for d in &row.errors {
         ui.add(
             egui::Label::new(
-                RichText::new(format!("Line {}: {}", d.line, d.message))
-                    .color(theme::WARM_ACCENT_TEXT),
+                RichText::new(format!("Line {}: {}", d.line, d.message)).color(pal::WARN),
             )
             .wrap(),
         );
@@ -1927,7 +1925,7 @@ Show
         for r in &wf.rows()[..2] {
             let f = flags_for(r);
             let g = f.iter().find(|f| f.text == "group broken").expect("flag");
-            assert_eq!(g.color, theme::WARM_ACCENT_TEXT);
+            assert_eq!(g.color, pal::WARN);
             assert!(g.tip.contains("# ff:group"));
         }
         assert!(
@@ -1945,7 +1943,7 @@ Show
         let wf = styled_filter("Nope");
         let f = flags_for(&wf.rows()[0]);
         let u = f.iter().find(|f| f.text == "unknown style").unwrap();
-        assert_eq!(u.color, theme::WARM_ACCENT_TEXT);
+        assert_eq!(u.color, pal::WARN);
         assert!(u.tip.starts_with("No style with this name exists"));
         assert!(
             !flags_for(&wf.rows()[1])

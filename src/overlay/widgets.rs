@@ -1,117 +1,20 @@
-//! Custom-painted chrome for the PoE2-idiom stripe: the header plate, zebra-striped rows, the
-//! circular enable/disable toggle, and the up/down reorder arrows.
-//!
-//! `egui::Visuals` alone cannot express a header plate (flat bronze fill, title, and a
-//! hand-painted close control) or a two-tone alternating row background — `Visuals::striped`
-//! is a simple on/off, not the designed two-color pair D-24 calls for (RESEARCH § "Code
-//! Examples"). Both need direct `egui::Painter` calls, which is what this module is for. It is
-//! the only place in the crate that paints the header's `✕` — as two crossed line segments, not
-//! a Unicode glyph, since neither egui's default font nor the all-caps Cinzel face contains
-//! U+2715 (the tofu box 13-03 found and deferred here).
-//!
-//! [`circular_toggle`] and [`arrow_button`] (plan 14-02) follow that same lesson: PoE2's own
-//! toggle is a circle, not egui's square `Checkbox`, and Cinzel almost certainly has no ▲/▼
-//! glyphs either (`PITFALLS.md`-adjacent RESEARCH Pitfall 4) — both are painted with
-//! `egui::Painter` primitives over the plain `ui.interact(..., Sense::click())` hit-testing
-//! `header_plate`'s `✕` already established, rather than a custom `egui::Widget` impl or a text
-//! glyph that might render as tofu.
+//! Thin overlay wrappers over the skin widgets: the circular enable/disable toggle, the up/down
+//! reorder arrows, the painted remove X, the slide switch and the list-chip editor. The drawing
+//! lives in `crate::skin::widgets`; this module keeps the overlay-facing signatures.
 
 use super::text_entry::parse_base_type_entry;
-use super::theme;
 use crate::skin::colour_picker::{PickerEdit, PickerMode, colour_popup};
 use crate::skin::editor::{ff_colour_card_ex, ff_swatch};
 use crate::skin::fonts::regular;
 use crate::skin::palette as pal;
 
-/// What [`header_plate`] reports back to the caller.
-pub struct HeaderResponse {
-    /// `true` exactly on the frame the close control (`✕`) was clicked.
-    pub close_clicked: bool,
-}
-
-/// Paints a full-width header plate filled with [`theme::HEADER_PLATE`]: `title` on the left in
-/// the Cinzel family, and a hand-painted `✕` on the right. D-14: the caller is responsible for
-/// what a click does (hide the stripe) — this function only reports the click.
-pub fn header_plate(ui: &mut egui::Ui, title: &str) -> HeaderResponse {
-    let height = 40.0;
-    let width = ui.available_width();
-    let (rect, _response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-
-    let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, theme::HEADER_PLATE);
-
-    painter.text(
-        egui::pos2(rect.left() + 14.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::new(17.0, egui::FontFamily::Name(theme::DISPLAY_FONT.into())),
-        theme::SECTION_CREAM,
-    );
-
-    // The close control's hit region: a square on the plate's right edge.
-    let close_size = 22.0;
-    let close_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - 20.0, rect.center().y),
-        egui::vec2(close_size, close_size),
-    );
-    let close_response = ui.interact(
-        close_rect,
-        ui.id().with("header-close"),
-        egui::Sense::click(),
-    );
-
-    let stroke_color = if close_response.hovered() {
-        theme::SECTION_CREAM
-    } else {
-        theme::LABEL_TAN
-    };
-    let stroke = egui::Stroke::new(2.0, stroke_color);
-    let pad = 6.0;
-    painter.line_segment(
-        [
-            close_rect.left_top() + egui::vec2(pad, pad),
-            close_rect.right_bottom() - egui::vec2(pad, pad),
-        ],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            close_rect.right_top() + egui::vec2(-pad, pad),
-            close_rect.left_bottom() + egui::vec2(pad, -pad),
-        ],
-        stroke,
-    );
-
-    HeaderResponse {
-        close_clicked: close_response.clicked(),
-    }
-}
-
-/// Fills a row-height rect with the base or alternate zebra tone by `index` parity (D-23), then
-/// renders `add`'s content inside it.
-pub fn zebra_row(ui: &mut egui::Ui, index: usize, add: impl FnOnce(&mut egui::Ui)) {
-    let color = if index % 2 == 0 {
-        theme::ROW_BASE
-    } else {
-        theme::ROW_ALT
-    };
-
-    egui::Frame::new()
-        .fill(color)
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui);
-        });
-}
-
 /// A PoE2-idiom circular toggle (D-24: "toggles are circular, not square").
 ///
-/// Built on the exact same `allocate_exact_size` -> `ui.interact` -> `ui.painter()` sequence as
-/// [`header_plate`]'s `✕`, swapping the paint step for a stroked circle (always) plus a filled
-/// inner dot (only when `checked`) instead of crossed line segments. No custom `egui::Widget`
+/// Built on the same `allocate_exact_size` -> `ui.interact` -> `ui.painter()` sequence as the
+/// other painted controls, with a stroked circle (always) plus a filled
+/// inner dot (only when `checked`). No custom `egui::Widget`
 /// impl and no bespoke hit-testing — `ui.interact`'s `Sense::click()` already gives correct
-/// click/hover/focus semantics, exactly as it does for the header's close control.
+/// click/hover/focus semantics.
 ///
 /// Mutates `*checked` in place and calls [`egui::Response::mark_changed`] on a click, the same
 /// "widget function over a `&mut` reference" shape `egui::Checkbox`'s own `Widget` impl uses
@@ -146,12 +49,12 @@ pub fn slide_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     let track = if *on {
         crate::skin::palette::GOLD
     } else {
-        theme::INPUT_FILL
+        pal::RECESS
     };
     let edge = if response.hovered() {
-        theme::SECTION_CREAM
+        pal::HEADING
     } else {
-        theme::CONTROL_GLYPH
+        pal::CONTROL_GLYPH
     };
     let painter = ui.painter();
     painter.rect(
@@ -175,12 +78,11 @@ pub enum ArrowDirection {
     Down,
 }
 
-/// A hand-painted reorder arrow (D-05), used for the rule stripe's up/down move controls.
+/// A hand-painted reorder arrow (D-05), used for the rule list's up/down move controls.
 ///
 /// Painted as a filled triangle via [`egui::Shape::convex_polygon`], **not** a text glyph —
-/// Cinzel is an all-caps display face and egui's rasterizer has no OpenType feature support, so
-/// `▲`/`▼` are as likely to render as tofu boxes as U+2715 did for `header_plate`'s `✕` before
-/// that control was hand-painted (RESEARCH Pitfall 4).
+/// the game fonts have no `▲`/`▼` coverage (and egui has no OpenType feature support), so
+/// a text glyph would render as a tofu box (RESEARCH Pitfall 4).
 ///
 /// When `enabled` is `false` the control is allocated with `Sense::hover()` instead of
 /// `Sense::click()`, so its `Response` structurally cannot report `clicked()` — callers pass
@@ -192,7 +94,7 @@ pub fn arrow_button(ui: &mut egui::Ui, direction: ArrowDirection, enabled: bool)
 }
 
 /// A 16px painted X inside a 24x24 click target, with a tooltip and accessible name `label`
-/// (for example "Remove this condition"). Painted, not a glyph: Cinzel has no coverage.
+/// (for example "Remove this condition"). Painted, not a glyph: the fonts have no coverage for it.
 pub fn remove_x_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     crate::skin::widgets::ff_x_button(ui, label)
 }
@@ -224,14 +126,14 @@ pub fn toggle_chip(ui: &mut egui::Ui, label: &str, selected: &mut bool) -> egui:
 /// A small outlined text badge (for example `from style`) with a hover tooltip. Not clickable.
 pub fn badge(ui: &mut egui::Ui, text: &str, tip: &str) -> egui::Response {
     let inner = egui::Frame::new()
-        .stroke(egui::Stroke::new(1.0, theme::LABEL_TAN))
+        .stroke(egui::Stroke::new(1.0, pal::LABEL))
         .inner_margin(egui::Margin::symmetric(4, 1))
         .show(ui, |ui| {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(text)
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(theme::LABEL_TAN),
+                        .size(crate::skin::fonts::SUMMARY_SIZE)
+                        .color(pal::LABEL),
                 )
                 .selectable(false),
             )
@@ -623,16 +525,16 @@ pub fn chip_list(
     let count = items.len();
     ui.label(
         egui::RichText::new(format!("{count} item{}", if count == 1 { "" } else { "s" }))
-            .size(theme::ROW_SUMMARY_SIZE)
-            .color(theme::LABEL_TAN),
+            .size(crate::skin::fonts::SUMMARY_SIZE)
+            .color(pal::LABEL),
     );
 
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         for (index, item) in items.iter().enumerate() {
             egui::Frame::new()
-                .fill(theme::INPUT_FILL)
-                .stroke(egui::Stroke::new(1.0, theme::CONTROL_GLYPH))
+                .fill(pal::RECESS)
+                .stroke(egui::Stroke::new(1.0, pal::CONTROL_GLYPH))
                 .inner_margin(egui::Margin {
                     left: 4,
                     right: 0,

@@ -29,7 +29,6 @@ pub(crate) mod shell;
 pub mod sound_files;
 pub mod style_lines;
 pub mod text_entry;
-pub mod theme;
 pub mod tray;
 pub mod virtual_list;
 pub mod visibility;

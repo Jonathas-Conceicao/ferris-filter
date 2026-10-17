@@ -19,7 +19,6 @@ use super::config_state::{
     ConfigState, RevertScope, StyleEdit, config_warning, delete_confirm_text,
 };
 use super::style_lines::{self, StyleIntent, StyleView, Vis, probe};
-use super::theme;
 use super::widgets;
 use crate::skin::editor as ed;
 use crate::skin::fonts::{regular, small_caps};
@@ -276,7 +275,7 @@ fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) {
 }
 
 fn small_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).size(theme::ROW_SUMMARY_SIZE))
+    egui::Button::new(RichText::new(text.to_string()).size(crate::skin::fonts::SUMMARY_SIZE))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -306,7 +305,7 @@ fn show_filter(
     actions: &mut Vec<ConfigAction>,
 ) {
     egui::Frame::new()
-        .fill(theme::ROW_BASE)
+        .fill(pal::ROW_EVEN)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -371,8 +370,8 @@ fn show_filter(
                 }
                 ui.label(
                     RichText::new(RELOAD_TOGGLE_LABEL)
-                        .size(theme::ROW_SUMMARY_SIZE)
-                        .color(theme::VALUE_TEXT),
+                        .size(crate::skin::fonts::SUMMARY_SIZE)
+                        .color(pal::VALUE),
                 )
                 .on_hover_text(reload_tip);
             });
@@ -1079,8 +1078,8 @@ pub fn show_load_error(ui: &mut egui::Ui, message: &str) -> Option<ConfigAction>
     ui.add(
         egui::Label::new(
             RichText::new(message)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::WARM_ACCENT_TEXT),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::WARN),
         )
         .wrap(),
     );
@@ -2135,7 +2134,7 @@ mod tests {
 
     fn big_fills(shape: &egui::Shape, out: &mut Vec<egui::Rect>) {
         match shape {
-            egui::Shape::Rect(r) if r.fill == theme::ROW_BASE => out.push(r.rect),
+            egui::Shape::Rect(r) if r.fill == pal::ROW_EVEN => out.push(r.rect),
             egui::Shape::Vec(v) => v.iter().for_each(|s| big_fills(s, out)),
             _ => {}
         }

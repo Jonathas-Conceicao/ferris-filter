@@ -11,6 +11,8 @@ use egui::{FontFamily, FontId};
 pub const SMALL_CAPS: &str = "fontin-sc";
 /// Family name of Fontin Regular (body text, values, summaries).
 pub const REGULAR: &str = "fontin";
+/// Size of summary text and small captions in the overlay (rule summaries, button captions).
+pub const SUMMARY_SIZE: f32 = 15.0;
 /// Family name of Cinzel, kept registered under the same name the overlay theme uses.
 pub const CINZEL: &str = "cinzel";
 

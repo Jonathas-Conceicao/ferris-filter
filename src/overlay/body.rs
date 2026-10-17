@@ -26,7 +26,6 @@ use super::grammar::{
 use super::rule_list::{FocusTarget, ListUi, PendingRow};
 use super::rules::{BodyEntry, EntryKind, LineKind, RowAction, RuleRow, StyleState, WorkingFilter};
 use super::style_lines::{self, Rgba, StyleIntent, StyleView, Vis};
-use super::theme;
 use super::widgets;
 #[cfg(test)]
 use crate::models::config::Style;
@@ -197,15 +196,15 @@ pub(crate) fn raw_line_edit(id: BlockId, entry: &BodyEntry, draft: &str) -> Opti
 // ---------------------------------------------------------------------------------------------
 
 pub(crate) fn caption(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).small().color(theme::LABEL_TAN));
+    ui.label(RichText::new(text).small().color(pal::LABEL));
 }
 
 pub(crate) fn hint(ui: &mut egui::Ui, text: &str) {
     ui.add(
         egui::Label::new(
             RichText::new(text)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::WARM_ACCENT_TEXT),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::WARN),
         )
         .wrap(),
     );
@@ -289,7 +288,7 @@ pub(crate) fn raw_row(
 ) {
     let content = line_content(&entry.text).trim_end().to_string();
     if !editable {
-        ui.add(egui::Label::new(RichText::new(&content).color(theme::LABEL_TAN)).wrap());
+        ui.add(egui::Label::new(RichText::new(&content).color(pal::LABEL)).wrap());
         return;
     }
     let tid = ui.make_persistent_id(("raw", id, entry.ordinal));
@@ -450,7 +449,7 @@ fn focus_flash(ui: &egui::Ui, rect: egui::Rect, key: egui::Id, start: bool) {
             ui.painter().rect_stroke(
                 rect,
                 2.0,
-                egui::Stroke::new(2.0, theme::WARM_ACCENT_TEXT),
+                egui::Stroke::new(2.0, pal::WARN),
                 egui::StrokeKind::Inside,
             );
             ui.ctx().request_repaint();
@@ -504,7 +503,7 @@ pub fn conditions_group(
     if !ctx.editable {
         if lines.is_empty() {
             for line in &ctx.row.conditions {
-                ui.add(egui::Label::new(RichText::new(line).color(theme::LABEL_TAN)).wrap());
+                ui.add(egui::Label::new(RichText::new(line).color(pal::LABEL)).wrap());
             }
         }
         for e in lines {
@@ -665,7 +664,7 @@ fn defences_card(
                         let t = widgets::circular_toggle(ui, &mut on);
                         #[cfg(test)]
                         probe_rect(ui, ("defences-toggle", id, name), t.rect);
-                        ui.label(RichText::new(label).size(14.0).color(theme::VALUE_TEXT));
+                        ui.label(RichText::new(label).size(14.0).color(pal::VALUE));
                         if t.changed() {
                             if on {
                                 if let Some(text) = grammar::default_line(kw) {
@@ -1984,8 +1983,8 @@ fn rarity_control(
         };
         ui.label(
             RichText::new(note)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::LABEL_TAN),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::LABEL),
         );
     }
 }
@@ -2278,7 +2277,7 @@ fn count_names_control(
             } else {
                 "Count"
             };
-            ui.label(RichText::new(lead).size(14.0).color(theme::VALUE_TEXT));
+            ui.label(RichText::new(lead).size(14.0).color(pal::VALUE));
             let (lo, hi, _) = grammar::slider_range("Sockets");
             // Leave room for the trailing "of these:" label.
             let (s, n) = ui
@@ -2295,11 +2294,7 @@ fn count_names_control(
                 })
                 .inner;
             changed = s.changed() || n.response.changed();
-            ui.label(
-                RichText::new("of these:")
-                    .size(14.0)
-                    .color(theme::VALUE_TEXT),
-            );
+            ui.label(RichText::new("of these:").size(14.0).color(pal::VALUE));
         });
         if changed && v != c {
             new_count = Some(v);
@@ -3394,7 +3389,7 @@ fn action_card(
                 ui.label(
                     RichText::new(current_values(entry))
                         .size(14.0)
-                        .color(theme::DISABLED_TEXT),
+                        .color(pal::DISABLED),
                 );
             } else {
                 primary = action_controls(ui, &card, &value, list, actions);
@@ -3501,8 +3496,8 @@ fn font_control(
     if let Some(msg) = font_hint(new.unwrap_or(current)) {
         ui.label(
             RichText::new(msg)
-                .size(theme::ROW_SUMMARY_SIZE)
-                .color(theme::TAB_ACTIVE),
+                .size(crate::skin::fonts::SUMMARY_SIZE)
+                .color(pal::HEADING),
         );
     }
     if let Some(n) = new
@@ -3707,11 +3702,7 @@ fn effect_control(ui: &mut egui::Ui, card: &Card, e: &Effect, actions: &mut Vec<
         let changed = ui
             .add_enabled_ui(!none, |ui| {
                 let c = widgets::circular_toggle(ui, &mut t).changed();
-                ui.label(
-                    RichText::new("Temporary")
-                        .size(14.0)
-                        .color(theme::VALUE_TEXT),
-                );
+                ui.label(RichText::new("Temporary").size(14.0).color(pal::VALUE));
                 c
             })
             .inner;
@@ -3735,7 +3726,7 @@ fn optional_bool_control(ui: &mut egui::Ui, card: &Card, actions: &mut Vec<RowAc
     let mut changed = false;
     ui.horizontal(|ui| {
         changed = widgets::circular_toggle(ui, &mut on).changed();
-        ui.label(RichText::new("On").size(14.0).color(theme::VALUE_TEXT));
+        ui.label(RichText::new("On").size(14.0).color(pal::VALUE));
     });
     if changed && let Some(a) = optional_bool_edit(card.id, card.entry, on) {
         actions.push(a);

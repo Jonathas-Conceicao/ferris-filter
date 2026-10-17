@@ -19,6 +19,8 @@ four tabs.
 
   ![A rule expanded](docs/screenshots/rule-expanded.png)
 
+  ![An economy rule expanded, read-only](docs/screenshots/economy-rule.png)
+
 - **Config** picks which filter file the Rules tab edits and holds the named styles
   (`styles.json`): colours, font size, minimap icon, beam and sounds.
 

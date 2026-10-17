@@ -2093,6 +2093,9 @@ impl OverlayApp {
             Ok(body) => {
                 if !working.set_staged_economy_body(&body) {
                     self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
+                } else if self.list.expanded.is_some_and(rules::is_preview_id) {
+                    // Preview ids restart on every re-price: an open row would point elsewhere.
+                    self.list.expanded = None;
                 }
             }
             Err(err) => self.list_status = Some(err),
@@ -5224,6 +5227,12 @@ Hide
         app.refresh_staged_economy();
         let after = app.working.as_ref().unwrap().economy_rows().len();
         assert_ne!(before, after);
+        // An expanded preview row is collapsed by a re-price (its id would point elsewhere).
+        let id = app.working.as_ref().unwrap().economy_rows()[0].id;
+        app.list.expanded = Some(id);
+        app.config.as_mut().unwrap().set_tier_text("S", "90000000");
+        app.refresh_staged_economy();
+        assert_eq!(app.list.expanded, None);
         assert_eq!(
             app.working
                 .as_ref()

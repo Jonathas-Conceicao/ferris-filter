@@ -438,6 +438,12 @@ Show
 /// hands out, so the two never collide.
 const PREVIEW_ID_BASE: u64 = 1 << 48;
 
+/// True for a block id handed out by the staged-economy preview document. Those ids restart on
+/// every re-price, so an expanded row holding one must be collapsed when that happens.
+pub fn is_preview_id(id: crate::filter::BlockId) -> bool {
+    id.0 >= PREVIEW_ID_BASE
+}
+
 fn refused(msg: String) -> ActionOutcome {
     ActionOutcome {
         status: Some(msg),

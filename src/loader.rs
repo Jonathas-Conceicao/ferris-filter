@@ -451,6 +451,24 @@ mod tests {
         assert!(msg.contains("expected u8"), "{msg}");
     }
 
+    /// WR-03: a bad field inside a cancelable minimap object is still reported with the style's
+    /// name, the field and the file.
+    #[test]
+    fn load_styles_reports_an_unknown_field_inside_a_minimap() {
+        let bad = STYLES.replacen(
+            r#""shape": "Circle" }"#,
+            r#""shape": "Circle", "zzbad": 1 }"#,
+            1,
+        );
+        assert_ne!(bad, STYLES, "splice must apply");
+        let err = load_text(&bad).unwrap_err();
+        assert!(matches!(err, LoadError::Parse(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("S.minimap"), "{msg}");
+        assert!(msg.contains("unknown field `zzbad`"), "{msg}");
+        assert!(msg.contains("styles.json"), "{msg}");
+    }
+
     #[test]
     fn load_styles_missing_required_style_is_styles_error() {
         let mut v: serde_json::Value = serde_json::from_str(STYLES).unwrap();

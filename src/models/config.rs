@@ -2666,12 +2666,17 @@ mod style_id_tests {
             .to_string();
         assert!(err.contains("Pinkk"), "{err}");
         let json = style_json(
-            r#""minimap":{"size":1,"color":"Pink","shape":"Circle","x":1},"beam":null,"sound":null"#,
+            r#""minimap":{"size":1,"color":"Pink","shape":"Circle","zzbad":1},"beam":null,"sound":null"#,
         );
         let err = serde_json::from_str::<Style>(&json)
             .unwrap_err()
             .to_string();
-        assert!(err.contains('x'), "{err}");
+        assert!(err.contains("unknown field `zzbad`"), "{err}");
+        let json = style_json(r#""minimap":null,"beam":null,"sound":{"id":3,"vol":100,"zzbad":1}"#);
+        let err = serde_json::from_str::<Style>(&json)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `zzbad`"), "{err}");
         let json = style_json(r#""minimap":"none","beam":null,"sound":null"#);
         let err = serde_json::from_str::<Style>(&json)
             .unwrap_err()

@@ -176,6 +176,60 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
 - Model mix: `balanced` profile, `yolo` gate mode; UAT feedback phases run autonomously.
 - Notable: 13 phases and 452 commits in four calendar days (2026-10-12 → 2026-10-15).
 
+## Milestone: v0.6 — New PoE2-based Tool UI
+
+**Shipped:** 2026-10-17
+**Phases:** 7 (29-35) | **Plans:** 30 (+7 quick tasks) | **Commits:** 281 | **Tests:** 1392 lib + integration
+
+### What Was Built
+
+- One Cargo workspace; the `ff-art` dev tool extracts the game's UI art read-only from the root.
+- The shared `src/skin/` and a skinned, left-docked `ff` shell with four tabs, one status line and
+  skinned popups; RULES redrawn on it with rules added at the top.
+- `# ff:section` sections, with the economy section as the locked last one, browsable read-only and
+  shown as Apply will write it.
+- A CONFIG style table and line-by-line style editor (off / cancel / value groups, folder sounds),
+  reused for Custom rule styling; ECONOMY and ABOUT tabs; the prototype retired.
+
+### What Worked
+
+- **Prototype first, then the real thing.** Two quick-task rounds of `ff-proto` settled the look on
+  fake data, so research was skipped and the phases only ported proven widgets.
+- **Pixel diffs for a refactor.** Retiring the old theme was checked with 12 before/after screenshots
+  diffing to 0 pixels, which made a broad UI cleanup safe without hand review.
+- **Debug screenshot mode in every UI phase.** Each change came with viewed screenshots, and the
+  author's feedback rounds could point at exact frames.
+
+### What Was Inefficient
+
+- **UAT bookkeeping lagged the real UAT.** The author walked every phase in game, but the
+  HUMAN-UAT / VERIFICATION files of phases 30-35 were never updated, so the close had 14 open
+  artifacts to acknowledge, and the ECO / ABOUT requirement boxes were still unticked.
+- **Feedback landed as quick tasks after the phases.** Three rounds (2rf, 7lp and the post-phase
+  fixes) changed behaviour the phases had already verified (economy headers, staged previews,
+  pending-style display); no milestone audit was run on top of them.
+
+### Patterns Established
+
+- Everything visual comes from `src/skin/` (palette, fonts, textures, `ff_*` widgets); no second theme.
+- Screenshot runs use a temp `FERRISFILTER_HOME` / `USERPROFILE` and the built exe, settled until two
+  captures are byte-identical.
+- The economy section is shown from an in-memory preview whenever Apply would write something
+  different (staged add, pending style or tier edits).
+
+### Key Lessons
+
+- Record the author's UAT verdict in the UAT file the same day it is given; otherwise the close
+  has to reconstruct it.
+- When feedback changes what a verified phase does, re-run that phase's verification (or the
+  milestone audit) before closing.
+
+### Cost Observations
+
+- Model mix: `balanced` profile, `yolo` gate mode; planner on opus, executors / reviewers / checkers
+  on sonnet; phases and feedback rounds run largely autonomously.
+- Notable: 7 phases plus 7 quick tasks and 281 commits in three calendar days (2026-10-15 → 2026-10-17).
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Commits | LOC (cumulative) | Span |
@@ -185,6 +239,7 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | ~7,534 | 15 days |
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | ~16,093 | 14 days |
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | ~50,244 | 4 days |
+| v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | ~70,900 | 3 days |
 
 **Trend — phases are getting smaller and cheaper.** Plans per phase fell from 3.5 (v0.1) to 2.3
 (v0.2) to 1.7 (v0.3) as the declarative rule model absorbed work that used to require code. v0.3's

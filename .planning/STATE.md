@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v0.6
 milestone_name: New PoE2-based Tool UI
-status: Milestone phases complete, awaiting review
-stopped_at: Phase 35 complete (human_needed); next: user review, then milestone audit and completion
-last_updated: "2026-10-17T10:08:10.986Z"
-last_activity: 2026-10-17
+status: Awaiting next milestone
+stopped_at: Milestone v0.6 complete and archived
+last_updated: "2026-10-17T22:20:55.012Z"
+last_activity: 2026-10-17 — Milestone v0.6 completed and archived
 progress:
   total_phases: 7
   completed_phases: 7
@@ -18,25 +18,23 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-16)
+See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** v0.6 phases 29-35 built; user review, then /gsd-complete-milestone
+**Current focus:** Planning the next milestone (/gsd-new-milestone)
 
 ## Current Position
 
-Phase: 35 (complete) — all v0.6 phases built
-Plan: 2/2
-Last activity: 2026-10-17
-Last activity: 2026-10-16
-
-Progress (v0.6): [█░░░░░░░░░] 14%
+Phase: Milestone v0.6 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-17 — Milestone v0.6 completed and archived
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 120 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71)
+- Total plans completed: 150 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
 
 **By Milestone:**
 
@@ -47,6 +45,7 @@ Progress (v0.6): [█░░░░░░░░░] 14%
 | v0.3 Economy Items & Exceptional Gear | 3 | 5 | 54 | 15 days |
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
+| v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | 3 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -210,8 +209,8 @@ work (carried forward past the v0.3 close):
   per-build filters are tracked deliverables or `.gitignore` fodder, and drop the `scratch_*`,
   `foo.filter`, `temptest_gen.filter` scratch artifacts.
 
-- **`Cargo.toml` is still `version = "0.1.0"`** while tags read v0.1/v0.2/v0.3 — confirm whether
-  the crate version is meant to track milestone tags.
+- ~~**`Cargo.toml` version vs milestone tags**~~ — RESOLVED in v0.6: the package version tracks the
+  milestone tags (0.6.0 at v0.6).
 
 ### Blockers/Concerns
 
@@ -325,6 +324,16 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
 
 ## Deferred Items
 
+Items acknowledged and deferred at the **v0.6** close on 2026-10-17 (open-artifact audit; no milestone
+audit run, closed on the author's in-game UAT through the feedback rounds):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Phases 30-34: 30..34-HUMAN-UAT.md | partial (83 / 34 / 9 / 9 / 15 scenarios not recorded); walked by hand in the feedback rounds |
+| uat | Phase 35: 35-HUMAN-UAT.md | pending, 0 scenarios recorded |
+| verification | Phases 30-35: *-VERIFICATION.md | human_needed; covered by the author's UAT, files not updated |
+| uat | Phases 14, 16 | carried from v0.5 (see below) |
+
 Items acknowledged and deferred at the **v0.5** close on 2026-10-15 (open-artifact audit):
 
 | Category | Item | Status |
@@ -356,7 +365,11 @@ Items carried from the **v0.1** close on 2026-05-28:
 ## Session Continuity
 
 Last session: 2026-10-16T18:17:21.821Z
-Stopped at: Phase 34 complete, UI review done
-Resume file: .planning/phases/34-economy-about-tabs/34-HUMAN-UAT.md
+Stopped at: Milestone v0.6 complete and archived
+Resume file: none
 
-**Next step:** `/gsd-discuss-phase 29` (or `/gsd-plan-phase 29`).
+**Next step:** `/gsd-new-milestone`.
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

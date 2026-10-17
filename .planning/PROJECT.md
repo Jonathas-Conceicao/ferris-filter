@@ -2,37 +2,39 @@
 
 ## What This Is
 
-FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a human-editable configuration into a working `.filter` and fetches live item prices from poe.ninja so highlight tiers are driven by real economy values. Its overlay, `ff`, draws over the running game and edits any working PoE2 filter in place — its own output or a FilterBlade / NeverSink / hand-written one — losslessly, with named styles, tier cutoffs and a regenerable economy section configurable from the overlay.
+FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a human-editable configuration into a working `.filter` and fetches live item prices from poe.ninja so highlight tiers are driven by real economy values. Its overlay, `ff`, is drawn in Path of Exile 2's own UI style beside the running game and edits any working PoE2 filter in place — its own output or a FilterBlade / NeverSink / hand-written one — losslessly, with named styles, tier cutoffs and a regenerable economy section configurable from the overlay.
 
 ## Core Value
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Current Milestone: v0.6 New PoE2-based Tool UI
+## Next Milestone Goals
 
-**Goal:** `ff` is rebuilt in Path of Exile 2's own Options-window style, on the shared skin proven
-by the `ff-proto` prototype (quick tasks 261015-tz2 / 261016-1de), and the prototype binary is
-retired.
+Not started; `/gsd-new-milestone` defines the next one. Candidates: the open backlog in ROADMAP.md
+(999.3 load message for online filters, 999.4 economy change summary, 999.7 locked rules / `Import`
+layering, 999.8 rest of the configuration tab, 999.9 presets, 999.10 raw-text block editing, 999.12
+in-game keyword checks, 999.13 unmatchable-condition guidance, 999.14 `Minimal`), sound preview and
+long-distance rule reordering (deferred from v0.6), the v0.5 tech debt (audit W1-W4), and the
+Deferred list below.
 
-**Target features:**
-- One Cargo workspace: `ff` stays the default package; `tools/ff-art` is a member runnable from the
-  repo root (`cargo run -p ff-art`)
-- New overlay shell: left-docked 660px full-height window on the game's monitor, DPI-correct, game
-  header, RULES / CONFIG / ECONOMY / ABOUT tabs, REVERT / RELOAD / APPLY bar with a one-line,
-  truncating, colour-coded status (absorbs backlog 999.11)
-- RULES tab on the skin, every existing editor capability kept; new rules are added at the top
-- Rule dividers: an explicit `#`-banner comment in the filter renders as a named, collapsible
-  section; the economy section becomes the default (locked) divider
-- CONFIG style table with a column header and aligned (greyed) order arrows; a line-by-line style
-  editor with a skinned colour-picker popup and Delete-with-confirm at the bottom
-- ECONOMY tab (league, last sync, priced items, SYNC ECONOMY) and ABOUT tab (identity, version,
-  repo, ownership disclaimer, third-party credits)
+<details>
+<summary>✅ v0.6 New PoE2-based Tool UI — SHIPPED 2026-10-17</summary>
 
-**Key context:** Branch `milestone/v0.6-new-poe2-based-tool-ui` was cut from `topic/dev`, so it
-also carries the Simple Defences rework (quick 261015-nbp) and both prototype rounds; they ship to
-`main` with v0.6. Game art is GGG's (README credits); Ferris is public-domain community art.
-Research skipped (the prototype answered the look). Sound preview and long-distance rule
-reordering are backlog. The Cargo version now follows tags (0.5.0, bumped to 0.6.0 at close).
+**Goal:** `ff` rebuilt in Path of Exile 2's own Options-window style on the shared skin proven by
+the `ff-proto` prototype, every v0.5 editor capability kept, and the prototype retired.
+
+Delivered: one Cargo workspace with `ff-art` runnable from the root; the skinned, left-docked
+shell with four tabs, one-line status bar and skinned popups; RULES on the skin with rules added at
+the top; `# ff:section` sections with the economy section as the locked last one (browsable
+read-only, `# ff:name` / `# ff:style` headers on every generated block); the CONFIG style table and
+line-by-line style editor (shared with Custom rule styling); ECONOMY and ABOUT tabs; `ff-proto`,
+the old theme and Cinzel removed; version 0.6.0.
+
+**Audit:** none run; closed on the author's in-game UAT (open HUMAN-UAT / VERIFICATION files
+deferred). Archives: [v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md) ·
+[v0.6-REQUIREMENTS.md](milestones/v0.6-REQUIREMENTS.md)
+
+</details>
 
 <details>
 <summary>✅ v0.5 Generic Filter Editor & Initial App Configuration — SHIPPED 2026-10-15</summary>
@@ -76,7 +78,17 @@ See Current State below and [v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md).
 
 ## Current State
 
-**Shipped:** v0.5 Generic Filter Editor & Initial App Configuration (2026-10-15) — `ff` now edits
+**Shipped:** v0.6 New PoE2-based Tool UI (2026-10-17) — `ff` is now drawn with Path of Exile 2's
+own UI art (extracted locally by the `ff-art` dev tool; GGG's art, credited, replaced if they
+object): a 660pt window docked to the game's monitor, RULES / CONFIG / ECONOMY / ABOUT tabs, one
+status line beside Revert / Reload / Apply. Filters can be split into collapsible `# ff:section`
+sections; the economy section is the locked last one, browsable read-only and shown as Apply will
+write it (pending styles and tiers included). Styles are edited line by line in a table (with a
+skinned colour picker, off / cancel / value groups, folder sounds, Positional), and the same editor
+styles Custom rules. `generate` / `sync` output and the committed fixtures are unchanged.
+~70,900 LOC Rust; 1392 lib tests plus integration suites green; package version 0.6.0.
+
+**Prior:** v0.5 Generic Filter Editor & Initial App Configuration (2026-10-15) — `ff` now edits
 any working PoE2 filter, not just FerrisFilter's own output. A lossless parser round-trips foreign
 filters byte-for-byte; `dynamic.json` is gone and the game-folder `.filter` is the store, with a
 fenced economy section regenerated on Apply and guarded writes (changed-on-disk refusal, atomic
@@ -106,16 +118,11 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** v0.6 New PoE2-based Tool UI (in progress). Remaining candidates: the open backlog
-(999.3 load message for online filters, 999.4 economy change summary, 999.7 locked rules / `Import`
-layering, 999.8 rest of the configuration tab, 999.9 presets, 999.10 raw-text block editing, 999.11
-UI review, 999.12 in-game keyword checks, 999.13 unmatchable-condition guidance, 999.14 `Minimal`),
-the v0.5 tech debt (integration warnings W1-W4 in the audit), and the longer-standing Deferred list
-below.
+**Next milestone:** not started; candidates under Next Milestone Goals above.
 
-**Open at close:** no blockers. Tech debt accepted per the v0.5 audit; upgrade note: an existing
-install folder needs `styles-default.json` to be found as the app root. Full suite green at tag
-`v0.5` — 1142 tests, 0 failures, `cargo fmt --check` clean.
+**Open at close (v0.6):** no blockers. Deferred: the HUMAN-UAT / VERIFICATION files of phases
+30-35 (walked by hand, not updated; STATE.md Deferred Items). Full suite green at tag `v0.6`;
+`cargo fmt` clean; clippy at its 121-warning baseline.
 
 ## Requirements
 
@@ -146,10 +153,14 @@ install folder needs `styles-default.json` to be found as the app root. Full sui
 - [x] **Overlay CONFIG tab** — filter choice, styles and tier cutoffs under one all-or-none Apply. *(Validated in Phases 21, 25 — CONF, v0.5)*
 - [x] **Single-instance `ff` and in-game reload after Apply.** *(Validated in Phases 22-23 — INST-01, RELOAD-01, v0.5)*
 - [x] **`ff` launchable from Explorer** — app root resolved via `FERRISFILTER_HOME` or by walking up from the exe (closes the v0.4 known gap). *(Validated in Phase 18 — STORE-05, v0.5)*
+- [x] **Game-styled overlay** — `ff` drawn with the PoE2 skin: docked shell, four tabs, one-line status, skinned popups, every v0.5 capability kept. *(Validated in Phases 30-31 — SHELL, RULES, v0.6)*
+- [x] **Rule sections** — `# ff:section` banners as collapsible sections; the economy section is the locked last one, browsable read-only. *(Validated in Phase 32 and quick 2rf / 7lp — SECT, v0.6)*
+- [x] **Style table and line-by-line style editor**, shared with Custom rule styling. *(Validated in Phase 33 and quick qi7 / 0wl — STY, v0.6)*
+- [x] **ECONOMY and ABOUT tabs; prototype retired; one workspace with `ff-art` from the root.** *(Validated in Phases 29, 34-35 — WS, ECO, ABOUT, CLEAN, v0.6)*
 
 ### Active
 
-See `.planning/REQUIREMENTS.md` (milestone v0.6).
+None; the next milestone defines them (`/gsd-new-milestone`).
 
 ### Deferred (next-milestone candidates)
 
@@ -229,6 +240,11 @@ See `.planning/REQUIREMENTS.md` (milestone v0.6).
 | One all-or-none Apply across RULES and CONFIG | Author's second UAT round (UAT2): one action, written all or none, no half-applied state | ✓ Good (v0.5) |
 | In-game reload via clipboard paste, no Ctrl+A | Same method as EE2 / Awakened PoE Trade; synthetic Ctrl+A fired another tool's hotkey | ✓ Good (v0.5) |
 | Committed `styles-default.json` / `tiers-default.json`; live files git-ignored | Per-user edits from the overlay must not dirty the repo or break `artifact_guard` | ✓ Good (v0.5) |
+| Overlay skin built from game art extracted locally by `ff-art` | Looks like the game's own Options window; GGG's art is credited and will be replaced if they object | ✓ Good (v0.6) |
+| Sections as three-line `# ff:section` banners; economy as a begin-only banner, always last | Readable in any text editor; one format for user dividers and the economy section | ✓ Good (v0.6) |
+| One style editor for CONFIG styles and Custom rule styling | Same controls, same file semantics; no second editor to keep in step | ✓ Good (v0.6) |
+| Economy blocks carry `# ff:name` / `# ff:style` only in the game-folder section | Economy rules read like any other rule in `ff`; `generate` output and fixtures stay byte-identical | ✓ Good (v0.6) |
+| Package version tracks milestone tags (0.6.0 at v0.6) | Version shown on ABOUT matches the tag | ✓ Good (v0.6) |
 | Overlay league pinned in `sync::OVERLAY_LEAGUE` | poe.ninja's `indexed` flag flips between leagues | ⚠️ Revisit (league picker) |
 
 ## Git Workflow
@@ -261,4 +277,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-16 at the start of milestone v0.6*
+*Last updated: 2026-10-17 after the v0.6 milestone*

@@ -122,18 +122,18 @@ retired. Every v0.5 editor capability survives the move.
 
 ### Economy Tab (ECO)
 
-- [ ] **ECO-01**: The ECONOMY tab shows the pinned league, the last sync time and the number of
+- [x] **ECO-01**: The ECONOMY tab shows the pinned league, the last sync time and the number of
   priced items, with SYNC ECONOMY (moved from the RULES footer); sync still runs off the UI thread
   and writes only `prices.json`. The tab also holds the Add economy section / Remove economy section
   control for the loaded filter: it writes or removes the banner-format markers of SECT-04 as an
   in-memory edit, written by the shared Apply and undone by Revert.
 
-- [ ] **ECO-02**: The TIERS cutoffs editor lives on the ECONOMY tab with inline validation, applied
+- [x] **ECO-02**: The TIERS cutoffs editor lives on the ECONOMY tab with inline validation, applied
   by the shared Apply.
 
 ### About Tab (ABOUT)
 
-- [ ] **ABOUT-01**: The ABOUT tab shows, top to bottom: app name, one-line description, a small
+- [x] **ABOUT-01**: The ABOUT tab shows, top to bottom: app name, one-line description, a small
   happy orange Ferris, the version (from Cargo), the GitHub link, a divider line, empty space, then
   at the bottom the ownership disclaimer ("This product isn't affiliated with or endorsed by
   Grinding Gear Games in any way." and the art/fonts belonging to their owners), followed by the
@@ -192,9 +192,9 @@ retired. Every v0.5 editor capability survives the move.
 | STY-03 | Phase 33 | Complete |
 | STY-04 | Phase 33 | Complete |
 | STY-05 | Phase 33 | Complete |
-| ECO-01 | Phase 34 | Pending |
-| ECO-02 | Phase 34 | Pending |
-| ABOUT-01 | Phase 34 | Pending |
+| ECO-01 | Phase 34 | Complete |
+| ECO-02 | Phase 34 | Complete |
+| ABOUT-01 | Phase 34 | Complete |
 | CLEAN-01 | Phase 35 | Complete |
 | CLEAN-02 | Phase 35 | Complete |
 

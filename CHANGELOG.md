@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-17
+
+**New PoE2-based Tool UI** — `ff` is redrawn in Path of Exile 2's own Options-window style
+(docked shell, four tabs, one-line status, skinned popups), filters gain collapsible sections with
+the economy section as the locked last one, styles get a table and a line-by-line editor shared
+with Custom rules, ECONOMY and ABOUT become tabs, and the `ff-proto` prototype is retired.
+
 ### Added
 
 - **PoE2-style UI prototype (`ff-proto`).** Added to try the game-styled look on fake data (quick
@@ -593,7 +600,8 @@ Exile 2 loot filter and prices currency from poe.ninja. Tagged `v0.1`.
   --early-game` is passed. Cutoffs are exalt-denominated (`Unit::Exalt`) so currency tiers like
   the poe2filter.com export; cross-rates are derived from the anchor orbs (no stored rates).
 
-[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.5...HEAD
+[Unreleased]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.6...HEAD
+[0.6.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.5...v0.6
 [0.5.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.4...v0.5
 [0.4.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.3...v0.4
 [0.3.0]: https://github.com/Jonathas-Conceicao/poe2-myfilter/compare/v0.2...v0.3

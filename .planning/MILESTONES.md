@@ -1,5 +1,49 @@
 # Milestones
 
+## v0.6 — New PoE2-based Tool UI
+
+**Shipped:** 2026-10-17
+**Phases:** 29-35 (7) · **Plans:** 30 · **Quick tasks:** 7 · **Commits:** 281 · **Tests:** 1392 lib + integration suites green
+**Timeline:** 2026-10-15 → 2026-10-17 · **Code:** ~70,900 lines Rust (+26,255/-5,263 in src/tests/tools)
+
+**Delivered:** `ff` is now a game-styled overlay drawn with Path of Exile 2's own UI art, with
+collapsible rule sections, a line-by-line style editor shared by styles and custom rules, and
+dedicated Economy and About tabs; the prototype it grew from is retired.
+
+**Key accomplishments:**
+
+1. **One Cargo workspace, game art from the repo root** — `ff` stays the default crate; the
+   `ff-art` dev tool (non-default member, `cargo ff-art`) extracts the Options-window art, minimap
+   atlas and Fontin fonts read-only from the install.
+2. **The skinned overlay shell** — a 660pt window docked to the game's monitor (DPI-correct), four
+   stone tabs, a one-line status bar with Revert / Reload / Apply on every tab, skinned popups, and
+   every v0.5 behaviour (hotkey, tray, single instance, in-game reload) intact.
+3. **RULES on the skin** — fixed two-line rows with painted flag icons and style chips, a two-column
+   editor, rules added at the top, and Simple Defences as multi-select base types written as
+   `# ff:group` block groups.
+4. **Rule sections** — `# ff:section` banners as collapsible, renamable, movable headers; the
+   economy section is the locked last section, browsable read-only, with `# ff:name` / `# ff:style`
+   headers on every generated block, even before a staged add is applied.
+5. **Style table and line-by-line style editor** — aligned Built-in / Custom tables, a skinned
+   colour picker, Minimap / Beam / Alert sound / Drop sound groups with off, cancel (`/`) and value,
+   a filter-folder sound picker and Positional; the same editor drives Custom rule styling.
+6. **Economy and About tabs, prototype retired** — sync, add/remove economy section and the tiers
+   editor on ECONOMY; ABOUT with Ferris, version, disclaimer and credits; `ff-proto`, the old theme
+   and Cinzel removed with a 0-pixel before/after diff; package version 0.6.0.
+
+**Audit:** none run; closed on the author's in-game UAT through three feedback rounds (quick tasks
+2rf, 7lp and the post-phase fixes).
+
+**Known deferred items at close:** 14 (see STATE.md Deferred Items) — HUMAN-UAT files of phases
+30-35 left `partial` / `pending` and their VERIFICATION reports `human_needed` (walked by hand in the
+feedback rounds, files not updated), plus the Phase 14 / 16 leftovers carried from v0.5.
+
+**Verification at close:** full suite green including `artifact_guard` and `generate_snapshot`;
+`cargo fmt` clean; clippy at its 121-warning baseline. `generate` output and the seed fixture are byte-identical (the
+economy `# ff:` headers go only into the game-folder economy section).
+
+---
+
 ## v0.5 — Generic Filter Editor & Initial App Configuration
 
 **Shipped:** 2026-10-15

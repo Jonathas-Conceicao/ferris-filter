@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
-status: executing
-stopped_at: Completed 41-04-PLAN.md
-last_updated: "2026-10-18T14:05:12.384Z"
+status: verifying
+stopped_at: Completed 41-05-PLAN.md
+last_updated: "2026-10-18T14:15:26.016Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 40
-  completed_plans: 37
-  percent: 93
+  completed_plans: 38
+  percent: 95
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 
 Phase: 41 (check-for-updates) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-10-18
 
 ## Performance Metrics
@@ -207,6 +207,7 @@ work (carried forward past the v0.3 close):
 - [Phase 39]: 39-05: price-source marker is the effective-source comparison (OD-1); applied_policy moves on Apply and filter switch (A2)
 - 41-03: update_job carries #![allow(dead_code)] until wired in 41-04/41-05; begin_install failure messages use UTC offset 0
 - 41-04: update_job.rs keeps allow(dead_code) until 41-05 wires the install side
+- 41-05: pending_install slot set in OverlayApp::new (not a build parameter); installer spawned only after run_native returns
 
 ### Pending Todos
 
@@ -377,8 +378,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18T14:05:12.020Z
-Stopped at: Completed 41-04-PLAN.md
+Last session: 2026-10-18T14:15:26.008Z
+Stopped at: Completed 41-05-PLAN.md
 Resume file: None
 
 **Next step:** Phase 41. At the end of the milestone run 40-07 (Inno Setup + installer UAT), then 40-08 (v0.7.0-rc.1 tag).

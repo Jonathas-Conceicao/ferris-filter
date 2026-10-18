@@ -607,7 +607,7 @@ fn minimap_group(
             }
             for (i, label) in minimap::SHAPES.iter().enumerate() {
                 let lit = !cancel && i == shape;
-                let r = ed::ff_icon_button(ui, skin, i, colour, lit, tile).on_hover_text(*label);
+                let r = ed::ff_icon_button(ui, skin, i, colour, lit, tile);
                 probe("ed-mm-shape", r.rect);
                 if r.clicked()
                     && !lit
@@ -1075,6 +1075,57 @@ mod tests {
         .drop_without_applying_deltas();
         let tags = drain_probes().into_iter().map(|(t, _)| t).collect();
         (tags, intents)
+    }
+
+    /// Resting on a minimap shape tile shows its name as a tooltip exactly once.
+    #[test]
+    fn a_minimap_shape_tile_shows_one_tooltip() {
+        fn texts(shape: &egui::epaint::Shape, name: &str, n: &mut usize) {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == name => *n += 1,
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| texts(s, name, n)),
+                _ => {}
+            }
+        }
+        let view = StyleView::from_style(&every_group_style());
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        ctx.global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(460.0, 900.0));
+        let frame = |events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            drain_probes();
+            let out = ctx.run_ui(raw, |ui| {
+                let mut n = 0;
+                show(ui, &view, egui::Id::new("t"), &mut n);
+            });
+            let rect = drain_probes()
+                .into_iter()
+                .find(|(t, _)| *t == "ed-mm-shape")
+                .map(|(_, r)| r);
+            let mut count = 0;
+            for c in &out.shapes {
+                texts(&c.shape, minimap::SHAPES[0], &mut count);
+            }
+            out.drop_without_applying_deltas();
+            (rect, count)
+        };
+        let (rect, _) = frame(vec![]);
+        let pos = rect.expect("shape tile drawn").center();
+        let mut count = 0;
+        for i in 0..6 {
+            let ev = if i == 0 {
+                vec![egui::Event::PointerMoved(pos)]
+            } else {
+                vec![]
+            };
+            count = frame(ev).1;
+        }
+        assert_eq!(count, 1, "one tooltip with the shape name");
     }
 
     /// The CONFIG style editor and a Custom rule's STYLE section draw the same lines with the same

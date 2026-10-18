@@ -377,6 +377,9 @@ const PREVIEW_FAILED_STATUS: &str =
 /// and is never replaced (the choice holds for this session).
 const UNUSABLE_SETTINGS_NOT_SAVED: &str = "the file cannot be used, fix or delete it";
 
+/// Apply & quit with tier edits pending under Fallback: the window stays open with them kept.
+const UNWRITABLE_TIERS_QUIT_STATUS: &str = "Not quit: tier edits apply only with Live prices. Switch to Live and Apply, or quit without applying.";
+
 fn staged_economy_body(
     root: &Path,
     config: Option<&ConfigState>,
@@ -2343,10 +2346,21 @@ impl OverlayApp {
                     }
                     apply::QuitStep::RunApply => {
                         self.quit_confirm = false;
-                        let ok = self.run_apply(ctx, false);
+                        // Unused tier edits alone leave nothing to write: no Apply, no reload.
+                        let ok = !self.applicable_dirty() || self.run_apply(ctx, false);
+                        if ok && self.has_unwritable_tier_edits() {
+                            // No Apply can write cutoffs while Fallback is on: stay open with
+                            // them kept rather than quit and lose them.
+                            self.apply_message = Some((
+                                UNWRITABLE_TIERS_QUIT_STATUS.to_string(),
+                                w::StatusKind::Warning,
+                            ));
                         // A refusal leaves the window open showing it (Overwrite/Reload as today).
-                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
-                            == apply::QuitStep::QuitWhenIdle
+                        } else if apply::quit_step(
+                            dirty,
+                            false,
+                            apply::QuitEvent::ApplyFinished { ok },
+                        ) == apply::QuitStep::QuitWhenIdle
                         {
                             self.quit_after_apply = true;
                         }
@@ -2434,7 +2448,22 @@ impl OverlayApp {
         }
     }
 
+    /// Anything the Quit confirm guards: unapplied work, plus tier edits kept unused under
+    /// Fallback (no Apply writes them, but quitting loses them).
     fn quit_dirty(&mut self) -> bool {
+        self.applicable_dirty() || self.has_unwritable_tier_edits()
+    }
+
+    /// Tier cutoff edits that stay pending because the Fallback price source does not use them.
+    fn has_unwritable_tier_edits(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_ok_and(|c| c.has_unwritable_tier_edits())
+    }
+
+    /// Unapplied work an Apply would write: rule edits, a pending style rewrite or source
+    /// switch, CONFIG edits.
+    fn applicable_dirty(&mut self) -> bool {
         let style_pending = self
             .working
             .as_mut()
@@ -7209,6 +7238,85 @@ Hide
         assert!(app.run_apply(&ctx, false), "{:?}", app.apply_message);
         assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
         assert!(!app.source_pending());
+    }
+
+    /// The tier cutoff `S` as currently typed in the CONFIG state.
+    fn s_tier_text(app: &super::OverlayApp) -> String {
+        let config = app.config.as_ref().unwrap();
+        config
+            .tier_rows()
+            .into_iter()
+            .find(|r| r.tier == "S")
+            .unwrap()
+            .buffer
+    }
+
+    #[test]
+    fn an_apply_under_fallback_leaves_unused_tier_edits_pending_but_not_unapplied() {
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        let tiers_before = std::fs::read(rig.root.path().join("tiers.json")).ok();
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.set_price_source(false);
+        assert!(app.has_unwritable_tier_edits());
+        assert!(app.run_apply(&ctx, false), "{:?}", app.apply_message);
+        // Nothing an Apply could write is left, so the state stays applied...
+        assert!(!app.applicable_dirty());
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+        assert_eq!(app.apply_state, crate::overlay::apply::ApplyState::Applied);
+        // ...while the cutoffs are kept, unwritten, and still guarded by the Quit confirm.
+        assert_eq!(s_tier_text(&app), "31");
+        assert!(app.config.as_ref().unwrap().tiers_dirty());
+        assert_eq!(
+            std::fs::read(rig.root.path().join("tiers.json")).ok(),
+            tiers_before
+        );
+        assert!(app.quit_dirty());
+
+        // Back on Live they are unapplied work again, written by the next Apply.
+        app.set_price_source(true);
+        assert!(app.applicable_dirty());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+    }
+
+    #[test]
+    fn apply_and_quit_under_fallback_keeps_unused_tier_edits_and_stays_open() {
+        use crate::overlay::shell::Popup;
+        // Only unused tier edits: no Apply runs, the window stays open with them kept.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.applied_policy = PriceSourcePolicy::ForceFallback;
+        app.set_price_source(false);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(app.quit_dirty() && !app.applicable_dirty());
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert_eq!(s_tier_text(&app), "31");
+        let (text, kind) = app.apply_message.clone().unwrap();
+        assert_eq!(text, super::UNWRITABLE_TIERS_QUIT_STATUS);
+        assert_eq!(kind, w::StatusKind::Warning);
+
+        // With other work pending too, that work is applied and the window still stays open.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.set_price_source(false);
+        assert!(app.applicable_dirty());
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+        assert!(!app.applicable_dirty());
+        assert_eq!(s_tier_text(&app), "31");
+
+        // Quit without applying still leaves at once.
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(app.quit_next_frame);
     }
 
     #[test]

@@ -458,9 +458,22 @@ impl ConfigState {
 
     // -- dirty / revert -------------------------------------------------------------------------
 
-    /// Styles added + deleted + edited (by name, value compare) + tier rows that differ.
+    /// Styles added + deleted + edited (by name, value compare) + tier rows that differ. Tier
+    /// rows count only while the cutoffs are in use: unused ones (Fallback) are kept, but no
+    /// Apply writes them, so they are not unapplied work ([`Self::has_unwritable_tier_edits`]).
     pub fn dirty_count(&self) -> usize {
-        self.styles_dirty_count() + self.tiers_dirty_count()
+        let tiers = if self.tiers_in_use {
+            self.tiers_dirty_count()
+        } else {
+            0
+        };
+        self.styles_dirty_count() + tiers
+    }
+
+    /// Pending cutoff edits that Apply does not write because the cutoffs are unused (Fallback
+    /// price source). They stay in memory and the first Apply under Live writes them.
+    pub fn has_unwritable_tier_edits(&self) -> bool {
+        !self.tiers_in_use && self.tiers_dirty()
     }
 
     /// Styles added + deleted + changed (matched by id, name for an id-less style, so a rename is
@@ -601,7 +614,7 @@ impl ConfigState {
         self.styles.id_of(name)
     }
 
-    /// Any unapplied CONFIG edit (styles, tiers or style order).
+    /// Any unapplied CONFIG edit Apply would write (styles, style order, tiers while in use).
     pub fn is_dirty(&self) -> bool {
         self.dirty_count() > 0
     }
@@ -958,6 +971,8 @@ mod tests {
         s.adopt(w);
         assert!(!s.styles_dirty());
         assert!(s.tiers_dirty());
+        assert!(s.has_unwritable_tier_edits());
+        assert!(!s.is_dirty(), "nothing is left that an Apply would write");
         assert_eq!(s.tiers_bytes, tiers_bytes);
         let row =
             |s: &ConfigState, t: &str| s.tier_rows().into_iter().find(|r| r.tier == t).unwrap();
@@ -966,6 +981,8 @@ mod tests {
         assert!(row(&s, "A").error.is_some());
 
         s.set_tiers_in_use(true);
+        assert!(!s.has_unwritable_tier_edits());
+        assert!(s.is_dirty());
         assert!(s.has_tier_errors());
         assert_eq!(
             s.pending_tiers()

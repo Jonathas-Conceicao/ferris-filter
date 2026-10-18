@@ -38,6 +38,14 @@ pub struct Settings {
     /// Send /reloaditemfilter to the game after a RULES Apply that wrote the filter; absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload_after_apply: Option<bool>,
+    /// The league Sync economy prices against, written only when the user picks one; absent means
+    /// the computed default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub league: Option<String>,
+    /// `"live"` or `"fallback"`; absent or any other string means Live. Read by the overlay only,
+    /// the CLI ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_source: Option<String>,
     /// Collapsed state of the RULES list sections: filter name -> section name -> `true` when
     /// collapsed. Absent means the default (user sections expanded, the economy section collapsed).
     /// Display state only: it never marks a filter unapplied.
@@ -132,6 +140,24 @@ impl Settings {
     /// Whether Apply should reload the filter in game; on unless explicitly turned off.
     pub fn reload_after_apply(&self) -> bool {
         self.reload_after_apply.unwrap_or(true)
+    }
+
+    /// The saved league name: the trimmed value when non-empty.
+    pub fn saved_league(&self) -> Option<&str> {
+        self.league
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The price source policy: Fallback only when saved as `fallback` (any case), else Auto.
+    pub fn price_policy(&self) -> crate::compile::PriceSourcePolicy {
+        match self.price_source.as_deref() {
+            Some(s) if s.eq_ignore_ascii_case("fallback") => {
+                crate::compile::PriceSourcePolicy::ForceFallback
+            }
+            _ => crate::compile::PriceSourcePolicy::Auto,
+        }
     }
 }
 
@@ -246,6 +272,26 @@ fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
                             Some(false)
                         }
                     };
+                    let league = match extra.remove("league") {
+                        Some(serde_json::Value::String(s)) => Some(s),
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`league` is not text, so the default league is used".to_string(),
+                            );
+                            None
+                        }
+                    };
+                    let price_source = match extra.remove("price_source") {
+                        Some(serde_json::Value::String(s)) => Some(s),
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`price_source` is not text, so Live prices are used".to_string(),
+                            );
+                            None
+                        }
+                    };
                     let collapsed_sections = match extra.remove("collapsed_sections") {
                         None => BTreeMap::new(),
                         Some(v) => match serde_json::from_value(v) {
@@ -269,6 +315,8 @@ fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
                             auto_filter: None,
                             game_folder,
                             reload_after_apply,
+                            league,
+                            price_source,
                             collapsed_sections,
                             extra,
                         },
@@ -866,6 +914,81 @@ mod tests {
             assert!(!s.extra.contains_key("reload_after_apply"));
             assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
         }
+    }
+
+    #[test]
+    fn league_and_price_source_default_unset_and_unserialized() {
+        use crate::compile::PriceSourcePolicy;
+        let s = Settings::default();
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("league") && !json.contains("price_source"));
+        assert_eq!(s.price_policy(), PriceSourcePolicy::Auto);
+        assert_eq!(s.saved_league(), None);
+    }
+
+    #[test]
+    fn price_source_values_map_to_a_policy_without_warning() {
+        use crate::compile::PriceSourcePolicy;
+        for (v, want) in [
+            ("fallback", PriceSourcePolicy::ForceFallback),
+            ("FALLBACK", PriceSourcePolicy::ForceFallback),
+            ("live", PriceSourcePolicy::Auto),
+            ("bogus", PriceSourcePolicy::Auto),
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            fs::write(path(t.path()), format!(r#"{{"price_source":"{v}"}}"#)).unwrap();
+            let (s, w) = load(t.path());
+            assert_eq!(w, None, "{v}");
+            assert_eq!(s.price_policy(), want, "{v}");
+        }
+    }
+
+    #[test]
+    fn league_round_trips_and_blank_reads_unset() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"league":"Runes of Aldur"}"#).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.saved_league(), Some("Runes of Aldur"));
+        save(t.path(), &s).unwrap();
+        let (s2, _) = load(t.path());
+        assert_eq!(s2, s);
+        fs::write(path(t.path()), r#"{"league":"   "}"#).unwrap();
+        assert_eq!(load(t.path()).0.saved_league(), None);
+    }
+
+    #[test]
+    fn wrongly_typed_league_and_price_source_are_salvaged() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","league":5,"price_source":true,"future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.expect("must warn");
+        assert!(w.contains("league") && w.contains("price_source"), "{w}");
+        assert_eq!((s.league.clone(), s.price_source.clone()), (None, None));
+        assert_eq!(s.filter_name(), "ssf.filter");
+        assert!(s.extra.contains_key("future"));
+        assert!(!s.extra.contains_key("league") && !s.extra.contains_key("price_source"));
+    }
+
+    #[test]
+    fn saving_both_keys_keeps_unknown_keys() {
+        let t = tempfile::tempdir().unwrap();
+        let mut s = Settings {
+            league: Some("Standard".into()),
+            price_source: Some("fallback".into()),
+            ..Settings::default()
+        };
+        s.extra.insert("future".into(), serde_json::json!(1));
+        save(t.path(), &s).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path(t.path())).unwrap()).unwrap();
+        assert_eq!(v["league"], "Standard");
+        assert_eq!(v["price_source"], "fallback");
+        assert_eq!(v["future"], 1);
     }
 
     #[test]

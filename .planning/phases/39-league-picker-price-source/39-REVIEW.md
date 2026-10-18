@@ -2,6 +2,7 @@
 phase: 39-league-picker-price-source
 reviewed: 2026-10-18T00:00:00Z
 depth: standard
+iteration: 3
 files_reviewed: 11
 files_reviewed_list:
   - src/overlay/app.rs
@@ -16,14 +17,14 @@ files_reviewed_list:
   - src/sync/mod.rs
   - src/sync/models.rs
 findings:
-  critical: 1
-  warning: 5
-  info: 4
+  critical: 0
+  warning: 1
+  info: 9
   total: 10
 status: issues_found
 ---
 
-# Phase 39: Code Review Report
+# Phase 39: Code Review Report (re-review after iteration-2 fixes)
 
 **Reviewed:** 2026-10-18
 **Depth:** standard
@@ -32,186 +33,161 @@ status: issues_found
 
 ## Summary
 
-Reviewed the Phase 39 diff (`9e532d6..HEAD`): the league list worker and pure view model
-(`leagues.rs`), the `league` / `price_source` settings keys, the policy threading through
-`apply_all::prepare` / `staged_economy_body`, the `tiers_in_use` gate in `ConfigState`, the
-Economy tab redraw and status-line row in `shell.rs`, the screenshot flags, and the removal of
-`OVERLAY_LEAGUE`.
+This pass re-reviewed the Phase 39 diff (`9e532d6..HEAD`), with most attention on the two
+iteration-2 fix commits (`14dd6a6..HEAD`: 8611871, 9b93f85).
 
-The league view state table follows the UI-SPEC closely and is well covered by tests. The main
-defect is in the "tier errors do not block Apply under Fallback" contract: it holds only for
-unparseable text. A cutoff that parses but is out of order still blocks Apply, and the editor that
-could fix it is greyed out. A second problem is that an Apply under Fallback silently throws away
-the pending cutoff text that UI-SPEC says must survive. The other findings are about the
-price-source staleness tracking, which is assumption-based and has holes (a filter switch,
-`ff-settings.json` overwrite, a failed refresh, an empty list).
+Status of the iteration-2 findings:
 
-## Critical Issues
+- **WR-01: mostly fixed.** `ConfigState::dirty_count()` now counts tier rows only while the cutoffs
+  are in use. That one change reaches every caller of `is_dirty()`: the footer, `set_price_source`,
+  the Revert paths, `reload_changed` and `overwrite_decision`. So an Apply under Fallback no longer
+  reports success and then flips back to `Unapplied changes`. `tiers_dirty()` is unchanged, so the
+  Economy ` *` marker, Economy Revert and the staged-preview trigger still see the edits.
+  `ConfigState::refresh` still follows disk only when `tiers_dirty_count() == 0`, so a `tiers.json`
+  change on disk cannot silently replace unused edits. `can_apply()` is only used by tests.
+  `quit_dirty()` still guards the edits, and **Apply & quit** no longer quits while they would be
+  lost. One new problem remains in the mixed case (WR-01 below).
+- **WR-02: fixed.** `rebind_applied_policy` is shared by `adopt_settings` and `reload()`. `reload()`
+  captures `open_filter_path()` before it replaces the settings or the game folder, and rebinds only
+  when the open filter changed. A same-filter reload keeps `applied_policy`, and the new test covers
+  both directions. One small edge is recorded as IN-09.
 
-### CR-01: Under Fallback, a non-ascending tier cutoff still blocks Apply, and the editor that could fix it is greyed out
-
-**File:** `src/overlay/config_state.rs:660-677` (with `445-457`, `410-433`)
-**Issue:** `set_tier_text` writes every *parseable* value into `self.tiers` (line ~417), so a
-cutoff that parses but is below the tier before it (e.g. A = `0.0001`) leaves the model
-non-ascending. `recompute_tier_errors` records that as a row error. Under Fallback,
-`has_tier_errors()` / `tiers_error()` now return false/None, so the first branch of `validate()`
-is skipped. But the "defensive re-check" further down,
-`ValidatedTiers::try_from(self.tiers.clone())`, still runs and returns `Err(NotAscending)`. The
-same thing happens for `MissingTiers`. As a result `validate()`, `prepare_write()`, and so
-`apply_all::prepare` all refuse the Apply, which contradicts CLAUDE.md and UI-SPEC ("Under Fallback
-… tier errors do not block Apply"). The Tiers editor and its Reset button are greyed under
-Fallback, with the tooltip "The fallback tiers are fixed." The user is told the tiers do not
-matter, yet Apply is refused because of them, and the only way to fix it is to switch back to Live.
-`unused_tiers_ignore_a_missing_required_tier_too` does not catch this: it fakes
-`errors.general` while `self.tiers` stays valid, so it never reaches the re-check. Only the
-unparseable `"abc"` case is really tested, and that one works only because the model keeps the
-last valid value.
-**Fix:** When the tiers are not in use, validate and write the *applied* tiers rather than the
-working ones. One option is to skip the tier re-check and keep `tiers.json` untouched:
-```rust
-// validate()
-if self.tiers_in_use {
-    ValidatedTiers::try_from(self.tiers.clone())
-        .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
-}
-// prepare_write_inner()
-let tiers_changed = self.tiers_in_use
-    && (force || !tiers_equal(&self.tiers, &self.tiers_applied));
-```
-Then make `adopt` keep the working tiers and buffers when `!w.tiers_changed && !tiers_in_use`
-(see WR-01). Add a test with a parseable, non-ascending cutoff under `set_tiers_in_use(false)`.
+The iteration-1 fixes (CR-01, WR-01 to WR-05) are untouched by these commits and still hold. IN-01 to
+IN-07 are still present and are carried over.
 
 ## Warnings
 
-### WR-01: An Apply under Fallback throws away the pending cutoff text that UI-SPEC says must survive
+### WR-01: Apply & quit with other work plus unused tier edits loses both the Apply outcome and the "Not quit" warning when an in-game reload is sent
 
-**File:** `src/overlay/config_state.rs:708-721`
-**Issue:** UI-SPEC (Tiers under Fallback) says: "Pending cutoff edits already typed before
-switching stay in memory, are not lost … the inline error text still shows when the editor is
-enabled again." Two things break this:
-- `tiers_dirty_count` counts a differing buffer as dirty, so an invalid buffer (`"abc"`) keeps the
-  config dirty and Apply enabled.
-- A successful Apply calls `adopt`, which runs `self.tiers_applied = self.tiers.clone()` and then
-  `resync_buffers()`. That rebuilds every buffer from the model and clears `errors`.
+**File:** `src/overlay/app.rs:2353-2372` (with `src/overlay/app.rs:2026-2038`, `1162-1170`, `1176-1189`)
+**Issue:** In the mixed case (rule, style or source work pending plus unused tier edits under
+Fallback), `run_apply` writes the filter. When reload-after-apply is on and the game is running, it
+also starts the `/reloaditemfilter` sequence: it sets `apply_message` to the interim line and records
+`reload_pending.interim`. The quit branch then overwrites `apply_message` with
+`UNWRITABLE_TIERS_QUIT_STATUS`. After that:
 
-So the first Apply under Fallback (for example, to apply a rule edit) silently drops the typed
-text and its inline error. Valid pending cutoffs are also committed to `tiers.json` while the UI
-says the tiers are "fixed" and unused. The test
-`unused_tiers_do_not_gate_apply_and_return_when_used_again` checks the state only *before* Apply,
-never after `adopt`.
-**Fix:** While `!tiers_in_use`, leave the tier part of the config alone on adopt: do not move
-`tiers_applied` and do not resync the buffers.
+1. The reload focuses the game, and the overlay hides (click-away). `clear_events_on_conceal`
+   keeps the message only when it equals `reload_pending.interim`. The warning does not, so it is
+   cleared.
+2. When the reload worker reports, `landed_reload_message` returns `None` for the same reason, so
+   the reload result is never shown either. That includes a failure such as
+   `could not reload in game: <cause>`, which tells the user to Refresh by hand.
+
+Net effect: the user clicks **Apply & quit**, the window disappears (the game took focus), the
+process quietly stays in the tray with its hotkey registered, and the next reveal shows neither why
+it did not quit nor whether the in-game reload worked. The new test
+`apply_and_quit_under_fallback_keeps_unused_tier_edits_and_stays_open` cannot catch this because
+no game window exists in tests, so the `Decision::Send` path never runs.
+
+**Fix:** Do not replace the interim line while a reload is pending. Fold the warning into the
+pending reload instead, so that the conceal rule and the landed message both carry it:
 ```rust
-if self.tiers_in_use || w.tiers_changed {
-    self.tiers_applied = self.tiers.clone();
-    self.tiers_bytes = w.tiers_new;
-    self.resync_buffers();
+if ok && self.has_unwritable_tier_edits() {
+    let note = format!(" {UNWRITABLE_TIERS_QUIT_STATUS}");
+    match &mut self.reload_pending {
+        Some(p) if self.apply_message.as_ref().is_some_and(|(t, _)| *t == p.interim) => {
+            p.extras.push_str(&note);          // carried into landed_reload_message
+            p.interim.push_str(&note);         // still equals apply_message, so it survives a conceal
+            self.apply_message = Some((p.interim.clone(), w::StatusKind::Warning));
+        }
+        _ => {
+            self.apply_message =
+                Some((UNWRITABLE_TIERS_QUIT_STATUS.to_string(), w::StatusKind::Warning));
+        }
+    }
 }
 ```
-This should be combined with `tiers_changed = false` under Fallback (CR-01).
-
-### WR-02: Switching to another filter and back forgets a pending price-source switch, and the indicator then reports "Filter matches saved rules" for a stale economy section
-
-**File:** `src/overlay/app.rs:1621-1628`, `src/overlay/app.rs:2912-2925`
-**Issue:** `adopt_settings` sets `self.applied_policy = self.settings.price_policy()`. The comment
-says this is because "another filter is another file". `select_filter` / `switch_decision` decide
-whether to confirm using only `working.is_dirty()`, so a pending `source_pending()` neither
-triggers the **Switch filter?** popup nor survives the switch. The sequence that goes wrong:
-1. Filter X (economy section, live prices) is open.
-2. The user switches the source to Fallback, so X is marked unapplied.
-3. The user picks filter Y, then picks X again.
-
-`applied_policy` is now ForceFallback, `source_pending()` is false, and the indicator says the file
-matches. X still holds live prices, so the user believes it is on Fallback. Picking a folder
-(`apply_folder`) hits the same path.
-**Fix:** Track the policy per filter path, e.g. `HashMap<PathBuf, PriceSourcePolicy>`, filled on
-Apply and on first load. Alternatively, include `source_pending()` in the `switch_decision` dirty
-input so the user is at least warned before the stale state is forgotten.
-
-### WR-03: A league pick or price-source toggle rewrites an unusable `ff-settings.json` with fallback defaults
-
-**File:** `src/overlay/app.rs:1805-1835` (`save_view_setting`), `src/settings.rs:382-391`
-**Issue:** `set_league` and `set_price_source` go through `save_view_setting`, which calls the
-whole-file `settings::save`. When `ff-settings.json` exists but cannot be used (a trailing comma, a
-non-object), the session settings are the fallback defaults (`dynamic.filter`, reload off). The
-first league pick then writes those defaults over the user's file, losing their `filter`,
-`game_folder`, collapsed sections and unknown keys. A wrongly typed `league` / `price_source` is
-also replaced, though that one at least warns at load. `save_section_state` exists precisely to
-avoid this for fold clicks (CLAUDE.md: "a hand-edited file is never replaced by fallback
-defaults"). The reload toggle already had the same behaviour, but a league pick is a far more
-frequent action, so the exposure grows a lot.
-**Fix:** Add a key-scoped writer like `save_section_state`: read the file, set only `league` /
-`price_source`, and refuse with `Ok(false)` plus a status message when the file is unusable. Use it
-from `set_league` / `set_price_source`.
-
-### WR-04: A failed refresh discards a good list, which can block Sync on a fresh install
-
-**File:** `src/overlay/leagues.rs:89-102`, `src/overlay/leagues.rs:203-218`
-**Issue:** `poll` replaces `Loaded(list)` with `Failed(e)` when a refresh fails. With nothing
-saved and no `league` in `prices.json` (a fresh install that has not synced yet), the view drops
-from "Forbidden Rites, Sync enabled" to "(no league)", with the dropdown disabled and Sync blocked.
-The default was known a moment earlier. The user is stuck until the network is back, because of a
-button press that is supposed to be harmless ("Refresh does not change the selection"). The
-test `a_failed_refresh_is_failed` locks this behaviour in.
-**Fix:** Keep the last good list on a failed refresh and expose the failure separately, e.g.
-`Loaded { list, refresh_error: Option<String> }`. Alternatively, have `ListState::Failed` carry
-`Option<Vec<EconomyLeague>>` so `view` can still compute `default_league` and show `TIP_FAILED`.
-
-### WR-05: An empty `economyLeagues` list marks the saved league as ended and blocks Sync
-
-**File:** `src/overlay/leagues.rs:242-269`, `src/sync/league.rs:102-106`
-**Issue:** `list_leagues` returns `Ok(vec![])` when poe.ninja answers with an empty array (an API
-hiccup or schema drift; `economyLeagues: []` still deserializes). `loaded_view` then fails to find
-the saved name, shows `<name> (ended)` in amber, disables Sync, and puts "<name> is no longer on
-poe.ninja; pick a league" on the status line on every tab. There is nothing to pick. UI-SPEC says
-"unknown is not ended", and an empty list carries no information.
-**Fix:** Treat an empty list as a failure:
-```rust
-let leagues = fetch_index_state(client).await?.economy_leagues;
-if leagues.is_empty() {
-    miette::bail!("poe.ninja listed no economy leagues");
-}
-Ok(leagues)
-```
+(Alternatively, skip the in-game reload for an Apply run from the quit confirm that will not quit.)
+Add a unit test that sets `reload_pending` and an interim `apply_message` before the quit branch,
+and asserts that the warning survives `clear_events_on_conceal` and appears in the landed message.
 
 ## Info
 
-### IN-01: `reload()` lost its doc comment to `sync_tiers_in_use`
+### IN-01: `reload()` lost its doc comment to `sync_tiers_in_use` (carried)
 
-**File:** `src/overlay/app.rs:2579-2584`
-**Issue:** `sync_tiers_in_use` was inserted between the RELOAD doc comment and `fn reload`. The
-RELOAD paragraph now documents `sync_tiers_in_use`, and `reload()` has no doc at all.
-**Fix:** Move the three `/// RELOAD: …` lines down onto `fn reload`.
+**File:** `src/overlay/app.rs:2660-2672`
+**Issue:** This is still present. The three `/// RELOAD: …` lines sit on `sync_tiers_in_use`, and
+`fn reload` has no doc.
+**Fix:** Move the RELOAD paragraph down onto `fn reload`.
 
-### IN-02: Ended-league detection is case-sensitive while Sync matching is case-insensitive
+### IN-02: Ended-league detection is case-sensitive while Sync matching is case-insensitive (carried)
 
-**File:** `src/overlay/leagues.rs:259`, `src/sync/league.rs:77`
-**Issue:** A hand-edited `"league": "forbidden rites"` is shown as ended and Sync is blocked, even
-though `resolve_league_with_override` would accept it (`eq_ignore_ascii_case` on name or slug).
-The test `the_saved_name_match_is_case_sensitive` locks this in on purpose, but the two halves
-disagree.
-**Fix:** Match the way sync matches (name or slug, ASCII case-insensitive), and select that entry.
+**File:** `src/overlay/leagues.rs:283`, `src/sync/league.rs:77`
+**Issue:** `names.iter().position(|n| n == s)` still matches exactly, so a hand-edited
+`"forbidden rites"` shows as `(ended)` and blocks Sync, while `resolve_league_with_override` would
+accept it.
+**Fix:** Match by name or slug with `eq_ignore_ascii_case`, the same way sync does.
 
-### IN-03: `source_pending` uses today's `prices_live` for both sides, so it can raise false positives
+### IN-03: `source_pending` compares both sides with today's `prices_live` (carried)
 
-**File:** `src/overlay/leagues.rs:302-310`
-**Issue:** Example: the filter was applied under Auto with no `prices.json` (so it was written with
-fallback prices), the user then syncs, then switches to Fallback. The economy section is flagged
-stale even though Apply would write identical bytes. This is harmless (the Apply is a no-op that
-counts as applied), but it can confuse the user. The underlying cause is assumption A2, as
-documented.
-**Fix:** Record the *effective* source (`effective_fallback(policy, live)`) at Apply time instead
-of the policy alone, and compare that against the current effective source.
+**File:** `src/overlay/leagues.rs:326-334`
+**Issue:** This is unchanged. Take a filter applied under Auto with no `prices.json` (so it was
+effectively priced from Fallback). After a sync, a switch to Fallback is flagged stale even though
+Apply would write identical bytes.
+**Fix:** Record `effective_fallback(policy, live)` at Apply time (and in `left_policies`), and
+compare it against the current effective source.
 
-### IN-04: The price-source preview is never re-priced when the CONFIG state failed to load
+### IN-04: The staged economy preview is not re-priced when CONFIG failed to load (carried)
 
-**File:** `src/overlay/app.rs:2500-2506`
-**Issue:** `refresh_staged_economy` returns early when `self.config` is `Err`. A staged **Add
-economy section** preview therefore keeps the old policy's prices after a source switch, while
-Apply (`config = None` goes to `economy_body(paths, policy)`) writes the new policy's prices. That
-breaks the "what Apply will write" promise in this degraded state.
-**Fix:** In the `Err(config)` branch, re-price with `staged_economy_body(root, None, policy)` when
-the policy in the key differs.
+**File:** `src/overlay/app.rs:2580-2585`
+**Issue:** `refresh_staged_economy` still returns early when `self.config` is `Err`, so after a
+source switch the preview keeps the old policy's prices while Apply writes the new policy's.
+**Fix:** In the `Err` case, re-price with `staged_economy_body(root, None, policy)` when the policy
+in `staged_econ_inputs` differs.
+
+### IN-05: The ended-league status still shows after a failed refresh (carried)
+
+**File:** `src/overlay/leagues.rs:199-205`
+**Issue:** `RefreshFailed` runs `loaded_view` on the old list, so `ended` is set and the
+`<name> is no longer on poe.ninja; pick a league` warning still appears. UI-SPEC item 7 suppresses
+it for "failed". When the saved league has ended or is `(no league)`, nothing in the UI shows that
+the refresh failed.
+**Fix:** Update UI-SPEC/CLAUDE.md to match the decision, or clear `v.ended` for `RefreshFailed`.
+Either way, surface the failure, for example on the refresh button's tooltip.
+
+### IN-06: A transient read error on `ff-settings.json` is reported as "the file cannot be used, fix or delete it" (carried)
+
+**File:** `src/settings.rs:416-424`
+**Issue:** `save_keys` still maps every read error other than NotFound to `Ok(false)`, which
+`save_view_key` reports as the unusable-file message.
+**Fix:** Return `Err(e)` for read errors other than NotFound, and keep `Ok(false)` for JSON that
+does not parse or is not an object.
+
+### IN-07: The reload toggle still writes the whole settings file (carried)
+
+**File:** `src/overlay/app.rs:1832-1845`
+**Issue:** `set_reload_after_apply` still calls `save_view_setting`, which uses the whole-file
+`settings::save`. With an unusable `ff-settings.json`, toggling the setting replaces the user's
+file with fallback defaults.
+**Fix:** Route the toggle through `save_view_key` with a `save_keys(root, settings,
+&["reload_after_apply"])` wrapper, then remove `save_view_setting`.
+
+### IN-08: With only unused tier edits, the Quit confirm says "Apply them before quitting?" while the indicator says the filter matches, and its Apply button cannot apply
+
+**File:** `src/overlay/app.rs:2459-2461`, `src/overlay/shell.rs:999-1011`, `src/overlay/apply.rs:409-413`
+**Issue:** Since 8611871, tier edits that are unused under Fallback are deliberately not unapplied
+work. The status line reads `Filter matches saved rules`. Tray Quit still opens the generic
+**Unapplied changes** / "Apply them before quitting?" popup, though, and its first button can only
+lead to the "Not quit" warning. Nothing in the popup tells the user that the pending items are tier
+edits that need Live prices. This is not wrong, since nothing is lost, but the user only finds out
+after choosing a dead-end option.
+**Fix:** Pass a flag into `PopupData::Quit`. When the only pending items are unwritable tier edits,
+use body text such as `Tier edits are kept only for Live prices. Quit and lose them?`, and grey out
+or drop **Apply & quit**.
+
+### IN-09: `left_policies` is keyed by exact `PathBuf`, so a case-only change of the filter name or folder loses the recorded policy
+
+**File:** `src/overlay/app.rs:1659-1667`, `src/overlay/app.rs:2712-2715`
+**Issue:** After 9b93f85, `reload()` rebinds whenever `open_filter_path() != left`. On Windows,
+hand-editing `ff-settings.json` from `dynamic.filter` to `Dynamic.filter` (or changing the case of
+`game_folder`) still names the same file. The comparison sees a different filter, though, so it
+records the old policy under the old key, misses the lookup for the new key, and resets
+`applied_policy` to the current policy. That silently drops a pending source switch for a file that
+was never re-applied. `pick_folder` already compares folders with `eq_ignore_ascii_case`, so the
+code knows about this case.
+**Fix:** Normalise the key, for example lowercasing `to_string_lossy()` on Windows (or using a
+case-insensitive compare), both for the `!=` check in `reload()` and for the `left_policies`
+key.
 
 ---
 

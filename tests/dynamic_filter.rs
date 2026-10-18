@@ -429,6 +429,16 @@ fn default_filter_path_uses_the_filter_selected_in_ff() {
 }
 
 #[test]
+fn default_filter_path_says_when_the_saved_choice_cannot_be_used() {
+    let dir = workspace("badsaved");
+    fs::write(dir.join("ff-settings.json"), r#"{"filter":"../evil.filter"}"#).unwrap();
+    apply(&dir, &["--add-economy"])
+        .success()
+        .stderr(contains("warning: ff-settings.json could not be used"));
+    assert!(gf(&dir).exists());
+}
+
+#[test]
 fn default_filter_path_refreshes_the_pinned_game_dir() {
     let dir = workspace("pinned");
     apply(&dir, &["--add-economy"]).success();

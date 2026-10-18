@@ -404,7 +404,11 @@ mod tests {
     #[test]
     fn a_resolved_root_reads_its_settings() {
         let t = tempfile::tempdir().unwrap();
-        std::fs::write(t.path().join("ff-settings.json"), r#"{"filter":"a.filter"}"#).unwrap();
+        std::fs::write(
+            t.path().join("ff-settings.json"),
+            r#"{"filter":"a.filter"}"#,
+        )
+        .unwrap();
         let dirs = crate::locations::AppDirs::at(t.path());
         let (choice, warning) = saved_choice_from(false, Ok(dirs)).unwrap();
         assert_eq!(choice.filter, "a.filter");

@@ -208,7 +208,7 @@ mod imp {
         PROCESS_SYNCHRONIZE, ResetEvent, SetEvent, WaitForSingleObject,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
+        MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
     };
 
     fn wide(s: &str) -> Vec<u16> {
@@ -721,6 +721,22 @@ mod imp {
         }
     }
 
+    /// An error message box (same as `notify`, with the error icon).
+    pub fn notify_error(message: &str) {
+        let text = wide(message);
+        let title = wide("FerrisFilter");
+        // SAFETY: both buffers are NUL-terminated and alive across the call; a
+        // null owner window is allowed.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
+            );
+        }
+    }
+
     /// The decision of one launch, before any message box is shown.
     pub enum Launch {
         /// This process is the single instance: run the window.
@@ -811,6 +827,8 @@ mod imp {
 
     pub fn notify(_message: &str) {}
 
+    pub fn notify_error(_message: &str) {}
+
     /// No single-instance enforcement off Windows, where the overlay is not
     /// supported anyway.
     pub fn acquire() -> Option<Guard> {
@@ -819,7 +837,8 @@ mod imp {
 }
 
 pub use imp::{
-    Guard, acquire, acquire_named, notify, quit_running, quit_running_named, signal_running,
+    Guard, acquire, acquire_named, notify, notify_error, quit_running, quit_running_named,
+    signal_running,
 };
 #[cfg(windows)]
 pub use imp::{Launch, launch_named};

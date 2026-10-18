@@ -623,9 +623,191 @@ pub fn run_check(
     })
 }
 
+// ---------------------------------------------------------------------------------------------
+// Production HTTP, entry point and installer spawn
+// ---------------------------------------------------------------------------------------------
+
+/// The reqwest implementation of `UpdateHttp`. Never constructed by tests.
+pub struct ReqwestUpdateHttp {
+    rt: tokio::runtime::Runtime,
+    client: reqwest::Client,
+}
+
+impl ReqwestUpdateHttp {
+    pub fn new() -> Result<Self, String> {
+        // The ring provider is required with `rustls-no-provider`; installing twice is harmless.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        // No client-wide `.timeout()`: it would bound the whole installer body.
+        let client = reqwest::Client::builder()
+            .user_agent(crate::sync::client::USER_AGENT)
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Cannot build HTTP client: {e}"))?;
+        let rt =
+            tokio::runtime::Runtime::new().map_err(|e| format!("Cannot start runtime: {e}"))?;
+        Ok(Self { rt, client })
+    }
+}
+
+fn header_u64(resp: &reqwest::Response, name: &str) -> Option<u64> {
+    resp.headers()
+        .get(name)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
+impl UpdateHttp for ReqwestUpdateHttp {
+    fn get(&self, url: &str, accept: &str, max_bytes: u64) -> Result<Reply, FetchError> {
+        self.rt.block_on(async {
+            let mut req = self
+                .client
+                .get(url)
+                .header(reqwest::header::ACCEPT, accept)
+                .timeout(Duration::from_secs(30));
+            if url == LATEST_URL {
+                req = req.header("X-GitHub-Api-Version", "2022-11-28");
+            }
+            let mut resp = req
+                .send()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?;
+            let status = resp.status().as_u16();
+            let ratelimit_remaining = header_u64(&resp, "x-ratelimit-remaining");
+            let retry_after = header_u64(&resp, "retry-after");
+            let mut body = Vec::new();
+            while let Some(chunk) = resp
+                .chunk()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?
+            {
+                if (body.len() + chunk.len()) as u64 > max_bytes {
+                    return Err(FetchError::TooLarge);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(Reply {
+                status,
+                ratelimit_remaining,
+                retry_after,
+                body,
+            })
+        })
+    }
+
+    fn download(
+        &self,
+        url: &str,
+        max_bytes: u64,
+        sink: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> Result<u16, FetchError> {
+        self.rt.block_on(async {
+            let mut resp = self
+                .client
+                .get(url)
+                .header(reqwest::header::ACCEPT, "application/octet-stream")
+                .send()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?;
+            let status = resp.status().as_u16();
+            if !resp.status().is_success() {
+                return Ok(status);
+            }
+            let mut total = 0u64;
+            while let Some(chunk) = resp
+                .chunk()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?
+            {
+                total += chunk.len() as u64;
+                if total > max_bytes {
+                    return Err(FetchError::TooLarge);
+                }
+                sink(&chunk).map_err(FetchError::Sink)?;
+            }
+            Ok(status)
+        })
+    }
+}
+
+/// The production check, run on the overlay's worker thread: the real GitHub, the real `%TEMP%`.
+#[cfg(not(test))]
+pub fn check_for_update_blocking(
+    work_dir: &std::sync::Mutex<Option<PathBuf>>,
+    on_downloading: &mut dyn FnMut(&str),
+) -> CheckResult {
+    let Ok(http) = ReqwestUpdateHttp::new() else {
+        return CheckResult::Failed(Failure::Offline);
+    };
+    run_check(
+        &http,
+        env!("CARGO_PKG_VERSION"),
+        &std::env::temp_dir(),
+        std::time::SystemTime::now(),
+        work_dir,
+        on_downloading,
+    )
+}
+
+/// Test twin: unit tests never reach GitHub, so a press of Check ends offline without any I/O.
+#[cfg(test)]
+pub fn check_for_update_blocking(
+    _work_dir: &std::sync::Mutex<Option<PathBuf>>,
+    _on_downloading: &mut dyn FnMut(&str),
+) -> CheckResult {
+    CheckResult::Failed(Failure::Offline)
+}
+
+/// Start the verified installer: a normal visible wizard, no arguments, default working
+/// directory (a cwd inside the temp folder would block its later deletion). The child is
+/// neither waited for nor killed.
+pub fn spawn_installer(path: &Path) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let mut attempt = 0;
+    loop {
+        let r = Command::new(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        match r {
+            Ok(_child) => return Ok(()),
+            // A sharing violation while an antivirus scans the fresh exe: wait and retry.
+            Err(e) if e.raw_os_error() == Some(32) && attempt < 3 => {
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            // ERROR_ELEVATION_REQUIRED: let the shell show the elevation prompt.
+            Err(e) if e.raw_os_error() == Some(740) => {
+                return crate::overlay::win::shell_execute_open(path);
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_installer_missing_path_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(spawn_installer(&dir.path().join("nope-setup.exe")).is_err());
+    }
+
+    #[test]
+    fn production_entry_point_is_offline_in_tests() {
+        let slot = std::sync::Mutex::new(None);
+        assert_eq!(
+            check_for_update_blocking(&slot, &mut |_| panic!("no download")),
+            CheckResult::Failed(Failure::Offline)
+        );
+    }
 
     fn reply(status: u16, rem: Option<u64>, retry: Option<u64>, body: &str) -> Reply {
         Reply {

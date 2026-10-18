@@ -117,11 +117,12 @@ mod imp {
         GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
         MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_MENU, VK_SHIFT,
     };
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, HWND_TOPMOST,
         IsIconic, IsWindow, IsWindowVisible, SPI_GETWORKAREA, SW_HIDE, SW_RESTORE,
-        SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SetForegroundWindow, SetWindowPos,
-        ShowWindow, SystemParametersInfoW,
+        SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SetForegroundWindow,
+        SetWindowPos, ShowWindow, SystemParametersInfoW,
     };
     use windows_sys::core::BOOL;
 
@@ -663,6 +664,34 @@ mod imp {
         // SAFETY: `GetClipboardSequenceNumber` takes no arguments.
         unsafe { GetClipboardSequenceNumber() }
     }
+
+    /// Start `path` with the shell's `open` verb (used when a plain spawn needs elevation).
+    pub fn shell_execute_open(path: &std::path::Path) -> Result<(), String> {
+        use std::os::windows::ffi::OsStrExt;
+        let file: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: `verb` and `file` are NUL-terminated and alive across the call; the null
+        // owner window, parameters and directory are allowed by ShellExecuteW.
+        let code = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        } as usize;
+        if code <= 32 {
+            Err(format!("ShellExecute error {code}"))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -778,14 +807,19 @@ mod imp {
     pub fn clipboard_sequence() -> u32 {
         0
     }
+
+    /// Not supported off Windows.
+    pub fn shell_execute_open(_path: &std::path::Path) -> Result<(), String> {
+        Err("not supported".into())
+    }
 }
 
 pub use imp::{
     ClipboardOwner, GameWindow, Monitor, OverlayWindow, clear_clipboard, clipboard_owner,
     clipboard_sequence, conceal, dock_left, find_game_window, focus_game,
     foreground_is_game_or_overlay, from_frame, game_is_foreground, modifiers_held, monitor_scale,
-    monitor_work_area_px, read_clipboard_text, reveal, send_chord, send_tap, target_monitor,
-    utc_offset_minutes, work_area, write_clipboard_text,
+    monitor_work_area_px, read_clipboard_text, reveal, send_chord, send_tap, shell_execute_open,
+    target_monitor, utc_offset_minutes, work_area, write_clipboard_text,
 };
 
 #[cfg(test)]

@@ -76,8 +76,8 @@
 - [ ] **REL-02**: The workflow fails when the tag differs from the `Cargo.toml` version or the
   version's CHANGELOG section is missing or empty.
 - [ ] **REL-03**: A GitHub Release is created with that CHANGELOG section as its notes, kept a
-  draft until every asset is uploaded.
-- [ ] **REL-04**: Release builds use a pinned toolchain, not a floating nightly.
+  draft until every asset is uploaded, then published by the workflow.
+- [ ] **REL-04**: Workflows run on version tags and pull requests only, on the project's floating nightly toolchain (the author accepts the risk); a release is published automatically once every asset is uploaded.
 - [ ] **REL-05**: Tags are `vX.Y.Z` from `v0.7.0` on; the milestone close-out check is updated.
 - [x] **REL-06**: The release profile is optimised (`lto = "fat"`, `codegen-units = 1`,
   `strip = true`). Done at milestone start.

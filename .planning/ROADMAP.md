@@ -168,7 +168,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 **Requirements**: REL-01, REL-02, REL-03, REL-04, REL-05, REL-06, INST-02, INST-03, INST-04, PUB-01, PUB-02
 **Success Criteria** (what must be TRUE):
   1. A `v0.7.0-rc` tag runs the tests and release build and yields a draft Release with the installer, portable zip, `SHA256SUMS.txt` and the CHANGELOG section as notes
-  2. The workflow fails when the tag differs from the `Cargo.toml` version or the CHANGELOG section is missing or empty, and builds with a pinned toolchain
+  2. The workflow fails when the tag differs from the `Cargo.toml` version or the CHANGELOG section is missing or empty; workflows run only on tags and pull requests
   3. Running the installer needs no admin prompt, installs only the `ff` overlay (no CLIs), creates the config folder, adds a Start menu entry and an uninstaller, and uninstalling keeps the config folder
   4. Installing over a running `ff` closes it first and keeps the user's settings
   5. `assets/README.md` records the decision to ship GGG art and Fontin credited and compiled in, and `Jonathas-Conceicao/ferris-filter` is the one repo name in `Cargo.toml`, the HTTP user agent and the updater (REL-06 already done: optimised release profile)

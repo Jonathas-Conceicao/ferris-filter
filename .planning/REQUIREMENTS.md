@@ -72,8 +72,8 @@
 - [x] **LEAGUE-01**: The Economy tab has a league picker listing poe.ninja's current leagues; the
   choice is saved and replaces the pinned `sync::OVERLAY_LEAGUE`.
 
-- [ ] **LEAGUE-02**: Sync economy uses the chosen league and its outcome names it.
-- [ ] **LEAGUE-03**: A saved league no longer listed (league end) is reported explicitly, never
+- [x] **LEAGUE-02**: Sync economy uses the chosen league and its outcome names it.
+- [x] **LEAGUE-03**: A saved league no longer listed (league end) is reported explicitly, never
   switched silently.
 
 - [x] **LEAGUE-04**: A price source choice, Live or Fallback; Fallback disables Sync and the league
@@ -81,6 +81,7 @@
   section from the fallback pair on Apply.
 
 - [x] **LEAGUE-05
+
 **: Under Fallback the Tiers editor is greyed with a tooltip (the fallback tiers
   are fixed).
 
@@ -200,8 +201,8 @@
 | RESET-02 | Phase 38 | Complete |
 | FIX-01 | Phase 38 | Complete |
 | LEAGUE-01 | Phase 39 | Complete |
-| LEAGUE-02 | Phase 39 | Pending |
-| LEAGUE-03 | Phase 39 | Pending |
+| LEAGUE-02 | Phase 39 | Complete |
+| LEAGUE-03 | Phase 39 | Complete |
 | LEAGUE-04 | Phase 39 | Complete |
 | LEAGUE-05 | Phase 39 | Pending |
 | REL-01 | Phase 40 | Pending |

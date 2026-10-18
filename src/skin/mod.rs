@@ -37,10 +37,12 @@ pub mod window;
 
 pub use textures::Skin;
 
-/// The FerrisFilter repository, linked from the ABOUT tab.
-pub const REPO_URL: &str = "https://github.com/Jonathas-Conceicao/poe2-myfilter";
+/// The FerrisFilter repository, linked from the ABOUT tab: the web page of the `origin` remote the
+/// binary was built from (`Cargo.toml`'s `repository` without one; empty when neither is a web
+/// URL). Set by `build.rs`.
+pub const REPO_URL: &str = env!("FF_REPO_URL");
 /// The link text shown for [`REPO_URL`].
-pub const REPO_LINK_TEXT: &str = "github.com/Jonathas-Conceicao/poe2-myfilter";
+pub const REPO_LINK_TEXT: &str = env!("FF_REPO_LINK_TEXT");
 
 /// One-call setup: installs the fonts and the skin's style on `ctx` and loads the textures.
 /// Call once, before the first frame paints, and keep the returned [`Skin`].

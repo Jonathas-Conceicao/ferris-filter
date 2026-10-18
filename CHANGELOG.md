@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The About tab shows the version from the git tag (`0.6`, or `0.6-dev` for unreleased
+  changes) and links to the repository the build was cloned from.
+
 ## [0.6.0] - 2026-10-17
 
 **New PoE2-based Tool UI** — `ff` is redrawn in Path of Exile 2's own Options-window style

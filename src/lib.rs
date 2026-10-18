@@ -7,6 +7,7 @@
 // The dual [[bin]] targets (ferrisfilter + ff) both compile src/main.rs which
 // re-uses these modules via `use ferrisfilter::...`.
 
+pub mod build_info;
 pub mod cli;
 pub mod compile;
 pub mod dynamic;

@@ -1381,7 +1381,7 @@ mod tests {
 
     #[test]
     fn config_sections_no_longer_draw_tiers() {
-        let src = include_str!("config_view.rs");
+        let src = include_str!("config_view.rs").replace("\r\n", "\n");
         let body = &src[src.find("pub fn show_sections(").unwrap()..];
         let body = &body[..body.find("\n}\n").unwrap()];
         assert!(!body.contains("show_tiers") && !body.contains("\"Tiers\""));

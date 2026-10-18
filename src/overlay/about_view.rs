@@ -21,10 +21,15 @@ pub const CREDITS: [&str; 3] = [
     "Ferris the crab: Karen Rustad Tölva, public domain",
 ];
 
-/// `Version x.y.z` for the running build.
+/// `Version 0.6` for a build of the release tag, `Version 0.6-dev` past it or with tracked edits
+/// (from `git describe`, set by `build.rs`; the `Cargo.toml` version when built without git).
 pub fn version_text() -> String {
-    format!("Version {}", env!("CARGO_PKG_VERSION"))
+    format!("Version {}", env!("FF_VERSION"))
 }
+
+/// The exact `git describe` of the build (`v0.6-3-gabc1234-dirty`), shown on hover of a `-dev`
+/// version; empty when built without git or a tag.
+pub const GIT_DESCRIBE: &str = env!("FF_GIT_DESCRIBE");
 
 fn text(s: &str, size: f32, colour: Color32) -> egui::RichText {
     egui::RichText::new(s)
@@ -86,13 +91,18 @@ pub fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Ferris the crab")
     });
     col.add_space(8.0);
-    col.label(text(&version_text(), 14.0, pal::MUTED));
-    col.add_space(4.0);
-    col.hyperlink_to(
-        text(crate::skin::REPO_LINK_TEXT, 15.0, pal::GOLD),
-        crate::skin::REPO_URL,
-    )
-    .on_hover_text("Open the repository in your browser.");
+    let version = col.label(text(&version_text(), 14.0, pal::MUTED));
+    if env!("FF_VERSION").ends_with("-dev") && !GIT_DESCRIBE.is_empty() {
+        version.on_hover_text(format!("Unreleased build ({GIT_DESCRIBE})"));
+    }
+    if !crate::skin::REPO_URL.is_empty() {
+        col.add_space(4.0);
+        col.hyperlink_to(
+            text(crate::skin::REPO_LINK_TEXT, 15.0, pal::GOLD),
+            crate::skin::REPO_URL,
+        )
+        .on_hover_text("Open the repository in your browser.");
+    }
     col.add_space(16.0);
     let (strip, _) = col.allocate_exact_size(vec2(area.width(), 3.0), Sense::hover());
     // The game's title underline art fades out to one side only, so the divider is a symmetric
@@ -150,10 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn version_text_names_the_crate_version() {
+    fn version_text_names_the_build_version() {
         let v = version_text();
         assert!(v.starts_with("Version "));
-        assert!(v.contains(env!("CARGO_PKG_VERSION")));
+        assert!(v.ends_with(env!("FF_VERSION")));
     }
 
     fn render(w: f32, h: f32) {

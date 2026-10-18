@@ -705,7 +705,7 @@ pub(crate) fn economy_tab(
             if combo.changed() {
                 clicks.league_pick = Some(sel);
             }
-            let refresh = w::ff_icon_button(ui, &skin.refresh, "Refresh", view.refresh_enabled)
+            let refresh = w::ff_reload_button(ui, skin, "Refresh", view.refresh_enabled)
                 .on_hover_text(&view.refresh_tip)
                 .on_disabled_hover_text(&view.refresh_tip);
             crate::overlay::style_lines::probe("league-refresh", refresh.rect);

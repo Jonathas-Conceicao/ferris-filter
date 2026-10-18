@@ -95,9 +95,12 @@ pub struct Skin {
     pub check_off: TextureHandle,
     /// Round red close button: normal, hover, pressed.
     pub close: [TextureHandle; 3],
-    /// The game's web-toolbar refresh button (`uiimages/common/webtoolbarrefresh*`): a round
-    /// arrow on a square button, painted as the whole button. Normal, hover, pressed.
-    pub refresh: [TextureHandle; 3],
+    /// Square icon button (`uiimages/common/fouriconbutton*`): dark plate, thin gold frame.
+    /// Normal, hover, pressed.
+    pub icon_button: [TextureHandle; 3],
+    /// Reload glyph (`uiimages/common/buttonreload*`): a round arrow, drawn mirrored on
+    /// `icon_button`. Normal, hover.
+    pub reload: [TextureHandle; 2],
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -155,10 +158,14 @@ impl Skin {
                 tex!(ctx, "poe2/common/close_hover.png"),
                 tex!(ctx, "poe2/common/close_down.png"),
             ],
-            refresh: [
-                tex!(ctx, "poe2/common/refresh_normal.png"),
-                tex!(ctx, "poe2/common/refresh_hover.png"),
-                tex!(ctx, "poe2/common/refresh_down.png"),
+            icon_button: [
+                tex!(ctx, "poe2/common/icon_button_normal.png"),
+                tex!(ctx, "poe2/common/icon_button_hover.png"),
+                tex!(ctx, "poe2/common/icon_button_pressed.png"),
+            ],
+            reload: [
+                tex!(ctx, "poe2/common/reload_normal.png"),
+                tex!(ctx, "poe2/common/reload_hover.png"),
             ],
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),

@@ -438,12 +438,9 @@ fn show_filter(
                 // a folder that appeared later (the game's first launch) is picked up.
                 let refresh_on = ctx.game_dir.is_some();
                 let refresh = match ctx.skin {
-                    Some(skin) => crate::skin::widgets::ff_icon_button(
-                        ui,
-                        &skin.refresh,
-                        "Refresh",
-                        refresh_on,
-                    ),
+                    Some(skin) => {
+                        crate::skin::widgets::ff_reload_button(ui, skin, "Refresh", refresh_on)
+                    }
                     None => ui.add_enabled(refresh_on, small_button("Refresh")),
                 };
                 let tip = "Refresh the file lists";

@@ -141,18 +141,30 @@ out = "common/close_down.png"
 prefer_4k = true
 trim = true
 
-# Refresh button: the web-toolbar refresh (round arrow on a square button), three states.
+# Square icon button (dark plate, thin gold frame), three states: the background of the reload
+# button.
 [[image]]
-path = "art/textures/interface/2d/2dart/uiimages/common/webtoolbarrefreshnormal.dds"
-out = "common/refresh_normal.png"
+path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonnormal.dds"
+out = "common/icon_button_normal.png"
 prefer_4k = true
 [[image]]
-path = "art/textures/interface/2d/2dart/uiimages/common/webtoolbarrefreshhover.dds"
-out = "common/refresh_hover.png"
+path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonhover.dds"
+out = "common/icon_button_hover.png"
 prefer_4k = true
 [[image]]
-path = "art/textures/interface/2d/2dart/uiimages/common/webtoolbarrefreshdown.dds"
-out = "common/refresh_down.png"
+path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonpressed.dds"
+out = "common/icon_button_pressed.png"
+prefer_4k = true
+
+# Reload glyph (round arrow), normal and hover; drawn mirrored on the square icon button, as the
+# game does.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonreloadnormal.dds"
+out = "common/reload_normal.png"
+prefer_4k = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonreloadhover.dds"
+out = "common/reload_hover.png"
 prefer_4k = true
 
 # The gold dropdown triangle.

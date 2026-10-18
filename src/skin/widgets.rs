@@ -1205,15 +1205,15 @@ pub fn ff_button_ex(
     resp
 }
 
-/// A square icon button, [`ROW_HEIGHT`] points on a side, painted from a three-state texture set
-/// (normal, hover or focus, pressed) that is the whole button, such as `skin.refresh`. `label` is
+/// The reload glyph's side as a fraction of the icon button's: the two textures' own pixel sizes
+/// (56 / 92 in the 4K art), so the glyph sits on the plate as it does in game.
+const RELOAD_GLYPH_SCALE: f32 = 56.0 / 92.0;
+
+/// The game's reload button: the square icon button plate ([`Skin::icon_button`], normal, hover or
+/// focus, pressed) with the round-arrow glyph ([`Skin::reload`]) centred on it, mirrored left to
+/// right so the arrow turns to the left as in game. [`ROW_HEIGHT`] points on a side; `label` is
 /// the accessible name. Disabled: dimmed normal art, never clicked, no hover state.
-pub fn ff_icon_button(
-    ui: &mut Ui,
-    textures: &[TextureHandle; 3],
-    label: &str,
-    enabled: bool,
-) -> Response {
+pub fn ff_reload_button(ui: &mut Ui, skin: &Skin, label: &str, enabled: bool) -> Response {
     let enabled = enabled && ui.is_enabled();
     let sense = if enabled {
         Sense::click()
@@ -1236,7 +1236,21 @@ pub fn ff_icon_button(
     } else {
         Color32::from_white_alpha(90)
     };
-    slice::paint_image(ui.painter(), &textures[state], rect, tint);
+    let painter = ui.painter();
+    slice::paint_image(painter, &skin.icon_button[state], rect, tint);
+    let glyph = &skin.reload[usize::from(state > 0)];
+    let offset = if state == 2 { 1.0 } else { 0.0 };
+    let dest = slice::snap_rect(
+        slice::centered(
+            rect.center() + vec2(0.0, offset),
+            Vec2::splat(ROW_HEIGHT * RELOAD_GLYPH_SCALE),
+        ),
+        painter.pixels_per_point(),
+    );
+    let uv = slice::full_uv(glyph.size());
+    // Swapping the u edges mirrors the glyph left to right.
+    let mirrored = Rect::from_min_max(pos2(uv.max.x, uv.min.y), pos2(uv.min.x, uv.max.y));
+    painter.image(glyph.id(), dest, mirrored, tint);
     resp
 }
 
@@ -2070,42 +2084,42 @@ mod tests {
     }
 
     #[test]
-    fn icon_button_is_row_height_square() {
+    fn reload_button_is_row_height_square() {
         let (ctx, skin) = setup();
         let size = rect_of(&ctx, |ui| {
-            ff_icon_button(ui, &skin.refresh, "Refresh", true).rect
+            ff_reload_button(ui, &skin, "Refresh", true).rect
         })
         .size();
         assert_eq!(size, Vec2::splat(ROW_HEIGHT));
     }
 
     #[test]
-    fn icon_button_clicks_only_when_enabled() {
+    fn reload_button_clicks_only_when_enabled() {
         let (ctx, skin) = setup();
         let rect = rect_of(&ctx, |ui| {
-            ff_icon_button(ui, &skin.refresh, "Refresh", true).rect
+            ff_reload_button(ui, &skin, "Refresh", true).rect
         });
         let mut on = false;
         ctx.run_ui(click_at(rect.center()), |ui| {
-            on = ff_icon_button(ui, &skin.refresh, "Refresh", true).clicked();
+            on = ff_reload_button(ui, &skin, "Refresh", true).clicked();
         })
         .drop_without_applying_deltas();
-        assert!(on, "an enabled icon button reports the click");
+        assert!(on, "an enabled reload button reports the click");
         let (ctx, skin) = setup();
         let mut off = true;
         ctx.run_ui(click_at(rect.center()), |ui| {
-            off = ff_icon_button(ui, &skin.refresh, "Refresh", false).clicked();
+            off = ff_reload_button(ui, &skin, "Refresh", false).clicked();
         })
         .drop_without_applying_deltas();
-        assert!(!off, "a disabled icon button never reports a click");
+        assert!(!off, "a disabled reload button never reports a click");
     }
 
     #[test]
-    fn icon_button_is_labelled_and_reports_enabled() {
+    fn reload_button_is_labelled_and_reports_enabled() {
         let (ctx, skin) = setup();
         ctx.enable_accesskit();
         let out = ctx.run_ui(RawInput::default(), |ui| {
-            ff_icon_button(ui, &skin.refresh, "Refresh", false);
+            ff_reload_button(ui, &skin, "Refresh", false);
         });
         let update = out
             .platform_output

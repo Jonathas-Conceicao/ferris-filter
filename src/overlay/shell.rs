@@ -236,23 +236,41 @@ pub(crate) fn apply_success_kind(text: &str) -> StatusKind {
     }
 }
 
-/// The event message, if any: the Apply outcome wins over a CONFIG message, then a finished sync,
-/// then the list status.
+/// The event message, if any: the update message first, then the Apply outcome, a CONFIG
+/// message, a finished sync, then the list status.
+///
+/// The app clears the update message whenever another event action starts, so a message it sets
+/// on a click is the newest. A message the update worker delivers later while another event was
+/// showing comes with `update_behind` set and ranks last, so it never hides the outcome of an
+/// action started during the check (an Apply refusal, a sync result).
 ///
 /// The Apply message carries the kind it was produced with (see [`apply_success_kind`]). A CONFIG
 /// message is `(text, is_problem)`. A sync outcome is `(text, is_failure)`.
 pub(crate) fn event_from(
     update: Option<(String, StatusKind)>,
+    update_behind: bool,
     apply_message: Option<(String, StatusKind)>,
     config_message: Option<(String, bool)>,
     sync: Option<(String, bool)>,
     list_status: Option<String>,
 ) -> Option<(String, StatusKind)> {
-    // The update message is the most recent explicit user action: the app clears it whenever
-    // another event action starts, so when it is present it is the newest.
-    if let Some(message) = update {
-        return Some(message);
-    }
+    let (first, last) = if update_behind {
+        (None, update)
+    } else {
+        (update, None)
+    };
+    first
+        .or_else(|| other_event(apply_message, config_message, sync, list_status))
+        .or(last)
+}
+
+/// [`event_from`] without the update message.
+fn other_event(
+    apply_message: Option<(String, StatusKind)>,
+    config_message: Option<(String, bool)>,
+    sync: Option<(String, bool)>,
+    list_status: Option<String>,
+) -> Option<(String, StatusKind)> {
     if let Some(message) = apply_message {
         return Some(message);
     }
@@ -1603,6 +1621,7 @@ mod tests {
     fn event_precedence_and_kinds() {
         let e = event_from(
             Some(("Up to date (0.7.0)".into(), StatusKind::Ok)),
+            false,
             Some(("a".into(), StatusKind::Ok)),
             Some(("c".into(), true)),
             Some(("s".into(), true)),
@@ -1611,6 +1630,7 @@ mod tests {
         assert_eq!(e, Some(("Up to date (0.7.0)".into(), StatusKind::Ok)));
         let e = event_from(
             None,
+            false,
             Some(("a".into(), StatusKind::Ok)),
             Some(("c".into(), true)),
             Some(("s".into(), true)),
@@ -1621,6 +1641,7 @@ mod tests {
         // apply state is (CR-02).
         let e = event_from(
             None,
+            false,
             Some(("a".into(), StatusKind::Error)),
             None,
             None,
@@ -1632,27 +1653,52 @@ mod tests {
         assert_eq!(apply_success_kind("Wrote x."), StatusKind::Ok);
         let e = event_from(
             None,
+            false,
             None,
             Some(("c".into(), true)),
             Some(("s".into(), true)),
             None,
         );
         assert_eq!(e, Some(("c".into(), StatusKind::Error)));
-        let e = event_from(None, None, Some(("c".into(), false)), None, None);
+        let e = event_from(None, false, None, Some(("c".into(), false)), None, None);
         assert_eq!(e, Some(("c".into(), StatusKind::Info)));
-        let e = event_from(None, None, None, Some(("s".into(), true)), Some("l".into()));
+        let e = event_from(
+            None,
+            false,
+            None,
+            None,
+            Some(("s".into(), true)),
+            Some("l".into()),
+        );
         assert_eq!(e, Some(("s".into(), StatusKind::Error)));
         let e = event_from(
             None,
+            false,
             None,
             None,
             Some(("s".into(), false)),
             Some("l".into()),
         );
         assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
-        let e = event_from(None, None, None, None, Some("l".into()));
+        let e = event_from(None, false, None, None, None, Some("l".into()));
         assert_eq!(e, Some(("l".into(), StatusKind::Info)));
-        assert_eq!(event_from(None, None, None, None, None), None);
+        assert_eq!(event_from(None, false, None, None, None, None), None);
+        // A late worker message ranks below every other event, and still shows on its own.
+        let late = || Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok));
+        let e = event_from(
+            late(),
+            true,
+            Some(("a".into(), StatusKind::Error)),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(e, Some(("a".into(), StatusKind::Error)));
+        let e = event_from(late(), true, None, None, Some(("s".into(), false)), None);
+        assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
+        let e = event_from(late(), true, None, None, None, Some("l".into()));
+        assert_eq!(e, Some(("l".into(), StatusKind::Info)));
+        assert_eq!(event_from(late(), true, None, None, None, None), late());
     }
 
     #[test]

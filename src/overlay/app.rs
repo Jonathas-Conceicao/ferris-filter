@@ -173,6 +173,11 @@ pub struct OverlayApp {
     update: UpdateJob,
     /// The update outcome shown in the status line (an event message).
     update_message: Option<(String, w::StatusKind)>,
+    /// The update message came from the worker while another event message was showing (an
+    /// Apply, CONFIG, sync or list outcome of an action started during the check), so it ranks
+    /// below them instead of hiding them. A message set by a click on the UI thread is newest
+    /// and ranks first.
+    update_behind: bool,
     /// Where `begin_shutdown` leaves the verified installer for `launch()` to start once the
     /// event loop has returned (only after an explicit Install click).
     pending_install: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
@@ -1553,6 +1558,7 @@ impl OverlayApp {
             economy: economy::EconomySync::new(),
             update: UpdateJob::new(),
             update_message: None,
+            update_behind: false,
             pending_install: std::sync::Arc::new(std::sync::Mutex::new(None)),
             leagues: super::leagues::LeagueList::default(),
             reload: chat::ReloadSend::default(),
@@ -2228,7 +2234,19 @@ impl OverlayApp {
         }) {
             let (text, kind) = crate::update::checking_message();
             self.update_message = Some((text, update_kind(kind)));
+            self.update_behind = false;
         }
+    }
+
+    /// Takes a message the update worker delivered. It ranks first only when no other event
+    /// message is showing; otherwise that message belongs to an action the player started while
+    /// the check ran, and the update outcome waits behind it.
+    fn receive_update_message(&mut self, text: String, kind: crate::update::UpdateKind) {
+        self.update_behind = self.apply_message.is_some()
+            || self.config_message.is_some()
+            || self.list_status.is_some()
+            || matches!(self.economy.state(), economy::SyncState::Finished(_));
+        self.update_message = Some((text, update_kind(kind)));
     }
 
     /// An edit or a revert on either tab clears every event message (the Apply outcome, the list
@@ -2687,6 +2705,7 @@ impl OverlayApp {
         match self.update.begin_install() {
             InstallClick::Failed((text, kind)) => {
                 self.update_message = Some((text, update_kind(kind)));
+                self.update_behind = false;
                 false
             }
             InstallClick::NotReady => false,
@@ -3499,7 +3518,7 @@ impl eframe::App for OverlayApp {
             ui.ctx().request_repaint();
         }
         if let Some((text, kind)) = self.update.poll(win::utc_offset_minutes()) {
-            self.update_message = Some((text, update_kind(kind)));
+            self.receive_update_message(text, kind);
             ui.ctx().request_repaint();
         }
         if matches!(
@@ -3915,6 +3934,7 @@ impl eframe::App for OverlayApp {
         };
         let event = shell::event_from(
             self.update_message.clone(),
+            self.update_behind,
             self.apply_message.clone(),
             self.config_message.clone(),
             sync_outcome,
@@ -6023,8 +6043,14 @@ Hide
         );
         let (text, kind) = app.apply_message.clone().unwrap();
         assert_eq!(kind, StatusKind::Error, "{text}");
-        let event =
-            crate::overlay::shell::event_from(None, app.apply_message.clone(), None, None, None);
+        let event = crate::overlay::shell::event_from(
+            None,
+            false,
+            app.apply_message.clone(),
+            None,
+            None,
+            None,
+        );
         assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
     }
@@ -6092,6 +6118,7 @@ Hide
             root_error: None,
             event: shell::event_from(
                 None,
+                false,
                 app.apply_message.clone(),
                 app.config_message.clone(),
                 None,
@@ -6309,6 +6336,48 @@ Hide
         assert_eq!(app.update_message, None);
         app.tab = ShellTab::Rules;
         assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+    }
+
+    /// A worker message landing after the player started another action (here an Apply that was
+    /// refused) does not hide that action's outcome; with nothing else showing it ranks first.
+    #[test]
+    fn a_late_update_message_waits_behind_a_newer_apply_outcome() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.start_update_check();
+        assert!(!app.update_behind);
+        app.clear_events_on_edit();
+        app.apply_message = Some(("Apply refused.".to_string(), StatusKind::Error));
+        app.receive_update_message(
+            "Up to date (0.7.0)".to_string(),
+            crate::update::UpdateKind::Ok,
+        );
+        assert!(app.update_behind);
+        let event = |app: &super::OverlayApp| {
+            shell::event_from(
+                app.update_message.clone(),
+                app.update_behind,
+                app.apply_message.clone(),
+                app.config_message.clone(),
+                None,
+                app.list_status.clone(),
+            )
+        };
+        assert_eq!(
+            event(&app),
+            Some(("Apply refused.".to_string(), StatusKind::Error))
+        );
+
+        app.clear_events_on_edit();
+        app.receive_update_message(
+            "Up to date (0.7.0)".to_string(),
+            crate::update::UpdateKind::Ok,
+        );
+        assert!(!app.update_behind);
+        assert_eq!(
+            event(&app),
+            Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok))
+        );
     }
 
     #[test]

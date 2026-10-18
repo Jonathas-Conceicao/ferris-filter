@@ -3,10 +3,11 @@ gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
-last_updated: "2026-10-18T02:59:03.500Z"
-last_activity: 2026-10-18 -- Phase 36 planning complete
+stopped_at: Milestone v0.6 complete and archived
+last_updated: "2026-10-18T03:00:39.623Z"
+last_activity: 2026-10-18 -- Phase 36 execution started
 progress:
-  total_phases: 7
+  total_phases: 24
   completed_phases: 0
   total_plans: 7
   completed_plans: 0
@@ -20,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 36 - Per-user Locations & Embedded Defaults
+**Current focus:** Phase 36 — per-user-locations-embedded-defaults
 
 ## Current Position
 
-Phase: 36 of 42 (Per-user Locations & Embedded Defaults)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-10-18 -- Phase 36 planning complete
+Phase: 36 (per-user-locations-embedded-defaults) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 36
+Last activity: 2026-10-18 -- Phase 36 execution started
 
 ## Performance Metrics
 

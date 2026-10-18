@@ -44,13 +44,13 @@
 
 ### Built-in styles (BSTY)
 
-- [ ] **BSTY-01**: The built-in styles are the author's reworked set (snapshot:
+- [x] **BSTY-01**: The built-in styles are the author's reworked set (snapshot:
   `.planning/research/author-styles-2026-10-17.json`): only its built-ins `S`-`F`, `unchanged`
   and `hidden` become `styles-default.json`; no custom style ships (`Recycle`, `kite`,
   `exceptional`, `Build Items`, `White bases` are the author's own). `tiers-default.json` is
   unchanged.
 
-- [ ] **BSTY-02**: No built-in style uses a custom sound file.
+- [x] **BSTY-02**: No built-in style uses a custom sound file.
 - [ ] **BSTY-03**: A user's own `styles.json` is kept; built-in ids stay `builtin:S`..`builtin:F`.
 
 ### Strictness Selector (STRICT)
@@ -188,8 +188,8 @@
 | GAME-04 | Phase 37 | Complete |
 | GAME-05 | Phase 37 | Complete |
 | GAME-06 | Phase 37 | Complete |
-| BSTY-01 | Phase 38 | Pending |
-| BSTY-02 | Phase 38 | Pending |
+| BSTY-01 | Phase 38 | Complete |
+| BSTY-02 | Phase 38 | Complete |
 | BSTY-03 | Phase 38 | Pending |
 | STRICT-01 | Phase 38 | Pending |
 | STRICT-02 | Phase 38 | Pending |

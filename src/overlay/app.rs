@@ -49,6 +49,7 @@ use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
 use super::instance;
+use super::leagues::ListState;
 use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
 use super::shell::{self, ConfigBarInputs, Popup, PopupData, ShellTab, StatusInputs, StatusLine};
@@ -159,6 +160,11 @@ pub struct OverlayApp {
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
+
+    /// poe.ninja's league list for the Economy tab's picker: fetched on a worker the first time
+    /// the tab is shown in a session and on refresh, never at start-up, in tests or in
+    /// screenshot mode.
+    leagues: super::leagues::LeagueList,
 
     /// The one-shot `/reloaditemfilter` worker. At most one in flight: one Apply click, one
     /// command.
@@ -339,6 +345,17 @@ fn resolve_root() -> Result<PathBuf, String> {
 #[cfg(test)]
 fn resolve_root() -> Result<PathBuf, String> {
     Err("unit tests never resolve the FerrisFilter folder".to_string())
+}
+
+/// poe.ninja's economy league list. Unit tests never reach the network.
+#[cfg(not(test))]
+fn fetch_leagues() -> Result<Vec<crate::sync::models::EconomyLeague>, String> {
+    crate::sync::fetch_leagues_blocking().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn fetch_leagues() -> Result<Vec<crate::sync::models::EconomyLeague>, String> {
+    Err("unit tests never fetch the league list".to_string())
 }
 
 /// The economy body a staged **Add economy section** previews: priced with the CONFIG tab's pending
@@ -958,6 +975,8 @@ struct EconomyInfo {
     /// Why an existing prices.json is unusable (unreadable, malformed or without items). The
     /// file's mtime is then not a sync time, so `mtime_secs` is `None`.
     problem: Option<String>,
+    /// The league the file was synced for (None when absent, unusable or blank).
+    league: Option<String>,
 }
 
 impl EconomyInfo {
@@ -969,20 +988,26 @@ impl EconomyInfo {
             .and_then(|meta| meta.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
-        let (priced_items, problem) =
+        let (priced_items, problem, league) =
             match crate::loader::load_prices_optional(&path.to_string_lossy()) {
-                Ok(Some(p)) if p.items.is_empty() => {
-                    (0, Some("prices.json has no priced items.".to_string()))
+                Ok(Some(p)) if p.items.is_empty() => (
+                    0,
+                    Some("prices.json has no priced items.".to_string()),
+                    None,
+                ),
+                Ok(Some(p)) => {
+                    let league = (!p.league.trim().is_empty()).then(|| p.league.clone());
+                    (p.items.len(), None, league)
                 }
-                Ok(Some(p)) => (p.items.len(), None),
-                Ok(None) => (0, None),
-                Err(err) => (0, Some(err.to_string())),
+                Ok(None) => (0, None, None),
+                Err(err) => (0, Some(err.to_string()), None),
             };
         EconomyInfo {
             mtime_secs: if problem.is_some() { None } else { mtime_secs },
             priced_items,
             live: priced_items > 0,
             problem,
+            league,
         }
     }
 }
@@ -1083,6 +1108,22 @@ fn choose_unsaved_filter(settings: &mut Settings, game_dir: Option<&Path>, curre
 fn settings_with_reload(current: &Settings, on: bool) -> Settings {
     Settings {
         reload_after_apply: Some(on),
+        ..current.clone()
+    }
+}
+
+/// `current` with the economy league replaced; every other field and unknown key stays.
+fn settings_with_league(current: &Settings, name: &str) -> Settings {
+    Settings {
+        league: Some(name.to_string()),
+        ..current.clone()
+    }
+}
+
+/// `current` with the price source replaced (`true` = live prices, `false` = fallback pair).
+fn settings_with_price_source(current: &Settings, live: bool) -> Settings {
+    Settings {
+        price_source: Some(if live { "live" } else { "fallback" }.to_string()),
         ..current.clone()
     }
 }
@@ -1390,7 +1431,8 @@ impl OverlayApp {
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
-            reload: chat::ReloadSend::default(),
+            leagues: super::leagues::LeagueList::default(),
+            reload:chat::ReloadSend::default(),
             reload_pending: None,
             working,
             list: ListUi::default(),
@@ -1728,6 +1770,11 @@ impl OverlayApp {
     /// edit: it never touches the loaded filter or the CONFIG pending state.
     fn set_reload_after_apply(&mut self, on: bool) {
         let next = settings_with_reload(&self.settings, on);
+        self.save_view_setting(next);
+    }
+
+    /// Saves `next` at once; a failed save still applies it for the session and says so.
+    fn save_view_setting(&mut self, next: Settings) {
         let save_error = match &self.root {
             Ok(root) => settings::save(root, &next).err(),
             Err(_) => None,
@@ -1736,6 +1783,32 @@ impl OverlayApp {
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
+    }
+
+    /// Persist the picked economy league at once. Never touches the loaded filter or CONFIG
+    /// edits.
+    fn set_league(&mut self, name: &str) {
+        let next = settings_with_league(&self.settings, name);
+        self.save_view_setting(next);
+    }
+
+    /// Persist the price source at once (`true` = Live) and re-gate the tier cutoffs.
+    fn set_price_source(&mut self, live: bool) {
+        let next = settings_with_price_source(&self.settings, live);
+        self.save_view_setting(next);
+        self.sync_tiers_in_use();
+    }
+
+    /// The decided league UI for the Economy tab.
+    fn league_view(&self) -> super::leagues::LeagueView {
+        super::leagues::view(&super::leagues::ViewInputs {
+            saved: self.settings.saved_league(),
+            state: self.leagues.state(),
+            fetching: self.leagues.is_fetching(),
+            prices_league: self.economy_info.league.as_deref(),
+            fallback: self.settings.price_policy() == PriceSourcePolicy::ForceFallback,
+            syncing: self.economy.is_running(),
+        })
     }
 
     /// What the footer knows about the filter, for [`apply::footer_actions`]. The economy part
@@ -3064,6 +3137,9 @@ impl eframe::App for OverlayApp {
             self.prices_changed();
             ui.ctx().request_repaint();
         }
+        if self.leagues.poll() {
+            ui.ctx().request_repaint();
+        }
 
         // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here; the
         // actual close-the-viewport send is deferred to after the body renders. Quit is still the
@@ -3373,11 +3449,17 @@ impl eframe::App for OverlayApp {
                 config_actions = self.config_body(&mut cui, &skin, config_footer);
             }
             ShellTab::Economy => {
+                // The list is fetched the first time the tab is shown in a session (never in
+                // screenshot mode; unit tests get an error from the `fetch_leagues` twin).
+                if !self.is_shot() && matches!(self.leagues.state(), ListState::NotStarted) {
+                    self.leagues.start(fetch_leagues);
+                }
+                let view = self.league_view();
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
                 let inputs = shell::EconomyTabInputs {
-                    league: crate::sync::OVERLAY_LEAGUE,
+                    league: &view.options[view.selected],
                     mtime_secs: self.economy_info.mtime_secs,
                     now_secs,
                     utc_offset_minutes: win::utc_offset_minutes(),
@@ -3525,6 +3607,8 @@ impl eframe::App for OverlayApp {
             }
         }
         if economy_clicks.sync
+            && self.settings.price_policy() != PriceSourcePolicy::ForceFallback
+            && let Some(league) = self.league_view().sync_league
             && let Ok(root) = &self.root
         {
             // The app root, not the process working directory: the overlay can be launched from
@@ -3533,7 +3617,7 @@ impl eframe::App for OverlayApp {
             // prices, and the game sees them on the next Apply (author, 2026-09-10).
             let base_dir = root.clone();
             self.economy.start(move || {
-                crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
+                crate::sync::sync_economy_blocking(&base_dir, &league).map_err(|e| e.to_string())
             });
         }
 
@@ -6296,6 +6380,119 @@ Hide
         // A missing file is simply absent: no problem to report.
         std::fs::remove_file(dir.path().join("prices.json")).unwrap();
         assert_eq!(super::EconomyInfo::read(dir.path()).problem, None);
+        assert_eq!(super::EconomyInfo::read(dir.path()).league, None);
+    }
+
+    #[test]
+    fn economy_info_reads_the_prices_league() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/seed-prices.json");
+        let mut text: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&seed).unwrap()).unwrap();
+        text["league"] = serde_json::json!("Runes of Aldur");
+        std::fs::write(dir.path().join("prices.json"), text.to_string()).unwrap();
+        assert_eq!(
+            super::EconomyInfo::read(dir.path()).league.as_deref(),
+            Some("Runes of Aldur")
+        );
+        text["league"] = serde_json::json!("");
+        std::fs::write(dir.path().join("prices.json"), text.to_string()).unwrap();
+        assert_eq!(super::EconomyInfo::read(dir.path()).league, None);
+    }
+
+    #[test]
+    fn league_and_price_source_setters_keep_the_rest() {
+        let mut current = crate::settings::Settings {
+            filter: Some("a.filter".into()),
+            ..Default::default()
+        };
+        current.extra.insert("future".into(), serde_json::json!(1));
+        let next = super::settings_with_league(&current, "Runes of Aldur");
+        assert_eq!(next.league.as_deref(), Some("Runes of Aldur"));
+        assert_eq!(next.filter.as_deref(), Some("a.filter"));
+        assert_eq!(next.extra.get("future"), current.extra.get("future"));
+        assert_eq!(
+            super::settings_with_price_source(&current, false)
+                .price_source
+                .as_deref(),
+            Some("fallback")
+        );
+        assert_eq!(
+            super::settings_with_price_source(&current, true)
+                .price_source
+                .as_deref(),
+            Some("live")
+        );
+    }
+
+    fn six_leagues() -> Vec<crate::sync::models::EconomyLeague> {
+        const FIXTURE: &str = include_str!("../../tests/fixtures/index-state-2026-10-18.json");
+        serde_json::from_str::<crate::sync::models::IndexState>(FIXTURE)
+            .unwrap()
+            .economy_leagues
+    }
+
+    #[test]
+    fn set_league_saves_at_once_and_leaves_the_rest() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let dirty_before = app.config.as_ref().unwrap().is_dirty();
+        app.set_league("Runes of Aldur");
+        assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
+        let root = app.root.clone().unwrap();
+        let text = std::fs::read_to_string(crate::settings::path(&root)).unwrap();
+        assert!(text.contains("Runes of Aldur"), "{text}");
+        assert_eq!(app.config.as_ref().unwrap().is_dirty(), dirty_before);
+    }
+
+    #[test]
+    fn set_league_with_an_unwritable_root_keeps_the_choice_and_reports() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let file = app.root.clone().unwrap().join("not-a-folder");
+        std::fs::write(&file, "x").unwrap();
+        app.root = Ok(file);
+        app.set_league("Runes of Aldur");
+        assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
+        let (msg, problem) = app.config_message.clone().unwrap();
+        assert!(msg.starts_with("Could not save ff-settings.json: "), "{msg}");
+        assert!(problem);
+    }
+
+    #[test]
+    fn set_price_source_saves_and_gates_the_tiers() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.config.as_mut().unwrap().set_tier_text("A", "abc");
+        app.set_price_source(false);
+        assert_eq!(
+            app.settings.price_policy(),
+            crate::compile::PriceSourcePolicy::ForceFallback
+        );
+        let root = app.root.clone().unwrap();
+        let text = std::fs::read_to_string(crate::settings::path(&root)).unwrap();
+        assert!(text.contains("\"price_source\": \"fallback\""), "{text}");
+        assert!(app.config.as_ref().unwrap().validate().is_ok());
+        app.set_price_source(true);
+        assert!(app.config.as_ref().unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn league_view_follows_the_list_and_the_price_source() {
+        use crate::overlay::leagues::ListState;
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(matches!(app.leagues.state(), ListState::NotStarted));
+        app.leagues.inject(ListState::Loaded(six_leagues()));
+        assert_eq!(
+            app.league_view().sync_league.as_deref(),
+            Some("Forbidden Rites")
+        );
+        app.set_price_source(false);
+        assert_eq!(app.league_view().sync_league, None);
+    }
+
+    #[test]
+    fn the_test_fetch_twin_never_reaches_the_network() {
+        let err = super::fetch_leagues().unwrap_err();
+        assert_eq!(err, "unit tests never fetch the league list");
     }
 
     #[test]

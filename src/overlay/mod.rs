@@ -44,10 +44,11 @@ use hotkey::HotkeyStatus;
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
     // Hidden flag for the installer (it runs before copying files and on uninstall): ask the
-    // running instance to quit and exit with the outcome's code. It only opens the
-    // instance mutex, never creates it (the `-ready` / `-quit` events are opened with
-    // CreateEventW), so it can never become the running instance, and it registers no hotkey,
-    // tray or window.
+    // running instance to quit and exit with the outcome's code. It never creates the instance
+    // mutex, so it can never become the running instance. The `-ready` / `-quit` events are
+    // opened through CreateEventW; if the instance vanished in between, that creates a fresh
+    // event, which is detected (no ERROR_ALREADY_EXISTS) and reported as Unreachable. It
+    // registers no hotkey, tray or window.
     if instance::is_quit_args(std::env::args().skip(1)) {
         std::process::exit(instance::quit_exit_code(instance::quit_running()));
     }

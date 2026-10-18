@@ -98,11 +98,17 @@ pub async fn fetch_index_state<C: crate::sync::client::HttpClient>(
         .map_err(|e| miette::miette!("Cannot parse index-state response: {e}"))
 }
 
-/// The leagues poe.ninja currently lists for the economy, in poe.ninja's order.
+/// The leagues poe.ninja currently lists for the economy, in poe.ninja's order. An empty list
+/// carries no information (there is always at least Standard), so it is an error rather than a
+/// list in which every saved league looks ended.
 pub async fn list_leagues<C: crate::sync::client::HttpClient>(
     client: &C,
 ) -> miette::Result<Vec<EconomyLeague>> {
-    Ok(fetch_index_state(client).await?.economy_leagues)
+    let leagues = fetch_index_state(client).await?.economy_leagues;
+    if leagues.is_empty() {
+        miette::bail!("poe.ninja listed no economy leagues");
+    }
+    Ok(leagues)
 }
 
 /// The overlay's default league when nothing is saved: the first softcore league that is
@@ -199,6 +205,13 @@ mod tests {
     fn list_leagues_errors_without_panicking() {
         assert!(run(list_leagues(&FakeClient(Err("offline".into())))).is_err());
         assert!(run(list_leagues(&FakeClient(Ok("not json".into())))).is_err());
+    }
+
+    #[test]
+    fn an_empty_league_list_is_an_error() {
+        let empty = r#"{"economyLeagues": []}"#.to_string();
+        let err = run(list_leagues(&FakeClient(Ok(empty)))).unwrap_err();
+        assert!(err.to_string().contains("no economy leagues"), "{err}");
     }
 
     fn make_state(leagues: Vec<EconomyLeague>) -> IndexState {

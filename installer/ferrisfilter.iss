@@ -87,7 +87,7 @@ var
 begin
   Result := True;
   Exe := ExpandConstant('{app}\ff.exe');
-  { Fresh install: nothing of ours can be running from {app}. }
+  { Fresh install: nothing of ours can be running from the install folder. }
   if not FileExists(Exe) then exit;
   repeat
     { Exec failure: carry on, Restart Manager is the backstop. }

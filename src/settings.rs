@@ -140,6 +140,33 @@ pub fn path(root: &Path) -> PathBuf {
 /// synthetic keystrokes that can no longer be read, so it fails closed (review iteration 2, WR-02).
 /// A wrongly typed key or an invalid stored name falls back per key, with a warning. Never writes.
 pub fn load(root: &Path) -> (Settings, Option<String>) {
+    let loaded = load_detailed(root);
+    (loaded.settings, loaded.warning)
+}
+
+/// What [`load_detailed`] read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Loaded {
+    pub settings: Settings,
+    /// The warning [`load`] returns.
+    pub warning: Option<String>,
+    /// The `filter` key was present but unusable, or the whole file was: the filter name fell
+    /// back to `dynamic.filter`, as the warning says. A warning about other keys only leaves it
+    /// `false`.
+    pub filter_fell_back: bool,
+}
+
+/// [`load`], also saying whether the filter name itself fell back.
+pub fn load_detailed(root: &Path) -> Loaded {
+    let (settings, warning, filter_fell_back) = load_parts(root);
+    Loaded {
+        settings,
+        warning,
+        filter_fell_back,
+    }
+}
+
+fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
     let warn = |reason: String| {
         Some(format!(
             "{SETTINGS_FILE} could not be used ({reason}); using {DEFAULT_FILTER}."
@@ -155,11 +182,14 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                 "{SETTINGS_FILE} could not be used ({reason}); using {DEFAULT_FILTER}, \
                  and reload after Apply is off."
             )),
+            true,
         )
     };
     let text = match fs::read_to_string(path(root)) {
         Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return (Settings::default(), None, false);
+        }
         Err(e) => return unusable(e.to_string()),
     };
     let mut settings: Settings = match serde_json::from_str(&text) {
@@ -170,6 +200,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
             return match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
                 Ok(mut extra) => {
                     let mut fallbacks = Vec::new();
+                    let mut filter_fell_back = false;
                     let filter = match extra.remove("filter") {
                         Some(serde_json::Value::String(n)) if valid_filter_name(&n).is_ok() => {
                             Some(n)
@@ -177,6 +208,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                         None => None,
                         Some(_) => {
                             fallbacks.push(format!("using {DEFAULT_FILTER}"));
+                            filter_fell_back = true;
                             None
                         }
                     };
@@ -233,6 +265,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                             "{SETTINGS_FILE} could not be fully used ({e}); {}.",
                             fallbacks.join("; ")
                         )),
+                        filter_fell_back,
                     )
                 }
                 Err(_) => unusable(e.to_string()),
@@ -256,19 +289,21 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
         ));
     }
     match (bad_filter, bad_folder) {
-        (None, None) => (settings, None),
-        (Some(f), None) => (settings, warn(f)),
+        (None, None) => (settings, None, false),
+        (Some(f), None) => (settings, warn(f), true),
         (None, Some(g)) => (
             settings,
             Some(format!(
                 "{SETTINGS_FILE} could not be fully used ({g}); using the default game folder."
             )),
+            false,
         ),
         (Some(f), Some(g)) => (
             settings,
             Some(format!(
                 "{SETTINGS_FILE} could not be fully used ({f}; {g}); using {DEFAULT_FILTER} and the default game folder."
             )),
+            true,
         ),
     }
 }
@@ -898,6 +933,43 @@ mod tests {
         assert!(!s.reload_after_apply());
         assert!(w.contains("using dynamic.filter"), "{w}");
         assert!(!w.contains("reload_after_apply"), "{w}");
+    }
+
+    #[test]
+    fn filter_fell_back_only_when_the_filter_name_did() {
+        let cases: &[(Option<&str>, bool)] = &[
+            (None, false),
+            (Some(r#"{"filter":"a.filter"}"#), false),
+            (Some(r#"{"game_folder":"relative"}"#), false),
+            (Some(r#"{"reload_after_apply":"yes"}"#), false),
+            (Some(r#"{"collapsed_sections":[]}"#), false),
+            (
+                Some(r#"{"filter":"a.filter","reload_after_apply":"yes"}"#),
+                false,
+            ),
+            (Some(r#"{"filter":"../evil.filter"}"#), true),
+            (
+                Some(r#"{"filter":"../evil.filter","game_folder":"relative"}"#),
+                true,
+            ),
+            (Some(r#"{"filter":5}"#), true),
+            (Some(r#"{"filter":5,"reload_after_apply":"yes"}"#), true),
+            (Some("{ not json"), true),
+            (Some("[]"), true),
+        ];
+        for (text, fell_back) in cases {
+            let t = tempfile::tempdir().unwrap();
+            if let Some(text) = text {
+                fs::write(path(t.path()), text).unwrap();
+            }
+            let loaded = load_detailed(t.path());
+            assert_eq!(loaded.filter_fell_back, *fell_back, "{text:?}");
+            assert_eq!(
+                (loaded.settings, loaded.warning),
+                load(t.path()),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]

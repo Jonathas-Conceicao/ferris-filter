@@ -1317,15 +1317,18 @@ impl OverlayApp {
         game_dir: Option<PathBuf>,
     ) -> Self {
         // Settings: the remembered filter. Without a root nothing is read and nothing is saved.
-        let (mut settings, settings_warning) = match &root {
-            Ok(root) => settings::load(root),
-            Err(_) => (Settings::default(), None),
+        let (mut settings, settings_warning, filter_fell_back) = match &root {
+            Ok(root) => {
+                let loaded = settings::load_detailed(root);
+                (loaded.settings, loaded.warning, loaded.filter_fell_back)
+            }
+            Err(_) => (Settings::default(), None, false),
         };
         // A fresh install (no saved filter): use the folder's filter instead of a fixed name.
         // Held in memory only; opening the overlay never writes.
-        // A file that could not be used says it falls back to `dynamic.filter`, so that is what
-        // is opened then.
-        if settings_warning.is_none() {
+        // A stored name or a file that could not be used says it falls back to `dynamic.filter`,
+        // so that is what is opened then; a warning about another key changes nothing here.
+        if !filter_fell_back {
             let current = settings.filter_name().to_string();
             choose_unsaved_filter(&mut settings, game_dir.as_deref(), &current);
         }
@@ -2379,9 +2382,12 @@ impl OverlayApp {
         if self.root.is_err() {
             self.root = resolve_root();
         }
+        let mut filter_fell_back = false;
         let settings_warning = match &self.root {
             Ok(root) => {
-                let (settings, warning) = settings::load(root);
+                let loaded = settings::load_detailed(root);
+                let (settings, warning) = (loaded.settings, loaded.warning);
+                filter_fell_back = loaded.filter_fell_back;
                 // A momentarily unreadable file must not reset the session's chosen filter (nor
                 // drop unknown keys held in memory), but a reload-off from the file always wins.
                 self.settings = settings_after_reload(
@@ -2403,9 +2409,10 @@ impl OverlayApp {
         {
             self.game_dir = crate::locations::game_dir(self.settings.game_folder_path());
         }
-        // No saved filter: keep the one that was open when the folder still lists it. A warned
-        // load either kept the session's filter or says it falls back to `dynamic.filter`.
-        if settings_warning.is_none() {
+        // No saved filter: keep the one that was open when the folder still lists it. A load
+        // whose filter name fell back either kept the session's filter or says it uses
+        // `dynamic.filter`; a warning about another key changes nothing here.
+        if !filter_fell_back {
             choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref(), &open_filter);
         }
         self.reset_filter_state();
@@ -6354,6 +6361,22 @@ Hide
                 .as_deref()
                 .is_some_and(|s| s.contains("dynamic.filter"))
         );
+    }
+
+    #[test]
+    fn a_warning_about_another_key_still_selects_the_folders_filter() {
+        for text in [
+            r#"{"game_folder":"relative"}"#,
+            r#"{"reload_after_apply":"yes"}"#,
+            r#"{"collapsed_sections":[]}"#,
+        ] {
+            let (mut app, _ctx, _home, _game) = folder_app(Some(text), &["x.filter"]);
+            assert!(app.list_status.is_some(), "{text}: warned");
+            assert_eq!(app.settings.filter_name(), "x.filter", "{text}: build");
+            assert!(app.filter.is_ok(), "{text}");
+            app.reload();
+            assert_eq!(app.settings.filter_name(), "x.filter", "{text}: reload");
+        }
     }
 
     #[test]

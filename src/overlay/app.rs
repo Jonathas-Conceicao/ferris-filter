@@ -1020,6 +1020,7 @@ fn filter_target(
 fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     Settings {
         filter: Some(name.to_string()),
+        auto_filter: None,
         ..current.clone()
     }
 }
@@ -1030,6 +1031,7 @@ fn settings_with_folder(current: &Settings, path: &std::path::Path, name: &str) 
     Settings {
         game_folder: Some(path.to_string_lossy().into_owned()),
         filter: Some(name.to_string()),
+        auto_filter: None,
         ..current.clone()
     }
 }
@@ -1057,15 +1059,16 @@ fn settings_after_reload(
 }
 
 /// With no saved filter, selects one from `game_dir`'s listing: `current` when listed, else the
-/// first `.filter`; an empty or unreadable folder leaves the name as it is. Held in memory only
-/// (nothing is written), so every place that replaces the settings from disk (startup, RELOAD)
-/// applies it again and the overlay stays on the filter it had open.
+/// first `.filter`; an empty or unreadable folder leaves the name as it is. The pick goes to
+/// [`Settings::auto_filter`], which is never written (not even by a later save of another
+/// preference), so every place that replaces the settings from disk (startup, RELOAD) applies it
+/// again and the overlay stays on the filter it had open.
 fn choose_unsaved_filter(settings: &mut Settings, game_dir: Option<&Path>, current: &str) {
     if settings.filter.is_none()
         && let Some(list) = game_dir.and_then(|dir| settings::list_filters(dir).ok())
         && !list.is_empty()
     {
-        settings.filter = Some(settings::choose_filter(&list, current));
+        settings.auto_filter = Some(settings::choose_filter(&list, current));
     }
 }
 
@@ -1654,6 +1657,21 @@ impl OverlayApp {
     fn switch_to(&mut self, name: String) {
         let next = settings_with_filter(&self.settings, &name);
         self.adopt_settings(next);
+    }
+
+    /// Saves the open filter as the selected one, without reloading anything (it is already
+    /// open). A failed save still selects it for this session and says so.
+    fn remember_open_filter(&mut self) {
+        let name = self.settings.filter_name().to_string();
+        let next = settings_with_filter(&self.settings, &name);
+        let save_error = match &self.root {
+            Ok(root) => settings::save(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
     }
 
     /// Saves `next` as the settings now in force. A failed save still applies it for this
@@ -2669,7 +2687,13 @@ impl OverlayApp {
     fn select_filter(&mut self, name: String) {
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         match switch_decision(rules_dirty, self.settings.filter_name(), &name) {
-            SwitchDecision::Noop => self.pending_switch = None,
+            SwitchDecision::Noop => {
+                self.pending_switch = None;
+                // Picking the filter the overlay opened on its own makes it the selection.
+                if self.settings.filter.is_none() {
+                    self.remember_open_filter();
+                }
+            }
             SwitchDecision::Switch => self.switch_to(name),
             SwitchDecision::Confirm => self.pending_switch = Some(name),
         }
@@ -2693,6 +2717,7 @@ impl OverlayApp {
         let ctx = ConfigViewCtx {
             filters: filters.as_deref(),
             active_filter: self.settings.filter_name(),
+            active_filter_selected: self.settings.filter.is_some(),
             game_dir: self.game_dir.as_deref(),
             game_dir_missing: self.game_dir_missing,
             game_dir_pinned: self.game_dir_pinned,
@@ -6326,6 +6351,7 @@ Hide
     fn fresh_install_selects_the_folders_filter_in_memory_only() {
         let (app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
         assert_eq!(app.settings.filter_name(), "x.filter");
+        assert_eq!(app.settings.filter, None);
         assert!(!home.path().join("ff-settings.json").exists());
         assert!(app.filter.is_ok());
     }
@@ -6382,9 +6408,73 @@ Hide
     #[test]
     fn reload_keeps_the_open_unsaved_filter_among_several() {
         let (mut app, _ctx, _home, _game) = folder_app(None, &["a.filter", "b.filter"]);
-        app.settings.filter = Some("b.filter".to_string());
+        app.settings.auto_filter = Some("b.filter".to_string());
         app.reload();
         assert_eq!(app.settings.filter_name(), "b.filter");
+        assert_eq!(app.settings.filter, None);
+    }
+
+    fn saved_keys(home: &tempfile::TempDir) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_str(&settings_text(home)).unwrap()
+    }
+
+    #[test]
+    fn saving_the_reload_preference_does_not_select_the_open_filter() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        assert_eq!(app.settings.filter, None);
+        app.set_reload_after_apply(false);
+        let keys = saved_keys(&home);
+        assert_eq!(
+            keys.get("reload_after_apply"),
+            Some(&serde_json::json!(false))
+        );
+        assert!(!keys.contains_key("filter"), "{keys:?}");
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        assert!(!saved_keys(&home).contains_key("filter"));
+    }
+
+    #[test]
+    fn a_fold_that_creates_the_settings_file_does_not_select_the_open_filter() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        app.set_section_collapsed("Mine", false, true);
+        let keys = saved_keys(&home);
+        assert!(keys.contains_key("collapsed_sections"), "{keys:?}");
+        assert!(!keys.contains_key("filter"), "{keys:?}");
+        assert!(app.settings.section_collapsed("x.filter", "Mine", false));
+        assert_eq!(app.settings.filter_name(), "x.filter");
+    }
+
+    #[test]
+    fn picking_the_open_unselected_filter_saves_it() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        app.select_filter("x.filter".to_string());
+        assert_eq!(app.settings.filter.as_deref(), Some("x.filter"));
+        assert_eq!(
+            saved_keys(&home).get("filter"),
+            Some(&serde_json::json!("x.filter"))
+        );
+    }
+
+    #[test]
+    fn picking_another_filter_or_a_folder_saves_the_selection() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter", "y.filter"]);
+        app.select_filter("y.filter".to_string());
+        assert_eq!(
+            saved_keys(&home).get("filter"),
+            Some(&serde_json::json!("y.filter"))
+        );
+        assert_eq!(app.settings.auto_filter, None);
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(other.path().join("z.filter"), "Show\n").unwrap();
+        app.on_folder_picked(other.path().to_path_buf());
+        let keys = saved_keys(&home);
+        assert_eq!(keys.get("filter"), Some(&serde_json::json!("z.filter")));
+        assert_eq!(
+            keys.get("game_folder"),
+            Some(&serde_json::json!(other.path().to_string_lossy()))
+        );
     }
 
     #[test]

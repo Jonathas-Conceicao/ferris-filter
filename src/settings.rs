@@ -22,8 +22,15 @@ const MAX_NAME_LEN: usize = 200;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
+    /// The filter the user selected (a filter choice or a game-folder pick); saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    /// The filter the overlay opened on its own because none is selected (the folder's
+    /// `dynamic.filter`, else its first `.filter`). [`Settings::filter_name`] reads it after
+    /// `filter`, but it is never serialized: saving another preference does not turn it into a
+    /// selection, so `ff-cli apply` only ever targets a filter the user picked.
+    #[serde(skip)]
+    pub auto_filter: Option<String>,
     /// The game folder the user picked on the Config tab; absent means the default
     /// (`FERRISFILTER_GAME_DIR`, else Documents\My Games\Path of Exile 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,9 +113,12 @@ impl Settings {
         next
     }
 
-    /// The stored filter name, or `dynamic.filter`.
+    /// The selected filter name, else the automatic pick, else `dynamic.filter`.
     pub fn filter_name(&self) -> &str {
-        self.filter.as_deref().unwrap_or(DEFAULT_FILTER)
+        self.filter
+            .as_deref()
+            .or(self.auto_filter.as_deref())
+            .unwrap_or(DEFAULT_FILTER)
     }
 
     /// The saved game folder, only when it is a non-empty absolute path.
@@ -256,6 +266,7 @@ fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
                     (
                         Settings {
                             filter,
+                            auto_filter: None,
                             game_folder,
                             reload_after_apply,
                             collapsed_sections,
@@ -637,6 +648,31 @@ mod tests {
         assert!(w.is_some());
         assert_eq!(s.filter, None);
         assert_eq!(s.extra["future"]["a"], 1);
+    }
+
+    #[test]
+    fn the_automatic_filter_is_read_but_never_saved() {
+        let t = tempfile::tempdir().unwrap();
+        let s = Settings {
+            auto_filter: Some("x.filter".to_string()),
+            ..Settings::default()
+        };
+        assert_eq!(s.filter_name(), "x.filter");
+        save(t.path(), &s).unwrap();
+        assert!(
+            !fs::read_to_string(path(t.path()))
+                .unwrap()
+                .contains("x.filter")
+        );
+        assert!(save_section_state(t.path(), &s).unwrap());
+        let (back, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(back.filter_name(), "dynamic.filter");
+        let chosen = Settings {
+            filter: Some("y.filter".to_string()),
+            ..s
+        };
+        assert_eq!(chosen.filter_name(), "y.filter");
     }
 
     #[test]

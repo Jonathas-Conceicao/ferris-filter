@@ -161,6 +161,9 @@ pub struct ConfigViewCtx<'a> {
     /// `*.filter` names in the game folder; `None` when the folder cannot be read.
     pub filters: Option<&'a [String]>,
     pub active_filter: &'a str,
+    /// `active_filter` is saved as the user's selection (not just the filter the overlay opened
+    /// because none is selected).
+    pub active_filter_selected: bool,
     pub game_dir: Option<&'a Path>,
     /// The game folder is not on disk (refresh and the filter dropdown are disabled).
     pub game_dir_missing: bool,
@@ -400,7 +403,10 @@ fn show_filter(
                             .show_ui(ui, |ui| {
                                 for name in list {
                                     let is_active = name == ctx.active_filter;
-                                    if ui.selectable_label(is_active, name).clicked() && !is_active
+                                    // The open filter, when the overlay chose it on its own, can
+                                    // still be picked: that saves it as the selection.
+                                    if ui.selectable_label(is_active, name).clicked()
+                                        && (!is_active || !ctx.active_filter_selected)
                                     {
                                         actions.push(ConfigAction::SelectFilter(name.clone()));
                                     }
@@ -1246,6 +1252,7 @@ mod tests {
         ConfigViewCtx {
             filters,
             active_filter: "dynamic.filter",
+            active_filter_selected: true,
             game_dir: None,
             game_dir_missing: false,
             game_dir_pinned: false,

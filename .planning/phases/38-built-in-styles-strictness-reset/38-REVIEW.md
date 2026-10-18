@@ -2,6 +2,7 @@
 phase: 38-built-in-styles-strictness-reset
 reviewed: 2026-10-18T00:00:00Z
 depth: standard
+iteration: 2
 files_reviewed: 29
 files_reviewed_list:
   - src/compile.rs
@@ -35,166 +36,116 @@ files_reviewed_list:
   - CLAUDE.md
 findings:
   critical: 0
-  warning: 4
-  info: 4
-  total: 8
-status: issues_found
+  warning: 0
+  info: 5
+  total: 5
+status: clean
 ---
 
-# Phase 38: Code Review Report
+# Phase 38: Code Review Report (iteration 2)
 
 **Reviewed:** 2026-10-18
 **Depth:** standard
-**Files Reviewed:** 29
-**Status:** issues_found
+**Files Reviewed:** 29 (scope as in iteration 1; this pass focused on `git diff e6d2f16 HEAD`)
+**Status:** clean (no Critical or Warning findings remain; Info items carried over plus one new)
 
 ## Summary
 
-Reviewed the phase-38 diff (`87969dd..HEAD`): the new nine-built-in `styles-default.json`, the frozen
-`tests/fixtures/seed-styles.json` (byte-identical to the old default, line endings aside), the
-strictness model (`strictness.rs`, `ConfigState::set_strictness`/`strictness`), the style/tier reset
-model, the `ff_levels` widget, the Reset buttons and the two new popups, the FIX-01 tooltip change
-and the test re-pointing. I checked the shipped styles against
-`.planning/research/author-styles-2026-10-17.json`. The author-locked decisions in 38-CONTEXT.md are
-followed: only built-ins ship, generate tests use the frozen fixture, `generate` failing without a
-live `styles.json` is documented, and strictness is one row.
+This pass re-reviewed the four fix commits (efc9cb6, 85cc7ed, 78ddf24, 59f57ee) against
+iteration 1's WR-01..WR-04. I traced each change into its callers: `ff_button_ex`, the
+`ConfigAction::ResetTiers` dispatch, `tiers_reset_enabled`, `recompute_tier_errors`,
+`ValidatedTiers::try_from`, `tiers_dirty_count`/`tiers_equal` and `revert_scope`. I also checked
+whether the fixes cause regressions on this worktree's CRLF checkout:
+`tests/fixtures/seed-styles.json` and `tiers-default.json` are `w/crlf`, and `styles-default.json`
+is `w/lf`.
 
-The phase-38 unit tests pass (31 tests, run with `FERRISFILTER_HOME`/`FERRISFILTER_GAME_DIR` pointing
-at an empty temp dir). The model logic is sound: strictness matches tier styles by built-in id, does
-not touch non-tier or custom styles, and is derived rather than stored. Reset keeps custom ids and
-order. Adding the unit to the tier dirty count is a real fix.
+`cargo test --lib -- config_state defaults strictness` passes: 77 tests, run with
+`FERRISFILTER_HOME`/`FERRISFILTER_GAME_DIR` pointing at an empty temp dir. Among them are the new
+`reset_tiers_takes_default_order_when_file_order_would_not_validate` and the tightened
+`old_twelve_style_file_loads_and_keeps_its_bytes`, which now also passes against the CRLF seed
+fixture. That works because `styles_changed` is a semantic comparison, not a byte comparison.
+`cargo fmt --check` reports no diff in phase-38 files. Its only diffs are in
+`tests/isolation_guard.rs`, from phase 37, which is outside this scope.
 
-There are no blockers. The defects found:
-- The disabled Reset buttons can never show their "Already at the defaults." tooltip. This is an egui
-  enabled-flag mismatch.
-- `reset_tiers` clears validation state without re-validating.
-- One new test makes no assertion at all on one branch.
-- One new byte-exact test fails on a CRLF checkout.
+### Resolution of iteration-1 findings
 
-## Warnings
+| ID | Status | Notes |
+|----|--------|-------|
+| WR-01 | Resolved | Both Reset buttons now attach the state-dependent tip with `on_hover_text(tip).on_disabled_hover_text(tip)`, so the tip shows whichever way the response's enabled flag is set: a greyed button in an enabled Ui, or any button in a disabled Ui. `ff_button_ex` (`src/skin/widgets.rs:1155-1171`) confirms the greyed button uses `Sense::hover()` in an enabled Ui. No tooltip test exists. This is UI-only and listed for manual hover check in the fix report. |
+| WR-02 | Resolved | `reset_tiers` (`src/overlay/config_state.rs:329-345`) now calls `recompute_tier_errors()` after `resync_buffers()`. When the file order would not validate, it sorts into the default order. `tiers_at_defaults` also requires no edge error and no general error. Revert restores `tiers_applied` (the file order), and the per-frame `combined_dirty` sync (`app.rs:3223`) picks up the edit. Because the all-chaos defaults are strictly ascending, keeping the file order only happens when the file already lists the known tiers in F..S order, so the order fallback is consistent. One narrow residual case is noted as IN-05. |
+| WR-03 | Resolved | The assertion is now unconditional (`config_state.rs:1740-1747`). |
+| WR-04 | Resolved | The test normalises `\r\n` (`defaults.rs:186`). The other `STYLES_DEFAULT.text` uses (`defaults.rs:101,120,128,134`) parse JSON or search for a substring, so they do not depend on line endings. |
 
-### WR-01: "Already at the defaults." tooltip on both Reset buttons never shows
+## Info
 
-**File:** `src/overlay/config_view.rs:805-809`, `src/overlay/shell.rs:705-711`
-**Issue:** `ff_button_ex` shows a disabled button by giving it `Sense::hover()` inside a Ui that is
-still enabled (`src/skin/widgets.rs:1168-1173`). In egui 0.36 the `Flags::ENABLED` bit comes from
-the Ui's enabled state (`Context::get_response`, `res.flags.set(Flags::ENABLED, enabled)`), not from
-the sense. So the greyed Reset button's `Response::enabled()` is still `true`.
-`on_disabled_hover_text` opens its tooltip only when `!response.enabled()`
-(`Tooltip::for_disabled`). The `else` branch therefore shows nothing, and hovering a greyed Reset
-button gives no explanation. Neither the strictness tests nor the reset-button tests check tooltips,
-so the tests miss this.
-**Fix:** The response counts as enabled, so use `on_hover_text` in both branches (or chain both, as
-`config_view.rs:383`/`:447` already do):
-```rust
-let tip = if enabled {
-    "Restore the built-in styles. Your custom styles are kept."
-} else {
-    "Already at the defaults."
-};
-r = r.on_hover_text(tip).on_disabled_hover_text(tip);
-```
-Make the same change in `shell.rs` for the Tiers button.
+### IN-01: The Custom level's caption looks the same as every other unselected level (carried over)
 
-### WR-02: `reset_tiers` clears every tier error without re-validating, and keeps a file order the defaults may not be valid in
+**File:** `src/skin/editor.rs` (`ff_levels`, the `color` match)
+**Issue:** An unselected clickable level and the display-only Custom level are both painted in
+`pal::DISABLED`; only hover tells them apart. CONTEXT asks for Custom to be display-only with a dim
+caption. Because every unselected level is equally dim, nothing marks Custom as not clickable. This
+matches the `ff_segmented` convention, so it may be intentional.
+**Fix:** Paint unselected clickable segments in `pal::LABEL`, and keep `pal::DISABLED` for
+`!level.clickable`.
 
-**File:** `src/overlay/config_state.rs:331-339` (with `resync_buffers` at `:185-192`)
-**Issue:** `reset_tiers` copies the default `min`/`unit` into each entry in the **current file
-order**, then calls `resync_buffers`, which sets `self.errors = TierErrors::default()`.
-`recompute_tier_errors` is never called. `ValidatedTiers::try_from` checks ascending cutoffs **in
-file order per unit** (`models/tiers.rs:87-99`), so a `tiers.json` that loads fine in a non-`F..S`
-order can turn invalid after a reset. Example: a mixed-unit file `F,E,D,C (chaos), S (exalt 1),
-A (div 1), B (exalt 5)` loads. After the reset every row is chaos, and in file order the cutoffs read
-`0.1,0.5,2,8,30,20,12`, which is not ascending.
-- The editor then shows no edge error.
-- `tiers_at_defaults()` returns `true` (it checks only `errors.row`), so the Reset button greys out.
-- The problem first shows up as an Apply refusal.
+### IN-02: The Custom tooltip describes the user's own mix even when Custom is not the current state (carried over)
 
-Whatever the order, a reset should not leave the error state stale.
-**Fix:** Re-validate after the reset. Preferably also put the entries in the default order, since
-"defaults" includes an order that is known to validate:
+**File:** `src/overlay/strictness.rs:64-68`
+**Issue:** The tooltip reads "Your own mix of shown and hidden tiers. Pick a level to replace it."
+It also shows while a preset is selected, when the user has no own mix.
+**Fix:** Word it so it holds in both states (for example "Shown when the tiers match no level."),
+or pass the current level in and choose the text from it.
+
+### IN-03: No upgrade notice for rules styled with the old shipped custom styles (carried over)
+
+**File:** `styles-default.json` (removal of `Recycle`/`kite`/`exceptional`, ids `q8m3vz`/`t5hw2k`/`n7c4rj`)
+**Issue:** A user with no live `styles.json` may have `dynamic.filter` rules tagged
+`# ff:style q8m3vz Recycle` (and so on). After upgrading, those rules show `unknown style` and their
+actions stay frozen, with no explanation. CLAUDE.md documents the `generate` consequence but not
+this overlay-side one.
+**Fix:** Add one sentence to CLAUDE.md or the CHANGELOG draft: rules tagged with the removed styles
+show `unknown style` until the style is recreated (for example from `tests/fixtures/seed-styles.json`).
+
+### IN-04: The Reset buttons are laid over the section heading without reserving space (carried over)
+
+**File:** `src/overlay/config_view.rs:787-796`, `src/overlay/shell.rs:697-703`
+**Issue:** The 34pt button sits in a child Ui sized to the `ff_section` heading rect, over the right
+part of the gold underline. No space is allocated for it in the parent, so a long heading in a
+narrow window could run under the button. This is a visual issue only.
+**Fix:** Put the heading and the button in one horizontal row, or make the button shorter or offset
+it so the underline stays clear. Check with `--screenshot --tab config`.
+
+### IN-05: `reset_tiers` order fallback is not guaranteed to validate when `tiers.json` holds an unknown or duplicate tier name (new)
+
+**File:** `src/overlay/config_state.rs:337-341`
+**Issue:** `ValidatedTiers::try_from` requires that S..F are present but accepts extra entries, so a
+`tiers.json` with an extra `{ "tier": "X", ... }` or a second `"S"` entry loads. Two cases then go
+wrong:
+- **Unknown tier.** `reset_tiers` leaves it unchanged and sorts it last (`unwrap_or(usize::MAX)`).
+  If it shares the chaos unit with a lower cutoff, it now fails validation after S. The error goes
+  in `errors.row["X"]`, but `tier_rows` shows only S..F (`DISPLAY_ORDER`), so the message is never
+  displayed: S is highlighted as an edge, Apply is refused ("Fix the tier errors first"), and the
+  Reset button stays enabled because `tiers_at_defaults` is now `false`.
+- **Duplicate tier.** Both copies get the same default cutoff, which can never be strictly
+  ascending. `set_tier_text` edits only the first copy, so the user can clear the error only with
+  Revert.
+
+Before the fix, both cases gave a silent "at defaults" state that failed at Apply. Now they show an
+error, which is an improvement, but the docstring's claim that the default order validates holds
+only for a file containing exactly the seven known tiers. These files are not ones the app
+produces.
+**Fix:** Either drop unknown or duplicate entries during a reset, since "defaults" means exactly
+`tiers-default.json`:
 ```rust
 pub fn reset_tiers(&mut self) {
-    for entry in &mut self.tiers { /* copy min/unit as now */ }
-    let order = |t: &str| Self::default_tiers().iter().position(|d| d.tier == t);
-    self.tiers.sort_by_key(|e| order(&e.tier).unwrap_or(usize::MAX)); // optional
+    self.tiers = Self::default_tiers().to_vec();
     self.resync_buffers();
     self.recompute_tier_errors();
 }
 ```
-If the file order must stay (the current test pins it), keep only the `recompute_tier_errors()` call,
-and make `tiers_at_defaults` also require `self.errors.edges.is_empty() && self.errors.general.is_none()`.
-
-### WR-03: `old_twelve_style_file_loads_and_keeps_its_bytes` asserts nothing on one branch
-
-**File:** `src/overlay/config_state.rs` (test `old_twelve_style_file_loads_and_keeps_its_bytes`, `let w = s.prepare_write()...; if !w.styles_changed() { ... }`)
-**Issue:** The test is named for the property "the old 12-style file keeps its bytes". It only checks
-the bytes inside `if !w.styles_changed()`. If a regression made a clean load mark the styles as
-changed (for example an id migration or a re-serialisation), the `if` would skip the check and the
-test would still pass. The guarded property is exactly the one it claims to test.
-**Fix:**
-```rust
-let w = s.prepare_write().unwrap();
-assert!(!w.styles_changed(), "an untouched 12-style file must not be rewritten");
-assert_eq!(w.styles_new, fs::read(d.path().join("styles.json")).unwrap());
-```
-
-### WR-04: `shipped_styles_round_trip_through_render_styles` fails on a CRLF checkout
-
-**File:** `src/defaults.rs` (test `shipped_styles_round_trip_through_render_styles`)
-**Issue:** The test compares `render_styles(...)` (always `\n`) byte for byte with
-`STYLES_DEFAULT.text`, which is `include_str!` of the working-tree `styles-default.json`.
-`.gitattributes` gives that file `* text=auto` ("check out native on each OS"). On a Windows clone
-with `core.autocrlf=true` (the Git for Windows installer default), the file is checked out with CRLF
-and this test fails, although nothing is wrong. Today's tree happens to be LF. The phase targets an
-initial public release, so outside contributors on Windows will run into this.
-**Fix:** Either pin the file's line endings in `.gitattributes` (`styles-default.json text eol=lf`,
-and likewise `tiers-default.json`), or normalise in the test:
-`assert_eq!(render_styles(..), STYLES_DEFAULT.text.replace("\r\n", "\n"))`.
-
-## Info
-
-### IN-01: The Custom level's caption looks the same as every other unselected level
-
-**File:** `src/skin/editor.rs` (`ff_levels`, the `color` match)
-**Issue:** An unselected clickable level and the display-only Custom level are both painted in
-`pal::DISABLED`; only hover tells them apart. CONTEXT asks for Custom to be "display-only (… dim
-caption)". In this row every unselected level reads as dim, so the six live levels look as disabled
-as Custom. This matches the `ff_segmented` convention, so it may be intended, but the requirement to
-mark Custom as non-clickable is not shown visually.
-**Fix:** Paint unselected clickable segments in `pal::LABEL`, and keep `pal::DISABLED` for
-`!level.clickable`.
-
-### IN-02: The Custom tooltip describes the user's own mix even when Custom is not the current state
-
-**File:** `src/overlay/strictness.rs:64-68`
-**Issue:** The tooltip "Your own mix of shown and hidden tiers. Pick a level to replace it." also
-shows while a preset is selected, when no own mix exists.
-**Fix:** Word it so it holds in both states, for example "Shown when the tiers match no level.", or
-pass the current level in to pick the text.
-
-### IN-03: No upgrade notice for rules styled with the old shipped custom styles
-
-**File:** `styles-default.json` (removal of `Recycle`/`kite`/`exceptional`, ids `q8m3vz`/`t5hw2k`/`n7c4rj`)
-**Issue:** A user with no live `styles.json` whose `dynamic.filter` rules carry
-`# ff:style q8m3vz Recycle` (and so on) will see those rules flagged `unknown style` after
-upgrading. Their actions are then frozen as last written, and nothing says why. CONTEXT accepts that
-these styles no longer ship and covers only the `generate` consequence. This overlay-side effect is
-not documented in CLAUDE.md.
-**Fix:** Add a sentence to CLAUDE.md or the CHANGELOG draft: rules tagged with the removed styles show
-`unknown style` until the style is recreated (for example by copying it from
-`tests/fixtures/seed-styles.json`).
-
-### IN-04: The Reset buttons are laid over the section heading without reserving space
-
-**File:** `src/overlay/config_view.rs:787-796`, `src/overlay/shell.rs:697-703`
-**Issue:** The 34pt-high button is placed in a child Ui sized to the `ff_section` heading rect
-(galley height + 12). That rect also holds the gold underline painted at `rect.max.y - 5`, so the
-centred button sits over the right-hand part of the underline. Nothing is allocated in the parent,
-so with a narrow window a long heading could also run under the button. This is a visual issue
-only.
-**Fix:** Lay the heading and the button out in one horizontal row, or reduce the button height or
-offset so the underline stays clear. Check with `--screenshot --tab config --popup reset-styles`.
+This would also drop the file-order branch, which with all-chaos defaults only applies when the
+file is already in F..S order. Alternatively, keep the current behaviour and narrow the docstring to
+"for a file holding exactly S..F".
 
 ---
 

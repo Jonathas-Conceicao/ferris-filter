@@ -205,6 +205,10 @@ pub struct OverlayApp {
     /// differing effective source makes the economy section stale ([`Self::source_pending`]).
     applied_policy: PriceSourcePolicy,
 
+    /// `applied_policy` of every filter left this session, by path, so switching away and back
+    /// keeps a pending price-source change on that filter.
+    left_policies: std::collections::HashMap<PathBuf, PriceSourcePolicy>,
+
     /// The class catalogue for the class picker, from `config.json`. `Err` degrades the picker
     /// to the generic chip list; it never blocks editing.
     classes: Result<ClassCatalog, String>,
@@ -1467,6 +1471,7 @@ impl OverlayApp {
             econ_preview_failed: false,
             applied_this_session: false,
             applied_policy: settings.price_policy(),
+            left_policies: std::collections::HashMap::new(),
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
             styles_checked: 0.0,
@@ -1606,6 +1611,7 @@ impl OverlayApp {
     /// first `.filter`, else the current name), and both are saved in one write.
     fn apply_folder(&mut self, path: std::path::PathBuf) {
         self.pending_folder = None;
+        let left = self.open_filter_path();
         self.game_dir = Some(path.clone());
         self.refresh_filters();
         let name = settings::choose_filter(
@@ -1613,19 +1619,32 @@ impl OverlayApp {
             self.settings.filter_name(),
         );
         let next = settings_with_folder(&self.settings, &path, &name);
-        self.adopt_settings(next);
+        self.adopt_settings(next, left);
+    }
+
+    /// The path of the filter the settings select, when the game folder is known.
+    fn open_filter_path(&self) -> Option<PathBuf> {
+        filter_target(self.game_dir.as_deref(), self.settings.filter_name()).ok()
     }
 
     /// Saves `next` as the settings in force (a failed save still applies it for the session and
-    /// says so), then reloads everything that follows the filter and folder.
-    fn adopt_settings(&mut self, next: Settings) {
+    /// says so), then reloads everything that follows the filter and folder. `left` is the
+    /// filter being left, whose `applied_policy` is kept for a later return.
+    fn adopt_settings(&mut self, next: Settings, left: Option<PathBuf>) {
         let save_error = match &self.root {
             Ok(root) => settings::save(root, &next).err(),
             Err(_) => None,
         };
+        if let Some(left) = left {
+            self.left_policies.insert(left, self.applied_policy);
+        }
         self.settings = next;
-        // Another filter is another file: assumed written under the policy now in force.
-        self.applied_policy = self.settings.price_policy();
+        // A filter left earlier this session keeps the policy it was written under; any other is
+        // assumed written under the policy now in force.
+        self.applied_policy = self
+            .open_filter_path()
+            .and_then(|p| self.left_policies.get(&p).copied())
+            .unwrap_or_else(|| self.settings.price_policy());
         self.reset_filter_state();
         self.refresh_inputs();
         self.refresh_filters();
@@ -1739,8 +1758,9 @@ impl OverlayApp {
     /// Makes `name` the active filter now and remembers it. A failed save still switches for
     /// this session and says so.
     fn switch_to(&mut self, name: String) {
+        let left = self.open_filter_path();
         let next = settings_with_filter(&self.settings, &name);
-        self.adopt_settings(next);
+        self.adopt_settings(next, left);
     }
 
     /// Saves the open filter as the selected one, without reloading anything (it is already
@@ -7163,6 +7183,25 @@ Hide
         assert!(app.run_apply(&ctx, false), "{:?}", app.apply_message);
         assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
         assert!(!app.source_pending());
+    }
+
+    #[test]
+    fn a_pending_source_switch_survives_switching_to_another_filter_and_back() {
+        let (mut app, _ctx, rig) = economy_app();
+        let dir = rig.path.parent().unwrap().to_path_buf();
+        std::fs::write(dir.join("other.filter"), RULES).unwrap();
+        app.game_dir = Some(dir);
+        app.set_price_source(false);
+        assert!(app.source_pending());
+
+        app.switch_to("other.filter".to_string());
+        // The other filter is taken as written under the policy now in force.
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+        app.switch_to("dynamic.filter".to_string());
+        app.economy_info.live = true;
+        assert!(app.has_economy_section());
+        assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
+        assert!(app.source_pending());
     }
 
     #[test]

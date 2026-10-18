@@ -19,6 +19,13 @@ use super::slice;
 /// Height of a segmented switch.
 pub const SEGMENT_HEIGHT: f32 = 30.0;
 
+/// The id of segment `i` of a segmented control whose whole-control response is `resp`. Not
+/// `resp.id.with(i)`: egui names a widget's tooltip area `widget_id.with(0)`, so segment 0 would
+/// share its id with the control's own tooltip.
+fn segment_id(resp: &Response, i: usize) -> egui::Id {
+    resp.id.with(("segment", i))
+}
+
 /// A segmented switch on the game's button art: one segment per option, the selected one lit
 /// (hover art, pale gold caption). `width` of 0 fills the available width. Marks the response
 /// changed when the selection changes.
@@ -55,7 +62,7 @@ pub fn ff_segmented(
             pos2(rect.min.x + seg_w * i as f32, rect.min.y),
             vec2(seg_w, rect.height()),
         );
-        let r = ui.interact(seg, resp.id.with(i), Sense::click());
+        let r = ui.interact(seg, segment_id(&resp, i), Sense::click());
         let is_sel = *selected == i;
         r.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, is_sel, *opt));
         if r.clicked() && !is_sel {
@@ -182,7 +189,7 @@ pub fn ff_levels(
         } else {
             Sense::hover()
         };
-        let r = ui.interact(seg, resp.id.with(i), sense);
+        let r = ui.interact(seg, segment_id(&resp, i), sense);
         let is_sel = selected == i;
         let name = level.lines.join(" ");
         r.widget_info(|| {
@@ -889,5 +896,54 @@ mod tests {
         .drop_without_applying_deltas();
         assert_eq!(sel, 1);
         assert!(changed);
+    }
+
+    /// Hovers the first segment of `draw`'s control for several frames with tooltips shown at
+    /// once. egui's debug build asserts (panics) when a widget id is reused on another layer, which
+    /// is what a segment sharing its id with the control's tooltip area does.
+    fn hover_first_segment(draw: impl Fn(&mut Ui, &Skin) -> Rect) {
+        use egui::{Event, RawInput};
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+        let skin = Skin::load(&ctx);
+        let mut rect = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| rect = draw(ui, &skin))
+            .drop_without_applying_deltas();
+        let pos = pos2(rect.min.x + 10.0, rect.center().y);
+        for frame in 0..6 {
+            let input = RawInput {
+                time: Some(frame as f64 * 0.2),
+                events: if frame == 0 {
+                    vec![Event::PointerMoved(pos)]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                draw(ui, &skin);
+            })
+            .drop_without_applying_deltas();
+        }
+    }
+
+    #[test]
+    fn segmented_switch_tooltip_does_not_clash_with_its_first_segment() {
+        hover_first_segment(|ui, skin| {
+            let mut sel = 0;
+            ff_segmented(ui, skin, &mut sel, &["Live", "Fallback"], 200.0)
+                .on_hover_text("Price source")
+                .rect
+        });
+    }
+
+    #[test]
+    fn levels_row_tooltip_does_not_clash_with_its_first_segment() {
+        let levels = levels_of(false);
+        hover_first_segment(|ui, skin| {
+            ui.set_max_width(517.0);
+            ff_levels(ui, skin, 1, &levels).0.on_hover_text("Strictness").rect
+        });
     }
 }

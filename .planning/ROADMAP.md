@@ -228,7 +228,7 @@ Plans:
   4. `CHANGELOG.md` has a drafted `0.7.0` section from the net changes since v0.6
   5. The author has reviewed and rewritten `README.md` and the CHANGELOG section, and confirms the phase
 
-**Plans**: TBD
+**Plans**: 5 plans in 3 waves (42-01 cargo fmt, dead code / stale comments, v0.7 id sweep in code, worker dedupe or defer, before/after tests and clippy; 42-02 README screenshots re-taken + README fact fixes; 42-03 version 0.7.0 + CHANGELOG 0.7.0 draft and links; 42-04 CLAUDE.md sweep / consistency + ROADMAP Phase 40 wording; 42-05 author review of README and CHANGELOG, human checkpoint)
 
 ### Progress
 
@@ -240,7 +240,7 @@ Plans:
 | 39. League Picker & Price Source | 7/7 | Complete    | 2026-10-18 |
 | 40. Release Pipeline & Installer | 6/8 | In Progress|  |
 | 41. Check for Updates | 5/5 | Complete    | 2026-10-18 |
-| 42. Release Review | 0/0 | Not started | - |
+| 42. Release Review | 0/5 | Planned | - |
 
 </details>
 

@@ -24,6 +24,10 @@ const MAX_NAME_LEN: usize = 200;
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    /// The game folder the user picked on the Config tab; absent means the default
+    /// (`FERRISFILTER_GAME_DIR`, else Documents\My Games\Path of Exile 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_folder: Option<String>,
     /// Send /reloaditemfilter to the game after a RULES Apply that wrote the filter; absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload_after_apply: Option<bool>,
@@ -107,10 +111,22 @@ impl Settings {
         self.filter.as_deref().unwrap_or(DEFAULT_FILTER)
     }
 
+    /// The saved game folder, only when it is a non-empty absolute path.
+    pub fn game_folder_path(&self) -> Option<&Path> {
+        self.game_folder
+            .as_deref()
+            .filter(|s| usable_folder(s))
+            .map(Path::new)
+    }
+
     /// Whether Apply should reload the filter in game; on unless explicitly turned off.
     pub fn reload_after_apply(&self) -> bool {
         self.reload_after_apply.unwrap_or(true)
     }
+}
+
+fn usable_folder(s: &str) -> bool {
+    !s.is_empty() && Path::new(s).is_absolute()
 }
 
 /// `<root>/ff-settings.json`.
@@ -164,6 +180,17 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                             None
                         }
                     };
+                    let game_folder = match extra.remove("game_folder") {
+                        Some(serde_json::Value::String(s)) if usable_folder(&s) => Some(s),
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`game_folder` is not an absolute folder path, so the default game folder is used"
+                                    .to_string(),
+                            );
+                            None
+                        }
+                    };
                     // The reload sends synthetic keystrokes, so an opt-out that cannot be read
                     // fails closed: off, not the default on (review WR-04).
                     let reload_after_apply = match extra.remove("reload_after_apply") {
@@ -197,6 +224,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                     (
                         Settings {
                             filter,
+                            game_folder,
                             reload_after_apply,
                             collapsed_sections,
                             extra,
@@ -211,13 +239,49 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
             };
         }
     };
+    let mut bad_filter = None;
     if let Some(name) = settings.filter.clone()
         && let Err(problem) = valid_filter_name(&name)
     {
         settings.filter = None;
-        return (settings, warn(format!("`{name}`: {problem}")));
+        bad_filter = Some(format!("`{name}`: {problem}"));
     }
-    (settings, None)
+    let mut bad_folder = None;
+    if let Some(folder) = settings.game_folder.clone()
+        && !usable_folder(&folder)
+    {
+        settings.game_folder = None;
+        bad_folder = Some(format!(
+            "`game_folder` `{folder}` is not an absolute folder path"
+        ));
+    }
+    match (bad_filter, bad_folder) {
+        (None, None) => (settings, None),
+        (Some(f), None) => (settings, warn(f)),
+        (None, Some(g)) => (
+            settings,
+            Some(format!(
+                "{SETTINGS_FILE} could not be fully used ({g}); using the default game folder."
+            )),
+        ),
+        (Some(f), Some(g)) => (
+            settings,
+            Some(format!(
+                "{SETTINGS_FILE} could not be fully used ({f}; {g}); using {DEFAULT_FILTER} and the default game folder."
+            )),
+        ),
+    }
+}
+
+/// The filter to select after the game folder changed: the listed entry with the same name (listed
+/// spelling), else the first listed `.filter`, else `current` (a new file the first Apply creates).
+/// `dynamic.filter` is not special: it is just the default current name.
+pub fn choose_filter(list: &[String], current: &str) -> String {
+    list.iter()
+        .find(|n| n.eq_ignore_ascii_case(current))
+        .or_else(|| list.first())
+        .cloned()
+        .unwrap_or_else(|| current.to_string())
 }
 
 /// Persist the settings atomically (same-directory temp file, then replace).
@@ -372,6 +436,127 @@ pub fn contains_name(list: &[String], name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn abs_folder() -> &'static str {
+        if cfg!(windows) {
+            r"C:\Games\PoE2"
+        } else {
+            "/games/poe2"
+        }
+    }
+
+    #[test]
+    fn game_folder_absent_round_trips_byte_identically() {
+        let t = tempfile::tempdir().unwrap();
+        let body = "{\n  \"filter\": \"a.filter\",\n  \"future\": 1\n}\n";
+        fs::write(path(t.path()), body).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.game_folder, None);
+        save(t.path(), &s).unwrap();
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), body);
+    }
+
+    #[test]
+    fn game_folder_valid_loads() {
+        let t = tempfile::tempdir().unwrap();
+        let body = format!(
+            r#"{{"game_folder":"{}"}}"#,
+            abs_folder().replace('\\', "\\\\")
+        );
+        fs::write(path(t.path()), body).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.game_folder_path(), Some(Path::new(abs_folder())));
+    }
+
+    #[test]
+    fn game_folder_empty_or_relative_is_dropped_with_warning() {
+        for bad in ["", r"relative\\dir"] {
+            let t = tempfile::tempdir().unwrap();
+            let body = format!(
+                r#"{{"game_folder":"{bad}","filter":"a.filter","reload_after_apply":false,"future":1}}"#
+            );
+            fs::write(path(t.path()), &body).unwrap();
+            let (s, w) = load(t.path());
+            let w = w.unwrap_or_else(|| panic!("{bad:?}: no warning"));
+            assert!(w.contains("game_folder"), "{w}");
+            assert!(w.contains("default game folder"), "{w}");
+            assert_eq!(s.game_folder, None);
+            assert_eq!(s.game_folder_path(), None);
+            assert_eq!(s.filter_name(), "a.filter");
+            assert!(!s.reload_after_apply());
+            assert!(s.extra.contains_key("future"));
+            assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
+        }
+    }
+
+    #[test]
+    fn game_folder_and_filter_both_bad_names_both() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"game_folder":"rel","filter":"C:/x.filter"}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(w.contains("game_folder") && w.contains("filter"), "{w}");
+        assert_eq!(s.game_folder, None);
+        assert_eq!(s.filter, None);
+    }
+
+    #[test]
+    fn game_folder_wrong_type_is_salvaged() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"game_folder":42,"filter":"ssf.filter","reload_after_apply":false,"future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(w.contains("default game folder"), "{w}");
+        assert_eq!(s.game_folder, None);
+        assert_eq!(s.filter_name(), "ssf.filter");
+        assert!(!s.reload_after_apply());
+        assert!(!s.extra.contains_key("game_folder"));
+    }
+
+    #[test]
+    fn game_folder_unusable_file_is_none() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), "{not json").unwrap();
+        let (s, _) = load(t.path());
+        assert_eq!(s.game_folder, None);
+    }
+
+    #[test]
+    fn game_folder_saved_keeps_unknown_keys() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"future":{"a":1}}"#).unwrap();
+        let (mut s, _) = load(t.path());
+        s.game_folder = Some(abs_folder().to_string());
+        save(t.path(), &s).unwrap();
+        let (s2, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s2.game_folder_path(), Some(Path::new(abs_folder())));
+        assert_eq!(s2.extra["future"]["a"], 1);
+    }
+
+    #[test]
+    fn choose_filter_rule() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            choose_filter(&l(&["a.filter", "Dynamic.filter"]), "dynamic.filter"),
+            "Dynamic.filter"
+        );
+        assert_eq!(
+            choose_filter(&l(&["a.filter", "b.filter"]), "dynamic.filter"),
+            "a.filter"
+        );
+        assert_eq!(choose_filter(&[], "mine.filter"), "mine.filter");
+    }
 
     #[test]
     fn save_creates_missing_folders() {

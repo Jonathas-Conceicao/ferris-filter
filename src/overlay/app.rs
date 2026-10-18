@@ -2901,9 +2901,6 @@ impl OverlayApp {
         }
     }
 
-    /// RELOAD: re-resolves the app root when it could not be resolved, re-reads the filter and
-    /// discards in-memory state (D-08). A resolved root is kept (the environment cannot change
-    /// under a running process); the game folder is re-resolved outside unit tests.
     /// Marks the tier cutoffs unused while the saved price source is Fallback, so their errors
     /// cannot gate Apply (they return when Live is chosen again).
     fn sync_tiers_in_use(&mut self) {
@@ -2913,6 +2910,9 @@ impl OverlayApp {
         }
     }
 
+    /// RELOAD: re-resolves the app root when it could not be resolved, re-reads the filter and
+    /// discards in-memory state (D-08). A resolved root is kept (the environment cannot change
+    /// under a running process); the game folder is re-resolved outside unit tests.
     fn reload(&mut self) {
         let old_root = self.root.clone();
         let open_filter = self.settings.filter_name().to_string();
@@ -3585,9 +3585,9 @@ impl eframe::App for OverlayApp {
         {
             quit_requested = self.request_quit();
         }
-        // Apply & quit succeeded, or a quit request arrived mid-reload: leave once the in-game
-        // reload (if one started) has finished, so it is never cut off mid-sequence. The quit
-        // itself sends no keystrokes.
+        // Apply & quit leaves once the in-game reload has finished; a quit request that came
+        // mid-reload is asked again then (see `run_deferred_quit`). The quit itself sends no
+        // keystrokes.
         if !quit_requested && self.run_deferred_quit() {
             quit_requested = true;
         }
@@ -6488,7 +6488,7 @@ Hide
         assert_eq!(app.update_message, None);
     }
 
-    /// WR-01 (iteration 2): a refused Apply's Error line gives way to each tab's revert message,
+    /// A refused Apply's Error line gives way to each tab's revert message,
     /// economy staging clears a stale success, and a CONFIG edit clears the list status.
     #[test]
     fn reverts_staging_and_config_edits_clear_stale_events() {
@@ -7448,7 +7448,7 @@ Hide
         assert!(!app.config_ui.revert_armed);
     }
 
-    // ---- game folder pick (Phase 37-05) ----
+    // ---- game folder pick ----
 
     use crate::overlay::config_state::RevertScope;
     use crate::overlay::config_view::ConfigAction;
@@ -7835,7 +7835,7 @@ Hide
         );
     }
 
-    // ---- price-source switch marker, tier gate and ended league (Phase 39-05) ----
+    // ---- price-source switch marker, tier gate and ended league ----
 
     fn with_economy_section() -> String {
         format!(

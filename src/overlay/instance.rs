@@ -205,7 +205,8 @@ mod imp {
     };
     use windows_sys::Win32::System::Threading::{
         CreateEventW, CreateMutexW, GetCurrentProcessId, OpenMutexW, OpenProcess,
-        PROCESS_SYNCHRONIZE, ResetEvent, SetEvent, WaitForSingleObject,
+        PROCESS_SYNCHRONIZE, ResetEvent, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
+        WaitForSingleObject,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
@@ -603,7 +604,7 @@ mod imp {
     /// instance, `Ok(None)` = no such mutex, `Err(code)` = it exists but cannot be opened.
     fn open_mutex(name: &[u16]) -> Result<Option<HANDLE>, u32> {
         // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
-        let h = unsafe { OpenMutexW(PROCESS_SYNCHRONIZE, 0, name.as_ptr()) };
+        let h = unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, 0, name.as_ptr()) };
         // SAFETY: plain thread-local error read, immediately after the call.
         let err = unsafe { GetLastError() };
         if !h.is_null() {

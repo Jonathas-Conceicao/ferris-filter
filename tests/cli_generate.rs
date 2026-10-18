@@ -258,10 +258,11 @@ fn generate_config_flag_reads_alternate_path() {
 /// which made `sync --standard` fail with "unexpected argument '--standard'".
 #[test]
 fn sync_help_shows_league_flags() {
-    let home = std::env::temp_dir();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
     Command::cargo_bin("ferrisfilter")
         .unwrap()
-        .env("FERRISFILTER_HOME", &home)
+        .env("FERRISFILTER_HOME", home)
         .env("FERRISFILTER_GAME_DIR", home.join("game"))
         .args(["sync", "--help"])
         .assert()

@@ -38,6 +38,8 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 rustls = { version = "0.23", features = ["ring"] }
 tokio   = { version = "1", features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
+semver = "1"
+ring = "0.17"
 dirs = "6"
 eframe  = "0.36"
 egui    = "0.36"

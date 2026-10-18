@@ -935,7 +935,7 @@ impl StyleSet {
     pub(crate) fn committed_for_tests() -> StyleSet {
         let mut set: StyleSet = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles-default.json"
+            "/tests/fixtures/seed-styles.json"
         )))
         .unwrap_or_else(|e| panic!("styles-default.json failed to parse: {e}"));
         set.assign_missing_ids();
@@ -1513,7 +1513,10 @@ mod tests {
     #[test]
     fn config_rejects_bad_enum_color() {
         // inject an invalid color name "Mauve" into styles.json
-        let styles_json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
+        let styles_json = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-styles.json"
+        ));
         let bad = styles_json.replace("\"Pink\"", "\"Mauve\"");
         let result: Result<StyleSet, _> = serde_json::from_str(&bad);
         assert!(
@@ -2137,8 +2140,10 @@ mod tests {
     // StyleSet (Phase 17)
     // -----------------------------------------------------------------------
 
-    const STYLES_JSON: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
+    const STYLES_JSON: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/seed-styles.json"
+    ));
     const DYNAMIC_BASE_JSON: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/v04-dynamic-base.json"

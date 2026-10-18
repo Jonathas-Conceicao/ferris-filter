@@ -47,7 +47,7 @@ mod tests {
         let dir = env!("CARGO_MANIFEST_DIR");
         crate::loader::load_config(
             &format!("{dir}/config.json"),
-            &format!("{dir}/styles-default.json"),
+            &format!("{dir}/tests/fixtures/seed-styles.json"),
         )
         .unwrap()
     }

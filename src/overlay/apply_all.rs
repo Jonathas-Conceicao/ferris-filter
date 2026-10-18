@@ -458,7 +458,7 @@ mod tests {
         /// The defaults copied in as the live `styles.json` / `tiers.json`.
         fn new() -> Fixture {
             Fixture::build(&[
-                ("styles-default.json", "styles.json"),
+                ("tests/fixtures/seed-styles.json", "styles.json"),
                 ("tiers-default.json", "tiers.json"),
             ])
         }
@@ -466,7 +466,7 @@ mod tests {
         /// Only the committed defaults under their own names: no live file (DEF-03).
         fn with_defaults() -> Fixture {
             Fixture::build(&[
-                ("styles-default.json", "styles-default.json"),
+                ("tests/fixtures/seed-styles.json", "styles-default.json"),
                 ("tiers-default.json", "tiers-default.json"),
             ])
         }

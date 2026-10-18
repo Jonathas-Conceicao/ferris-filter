@@ -453,7 +453,7 @@ mod tests {
         )
         .unwrap();
         fs::copy(
-            repo_file("styles-default.json"),
+            repo_file("tests/fixtures/seed-styles.json"),
             dir.path().join("styles.json"),
         )
         .unwrap();
@@ -565,7 +565,7 @@ mod tests {
         )
         .unwrap();
         fs::copy(
-            repo_file("styles-default.json"),
+            repo_file("tests/fixtures/seed-styles.json"),
             empty.path().join("styles.json"),
         )
         .unwrap();
@@ -615,7 +615,7 @@ mod tests {
         )
         .unwrap();
         fs::copy(
-            repo_file("styles-default.json"),
+            repo_file("tests/fixtures/seed-styles.json"),
             empty.path().join("styles.json"),
         )
         .unwrap();

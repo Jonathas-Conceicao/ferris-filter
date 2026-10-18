@@ -3985,7 +3985,7 @@ mod tests {
     fn config_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -4780,7 +4780,8 @@ mod tests {
     fn styles_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("styles-default.json"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/seed-styles.json"),
             dir.path().join("styles.json"),
         )
         .unwrap();
@@ -5481,7 +5482,7 @@ Hide
         let (mut app, ctx) = popup_app(RULES);
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -5554,7 +5555,7 @@ Hide
         let (mut app, ctx) = popup_app(RULES);
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -5576,7 +5577,7 @@ Hide
     fn config_with_defaults(app: &mut super::OverlayApp) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(

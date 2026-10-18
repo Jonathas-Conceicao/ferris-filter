@@ -1213,7 +1213,7 @@ mod tests {
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             fs::copy(

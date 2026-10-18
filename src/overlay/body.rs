@@ -4046,7 +4046,7 @@ mod tests {
         let dir = env!("CARGO_MANIFEST_DIR");
         let cfg = crate::loader::load_config(
             &format!("{dir}/config.json"),
-            &format!("{dir}/styles-default.json"),
+            &format!("{dir}/tests/fixtures/seed-styles.json"),
         )
         .unwrap();
         ClassCatalog::from_config(&cfg)
@@ -5686,7 +5686,7 @@ mod tests {
         let mut wf = WorkingFilter::from_text(src);
         wf.set_styles(Ok(crate::loader::load_styles(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles-default.json"
+            "/tests/fixtures/seed-styles.json"
         ))
         .unwrap()));
         wf
@@ -5694,9 +5694,11 @@ mod tests {
 
     #[test]
     fn style_owned_follows_style_output() {
-        let set =
-            crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
-                .unwrap();
+        let set = crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-styles.json"
+        ))
+        .unwrap();
         assert!(style_owned(set.get("S").unwrap(), "SetFontSize"));
         assert!(style_owned(set.get("S").unwrap(), "PlayEffect"));
         for kw in crate::filter::keywords::KEYWORDS

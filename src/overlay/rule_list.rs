@@ -1910,7 +1910,7 @@ Show
         let mut wf = WorkingFilter::from_text(&src);
         wf.set_styles(Ok(crate::loader::load_styles(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles-default.json"
+            "/tests/fixtures/seed-styles.json"
         ))
         .unwrap()));
         wf
@@ -2042,7 +2042,7 @@ Show
         let mut wf = wf;
         wf.set_styles(Ok(crate::loader::load_styles(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles-default.json"
+            "/tests/fixtures/seed-styles.json"
         ))
         .unwrap()));
         let f = flags_for(&wf.rows()[0]);
@@ -2057,7 +2057,7 @@ Show
         assert_eq!(wf.rows()[0].chip_icon, None);
         wf.set_styles(Ok(crate::loader::load_styles(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles-default.json"
+            "/tests/fixtures/seed-styles.json"
         ))
         .unwrap()));
         assert_eq!(wf.rows()[0].chip_icon, Some((0, 9)));
@@ -2727,7 +2727,7 @@ Show
             let mut wf = WorkingFilter::from_text(src);
             wf.set_styles(Ok(crate::loader::load_styles(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/styles-default.json"
+                "/tests/fixtures/seed-styles.json"
             ))
             .unwrap()));
             let ctx = headless_ctx();

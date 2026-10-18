@@ -378,8 +378,8 @@ mod tests {
 
     #[test]
     fn styles_str_equals_file_loader() {
-        let from_text = load_styles_str(&text("styles-default.json"), "x").unwrap();
-        let from_file = load_styles(&repo("styles-default.json")).unwrap();
+        let from_text = load_styles_str(&text("tests/fixtures/seed-styles.json"), "x").unwrap();
+        let from_file = load_styles(&repo("tests/fixtures/seed-styles.json")).unwrap();
         assert_eq!(format!("{from_text:?}"), format!("{from_file:?}"));
     }
 
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn config_str_equals_file_loader() {
-        let styles_path = repo("styles-default.json");
+        let styles_path = repo("tests/fixtures/seed-styles.json");
         let styles = load_styles(&styles_path).unwrap();
         let from_text = load_config_str_with_live(
             &text("config.json"),
@@ -490,7 +490,10 @@ mod tests {
         ValidatedTiers::try_from(back).unwrap();
     }
 
-    const STYLES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
+    const STYLES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/seed-styles.json"
+    ));
 
     fn load_text(text: &str) -> Result<StyleSet, LoadError> {
         let dir = tempfile::tempdir().unwrap();

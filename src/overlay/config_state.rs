@@ -724,7 +724,7 @@ mod tests {
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             fs::copy(
@@ -1464,7 +1464,10 @@ mod tests {
     #[test]
     fn committed_styles_default_carries_every_id() {
         let mut set: StyleSet = serde_json::from_slice(
-            &fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("styles-default.json")).unwrap(),
+            &fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/seed-styles.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert!(!set.assign_missing_ids());

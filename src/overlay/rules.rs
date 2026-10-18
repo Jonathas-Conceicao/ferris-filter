@@ -2333,8 +2333,11 @@ Show # Unique A
     }
 
     fn test_styles() -> StyleSet {
-        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
-            .expect("styles.json")
+        crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-styles.json"
+        ))
+        .expect("styles.json")
     }
 
     fn styled_wf(text: &str) -> WorkingFilter {

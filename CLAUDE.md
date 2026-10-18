@@ -290,7 +290,9 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > and `SHA256SUMS.txt` are downloaded into `%TEMP%\FerrisFilter-update-*` and hash-checked, then the
 > button reads `Install <ver> and quit`. The click re-checks the installer and goes through the
 > normal Quit path (the Unapplied changes popup; Cancel or a refused Apply drops the intent), and the
-> installer is started only after the hotkey, tray icon and instance name are released. Any other
+> installer is started only after the hotkey, tray icon and instance name are released, hashed once
+> more right before (through a handle that keeps it from being rewritten or deleted until the
+> wizard has started; a mismatch or a missing file shows an error box instead). Any other
 > quit deletes the download (a partial one too); update folders older than 24 h are swept at the next
 > check. Every result shows in the status line. Code: `src/update.rs` (logic, the `UpdateHttp` test
 > seam) and `src/overlay/update_job.rs` (the button's state model).

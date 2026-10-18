@@ -180,7 +180,7 @@ pub struct OverlayApp {
     update_behind: bool,
     /// Where `begin_shutdown` leaves the verified installer for `launch()` to start once the
     /// event loop has returned (only after an explicit Install click).
-    pending_install: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
+    pending_install: std::sync::Arc<std::sync::Mutex<Option<crate::update::ReadyUpdate>>>,
 
     /// poe.ninja's league list for the Economy tab's picker: fetched on a worker the first time
     /// the tab is shown in a session and on refresh, never at start-up, in tests or in
@@ -1274,7 +1274,7 @@ impl OverlayApp {
         hotkey_status: HotkeyStatus,
         instance: instance::Guard,
         skin: Skin,
-        pending_install: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
+        pending_install: std::sync::Arc<std::sync::Mutex<Option<crate::update::ReadyUpdate>>>,
     ) -> Self {
         let root = resolve_root();
         let game_dir = startup_game_dir(&root);
@@ -2690,10 +2690,10 @@ impl OverlayApp {
         self.instance = None;
         // Hand a clicked-for installer to `launch()`, which starts it after the event loop has
         // returned; any other quit deletes the download here.
-        if let Some(path) = self.update.shutdown()
+        if let Some(ready) = self.update.shutdown()
             && let Ok(mut slot) = self.pending_install.lock()
         {
-            *slot = Some(path);
+            *slot = Some(ready);
         }
     }
 
@@ -6224,7 +6224,11 @@ Hide
     }
 
     fn handed_off(app: &super::OverlayApp) -> Option<std::path::PathBuf> {
-        app.pending_install.lock().unwrap().clone()
+        app.pending_install
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|r| r.installer.clone())
     }
 
     #[test]

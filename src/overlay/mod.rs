@@ -101,7 +101,8 @@ pub fn launch() -> eframe::Result<()> {
         .expect("failed to build the system tray icon");
     let options = native_options();
 
-    let pending_install = std::sync::Arc::new(std::sync::Mutex::new(None::<std::path::PathBuf>));
+    let pending_install =
+        std::sync::Arc::new(std::sync::Mutex::new(None::<crate::update::ReadyUpdate>));
     let app_slot = pending_install.clone();
     let result = eframe::run_native(
         "ferrisfilter",
@@ -125,14 +126,12 @@ pub fn launch() -> eframe::Result<()> {
     // eframe 0.36 `run_and_return` defaults to true, so `run_native` returns once the window
     // closed. By then `begin_shutdown` released the hotkey, tray and instance name, so the
     // installer's own `ff --quit` finds nothing running.
+    // The installer is hashed once more right before it starts.
     let installer = pending_install.lock().ok().and_then(|mut p| p.take());
-    if let Some(path) = installer
-        && let Err(cause) = crate::update::spawn_installer(&path)
+    if let Some(ready) = installer
+        && let Err(err) = crate::update::launch_verified_installer(&ready.installer, &ready.sha256)
     {
-        instance::notify_error(&format!(
-            "Could not start the FerrisFilter installer: {cause}. It was saved to {}.",
-            path.display()
-        ));
+        instance::notify_error(&crate::update::launch_error_text(&ready, &err));
     }
     result
 }

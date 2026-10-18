@@ -178,7 +178,11 @@ pub fn hex_lower(bytes: &[u8]) -> String {
 
 /// SHA-256 of a file, streamed in 64 KiB reads.
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    let mut f = std::fs::File::open(path)?;
+    sha256_reader(&mut std::fs::File::open(path)?)
+}
+
+/// SHA-256 of everything `f` yields, as lowercase hex.
+fn sha256_reader(f: &mut impl Read) -> std::io::Result<String> {
     let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buf = vec![0u8; 64 * 1024];
     loop {
@@ -209,6 +213,76 @@ pub fn verify_installer(path: &Path, expected_hex: &str) -> Result<(), Installer
     } else {
         Err(InstallerCheck::Mismatch)
     }
+}
+
+/// Why the installer was not started at quit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchError {
+    /// The file failed its last check (missing, unreadable or a different hash).
+    Check(InstallerCheck),
+    /// The checked file could not be started.
+    Spawn(String),
+}
+
+/// Start the downloaded installer, checking its SHA-256 right before: the file is opened with a
+/// handle that lets other processes read it but not write, rename or delete it, hashed through
+/// that handle, and the handle stays open until the child process has started. So the file that
+/// runs is the file that was checked.
+pub fn launch_verified_installer(path: &Path, expected_hex: &str) -> Result<(), LaunchError> {
+    launch_verified_with(path, expected_hex, spawn_installer)
+}
+
+fn launch_verified_with(
+    path: &Path,
+    expected_hex: &str,
+    spawn: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), LaunchError> {
+    let mut file = open_read_locked(path).map_err(|_| LaunchError::Check(InstallerCheck::Gone))?;
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(LaunchError::Check(InstallerCheck::Gone));
+    }
+    let actual = sha256_reader(&mut file).map_err(|_| LaunchError::Check(InstallerCheck::Gone))?;
+    if !actual.eq_ignore_ascii_case(expected_hex) {
+        return Err(LaunchError::Check(InstallerCheck::Mismatch));
+    }
+    let started = spawn(path).map_err(LaunchError::Spawn);
+    drop(file);
+    started
+}
+
+/// The error box text when the installer was not started at quit.
+pub fn launch_error_text(ready: &ReadyUpdate, err: &LaunchError) -> String {
+    let version = &ready.version;
+    match err {
+        LaunchError::Check(InstallerCheck::Gone) => format!(
+            "The FerrisFilter {version} installer is no longer there, so it was not started. \
+             Check for updates again."
+        ),
+        LaunchError::Check(InstallerCheck::Mismatch) => format!(
+            "The FerrisFilter {version} installer changed after it was checked and no longer \
+             matches its checksum, so it was not started. Check for updates again."
+        ),
+        LaunchError::Spawn(cause) => format!(
+            "Could not start the FerrisFilter installer: {cause}. It was saved to {}.",
+            ready.installer.display()
+        ),
+    }
+}
+
+/// Open `path` for reading while refusing writers and deleters for as long as the handle lives.
+#[cfg(windows)]
+fn open_read_locked(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_read_locked(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -798,6 +872,92 @@ mod tests {
     fn spawn_installer_missing_path_errors() {
         let dir = tempfile::tempdir().unwrap();
         assert!(spawn_installer(&dir.path().join("nope-setup.exe")).is_err());
+    }
+
+    fn installer_in(dir: &Path) -> (PathBuf, String) {
+        let path = dir.join("FerrisFilter-0.8.0-setup.exe");
+        std::fs::write(&path, b"installer bytes").unwrap();
+        let hex = sha256_file(&path).unwrap();
+        (path, hex)
+    }
+
+    #[test]
+    fn launch_starts_a_matching_installer_while_it_is_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut started = false;
+        let r = launch_verified_with(&path, &hex.to_uppercase(), |p| {
+            assert_eq!(p, path.as_path());
+            started = true;
+            // The checked file stays readable but cannot be rewritten or deleted meanwhile.
+            assert_eq!(std::fs::read(p).unwrap(), b"installer bytes");
+            #[cfg(windows)]
+            {
+                assert!(std::fs::OpenOptions::new().write(true).open(p).is_err());
+                assert!(std::fs::remove_file(p).is_err());
+            }
+            Ok(())
+        });
+        assert_eq!(r, Ok(()));
+        assert!(started);
+        // The lock ends once the child has started.
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn launch_refuses_a_changed_or_missing_installer_without_starting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        std::fs::write(&path, b"other bytes").unwrap();
+        let never = |_: &Path| -> Result<(), String> { panic!("must not start") };
+        assert_eq!(
+            launch_verified_with(&path, &hex, never),
+            Err(LaunchError::Check(InstallerCheck::Mismatch))
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            launch_verified_with(&path, &hex, never),
+            Err(LaunchError::Check(InstallerCheck::Gone))
+        );
+        assert_eq!(
+            launch_verified_with(dir.path(), &hex, never),
+            Err(LaunchError::Check(InstallerCheck::Gone))
+        );
+    }
+
+    #[test]
+    fn launch_reports_a_spawn_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        assert_eq!(
+            launch_verified_with(&path, &hex, |_| Err("denied".to_string())),
+            Err(LaunchError::Spawn("denied".to_string()))
+        );
+    }
+
+    #[test]
+    fn launch_error_texts() {
+        let ready = ReadyUpdate {
+            version: "0.8.0".to_string(),
+            published_unix: None,
+            installer: PathBuf::from("x-setup.exe"),
+            sha256: String::new(),
+        };
+        let text = |e: LaunchError| launch_error_text(&ready, &e);
+        assert_eq!(
+            text(LaunchError::Check(InstallerCheck::Gone)),
+            "The FerrisFilter 0.8.0 installer is no longer there, so it was not started. \
+             Check for updates again."
+        );
+        assert_eq!(
+            text(LaunchError::Check(InstallerCheck::Mismatch)),
+            "The FerrisFilter 0.8.0 installer changed after it was checked and no longer \
+             matches its checksum, so it was not started. Check for updates again."
+        );
+        assert_eq!(
+            text(LaunchError::Spawn("denied".to_string())),
+            "Could not start the FerrisFilter installer: denied. It was saved to x-setup.exe."
+        );
     }
 
     #[test]

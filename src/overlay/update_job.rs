@@ -268,14 +268,15 @@ impl UpdateJob {
         }
     }
 
-    /// Called once when the app shuts down. Returns the installer to launch only when the player
-    /// clicked Install; otherwise deletes the work folder and returns None.
-    pub fn shutdown(&mut self) -> Option<PathBuf> {
+    /// Called once when the app shuts down. Returns the installer to launch (with the digest it
+    /// is checked against again right before it starts) only when the player clicked Install;
+    /// otherwise deletes the work folder and returns None.
+    pub fn shutdown(&mut self) -> Option<ReadyUpdate> {
         if self.install_on_quit
             && let UpdateState::Ready(r) = &self.state
         {
             // The installer runs from its folder; the stale sweep removes it later.
-            return Some(r.installer.clone());
+            return Some(r.clone());
         }
         self.abandon();
         None
@@ -543,7 +544,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let (mut job, r) = ready_job(td.path());
         assert_eq!(job.begin_install(), InstallClick::Proceed);
-        assert_eq!(job.shutdown(), Some(r.installer.clone()));
+        assert_eq!(job.shutdown(), Some(r.clone()));
         assert!(r.installer.parent().unwrap().exists());
     }
 

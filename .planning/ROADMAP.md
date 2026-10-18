@@ -239,7 +239,7 @@ Plans:
 | 38. Built-in Styles, Strictness & Reset | 6/6 | Complete    | 2026-10-18 |
 | 39. League Picker & Price Source | 7/7 | Complete    | 2026-10-18 |
 | 40. Release Pipeline & Installer | 6/8 | In Progress|  |
-| 41. Check for Updates | 0/0 | Not started | - |
+| 41. Check for Updates | 1/5 | In Progress|  |
 | 42. Release Review | 0/0 | Not started | - |
 
 </details>

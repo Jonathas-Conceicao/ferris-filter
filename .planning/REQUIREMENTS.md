@@ -110,13 +110,13 @@
 
 ### Check for updates (UPD)
 
-- [ ] **UPD-01**: Check for updates on the About tab reports "up to date" or the newer version
+- [x] **UPD-01**: Check for updates on the About tab reports "up to date" or the newer version
   found (GitHub Releases of `Jonathas-Conceicao/ferris-filter`).
 
-- [ ] **UPD-02**: For a newer version it downloads the installer, verifies its SHA-256 and offers
+- [x] **UPD-02**: For a newer version it downloads the installer, verifies its SHA-256 and offers
   Install and quit (through the existing Unapplied changes popup).
 
-- [ ] **UPD-03**: Offline, rate-limited or missing-asset failures show a status message and change
+- [x] **UPD-03**: Offline, rate-limited or missing-asset failures show a status message and change
   nothing.
 
 ### Public release (PUB)
@@ -214,9 +214,9 @@
 | INST-04 | Phase 40 | Pending |
 | PUB-01 | Phase 40 | Pending |
 | PUB-02 | Phase 40 | Pending |
-| UPD-01 | Phase 41 | Pending |
-| UPD-02 | Phase 41 | Pending |
-| UPD-03 | Phase 41 | Pending |
+| UPD-01 | Phase 41 | Complete |
+| UPD-02 | Phase 41 | Complete |
+| UPD-03 | Phase 41 | Complete |
 | REV-01 | Phase 42 | Pending |
 | REV-02 | Phase 42 | Pending |
 | REV-03 | Phase 42 | Pending |

@@ -5,6 +5,9 @@
 //! session and on refresh, never at start-up, in tests or in screenshot mode (the caller enforces
 //! that). One pure function, [`view`], decides the whole league UI so the view only draws it.
 
+// The view and app wiring that consume this model land in the next plans.
+#![allow(dead_code)]
+
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::compile::PriceSourcePolicy;

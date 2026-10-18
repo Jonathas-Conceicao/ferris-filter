@@ -396,6 +396,24 @@ pub fn save(root: &Path, settings: &Settings) -> io::Result<()> {
 /// left alone and `Ok(false)` is returned, so a hand-edited file is never replaced by fallback
 /// defaults. `Ok(true)` means the key was written.
 pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> {
+    save_keys(root, settings, &["collapsed_sections"])
+}
+
+/// Persist only the `league` key (a league pick); same rules as [`save_section_state`].
+pub fn save_league(root: &Path, settings: &Settings) -> io::Result<bool> {
+    save_keys(root, settings, &["league"])
+}
+
+/// Persist only the `price_source` key (a Live / Fallback switch); same rules as
+/// [`save_section_state`].
+pub fn save_price_source(root: &Path, settings: &Settings) -> io::Result<bool> {
+    save_keys(root, settings, &["price_source"])
+}
+
+/// Write `keys` of `settings` into the file on disk, every other key left as it is. A key that
+/// `settings` does not serialize (unset, empty) is removed. A missing file is created whole; an
+/// unusable one is left alone (`Ok(false)`).
+fn save_keys(root: &Path, settings: &Settings, keys: &[&str]) -> io::Result<bool> {
     let text = match fs::read_to_string(path(root)) {
         Ok(t) => t,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -409,11 +427,16 @@ pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> 
     else {
         return Ok(false);
     };
-    if settings.collapsed_sections.is_empty() {
-        map.remove("collapsed_sections");
-    } else {
-        let value = serde_json::to_value(&settings.collapsed_sections).map_err(io::Error::other)?;
-        map.insert("collapsed_sections".to_string(), value);
+    let serde_json::Value::Object(mut wanted) =
+        serde_json::to_value(settings).map_err(io::Error::other)?
+    else {
+        return Err(io::Error::other("settings did not serialize to an object"));
+    };
+    for key in keys {
+        match wanted.remove(*key) {
+            Some(value) => map.insert((*key).to_string(), value),
+            None => map.remove(*key),
+        };
     }
     let mut out = serde_json::to_string_pretty(&map).map_err(io::Error::other)?;
     out.push('\n');
@@ -1152,6 +1175,46 @@ mod tests {
         assert_eq!(v["collapsed_sections"]["ssf.filter"]["Gear"], true);
         let (again, _) = load(t.path());
         assert!(again.section_collapsed("ssf.filter", "Gear", false));
+    }
+
+    #[test]
+    fn league_and_price_source_saves_write_only_their_own_key() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","price_source":7,"future":1}"#,
+        )
+        .unwrap();
+        let (s, _) = load(t.path());
+        let next = Settings {
+            league: Some("Standard".into()),
+            ..s
+        };
+        assert!(save_league(t.path(), &next).unwrap());
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path(t.path())).unwrap()).unwrap();
+        assert_eq!(v["league"], "Standard");
+        assert_eq!(v["price_source"], 7);
+        assert_eq!(v["filter"], "ssf.filter");
+        assert_eq!(v["future"], 1);
+
+        let next = Settings {
+            price_source: Some("fallback".into()),
+            ..next
+        };
+        assert!(save_price_source(t.path(), &next).unwrap());
+        let (again, _) = load(t.path());
+        assert_eq!(again.saved_league(), Some("Standard"));
+        assert_eq!(
+            again.price_policy(),
+            crate::compile::PriceSourcePolicy::ForceFallback
+        );
+
+        let bad = "[1, 2]";
+        fs::write(path(t.path()), bad).unwrap();
+        assert!(!save_league(t.path(), &next).unwrap());
+        assert!(!save_price_source(t.path(), &next).unwrap());
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), bad);
     }
 
     #[test]

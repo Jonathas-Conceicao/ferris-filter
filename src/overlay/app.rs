@@ -373,6 +373,10 @@ fn fetch_leagues() -> Result<Vec<crate::sync::models::EconomyLeague>, String> {
 const PREVIEW_FAILED_STATUS: &str =
     "Could not build the economy section preview. Nothing was staged.";
 
+/// Why a league pick or price-source switch was not saved: the file exists but cannot be used,
+/// and is never replaced (the choice holds for this session).
+const UNUSABLE_SETTINGS_NOT_SAVED: &str = "the file cannot be used, fix or delete it";
+
 fn staged_economy_body(
     root: &Path,
     config: Option<&ConfigState>,
@@ -1833,17 +1837,39 @@ impl OverlayApp {
         }
     }
 
+    /// Saves one key of `next` at once, every other key of the file left as it is. An unusable
+    /// file is never replaced: the choice applies for the session and the status line says it
+    /// was not saved, as does a failed save.
+    fn save_view_key(
+        &mut self,
+        next: Settings,
+        save: fn(&Path, &Settings) -> std::io::Result<bool>,
+    ) {
+        let save_error = match &self.root {
+            Ok(root) => match save(root, &next) {
+                Ok(true) => None,
+                Ok(false) => Some(UNUSABLE_SETTINGS_NOT_SAVED.to_string()),
+                Err(e) => Some(e.to_string()),
+            },
+            Err(_) => None,
+        };
+        self.settings = next;
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
     /// Persist the picked economy league at once. Never touches the loaded filter or CONFIG
     /// edits.
     fn set_league(&mut self, name: &str) {
         let next = settings_with_league(&self.settings, name);
-        self.save_view_setting(next);
+        self.save_view_key(next, settings::save_league);
     }
 
     /// Persist the price source at once (`true` = Live) and re-gate the tier cutoffs.
     fn set_price_source(&mut self, live: bool) {
         let next = settings_with_price_source(&self.settings, live);
-        self.save_view_setting(next);
+        self.save_view_key(next, settings::save_price_source);
         self.sync_tiers_in_use();
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         let style_pending = self
@@ -7202,6 +7228,48 @@ Hide
         assert!(app.has_economy_section());
         assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
         assert!(app.source_pending());
+    }
+
+    #[test]
+    fn a_league_pick_or_source_switch_never_overwrites_an_unusable_settings_file() {
+        let (mut app, _ctx, rig) = economy_app();
+        let file = crate::settings::path(rig.root.path());
+        let bad = "{ \"filter\": \"x.filter\", }";
+        std::fs::write(&file, bad).unwrap();
+        app.set_league("Runes of Aldur");
+        assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
+        assert!(
+            app.config_message
+                .as_ref()
+                .is_some_and(|(m, err)| *err && m.starts_with("Could not save ff-settings.json"))
+        );
+        app.set_price_source(false);
+        assert_eq!(
+            app.settings.price_policy(),
+            PriceSourcePolicy::ForceFallback
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), bad);
+    }
+
+    #[test]
+    fn a_league_pick_writes_only_its_own_key() {
+        let (mut app, _ctx, rig) = economy_app();
+        let file = crate::settings::path(rig.root.path());
+        std::fs::write(
+            &file,
+            r#"{"filter":"ssf.filter","reload_after_apply":"yes","future":1}"#,
+        )
+        .unwrap();
+        app.set_league("Runes of Aldur");
+        app.set_price_source(false);
+        assert!(app.config_message.is_none(), "{:?}", app.config_message);
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(v["filter"], "ssf.filter");
+        assert_eq!(v["reload_after_apply"], "yes");
+        assert_eq!(v["future"], 1);
+        assert_eq!(v["league"], "Runes of Aldur");
+        assert_eq!(v["price_source"], "fallback");
     }
 
     #[test]

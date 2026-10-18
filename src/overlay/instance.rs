@@ -15,6 +15,10 @@
 //! quit (tray Quit releases the name at once) or crashed, this launch runs as the new
 //! first instance; otherwise a MessageBox is shown (the release `ff` has no console).
 //!
+//! `ff --quit` sets an auto-reset `-quit` event, then waits for the instance's own process to
+//! exit: the instance writes its process id into a small named `-pid` section once it holds
+//! the mutex.
+//!
 //! Failure policy (WR-03): if the mutex itself cannot be created, the launch fails
 //! closed with a MessageBox naming the Win32 error, because the same failure would
 //! repeat on every launch and each would open another window. If the first instance
@@ -84,7 +88,7 @@ pub fn is_quit_args(args: impl IntoIterator<Item = String>) -> bool {
     args.next().as_deref() == Some("--quit") && args.next().is_none()
 }
 
-/// Names of the five kernel objects making up one instance gate.
+/// Names of the six kernel objects making up one instance gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceNames {
     pub mutex: String,
@@ -92,9 +96,12 @@ pub struct InstanceNames {
     pub ack: String,
     pub ready: String,
     pub quit: String,
+    /// A small shared-memory section holding the running instance's process id, so
+    /// `ff --quit` can wait for that exact process to exit.
+    pub pid: String,
 }
 
-/// Build the five object names from a base.
+/// Build the six object names from a base.
 pub fn names_for(base: &str) -> InstanceNames {
     InstanceNames {
         mutex: base.to_string(),
@@ -102,6 +109,7 @@ pub fn names_for(base: &str) -> InstanceNames {
         ack: format!("{base}-ack"),
         ready: format!("{base}-ready"),
         quit: format!("{base}-quit"),
+        pid: format!("{base}-pid"),
     }
 }
 
@@ -191,18 +199,14 @@ mod imp {
         CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, GetLastError,
         HANDLE, INVALID_HANDLE_VALUE,
     };
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-        TH32CS_SNAPPROCESS,
+    use windows_sys::Win32::System::Memory::{
+        CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MapViewOfFile, OpenFileMappingW,
+        PAGE_READWRITE, UnmapViewOfFile,
     };
     use windows_sys::Win32::System::Threading::{
         CreateEventW, CreateMutexW, GetCurrentProcessId, OpenMutexW, OpenProcess,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW,
-        ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+        PROCESS_SYNCHRONIZE, ResetEvent, SetEvent, WaitForSingleObject,
     };
-
-    /// Win32 limit on handles in one `WaitForMultipleObjects` call.
-    const MAXIMUM_WAIT_OBJECTS: u32 = 64;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
     };
@@ -220,6 +224,8 @@ mod imp {
         ready: HANDLE,
         /// Auto-reset; set by `ff --quit`, consumed by the instance's frame poll.
         quit: HANDLE,
+        /// The `-pid` section holding this process id (null if it could not be created).
+        pid: HANDLE,
         ready_marked: bool,
     }
 
@@ -233,7 +239,9 @@ mod imp {
             // The mutex goes first: while it is held, this instance's `-ready` event
             // exists, which is how a launcher tells a starting instance from one that has
             // no show channel (WR-03).
-            for h in [self.mutex, self.show, self.ack, self.ready, self.quit] {
+            for h in [
+                self.mutex, self.show, self.ack, self.ready, self.quit, self.pid,
+            ] {
                 if !h.is_null() {
                     // SAFETY: the handle came from Create* in this module and is
                     // closed exactly once, here.
@@ -321,6 +329,80 @@ mod imp {
         }
     }
 
+    /// Size of the `-pid` section: one `u32` process id.
+    const PID_BYTES: usize = std::mem::size_of::<u32>();
+
+    /// Create the `-pid` section and write this process id into it. Returns the section
+    /// handle (kept open by the Guard), or null when it cannot be created; `ff --quit` then
+    /// falls back to waiting for the mutex to be released.
+    fn publish_pid(name: &[u16]) -> HANDLE {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call; a
+        // pagefile-backed section (INVALID_HANDLE_VALUE) with the default same-user DACL.
+        let h = unsafe {
+            CreateFileMappingW(
+                INVALID_HANDLE_VALUE,
+                std::ptr::null(),
+                PAGE_READWRITE,
+                0,
+                PID_BYTES as u32,
+                name.as_ptr(),
+            )
+        };
+        if h.is_null() {
+            return h;
+        }
+        // SAFETY: `h` is a live section handle of at least PID_BYTES bytes.
+        let view = unsafe { MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, PID_BYTES) };
+        if view.Value.is_null() {
+            close_all(&[h]);
+            return std::ptr::null_mut();
+        }
+        // SAFETY: `view` maps at least PID_BYTES writable bytes and is unmapped once, here.
+        unsafe {
+            view.Value
+                .cast::<u32>()
+                .write_unaligned(GetCurrentProcessId());
+            UnmapViewOfFile(view);
+        }
+        h
+    }
+
+    /// The process id the running instance published, if its `-pid` section exists.
+    pub(super) fn published_pid(name: &[u16]) -> Option<u32> {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
+        let h = unsafe { OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr()) };
+        if h.is_null() {
+            return None;
+        }
+        // SAFETY: `h` is a live section handle; the instance created it PID_BYTES long.
+        let view = unsafe { MapViewOfFile(h, FILE_MAP_READ, 0, 0, PID_BYTES) };
+        let pid = if view.Value.is_null() {
+            None
+        } else {
+            // SAFETY: `view` maps at least PID_BYTES readable bytes and is unmapped once, here.
+            let pid = unsafe { view.Value.cast::<u32>().read_unaligned() };
+            // SAFETY: as above.
+            unsafe { UnmapViewOfFile(view) };
+            Some(pid)
+        };
+        close_all(&[h]);
+        pid.filter(|&p| p != 0)
+    }
+
+    /// Open (SYNCHRONIZE) the process that published itself as the running instance. `None`
+    /// when there is no `-pid` section, it names this very process (the in-process tests),
+    /// or the process cannot be opened. The caller closes the handle.
+    fn owner_process(pid_name: &[u16]) -> Option<HANDLE> {
+        let pid = published_pid(pid_name)?;
+        // SAFETY: plain call.
+        if pid == unsafe { GetCurrentProcessId() } {
+            return None;
+        }
+        // SAFETY: plain call; a null result (access denied, gone) means no owner handle.
+        let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        (!h.is_null()).then_some(h)
+    }
+
     pub fn acquire_named(names: &InstanceNames) -> Acquired {
         // Build every wide name before CreateMutexW so nothing runs between it
         // and GetLastError.
@@ -329,6 +411,7 @@ mod imp {
         let ack_name = wide(&names.ack);
         let ready_name = wide(&names.ready);
         let quit_name = wide(&names.quit);
+        let pid_name = wide(&names.pid);
 
         // Events BEFORE the mutex (WR-03): a running instance's `-ready` event then
         // exists for as long as it holds the mutex, so a launcher that finds the mutex
@@ -388,12 +471,19 @@ mod imp {
                 unsafe { ResetEvent(h) };
             }
         }
+        // Only the process that won the mutex publishes its id, and it does so before it can
+        // be marked ready, which is when `ff --quit` reads it.
+        let pid = publish_pid(&pid_name);
+        if pid.is_null() {
+            eprintln!("single-instance: CreateFileMappingW failed; ff --quit waits on the name");
+        }
         Acquired::First(Guard {
             mutex,
             show,
             ack,
             ready,
             quit,
+            pid,
             ready_marked: false,
         })
     }
@@ -502,90 +592,34 @@ mod imp {
         }
     }
 
-    /// Canonical, lower-cased form of a path for comparing two exe locations.
-    fn comparable(path: &std::path::Path) -> String {
-        std::fs::canonicalize(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .to_string_lossy()
-            .to_lowercase()
-    }
-
-    /// The full image path of an open process, if it can be read.
-    fn image_path(process: HANDLE) -> Option<std::path::PathBuf> {
-        let mut buf = vec![0u16; 32_768];
-        let mut len = buf.len() as u32;
-        // SAFETY: `process` is a live handle with PROCESS_QUERY_LIMITED_INFORMATION; `buf`
-        // holds `len` u16 and `len` is updated to the number written.
-        let ok = unsafe { QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) };
-        if ok == 0 {
-            return None;
-        }
-        Some(std::path::PathBuf::from(String::from_utf16_lossy(
-            &buf[..len as usize],
-        )))
-    }
-
-    /// Open (SYNCHRONIZE) every other `ff.exe` process whose image is this exe. The caller
-    /// closes the handles.
-    fn same_exe_processes() -> Vec<HANDLE> {
-        let Ok(me) = std::env::current_exe() else {
-            return Vec::new();
-        };
-        let me = comparable(&me);
-        // SAFETY: plain call; the snapshot handle is closed below.
-        let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-        if snap == INVALID_HANDLE_VALUE {
-            return Vec::new();
-        }
-        // SAFETY: PROCESSENTRY32W is plain data; all-zero is a valid initial value.
-        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        // SAFETY: plain call.
-        let own_pid = unsafe { GetCurrentProcessId() };
-        let mut found = Vec::new();
-        // SAFETY: `snap` is a live snapshot and `entry.dwSize` is set.
-        let mut more = unsafe { Process32FirstW(snap, &mut entry) } != 0;
-        while more {
-            let len = entry
-                .szExeFile
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(entry.szExeFile.len());
-            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
-            if entry.th32ProcessID != own_pid && exe.eq_ignore_ascii_case("ff.exe") {
-                // SAFETY: plain call; a null result (access denied, gone) is skipped.
-                let process = unsafe {
-                    OpenProcess(
-                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                        0,
-                        entry.th32ProcessID,
-                    )
-                };
-                if !process.is_null() {
-                    match image_path(process) {
-                        Some(path) if comparable(&path) == me => found.push(process),
-                        _ => close_all(&[process]),
-                    }
-                }
+    /// True once the instance mutex no longer exists (every holder closed it).
+    fn mutex_gone(name: &[u16]) -> bool {
+        match open_mutex(name) {
+            Ok(None) => true,
+            Ok(Some(h)) => {
+                close_all(&[h]);
+                false
             }
-            // SAFETY: `snap` is a live snapshot and `entry.dwSize` is set.
-            more = unsafe { Process32NextW(snap, &mut entry) } != 0;
+            Err(_) => false,
         }
-        close_all(&[snap]);
-        found
     }
 
-    /// True when every process handle is signalled (the process has exited).
-    fn all_exited(processes: &[HANDLE]) -> bool {
-        // SAFETY: every handle is a live process handle with SYNCHRONIZE access; the
-        // count is at most MAXIMUM_WAIT_OBJECTS because the list is truncated by the caller.
-        let code =
-            unsafe { WaitForMultipleObjects(processes.len() as u32, processes.as_ptr(), 1, 0) };
+    /// True when the process handle is signalled (the process has exited).
+    fn has_exited(process: HANDLE) -> bool {
+        // SAFETY: `process` is a live process handle with SYNCHRONIZE access.
+        let code = unsafe { WaitForSingleObject(process, 0) };
         code == WAIT_OBJECT_0_CODE
     }
 
-    /// Ask the running instance to quit (`ff --quit`). Only opens the instance's objects;
-    /// it never creates the mutex, so it can never become the instance itself.
+    /// Ask the running instance to quit (`ff --quit`). It never creates the mutex, so it can
+    /// never become the instance itself.
+    ///
+    /// Success means the process that owns the instance has exited: the instance publishes
+    /// its process id in the `-pid` section, and that one process is waited for. Other `ff.exe`
+    /// processes (a launch showing a message box, another `--quit`, a launch that becomes the
+    /// next instance) do not count, and the instance releasing its name early in its shutdown
+    /// is not mistaken for its exit. Without a readable `-pid` section the wait falls back to
+    /// the mutex being released.
     pub fn quit_running_named(names: &InstanceNames, startup_ms: u32, wait_ms: u32) -> QuitOutcome {
         let mutex_name = wide(&names.mutex);
         match open_mutex(&mutex_name) {
@@ -594,15 +628,10 @@ mod imp {
             // Holding it would keep the name alive past the instance's exit.
             Ok(Some(h)) => close_all(&[h]),
         }
-        // Targets are collected BEFORE signalling so a fast exit cannot be missed.
-        let mut targets = same_exe_processes();
-        if targets.len() > MAXIMUM_WAIT_OBJECTS as usize {
-            close_all(&targets[MAXIMUM_WAIT_OBJECTS as usize..]);
-            targets.truncate(MAXIMUM_WAIT_OBJECTS as usize);
-        }
 
         let (ready, ready_err) = open_event(&wide(&names.ready), true);
         let (quit, quit_err) = open_event(&wide(&names.quit), false);
+        let mut owner: Option<HANDLE> = None;
         let outcome = if ready.is_null() || quit.is_null() {
             QuitOutcome::Unreachable
         } else if ready_err != ERROR_ALREADY_EXISTS || quit_err != ERROR_ALREADY_EXISTS {
@@ -613,6 +642,9 @@ mod imp {
             if classify_wait(code) != Wait::Signaled {
                 QuitOutcome::Unreachable
             } else {
+                // The instance publishes its id before it is marked ready. Read it BEFORE
+                // signalling so a fast exit cannot be missed.
+                owner = owner_process(&wide(&names.pid));
                 // One request only: a re-asserted one would reopen the Unapplied changes
                 // popup right after the user picked Cancel in it.
                 // SAFETY: `quit` is a live event handle owned by this function.
@@ -620,17 +652,9 @@ mod imp {
                 let deadline = Instant::now() + Duration::from_millis(u64::from(wait_ms));
                 let interval = Duration::from_millis(u64::from(RETRY_INTERVAL_MS));
                 loop {
-                    let done = if targets.is_empty() {
-                        match open_mutex(&mutex_name) {
-                            Ok(None) => true,
-                            Ok(Some(h)) => {
-                                close_all(&[h]);
-                                false
-                            }
-                            Err(_) => false,
-                        }
-                    } else {
-                        all_exited(&targets)
+                    let done = match owner {
+                        Some(process) => has_exited(process),
+                        None => mutex_gone(&mutex_name),
                     };
                     if done {
                         break QuitOutcome::Exited;
@@ -647,7 +671,9 @@ mod imp {
             }
         };
         close_all(&[ready, quit]);
-        close_all(&targets);
+        if let Some(process) = owner {
+            close_all(&[process]);
+        }
         outcome
     }
 
@@ -789,7 +815,7 @@ mod tests {
     #[test]
     fn names_live_in_the_local_namespace() {
         for n in [names(true), names(false)] {
-            for s in [&n.mutex, &n.show, &n.ack, &n.ready, &n.quit] {
+            for s in [&n.mutex, &n.show, &n.ack, &n.ready, &n.quit, &n.pid] {
                 assert!(s.starts_with("Local\\"), "{s}");
             }
         }
@@ -803,6 +829,7 @@ mod tests {
         assert_eq!(n.ack, "Local\\x-ack");
         assert_eq!(n.ready, "Local\\x-ready");
         assert_eq!(n.quit, "Local\\x-quit");
+        assert_eq!(n.pid, "Local\\x-pid");
         assert_ne!(n.quit, n.show);
         assert_ne!(n.ready, n.ack);
         assert_ne!(n.mutex, n.show);
@@ -1041,6 +1068,24 @@ mod windows_tests {
         acquired_rx.recv().unwrap();
         assert_eq!(quit_running_named(&n, 2000, 3000), QuitOutcome::Exited);
         t.join().unwrap();
+    }
+
+    #[test]
+    fn the_instance_publishes_its_process_id_until_it_drops() {
+        let n = test_names("pid");
+        let pid_name = n
+            .pid
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        assert_eq!(imp::published_pid(&pid_name), None);
+        let g = first(&n);
+        assert_eq!(imp::published_pid(&pid_name), Some(std::process::id()));
+        // A launcher never touches it.
+        assert!(matches!(acquire_named(&n), Acquired::AlreadyRunning));
+        assert_eq!(imp::published_pid(&pid_name), Some(std::process::id()));
+        drop(g);
+        assert_eq!(imp::published_pid(&pid_name), None);
     }
 
     #[test]

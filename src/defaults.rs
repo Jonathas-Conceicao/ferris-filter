@@ -180,9 +180,10 @@ mod tests {
 
     #[test]
     fn shipped_styles_round_trip_through_render_styles() {
+        // `render_styles` writes `\n`; the checked-out file may use CRLF (`text=auto`).
         assert_eq!(
             crate::loader::render_styles(&shipped_styles()),
-            STYLES_DEFAULT.text
+            STYLES_DEFAULT.text.replace("\r\n", "\n")
         );
     }
 

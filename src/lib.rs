@@ -16,6 +16,7 @@ pub mod error;
 pub mod filter;
 pub mod install;
 pub mod loader;
+pub mod locations;
 pub mod overlay;
 pub mod paths;
 pub mod run;

@@ -18,8 +18,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-/// Environment variable that pins the FerrisFilter folder.
-pub const HOME_ENV: &str = "FERRISFILTER_HOME";
+pub use crate::locations::HOME_ENV;
 
 /// Why the app root could not be resolved.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]

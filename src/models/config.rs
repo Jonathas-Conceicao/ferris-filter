@@ -527,6 +527,21 @@ impl StyleSet {
         self.0.get(name)
     }
 
+    /// The embedded `styles-default.json`, parsed and validated once, ids assigned. The source
+    /// of every reset; a parse failure is a programming error pinned by the defaults tests.
+    pub fn shipped_defaults() -> &'static StyleSet {
+        static SET: std::sync::OnceLock<StyleSet> = std::sync::OnceLock::new();
+        SET.get_or_init(|| {
+            let b = &crate::defaults::STYLES_DEFAULT;
+            let mut set: StyleSet = serde_json::from_str(b.text)
+                .unwrap_or_else(|e| panic!("{} failed to parse: {e}", b.label()));
+            set.assign_missing_ids();
+            set.validate()
+                .unwrap_or_else(|e| panic!("{} failed validation: {e}", b.label()));
+            set
+        })
+    }
+
     /// Style names in file order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)

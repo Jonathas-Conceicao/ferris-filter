@@ -19,6 +19,7 @@ use crate::models::config::{
     StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
+use crate::overlay::strictness::{Strictness, TIER_LETTERS, strictness_of};
 
 /// Display order of the tier rows. Presentation only: rows map to entries by tier name.
 const DISPLAY_ORDER: [&str; 7] = ["S", "A", "B", "C", "D", "E", "F"];
@@ -250,6 +251,104 @@ impl ConfigState {
         true
     }
 
+    /// The strictness level the pending set currently reads as.
+    pub fn strictness(&self) -> Strictness {
+        strictness_of(&self.styles)
+    }
+
+    /// Show or hide the seven tier styles (found by built-in id) as `level` says. `Custom` is
+    /// not a preset: no change. Returns whether anything changed.
+    pub fn set_strictness(&mut self, level: Strictness) -> bool {
+        if level == Strictness::Custom {
+            return false;
+        }
+        let mut changed = false;
+        for letter in TIER_LETTERS {
+            let Some(name) = self
+                .styles
+                .name_of_id(&StyleSet::builtin_id(letter))
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let action = if level.hidden().contains(&letter) {
+                StyleAction::Hide
+            } else {
+                StyleAction::Show
+            };
+            if self.styles.get(&name).is_some_and(|s| s.action != action) {
+                changed |= self.edit_style(&name, StyleEdit::Action(action));
+            }
+        }
+        changed
+    }
+
+    /// Put the default built-ins back (default values and order, first) and keep every custom
+    /// style after them in its current order, ids kept. A pending edit; `Revert` undoes it.
+    pub fn reset_styles(&mut self) {
+        let defaults = StyleSet::shipped_defaults();
+        let builtins = defaults
+            .iter()
+            .filter(|(n, _)| StyleSet::is_builtin(n))
+            .map(|(n, s)| (n.to_string(), s.clone()));
+        let customs = self
+            .styles
+            .iter()
+            .filter(|(n, _)| !StyleSet::is_builtin(n))
+            .map(|(n, s)| (n.to_string(), s.clone()));
+        self.styles = StyleSet::from_pairs(builtins.chain(customs).collect::<Vec<_>>());
+    }
+
+    /// The pending built-ins already equal the defaults in values and order (customs ignored).
+    pub fn styles_at_defaults(&self) -> bool {
+        let defaults: Vec<(&str, &Style)> = StyleSet::shipped_defaults()
+            .iter()
+            .filter(|(n, _)| StyleSet::is_builtin(n))
+            .collect();
+        let now: Vec<(&str, &Style)> = self.styles.iter().take(defaults.len()).collect();
+        now == defaults
+    }
+
+    /// Default cutoffs: the embedded `tiers-default.json`, parsed and validated once.
+    fn default_tiers() -> &'static [TierEntry] {
+        static TIERS: std::sync::OnceLock<Vec<TierEntry>> = std::sync::OnceLock::new();
+        TIERS.get_or_init(|| {
+            let b = &crate::defaults::TIERS_DEFAULT;
+            let tiers: Vec<TierEntry> = serde_json::from_str(b.text)
+                .unwrap_or_else(|e| panic!("{} failed to parse: {e}", b.label()));
+            ValidatedTiers::try_from(tiers.clone())
+                .unwrap_or_else(|e| panic!("{} failed validation: {e}", b.label()));
+            tiers
+        })
+    }
+
+    /// Write the default cutoff and unit into each existing entry by tier name (file order
+    /// kept), clearing buffers and errors. A pending edit; `Revert` undoes it.
+    pub fn reset_tiers(&mut self) {
+        for entry in &mut self.tiers {
+            if let Some(d) = Self::default_tiers().iter().find(|d| d.tier == entry.tier) {
+                entry.min = d.min;
+                entry.unit = d.unit.clone();
+            }
+        }
+        self.resync_buffers();
+    }
+
+    /// Every default tier is present with the default cutoff and unit, no pending bad text.
+    pub fn tiers_at_defaults(&self) -> bool {
+        self.errors.row.is_empty()
+            && Self::default_tiers().iter().all(|d| {
+                self.tiers
+                    .iter()
+                    .find(|e| e.tier == d.tier)
+                    .is_some_and(|e| e.min == d.min && e.unit == d.unit)
+                    && self
+                        .buffers
+                        .get(&d.tier)
+                        .is_some_and(|b| *b == format!("{}", d.min))
+            })
+    }
+
     /// The `StyleSet::validate` message when the working styles are invalid.
     pub fn styles_error(&self) -> Option<String> {
         self.styles.validate().err().map(|e| e.to_string())
@@ -381,7 +480,7 @@ impl ConfigState {
                     .buffers
                     .get(&e.tier)
                     .is_some_and(|b| *b != format!("{}", base.min));
-                buffer_differs || e.min != base.min
+                buffer_differs || e.min != base.min || e.unit != base.unit
             })
             .count()
     }
@@ -1528,5 +1627,227 @@ mod tests {
         assert_eq!(s.rename_style("kite", "a\tb"), Err(StyleNameError::Invalid));
         assert_eq!(s.rename_style("nope", "x"), Err(StyleNameError::Unknown));
         assert_eq!(s.dirty_count(), 0);
+    }
+
+    // -- strictness and resets ------------------------------------------------------------------
+
+    fn home_with(styles: &str, tiers: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [(styles, "styles.json"), (tiers, "tiers.json")] {
+            fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut v: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    fs::read(e.path()).unwrap(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn every_strictness_level_applies_and_reads_back() {
+        let (_d, mut s) = loaded();
+        for level in Strictness::ALL {
+            if level == Strictness::Custom {
+                continue;
+            }
+            s.set_strictness(level);
+            assert_eq!(s.strictness(), level);
+            assert!(!s.set_strictness(level), "{level:?} again is no change");
+        }
+    }
+
+    #[test]
+    fn strictness_touches_only_tier_styles_and_reverts() {
+        let (_d, mut s) = loaded();
+        let kept: Vec<(String, Style)> = ["unchanged", "hidden", "Recycle", "kite", "exceptional"]
+            .iter()
+            .map(|n| (n.to_string(), s.style(n).unwrap().clone()))
+            .collect();
+        let before = s.pending_styles().clone();
+        assert!(s.set_strictness(Strictness::Comfy));
+        for (n, st) in &kept {
+            assert_eq!(s.style(n).unwrap(), st, "{n}");
+        }
+        for l in ["D", "E", "F"] {
+            assert_eq!(s.style(l).unwrap().action, StyleAction::Hide);
+        }
+        for l in ["S", "A", "B", "C"] {
+            assert_eq!(s.style(l).unwrap().action, StyleAction::Show);
+        }
+        assert!(s.styles_dirty());
+        s.revert_scope(RevertScope::Styles);
+        assert_eq!(s.pending_styles(), &before);
+        assert!(!s.styles_dirty());
+    }
+
+    #[test]
+    fn strictness_shows_s_and_a_even_when_hidden() {
+        let (_d, mut s) = loaded();
+        s.edit_style("S", StyleEdit::Action(StyleAction::Hide));
+        assert_eq!(s.strictness(), Strictness::Custom);
+        assert!(s.set_strictness(Strictness::FlatBroke));
+        assert_eq!(s.style("S").unwrap().action, StyleAction::Show);
+    }
+
+    #[test]
+    fn custom_level_changes_nothing() {
+        let (_d, mut s) = loaded();
+        s.set_strictness(Strictness::Loaded);
+        let before = s.pending_styles().clone();
+        assert!(!s.set_strictness(Strictness::Custom));
+        assert_eq!(s.pending_styles(), &before);
+    }
+
+    #[test]
+    fn old_twelve_style_file_loads_and_keeps_its_bytes() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-default.json");
+        let s = ConfigState::load(d.path()).unwrap();
+        let names = s.style_names();
+        assert_eq!(names.len(), 12);
+        for n in ["Recycle", "kite", "exceptional"] {
+            assert!(names.iter().any(|x| x == n), "{n}");
+        }
+        assert_eq!(s.dirty_count(), 0);
+        let before = snapshot(d.path());
+        let w = s.prepare_write().unwrap();
+        if !w.styles_changed() {
+            assert_eq!(
+                w.styles_new,
+                fs::read(d.path().join("styles.json")).unwrap()
+            );
+        }
+        assert_eq!(snapshot(d.path()), before);
+        for (n, st) in StyleSet::shipped_defaults().iter() {
+            assert_eq!(st.id.as_deref(), Some(format!("builtin:{n}").as_str()));
+        }
+        assert_eq!(StyleSet::shipped_defaults().len(), 9);
+    }
+
+    #[test]
+    fn reset_styles_restores_builtins_and_keeps_customs() {
+        let (d, mut s) = loaded();
+        let customs_before: Vec<(String, Style)> = s
+            .pending_styles()
+            .iter()
+            .filter(|(n, _)| !StyleSet::is_builtin(n))
+            .map(|(n, st)| (n.to_string(), st.clone()))
+            .collect();
+        s.edit_style("S", StyleEdit::Font(Some(12)));
+        s.edit_style("kite", StyleEdit::Font(Some(30)));
+        s.set_strictness(Strictness::DivFarmer);
+        s.move_style("kite", false);
+        assert!(!s.styles_at_defaults());
+        let current_customs: Vec<String> = s
+            .pending_styles()
+            .names()
+            .filter(|n| !StyleSet::is_builtin(n))
+            .map(str::to_string)
+            .collect();
+        let files = snapshot(d.path());
+
+        s.reset_styles();
+        let defaults = StyleSet::shipped_defaults();
+        let names = s.style_names();
+        let default_names: Vec<&str> = defaults.names().collect();
+        assert_eq!(&names[..9], &default_names[..]);
+        for (n, st) in defaults.iter() {
+            assert_eq!(s.style(n).unwrap(), st);
+        }
+        assert_eq!(names[9..], current_customs[..]);
+        for (n, st) in &customs_before {
+            assert_eq!(s.style(n).unwrap().id, st.id);
+        }
+        assert_eq!(s.style("kite").unwrap().font, Some(30));
+        assert_eq!(s.strictness(), Strictness::FlatBroke);
+        assert!(s.styles_at_defaults());
+        assert_eq!(snapshot(d.path()), files);
+        s.revert_scope(RevertScope::Styles);
+        assert!(!s.styles_dirty());
+    }
+
+    #[test]
+    fn styles_at_defaults_tracks_builtins_only() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert!(s.styles_at_defaults());
+        assert!(s.edit_style("hidden", StyleEdit::Action(StyleAction::Show)));
+        assert!(!s.styles_at_defaults());
+        s.revert_scope(RevertScope::Styles);
+        assert!(s.styles_at_defaults());
+        s.add_style("Mine").unwrap();
+        assert!(s.styles_at_defaults(), "customs never count");
+        // A custom between the built-ins breaks the order.
+        let (_d2, mut f) = loaded();
+        f.reset_styles();
+        assert!(f.styles_at_defaults());
+        let mut pairs: Vec<(String, Style)> = f
+            .pending_styles()
+            .iter()
+            .map(|(n, st)| (n.to_string(), st.clone()))
+            .collect();
+        let custom = pairs.remove(9);
+        pairs.insert(7, custom);
+        f.styles = StyleSet::from_pairs(pairs);
+        assert!(!f.styles_at_defaults());
+    }
+
+    #[test]
+    fn reset_tiers_keeps_order_and_clears_errors() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-fallback.json");
+        let mut s = ConfigState::load(d.path()).unwrap();
+        let order: Vec<String> = s.pending_tiers().iter().map(|e| e.tier.clone()).collect();
+        assert!(!s.tiers_at_defaults());
+        s.set_tier_text("S", "99");
+        s.set_tier_text("A", "abc");
+        assert!(s.has_tier_errors());
+        let files = snapshot(d.path());
+
+        s.reset_tiers();
+        let now: Vec<String> = s.pending_tiers().iter().map(|e| e.tier.clone()).collect();
+        assert_eq!(now, order);
+        assert!(s.tiers_at_defaults());
+        assert!(!s.has_tier_errors());
+        for r in s.tier_rows() {
+            assert_eq!(r.unit, "chaos");
+        }
+        let bufs: Vec<_> = s.tier_rows().into_iter().map(|r| r.buffer).collect();
+        assert_eq!(bufs, ["30", "20", "12", "8", "2", "0.5", "0.1"]);
+        assert!(s.tiers_dirty() && s.dirty_count() > 0);
+        assert_eq!(snapshot(d.path()), files);
+        s.revert_scope(RevertScope::Tiers);
+        assert!(!s.tiers_dirty());
+    }
+
+    #[test]
+    fn unit_only_difference_counts_as_dirty() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-default.json");
+        let mut t = ConfigState::load(d.path()).unwrap();
+        for e in &mut t.tiers {
+            e.unit = crate::models::tiers::Unit::Div;
+        }
+        assert!(t.tiers_dirty());
+    }
+
+    #[test]
+    fn tiers_at_defaults_follows_edits() {
+        let (_d, mut s) = loaded();
+        assert!(s.tiers_at_defaults());
+        s.set_tier_text("S", "31");
+        assert!(!s.tiers_at_defaults());
     }
 }

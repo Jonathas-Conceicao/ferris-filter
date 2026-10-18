@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
-stopped_at: Completed 41-03-PLAN.md
-last_updated: "2026-10-18T13:42:18.007Z"
+stopped_at: Completed 41-04-PLAN.md
+last_updated: "2026-10-18T14:05:12.384Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 4
   total_plans: 40
-  completed_plans: 36
-  percent: 90
+  completed_plans: 37
+  percent: 93
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 ## Current Position
 
 Phase: 41 (check-for-updates) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-10-18
 
@@ -206,6 +206,7 @@ work (carried forward past the v0.3 close):
 - [Phase 38-05] Reset buttons arm a popup; Reset is a pending edit (Revert undoes), expanded style row explicitly collapsed
 - [Phase 39]: 39-05: price-source marker is the effective-source comparison (OD-1); applied_policy moves on Apply and filter switch (A2)
 - 41-03: update_job carries #![allow(dead_code)] until wired in 41-04/41-05; begin_install failure messages use UTC offset 0
+- 41-04: update_job.rs keeps allow(dead_code) until 41-05 wires the install side
 
 ### Pending Todos
 
@@ -376,8 +377,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18T13:42:17.998Z
-Stopped at: Completed 41-03-PLAN.md
+Last session: 2026-10-18T14:05:12.020Z
+Stopped at: Completed 41-04-PLAN.md
 Resume file: None
 
 **Next step:** Phase 41. At the end of the milestone run 40-07 (Inno Setup + installer UAT), then 40-08 (v0.7.0-rc.1 tag).

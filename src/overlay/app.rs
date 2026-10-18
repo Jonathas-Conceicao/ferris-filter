@@ -1152,6 +1152,32 @@ struct PendingReload {
     extras: String,
     /// The interim status line; the result replaces it only while it is still showing.
     interim: String,
+    /// The landed line is a warning whatever the reload result (it carries the "Not quit" note).
+    warning: bool,
+}
+
+/// Shows the "Not quit" warning of an Apply & quit that stays open for unused tier edits. While a
+/// reload's interim line is showing, the warning is folded into it and into the line the reload
+/// result will become, so it survives the conceal the reload causes and the result still lands.
+fn show_not_quit_warning(
+    message: &mut Option<(String, w::StatusKind)>,
+    pending: Option<&mut PendingReload>,
+) {
+    match pending {
+        Some(p) if message.as_ref().is_some_and(|(t, _)| *t == p.interim) => {
+            let note = format!(" {UNWRITABLE_TIERS_QUIT_STATUS}");
+            p.interim.push_str(&note);
+            p.extras.push_str(&note);
+            p.warning = true;
+            *message = Some((p.interim.clone(), w::StatusKind::Warning));
+        }
+        _ => {
+            *message = Some((
+                UNWRITABLE_TIERS_QUIT_STATUS.to_string(),
+                w::StatusKind::Warning,
+            ));
+        }
+    }
 }
 
 /// The Apply status line after the window is concealed. Hiding normally clears it, but not while
@@ -2033,6 +2059,7 @@ impl OverlayApp {
                                 prefix: prefix.clone(),
                                 extras: extras.clone(),
                                 interim,
+                                warning: false,
                             });
                         } else {
                             self.apply_message = applied_message(format!(
@@ -2357,10 +2384,10 @@ impl OverlayApp {
                         if ok && self.has_unwritable_tier_edits() {
                             // No Apply can write cutoffs while Fallback is on: stay open with
                             // them kept rather than quit and lose them.
-                            self.apply_message = Some((
-                                UNWRITABLE_TIERS_QUIT_STATUS.to_string(),
-                                w::StatusKind::Warning,
-                            ));
+                            show_not_quit_warning(
+                                &mut self.apply_message,
+                                self.reload_pending.as_mut(),
+                            );
                         // A refusal leaves the window open showing it (Overwrite/Reload as today).
                         } else if apply::quit_step(
                             dirty,
@@ -3448,7 +3475,11 @@ impl eframe::App for OverlayApp {
                     &result,
                 )
             {
-                self.apply_message = applied_message(msg);
+                self.apply_message = if p.warning {
+                    Some((msg, w::StatusKind::Warning))
+                } else {
+                    applied_message(msg)
+                };
             }
             ui.ctx().request_repaint();
         }
@@ -4038,7 +4069,53 @@ mod tests {
             prefix: String::new(),
             extras: " [x]".to_string(),
             interim: interim.to_string(),
+            warning: false,
         }
+    }
+
+    #[test]
+    fn the_not_quit_warning_rides_on_a_pending_reload_line() {
+        use super::{
+            UNWRITABLE_TIERS_QUIT_STATUS, apply_message_after_conceal, landed_reload_message,
+            show_not_quit_warning,
+        };
+        // A reload is in flight with its interim line showing.
+        let mut p = pending("interim");
+        let mut message = Some(("interim".to_string(), w::StatusKind::Ok));
+        show_not_quit_warning(&mut message, Some(&mut p));
+        let (text, kind) = message.clone().unwrap();
+        assert_eq!(kind, w::StatusKind::Warning);
+        assert!(text.starts_with("interim") && text.ends_with(UNWRITABLE_TIERS_QUIT_STATUS));
+        assert!(p.warning);
+        // The reload's own focus change hides the window: the line is kept.
+        assert_eq!(
+            apply_message_after_conceal(Some(text.clone()), Some(&p)),
+            Some(text.clone())
+        );
+        // The result still lands and still carries the warning, success or failure.
+        let landed = landed_reload_message(Some(&text), &p, &Ok(())).unwrap();
+        assert!(landed.contains("Reloaded in game"), "{landed}");
+        assert!(landed.ends_with(UNWRITABLE_TIERS_QUIT_STATUS), "{landed}");
+        let failed = landed_reload_message(Some(&text), &p, &Err("x".to_string())).unwrap();
+        assert!(failed.contains("could not reload in game: x"), "{failed}");
+        assert!(failed.ends_with(UNWRITABLE_TIERS_QUIT_STATUS), "{failed}");
+
+        // No reload line showing (already replaced, or no reload at all): the warning alone.
+        let mut message = Some(("other".to_string(), w::StatusKind::Ok));
+        let mut p = pending("interim");
+        show_not_quit_warning(&mut message, Some(&mut p));
+        assert_eq!(
+            message,
+            Some((
+                UNWRITABLE_TIERS_QUIT_STATUS.to_string(),
+                w::StatusKind::Warning
+            ))
+        );
+        assert_eq!(p.interim, "interim");
+        assert!(!p.warning);
+        let mut message = None;
+        show_not_quit_warning(&mut message, None);
+        assert_eq!(message.unwrap().0, UNWRITABLE_TIERS_QUIT_STATUS);
     }
 
     #[test]

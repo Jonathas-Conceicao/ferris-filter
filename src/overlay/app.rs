@@ -278,6 +278,33 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     true
 }
 
+/// The saved `game_folder` of a resolved app root (none for an unresolved root).
+fn saved_game_folder(root: &Result<PathBuf, String>) -> Option<PathBuf> {
+    let root = root.as_ref().ok()?;
+    settings::load(root)
+        .0
+        .game_folder_path()
+        .map(Path::to_path_buf)
+}
+
+/// The game folder at startup, with every input injected: `env` (FERRISFILTER_GAME_DIR) wins,
+/// then the `game_folder` saved in the root's `ff-settings.json` (restored on the next launch),
+/// then the Documents default. Reads only; creates nothing.
+#[cfg_attr(not(test), allow(dead_code))]
+fn startup_game_dir_from(
+    root: &Result<PathBuf, String>,
+    env: Option<&std::ffi::OsStr>,
+    documents: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let saved = saved_game_folder(root);
+    crate::locations::game_dir_from(env, saved.as_deref(), documents)
+}
+
+/// [`startup_game_dir_from`] with the real environment; never called from unit tests.
+fn startup_game_dir(root: &Result<PathBuf, String>) -> Option<PathBuf> {
+    crate::locations::game_dir(saved_game_folder(root).as_deref())
+}
+
 /// The FerrisFilter folder: `FERRISFILTER_HOME`, else the per-user folder. Unit tests never
 /// resolve it (they build apps on a per-test temp home instead).
 #[cfg(not(test))]
@@ -966,7 +993,7 @@ fn filter_target(
     match game_dir {
         Some(dir) => Ok(dir.join(name)),
         None => Err(
-            "Cannot resolve the default PoE2 config folder (USERPROFILE is not set).".to_string(),
+            "Cannot find the Documents folder; pick the game folder on the Config tab.".to_string(),
         ),
     }
 }
@@ -1082,14 +1109,16 @@ impl OverlayApp {
         instance: instance::Guard,
         skin: Skin,
     ) -> Self {
+        let root = resolve_root();
+        let game_dir = startup_game_dir(&root);
         Self::build(
             tray,
             hotkey_manager,
             hotkey_status,
             Some(instance),
             skin,
-            resolve_root(),
-            dynamic::default_destination(),
+            root,
+            game_dir,
         )
     }
 
@@ -1097,14 +1126,16 @@ impl OverlayApp {
     /// shown and the window kept visible until the frame is saved.
     #[cfg(debug_assertions)]
     pub(crate) fn new_screenshot(skin: Skin, shot: super::screenshot::ShotArgs) -> Self {
+        let root = resolve_root();
+        let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             TrayHandles::inert(),
             None,
             HotkeyStatus::Failed("screenshot mode".to_string()),
             None,
             skin,
-            resolve_root(),
-            dynamic::default_destination(),
+            root,
+            game_dir,
         );
         app.tab = shot.tab;
         app.visibility = Visibility::ShownFocused;
@@ -2223,10 +2254,6 @@ impl OverlayApp {
         if self.root.is_err() {
             self.root = resolve_root();
         }
-        #[cfg(not(test))]
-        {
-            self.game_dir = dynamic::default_destination();
-        }
         let settings_warning = match &self.root {
             Ok(root) => {
                 let (settings, warning) = settings::load(root);
@@ -2245,6 +2272,12 @@ impl OverlayApp {
                 None
             }
         };
+        // The game folder follows the (just re-read) settings; unit tests keep the folder they
+        // were built with.
+        #[cfg(not(test))]
+        {
+            self.game_dir = crate::locations::game_dir(self.settings.game_folder_path());
+        }
         self.reset_filter_state();
         self.refresh_inputs();
         if settings_warning.is_some() {
@@ -3305,6 +3338,68 @@ impl eframe::App for OverlayApp {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    fn boom() -> Option<PathBuf> {
+        panic!("Documents must not be asked for");
+    }
+
+    fn root_with_game_folder(
+        game: Option<&std::path::Path>,
+    ) -> (tempfile::TempDir, Result<PathBuf, String>) {
+        let t = tempfile::tempdir().unwrap();
+        if let Some(g) = game {
+            let json = serde_json::json!({ "game_folder": g.to_string_lossy() });
+            std::fs::write(t.path().join("ff-settings.json"), json.to_string()).unwrap();
+        }
+        let root = Ok(t.path().to_path_buf());
+        (t, root)
+    }
+
+    #[test]
+    fn startup_game_dir_restores_the_saved_folder() {
+        let want = std::env::temp_dir().join("ff-picked-game");
+        let (_t, root) = root_with_game_folder(Some(&want));
+        assert_eq!(super::startup_game_dir_from(&root, None, boom), Some(want));
+    }
+
+    #[test]
+    fn startup_game_dir_env_wins_over_the_saved_folder() {
+        let saved = std::env::temp_dir().join("ff-picked-game");
+        let (_t, root) = root_with_game_folder(Some(&saved));
+        let env = std::env::temp_dir().join("ff-env-game");
+        assert_eq!(
+            super::startup_game_dir_from(&root, Some(OsStr::new(&env)), boom),
+            Some(env)
+        );
+    }
+
+    #[test]
+    fn startup_game_dir_without_settings_uses_documents() {
+        let (t, root) = root_with_game_folder(None);
+        let docs = PathBuf::from("D");
+        let got = super::startup_game_dir_from(&root, None, || Some(docs.clone()));
+        assert_eq!(got, Some(docs.join("My Games").join("Path of Exile 2")));
+        assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn startup_game_dir_with_an_unresolved_root_uses_documents() {
+        let root = Err("no root".to_string());
+        let docs = PathBuf::from("D");
+        let got = super::startup_game_dir_from(&root, None, || Some(docs.clone()));
+        assert_eq!(got, Some(docs.join("My Games").join("Path of Exile 2")));
+    }
+
+    #[test]
+    fn startup_game_dir_ignores_a_relative_saved_folder() {
+        let (_t, root) = root_with_game_folder(Some(std::path::Path::new("relative")));
+        let docs = PathBuf::from("D");
+        let got = super::startup_game_dir_from(&root, None, || Some(docs.clone()));
+        assert_eq!(got, Some(docs.join("My Games").join("Path of Exile 2")));
+    }
+
     #[test]
     fn filter_target_refuses_traversal_and_a_missing_folder() {
         use super::filter_target;
@@ -3314,7 +3409,7 @@ mod tests {
         assert!(filter_target(Some(dir), "notafilter.txt").is_err());
         assert_eq!(
             filter_target(None, "ssf.filter").unwrap_err(),
-            "Cannot resolve the default PoE2 config folder (USERPROFILE is not set)."
+            "Cannot find the Documents folder; pick the game folder on the Config tab."
         );
         assert_eq!(
             filter_target(Some(dir), "ssf.filter").unwrap(),

@@ -1310,6 +1310,31 @@ impl OverlayApp {
         if let Some(q) = &shot.search {
             app.query = q.clone();
         }
+        match shot.update_state.as_deref() {
+            Some("checking") => app.update.inject(UpdateState::Checking),
+            Some("downloading") => app.update.inject(UpdateState::Downloading {
+                version: "0.8.0".to_string(),
+            }),
+            Some(s) if s.starts_with("ready:") => {
+                let mut parts = s.splitn(3, ':').skip(1);
+                let version = parts.next().unwrap_or_default().to_string();
+                let date = parts.next().unwrap_or_default().to_string();
+                app.update
+                    .inject(UpdateState::Ready(crate::update::ReadyUpdate {
+                        version: version.clone(),
+                        published_unix: crate::update::parse_published(&format!(
+                            "{date}T12:00:00Z"
+                        )),
+                        installer: PathBuf::new(),
+                        sha256: String::new(),
+                    }));
+                app.update_message = Some((
+                    format!("{version} available, released {date}"),
+                    w::StatusKind::Info,
+                ));
+            }
+            _ => {}
+        }
         match shot.stage_economy.as_deref() {
             Some("add") => app.stage_add_economy(),
             Some("remove") => app.stage_remove_economy(),

@@ -1,7 +1,8 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
 //! [--filter f] [--expand n] [--expand-economy n] [--search text] [--rename-section n] [--expand-style name]
 //! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT] [--stage-economy add|remove]
-//! [--leagues <names>|none|loading] [--league <name>] [--price-source live|fallback]` renders the
+//! [--leagues <names>|none|loading] [--league <name>] [--price-source live|fallback]
+//! [--update-state idle|checking|downloading|ready:<ver>:<YYYY-MM-DD>]` renders the
 //! shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
@@ -100,6 +101,9 @@ pub(crate) struct ShotArgs {
     pub league: Option<String>,
     /// Save this price source (`live` or `fallback`) as the chosen one.
     pub price_source: Option<String>,
+    /// The About tab's update button state (`idle`, `checking`, `downloading` or
+    /// `ready:<ver>:<YYYY-MM-DD>`); injected, no worker runs and nothing can be installed.
+    pub update_state: Option<String>,
 }
 
 /// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent: a
@@ -127,6 +131,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut leagues = None;
     let mut league = None;
     let mut price_source = None;
+    let mut update_state = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -243,6 +248,22 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                 }
                 price_source = Some(v);
             }
+            "--update-state" => {
+                let s = value("--update-state")?;
+                let ok = match s.as_str() {
+                    "idle" | "checking" | "downloading" => true,
+                    _ => s.strip_prefix("ready:").is_some_and(|rest| {
+                        rest.split_once(':')
+                            .is_some_and(|(ver, date)| !ver.is_empty() && date.len() == 10)
+                    }),
+                };
+                if !ok {
+                    return Err(format!(
+                        "unknown update state `{s}` (idle|checking|downloading|ready:<ver>:<date>)"
+                    ));
+                }
+                update_state = Some(s);
+            }
             "--search" => search = Some(value("--search")?),
             other => return Err(format!("unknown argument `{other}`")),
         }
@@ -265,6 +286,7 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         leagues,
         league,
         price_source,
+        update_state,
     }))
 }
 
@@ -600,6 +622,27 @@ mod tests {
         assert_eq!(a.tier_text, Some(("S".into(), "abc".into())));
         let b = p(&["--screenshot", "o.png"]).unwrap().unwrap();
         assert_eq!(b.tier_text, None);
+    }
+
+    #[test]
+    fn update_state_is_read_and_validated() {
+        for ok in ["idle", "checking", "downloading", "ready:0.8.0:2026-11-02"] {
+            let a = p(&["--screenshot", "o.png", "--update-state", ok])
+                .unwrap()
+                .unwrap();
+            assert_eq!(a.update_state.as_deref(), Some(ok));
+        }
+        for bad in [
+            "bogus",
+            "ready:",
+            "ready:0.8.0",
+            "ready:0.8.0:2026",
+            "ready::2026-11-02",
+        ] {
+            assert!(p(&["--screenshot", "o.png", "--update-state", bad]).is_err());
+        }
+        let b = p(&["--screenshot", "o.png"]).unwrap().unwrap();
+        assert_eq!(b.update_state, None);
     }
 
     #[test]

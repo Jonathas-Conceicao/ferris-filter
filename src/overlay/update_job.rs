@@ -12,10 +12,6 @@
 //! down. Any other shutdown deletes the work folder: a partial download while Downloading, the
 //! verified but unused installer while Ready.
 
-// The install side (`begin_install`, `cancel_install`, `shutdown`, `InstallClick`) is wired by the
-// next plan of this phase; remove this allow then.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -211,6 +207,7 @@ impl UpdateJob {
     }
 
     /// Set the state without a worker (screenshot mode and tests).
+    #[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
     pub fn inject(&mut self, state: UpdateState) {
         self.state = state;
         self.rx = None;
@@ -245,6 +242,7 @@ impl UpdateJob {
         self.install_on_quit = false;
     }
 
+    #[cfg(test)]
     pub fn install_intended(&self) -> bool {
         self.install_on_quit
     }

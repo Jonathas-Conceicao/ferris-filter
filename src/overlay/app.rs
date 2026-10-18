@@ -54,7 +54,7 @@ use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
 use super::shell::{self, ConfigBarInputs, Popup, PopupData, ShellTab, StatusInputs, StatusLine};
 use super::tray::{self, OverlayCommand, TrayHandles};
-use super::update_job::{UpdateJob, UpdateState};
+use super::update_job::{InstallClick, UpdateJob, UpdateState};
 use super::visibility::{self, Visibility};
 use super::win::{self, OverlayWindow};
 use crate::skin::Skin;
@@ -173,6 +173,9 @@ pub struct OverlayApp {
     update: UpdateJob,
     /// The update outcome shown in the status line (an event message).
     update_message: Option<(String, w::StatusKind)>,
+    /// Where `begin_shutdown` leaves the verified installer for `launch()` to start once the
+    /// event loop has returned (only after an explicit Install click).
+    pending_install: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
 
     /// poe.ninja's league list for the Economy tab's picker: fetched on a worker the first time
     /// the tab is shown in a session and on refresh, never at start-up, in tests or in
@@ -1266,10 +1269,11 @@ impl OverlayApp {
         hotkey_status: HotkeyStatus,
         instance: instance::Guard,
         skin: Skin,
+        pending_install: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
     ) -> Self {
         let root = resolve_root();
         let game_dir = startup_game_dir(&root);
-        Self::build(
+        let mut app = Self::build(
             tray,
             hotkey_manager,
             hotkey_status,
@@ -1277,7 +1281,9 @@ impl OverlayApp {
             skin,
             root,
             game_dir,
-        )
+        );
+        app.pending_install = pending_install;
+        app
     }
 
     /// The debug screenshot app: an inert tray, no hotkey, no instance guard, the requested tab
@@ -1522,6 +1528,7 @@ impl OverlayApp {
             economy: economy::EconomySync::new(),
             update: UpdateJob::new(),
             update_message: None,
+            pending_install: std::sync::Arc::new(std::sync::Mutex::new(None)),
             leagues: super::leagues::LeagueList::default(),
             reload: chat::ReloadSend::default(),
             reload_pending: None,
@@ -2420,7 +2427,10 @@ impl OverlayApp {
                 };
                 let dirty = self.quit_dirty();
                 match apply::quit_step(dirty, true, apply::QuitEvent::Choice(quit_choice)) {
-                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
+                    apply::QuitStep::CloseConfirm => {
+                        self.quit_confirm = false;
+                        self.update.cancel_install();
+                    }
                     apply::QuitStep::QuitNow => {
                         // Deferred to the top of the next frame so the Phase 22 order holds:
                         // shutdown before that frame's instance show-request poll (WR-08).
@@ -2447,6 +2457,9 @@ impl OverlayApp {
                         ) == apply::QuitStep::QuitWhenIdle
                         {
                             self.quit_after_apply = true;
+                        } else {
+                            // A refused Apply keeps the window open: no install on a later quit.
+                            self.update.cancel_install();
                         }
                     }
                     _ => {}
@@ -2630,6 +2643,28 @@ impl OverlayApp {
         // relaunch becomes the new first instance rather than waiting on (or being acked by) a
         // process that is about to close.
         self.instance = None;
+        // Hand a clicked-for installer to `launch()`, which starts it after the event loop has
+        // returned; any other quit deletes the download here.
+        if let Some(path) = self.update.shutdown()
+            && let Ok(mut slot) = self.pending_install.lock()
+        {
+            *slot = Some(path);
+        }
+    }
+
+    /// The Install click: re-checks the installer, sets the install-on-quit intent and asks to
+    /// quit through the normal path (quits at once when clean, else the Unapplied changes popup).
+    /// Returns true when the shutdown began. Never starts the installer.
+    fn install_and_quit(&mut self) -> bool {
+        self.clear_events_on_edit();
+        match self.update.begin_install() {
+            InstallClick::Failed((text, kind)) => {
+                self.update_message = Some((text, update_kind(kind)));
+                false
+            }
+            InstallClick::NotReady => false,
+            InstallClick::Proceed => self.request_quit(),
+        }
     }
 
     /// RULES REVERT: discard the rule edits. A staged economy add/remove is the ECONOMY tab's and
@@ -3945,6 +3980,11 @@ impl eframe::App for OverlayApp {
         }
         if let Some(super::about_view::AboutAction::Check) = about_action {
             self.start_update_check();
+        }
+        if let Some(super::about_view::AboutAction::InstallAndQuit) = about_action
+            && self.install_and_quit()
+        {
+            quit_requested = true;
         }
         if economy_clicks.sync
             && self.settings.price_policy() != PriceSourcePolicy::ForceFallback
@@ -6101,6 +6141,118 @@ Hide
             ))
         );
         assert_eq!(app.update.state(), &super::UpdateState::Idle);
+    }
+
+    /// An app in the Ready state holding a real installer in a `FerrisFilter-update-*` folder
+    /// under a temp dir (never the real %TEMP%). Nothing is ever spawned.
+    fn ready_app() -> (super::OverlayApp, tempfile::TempDir, std::path::PathBuf) {
+        let (mut app, _ctx) = popup_app(RULES);
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("FerrisFilter-update-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let installer = dir.join("FerrisFilter-0.8.0-setup.exe");
+        std::fs::write(&installer, b"installer bytes").unwrap();
+        let sha256 = crate::update::sha256_file(&installer).unwrap();
+        app.update
+            .inject(super::UpdateState::Ready(crate::update::ReadyUpdate {
+                version: "0.8.0".to_string(),
+                published_unix: None,
+                installer: installer.clone(),
+                sha256,
+            }));
+        (app, root, installer)
+    }
+
+    fn handed_off(app: &super::OverlayApp) -> Option<std::path::PathBuf> {
+        app.pending_install.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn install_click_with_nothing_unapplied_quits_and_hands_off_the_installer() {
+        let (mut app, _root, installer) = ready_app();
+        assert!(app.install_and_quit());
+        assert_eq!(handed_off(&app), Some(installer.clone()));
+        assert!(installer.exists(), "the wizard runs from this file");
+    }
+
+    #[test]
+    fn install_click_with_unapplied_edits_asks_and_cancel_clears_the_intent() {
+        use crate::overlay::shell::Popup;
+        let (mut app, _root, installer) = ready_app();
+        let ctx = egui::Context::default();
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(!app.install_and_quit());
+        assert!(app.quit_confirm);
+        assert!(app.update.install_intended());
+        assert_eq!(handed_off(&app), None);
+
+        app.dispatch_popup(&ctx, Popup::Quit, 2);
+        assert!(!app.update.install_intended());
+        assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+        assert_eq!(handed_off(&app), None);
+
+        // A later plain quit never launches it.
+        app.quit_confirm = false;
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+    }
+
+    #[test]
+    fn install_click_then_refused_apply_clears_the_intent() {
+        use crate::overlay::shell::Popup;
+        let (mut app, _root, _installer) = ready_app();
+        let ctx = egui::Context::default();
+        // A cutoff that is not a number refuses the Apply.
+        app.config
+            .as_mut()
+            .unwrap()
+            .set_tier_text("S", "not a number");
+        assert!(!app.install_and_quit());
+        assert!(app.quit_confirm && app.update.install_intended());
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply, "the refused Apply keeps the window");
+        assert!(!app.update.install_intended());
+        assert_eq!(handed_off(&app), None);
+    }
+
+    #[test]
+    fn install_click_then_quit_without_applying_hands_off() {
+        use crate::overlay::shell::Popup;
+        let (mut app, _root, installer) = ready_app();
+        let ctx = egui::Context::default();
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(!app.install_and_quit());
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(app.quit_next_frame);
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), Some(installer));
+    }
+
+    #[test]
+    fn plain_quit_while_ready_deletes_the_installer_and_launches_nothing() {
+        let (mut app, _root, installer) = ready_app();
+        assert!(app.request_quit());
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+        assert!(!installer.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn install_click_with_the_installer_gone_reports_it_and_stays_open() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _root, installer) = ready_app();
+        std::fs::remove_file(&installer).unwrap();
+        assert!(!app.install_and_quit());
+        assert_eq!(
+            app.update_message,
+            Some((
+                "The installer for 0.8.0 is no longer there. Check for updates again.".to_string(),
+                StatusKind::Error
+            ))
+        );
+        assert_eq!(app.update.state(), &super::UpdateState::Idle);
+        assert_eq!(handed_off(&app), None);
     }
 
     #[test]

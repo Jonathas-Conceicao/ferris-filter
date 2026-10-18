@@ -2499,7 +2499,6 @@ impl OverlayApp {
                 a,
                 ConfigAction::AddStyle(_)
                     | ConfigAction::EditStyle { .. }
-                    | ConfigAction::SetStrictness(_)
                     | ConfigAction::DeleteStyle(_)
                     | ConfigAction::RenameStyle { .. }
                     | ConfigAction::MoveStyle { .. }
@@ -2538,7 +2537,7 @@ impl OverlayApp {
                     if let Ok(state) = &mut self.config
                         && state.set_strictness(level)
                     {
-                        self.config_message = None;
+                        self.clear_events_on_edit();
                     }
                 }
                 ConfigAction::DeleteStyle(name) => {
@@ -5580,6 +5579,76 @@ Hide
             assert_eq!(app.config_ui.expanded.as_deref(), Some(name));
             assert_eq!(app.config_ui.scroll_to.as_deref(), Some(name));
         }
+    }
+
+    #[test]
+    fn strictness_click_is_a_pending_style_edit_that_revert_undoes() {
+        use crate::models::config::StyleAction;
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        use crate::overlay::strictness::Strictness;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        assert_eq!(
+            app.config.as_ref().unwrap().strictness(),
+            Strictness::FlatBroke
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::SetStrictness(Strictness::Loaded)]);
+        let c = app.config.as_ref().unwrap();
+        assert_eq!(c.strictness(), Strictness::Loaded);
+        assert!(c.styles_dirty() && c.is_dirty());
+        for n in ["C", "D", "E", "F"] {
+            assert_eq!(c.style(n).unwrap().action, StyleAction::Hide, "{n}");
+        }
+        app.config_ui.revert_scope = crate::overlay::config_state::RevertScope::Styles;
+        app.config_ui.revert_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        let c = app.config.as_ref().unwrap();
+        assert_eq!(c.strictness(), Strictness::FlatBroke);
+        assert!(!c.styles_dirty());
+    }
+
+    #[test]
+    fn strictness_apply_writes_styles_json_into_the_temp_home_only() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::strictness::Strictness;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = config_with_defaults(&mut app);
+        app.root = Ok(dir.path().to_path_buf());
+        // No filter loaded: Apply writes the config files only.
+        app.filter = Err("no filter".to_string());
+        app.working = None;
+        let defaults = std::fs::read_to_string(dir.path().join("styles.json")).unwrap();
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::SetStrictness(Strictness::Scrounging)],
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::Apply]);
+
+        let written = std::fs::read_to_string(dir.path().join("styles.json")).unwrap();
+        let styles: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(styles["F"]["action"], "Hide");
+        assert_ne!(written, defaults);
+        let before: serde_json::Value = serde_json::from_str(&defaults).unwrap();
+        for k in ["unchanged", "hidden"] {
+            assert_eq!(styles[k], before[k], "{k}");
+        }
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn strictness_of_the_current_level_changes_nothing() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::strictness::Strictness;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.config_message = Some(("kept".to_string(), true));
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::SetStrictness(Strictness::FlatBroke)],
+        );
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+        assert!(app.config_message.is_some());
     }
 
     fn config_with_defaults(app: &mut super::OverlayApp) -> tempfile::TempDir {

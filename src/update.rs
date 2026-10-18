@@ -563,10 +563,27 @@ pub fn sweep_stale(tmp_root: &Path, now: std::time::SystemTime) {
     }
 }
 
-fn set_slot(slot: &std::sync::Mutex<Option<PathBuf>>, value: Option<PathBuf>) {
+/// The work folder of a running check, shared between the worker and the shutdown that may
+/// delete it. Both sides change it only under its lock, so a shutdown either sees the folder or
+/// stops the worker before it creates one.
+#[derive(Debug, Default)]
+pub struct WorkSlot {
+    /// The folder the worker created, once it exists.
+    pub dir: Option<PathBuf>,
+    /// Set at shutdown: from then on the worker creates no folder and stops its download (its
+    /// own cleanup then deletes the folder it made).
+    pub cancelled: bool,
+}
+
+fn set_slot(slot: &std::sync::Mutex<WorkSlot>, value: Option<PathBuf>) {
     if let Ok(mut g) = slot.lock() {
-        *g = value;
+        g.dir = value;
     }
+}
+
+/// Whether shutdown has stopped the check. A poisoned lock counts as stopped.
+fn is_cancelled(slot: &std::sync::Mutex<WorkSlot>) -> bool {
+    slot.lock().map(|g| g.cancelled).unwrap_or(true)
 }
 
 /// Run one update check: ask GitHub for the latest release and, when it is newer, download its
@@ -577,7 +594,7 @@ pub fn run_check(
     current: &str,
     tmp_root: &Path,
     now: std::time::SystemTime,
-    work_dir: &std::sync::Mutex<Option<PathBuf>>,
+    work_dir: &std::sync::Mutex<WorkSlot>,
     on_downloading: &mut dyn FnMut(&str),
 ) -> CheckResult {
     use std::io::Write;
@@ -663,13 +680,24 @@ pub fn run_check(
         None => return failed(|version| Failure::BadSums { version }),
     };
 
-    let Ok(dir) = tempfile::Builder::new()
-        .prefix(WORK_PREFIX)
-        .tempdir_in(tmp_root)
-    else {
-        return failed(|version| Failure::DownloadFailed { version });
+    // Created and published under the slot's lock: a shutdown either finds the folder or has
+    // already stopped the check, so no folder is ever left behind unseen.
+    let dir = {
+        let Ok(mut slot) = work_dir.lock() else {
+            return failed(|version| Failure::DownloadFailed { version });
+        };
+        if slot.cancelled {
+            return failed(|version| Failure::DownloadFailed { version });
+        }
+        let Ok(dir) = tempfile::Builder::new()
+            .prefix(WORK_PREFIX)
+            .tempdir_in(tmp_root)
+        else {
+            return failed(|version| Failure::DownloadFailed { version });
+        };
+        slot.dir = Some(dir.path().to_path_buf());
+        dir
     };
-    set_slot(work_dir, Some(dir.path().to_path_buf()));
     let fail = |f: Failure| {
         set_slot(work_dir, None);
         CheckResult::Failed(f)
@@ -682,6 +710,13 @@ pub fn run_check(
     let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
     let status = {
         let mut sink = |chunk: &[u8]| -> std::io::Result<()> {
+            // Shutdown stopped the check: end the download; the folder is deleted on return.
+            if is_cancelled(work_dir) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "update check stopped at shutdown",
+                ));
+            }
             ctx.update(chunk);
             file.write_all(chunk)
         };
@@ -707,8 +742,19 @@ pub fn run_check(
         return fail(Failure::Mismatch { version });
     }
 
-    let kept = dir.keep();
-    set_slot(work_dir, Some(kept.clone()));
+    // Kept only while the check still runs; after a shutdown the folder goes with `dir`.
+    let kept = {
+        let Ok(mut slot) = work_dir.lock() else {
+            return CheckResult::Failed(Failure::DownloadFailed { version });
+        };
+        if slot.cancelled {
+            slot.dir = None;
+            return CheckResult::Failed(Failure::DownloadFailed { version });
+        }
+        let kept = dir.keep();
+        slot.dir = Some(kept.clone());
+        kept
+    };
     CheckResult::Ready(ReadyUpdate {
         version,
         published_unix: release.published_at.as_deref().and_then(parse_published),
@@ -831,7 +877,7 @@ impl UpdateHttp for ReqwestUpdateHttp {
 /// The production check, run on the overlay's worker thread: the real GitHub, the real `%TEMP%`.
 #[cfg(not(test))]
 pub fn check_for_update_blocking(
-    work_dir: &std::sync::Mutex<Option<PathBuf>>,
+    work_dir: &std::sync::Mutex<WorkSlot>,
     on_downloading: &mut dyn FnMut(&str),
 ) -> CheckResult {
     let Ok(http) = ReqwestUpdateHttp::new() else {
@@ -850,7 +896,7 @@ pub fn check_for_update_blocking(
 /// Test twin: unit tests never reach GitHub, so a press of Check ends offline without any I/O.
 #[cfg(test)]
 pub fn check_for_update_blocking(
-    _work_dir: &std::sync::Mutex<Option<PathBuf>>,
+    _work_dir: &std::sync::Mutex<WorkSlot>,
     _on_downloading: &mut dyn FnMut(&str),
 ) -> CheckResult {
     CheckResult::Failed(Failure::Offline)
@@ -982,7 +1028,7 @@ mod tests {
 
     #[test]
     fn production_entry_point_is_offline_in_tests() {
-        let slot = std::sync::Mutex::new(None);
+        let slot = std::sync::Mutex::new(WorkSlot::default());
         assert_eq!(
             check_for_update_blocking(&slot, &mut |_| panic!("no download")),
             CheckResult::Failed(Failure::Offline)
@@ -1490,13 +1536,13 @@ mod tests {
     struct Run {
         result: CheckResult,
         root: tempfile::TempDir,
-        slot: Mutex<Option<PathBuf>>,
+        slot: Mutex<WorkSlot>,
         announced: Vec<String>,
     }
 
     fn run(http: &FakeHttp, current: &str) -> Run {
         let root = tempfile::tempdir().unwrap();
-        let slot = Mutex::new(None);
+        let slot = Mutex::new(WorkSlot::default());
         let mut announced = Vec::new();
         let result = run_check(
             http,
@@ -1523,7 +1569,7 @@ mod tests {
 
     fn assert_clean(r: &Run) {
         assert!(entries(r.root.path()).is_empty(), "temp root not empty");
-        assert!(r.slot.lock().unwrap().is_none());
+        assert!(r.slot.lock().unwrap().dir.is_none());
     }
 
     fn failure(r: &Run) -> Failure {
@@ -1569,7 +1615,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(&ready.installer).unwrap(), INSTALLER);
         assert_eq!(r.announced, vec!["0.8.0".to_string()]);
-        assert_eq!(r.slot.lock().unwrap().clone(), Some(folders[0].clone()));
+        assert_eq!(r.slot.lock().unwrap().dir.clone(), Some(folders[0].clone()));
     }
 
     #[test]
@@ -1809,6 +1855,90 @@ mod tests {
         assert_clean(&r);
     }
 
+    /// Wraps a fake and stops the check (as shutdown does) after `after` downloaded chunks.
+    struct StopAfter<'a> {
+        after: usize,
+        inner: &'a FakeHttp,
+        slot: &'a Mutex<WorkSlot>,
+    }
+
+    impl UpdateHttp for StopAfter<'_> {
+        fn get(&self, url: &str, accept: &str, max_bytes: u64) -> Result<Reply, FetchError> {
+            self.inner.get(url, accept, max_bytes)
+        }
+
+        fn download(
+            &self,
+            url: &str,
+            max_bytes: u64,
+            sink: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+        ) -> Result<u16, FetchError> {
+            let mut chunks = 0;
+            self.inner.download(url, max_bytes, &mut |c| {
+                let r = sink(c);
+                chunks += 1;
+                if chunks == self.after {
+                    self.slot.lock().unwrap().cancelled = true;
+                }
+                r
+            })
+        }
+    }
+
+    #[test]
+    fn a_stopped_check_creates_no_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Mutex::new(WorkSlot {
+            dir: None,
+            cancelled: true,
+        });
+        let result = run_check(
+            &good("v0.8.0"),
+            "0.7.0",
+            root.path(),
+            SystemTime::now(),
+            &slot,
+            &mut |_| {},
+        );
+        assert_eq!(
+            result,
+            CheckResult::Failed(Failure::DownloadFailed { version: ver() })
+        );
+        assert!(entries(root.path()).is_empty());
+        assert!(slot.lock().unwrap().dir.is_none());
+    }
+
+    #[test]
+    fn a_check_stopped_mid_download_ends_it_and_deletes_its_folder() {
+        // After the first chunk (the download ends early) and after the last one (the verified
+        // installer is not kept).
+        for after in [1, 3] {
+            let root = tempfile::tempdir().unwrap();
+            let slot = Mutex::new(WorkSlot::default());
+            let fake = good("v0.8.0");
+            let http = StopAfter {
+                after,
+                inner: &fake,
+                slot: &slot,
+            };
+            let result = run_check(
+                &http,
+                "0.7.0",
+                root.path(),
+                SystemTime::now(),
+                &slot,
+                &mut |_| {},
+            );
+            assert_eq!(
+                result,
+                CheckResult::Failed(Failure::DownloadFailed { version: ver() }),
+                "after {after}"
+            );
+            assert!(entries(root.path()).is_empty(), "after {after}");
+            assert!(slot.lock().unwrap().dir.is_none());
+        }
+    }
+
     #[test]
     fn sweep_stale_deletes_only_old_update_folders() {
         let root = tempfile::tempdir().unwrap();
@@ -1839,7 +1969,7 @@ mod tests {
         std::fs::create_dir(&old).unwrap();
         let mut h = FakeHttp::default();
         h.replies.insert(LATEST_URL.into(), status(404));
-        let slot = Mutex::new(None);
+        let slot = Mutex::new(WorkSlot::default());
         let _ = run_check(
             &h,
             "0.7.0",

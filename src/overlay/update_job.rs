@@ -17,7 +17,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
 use crate::update::{
-    CheckResult, Failure, InstallerCheck, ReadyUpdate, UpdateKind, WORK_PREFIX,
+    CheckResult, Failure, InstallerCheck, ReadyUpdate, UpdateKind, WORK_PREFIX, WorkSlot,
     downloading_message, message_for, verify_installer,
 };
 
@@ -71,7 +71,7 @@ pub enum UpdateMsg {
 #[derive(Debug, Clone)]
 pub struct UpdateProgress {
     tx: Sender<UpdateMsg>,
-    work_dir: Arc<Mutex<Option<PathBuf>>>,
+    work_dir: Arc<Mutex<WorkSlot>>,
 }
 
 impl UpdateProgress {
@@ -84,7 +84,7 @@ impl UpdateProgress {
     }
 
     /// The slot where the worker publishes its work folder, so shutdown can delete a partial one.
-    pub fn work_dir(&self) -> &Mutex<Option<PathBuf>> {
+    pub fn work_dir(&self) -> &Mutex<WorkSlot> {
         &self.work_dir
     }
 }
@@ -102,7 +102,7 @@ pub enum InstallClick {
 pub struct UpdateJob {
     state: UpdateState,
     rx: Option<Receiver<UpdateMsg>>,
-    work_dir: Arc<Mutex<Option<PathBuf>>>,
+    work_dir: Arc<Mutex<WorkSlot>>,
     install_on_quit: bool,
 }
 
@@ -117,7 +117,7 @@ impl UpdateJob {
         Self {
             state: UpdateState::Idle,
             rx: None,
-            work_dir: Arc::new(Mutex::new(None)),
+            work_dir: Arc::new(Mutex::new(WorkSlot::default())),
             install_on_quit: false,
         }
     }
@@ -148,7 +148,7 @@ impl UpdateJob {
             return false;
         }
         if let Ok(mut slot) = self.work_dir.lock() {
-            *slot = None;
+            slot.dir = None;
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let progress = UpdateProgress {
@@ -184,7 +184,7 @@ impl UpdateJob {
                         _ => {
                             self.state = UpdateState::Idle;
                             if let Ok(mut slot) = self.work_dir.lock() {
-                                *slot = None;
+                                slot.dir = None;
                             }
                         }
                     }
@@ -196,7 +196,7 @@ impl UpdateJob {
                     // The worker died before reporting (a panic): never leave the button stuck.
                     self.rx = None;
                     self.state = UpdateState::Idle;
-                    self.abandon();
+                    self.abandon(false);
                     return Some(message_for(
                         &CheckResult::Failed(Failure::BadResponse),
                         utc_offset_minutes,
@@ -231,7 +231,7 @@ impl UpdateJob {
                 version: r.version.clone(),
             },
         };
-        self.abandon();
+        self.abandon(false);
         self.state = UpdateState::Idle;
         self.install_on_quit = false;
         InstallClick::Failed(message_for(&CheckResult::Failed(failure), 0))
@@ -248,13 +248,17 @@ impl UpdateJob {
     }
 
     /// Delete the work folder, best effort. Only ever removes a folder whose final component
-    /// starts with [`WORK_PREFIX`].
-    fn abandon(&mut self) {
+    /// starts with [`WORK_PREFIX`]. `stop_worker` (shutdown) also stops a running check in the
+    /// same lock, so it creates no folder afterwards and ends its download.
+    fn abandon(&mut self, stop_worker: bool) {
         let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Ok(mut slot) = self.work_dir.lock()
-            && let Some(p) = slot.take()
-        {
-            candidates.push(p);
+        if let Ok(mut slot) = self.work_dir.lock() {
+            if stop_worker {
+                slot.cancelled = true;
+            }
+            if let Some(p) = slot.dir.take() {
+                candidates.push(p);
+            }
         }
         if let UpdateState::Ready(r) = &self.state
             && let Some(parent) = r.installer.parent()
@@ -270,7 +274,7 @@ impl UpdateJob {
 
     /// Called once when the app shuts down. Returns the installer to launch (with the digest it
     /// is checked against again right before it starts) only when the player clicked Install;
-    /// otherwise deletes the work folder and returns None.
+    /// otherwise stops a running check, deletes the work folder and returns None.
     pub fn shutdown(&mut self) -> Option<ReadyUpdate> {
         if self.install_on_quit
             && let UpdateState::Ready(r) = &self.state
@@ -278,7 +282,7 @@ impl UpdateJob {
             // The installer runs from its folder; the stale sweep removes it later.
             return Some(r.clone());
         }
-        self.abandon();
+        self.abandon(true);
         None
     }
 }
@@ -577,7 +581,7 @@ mod tests {
         let p2 = partial.clone();
         let mut job = UpdateJob::new();
         job.start(move |p| {
-            *p.work_dir().lock().unwrap() = Some(p2);
+            p.work_dir().lock().unwrap().dir = Some(p2);
             p.downloading("0.8.0");
             let _ = pub_tx.send(());
             let _ = gate_rx.recv();
@@ -587,6 +591,38 @@ mod tests {
         assert_eq!(job.shutdown(), None);
         assert!(!partial.exists());
         let _ = gate_tx.send(());
+    }
+
+    /// The worker still has its partial file open and writing when shutdown runs: the folder is
+    /// deleted anyway and the worker is told to stop.
+    #[test]
+    fn shutdown_while_the_download_file_is_open_deletes_it_and_stops_the_worker() {
+        use std::io::Write;
+        let td = tempfile::tempdir().unwrap();
+        let partial = td.path().join(format!("{WORK_PREFIX}partial"));
+        std::fs::create_dir_all(&partial).unwrap();
+        let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let (pub_tx, pub_rx) = std::sync::mpsc::channel::<()>();
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel::<bool>();
+        let p2 = partial.clone();
+        let mut job = UpdateJob::new();
+        job.start(move |p| {
+            let mut file = std::fs::File::create(p2.join("part.exe")).unwrap();
+            file.write_all(b"half").unwrap();
+            p.work_dir().lock().unwrap().dir = Some(p2);
+            p.downloading("0.8.0");
+            let _ = pub_tx.send(());
+            let _ = gate_rx.recv();
+            let _ = file.write_all(b"more");
+            let _ = seen_tx.send(p.work_dir().lock().unwrap().cancelled);
+            drop(file);
+            CheckResult::Failed(Failure::Offline)
+        });
+        pub_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(job.shutdown(), None);
+        assert!(!partial.exists());
+        gate_tx.send(()).unwrap();
+        assert!(seen_rx.recv_timeout(Duration::from_secs(5)).unwrap());
     }
 
     #[test]
@@ -601,7 +637,7 @@ mod tests {
         let other = td.path().join("something-else");
         std::fs::create_dir_all(&other).unwrap();
         let mut job = UpdateJob::new();
-        *job.work_dir.lock().unwrap() = Some(other.clone());
+        job.work_dir.lock().unwrap().dir = Some(other.clone());
         assert_eq!(job.shutdown(), None);
         assert!(other.exists());
     }

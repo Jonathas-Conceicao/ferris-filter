@@ -31,8 +31,12 @@ human review and input to be stacked here and presented after Phase 41, before P
   popup and "Not quit" warning sharing the line with an in-game reload; a pending source switch
   surviving a filter switch / Reload; offline refresh and a broken `ff-settings.json` left as is.
 - **Phase 40-07** (manual): install Inno Setup (`winget install --id JRSoftware.InnoSetup -e`),
-  build the three assets locally, run the 8-step installer test, and confirm or drop installing
-  `LICENSE.txt` next to `ff.exe` (step 8).
+  rebuild `ff.exe` (the dry-run build predates the review fixes), build the three assets locally,
+  run the 8-step installer test, confirm or drop installing `LICENSE.txt` next to `ff.exe` (step 8).
+  Also check: uninstall answered No leaves a running `ff` alone; a failed quit during uninstall shows
+  its message and removes nothing.
+- **Ordering:** 40-07 and 40-08 must run **before** Phase 42 writes the `0.7.0` CHANGELOG section,
+  because the rc tag's release notes come from `[Unreleased]`.
 - **Phase 40-08** (outward, cleared by the author, run after 40-07): read-only checks, then one push
   of `refs/tags/v0.7.0-rc.1`, watch the run and release, verify checksums; at most one rerun /
   one `-rc.2`. Note: the tag's source archives include `.planning/` (the repo is already public).
@@ -134,3 +138,10 @@ human review and input to be stacked here and presented after Phase 41, before P
   Live / Fallback price source (Fallback greys league, Sync, Tiers); new `ff-settings.json` keys
   `league`, `price_source`; ended-league status line; a source switch is an unapplied change that
   Revert does not undo; CLI keeps automatic league resolution and `--league`.
+- Phase 40: CHANGELOG — the installer, portable zip, `ff --quit` (installer use), the real version
+  and repo in the user agent, Ferris icon + version info in `ff.exe`; new build dependency
+  `winresource` 0.1.34 (MIT). CHANGELOG link references still point at `poe2-myfilter`; the 0.7.0
+  compare link should be `v0.6...v0.7.0`. `release.yml` installs Inno Setup 6.7.1 via Chocolatey on
+  the runner (unproven until 40-08). `cargo fmt --check` fails in `src/overlay/app.rs`,
+  `src/sync/league.rs`, `tests/isolation_guard.rs` (CI doesn't check fmt). 12 info items open in
+  `40-REVIEW.md`. Version is now `0.7.0-rc.1`; REV-03 sets `0.7.0`.

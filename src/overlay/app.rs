@@ -1492,8 +1492,8 @@ impl OverlayApp {
             .then(|| format!("Game folder not found: {}", dir.display()))
     }
 
-    /// A game folder came back from the dialog. A pick equal to the current folder does nothing;
-    /// unapplied rule edits make it wait for confirmation (the Switch filter? popup).
+    /// A game folder came back from the dialog. A pick equal to the current folder only re-lists
+    /// it; unapplied rule edits make it wait for confirmation (the Switch filter? popup).
     fn on_folder_picked(&mut self, path: std::path::PathBuf) {
         if self.game_dir_pinned {
             return;
@@ -1503,6 +1503,8 @@ impl OverlayApp {
                 .eq_ignore_ascii_case(&path.to_string_lossy())
         });
         if same {
+            // Re-picking the current folder re-checks it (it may have appeared since).
+            self.refresh_filters();
             return;
         }
         if self.working.as_ref().is_some_and(|w| w.is_dirty()) {
@@ -6119,6 +6121,26 @@ Hide
         app.game_dir = Some(home.path().to_path_buf());
         app.refresh_filters();
         assert!(!app.game_dir_missing);
+    }
+
+    #[test]
+    fn a_folder_that_appears_later_is_found_by_refresh_or_a_re_pick() {
+        let (mut app, ctx, home, _game) = folder_app(None, &[]);
+        let later = home.path().join("later");
+        app.game_dir = Some(later.clone());
+        app.refresh_filters();
+        assert!(app.game_dir_missing);
+        std::fs::create_dir(&later).unwrap();
+        app.handle_config_actions(&ctx, vec![ConfigAction::RefreshLists]);
+        assert!(!app.game_dir_missing);
+
+        std::fs::remove_dir(&later).unwrap();
+        app.refresh_filters();
+        assert!(app.game_dir_missing);
+        std::fs::create_dir(&later).unwrap();
+        app.on_folder_picked(later.clone());
+        assert!(!app.game_dir_missing);
+        assert_eq!(app.game_dir.as_deref(), Some(later.as_path()));
     }
 
     #[test]

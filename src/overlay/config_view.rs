@@ -420,15 +420,21 @@ fn show_filter(
                         .response
                         .on_hover_text(dir.join(ctx.active_filter).display().to_string());
                 }
+                // Refresh only re-lists, so it stays live while the folder is missing: it is how
+                // a folder that appeared later (the game's first launch) is picked up.
+                let refresh_on = ctx.game_dir.is_some();
                 let refresh = match ctx.skin {
-                    Some(skin) => {
-                        crate::skin::widgets::ff_icon_button(ui, &skin.refresh, "Refresh", enabled)
-                    }
-                    None => ui.add_enabled(enabled, small_button("Refresh")),
+                    Some(skin) => crate::skin::widgets::ff_icon_button(
+                        ui,
+                        &skin.refresh,
+                        "Refresh",
+                        refresh_on,
+                    ),
+                    None => ui.add_enabled(refresh_on, small_button("Refresh")),
                 };
                 let tip = "Refresh the file lists";
                 let refresh = refresh.on_hover_text(tip).on_disabled_hover_text(tip);
-                if enabled && refresh.clicked() {
+                if refresh_on && refresh.clicked() {
                     actions.push(ConfigAction::RefreshLists);
                 }
             });
@@ -1330,9 +1336,21 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_folder_disables_refresh_but_not_browse() {
-        let found = actions_over_rows(|c| c.game_dir_missing = true);
+    fn a_missing_folder_keeps_browse_and_refresh_live() {
+        let found = actions_over_rows(|c| {
+            c.game_dir_missing = true;
+            c.filters = None;
+        });
         assert!(found.contains(&ConfigAction::BrowseFolder));
+        assert!(found.contains(&ConfigAction::RefreshLists));
+    }
+
+    #[test]
+    fn refresh_is_off_without_a_game_folder() {
+        let found = actions_over_rows(|c| {
+            c.game_dir = None;
+            c.filters = None;
+        });
         assert!(!found.contains(&ConfigAction::RefreshLists));
     }
 

@@ -123,9 +123,14 @@ popups.
 - Implementation: a new `skin::editor::ff_segmented_levels` (or a parameterised extension of
   `ff_segmented`) with the same art, dividers, hover and `WidgetInfo` radio semantics as
   `ff_segmented`. It must not change `ff_segmented`'s existing behaviour for Show | Hide.
-- Segment widths: Custom is fixed 72pt; the six levels share the remaining width equally
-  (about 88pt each at a ~600pt content width; the executor computes from `available_width()`).
-  This makes Custom visually separate and lets the level names have the room.
+- Segment widths (amended after 38-RESEARCH measured the real content width): the Styles
+  content width at the 660pt window is about **517pt** (the same width the existing
+  `table_columns(517.0)` test uses), not ~600pt, and `Scrounging` is 78.9pt at 14pt, so equal
+  segments cannot fit it even at 12pt. Segments are therefore **content-proportional**: each
+  segment's width is its widest caption line plus equal padding, with the leftover width shared
+  equally, computed from `available_width()`. Two-word captions stay stacked, so their width is
+  the wider of their two words. All captions then fit at 14pt on one row; the 13/12pt shrink below
+  is kept only as a fallback for narrower widths.
 - Captions: single-word names (`Scrounging`, `Comfy`, `Loaded`, `Custom`) on one line, vertically
   centred. Two-word names are **stacked on two lines** at the word break, centred, 14pt, 14pt
   line step: `Flat / Broke`, `Getting / By`, `Div / Farmer`. All captions are painted in small
@@ -269,8 +274,8 @@ labels.
 ## Choices made in the author's place
 
 1. Strictness row implemented as a levels variant of the skin segmented switch (same art,
-   dividers, colours) with a fixed-width Custom segment (72pt) and six equal level segments, rather
-   than seven equal segments; reasoning: Custom is display-only and short.
+   dividers, colours) with content-proportional segment widths (amended: the first draft's fixed
+   72pt Custom plus six equal segments does not fit the measured ~517pt content width).
 2. Row height 40pt (vs 30pt) and two-word captions stacked on two lines; single-word captions one
    line. The author allowed stacked captions; I chose stacking by default over shrinking text,
    with 14 -> 13 -> 12pt shrink only as an overflow fallback.

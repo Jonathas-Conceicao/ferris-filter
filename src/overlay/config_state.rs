@@ -322,21 +322,33 @@ impl ConfigState {
         })
     }
 
-    /// Write the default cutoff and unit into each existing entry by tier name (file order
-    /// kept), clearing buffers and errors. A pending edit; `Revert` undoes it.
+    /// Write the default cutoff and unit into each existing entry by tier name, then
+    /// re-validate. The file order is kept when the defaults are ascending in it; otherwise the
+    /// entries take the default order (cutoffs are checked in file order, so the defaults are
+    /// only known to validate in theirs). A pending edit; `Revert` undoes it.
     pub fn reset_tiers(&mut self) {
+        let defaults = Self::default_tiers();
         for entry in &mut self.tiers {
-            if let Some(d) = Self::default_tiers().iter().find(|d| d.tier == entry.tier) {
+            if let Some(d) = defaults.iter().find(|d| d.tier == entry.tier) {
                 entry.min = d.min;
                 entry.unit = d.unit.clone();
             }
         }
+        if ValidatedTiers::try_from(self.tiers.clone()).is_err() {
+            let order = |t: &str| defaults.iter().position(|d| d.tier == t);
+            self.tiers
+                .sort_by_key(|e| order(&e.tier).unwrap_or(usize::MAX));
+        }
         self.resync_buffers();
+        self.recompute_tier_errors();
     }
 
-    /// Every default tier is present with the default cutoff and unit, no pending bad text.
+    /// Every default tier is present with the default cutoff and unit, no pending bad text and
+    /// no ordering or missing-tier error.
     pub fn tiers_at_defaults(&self) -> bool {
         self.errors.row.is_empty()
+            && self.errors.edges.is_empty()
+            && self.errors.general.is_none()
             && Self::default_tiers().iter().all(|d| {
                 self.tiers
                     .iter()
@@ -1831,6 +1843,36 @@ mod tests {
         assert_eq!(snapshot(d.path()), files);
         s.revert_scope(RevertScope::Tiers);
         assert!(!s.tiers_dirty());
+    }
+
+    #[test]
+    fn reset_tiers_takes_default_order_when_file_order_would_not_validate() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-default.json");
+        // Ascending per unit in this order, so it loads; all-chaos defaults are not.
+        fs::write(
+            d.path().join("tiers.json"),
+            r#"[
+  { "tier": "F", "min": 0.1, "unit": "chaos" },
+  { "tier": "E", "min": 0.5, "unit": "chaos" },
+  { "tier": "D", "min": 2.0, "unit": "chaos" },
+  { "tier": "C", "min": 8.0, "unit": "chaos" },
+  { "tier": "S", "min": 1.0, "unit": "exalt" },
+  { "tier": "A", "min": 1.0, "unit": "div" },
+  { "tier": "B", "min": 5.0, "unit": "exalt" }
+]"#,
+        )
+        .unwrap();
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert!(!s.tiers_at_defaults());
+
+        s.reset_tiers();
+        let now: Vec<String> = s.pending_tiers().iter().map(|e| e.tier.clone()).collect();
+        assert_eq!(now, ["F", "E", "D", "C", "B", "A", "S"]);
+        assert!(!s.has_tier_errors());
+        assert!(s.tiers_error().is_none());
+        assert!(s.tier_rows().iter().all(|r| !r.edge));
+        assert!(s.tiers_at_defaults());
+        assert!(ValidatedTiers::try_from(s.pending_tiers().to_vec()).is_ok());
     }
 
     #[test]

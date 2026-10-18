@@ -389,6 +389,29 @@ mod imp {
         pid.filter(|&p| p != 0)
     }
 
+    /// Tests only: make an existing `-pid` section name another process, so `ff --quit` can be
+    /// pointed at a real process other than the test binary. False when there is no section.
+    #[cfg(test)]
+    pub(super) fn overwrite_published_pid(name: &[u16], pid: u32) -> bool {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
+        let h = unsafe { OpenFileMappingW(FILE_MAP_WRITE, 0, name.as_ptr()) };
+        if h.is_null() {
+            return false;
+        }
+        // SAFETY: `h` is a live section handle; the instance created it PID_BYTES long.
+        let view = unsafe { MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, PID_BYTES) };
+        let ok = !view.Value.is_null();
+        if ok {
+            // SAFETY: `view` maps at least PID_BYTES writable bytes and is unmapped once, here.
+            unsafe {
+                view.Value.cast::<u32>().write_unaligned(pid);
+                UnmapViewOfFile(view);
+            }
+        }
+        close_all(&[h]);
+        ok
+    }
+
     /// Open (SYNCHRONIZE) the process that published itself as the running instance. `None`
     /// when there is no `-pid` section, it names this very process (the in-process tests),
     /// or the process cannot be opened. The caller closes the handle.
@@ -1086,6 +1109,91 @@ mod windows_tests {
         assert_eq!(imp::published_pid(&pid_name), Some(std::process::id()));
         drop(g);
         assert_eq!(imp::published_pid(&pid_name), None);
+    }
+
+    fn wide_name(name: &str) -> Vec<u16> {
+        name.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// A harmless long-running child process (a system `PING.EXE` with no output), killed
+    /// when dropped so a failing test never leaves it behind.
+    struct Sleeper(std::process::Child);
+
+    impl Sleeper {
+        fn spawn() -> Self {
+            let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+            let child = std::process::Command::new(format!(r"{root}\System32\PING.EXE"))
+                .args(["-n", "60", "127.0.0.1"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn PING.EXE");
+            Self(child)
+        }
+
+        /// Ends the process; the `Child` (and so its handle, which keeps the pid from being
+        /// reused) stays alive until the Sleeper drops.
+        fn end(&mut self) {
+            let _ = self.0.kill();
+            self.0.wait().expect("wait for PING.EXE");
+        }
+    }
+
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn quit_follows_the_published_owner_process_not_the_name() {
+        let n = test_names("owner");
+        let mut child = Sleeper::spawn();
+        let mut g = first(&n);
+        assert!(imp::overwrite_published_pid(
+            &wide_name(&n.pid),
+            child.0.id()
+        ));
+        g.mark_ready();
+        // The owner is alive: still running.
+        assert_eq!(quit_running_named(&n, 2000, 300), QuitOutcome::StillRunning);
+        // The owner has exited while the name is still held: that exit is what counts.
+        child.end();
+        assert_eq!(quit_running_named(&n, 2000, 3000), QuitOutcome::Exited);
+        drop(g);
+    }
+
+    #[test]
+    fn an_instance_releasing_its_name_early_is_not_taken_as_its_exit() {
+        let n = test_names("earlyname");
+        let mut child = Sleeper::spawn();
+        let child_pid = child.0.id();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let t = {
+            let n = n.clone();
+            std::thread::spawn(move || {
+                let mut g = first(&n);
+                assert!(imp::overwrite_published_pid(&wide_name(&n.pid), child_pid));
+                g.mark_ready();
+                ready_tx.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < deadline {
+                    if g.take_quit_request() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                // Release the name (and every other object) while the owner process runs on,
+                // the way a shutting-down instance gives up its name before it exits.
+                drop(g);
+            })
+        };
+        ready_rx.recv().unwrap();
+        assert_eq!(quit_running_named(&n, 2000, 600), QuitOutcome::StillRunning);
+        t.join().unwrap();
+        child.end();
     }
 
     #[test]

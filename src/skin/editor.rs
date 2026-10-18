@@ -97,6 +97,152 @@ pub fn ff_segmented(
     resp
 }
 
+/// Height of the one-line levels switch (two stacked caption lines fit).
+pub const LEVELS_HEIGHT: f32 = 40.0;
+
+/// One segment of [`ff_levels`]: its caption lines (two for a stacked two-word caption), its
+/// tooltip, and whether a click on it selects it (a display-only segment senses hover only).
+pub struct Level<'a> {
+    pub lines: &'a [&'a str],
+    pub tip: &'a str,
+    pub clickable: bool,
+}
+
+/// Segment widths for a row `total` wide whose captions need `naturals` (widest line, in points):
+/// natural width plus 16pt padding plus an equal share of the slack; when the row is too narrow
+/// the padding drops to 8pt, and if even that does not fit the widths shrink proportionally.
+/// The widths always sum to `total`.
+pub fn levels_layout(total: f32, naturals: &[f32]) -> Vec<f32> {
+    let n = naturals.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let sum: f32 = naturals.iter().sum();
+    for pad in [16.0, 8.0] {
+        let slack = total - sum - pad * n as f32;
+        if slack >= 0.0 {
+            return naturals
+                .iter()
+                .map(|w| w + pad + slack / n as f32)
+                .collect();
+        }
+    }
+    let need = sum + 8.0 * n as f32;
+    naturals
+        .iter()
+        .map(|w| (w + 8.0) * total.max(0.0) / need.max(f32::EPSILON))
+        .collect()
+}
+
+/// A one-line, multi-segment switch in the look of [`ff_segmented`] (same art, dividers and
+/// captions), with content-proportional segments and two-line captions. Returns the combined
+/// response and the index of a clickable, not-yet-selected segment that was clicked.
+pub fn ff_levels(
+    ui: &mut Ui,
+    skin: &Skin,
+    selected: usize,
+    levels: &[Level],
+) -> (Response, Option<usize>) {
+    let width = ui.available_width();
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(width, LEVELS_HEIGHT), Sense::hover());
+    let naturals: Vec<f32> = levels
+        .iter()
+        .map(|l| {
+            l.lines
+                .iter()
+                .map(|t| {
+                    ui.painter()
+                        .layout_no_wrap((*t).to_owned(), small_caps(14.0), pal::LABEL)
+                        .size()
+                        .x
+                })
+                .fold(0.0, f32::max)
+        })
+        .collect();
+    let widths = levels_layout(rect.width(), &naturals);
+    let painter = ui.painter().clone();
+    let ppp = painter.pixels_per_point();
+    let paint_art = |p: &Painter, state: usize, tint: Color32| {
+        let art = &skin.button[state];
+        slice::paint_three(
+            p,
+            [&art.left, &art.middle, &art.right],
+            slice::three_h_rects(rect, art.left.size(), art.right.size(), ppp),
+            tint,
+        );
+    };
+    paint_art(&painter, 0, Color32::from_gray(170));
+    let mut clicked = None;
+    let mut x = rect.min.x;
+    for (i, level) in levels.iter().enumerate() {
+        let seg = Rect::from_min_size(pos2(x, rect.min.y), vec2(widths[i], rect.height()));
+        x += widths[i];
+        let sense = if level.clickable {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let r = ui.interact(seg, resp.id.with(i), sense);
+        let is_sel = selected == i;
+        let name = level.lines.join(" ");
+        r.widget_info(|| {
+            WidgetInfo::selected(WidgetType::RadioButton, level.clickable, is_sel, &name)
+        });
+        if level.clickable && !is_sel && r.clicked() {
+            clicked = Some(i);
+        }
+        if is_sel {
+            paint_art(&painter.with_clip_rect(seg), 1, Color32::WHITE);
+        }
+        if i > 0 {
+            painter.line_segment(
+                [
+                    pos2(seg.min.x, seg.min.y + 7.0),
+                    pos2(seg.min.x, seg.max.y - 7.0),
+                ],
+                Stroke::new(1.0, Color32::from_black_alpha(160)),
+            );
+        }
+        let color = if is_sel {
+            pal::HEADING
+        } else if level.clickable && r.hovered() {
+            pal::LABEL
+        } else {
+            pal::DISABLED
+        };
+        let mut size = 14.0;
+        for s in [14.0, 13.0, 12.0] {
+            size = s;
+            let widest = level
+                .lines
+                .iter()
+                .map(|t| {
+                    painter
+                        .layout_no_wrap((*t).to_owned(), small_caps(s), color)
+                        .size()
+                        .x
+                })
+                .fold(0.0, f32::max);
+            if widest <= seg.width() - 8.0 {
+                break;
+            }
+        }
+        let count = level.lines.len().max(1) as f32;
+        for (k, line) in level.lines.iter().enumerate() {
+            let dy = (k as f32 - (count - 1.0) / 2.0) * 14.0 + 1.0;
+            painter.text(
+                seg.center() + vec2(0.0, dy),
+                Align2::CENTER_CENTER,
+                *line,
+                small_caps(size),
+                color,
+            );
+        }
+        resp |= r.on_hover_text(level.tip);
+    }
+    (resp, clicked)
+}
+
 /// Paints the "no colour" mark: a dark box crossed by a thin red diagonal.
 fn paint_none(painter: &Painter, rect: Rect) {
     painter.rect_filled(rect, CornerRadius::same(1), pal::INPUT_FILL);
@@ -566,6 +712,143 @@ mod tests {
     fn an_open_colour_card_shows_the_heading_ring() {
         assert!(card_strokes(true).contains(&(2.0, pal::HEADING)));
         assert!(!card_strokes(false).contains(&(2.0, pal::HEADING)));
+    }
+
+    const LEVEL_CAPTIONS: [&[&str]; 7] = [
+        &["Custom"],
+        &["Flat", "Broke"],
+        &["Scrounging"],
+        &["Getting", "By"],
+        &["Comfy"],
+        &["Loaded"],
+        &["Div", "Farmer"],
+    ];
+
+    fn levels_of(clickable_first: bool) -> Vec<Level<'static>> {
+        LEVEL_CAPTIONS
+            .iter()
+            .enumerate()
+            .map(|(i, l)| Level {
+                lines: l,
+                tip: "tip",
+                clickable: i > 0 || clickable_first,
+            })
+            .collect()
+    }
+
+    fn natural_widths(ctx: &egui::Context) -> Vec<f32> {
+        let mut out = Vec::new();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            for l in LEVEL_CAPTIONS {
+                out.push(
+                    l.iter()
+                        .map(|t| {
+                            ui.painter()
+                                .layout_no_wrap((*t).to_owned(), small_caps(14.0), pal::LABEL)
+                                .size()
+                                .x
+                        })
+                        .fold(0.0, f32::max),
+                );
+            }
+        })
+        .drop_without_applying_deltas();
+        out
+    }
+
+    #[test]
+    fn levels_layout_sums_to_the_total_and_keeps_padding() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let nat = natural_widths(&ctx);
+        for total in [517.0, 660.0] {
+            let w = levels_layout(total, &nat);
+            assert!((w.iter().sum::<f32>() - total).abs() < 0.5);
+            for (w, n) in w.iter().zip(&nat) {
+                assert!(*w >= n + 16.0 - 0.01, "{w} < {n} + 16");
+            }
+        }
+        let a = levels_layout(517.0, &nat);
+        let b = levels_layout(660.0, &nat);
+        let extra = b[0] - a[0];
+        for i in 0..7 {
+            assert!((b[i] - a[i] - extra).abs() < 0.01, "slack shared equally");
+        }
+        let w = levels_layout(460.0, &nat);
+        assert!((w.iter().sum::<f32>() - 460.0).abs() < 0.5);
+        for (w, n) in w.iter().zip(&nat) {
+            assert!(*w >= n + 8.0 - 0.01, "{w} < {n} + 8");
+        }
+        assert!(levels_layout(100.0, &nat).iter().all(|w| *w >= 0.0));
+    }
+
+    #[test]
+    fn levels_row_is_one_40pt_row_and_every_caption_fits() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let skin = Skin::load(&ctx);
+        let nat = natural_widths(&ctx);
+        let widths = levels_layout(517.0, &nat);
+        for (w, n) in widths.iter().zip(&nat) {
+            assert!(n <= &(w - 8.0), "caption {n} does not fit {w}");
+        }
+        let levels = levels_of(false);
+        let mut rect = Rect::NOTHING;
+        let mut before = 0.0;
+        let mut after = 0.0;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_max_width(517.0);
+            before = ui.cursor().min.y;
+            rect = ff_levels(ui, &skin, 0, &levels).0.rect;
+            after = ui.cursor().min.y;
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(rect.height(), LEVELS_HEIGHT);
+        assert!((rect.width() - 517.0).abs() < 0.5);
+        assert!(after - before >= LEVELS_HEIGHT && after - before < LEVELS_HEIGHT + 10.0);
+    }
+
+    /// Selected `sel`, click at fraction `at` across the row; the reported click.
+    fn levels_click(first_clickable: bool, sel: usize, seg: usize) -> Option<usize> {
+        use egui::{Event, Modifiers, PointerButton, RawInput};
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let skin = Skin::load(&ctx);
+        let nat = natural_widths(&ctx);
+        let levels = levels_of(first_clickable);
+        let mut rect = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            ui.set_max_width(517.0);
+            rect = ff_levels(ui, &skin, sel, &levels).0.rect;
+        })
+        .drop_without_applying_deltas();
+        let widths = levels_layout(rect.width(), &nat);
+        let left = rect.min.x + widths[..seg].iter().sum::<f32>();
+        let pos = pos2(left + widths[seg] / 2.0, rect.center().y);
+        let btn = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::default(),
+        };
+        let click = RawInput {
+            events: vec![Event::PointerMoved(pos), btn(true), btn(false)],
+            ..Default::default()
+        };
+        let mut got = None;
+        ctx.run_ui(click, |ui| {
+            ui.set_max_width(517.0);
+            got = ff_levels(ui, &skin, sel, &levels).1;
+        })
+        .drop_without_applying_deltas();
+        got
+    }
+
+    #[test]
+    fn levels_report_clicks_only_on_clickable_unselected_segments() {
+        assert_eq!(levels_click(false, 0, 3), Some(3));
+        assert_eq!(levels_click(false, 3, 3), None);
+        assert_eq!(levels_click(false, 3, 0), None);
     }
 
     #[test]

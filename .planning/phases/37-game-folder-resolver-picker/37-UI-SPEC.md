@@ -1,7 +1,8 @@
 ---
 phase: 37
 slug: game-folder-resolver-picker
-status: draft
+status: approved
+reviewed_at: 2026-10-18
 shadcn_initialized: false
 preset: none
 created: 2026-10-18
@@ -39,7 +40,7 @@ The overlay uses the existing pt values; this phase adds none. Reuse:
 | Field gap | 10pt | `widgets::FIELD_GAP`, gap between a control and the button beside it |
 | Section gap | 16pt | `ui.add_space(16.0)` between Filter and Styles |
 
-Exceptions: the refresh button is a 34 x 34pt square (matches `ROW_HEIGHT` and the `ff_button` height of 34pt), not a multiple of the 4pt grid constraint of web specs; it is the existing button height.
+Exceptions: the refresh button is a 34 x 34pt square (matches `ROW_HEIGHT` and the `ff_button` height of 34pt), off the 4pt grid; it is the existing skin button height. Plans reference the skin constants by name (`ROW_HEIGHT`, `FIELD_GAP`, `LABEL_COL_W`, `CONTROL_WIDTH`), never literals.
 
 ---
 
@@ -177,11 +178,11 @@ Pixel-check: refresh button 34 x 34pt, 10pt gap to the dropdown, dropdown and bu
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: FLAG (non-blocking)
+- [x] Dimension 2 Visuals: FLAG (non-blocking: no new focal point on the Config tab)
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: FLAG (non-blocking: line height is the egui default)
+- [x] Dimension 5 Spacing: FLAG (non-blocking: existing skin constants off the 4pt grid)
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-10-18 (gsd-ui-checker)

@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-10-18T01:27:37.421Z"
 last_activity: 2026-10-18
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Planning the next milestone (/gsd-new-milestone)
+**Current focus:** Phase 36 - Per-user Locations & Embedded Defaults
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 36 of 42 (Per-user Locations & Embedded Defaults)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-10-18 — Milestone v0.7 started
+Status: Roadmap created, ready to plan Phase 36
+Last activity: 2026-10-18 - v0.7 roadmap created (Phases 36-42)
 
 ## Performance Metrics
 
@@ -89,6 +89,11 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.7 roadmap created (2026-10-18): Phases 36-42 - per-user locations + embedded defaults, game
+  folder picker, built-in styles + Strictness Selector + Reset to defaults (one fixture re-baseline), league + price
+  source, release pipeline + installer + PUB items (v0.7.0-rc dry run), Check for updates, Release
+  Review (last). Research flags: 37, 39, 40, 41. UI phases 36-39 and 41 carry UI hint: yes.
 
 - v0.6 roadmap created (2026-10-16): Phases 29-35 — workspace + ff-art from the root, skinned
   shell, RULES on the skin + add-at-top, dividers + economy banner, style table/editor + colour
@@ -368,8 +373,8 @@ Last session: 2026-10-16T18:17:21.821Z
 Stopped at: Milestone v0.6 complete and archived
 Resume file: none
 
-**Next step:** `/gsd-new-milestone`.
+**Next step:** `/gsd-plan-phase 36`.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 36 with /gsd-plan-phase 36

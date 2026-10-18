@@ -99,6 +99,15 @@
 - [ ] **PUB-02**: One public repo name, `Jonathas-Conceicao/ferris-filter`, is used everywhere
   (`Cargo.toml`, HTTP user agent, updater).
 
+### Reset to defaults (RESET)
+
+- [ ] **RESET-01**: A Reset to defaults button on the Config tab's Styles heading restores the
+  built-in styles and the shipped extras (`Recycle`, `kite`, `exceptional`) to their defaults and
+  keeps the user's other custom styles; it asks first in a popup and is one pending edit (Revert
+  undoes, Apply writes).
+- [ ] **RESET-02**: A Reset to defaults button on the Economy tab's Tiers heading restores the
+  default tier cutoffs, with the same popup and pending-edit behaviour.
+
 ### Fixes (FIX)
 
 - [ ] **FIX-01**: Hovering a minimap icon shows its tooltip once (today the shape name, e.g.
@@ -140,8 +149,51 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| LOC-01 | Phase 36 | Pending |
+| LOC-02 | Phase 36 | Pending |
+| LOC-03 | Phase 36 | Pending |
+| LOC-04 | Phase 36 | Pending |
+| LOC-05 | Phase 36 | Pending |
+| GAME-01 | Phase 37 | Pending |
+| GAME-02 | Phase 37 | Pending |
+| GAME-03 | Phase 37 | Pending |
+| GAME-04 | Phase 37 | Pending |
+| BSTY-01 | Phase 38 | Pending |
+| BSTY-02 | Phase 38 | Pending |
+| BSTY-03 | Phase 38 | Pending |
+| STRICT-01 | Phase 38 | Pending |
+| STRICT-02 | Phase 38 | Pending |
+| STRICT-03 | Phase 38 | Pending |
+| STRICT-04 | Phase 38 | Pending |
+| RESET-01 | Phase 38 | Pending |
+| RESET-02 | Phase 38 | Pending |
+| FIX-01 | Phase 38 | Pending |
+| LEAGUE-01 | Phase 39 | Pending |
+| LEAGUE-02 | Phase 39 | Pending |
+| LEAGUE-03 | Phase 39 | Pending |
+| LEAGUE-04 | Phase 39 | Pending |
+| LEAGUE-05 | Phase 39 | Pending |
+| REL-01 | Phase 40 | Pending |
+| REL-02 | Phase 40 | Pending |
+| REL-03 | Phase 40 | Pending |
+| REL-04 | Phase 40 | Pending |
+| REL-05 | Phase 40 | Pending |
+| REL-06 | Phase 40 | Complete |
+| INST-02 | Phase 40 | Pending |
+| INST-03 | Phase 40 | Pending |
+| INST-04 | Phase 40 | Pending |
+| PUB-01 | Phase 40 | Pending |
+| PUB-02 | Phase 40 | Pending |
+| UPD-01 | Phase 41 | Pending |
+| UPD-02 | Phase 41 | Pending |
+| UPD-03 | Phase 41 | Pending |
+| REV-01 | Phase 42 | Pending |
+| REV-02 | Phase 42 | Pending |
+| REV-03 | Phase 42 | Pending |
+| REV-04 | Phase 42 | Pending |
+| REV-05 | Phase 42 | Pending |
 
-**Coverage:** filled in by the roadmap.
+**Coverage:** 43/43 v0.7 requirements mapped, no orphans, no duplicates.
 
 ---
 *Requirements defined: 2026-10-17*

@@ -69,14 +69,14 @@
 
 ### League and price source (LEAGUE)
 
-- [ ] **LEAGUE-01**: The Economy tab has a league picker listing poe.ninja's current leagues; the
+- [x] **LEAGUE-01**: The Economy tab has a league picker listing poe.ninja's current leagues; the
   choice is saved and replaces the pinned `sync::OVERLAY_LEAGUE`.
 
 - [ ] **LEAGUE-02**: Sync economy uses the chosen league and its outcome names it.
 - [ ] **LEAGUE-03**: A saved league no longer listed (league end) is reported explicitly, never
   switched silently.
 
-- [ ] **LEAGUE-04**: A price source choice, Live or Fallback; Fallback disables Sync and the league
+- [x] **LEAGUE-04**: A price source choice, Live or Fallback; Fallback disables Sync and the league
   picker (tooltip: recommended for league start and non-trade players) and prices the economy
   section from the fallback pair on Apply.
 
@@ -198,10 +198,10 @@
 | RESET-01 | Phase 38 | Complete |
 | RESET-02 | Phase 38 | Complete |
 | FIX-01 | Phase 38 | Complete |
-| LEAGUE-01 | Phase 39 | Pending |
+| LEAGUE-01 | Phase 39 | Complete |
 | LEAGUE-02 | Phase 39 | Pending |
 | LEAGUE-03 | Phase 39 | Pending |
-| LEAGUE-04 | Phase 39 | Pending |
+| LEAGUE-04 | Phase 39 | Complete |
 | LEAGUE-05 | Phase 39 | Pending |
 | REL-01 | Phase 40 | Pending |
 | REL-02 | Phase 40 | Pending |

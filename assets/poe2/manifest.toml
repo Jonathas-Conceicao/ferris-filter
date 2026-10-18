@@ -156,15 +156,11 @@ path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonpressed.dd
 out = "common/icon_button_pressed.png"
 prefer_4k = true
 
-# Reload glyph (round arrow), normal and hover; drawn mirrored on the square icon button, as the
-# game does.
-[[image]]
-path = "art/textures/interface/2d/2dart/uiimages/common/buttonreloadnormal.dds"
-out = "common/reload_normal.png"
-prefer_4k = true
+# Reload glyph (round arrow): the game's hover art, which is the resting colour once tinted; drawn
+# mirrored and turned on the square icon button, as the game does.
 [[image]]
 path = "art/textures/interface/2d/2dart/uiimages/common/buttonreloadhover.dds"
-out = "common/reload_hover.png"
+out = "common/reload.png"
 prefer_4k = true
 
 # The gold dropdown triangle.

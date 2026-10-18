@@ -98,9 +98,9 @@ pub struct Skin {
     /// Square icon button (`uiimages/common/fouriconbutton*`): dark plate, thin gold frame.
     /// Normal, hover, pressed.
     pub icon_button: [TextureHandle; 3],
-    /// Reload glyph (`uiimages/common/buttonreload*`): a round arrow, drawn mirrored on
-    /// `icon_button`. Normal, hover.
-    pub reload: [TextureHandle; 2],
+    /// Reload glyph (`uiimages/common/buttonreloadhover`): a round arrow, drawn mirrored and turned
+    /// on `icon_button` (tinted at rest, as is when hovered).
+    pub reload: TextureHandle,
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -163,10 +163,7 @@ impl Skin {
                 tex!(ctx, "poe2/common/icon_button_hover.png"),
                 tex!(ctx, "poe2/common/icon_button_pressed.png"),
             ],
-            reload: [
-                tex!(ctx, "poe2/common/reload_normal.png"),
-                tex!(ctx, "poe2/common/reload_hover.png"),
-            ],
+            reload: tex!(ctx, "poe2/common/reload.png"),
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),
                 tex!(ctx, "poe2/common/combo_arrow_hover.png"),

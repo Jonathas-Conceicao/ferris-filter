@@ -1205,14 +1205,26 @@ pub fn ff_button_ex(
     resp
 }
 
-/// The reload glyph's side as a fraction of the icon button's: the two textures' own pixel sizes
-/// (56 / 92 in the 4K art), so the glyph sits on the plate as it does in game.
-const RELOAD_GLYPH_SCALE: f32 = 56.0 / 92.0;
+/// The opaque part of the icon-button plate texture: its top-left 84 of 92 pixels (the rest is
+/// transparent margin).
+const PLATE_VISIBLE: f32 = 84.0 / 92.0;
+/// The ring's height as a fraction of the visible plate, measured on the in-game button.
+const RING_OF_PLATE: f32 = 0.78;
+/// The ring's share of the glyph texture: 40 of its 56 pixels.
+const RING_OF_GLYPH: f32 = 40.0 / 56.0;
+/// The ring's centre in the mirrored glyph texture, as a fraction of its size (the ring sits off
+/// centre, at pixel 24.5, 23.5 before mirroring).
+const RING_CENTRE: Vec2 = Vec2::new((56.0 - 24.5) / 56.0, 23.5 / 56.0);
+/// The game draws the mirrored glyph turned a little anticlockwise (degrees).
+const RING_TURN_DEG: f32 = -28.0;
+/// The glyph's resting colour: the hover art multiplied down to the cooler cream it has in game.
+const GLYPH_REST_TINT: Color32 = Color32::from_rgb(191, 214, 253);
 
 /// The game's reload button: the square icon button plate ([`Skin::icon_button`], normal, hover or
-/// focus, pressed) with the round-arrow glyph ([`Skin::reload`]) centred on it, mirrored left to
-/// right so the arrow turns to the left as in game. [`ROW_HEIGHT`] points on a side; `label` is
-/// the accessible name. Disabled: dimmed normal art, never clicked, no hover state.
+/// focus, pressed) with the round-arrow glyph ([`Skin::reload`]) on it, mirrored left to right and
+/// turned as in game. At rest the glyph is tinted to the game's cream; hovered or pressed it shows
+/// its own warmer colour. [`ROW_HEIGHT`] points on a side; `label` is the accessible name.
+/// Disabled: dimmed resting art, never clicked, no hover state.
 pub fn ff_reload_button(ui: &mut Ui, skin: &Skin, label: &str, enabled: bool) -> Response {
     let enabled = enabled && ui.is_enabled();
     let sense = if enabled {
@@ -1236,21 +1248,27 @@ pub fn ff_reload_button(ui: &mut Ui, skin: &Skin, label: &str, enabled: bool) ->
     } else {
         Color32::from_white_alpha(90)
     };
-    let painter = ui.painter();
-    slice::paint_image(painter, &skin.icon_button[state], rect, tint);
-    let glyph = &skin.reload[usize::from(state > 0)];
-    let offset = if state == 2 { 1.0 } else { 0.0 };
-    let dest = slice::snap_rect(
-        slice::centered(
-            rect.center() + vec2(0.0, offset),
-            Vec2::splat(ROW_HEIGHT * RELOAD_GLYPH_SCALE),
-        ),
-        painter.pixels_per_point(),
-    );
-    let uv = slice::full_uv(glyph.size());
+    slice::paint_image(ui.painter(), &skin.icon_button[state], rect, tint);
+
+    let glyph_tint = match (enabled, state) {
+        (false, _) => GLYPH_REST_TINT.gamma_multiply(90.0 / 255.0),
+        (true, 0) => GLYPH_REST_TINT,
+        (true, _) => Color32::WHITE,
+    };
+    let plate = ROW_HEIGHT * PLATE_VISIBLE;
+    let side = plate * RING_OF_PLATE / RING_OF_GLYPH;
+    let pressed = if state == 2 { 1.0 } else { 0.0 };
+    // The game sits the ring 1pt below the plate's centre.
+    let ring_centre = rect.min + Vec2::splat(plate / 2.0) + vec2(0.0, 1.0 + pressed);
+    let dest = Rect::from_min_size(ring_centre - RING_CENTRE * side, Vec2::splat(side));
+    let uv = slice::full_uv(skin.reload.size());
     // Swapping the u edges mirrors the glyph left to right.
     let mirrored = Rect::from_min_max(pos2(uv.max.x, uv.min.y), pos2(uv.min.x, uv.max.y));
-    painter.image(glyph.id(), dest, mirrored, tint);
+    egui::Image::new(&skin.reload)
+        .uv(mirrored)
+        .rotate(RING_TURN_DEG.to_radians(), RING_CENTRE)
+        .tint(glyph_tint)
+        .paint_at(ui, dest);
     resp
 }
 

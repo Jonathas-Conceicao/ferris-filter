@@ -46,6 +46,8 @@ pub(crate) enum ListState {
     Loading,
     Loaded(Vec<EconomyLeague>),
     Failed(String),
+    /// A refresh failed after a list had loaded: the last good list stays usable.
+    RefreshFailed(Vec<EconomyLeague>, String),
 }
 
 type Fetched = Result<Vec<EconomyLeague>, String>;
@@ -80,7 +82,10 @@ impl LeagueList {
             let _ = tx.send(work());
         });
         self.rx = Some(rx);
-        if !matches!(self.state, ListState::Loaded(_)) {
+        if !matches!(
+            self.state,
+            ListState::Loaded(_) | ListState::RefreshFailed(..)
+        ) {
             self.state = ListState::Loading;
         }
     }
@@ -90,14 +95,26 @@ impl LeagueList {
         let Some(rx) = &self.rx else {
             return false;
         };
-        let next = match rx.try_recv() {
-            Ok(Ok(list)) => ListState::Loaded(list),
-            Ok(Err(e)) => ListState::Failed(e),
+        let error = match rx.try_recv() {
+            Ok(Ok(list)) => {
+                self.rx = None;
+                self.state = ListState::Loaded(list);
+                return true;
+            }
+            Ok(Err(e)) => e,
             Err(TryRecvError::Empty) => return false,
-            Err(TryRecvError::Disconnected) => ListState::Failed(WORKER_STOPPED.to_string()),
+            Err(TryRecvError::Disconnected) => WORKER_STOPPED.to_string(),
         };
         self.rx = None;
-        self.state = next;
+        // A failed refresh never takes away a list that loaded.
+        let kept = match std::mem::replace(&mut self.state, ListState::NotStarted) {
+            ListState::Loaded(list) | ListState::RefreshFailed(list, _) => Some(list),
+            _ => None,
+        };
+        self.state = match kept {
+            Some(list) => ListState::RefreshFailed(list, error),
+            None => ListState::Failed(error),
+        };
         true
     }
 
@@ -179,6 +196,13 @@ fn single(name: &str, caption: CaptionKind) -> LeagueView {
 pub(crate) fn view(i: &ViewInputs) -> LeagueView {
     let mut v = match i.state {
         ListState::Loaded(list) => loaded_view(i.saved, list),
+        ListState::RefreshFailed(list, _) => {
+            let mut v = loaded_view(i.saved, list);
+            if v.dropdown_tip == TIP_LEAGUE {
+                v.dropdown_tip = TIP_FAILED.to_string();
+            }
+            v
+        }
         ListState::NotStarted | ListState::Loading => match i.saved {
             Some(x) => {
                 let mut v = single(x, CaptionKind::Value);
@@ -381,12 +405,28 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_refresh_is_failed() {
+    fn a_failed_refresh_keeps_the_loaded_list_usable() {
         let mut l = LeagueList::default();
         l.inject(ListState::Loaded(leagues()));
         l.start(|| Err("down".into()));
+        assert!(matches!(l.state(), ListState::Loaded(_)));
         settle(&mut l);
-        assert!(matches!(l.state(), ListState::Failed(_)));
+        assert_eq!(
+            l.state(),
+            &ListState::RefreshFailed(leagues(), "down".into())
+        );
+        // Nothing saved and no prices.json league: the default is still known.
+        let v = view(&inputs(None, l.state()));
+        assert_eq!(v.options[v.selected], "Forbidden Rites");
+        assert_eq!(v.sync_league.as_deref(), Some("Forbidden Rites"));
+        assert!(v.sync_block_tip.is_none());
+        assert!(v.dropdown_enabled && v.refresh_enabled);
+        assert_eq!(v.dropdown_tip, TIP_FAILED);
+        // A further refresh keeps the list while it runs, and a success clears the failure.
+        l.start(|| Ok(leagues()));
+        assert!(matches!(l.state(), ListState::RefreshFailed(..)));
+        settle(&mut l);
+        assert_eq!(l.state(), &ListState::Loaded(leagues()));
     }
 
     #[test]

@@ -292,7 +292,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > refresh button beside the dropdown, never at start-up. With nothing saved the default is the first
 > non-hardcore league that is neither Standard nor Hardcore; poe.ninja's `indexed` flag is ignored
 > because it flipped between Forbidden Rites and Runes of Aldur within six hours on 2026-09-10/11. The
-> pick is saved only when the user picks. Offline, the saved league (else the league `prices.json` last
+> pick is saved only when the user picks. A failed refresh keeps the last loaded list. Offline, the saved league (else the league `prices.json` last
 > priced) stays usable. A saved league that is no longer listed shows as `<name> (ended)`, greys
 > **Sync economy** and is never switched silently. The outcome (status line) names the league it priced
 > against. The CLI keeps automatic resolution and its `--league` override, and reads neither overlay key.

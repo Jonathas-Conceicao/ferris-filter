@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
-stopped_at: Completed 38-03-PLAN.md
-last_updated: "2026-10-18T08:29:59.421Z"
+stopped_at: Completed 38-05-PLAN.md
+last_updated: "2026-10-18T08:37:42.125Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 2
   total_plans: 40
-  completed_plans: 18
-  percent: 8
+  completed_plans: 19
+  percent: 48
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 ## Current Position
 
 Phase: 38 (built-in-styles-strictness-reset) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-10-18
 
@@ -203,6 +203,7 @@ work (carried forward past the v0.3 close):
 - [Phase 33]: 33-04: style editor lines are one id scope each; tile sizes adapt (14-24pt) so shape rows never wrap; reset_for_new_styles bumps the epoch to orphan pickers and None-memory
 - [Phase 36]: Isolation guard scans for locations::from_env (free function), not AppDirs::from_env
 - [Phase ?]: 38-04: SetStrictness clears stale messages only on a real change
+- [Phase 38-05] Reset buttons arm a popup; Reset is a pending edit (Revert undoes), expanded style row explicitly collapsed
 
 ### Pending Todos
 
@@ -373,8 +374,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18T08:24:19.194Z
-Stopped at: Completed 38-03-PLAN.md
+Last session: 2026-10-18T08:37:42.116Z
+Stopped at: Completed 38-05-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 36`.

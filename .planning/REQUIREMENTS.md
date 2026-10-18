@@ -24,10 +24,10 @@
 
 ### Game folder (GAME)
 
-- [ ] **GAME-01**: The default game folder is the OS Documents folder + `My Games\Path of Exile 2`
+- [x] **GAME-01**: The default game folder is the OS Documents folder + `My Games\Path of Exile 2`
   (OneDrive redirection and localized folder names work).
 
-- [ ] **GAME-02**: The Config tab shows the game folder and a Browse button to pick another; the
+- [x] **GAME-02**: The Config tab shows the game folder and a Browse button to pick another; the
   choice is saved and restored on the next launch.
 
 - [ ] **GAME-03**: Changing the game folder with unapplied rule edits asks first (the Switch
@@ -182,8 +182,8 @@
 | LOC-03 | Phase 36 | Complete |
 | LOC-04 | Phase 36 | Complete |
 | LOC-05 | Phase 36 | Complete |
-| GAME-01 | Phase 37 | Pending |
-| GAME-02 | Phase 37 | Pending |
+| GAME-01 | Phase 37 | Complete |
+| GAME-02 | Phase 37 | Complete |
 | GAME-03 | Phase 37 | Pending |
 | GAME-04 | Phase 37 | Pending |
 | GAME-05 | Phase 37 | Pending |

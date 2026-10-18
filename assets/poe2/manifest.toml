@@ -141,6 +141,20 @@ out = "common/close_down.png"
 prefer_4k = true
 trim = true
 
+# Refresh button: the web-toolbar refresh (round arrow on a square button), three states.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/webtoolbarrefreshnormal.dds"
+out = "common/refresh_normal.png"
+prefer_4k = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/webtoolbarrefreshhover.dds"
+out = "common/refresh_hover.png"
+prefer_4k = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/webtoolbarrefreshdown.dds"
+out = "common/refresh_down.png"
+prefer_4k = true
+
 # The gold dropdown triangle.
 [[image]]
 path = "art/textures/interface/2d/2dart/uiimages/common/buttoncomboboxnormal.dds"

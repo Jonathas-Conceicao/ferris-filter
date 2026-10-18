@@ -30,11 +30,11 @@
 - [x] **GAME-02**: The Config tab shows the game folder and a Browse button to pick another; the
   choice is saved and restored on the next launch.
 
-- [ ] **GAME-03**: Changing the game folder with unapplied rule edits asks first (the Switch
+- [x] **GAME-03**: Changing the game folder with unapplied rule edits asks first (the Switch
   filter? popup).
 
-- [ ] **GAME-04**: A missing game folder shows a clear status pointing to the picker.
-- [ ] **GAME-05**: A refresh button beside the filter selector re-reads the game folder, so
+- [x] **GAME-04**: A missing game folder shows a clear status pointing to the picker.
+- [x] **GAME-05**: A refresh button beside the filter selector re-reads the game folder, so
   `.filter` files and `.mp3` / `.wav` sound files added since load appear in the filter dropdown and
   the Alert sound dropdowns without a restart; it never writes and never discards edits.
 
@@ -184,9 +184,9 @@
 | LOC-05 | Phase 36 | Complete |
 | GAME-01 | Phase 37 | Complete |
 | GAME-02 | Phase 37 | Complete |
-| GAME-03 | Phase 37 | Pending |
-| GAME-04 | Phase 37 | Pending |
-| GAME-05 | Phase 37 | Pending |
+| GAME-03 | Phase 37 | Complete |
+| GAME-04 | Phase 37 | Complete |
+| GAME-05 | Phase 37 | Complete |
 | GAME-06 | Phase 37 | Complete |
 | BSTY-01 | Phase 38 | Pending |
 | BSTY-02 | Phase 38 | Pending |

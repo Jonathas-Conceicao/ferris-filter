@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
-stopped_at: Completed 36-07-PLAN.md
-last_updated: "2026-10-18T06:26:25.856Z"
+stopped_at: Completed 37-05-PLAN.md
+last_updated: "2026-10-18T06:45:57.027Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 1
   total_plans: 20
-  completed_plans: 11
+  completed_plans: 12
   percent: 4
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 ## Current Position
 
 Phase: 37 (game-folder-resolver-picker) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-10-18
 
@@ -372,8 +372,8 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18T04:27:17.790Z
-Stopped at: Completed 36-07-PLAN.md
+Last session: 2026-10-18T06:45:57.017Z
+Stopped at: Completed 37-05-PLAN.md
 Resume file: None
 
 **Next step:** `/gsd-plan-phase 36`.

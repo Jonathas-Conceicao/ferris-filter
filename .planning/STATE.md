@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
-status: verifying
-stopped_at: Completed 37-05-PLAN.md
-last_updated: "2026-10-18T06:55:57.639Z"
+status: executing
+stopped_at: Phase 37 complete (all 7 plans, review clean, verification human_needed)
+last_updated: "2026-10-18T07:55:42.307Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 2
-  total_plans: 24
+  total_plans: 35
   completed_plans: 14
   percent: 8
 ---
@@ -21,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 37 — game-folder-resolver-picker
+**Current focus:** Phase 38 — built-in-styles-strictness-reset
 
 ## Current Position
 
-Phase: 37 (game-folder-resolver-picker) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
+Phase: 38
+Plan: Not started
+Status: Ready to execute Phase 38; Phase 37 finished 2026-10-18 with its 9 manual checks deferred to the end of the milestone (37-HUMAN-UAT.md)
 Last activity: 2026-10-18
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 157 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
+- Total plans completed: 164 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
 
 **By Milestone:**
 

@@ -719,10 +719,14 @@ impl ConfigState {
             self.tiers_live = Some(w.tiers_new.clone());
         }
         self.styles_applied = self.styles.clone();
-        self.tiers_applied = self.tiers.clone();
         self.styles_bytes = w.styles_new;
-        self.tiers_bytes = w.tiers_new;
-        self.resync_buffers();
+        // Unused cutoffs (Fallback) were not written: their pending text and inline errors stay
+        // for when the editor is enabled again.
+        if self.tiers_in_use || w.tiers_changed {
+            self.tiers_applied = self.tiers.clone();
+            self.tiers_bytes = w.tiers_new;
+            self.resync_buffers();
+        }
     }
 
     /// Discard in-memory edits back to the last-applied snapshot.
@@ -939,6 +943,38 @@ mod tests {
 
         s.set_tiers_in_use(true);
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn an_apply_with_unused_tiers_keeps_their_pending_text_and_errors() {
+        let (_d, mut s) = loaded();
+        s.set_tier_text("S", "31");
+        s.set_tier_text("A", "abc");
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        let tiers_bytes = s.tiers_bytes.clone();
+
+        s.set_tiers_in_use(false);
+        let w = s.prepare_write().unwrap();
+        s.adopt(w);
+        assert!(!s.styles_dirty());
+        assert!(s.tiers_dirty());
+        assert_eq!(s.tiers_bytes, tiers_bytes);
+        let row =
+            |s: &ConfigState, t: &str| s.tier_rows().into_iter().find(|r| r.tier == t).unwrap();
+        assert_eq!(row(&s, "S").buffer, "31");
+        assert_eq!(row(&s, "A").buffer, "abc");
+        assert!(row(&s, "A").error.is_some());
+
+        s.set_tiers_in_use(true);
+        assert!(s.has_tier_errors());
+        assert_eq!(
+            s.pending_tiers()
+                .iter()
+                .find(|e| e.tier == "S")
+                .unwrap()
+                .min,
+            31.0
+        );
     }
 
     #[test]

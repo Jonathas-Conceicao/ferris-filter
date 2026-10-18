@@ -20,7 +20,15 @@ pub fn cmd_sync(
     let sub = sub.unwrap_or(SyncSubcommand::Prices);
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| miette::miette!("Cannot create async runtime: {e}"))?;
-    rt.block_on(run(standard, hc, league, sub, std::path::Path::new(".")))?;
+    let base_dir = match sub {
+        SyncSubcommand::Prices => {
+            crate::locations::from_env()
+                .map_err(miette::Error::from)?
+                .root
+        }
+        SyncSubcommand::Metadata => std::path::PathBuf::from("."),
+    };
+    rt.block_on(run(standard, hc, league, sub, &base_dir))?;
     Ok(())
 }
 
@@ -31,6 +39,8 @@ pub fn cmd_sync(
 /// selection uses the same automatic resolution the bare CLI `sync` uses; the overlay deliberately
 /// exposes no `--standard`/`--hc`/`--league`/`--tiers` switches (author, 2026-09-10: the GUI syncs
 /// with the tiers file already in place).
+///
+/// `prices.json` lands in `base_dir`; the mapping is built into the binary.
 ///
 /// Nothing here touches `dynamic.filter`. Fresh prices reach the game on the next **Apply**, which
 /// is what makes this safe to run mid-session.

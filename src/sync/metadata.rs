@@ -17,6 +17,8 @@ use crate::sync::mapping::{Mapping, normalize_item_class};
 
 const REPOE_BASE_ITEMS_URL: &str = "https://repoe-fork.github.io/poe2/base_items.json";
 const REPOE_UNIQUES_URL: &str = "https://repoe-fork.github.io/poe2/uniques.json";
+/// The repo `mapping.json` in the working directory. The binary embeds that file at build time,
+/// so rebuild after running the metadata command.
 const MAPPING_PATH: &str = "mapping.json";
 
 /// Lenient RePoE entry — only the fields we need (T-04-07 DoS mitigation: no recursion,

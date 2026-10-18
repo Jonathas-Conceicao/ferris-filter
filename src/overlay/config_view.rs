@@ -55,6 +55,8 @@ pub enum ConfigAction {
     RefreshLists,
     CancelSwitch,
     SetReloadAfterApply(bool),
+    /// A strictness level was clicked: a pending edit of the tier styles' visibility.
+    SetStrictness(crate::overlay::strictness::Strictness),
     AddStyle(String),
     EditStyle {
         name: String,
@@ -733,6 +735,32 @@ fn group_heading(ui: &mut egui::Ui, title: &str) -> egui::Response {
     )
 }
 
+/// The one-line strictness switch; the selection is derived from the pending style set.
+fn strictness_row(ui: &mut egui::Ui, state: &ConfigState, actions: &mut Vec<ConfigAction>) {
+    use crate::overlay::strictness::Strictness;
+    let tips: Vec<String> = Strictness::ALL.iter().map(|l| l.tooltip()).collect();
+    let levels: Vec<crate::skin::editor::Level> = Strictness::ALL
+        .iter()
+        .zip(&tips)
+        .map(|(l, tip)| crate::skin::editor::Level {
+            lines: l.caption_lines(),
+            tip,
+            clickable: *l != Strictness::Custom,
+        })
+        .collect();
+    let current = state.strictness();
+    let selected = Strictness::ALL
+        .iter()
+        .position(|l| *l == current)
+        .unwrap_or(0);
+    let (resp, clicked) =
+        crate::skin::editor::ff_levels(ui, &crate::skin::of(ui.ctx()), selected, &levels);
+    probe("strictness-row", resp.rect);
+    if let Some(i) = clicked {
+        actions.push(ConfigAction::SetStrictness(Strictness::ALL[i]));
+    }
+}
+
 fn show_styles(
     ui: &mut egui::Ui,
     state: &ConfigState,
@@ -752,6 +780,9 @@ fn show_styles(
         .on_hover_text("Revert to reload styles.json.");
         return;
     }
+    ui.add_space(4.0);
+    strictness_row(ui, state, actions);
+    ui.add_space(8.0);
     let skin = crate::skin::of(ui.ctx());
     if !builtin.is_empty() {
         let heading = group_heading(ui, "Built-in");
@@ -1771,6 +1802,124 @@ mod tests {
             )),
             ..Default::default()
         }
+    }
+
+    /// Run `show_styles` once, then again with a click at the point `click` picks from the first
+    /// frame's probes; returns those probes and the click frame's actions.
+    fn styles_frames(
+        state: &ConfigState,
+        click: impl Fn(&[(&'static str, egui::Rect)]) -> Option<egui::Pos2>,
+    ) -> (Vec<(&'static str, egui::Rect)>, Vec<ConfigAction>) {
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        actions.clear();
+        if let Some(pos) = click(&probes) {
+            let ev = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let mut input = tall_input();
+            input.events = vec![egui::Event::PointerMoved(pos), ev(true), ev(false)];
+            ctx.run_ui(input, |ui| {
+                show_styles(ui, state, &mut cfg, &vctx, &mut actions);
+            })
+            .drop_without_applying_deltas();
+        }
+        (probes, actions)
+    }
+
+    /// Centre of segment `index` of the strictness row, from the widget's own layout.
+    fn segment_centre(probes: &[(&'static str, egui::Rect)], index: usize) -> egui::Pos2 {
+        let row = probes
+            .iter()
+            .find(|(t, _)| *t == "strictness-row")
+            .unwrap()
+            .1;
+        let (ctx, _) = headless();
+        let mut nat = Vec::new();
+        ctx.run_ui(tall_input(), |ui| {
+            for l in crate::overlay::strictness::Strictness::ALL {
+                let widest = l
+                    .caption_lines()
+                    .iter()
+                    .map(|t| {
+                        ui.painter()
+                            .layout_no_wrap((*t).to_owned(), small_caps(14.0), pal::LABEL)
+                            .size()
+                            .x
+                    })
+                    .fold(0.0, f32::max);
+                nat.push(widest);
+            }
+        })
+        .drop_without_applying_deltas();
+        let widths = ed::levels_layout(row.width(), &nat);
+        let x = row.min.x + widths[..index].iter().sum::<f32>() + widths[index] / 2.0;
+        egui::pos2(x, row.center().y)
+    }
+
+    #[test]
+    fn strictness_row_sits_above_the_built_in_group_and_selects_flat_broke() {
+        use crate::overlay::strictness::Strictness;
+        let (_d, state) = loaded();
+        assert_eq!(state.strictness(), Strictness::FlatBroke);
+        let (probes, _) = styles_frames(&state, |_| None);
+        let rows: Vec<_> = probes
+            .iter()
+            .filter(|(t, _)| *t == "strictness-row")
+            .collect();
+        assert_eq!(rows.len(), 1);
+        let heading = probes
+            .iter()
+            .find(|(t, _)| *t == "builtin-heading")
+            .unwrap()
+            .1;
+        assert!(rows[0].1.bottom() <= heading.top());
+    }
+
+    #[test]
+    fn clicking_a_level_emits_set_strictness_once() {
+        use crate::overlay::strictness::Strictness;
+        let (_d, state) = loaded();
+        let idx = Strictness::ALL
+            .iter()
+            .position(|l| *l == Strictness::Comfy)
+            .unwrap();
+        let (_, actions) = styles_frames(&state, |p| Some(segment_centre(p, idx)));
+        assert_eq!(
+            actions,
+            vec![ConfigAction::SetStrictness(Strictness::Comfy)]
+        );
+    }
+
+    #[test]
+    fn clicking_the_selected_level_or_custom_emits_nothing() {
+        let (_d, state) = loaded();
+        // Flat Broke is selected (index 1); Custom is index 0.
+        for idx in [0, 1] {
+            let (_, actions) = styles_frames(&state, |p| Some(segment_centre(p, idx)));
+            assert!(actions.is_empty(), "{idx}: {actions:?}");
+        }
+    }
+
+    #[test]
+    fn a_manual_switch_flip_reads_as_custom() {
+        use crate::overlay::strictness::Strictness;
+        let (_d, mut state) = loaded();
+        state.edit_style("E", StyleEdit::Action(StyleAction::Hide));
+        assert_eq!(state.strictness(), Strictness::Custom);
     }
 
     #[test]

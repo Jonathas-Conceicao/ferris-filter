@@ -2499,6 +2499,7 @@ impl OverlayApp {
                 a,
                 ConfigAction::AddStyle(_)
                     | ConfigAction::EditStyle { .. }
+                    | ConfigAction::SetStrictness(_)
                     | ConfigAction::DeleteStyle(_)
                     | ConfigAction::RenameStyle { .. }
                     | ConfigAction::MoveStyle { .. }
@@ -2529,6 +2530,13 @@ impl OverlayApp {
                 ConfigAction::EditStyle { name, edit } => {
                     if let Ok(state) = &mut self.config
                         && state.edit_style(&name, edit)
+                    {
+                        self.config_message = None;
+                    }
+                }
+                ConfigAction::SetStrictness(level) => {
+                    if let Ok(state) = &mut self.config
+                        && state.set_strictness(level)
                     {
                         self.config_message = None;
                     }

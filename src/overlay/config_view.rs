@@ -355,7 +355,10 @@ fn show_filter(
                                 .size(crate::skin::fonts::SUMMARY_SIZE)
                                 .color(color),
                         )
-                        .truncate(),
+                        .truncate()
+                        // The full path tooltip below is the only one: egui's own elided-text
+                        // tooltip would show the same path a second time.
+                        .show_tooltip_when_elided(false),
                     );
                     if ctx.game_dir.is_some() {
                         label.on_hover_text(text);
@@ -1013,9 +1016,10 @@ fn style_row(
                 ui.add(
                     egui::Label::new(RichText::new(name).font(small_caps(17.0)).color(pal::VALUE))
                         .truncate()
+                        .show_tooltip_when_elided(false)
                         .sense(egui::Sense::hover()),
                 )
-                .on_hover_text(RENAME_TIP);
+                .on_hover_text(format!("{name}\n{RENAME_TIP}"));
             }
         });
         probe("row-name", name_cell);

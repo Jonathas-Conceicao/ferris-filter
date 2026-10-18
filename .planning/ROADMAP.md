@@ -100,7 +100,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 
 - [x] **Phase 36: Per-user Locations & Embedded Defaults** - Config, settings and prices move to one per-user folder; every shipped data file is built into the exe (completed 2026-10-18)
 - [x] **Phase 37: Game Folder Resolver & Picker** - Documents-based default game folder with a Browse picker on the Config tab, and a refresh button (game art) that re-reads filters and sounds (completed 2026-10-18)
-- [ ] **Phase 38: Built-in Styles, Strictness & Reset** - Reworked built-in styles (one fixture re-baseline), the seven-level Strictness row, Reset to defaults for styles and tiers
+- [x] **Phase 38: Built-in Styles, Strictness & Reset** - Reworked built-in styles (one fixture re-baseline), the seven-level Strictness row, Reset to defaults for styles and tiers (completed 2026-10-18)
 - [ ] **Phase 39: League Picker & Price Source** - Choose the league and Live or Fallback prices from the Economy tab
 - [ ] **Phase 40: Release Pipeline & Installer** - Tag-triggered build, per-user installer, portable zip, checksums, public-release items
 - [ ] **Phase 41: Check for Updates** - About-tab update check that downloads, verifies and hands off to the installer
@@ -236,7 +236,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 36. Per-user Locations & Embedded Defaults | 7/7 | Complete    | 2026-10-18 |
 | 37. Game Folder Resolver & Picker | 7/7 | Complete    | 2026-10-18 |
-| 38. Built-in Styles, Strictness & Reset | 6/6 | Complete   | 2026-10-18 |
+| 38. Built-in Styles, Strictness & Reset | 6/6 | Complete    | 2026-10-18 |
 | 39. League Picker & Price Source | 0/0 | Not started | - |
 | 40. Release Pipeline & Installer | 0/0 | Not started | - |
 | 41. Check for Updates | 0/0 | Not started | - |

@@ -180,7 +180,7 @@ Plans:
   4. Choosing Fallback greys Sync and the league picker (with the recommendation tooltip) and the next Apply prices the economy section from the fallback pair
   5. Under Fallback the Tiers editor is greyed with a tooltip saying the fallback tiers are fixed
 
-**Plans**: TBD
+**Plans**: 7 plans in 5 waves, applied on top of Phases 37 and 38 (39-01 fixture + league list/default + settings keys; 39-02 price-source policy through apply_all, preview key, tiers-in-use; 39-03 leagues.rs worker + pure view table; 39-04 OVERLAY_LEAGUE removed, sync takes the league, Economy tab switch/picker/refresh/greying; 39-05 unapplied marker + ended-league status line; 39-06 screenshot flags + capture gate; 39-07 CLAUDE.md)
 **UI hint**: yes
 **Research**: needed (live poe.ninja league spike; default-league rule)
 

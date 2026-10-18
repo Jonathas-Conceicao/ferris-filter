@@ -247,7 +247,6 @@ pub struct OverlayApp {
     game_dir_pinned: bool,
 
     /// The default game folder (Documents\My Games\Path of Exile 2), for the Config tab.
-    #[allow(dead_code)]
     default_game_dir: Option<std::path::PathBuf>,
 
     /// The game folder does not exist on disk. Read only when the lists are refreshed.
@@ -1533,7 +1532,6 @@ impl OverlayApp {
     }
 
     /// Whether the folder dialog is open (read by the Config tab to grey Browse).
-    #[allow(dead_code)]
     pub(crate) fn folder_dialog_open(&self) -> bool {
         self.folder_pick.is_open()
     }
@@ -2670,6 +2668,10 @@ impl OverlayApp {
             filters: filters.as_deref(),
             active_filter: self.settings.filter_name(),
             game_dir: self.game_dir.as_deref(),
+            game_dir_missing: self.game_dir_missing,
+            game_dir_pinned: self.game_dir_pinned,
+            default_game_dir: self.default_game_dir.as_deref(),
+            folder_dialog_open: self.folder_dialog_open(),
             rule_users: &users,
             config_refs: &self.config_refs,
             changed_on_disk: !self.changed_on_disk.is_empty(),

@@ -25,6 +25,8 @@ use crate::skin::fonts::{regular, small_caps};
 use crate::skin::minimap;
 use crate::skin::palette as pal;
 
+/// Width of the Browse button.
+const BROWSE_WIDTH: f32 = 96.0;
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
 const ORDER_TIP: &str = "Built-in styles keep their order";
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
@@ -160,6 +162,14 @@ pub struct ConfigViewCtx<'a> {
     pub filters: Option<&'a [String]>,
     pub active_filter: &'a str,
     pub game_dir: Option<&'a Path>,
+    /// The game folder is not on disk (refresh and the filter dropdown are disabled).
+    pub game_dir_missing: bool,
+    /// `FERRISFILTER_GAME_DIR` pins the folder (Browse is disabled).
+    pub game_dir_pinned: bool,
+    /// The default game folder, Browse's tooltip.
+    pub default_game_dir: Option<&'a Path>,
+    /// The native folder dialog is open (Browse is disabled).
+    pub folder_dialog_open: bool,
     /// Style name -> number of loaded rules using it.
     pub rule_users: &'a HashMap<String, usize>,
     /// Styles `config.json` itself references.
@@ -314,8 +324,63 @@ fn show_filter(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 4.0;
-            body::caption(ui, "GAME FOLDER FILTER");
+            let gap = crate::skin::widgets::FIELD_GAP;
+            let row_h = crate::skin::widgets::ROW_HEIGHT;
+            let missing = ctx.game_dir_missing;
 
+            // Row 1: the game folder and its Browse button.
+            crate::skin::widgets::ff_field_row(ui, 0, "Game folder", None, |ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let path_w = (ui.available_width() - BROWSE_WIDTH - gap).max(24.0);
+                let (text, color) = match ctx.game_dir {
+                    Some(dir) => (
+                        dir.display().to_string(),
+                        if missing { pal::WARN } else { pal::VALUE },
+                    ),
+                    None => ("(no Documents folder)".to_string(), pal::WARN),
+                };
+                ui.allocate_ui(vec2(path_w, row_h), |ui| {
+                    ui.set_width(path_w);
+                    let label = ui.add(
+                        egui::Label::new(
+                            RichText::new(text.clone())
+                                .size(crate::skin::fonts::SUMMARY_SIZE)
+                                .color(color),
+                        )
+                        .truncate(),
+                    );
+                    if ctx.game_dir.is_some() {
+                        label.on_hover_text(text);
+                    }
+                });
+                let enabled = !ctx.game_dir_pinned && !ctx.folder_dialog_open;
+                let browse = match ctx.skin {
+                    Some(skin) => crate::skin::widgets::ff_button_ex(
+                        ui,
+                        skin,
+                        "Browse",
+                        BROWSE_WIDTH,
+                        enabled,
+                        false,
+                    ),
+                    None => ui.add_enabled(enabled, small_button("Browse")),
+                };
+                let tip = if ctx.game_dir_pinned {
+                    Some("Set by FERRISFILTER_GAME_DIR".to_string())
+                } else {
+                    ctx.default_game_dir
+                        .map(|d| format!("Default: {}", d.display()))
+                };
+                let browse = match tip {
+                    Some(t) => browse.on_hover_text(t.clone()).on_disabled_hover_text(t),
+                    None => browse,
+                };
+                if enabled && browse.clicked() {
+                    actions.push(ConfigAction::BrowseFolder);
+                }
+            });
+
+            // Row 2: the filter dropdown with the refresh button beside it.
             let list: &[String] = ctx.filters.unwrap_or(&[]);
             let shown = if ctx.filters.is_some() {
                 ctx.active_filter.to_string()
@@ -323,37 +388,50 @@ fn show_filter(
                 "(game folder not found)".to_string()
             };
             let mut open_draft = false;
-            let combo = ui
-                .add_enabled_ui(ctx.filters.is_some(), |ui| {
-                    egui::ComboBox::from_id_salt("cfg-filter")
-                        .selected_text(shown)
-                        .width(ui.available_width() - 8.0)
-                        .show_ui(ui, |ui| {
-                            for name in list {
-                                let is_active = name == ctx.active_filter;
-                                if ui.selectable_label(is_active, name).clicked() && !is_active {
-                                    actions.push(ConfigAction::SelectFilter(name.clone()));
+            crate::skin::widgets::ff_field_row(ui, 1, "Filter", None, |ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let combo_w = (ui.available_width() - row_h - gap).max(24.0);
+                let enabled = ctx.filters.is_some() && !missing;
+                let combo = ui
+                    .add_enabled_ui(enabled, |ui| {
+                        egui::ComboBox::from_id_salt("cfg-filter")
+                            .selected_text(shown)
+                            .width(combo_w)
+                            .show_ui(ui, |ui| {
+                                for name in list {
+                                    let is_active = name == ctx.active_filter;
+                                    if ui.selectable_label(is_active, name).clicked() && !is_active
+                                    {
+                                        actions.push(ConfigAction::SelectFilter(name.clone()));
+                                    }
                                 }
-                            }
-                            ui.separator();
-                            if ui
-                                .selectable_label(false, "New empty filter\u{2026}")
-                                .clicked()
-                            {
-                                open_draft = true;
-                            }
-                        })
-                })
-                .inner;
-            let saved_note = "Saved on this computer. Default: dynamic.filter.";
-            if let Some(dir) = ctx.game_dir {
-                combo.response.on_hover_text(format!(
-                    "{}\n{saved_note}",
-                    dir.join(ctx.active_filter).display()
-                ));
-            } else {
-                combo.response.on_hover_text(saved_note);
-            }
+                                ui.separator();
+                                if ui
+                                    .selectable_label(false, "New empty filter\u{2026}")
+                                    .clicked()
+                                {
+                                    open_draft = true;
+                                }
+                            })
+                    })
+                    .inner;
+                if let Some(dir) = ctx.game_dir {
+                    combo
+                        .response
+                        .on_hover_text(dir.join(ctx.active_filter).display().to_string());
+                }
+                let refresh = match ctx.skin {
+                    Some(skin) => {
+                        crate::skin::widgets::ff_icon_button(ui, &skin.refresh, "Refresh", enabled)
+                    }
+                    None => ui.add_enabled(enabled, small_button("Refresh")),
+                };
+                let tip = "Refresh the file lists";
+                let refresh = refresh.on_hover_text(tip).on_disabled_hover_text(tip);
+                if enabled && refresh.clicked() {
+                    actions.push(ConfigAction::RefreshLists);
+                }
+            });
             if open_draft && cfg.filter_draft.is_none() {
                 cfg.filter_draft = Some(String::new());
                 cfg.focus_draft = true;
@@ -1163,6 +1241,10 @@ mod tests {
             filters,
             active_filter: "dynamic.filter",
             game_dir: None,
+            game_dir_missing: false,
+            game_dir_pinned: false,
+            default_game_dir: None,
+            folder_dialog_open: false,
             rule_users: users,
             config_refs: refs,
             changed_on_disk: false,
@@ -1173,6 +1255,94 @@ mod tests {
             reload_after_apply: true,
             skin: None,
         }
+    }
+
+    /// Every action produced by clicking, one point at a time, over the Filter section's two
+    /// rows (headless, so the buttons are plain egui buttons).
+    fn actions_over_rows(set: impl Fn(&mut ConfigViewCtx)) -> Vec<ConfigAction> {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let filters = vec!["dynamic.filter".to_string()];
+        let default_dir = Path::new("C:/default/game");
+        let mut found = Vec::new();
+        for y in (30..170).step_by(6) {
+            for x in (200..456).step_by(6) {
+                let mut vctx = view_ctx(Some(filters.as_slice()), &users, &refs);
+                vctx.game_dir = Some(Path::new("C:/game"));
+                vctx.default_game_dir = Some(default_dir);
+                set(&mut vctx);
+                let (ctx, input) = headless();
+                let mut cfg = ConfigUi::default();
+                ctx.run_ui(input, |ui| {
+                    show_sections(ui, &state, &mut cfg, &vctx);
+                })
+                .drop_without_applying_deltas();
+                let pos = egui::pos2(x as f32, y as f32);
+                let click = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(460.0, 600.0),
+                    )),
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: Default::default(),
+                        },
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                };
+                ctx.run_ui(click, |ui| {
+                    found.extend(show_sections(ui, &state, &mut cfg, &vctx));
+                })
+                .drop_without_applying_deltas();
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn browse_and_refresh_push_their_actions() {
+        let found = actions_over_rows(|_| {});
+        assert!(found.contains(&ConfigAction::BrowseFolder));
+        assert!(found.contains(&ConfigAction::RefreshLists));
+    }
+
+    #[test]
+    fn browse_is_off_when_pinned_or_while_the_dialog_is_open() {
+        for set in [
+            (|c: &mut ConfigViewCtx| c.game_dir_pinned = true) as fn(&mut ConfigViewCtx),
+            |c| c.folder_dialog_open = true,
+        ] {
+            let found = actions_over_rows(set);
+            assert!(!found.contains(&ConfigAction::BrowseFolder));
+            assert!(found.contains(&ConfigAction::RefreshLists));
+        }
+    }
+
+    #[test]
+    fn a_missing_folder_disables_refresh_but_not_browse() {
+        let found = actions_over_rows(|c| c.game_dir_missing = true);
+        assert!(found.contains(&ConfigAction::BrowseFolder));
+        assert!(!found.contains(&ConfigAction::RefreshLists));
+    }
+
+    #[test]
+    fn the_removed_captions_stay_removed() {
+        let src = include_str!("config_view.rs");
+        let old_caption = ["GAME FOLDER", " FILTER"].concat();
+        let old_default = ["Default: dynamic", ".filter"].concat();
+        assert_eq!(src.matches(old_caption.as_str()).count(), 0);
+        assert_eq!(src.matches(old_default.as_str()).count(), 0);
     }
 
     #[test]

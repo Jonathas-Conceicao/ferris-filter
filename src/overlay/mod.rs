@@ -17,6 +17,7 @@ pub mod conditions;
 pub mod config_state;
 pub mod config_view;
 pub mod economy;
+pub(crate) mod folder_dialog;
 pub mod grammar;
 pub mod hotkey;
 pub mod instance;

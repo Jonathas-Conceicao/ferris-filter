@@ -73,7 +73,7 @@ pub enum Commands {
     /// converted on its first apply. PoE2 still needs the filter reloaded in-game afterwards.
     Apply {
         /// Filter file to update
-        /// [default: dynamic.filter in %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        /// [default: dynamic.filter in the game folder: FERRISFILTER_GAME_DIR, else the folder picked in ff (ff-settings.json game_folder), else Documents\My Games\Path of Exile 2]
         #[arg(long)]
         filter: Option<String>,
         /// Add an economy section at the end of the filter (creates the file if it does not
@@ -108,7 +108,7 @@ pub enum Commands {
         #[arg(long, default_value = "universal.filter")]
         input: String,
         /// Destination PoE2 config folder
-        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        /// [default: the game folder: FERRISFILTER_GAME_DIR, else the folder picked in ff (ff-settings.json game_folder), else Documents\My Games\Path of Exile 2]
         #[arg(long)]
         dest: Option<String>,
     },

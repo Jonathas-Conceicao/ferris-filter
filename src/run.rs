@@ -67,7 +67,9 @@ pub fn run() -> miette::Result<()> {
             league,
             sub,
         } => sync::cmd_sync(standard, hc, league, sub)?,
-        Commands::Install { input, dest } => install::cmd_install(&input, dest)?,
+        Commands::Install { input, dest } => {
+            install::cmd_install(&input, dest, saved_game_folder().as_deref())?
+        }
     }
     Ok(())
 }
@@ -154,10 +156,9 @@ fn cmd_apply(
 ) -> miette::Result<()> {
     let path: PathBuf = match filter {
         Some(f) => PathBuf::from(f),
-        None => dynamic::default_filter_path().ok_or_else(|| {
+        None => dynamic::default_filter_path(saved_game_folder().as_deref()).ok_or_else(|| {
             miette::miette!(
-                "Cannot resolve the default PoE2 config folder (USERPROFILE is not set). \
-                 Pass --filter <path>."
+                "Cannot find the Documents folder; set FERRISFILTER_GAME_DIR or pass --filter <path>."
             )
         })?,
     };
@@ -245,4 +246,52 @@ fn cmd_apply(
     // PoE2 never re-reads a filter on its own, and no external process can make it.
     println!("Reload it in-game: Options > Game > Item Filter > Refresh");
     Ok(())
+}
+
+/// The `game_folder` saved in `<root>/ff-settings.json`: absolute, or `None` when the file or the
+/// key is absent or unusable (a bad key already means "use the default", so the load warning is
+/// not needed here). Reads only; creates nothing.
+pub(crate) fn saved_game_folder_in(root: &Path) -> Option<PathBuf> {
+    crate::settings::load(root)
+        .0
+        .game_folder_path()
+        .map(Path::to_path_buf)
+}
+
+/// The saved game folder of the app root this process resolves, if any.
+fn saved_game_folder() -> Option<PathBuf> {
+    let dirs = crate::locations::from_env().ok()?;
+    saved_game_folder_in(&dirs.root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_game_folder_absent_file_is_none_and_creates_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(saved_game_folder_in(t.path()), None);
+        assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn saved_game_folder_returns_the_absolute_key() {
+        let t = tempfile::tempdir().unwrap();
+        let game = t.path().join("game");
+        let json = serde_json::json!({ "game_folder": game.to_string_lossy() });
+        std::fs::write(t.path().join("ff-settings.json"), json.to_string()).unwrap();
+        assert_eq!(saved_game_folder_in(t.path()), Some(game));
+    }
+
+    #[test]
+    fn saved_game_folder_relative_key_is_none() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(
+            t.path().join("ff-settings.json"),
+            r#"{"game_folder":"relative/dir"}"#,
+        )
+        .unwrap();
+        assert_eq!(saved_game_folder_in(t.path()), None);
+    }
 }

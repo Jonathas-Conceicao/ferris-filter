@@ -75,6 +75,7 @@ fn apply(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
         .current_dir(dir)
         .env("FERRISFILTER_HOME", dir)
         .env("USERPROFILE", dir)
+        .env("FERRISFILTER_GAME_DIR", dir.join("game"))
         .arg("apply")
         .args(args)
         .assert()
@@ -143,6 +144,7 @@ fn economy_section_matches_generate() {
         .current_dir(&dir)
         .env("FERRISFILTER_HOME", &dir)
         .env("USERPROFILE", &dir)
+        .env("FERRISFILTER_GAME_DIR", dir.join("game"))
         .args(["generate", "--output", "universal.filter"])
         .assert()
         .success();
@@ -336,6 +338,7 @@ fn app_root_from_ferrisfilter_home_wins_over_cwd() {
         .current_dir(&other)
         .env("FERRISFILTER_HOME", &dir)
         .env("USERPROFILE", &dir)
+        .env("FERRISFILTER_GAME_DIR", dir.join("game"))
         .args(["apply", "--add-economy", "--filter", &f])
         .assert()
         .success();
@@ -380,6 +383,7 @@ fn apply_relative_overrides_resolve_against_the_app_root_not_the_cwd() {
         .current_dir(dir.join("game"))
         .env("FERRISFILTER_HOME", &dir)
         .env("USERPROFILE", &dir)
+        .env("FERRISFILTER_GAME_DIR", dir.join("game"))
         .args([
             "apply",
             "--filter",
@@ -396,13 +400,29 @@ fn apply_relative_overrides_resolve_against_the_app_root_not_the_cwd() {
 }
 
 #[test]
-fn default_filter_path_uses_userprofile() {
+fn default_filter_path_uses_game_dir_env() {
     let dir = workspace("default");
-    apply(&dir, &[])
+    let nogame = dir.join("nogame");
+    Command::cargo_bin("ferrisfilter")
+        .expect("binary")
+        .current_dir(&dir)
+        .env("FERRISFILTER_HOME", &dir)
+        .env("USERPROFILE", &dir)
+        .env("FERRISFILTER_GAME_DIR", &nogame)
+        .arg("apply")
+        .assert()
         .failure()
-        .stderr(contains("Path of Exile 2"))
+        .stderr(contains("nogame"))
         .stderr(contains("dynamic.filter"));
-    assert!(!dir.join("OneDrive").exists());
+    assert!(!nogame.exists());
+}
+
+#[test]
+fn default_filter_path_refreshes_the_pinned_game_dir() {
+    let dir = workspace("pinned");
+    apply(&dir, &["--add-economy"]).success();
+    assert!(gf(&dir).exists());
+    apply(&dir, &[]).success();
 }
 
 /// DEF-03: with no live files in the app root, apply reads the defaults, writes the same economy
@@ -495,6 +515,7 @@ fn apply_with_a_missing_home_folder_fails() {
         .current_dir(&dir)
         .env("FERRISFILTER_HOME", dir.join("nope"))
         .env("USERPROFILE", &dir)
+        .env("FERRISFILTER_GAME_DIR", dir.join("game"))
         .args(["apply", "--add-economy", "--filter", &f])
         .assert()
         .failure()
@@ -510,6 +531,7 @@ fn help_describes_the_folder_rule() {
             .current_dir(&dir)
             .env("FERRISFILTER_HOME", &dir)
             .env("USERPROFILE", &dir)
+            .env("FERRISFILTER_GAME_DIR", dir.join("game"))
             .args([cmd, "--help"])
             .assert()
             .success()

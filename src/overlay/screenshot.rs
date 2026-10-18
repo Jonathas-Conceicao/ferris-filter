@@ -277,7 +277,7 @@ pub(crate) fn guard_env() -> Result<(), String> {
 }
 
 fn game_dir() -> Result<PathBuf, String> {
-    crate::dynamic::default_destination()
+    crate::dynamic::default_destination(None)
         .ok_or_else(|| "screenshot mode needs USERPROFILE set".to_string())
 }
 

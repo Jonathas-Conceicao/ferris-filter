@@ -27,12 +27,12 @@ pub const FILTER_FILE: &str = "dynamic.filter";
 
 /// The in-game config folder `dynamic.filter` lands in by default.
 ///
-/// Delegates to the same resolution `install` uses rather than re-spelling the path segments —
-/// there should be exactly one place in the crate that knows where Path of Exile 2 keeps its
-/// filters. Returns `None` when `USERPROFILE` is unset (non-Windows), in which case the caller
-/// must require an explicit destination.
-pub fn default_destination() -> Option<PathBuf> {
-    crate::install::default_dest()
+/// The one place that resolves the game folder: `FERRISFILTER_GAME_DIR`, else the saved
+/// `game_folder` from `ff-settings.json` (passed in), else `Documents\My Games\Path of Exile 2`.
+/// `None` only when the OS has no Documents folder, in which case the caller must require an
+/// explicit destination.
+pub fn default_destination(saved: Option<&Path>) -> Option<PathBuf> {
+    crate::locations::game_dir(saved)
 }
 
 /// Everything that can go wrong in the dynamic lifecycle.
@@ -101,8 +101,8 @@ pub enum DynamicError {
 }
 
 /// The default `dynamic.filter` location inside the PoE2 folder.
-pub fn default_filter_path() -> Option<PathBuf> {
-    default_destination().map(|d| d.join(FILTER_FILE))
+pub fn default_filter_path(saved: Option<&Path>) -> Option<PathBuf> {
+    default_destination(saved).map(|d| d.join(FILTER_FILE))
 }
 
 /// An explicit operation on the economy section (D-05): only `AddEconomy` creates a section and

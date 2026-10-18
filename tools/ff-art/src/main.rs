@@ -44,6 +44,8 @@ enum Cmd {
     Dump { pattern: String, dir: PathBuf },
     /// Render the Ferris background and the orange ABOUT Ferris (no game install needed).
     Ferris,
+    /// Render the multi-size Ferris exe/installer icon (no game install needed).
+    Icon,
     /// Crop `[x, y, w, h]` out of a PNG and enlarge it `zoom` times (nearest neighbour), to
     /// inspect screenshots of the skinned UI up close.
     Zoom {
@@ -80,6 +82,7 @@ struct Manifest {
     font: Vec<FontEntry>,
     ferris: Option<FerrisEntry>,
     ferris_about: Option<FerrisAboutEntry>,
+    ferris_icon: Option<FerrisIconEntry>,
 }
 
 #[derive(Deserialize)]
@@ -136,6 +139,16 @@ struct FerrisAboutEntry {
     out: String,
     /// Output width in pixels (the artwork is cropped tight and scaled to exactly this).
     width: u32,
+}
+
+#[derive(Deserialize)]
+struct FerrisIconEntry {
+    /// Source SVG, relative to the repo root.
+    svg: String,
+    /// Output ICO, relative to the repo root.
+    out: String,
+    /// Square frame sizes in pixels, one PNG frame each.
+    sizes: Vec<u32>,
 }
 
 #[derive(Deserialize)]
@@ -204,6 +217,7 @@ fn main() -> Result<()> {
             ferris(&manifest, &root)?;
             ferris_about(&manifest, &root)
         }
+        Cmd::Icon => ferris_icon(&manifest, &root),
         Cmd::Sheet { list, out, cell } => sheet(&list, &out, cell),
         Cmd::Zoom {
             input,
@@ -554,6 +568,54 @@ fn ferris_about(manifest: &Manifest, root: &Path) -> Result<()> {
     std::fs::create_dir_all(out_path.parent().unwrap())?;
     save_png(&out, &out_path)?;
     println!("{}x{} {} <- {}", f.width, h, f.out, f.svg);
+    Ok(())
+}
+
+/// Renders the Ferris SVG in its original colours, crops it to the artwork, pads it to a centred
+/// transparent square and writes one PNG frame per size into a multi-size ICO.
+fn ferris_icon(manifest: &Manifest, root: &Path) -> Result<()> {
+    use image::codecs::ico::{IcoEncoder, IcoFrame};
+    let Some(f) = &manifest.ferris_icon else {
+        return Ok(());
+    };
+    let svg = std::fs::read(root.join(&f.svg)).with_context(|| format!("reading {}", f.svg))?;
+    let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default())?;
+    // Render large once, then downscale to every frame size.
+    let scale = 1024.0 / tree.size().width();
+    let (pix, (x0, y0, x1, y1)) = render_with_bbox(&tree, scale)?;
+    let (w, h) = (x1 - x0 + 1, y1 - y0 + 1);
+    let side = w.max(h);
+    let (ox, oy) = ((side - w) / 2, (side - h) / 2);
+    let pw = pix.width();
+    let mut square = RgbaImage::new(side, side);
+    for y in 0..h {
+        for x in 0..w {
+            let p = pix.pixels()[((y0 + y) * pw + x0 + x) as usize].demultiply();
+            square.put_pixel(
+                ox + x,
+                oy + y,
+                image::Rgba([p.red(), p.green(), p.blue(), p.alpha()]),
+            );
+        }
+    }
+    let mut frames = Vec::new();
+    for &s in &f.sizes {
+        let small = image::imageops::resize(&square, s, s, image::imageops::FilterType::Lanczos3);
+        frames.push(IcoFrame::as_png(
+            small.as_raw(),
+            s,
+            s,
+            image::ExtendedColorType::Rgba8,
+        )?);
+    }
+    let out_path = root.join(&f.out);
+    std::fs::create_dir_all(out_path.parent().unwrap())?;
+    let file = std::io::BufWriter::new(
+        std::fs::File::create(&out_path)
+            .with_context(|| format!("creating {}", out_path.display()))?,
+    );
+    IcoEncoder::new(file).encode_images(&frames)?;
+    println!("{} sizes {} <- {}", f.sizes.len(), f.out, f.svg);
     Ok(())
 }
 

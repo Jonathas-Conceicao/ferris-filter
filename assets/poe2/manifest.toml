@@ -278,3 +278,10 @@ line_radius = 2
 svg = "assets/ferris/rustacean-flat-happy.svg"
 out = "assets/ui/ferris-about.png"
 width = 336
+
+# Multi-size Windows icon for ff.exe, the installer and the Start menu (original colours, square
+# crop around the artwork; rendered from the committed SVG, no game install needed).
+[ferris_icon]
+svg = "assets/ferris/rustacean-flat-happy.svg"
+out = "assets/ferris/ferris.ico"
+sizes = [16, 24, 32, 48, 64, 128, 256]

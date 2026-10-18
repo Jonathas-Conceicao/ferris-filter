@@ -108,7 +108,10 @@ fn dirs_only_in_locations() {
             }
         }
     }
-    assert!(bad.is_empty(), "OS folder lookup outside src/locations.rs: {bad:?}");
+    assert!(
+        bad.is_empty(),
+        "OS folder lookup outside src/locations.rs: {bad:?}"
+    );
 }
 
 #[test]
@@ -132,7 +135,12 @@ fn no_env_mutation() {
 #[test]
 fn from_env_call_sites() {
     let needle = concat!("locations::", "from_env");
-    let allowed = ["src/locations.rs", "src/run.rs", "src/sync/mod.rs", "src/overlay/app.rs"];
+    let allowed = [
+        "src/locations.rs",
+        "src/run.rs",
+        "src/sync/mod.rs",
+        "src/overlay/app.rs",
+    ];
     let mut bad = Vec::new();
     for f in files_under("src").into_iter().chain(files_under("tests")) {
         if is_self(&f) || allowed.contains(&rel(&f).as_str()) {
@@ -143,7 +151,10 @@ fn from_env_call_sites() {
             bad.push(format!("{}:{}", rel(&f), line_of(&text, i)));
         }
     }
-    assert!(bad.is_empty(), "folder resolver called from an unexpected place: {bad:?}");
+    assert!(
+        bad.is_empty(),
+        "folder resolver called from an unexpected place: {bad:?}"
+    );
 }
 
 #[test]

@@ -197,7 +197,10 @@ mod tests {
 
     #[test]
     fn list_leagues_reads_the_fixture() {
-        let got = run(list_leagues(&FakeClient(Ok(FIXTURE_2026_10_18.to_string())))).unwrap();
+        let got = run(list_leagues(&FakeClient(
+            Ok(FIXTURE_2026_10_18.to_string()),
+        )))
+        .unwrap();
         assert_eq!(got.len(), 6);
     }
 

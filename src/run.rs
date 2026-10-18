@@ -16,11 +16,11 @@ use crate::cli::{Cli, Commands};
 use crate::compile::{self, FallbackReason, InputPaths, PriceSource, PriceSourcePolicy};
 use crate::dynamic;
 use crate::safe_write::WriteOutcome;
-use crate::{install, paths, sync};
+use crate::{install, sync};
 use std::path::{Path, PathBuf};
 
-/// `p` as given when absolute, else joined onto `root`. `apply` reads its inputs from the app
-/// root, so a relative `--tiers`/`--styles` override is relative to that same folder rather than
+/// `p` as given when absolute, else joined onto `root`. `apply` reads its inputs from the
+/// FerrisFilter folder, so a relative `--tiers`/`--styles` override is relative to it rather than
 /// the process working directory.
 fn under_root(root: &Path, p: &str) -> PathBuf {
     let p = Path::new(p);
@@ -178,24 +178,24 @@ fn cmd_apply(
     let body = if remove_economy {
         None
     } else {
-        let root = paths::app_root().map_err(miette::Error::from)?;
-        let mut inputs = InputPaths::relative_to(&root);
-        // A relative override resolves against the app root, like the default input it replaces,
-        // so `apply --tiers tiers-fallback.json` works from any working directory.
+        let dirs = crate::locations::from_env().map_err(miette::Error::from)?;
+        let mut inputs = InputPaths::from_dirs(&dirs);
+        // A relative override resolves against the FerrisFilter folder, like the default input
+        // it replaces, so `apply --tiers tiers-fallback.json` works from any working directory.
         if let Some(t) = tiers {
             eprintln!("note: --tiers {t} — using its cutoffs instead of tiers.json");
-            inputs = inputs.with_tiers(under_root(&root, t));
+            inputs = inputs.with_tiers_or_builtin(under_root(&dirs.root, t), t);
         }
         if let Some(s) = styles {
             eprintln!("note: --styles {s} — using it instead of styles.json");
-            inputs = inputs.with_styles(under_root(&root, s));
+            inputs = inputs.with_styles_or_builtin(under_root(&dirs.root, s), s);
         }
         let (body, source) =
             dynamic::economy_body(&inputs, PriceSourcePolicy::Auto).map_err(miette::Error::from)?;
         match source {
             PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty) => {
                 eprintln!(
-                    "warning: prices.json absent or empty — falling back to \
+                    "warning: prices.json absent or empty — falling back to the built-in \
                      prices-fallback.json + tiers-fallback.json"
                 );
             }

@@ -50,14 +50,20 @@ fn workspace(tag: &str) -> PathBuf {
     dir
 }
 
-/// Like [`workspace`], but the app root holds the committed `styles-default.json` /
-/// `tiers-default.json` under their own names and no live `styles.json` / `tiers.json`.
+/// Like [`workspace`], but the folder holds only `game/` and `prices.json`: no live
+/// `styles.json` / `tiers.json`, and no default files either (those are built in).
 fn workspace_defaults(tag: &str) -> PathBuf {
     let dir = workspace(tag);
     fs::remove_file(dir.join("styles.json")).expect("remove live styles");
     fs::remove_file(dir.join("tiers.json")).expect("remove live tiers");
-    for f in ["styles-default.json", "tiers-default.json"] {
-        fs::copy(manifest().join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    dir
+}
+
+/// A fresh temp folder holding only `game/`: no styles, tiers or prices of any kind.
+fn empty_home(tag: &str) -> PathBuf {
+    let dir = workspace(tag);
+    for f in ["styles.json", "tiers.json", "prices.json"] {
+        fs::remove_file(dir.join(f)).unwrap_or_else(|e| panic!("remove {f}: {e}"));
     }
     dir
 }
@@ -295,16 +301,20 @@ fn v04_filter_is_converted_on_first_apply() {
 }
 
 #[test]
-fn no_price_data_refuses_and_keeps_the_section() {
+fn missing_prices_use_the_built_in_fallback() {
     let dir = workspace("noprices");
     let f = gfs(&dir);
     apply(&dir, &["--filter", &f, "--add-economy"]).success();
-    let before = fs::read(gf(&dir)).unwrap();
     fs::remove_file(dir.join("prices.json")).unwrap();
     apply(&dir, &["--filter", &f])
-        .failure()
-        .stderr(contains("No price data"));
-    assert_eq!(before, fs::read(gf(&dir)).unwrap());
+        .success()
+        .stderr(contains("built-in prices-fallback.json"));
+    let text = read(&gf(&dir));
+    assert!(text.contains(ECONOMY_LINE), "{text}");
+    assert!(
+        !dir.join("prices.json").exists(),
+        "apply must not create prices.json"
+    );
 }
 
 #[test]
@@ -411,4 +421,98 @@ fn apply_falls_back_to_default_files_and_creates_no_live_file() {
     let lf = gfs(&live);
     apply(&live, &["--filter", &lf, "--add-economy"]).success();
     assert_eq!(normalize(&from_defaults), normalize(&read(&gf(&live))));
+}
+
+/// With nothing in the folder at all, apply uses the built-in defaults and fallback prices,
+/// writes the same section as from live copies of the defaults, and creates no input file.
+#[test]
+fn apply_in_an_empty_folder_uses_the_built_in_defaults() {
+    let dir = empty_home("emptyhome");
+    let f = gfs(&dir);
+    apply(&dir, &["--filter", &f, "--add-economy"])
+        .success()
+        .stderr(contains("built-in prices-fallback.json"));
+    let built_in = read(&gf(&dir));
+    assert!(built_in.contains(ECONOMY_LINE), "{built_in}");
+    for name in ["styles.json", "tiers.json", "prices.json"] {
+        assert!(!dir.join(name).exists(), "{name} was created");
+    }
+
+    let live = empty_home("emptyhome_live");
+    for (src, dst) in [
+        ("tiers-default.json", "tiers.json"),
+        ("styles-default.json", "styles.json"),
+    ] {
+        fs::copy(manifest().join(src), live.join(dst)).unwrap();
+    }
+    let lf = gfs(&live);
+    apply(&live, &["--filter", &lf, "--add-economy"]).success();
+    assert_eq!(normalize(&built_in), normalize(&read(&gf(&live))));
+}
+
+/// A bare built-in file name given to `--tiers` works with no such file in the folder; any other
+/// missing override is still an error.
+#[test]
+fn apply_tiers_override_accepts_a_built_in_name_only() {
+    let dir = empty_home("builtintiers");
+    let f = gfs(&dir);
+    apply(
+        &dir,
+        &[
+            "--filter",
+            &f,
+            "--add-economy",
+            "--tiers",
+            "tiers-fallback.json",
+        ],
+    )
+    .success();
+    assert!(!dir.join("tiers-fallback.json").exists());
+
+    // Live prices are needed here: with the fallback pair the tiers override is never read.
+    let dir = workspace("missingtiers");
+    let f = gfs(&dir);
+    apply(
+        &dir,
+        &[
+            "--filter",
+            &f,
+            "--add-economy",
+            "--tiers",
+            "missing-tiers.json",
+        ],
+    )
+    .failure()
+    .stderr(contains("Cannot read"));
+}
+
+#[test]
+fn apply_with_a_missing_home_folder_fails() {
+    let dir = empty_home("badhome");
+    let f = gfs(&dir);
+    Command::cargo_bin("ferrisfilter")
+        .expect("binary")
+        .current_dir(&dir)
+        .env("FERRISFILTER_HOME", dir.join("nope"))
+        .env("USERPROFILE", &dir)
+        .args(["apply", "--add-economy", "--filter", &f])
+        .assert()
+        .failure()
+        .stderr(contains("not an existing directory"));
+}
+
+#[test]
+fn help_describes_the_folder_rule() {
+    let dir = empty_home("help");
+    for (cmd, needle) in [("apply", "APPDATA"), ("sync", "prices.json")] {
+        Command::cargo_bin("ferrisfilter")
+            .expect("binary")
+            .current_dir(&dir)
+            .env("FERRISFILTER_HOME", &dir)
+            .env("USERPROFILE", &dir)
+            .args([cmd, "--help"])
+            .assert()
+            .success()
+            .stdout(contains(needle));
+    }
 }

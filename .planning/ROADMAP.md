@@ -98,7 +98,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 <details open>
 <summary>🚧 v0.7 Initial Public Release and Strictness Selector (Phases 36-42) — IN PROGRESS</summary>
 
-- [ ] **Phase 36: Per-user Locations & Embedded Defaults** - Config, settings and prices move to one per-user folder; every shipped data file is built into the exe
+- [x] **Phase 36: Per-user Locations & Embedded Defaults** - Config, settings and prices move to one per-user folder; every shipped data file is built into the exe (completed 2026-10-18)
 - [ ] **Phase 37: Game Folder Resolver & Picker** - Documents-based default game folder with a Browse picker on the Config tab, and a refresh button (game art) that re-reads filters and sounds
 - [ ] **Phase 38: Built-in Styles, Strictness & Reset** - Reworked built-in styles (one fixture re-baseline), the seven-level Strictness row, Reset to defaults for styles and tiers
 - [ ] **Phase 39: League Picker & Price Source** - Choose the league and Live or Fallback prices from the Economy tab
@@ -224,7 +224,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 36. Per-user Locations & Embedded Defaults | 7/7 | Complete   | 2026-10-18 |
+| 36. Per-user Locations & Embedded Defaults | 7/7 | Complete    | 2026-10-18 |
 | 37. Game Folder Resolver & Picker | 0/0 | Not started | - |
 | 38. Built-in Styles, Strictness & Reset | 0/0 | Not started | - |
 | 39. League Picker & Price Source | 0/0 | Not started | - |

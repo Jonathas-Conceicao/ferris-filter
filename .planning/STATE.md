@@ -4,7 +4,7 @@ milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: verifying
 stopped_at: Completed 36-07-PLAN.md
-last_updated: "2026-10-18T04:27:17.797Z"
+last_updated: "2026-10-18T04:46:12.986Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
@@ -21,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 36 — per-user-locations-embedded-defaults
+**Current focus:** Phase 37 — game-folder-resolver-picker
 
 ## Current Position
 
-Phase: 36 (per-user-locations-embedded-defaults) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
+Phase: 37
+Plan: Not started
+Status: Phase 36 complete (its 2 human-verification items are deferred to the end of the milestone, recorded in 36-HUMAN-UAT.md); Phase 37 not started
 Last activity: 2026-10-18
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 150 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
+- Total plans completed: 157 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
 
 **By Milestone:**
 

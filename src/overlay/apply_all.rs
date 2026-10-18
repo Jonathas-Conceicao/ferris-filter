@@ -9,6 +9,9 @@
 //! earlier files from the in-memory baselines. Baselines in [`ConfigState`] and [`LoadedFilter`]
 //! move only after the write succeeded.
 //!
+//! The config files live in the FerrisFilter folder (`root`); the defaults are built in, so the
+//! folder may be missing or empty. It is created only when a config file is actually written.
+//!
 //! Layer rule (same as `config_state.rs` / `apply.rs`): no GUI-framework types here, so every
 //! rule is provable with temp roots.
 
@@ -179,7 +182,7 @@ pub fn prepare(
         }
         let body = match input.plan {
             EconomyPlan::Refresh | EconomyPlan::Add => {
-                let paths = InputPaths::relative_to(root);
+                let paths = InputPaths::in_home(root);
                 let priced = match config {
                     Some(c) => dynamic::economy_body_with(
                         &paths,
@@ -230,8 +233,8 @@ pub fn prepare(
     // 3. Changed on disk: every participating file against its baseline. A config file without a
     // pending change does not participate: it is neither guarded nor written (CR-01). The guard
     // compares the LIVE file with its live baseline, `None` meaning it was absent at load (the
-    // config was read from the `-default.json`): still absent is no conflict and the write creates
-    // it; created or deleted since is a conflict (DEF-03). The default files are never guarded or
+    // config was read from the built-in default): still absent is no conflict and the write creates
+    // it; created or deleted since is a conflict (DEF-03). The defaults are never guarded or
     // written.
     let mut changed = Vec::new();
     let mut config_part = None;
@@ -310,6 +313,25 @@ pub(crate) fn commit_with(
         filter: filter_part,
         used_fallback,
     } = p;
+
+    // The FerrisFilter folder may not exist yet (nothing is created before the first real config
+    // write). Only the parent of a config file that is actually written is created.
+    if let Some(c) = &config_part {
+        let written = [
+            (c.write.styles_changed(), &c.styles_path),
+            (c.write.tiers_changed(), &c.tiers_path),
+        ];
+        for (changed, path) in written {
+            if let Some(dir) = path.parent().filter(|_| changed) {
+                fs::create_dir_all(dir).map_err(|e| {
+                    ApplyAllError::Write(format!(
+                        "Nothing was applied: could not create {}: {e}.",
+                        dir.display()
+                    ))
+                })?;
+            }
+        }
+    }
 
     // Targets in write order; remember which slot is which.
     let mut targets: Vec<Target> = Vec::new();
@@ -499,6 +521,68 @@ mod tests {
             styled: Ok(l.text().to_string()),
             plan,
         }
+    }
+
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn first_run_apply_writes_only_the_filter() {
+        let root = tempfile::tempdir().unwrap();
+        let game = tempfile::tempdir().unwrap();
+        let filter = game.path().join("dynamic.filter");
+        fs::write(&filter, RULES).unwrap();
+
+        let mut cfg = ConfigState::load(root.path()).unwrap();
+        assert!(!cfg.is_dirty());
+        let mut lf = LoadedFilter::load(&filter).unwrap();
+        let prepared = prepare(
+            root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Add)),
+            false,
+        )
+        .unwrap();
+        assert!(
+            prepared.used_fallback(),
+            "no prices.json: built-in fallback"
+        );
+        let done = commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(!done.styles_written && !done.tiers_written);
+
+        let text = fs::read_to_string(&filter).unwrap();
+        assert!(text.contains("# ff:economy-begin"), "{text}");
+        assert!(file_names(root.path()).is_empty(), "root must stay empty");
+    }
+
+    #[test]
+    fn apply_creates_the_folder_for_config_edits() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("FerrisFilter");
+        let game = tempfile::tempdir().unwrap();
+        let filter = game.path().join("dynamic.filter");
+        fs::write(&filter, RULES).unwrap();
+
+        let mut cfg = ConfigState::load(&root).unwrap();
+        assert!(!root.exists(), "load creates nothing");
+        assert!(cfg.edit_style("S", StyleEdit::Font(Some(41))));
+        let mut lf = LoadedFilter::load(&filter).unwrap();
+        let prepared = prepare(
+            &root,
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Keep)),
+            false,
+        )
+        .unwrap();
+        let done = commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(done.styles_written && !done.tiers_written);
+        assert_eq!(file_names(&root), vec!["styles.json".to_string()]);
     }
 
     fn tier(s: &ConfigState, name: &str) -> f64 {

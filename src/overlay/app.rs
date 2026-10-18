@@ -5254,7 +5254,15 @@ Hide
     #[test]
     fn staged_economy_preview_follows_pending_tier_edits() {
         let (mut app, _ctx) = popup_app(RULES);
-        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        // Live-priced economy needs a prices.json: a temp root holding the frozen seed prices.
+        let priced_root = tempfile::tempdir().unwrap();
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/seed-prices.json"),
+            priced_root.path().join("prices.json"),
+        )
+        .unwrap();
+        app.root = Ok(priced_root.path().to_path_buf());
         let Ok(_) = &app.config else {
             panic!("rig has no CONFIG state");
         };

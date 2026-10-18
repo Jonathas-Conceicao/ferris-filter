@@ -399,8 +399,8 @@ impl ConfigState {
         if !self.styles_changed() {
             let (src, now, live) = read_effective(&paths.styles, || paths.styles_source())?;
             if now != self.styles_bytes {
-                let mut set: StyleSet = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", src.label()))?;
+                let mut set: StyleSet =
+                    serde_json::from_slice(&now).map_err(|e| format!("{}: {e}", src.label()))?;
                 let assigned = set.assign_missing_ids();
                 set.validate()
                     .map_err(|e| format!("{}: {e}", src.label()))?;
@@ -415,8 +415,8 @@ impl ConfigState {
         if self.tiers_dirty_count() == 0 {
             let (src, now, live) = read_effective(&paths.tiers, || paths.tiers_source())?;
             if now != self.tiers_bytes {
-                let entries: Vec<TierEntry> = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", src.label()))?;
+                let entries: Vec<TierEntry> =
+                    serde_json::from_slice(&now).map_err(|e| format!("{}: {e}", src.label()))?;
                 ValidatedTiers::try_from(entries.clone())
                     .map_err(|e| format!("{}: {e}", src.label()))?;
                 tiers = Some((entries, now));
@@ -943,10 +943,13 @@ mod tests {
         let default = d.path().join("styles-default.json");
         let paths = InputPaths::in_home(d.path());
 
-        let (src, bytes, live_bytes) =
-            read_effective(&live, || paths.styles_source()).unwrap();
+        let (src, bytes, live_bytes) = read_effective(&live, || paths.styles_source()).unwrap();
         assert!(matches!(src, Source::Embedded(_)));
-        assert_eq!(bytes, fs::read(&default).unwrap(), "built-in copy equals the committed default");
+        assert_eq!(
+            bytes,
+            fs::read(&default).unwrap(),
+            "built-in copy equals the committed default"
+        );
         assert_eq!(live_bytes, None);
         assert_no_live(d.path());
 

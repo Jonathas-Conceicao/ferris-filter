@@ -39,8 +39,11 @@ fn valid_tiers() -> String {
 
 /// The committed default `styles-default.json` (valid).
 fn valid_styles() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
-        .expect("read styles-default.json")
+    fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/seed-styles.json"
+    ))
+    .expect("read styles-default.json")
 }
 
 /// A missing `config.json` (cwd has no config.json) must produce a non-zero exit

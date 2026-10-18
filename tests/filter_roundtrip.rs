@@ -170,7 +170,7 @@ fn corpus_generated_dynamic() {
     let dir = tmp.path();
     for (src, dst) in [
         ("tiers-default.json", "tiers.json"),
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
     ] {
         fs::copy(manifest().join(src), dir.join(dst)).unwrap();
     }

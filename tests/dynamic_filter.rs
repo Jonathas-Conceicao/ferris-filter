@@ -38,7 +38,7 @@ fn workspace(tag: &str) -> PathBuf {
     fs::create_dir_all(dir.join("game")).expect("create temp dir");
     for (src, dst) in [
         ("tiers-default.json", "tiers.json"),
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
     ] {
         fs::copy(manifest().join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
@@ -486,7 +486,7 @@ fn apply_in_an_empty_folder_uses_the_built_in_defaults() {
     let live = empty_home("emptyhome_live");
     for (src, dst) in [
         ("tiers-default.json", "tiers.json"),
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
     ] {
         fs::copy(manifest().join(src), live.join(dst)).unwrap();
     }

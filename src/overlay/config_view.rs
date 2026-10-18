@@ -816,6 +816,11 @@ fn show_styles(
         }
     }
     ui.add_space(4.0);
+    let heading = group_heading(ui, "Economy Visibility").on_hover_text(
+        "Which economy tiers show: hides the tier styles S to F that the FF economy section uses, \
+         lowest first.",
+    );
+    probe("strictness-heading", heading.rect);
     strictness_row(ui, state, actions);
     ui.add_space(8.0);
     if !builtin.is_empty() {

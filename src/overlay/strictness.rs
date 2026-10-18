@@ -10,7 +10,8 @@ use crate::models::config::{StyleAction, StyleSet};
 pub const TIER_LETTERS: [&str; 7] = ["S", "A", "B", "C", "D", "E", "F"];
 
 /// Shared last paragraph of every level tooltip.
-const AFFECTS_NOTE: &str = "Affects every rule that uses these tier styles, yours included.";
+const AFFECTS_NOTE: &str = "Applies to the tier styles S to F used by the FF economy section, and to \
+                            every rule of yours that uses them.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strictness {
@@ -159,7 +160,8 @@ mod tests {
         );
         assert_eq!(
             Strictness::GettingBy.tooltip(),
-            "Hides tiers E and F.\n\nAffects every rule that uses these tier styles, yours included."
+            "Hides tiers E and F.\n\nApplies to the tier styles S to F used by the FF economy \
+             section, and to every rule of yours that uses them."
         );
         assert_eq!(Strictness::DivFarmer.caption_lines(), ["Div", "Farmer"]);
         assert_eq!(Strictness::ALL[0], Strictness::Custom);

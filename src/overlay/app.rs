@@ -1642,22 +1642,28 @@ impl OverlayApp {
             Ok(root) => settings::save(root, &next).err(),
             Err(_) => None,
         };
-        if let Some(left) = left {
-            self.left_policies.insert(left, self.applied_policy);
-        }
         self.settings = next;
-        // A filter left earlier this session keeps the policy it was written under; any other is
-        // assumed written under the policy now in force.
-        self.applied_policy = self
-            .open_filter_path()
-            .and_then(|p| self.left_policies.get(&p).copied())
-            .unwrap_or_else(|| self.settings.price_policy());
+        self.rebind_applied_policy(left);
         self.reset_filter_state();
         self.refresh_inputs();
         self.refresh_filters();
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
+    }
+
+    /// Call once the settings and game folder name the filter now open: `left` (the filter open
+    /// before) keeps its `applied_policy` for a later return. A filter left earlier this session
+    /// gets back the policy it was written under; any other is assumed written under the policy
+    /// now in force.
+    fn rebind_applied_policy(&mut self, left: Option<PathBuf>) {
+        if let Some(left) = left {
+            self.left_policies.insert(left, self.applied_policy);
+        }
+        self.applied_policy = self
+            .open_filter_path()
+            .and_then(|p| self.left_policies.get(&p).copied())
+            .unwrap_or_else(|| self.settings.price_policy());
     }
 
     /// Whether the folder dialog is open (read by the Config tab to grey Browse).
@@ -2666,6 +2672,7 @@ impl OverlayApp {
     fn reload(&mut self) {
         let old_root = self.root.clone();
         let open_filter = self.settings.filter_name().to_string();
+        let left = self.open_filter_path();
         if self.root.is_err() {
             self.root = resolve_root();
         }
@@ -2701,6 +2708,10 @@ impl OverlayApp {
         // `dynamic.filter`; a warning about another key changes nothing here.
         if !filter_fell_back {
             choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref(), &open_filter);
+        }
+        // The re-read settings or folder may name another filter than the one open before.
+        if self.open_filter_path() != left {
+            self.rebind_applied_policy(left);
         }
         self.reset_filter_state();
         self.refresh_inputs();
@@ -7336,6 +7347,40 @@ Hide
         assert!(app.has_economy_section());
         assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
         assert!(app.source_pending());
+    }
+
+    #[test]
+    fn a_pending_source_switch_survives_a_reload_onto_another_filter_and_back() {
+        let (mut app, _ctx, rig) = economy_app();
+        let dir = rig.path.parent().unwrap().to_path_buf();
+        std::fs::write(dir.join("other.filter"), RULES).unwrap();
+        app.game_dir = Some(dir);
+        app.set_price_source(false);
+        assert!(app.source_pending());
+        let file = crate::settings::path(rig.root.path());
+        let select = |name: &str| {
+            let mut keys: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            keys["filter"] = serde_json::json!(name);
+            std::fs::write(&file, keys.to_string()).unwrap();
+        };
+
+        // ff-settings.json now names another filter: Reload opens it.
+        select("other.filter");
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "other.filter");
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+
+        select("dynamic.filter");
+        app.reload();
+        app.economy_info.live = true;
+        assert!(app.has_economy_section());
+        assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
+        assert!(app.source_pending());
+
+        // A reload that keeps the same filter leaves its applied policy alone.
+        app.reload();
+        assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
     }
 
     #[test]

@@ -115,7 +115,12 @@ impl Mapping {
 pub fn load_mapping(path: &str) -> miette::Result<Mapping> {
     let content =
         std::fs::read_to_string(path).map_err(|e| miette::miette!("Cannot read {path}: {e}"))?;
-    serde_json::from_str(&content).map_err(|e| miette::miette!("Cannot parse {path}: {e}"))
+    load_mapping_str(&content, path)
+}
+
+/// [`load_mapping`] over text already in memory; `label` names the source in errors.
+pub fn load_mapping_str(content: &str, label: &str) -> miette::Result<Mapping> {
+    serde_json::from_str(content).map_err(|e| miette::miette!("Cannot parse {label}: {e}"))
 }
 
 /// Normalize a RePoE PascalCase `item_class` value to the filter's `Class==` spaced form.
@@ -188,6 +193,18 @@ pub fn normalize_item_class(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapping_str_parses_shipped_file() {
+        let text = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/mapping.json"));
+        load_mapping_str(text, "mapping.json (built in)").unwrap();
+    }
+
+    #[test]
+    fn mapping_str_error_names_the_label() {
+        let err = load_mapping_str("{", "LABEL-X").unwrap_err();
+        assert!(err.to_string().contains("LABEL-X"));
+    }
 
     // --- normalize_item_class tests ---
 

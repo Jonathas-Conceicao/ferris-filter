@@ -58,3 +58,10 @@ insta       = "1.47.2"
 # Our own crate stays at opt-level 0 for debugging.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Release builds (the shipped binaries): whole-program optimisation, one codegen unit, no
+# debug symbols. Slower to build, smaller and faster to run.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

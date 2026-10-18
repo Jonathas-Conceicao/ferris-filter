@@ -90,6 +90,8 @@ You can also get the pre-compiled binaries from the release tab.
   inspiration and the tool I used before this one.
 - [FilterBlade](https://www.filterblade.xyz/?game=Poe2): Some more
   inspiration as the most popular PoE Filter tool.
+- [Dracula](https://draculatheme.com/): The high-contrast colour
+  scheme behind the default styles, a personal favourite of mine.
 
 ## AI Disclaimer
 

@@ -1270,6 +1270,13 @@ impl OverlayApp {
                 self.config_ui.delete_armed = Some(name.unwrap_or_else(|| "kite".to_string()));
             }
             Some("remove-economy") => self.list.confirm_economy_remove = true,
+            Some("reset-styles") => {
+                if let Ok(state) = &mut self.config {
+                    state.edit_style("S", config_state::StyleEdit::Font(Some(41)));
+                }
+                self.config_ui.reset_armed = Some(RevertScope::Styles);
+            }
+            Some("reset-tiers") => self.config_ui.reset_armed = Some(RevertScope::Tiers),
             Some("discard-config") => {
                 if let Ok(state) = &mut self.config {
                     state.edit_style("S", config_state::StyleEdit::Font(Some(41)));
@@ -1986,6 +1993,8 @@ impl OverlayApp {
             delete_rule: self.list.confirm_delete.is_some(),
             delete_style: self.config_ui.delete_armed.is_some(),
             remove_economy: self.list.confirm_economy_remove,
+            reset_styles: self.config_ui.reset_armed == Some(RevertScope::Styles),
+            reset_tiers: self.config_ui.reset_armed == Some(RevertScope::Tiers),
             discard_config: self.config_ui.revert_armed && self.config_discard_count() > 0,
             discard_rules: self.revert_rules_armed && self.rules_revertible(),
         }
@@ -2089,6 +2098,8 @@ impl OverlayApp {
                 shell::popup_spec(PopupData::DeleteStyle { prompt })
             }
             Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
+            Popup::ResetStyles => shell::popup_spec(PopupData::ResetStyles),
+            Popup::ResetTiers => shell::popup_spec(PopupData::ResetTiers),
             Popup::DiscardConfig => {
                 let scope = self.config_ui.revert_scope;
                 let economy = scope == RevertScope::Tiers;
@@ -2187,6 +2198,17 @@ impl OverlayApp {
                 self.list.confirm_economy_remove = false;
                 if choice == 0 {
                     self.stage_remove_economy();
+                }
+            }
+            Popup::ResetStyles | Popup::ResetTiers => {
+                self.config_ui.reset_armed = None;
+                if choice == 0 {
+                    let action = if popup == Popup::ResetStyles {
+                        ConfigAction::ResetStyles
+                    } else {
+                        ConfigAction::ResetTiers
+                    };
+                    self.handle_config_actions(ctx, vec![action]);
                 }
             }
             Popup::DiscardConfig => {
@@ -2505,6 +2527,8 @@ impl OverlayApp {
                     | ConfigAction::TierText { .. }
                     | ConfigAction::Revert
                     | ConfigAction::RevertScoped(_)
+                    | ConfigAction::ResetStyles
+                    | ConfigAction::ResetTiers
             )
         }) {
             // A revert sets its own CONFIG message below, after this clear.
@@ -2616,6 +2640,20 @@ impl OverlayApp {
                         self.applied_this_session,
                         rules_dirty || config_dirty,
                     );
+                }
+                ConfigAction::ResetStyles => {
+                    if let Ok(state) = &mut self.config {
+                        state.reset_styles();
+                        self.config_ui.reset_for_new_styles();
+                        self.config_ui.expanded = None;
+                        self.config_message = None;
+                    }
+                }
+                ConfigAction::ResetTiers => {
+                    if let Ok(state) = &mut self.config {
+                        state.reset_tiers();
+                        self.config_message = None;
+                    }
                 }
                 ConfigAction::Apply => {
                     self.run_apply(ctx, false);
@@ -3316,6 +3354,7 @@ impl eframe::App for OverlayApp {
                     syncing: self.economy.is_running(),
                     sync_enabled: actions.sync,
                     sync_disabled_tip: self.root.as_ref().err().map(String::as_str),
+                    tiers_reset_enabled: self.config.as_ref().is_ok_and(|c| !c.tiers_at_defaults()),
                     section: shell::section_button(
                         self.working.as_ref().map(|w| w.economy()),
                         self.root.is_ok(),
@@ -3514,6 +3553,9 @@ impl eframe::App for OverlayApp {
         }
         if economy_clicks.remove {
             self.list.confirm_economy_remove = true;
+        }
+        if economy_clicks.reset_tiers {
+            self.config_ui.reset_armed = Some(RevertScope::Tiers);
         }
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
@@ -5871,6 +5913,56 @@ Hide
         app.refresh_staged_economy();
         let after = app.working.as_ref().unwrap().economy_rows().len();
         assert_ne!(before, after, "the preview must follow the new prices");
+    }
+
+    #[test]
+    fn reset_popups_apply_one_pending_edit_and_keep_does_nothing() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = config_root();
+        app.config = ConfigState::load(dir.path());
+        assert!(app.config.as_mut().unwrap().add_style("glow").is_ok());
+        app.config
+            .as_mut()
+            .unwrap()
+            .edit_style("S", StyleEdit::Font(Some(41)));
+        app.config.as_mut().unwrap().set_tier_text("S", "999");
+        app.config_ui.expanded = Some("S".to_string());
+        let before = app.config.as_ref().unwrap().pending_styles().clone();
+
+        // Keep: nothing changes, the arm clears.
+        app.config_ui.reset_armed = Some(RevertScope::Styles);
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::ResetStyles)
+        );
+        app.dispatch_popup(&ctx, Popup::ResetStyles, 1);
+        assert_eq!(app.config_ui.reset_armed, None);
+        assert_eq!(*app.config.as_ref().unwrap().pending_styles(), before);
+
+        // Reset: built-ins back, custom kept, row collapsed, still pending.
+        app.config_ui.reset_armed = Some(RevertScope::Styles);
+        app.dispatch_popup(&ctx, Popup::ResetStyles, 0);
+        let state = app.config.as_ref().unwrap();
+        assert!(state.styles_at_defaults());
+        assert!(state.style("glow").is_some());
+        assert_eq!(app.config_ui.expanded, None);
+        assert_eq!(app.config_ui.reset_armed, None);
+        assert!(state.is_dirty());
+
+        // Tiers likewise.
+        assert!(!app.config.as_ref().unwrap().tiers_at_defaults());
+        app.config_ui.reset_armed = Some(RevertScope::Tiers);
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::ResetTiers)
+        );
+        app.dispatch_popup(&ctx, Popup::ResetTiers, 1);
+        assert!(!app.config.as_ref().unwrap().tiers_at_defaults());
+        app.config_ui.reset_armed = Some(RevertScope::Tiers);
+        app.dispatch_popup(&ctx, Popup::ResetTiers, 0);
+        assert!(app.config.as_ref().unwrap().tiers_at_defaults());
+        assert_eq!(app.config_ui.reset_armed, None);
     }
 
     #[test]

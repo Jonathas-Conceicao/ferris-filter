@@ -16,13 +16,15 @@ use std::path::{Path, PathBuf};
 use super::shell::ShellTab;
 
 /// The popups `--popup` can open.
-pub(crate) const POPUPS: [&str; 8] = [
+pub(crate) const POPUPS: [&str; 10] = [
     "changed",
     "switch",
     "quit",
     "delete-rule",
     "delete-style",
     "remove-economy",
+    "reset-styles",
+    "reset-tiers",
     "discard-config",
     "discard-rules",
 ];

@@ -81,6 +81,10 @@ pub enum ConfigAction {
     Revert,
     /// Revert one tab's CONFIG edits: styles from CONFIG, tiers from ECONOMY.
     RevertScoped(RevertScope),
+    /// Restore the built-in styles to their defaults (customs kept); a pending edit.
+    ResetStyles,
+    /// Restore the tier cutoffs to their defaults; a pending edit.
+    ResetTiers,
     Reload,
     Overwrite,
 }
@@ -105,6 +109,8 @@ pub struct ConfigUi {
     pub revert_armed: bool,
     /// What the armed Discard config changes? popup discards.
     pub revert_scope: RevertScope,
+    /// Which Reset to defaults? popup is armed (styles on CONFIG, tiers on ECONOMY).
+    pub reset_armed: Option<RevertScope>,
     /// A just-added style to scroll into view.
     pub scroll_to: Option<String>,
     /// A name draft was just opened; its text field takes focus once.
@@ -143,6 +149,7 @@ impl ConfigUi {
         self.delete_armed = None;
         self.revert_armed = false;
         self.revert_scope = RevertScope::Styles;
+        self.reset_armed = None;
     }
 
     /// Called when the styles are replaced (CONFIG Revert, reload, Apply, an outside edit
@@ -282,14 +289,10 @@ pub fn revert_prompt(n: usize) -> String {
 
 /// A section heading: the skin's gold rule heading, or a plain heading label when no skin is
 /// available (headless tests).
-fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) {
+fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) -> egui::Response {
     match ctx.skin {
-        Some(skin) => {
-            crate::skin::widgets::ff_section(ui, skin, title);
-        }
-        None => {
-            ui.label(RichText::new(title).size(21.0));
-        }
+        Some(skin) => crate::skin::widgets::ff_section(ui, skin, title),
+        None => ui.label(RichText::new(title).size(21.0)),
     }
 }
 
@@ -768,7 +771,7 @@ fn show_styles(
     ctx: &ConfigViewCtx,
     actions: &mut Vec<ConfigAction>,
 ) {
-    section_title(ui, ctx, "Styles");
+    let heading = section_title(ui, ctx, "Styles");
 
     let (builtin, custom) = style_groups(state);
     if builtin.is_empty() && custom.is_empty() {
@@ -780,10 +783,38 @@ fn show_styles(
         .on_hover_text("Revert to reload styles.json.");
         return;
     }
+    let skin = crate::skin::of(ui.ctx());
+    {
+        let enabled = !state.styles_at_defaults();
+        let mut right = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(
+                    heading.rect.min,
+                    egui::pos2(ui.max_rect().right() - 8.0, heading.rect.max.y),
+                ))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        let mut r = crate::skin::widgets::ff_button_ex(
+            &mut right,
+            &skin,
+            "Reset to defaults",
+            150.0,
+            enabled,
+            false,
+        );
+        r = if enabled {
+            r.on_hover_text("Restore the built-in styles. Your custom styles are kept.")
+        } else {
+            r.on_disabled_hover_text("Already at the defaults.")
+        };
+        probe("reset-styles", r.rect);
+        if r.clicked() && enabled {
+            cfg.reset_armed = Some(RevertScope::Styles);
+        }
+    }
     ui.add_space(4.0);
     strictness_row(ui, state, actions);
     ui.add_space(8.0);
-    let skin = crate::skin::of(ui.ctx());
     if !builtin.is_empty() {
         let heading = group_heading(ui, "Built-in");
         probe("builtin-heading", heading.rect);
@@ -2354,6 +2385,42 @@ mod tests {
         })
         .drop_without_applying_deltas();
         actions
+    }
+
+    fn loaded_edited() -> (tempfile::TempDir, ConfigState) {
+        let (d, mut state) = loaded();
+        state.reset_styles();
+        let (builtin, _) = style_groups(&state);
+        assert!(state.edit_style(&builtin[0], StyleEdit::Action(StyleAction::Hide)));
+        (d, state)
+    }
+
+    #[test]
+    fn reset_styles_button_is_greyed_at_defaults_and_arms_when_edited() {
+        let (_d, mut state) = loaded();
+        state.reset_styles();
+        assert!(state.styles_at_defaults());
+        let mut cfg = ConfigUi::default();
+        let at_defaults = render_probes(&state, &mut cfg, "reset-styles");
+        assert_eq!(at_defaults.len(), 1);
+        let (ctx, _) = headless();
+        click_styles(&ctx, &state, &mut cfg, at_defaults[0].center());
+        assert_eq!(cfg.reset_armed, None, "a disabled button must not arm");
+
+        let (_d2, state) = loaded_edited();
+        let mut cfg = ConfigUi::default();
+        let rects = render_probes(&state, &mut cfg, "reset-styles");
+        let (ctx, _) = headless();
+        let actions = click_styles(&ctx, &state, &mut cfg, rects[0].center());
+        assert_eq!(cfg.reset_armed, Some(RevertScope::Styles));
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, ConfigAction::ResetStyles)),
+            "the click only arms the confirmation"
+        );
+        cfg.disarm_all();
+        assert_eq!(cfg.reset_armed, None);
     }
 
     fn moves(actions: &[ConfigAction]) -> Vec<&ConfigAction> {

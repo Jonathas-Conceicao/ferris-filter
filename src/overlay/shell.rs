@@ -551,6 +551,7 @@ pub(crate) struct EconomyClicks {
     pub sync: bool,
     pub add: bool,
     pub remove: bool,
+    pub reset_tiers: bool,
 }
 
 /// Everything the ECONOMY tab shows.
@@ -567,6 +568,8 @@ pub(crate) struct EconomyTabInputs<'a> {
     pub sync_enabled: bool,
     pub sync_disabled_tip: Option<&'a str>,
     pub section: SectionButton,
+    /// The Tiers Reset to defaults button is live (the cutoffs differ from the defaults).
+    pub tiers_reset_enabled: bool,
 }
 
 /// The ECONOMY tab: league, last sync, price source, the Sync economy button, the economy
@@ -691,7 +694,26 @@ pub(crate) fn economy_tab(
                 .on_hover_text("Rules inside the section cannot be edited.");
         }
         ui.add_space(16.0);
-        w::ff_section(ui, skin, "Tiers");
+        let heading = w::ff_section(ui, skin, "Tiers");
+        {
+            let mut right = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(heading.rect.shrink2(vec2(8.0, 0.0)))
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            let enabled = inputs.tiers_reset_enabled;
+            let mut r =
+                w::ff_button_ex(&mut right, skin, "Reset to defaults", 150.0, enabled, false);
+            r = if enabled {
+                r.on_hover_text("Restore the default cutoffs.")
+            } else {
+                r.on_disabled_hover_text("Already at the defaults.")
+            };
+            crate::overlay::style_lines::probe("reset-tiers", r.rect);
+            if r.clicked() && enabled {
+                clicks.reset_tiers = true;
+            }
+        }
         tiers(ui);
     });
     clicks
@@ -701,7 +723,7 @@ pub(crate) fn economy_tab(
 // Popups (SHELL-07)
 // ---------------------------------------------------------------------------------------------
 
-/// The eight confirmations and choices the overlay asks, each shown as one skinned modal.
+/// The ten confirmations and choices the overlay asks, each shown as one skinned modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Popup {
     Quit,
@@ -710,6 +732,8 @@ pub(crate) enum Popup {
     DeleteRule,
     DeleteStyle,
     RemoveEconomy,
+    ResetStyles,
+    ResetTiers,
     DiscardConfig,
     DiscardRules,
 }
@@ -723,6 +747,8 @@ pub(crate) struct PopupFlags {
     pub delete_rule: bool,
     pub delete_style: bool,
     pub remove_economy: bool,
+    pub reset_styles: bool,
+    pub reset_tiers: bool,
     pub discard_config: bool,
     pub discard_rules: bool,
 }
@@ -737,6 +763,8 @@ pub(crate) fn active_popup(f: PopupFlags) -> Option<Popup> {
         (f.delete_rule, Popup::DeleteRule),
         (f.delete_style, Popup::DeleteStyle),
         (f.remove_economy, Popup::RemoveEconomy),
+        (f.reset_styles, Popup::ResetStyles),
+        (f.reset_tiers, Popup::ResetTiers),
         (f.discard_config, Popup::DiscardConfig),
         (f.discard_rules, Popup::DiscardRules),
     ]
@@ -752,6 +780,7 @@ pub(crate) const KEEP: &str = "Keep";
 pub(crate) const DELETE_STYLE: &str = "Delete style";
 pub(crate) const KEEP_STYLE: &str = "Keep style";
 pub(crate) const REMOVE: &str = "Remove";
+pub(crate) const RESET: &str = "Reset";
 pub(crate) const DISCARD: &str = "Discard";
 pub(crate) const RELOAD: &str = "Reload";
 pub(crate) const OVERWRITE: &str = "Overwrite";
@@ -793,6 +822,8 @@ pub(crate) enum PopupData<'a> {
         prompt: String,
     },
     RemoveEconomy,
+    ResetStyles,
+    ResetTiers,
     DiscardConfig {
         /// Unapplied edits in the reverted scope (styles on CONFIG, tiers on ECONOMY).
         count: usize,
@@ -903,6 +934,16 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
             "Your own rules are kept. Add the section back any time.".to_string(),
             vec![(REMOVE, true, None), (KEEP, false, None)],
         ),
+        PopupData::ResetStyles => (
+            "Reset styles to defaults?",
+            "The built-in styles go back to their default look, names and order. Your custom styles are kept. Press Apply to save, or Revert to undo.".to_string(),
+            vec![(RESET, true, None), (KEEP, false, None)],
+        ),
+        PopupData::ResetTiers => (
+            "Reset tiers to defaults?",
+            "The tier cutoffs go back to their defaults. Press Apply to save, or Revert to undo.".to_string(),
+            vec![(RESET, true, None), (KEEP, false, None)],
+        ),
         PopupData::DiscardConfig {
             count,
             economy,
@@ -976,6 +1017,7 @@ mod tests {
             sync_enabled: true,
             sync_disabled_tip: None,
             section,
+            tiers_reset_enabled: true,
         }
     }
 
@@ -992,7 +1034,8 @@ mod tests {
             EconomyClicks {
                 sync: false,
                 add: false,
-                remove: false
+                remove: false,
+                reset_tiers: false
             }
         );
     }
@@ -1022,6 +1065,54 @@ mod tests {
             let (clicks, ran) = draw(&i);
             assert_eq!(ran, 1);
             assert_eq!(clicks, EconomyClicks::default());
+        }
+    }
+
+    #[test]
+    fn the_tiers_reset_button_clicks_only_when_enabled() {
+        use crate::overlay::style_lines::drain_probes;
+        for enabled in [true, false] {
+            let mut i = inputs(ADD);
+            i.tiers_reset_enabled = enabled;
+            let ctx = egui::Context::default();
+            crate::skin::fonts::install(&ctx);
+            let skin = crate::skin::textures::load_light(&ctx);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(535.0, 900.0));
+            let input = |events| egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            drain_probes();
+            ctx.run_ui(input(vec![]), |ui| {
+                economy_tab(ui, &skin, &i, |_| {});
+            })
+            .drop_without_applying_deltas();
+            let target = drain_probes()
+                .into_iter()
+                .find(|(t, _)| *t == "reset-tiers")
+                .expect("the button is drawn")
+                .1
+                .center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let mut clicks = EconomyClicks::default();
+            ctx.run_ui(
+                input(vec![
+                    egui::Event::PointerMoved(target),
+                    button(true),
+                    button(false),
+                ]),
+                |ui| {
+                    clicks = economy_tab(ui, &skin, &i, |_| {});
+                },
+            )
+            .drop_without_applying_deltas();
+            assert_eq!(clicks.reset_tiers, enabled);
         }
     }
 
@@ -1527,6 +1618,8 @@ mod tests {
             delete_rule: true,
             delete_style: true,
             remove_economy: true,
+            reset_styles: true,
+            reset_tiers: true,
             discard_config: true,
             discard_rules: true,
         };
@@ -1552,6 +1645,16 @@ mod tests {
         assert_eq!(active_popup(f), Some(Popup::RemoveEconomy));
         let f = PopupFlags {
             remove_economy: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::ResetStyles));
+        let f = PopupFlags {
+            reset_styles: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::ResetTiers));
+        let f = PopupFlags {
+            reset_tiers: false,
             ..f
         };
         assert_eq!(active_popup(f), Some(Popup::DiscardConfig));
@@ -1713,6 +1816,22 @@ mod tests {
         );
         assert_eq!(labels(&s), ["Remove", "Keep"]);
 
+        let s = popup_spec(PopupData::ResetStyles);
+        assert_eq!(s.title, "Reset styles to defaults?");
+        assert_eq!(
+            s.body,
+            "The built-in styles go back to their default look, names and order. Your custom styles are kept. Press Apply to save, or Revert to undo."
+        );
+        assert_eq!(s.buttons, [(RESET, true, None), (KEEP, false, None)]);
+
+        let s = popup_spec(PopupData::ResetTiers);
+        assert_eq!(s.title, "Reset tiers to defaults?");
+        assert_eq!(
+            s.body,
+            "The tier cutoffs go back to their defaults. Press Apply to save, or Revert to undo."
+        );
+        assert_eq!(s.buttons, [(RESET, true, None), (KEEP, false, None)]);
+
         let s = popup_spec(PopupData::DiscardConfig {
             count: 2,
             economy: false,
@@ -1783,6 +1902,8 @@ mod tests {
                 prompt: String::new(),
             },
             PopupData::RemoveEconomy,
+            PopupData::ResetStyles,
+            PopupData::ResetTiers,
             PopupData::DiscardConfig {
                 count: 1,
                 economy: false,

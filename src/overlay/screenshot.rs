@@ -262,7 +262,7 @@ pub(crate) fn paths_under_temp(
 /// Requires `FERRISFILTER_HOME` and `USERPROFILE` (and so the derived game folder) to be under
 /// the system temp folder.
 pub(crate) fn guard_env() -> Result<(), String> {
-    let home = std::env::var_os(crate::paths::HOME_ENV).ok_or_else(|| {
+    let home = std::env::var_os(crate::locations::HOME_ENV).ok_or_else(|| {
         "screenshot mode needs FERRISFILTER_HOME set to a temp folder".to_string()
     })?;
     let profile = std::env::var_os("USERPROFILE")
@@ -292,7 +292,7 @@ pub(crate) fn stage_filter(args: &ShotArgs) -> Result<(), String> {
     let Some(src) = &args.filter else {
         return Ok(());
     };
-    let home = std::env::var_os(crate::paths::HOME_ENV)
+    let home = std::env::var_os(crate::locations::HOME_ENV)
         .ok_or_else(|| "screenshot mode needs FERRISFILTER_HOME set".to_string())?;
     let (settings, _) = crate::settings::load(Path::new(&home));
     stage_into(src, &game_dir()?, settings.filter_name())

@@ -7,8 +7,9 @@
 //! filter-as-store footer (Phase 18).
 //!
 //! **Filter-as-store (Phase 18) and the rule list (Phase 19).** The game-folder `dynamic.filter`
-//! is the store. On launch the overlay resolves the app root ([`crate::paths::app_root`], never
-//! the working directory, so a double-click launch works) and loads the filter
+//! is the store. On launch the overlay resolves the app root ([`crate::locations::AppDirs`]:
+//! `FERRISFILTER_HOME`, else the per-user folder; no walk-up from the exe, and never the
+//! working directory, so a double-click launch works) and loads the filter
 //! ([`dynamic::LoadedFilter::load`], which never writes); RELOAD repeats both, and is offered
 //! whenever the root, the load, or the economy markers are broken, so every such state can be
 //! recovered without a restart.
@@ -198,6 +199,10 @@ pub struct OverlayApp {
     /// deleting the live file switches the source.
     styles_stamp: Option<(std::path::PathBuf, std::time::SystemTime)>,
 
+    /// Keeps a unit-test app's per-test home alive as long as the app.
+    #[cfg(test)]
+    test_home: Option<tempfile::TempDir>,
+
     /// `ctx.input(|i| i.time)` of the last `styles.json` poll.
     styles_checked: f64,
 
@@ -271,6 +276,20 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     }
     working.set_styles_over(config.pending_styles().clone(), config.applied_styles());
     true
+}
+
+/// The FerrisFilter folder: `FERRISFILTER_HOME`, else the per-user folder. Unit tests never
+/// resolve it (they build apps on a per-test temp home instead).
+#[cfg(not(test))]
+fn resolve_root() -> Result<PathBuf, String> {
+    crate::locations::AppDirs::from_env()
+        .map(|d| d.root)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn resolve_root() -> Result<PathBuf, String> {
+    Err("unit tests never resolve the FerrisFilter folder".to_string())
 }
 
 /// The economy body a staged **Add economy section** previews: priced with the CONFIG tab's pending
@@ -1030,7 +1049,15 @@ impl OverlayApp {
         instance: instance::Guard,
         skin: Skin,
     ) -> Self {
-        Self::build(tray, hotkey_manager, hotkey_status, Some(instance), skin)
+        Self::build(
+            tray,
+            hotkey_manager,
+            hotkey_status,
+            Some(instance),
+            skin,
+            resolve_root(),
+            dynamic::default_destination(),
+        )
     }
 
     /// The debug screenshot app: an inert tray, no hotkey, no instance guard, the requested tab
@@ -1043,6 +1070,8 @@ impl OverlayApp {
             HotkeyStatus::Failed("screenshot mode".to_string()),
             None,
             skin,
+            resolve_root(),
+            dynamic::default_destination(),
         );
         app.tab = shot.tab;
         app.visibility = Visibility::ShownFocused;
@@ -1179,9 +1208,9 @@ impl OverlayApp {
         hotkey_status: HotkeyStatus,
         instance: Option<instance::Guard>,
         skin: Skin,
+        root: Result<PathBuf, String>,
+        game_dir: Option<PathBuf>,
     ) -> Self {
-        let root = crate::paths::app_root().map_err(|e| e.to_string());
-        let game_dir = dynamic::default_destination();
         // Settings: the remembered filter. Without a root nothing is read and nothing is saved.
         let (settings, settings_warning) = match &root {
             Ok(root) => settings::load(root),
@@ -1250,6 +1279,8 @@ impl OverlayApp {
             filters_cache: None,
             pending_switch: None,
             sound_dir_stale: true,
+            #[cfg(test)]
+            test_home: None,
         };
         app.refresh_inputs();
         app.refresh_economy_info();
@@ -2151,13 +2182,18 @@ impl OverlayApp {
         }
     }
 
-    /// RELOAD: re-resolves the app root, re-reads the filter and discards in-memory state (D-08).
-    /// Re-resolving the root here is what lets a window launched before the FerrisFilter folder
-    /// was in place recover without a restart.
+    /// RELOAD: re-resolves the app root when it could not be resolved, re-reads the filter and
+    /// discards in-memory state (D-08). A resolved root is kept (the environment cannot change
+    /// under a running process); the game folder is re-resolved outside unit tests.
     fn reload(&mut self) {
         let old_root = self.root.clone();
-        self.root = crate::paths::app_root().map_err(|e| e.to_string());
-        self.game_dir = dynamic::default_destination();
+        if self.root.is_err() {
+            self.root = resolve_root();
+        }
+        #[cfg(not(test))]
+        {
+            self.game_dir = dynamic::default_destination();
+        }
         let settings_warning = match &self.root {
             Ok(root) => {
                 let (settings, warning) = settings::load(root);
@@ -4796,13 +4832,17 @@ Hide
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
         let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
         let mut app = super::OverlayApp::build(
             TrayHandles::inert(),
             None,
             HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("game")),
         );
+        app.test_home = Some(home);
         app.working = Some(WorkingFilter::from_text(filter_text));
         (app, ctx)
     }

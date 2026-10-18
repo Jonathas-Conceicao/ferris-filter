@@ -3,8 +3,8 @@
 //!
 //! Layer rule (same as `overlay/apply.rs`): no GUI-framework types live here, so every CONF-02/03/04
 //! rule is provable with temp dirs -- `OverlayApp::new` needs a real tray and cannot be unit-tested.
-//! File paths come only from `InputPaths::relative_to(root)`. Reads go through
-//! `InputPaths::styles_source` / `tiers_source` (the live file, else the committed `-default.json`);
+//! File paths come only from `InputPaths::in_home(root)`. Reads go through
+//! `InputPaths::styles_source` / `tiers_source` (the live file, else the built-in default);
 //! this module only ever hands out the live `styles.json` / `tiers.json` as write targets, so the
 //! `-default.json` files and the early-league fallback pair are never touched.
 
@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compile::InputPaths;
+use crate::compile::{InputPaths, Source};
 use crate::loader::LoadError;
 use crate::models::config::{
     Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
@@ -104,42 +104,31 @@ pub struct ConfigState {
     ids_unpersisted: bool,
 }
 
-fn file_label(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-/// Read `path`, `None` when it does not exist. Errors read `<file name>: <reason>`.
+/// Read `path`, `None` when it does not exist. Errors read `<full path>: <reason>`.
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match fs::read(path) {
         Ok(b) => Ok(Some(b)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", file_label(path))),
+        Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
 
-/// Map a read-source resolution error so it starts with the live file name.
-fn source(live: &Path, resolved: Result<PathBuf, LoadError>) -> Result<PathBuf, String> {
-    resolved.map_err(|e| format!("{}: {e}", file_label(live)))
-}
-
-/// One read of the effective source of a live file: `(source path, content bytes, live bytes)`.
+/// One read of the effective source of a live file: `(source, content bytes, live bytes)`.
 ///
 /// The live file is read once and, when present, supplies both the content and the guard
 /// baseline, so the two can never disagree (WR-01). Only when it is absent is the source resolved
-/// (normally the `-default.json`) and read; should the live file appear in between, the resolver
-/// picks it and that single read again feeds both baselines.
+/// (normally the built-in default, which has no live bytes) and read; should the live file appear
+/// in between, the resolver picks it and that single read again feeds both baselines.
 fn read_effective(
     live: &Path,
-    resolve: impl FnOnce() -> Result<PathBuf, LoadError>,
-) -> Result<(PathBuf, Vec<u8>, Option<Vec<u8>>), String> {
+    resolve: impl FnOnce() -> Result<Source, LoadError>,
+) -> Result<(Source, Vec<u8>, Option<Vec<u8>>), String> {
     if let Some(bytes) = read_optional(live)? {
-        return Ok((live.to_path_buf(), bytes.clone(), Some(bytes)));
+        return Ok((Source::File(live.to_path_buf()), bytes.clone(), Some(bytes)));
     }
-    let src = source(live, resolve())?;
-    let bytes = fs::read(&src).map_err(|e| format!("{}: {e}", file_label(&src)))?;
-    let live_bytes = (src == live).then(|| bytes.clone());
+    let src = resolve().map_err(|e| format!("{}: {e}", live.display()))?;
+    let bytes = src.bytes().map_err(|e| format!("{}: {e}", src.label()))?;
+    let live_bytes = (src.as_file() == Some(live)).then(|| bytes.clone());
     Ok((src, bytes, live_bytes))
 }
 
@@ -154,25 +143,25 @@ impl ConfigState {
     /// Read `styles.json` and `tiers.json` under `root`, each falling back to its
     /// `-default.json` when absent (DEF-03). Errors read `<file name>: <reason>`. Never writes.
     pub fn load(root: &Path) -> Result<ConfigState, String> {
-        let paths = InputPaths::relative_to(root);
+        let paths = InputPaths::in_home(root);
 
         let (styles_src, styles_bytes, styles_live) =
-            read_effective(&paths.styles, || paths.styles_source_path())?;
+            read_effective(&paths.styles, || paths.styles_source())?;
         let mut styles: StyleSet = serde_json::from_slice(&styles_bytes)
-            .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
+            .map_err(|e| format!("{}: {e}", styles_src.label()))?;
         // Ids assigned to a default source are derived from the names, and the default is never
         // written: persisting them would create a live styles.json nobody edited (WR-02).
         let ids_unpersisted = styles.assign_missing_ids() && styles_live.is_some();
         styles
             .validate()
-            .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
+            .map_err(|e| format!("{}: {e}", styles_src.label()))?;
 
         let (tiers_src, tiers_bytes, tiers_live) =
-            read_effective(&paths.tiers, || paths.tiers_source_path())?;
+            read_effective(&paths.tiers, || paths.tiers_source())?;
         let tiers: Vec<TierEntry> = serde_json::from_slice(&tiers_bytes)
-            .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
+            .map_err(|e| format!("{}: {e}", tiers_src.label()))?;
         ValidatedTiers::try_from(tiers.clone())
-            .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
+            .map_err(|e| format!("{}: {e}", tiers_src.label()))?;
 
         let mut state = ConfigState {
             root: root.to_path_buf(),
@@ -404,17 +393,17 @@ impl ConfigState {
     /// baselines (changed-on-disk refusal, OVERWRITE). On error (a clean file that no longer
     /// loads) nothing changes. Never writes. Returns whether any content was re-read.
     pub fn follow_disk(&mut self) -> Result<bool, String> {
-        let paths = InputPaths::relative_to(&self.root);
+        let paths = InputPaths::in_home(&self.root);
         let mut styles = None;
         let mut styles_live = None;
         if !self.styles_changed() {
-            let (src, now, live) = read_effective(&paths.styles, || paths.styles_source_path())?;
+            let (src, now, live) = read_effective(&paths.styles, || paths.styles_source())?;
             if now != self.styles_bytes {
                 let mut set: StyleSet = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                    .map_err(|e| format!("{}: {e}", src.label()))?;
                 let assigned = set.assign_missing_ids();
                 set.validate()
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                    .map_err(|e| format!("{}: {e}", src.label()))?;
                 styles = Some((set, now, assigned));
             }
             if live != self.styles_live {
@@ -424,12 +413,12 @@ impl ConfigState {
         let mut tiers = None;
         let mut tiers_live = None;
         if self.tiers_dirty_count() == 0 {
-            let (src, now, live) = read_effective(&paths.tiers, || paths.tiers_source_path())?;
+            let (src, now, live) = read_effective(&paths.tiers, || paths.tiers_source())?;
             if now != self.tiers_bytes {
                 let entries: Vec<TierEntry> = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                    .map_err(|e| format!("{}: {e}", src.label()))?;
                 ValidatedTiers::try_from(entries.clone())
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                    .map_err(|e| format!("{}: {e}", src.label()))?;
                 tiers = Some((entries, now));
             }
             if live != self.tiers_live {
@@ -509,12 +498,12 @@ impl ConfigState {
 
     /// The live `styles.json`: the write target. Reads may come from `styles-default.json`.
     pub fn styles_path(&self) -> PathBuf {
-        InputPaths::relative_to(&self.root).styles
+        InputPaths::in_home(&self.root).styles
     }
 
     /// The live `tiers.json`: the write target. Reads may come from `tiers-default.json`.
     pub fn tiers_path(&self) -> PathBuf {
-        InputPaths::relative_to(&self.root).tiers
+        InputPaths::in_home(&self.root).tiers
     }
 
     /// The content bytes read at load (or written by the last apply), from whichever source was
@@ -794,21 +783,37 @@ mod tests {
     }
 
     #[test]
-    fn load_errors_name_the_file() {
+    fn load_errors_name_the_full_path() {
         let d = temp_root();
         fs::write(d.path().join("styles.json"), "{ not json").unwrap();
         let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("styles.json:"), "{e}");
+        let live = d.path().join("styles.json");
+        assert!(e.starts_with(&format!("{}:", live.display())), "{e}");
 
         let d = temp_root();
-        fs::remove_file(d.path().join("tiers.json")).unwrap();
+        fs::write(d.path().join("tiers.json"), "[ not json").unwrap();
         let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("tiers.json:"), "{e}");
+        let live = d.path().join("tiers.json");
+        assert!(e.starts_with(&format!("{}:", live.display())), "{e}");
+    }
 
-        let d = temp_root();
-        fs::remove_file(d.path().join("styles.json")).unwrap();
-        let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("styles.json:"), "{e}");
+    #[test]
+    fn empty_folder_loads_the_built_in_defaults_and_writes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let s = ConfigState::load(d.path()).unwrap();
+        let names = s.style_names();
+        for n in ["S", "A", "B", "C", "D", "E", "F", "unchanged", "hidden"] {
+            assert!(names.iter().any(|x| x == n), "missing {n}");
+        }
+        assert_eq!(s.pending_tiers().len(), 7);
+        assert_eq!(s.dirty_count(), 0);
+        assert!(!s.is_dirty());
+        assert_eq!(s.live_baselines(), (None, None));
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed() && !w.tiers_changed());
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 0);
+        assert_eq!(s.styles_path(), d.path().join("styles.json"));
+        assert_eq!(s.tiers_path(), d.path().join("tiers.json"));
     }
 
     /// A temp root holding only the committed defaults under their own names (no live file).
@@ -867,18 +872,13 @@ mod tests {
     }
 
     #[test]
-    fn load_without_any_styles_file_names_both() {
+    fn default_files_in_the_folder_are_ignored() {
         let d = defaults_root();
         fs::remove_file(d.path().join("styles-default.json")).unwrap();
-        let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("styles.json:"), "{e}");
-        assert!(e.contains("styles-default.json"), "{e}");
-
-        let d = defaults_root();
         fs::remove_file(d.path().join("tiers-default.json")).unwrap();
-        let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("tiers.json:"), "{e}");
-        assert!(e.contains("tiers-default.json"), "{e}");
+        let s = ConfigState::load(d.path()).unwrap();
+        assert_eq!(s.style_names().len(), 12);
+        assert_no_live(d.path());
     }
 
     #[test]
@@ -941,12 +941,12 @@ mod tests {
         let d = defaults_root();
         let live = d.path().join("styles.json");
         let default = d.path().join("styles-default.json");
-        let paths = InputPaths::relative_to(d.path());
+        let paths = InputPaths::in_home(d.path());
 
         let (src, bytes, live_bytes) =
-            read_effective(&live, || paths.styles_source_path()).unwrap();
-        assert_eq!(src, default);
-        assert_eq!(bytes, fs::read(&default).unwrap());
+            read_effective(&live, || paths.styles_source()).unwrap();
+        assert!(matches!(src, Source::Embedded(_)));
+        assert_eq!(bytes, fs::read(&default).unwrap(), "built-in copy equals the committed default");
         assert_eq!(live_bytes, None);
         assert_no_live(d.path());
 
@@ -954,17 +954,17 @@ mod tests {
         let created = b"{\"created\": true}".to_vec();
         let (src, bytes, live_bytes) = read_effective(&live, || {
             fs::write(&live, &created).unwrap();
-            paths.styles_source_path()
+            paths.styles_source()
         })
         .unwrap();
-        assert_eq!(src, live);
+        assert_eq!(src, Source::File(live.clone()));
         assert_eq!(bytes, created);
         assert_eq!(live_bytes.as_deref(), Some(&created[..]));
 
         // Present from the start: both baselines are the live bytes.
         let (src, bytes, live_bytes) =
             read_effective(&live, || panic!("no resolution needed")).unwrap();
-        assert_eq!(src, live);
+        assert_eq!(src, Source::File(live.clone()));
         assert_eq!(live_bytes.as_deref(), Some(&bytes[..]));
     }
 
@@ -1383,7 +1383,7 @@ mod tests {
 
         // A clean file that no longer loads is an error and changes nothing.
         fs::write(dir.path().join("tiers.json"), b"not json").unwrap();
-        assert!(s.follow_disk().unwrap_err().starts_with("tiers.json"));
+        assert!(s.follow_disk().unwrap_err().contains("tiers.json"));
         assert_eq!(s.baselines().1, &tiers_disk[..]);
     }
 

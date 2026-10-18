@@ -103,6 +103,10 @@ pub struct ConfigState {
     /// styles.json even with no CONFIG edit. Never counts as an edit. Always false while the
     /// source is the `-default.json` (never written; its ids derive from the names anyway).
     ids_unpersisted: bool,
+    /// False while the overlay prices from the Fallback pair: the cutoffs are unused, so their
+    /// errors must not block Apply. Row errors stay recorded for `tier_rows()` so the inline text
+    /// returns when the editor is enabled again. Not part of dirty counting, revert or reset.
+    tiers_in_use: bool,
 }
 
 /// Read `path`, `None` when it does not exist. Errors read `<full path>: <reason>`.
@@ -177,6 +181,7 @@ impl ConfigState {
             styles_live,
             tiers_live,
             ids_unpersisted,
+            tiers_in_use: true,
         };
         state.resync_buffers();
         Ok(state)
@@ -427,13 +432,28 @@ impl ConfigState {
         self.errors = errors;
     }
 
-    pub fn has_tier_errors(&self) -> bool {
-        !self.errors.row.is_empty()
+    /// Whether the tier cutoffs are used for pricing (false under the Fallback price source).
+    pub fn tiers_in_use(&self) -> bool {
+        self.tiers_in_use
     }
 
-    /// A problem not tied to one row (a required tier is missing).
+    /// Marks the cutoffs as used / unused. While unused their errors do not gate Apply.
+    pub fn set_tiers_in_use(&mut self, on: bool) {
+        self.tiers_in_use = on;
+    }
+
+    pub fn has_tier_errors(&self) -> bool {
+        self.tiers_in_use && !self.errors.row.is_empty()
+    }
+
+    /// A problem not tied to one row (a required tier is missing). None while the cutoffs are
+    /// not in use.
     pub fn tiers_error(&self) -> Option<String> {
-        self.errors.general.clone()
+        if self.tiers_in_use {
+            self.errors.general.clone()
+        } else {
+            None
+        }
     }
 
     // -- dirty / revert -------------------------------------------------------------------------
@@ -865,6 +885,47 @@ mod tests {
         assert!(rows.iter().all(|r| r.unit == "chaos"));
         assert_eq!(s.dirty_count(), 0);
         assert!(!s.can_apply());
+    }
+
+    #[test]
+    fn unused_tiers_do_not_gate_apply_and_return_when_used_again() {
+        let (_d, mut s) = loaded();
+        assert!(s.tiers_in_use());
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        s.set_tier_text("A", "abc");
+        assert!(s.has_tier_errors());
+        assert!(s.validate().is_err());
+        assert!(!s.can_apply());
+
+        s.set_tiers_in_use(false);
+        assert!(!s.has_tier_errors());
+        assert!(s.tiers_error().is_none());
+        assert!(s.validate().is_ok());
+        assert!(s.can_apply());
+        // The row keeps its inline error and the pending edit stays counted.
+        let row = s.tier_rows().into_iter().find(|r| r.tier == "A").unwrap();
+        assert!(row.error.is_some());
+        assert!(s.tiers_dirty());
+        // The bad buffer never reaches tiers.json: the last valid values are written.
+        let w = s.prepare_write().unwrap();
+        assert!(!w.tiers_changed);
+        assert_eq!(w.tiers_new, s.tiers_bytes);
+
+        s.set_tiers_in_use(true);
+        assert!(s.has_tier_errors());
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn unused_tiers_ignore_a_missing_required_tier_too() {
+        let (_d, mut s) = loaded();
+        s.errors.general = Some("tier S is missing".to_string());
+        assert!(s.validate().is_err());
+        s.set_tiers_in_use(false);
+        assert!(s.tiers_error().is_none());
+        assert!(s.validate().is_ok());
+        s.set_tiers_in_use(true);
+        assert!(s.tiers_error().is_some());
     }
 
     #[test]

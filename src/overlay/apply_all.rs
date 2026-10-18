@@ -54,6 +54,9 @@ pub struct FilterInput<'a> {
     /// The working document's text rendered with the pending styles, or why that failed.
     pub styled: Result<String, String>,
     pub plan: EconomyPlan,
+    /// The price source the economy section is priced with. The overlay passes the saved
+    /// Live/Fallback choice (Live = `Auto`).
+    pub policy: PriceSourcePolicy,
 }
 
 /// Why an Apply did not happen. Nothing was changed in any of these cases.
@@ -186,11 +189,11 @@ pub fn prepare(
                 let priced = match config {
                     Some(c) => dynamic::economy_body_with(
                         &paths,
-                        PriceSourcePolicy::Auto,
+                        input.policy,
                         c.pending_styles(),
                         c.pending_tiers(),
                     ),
-                    None => dynamic::economy_body(&paths, PriceSourcePolicy::Auto),
+                    None => dynamic::economy_body(&paths, input.policy),
                 };
                 let (text, source) = priced.map_err(|e| ApplyAllError::Invalid(e.to_string()))?;
                 used_fallback = matches!(source, PriceSource::Fallback(_));
@@ -520,6 +523,7 @@ mod tests {
             loaded: l,
             styled: Ok(l.text().to_string()),
             plan,
+            policy: PriceSourcePolicy::Auto,
         }
     }
 
@@ -583,6 +587,38 @@ mod tests {
         let done = commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
         assert!(done.styles_written && !done.tiers_written);
         assert_eq!(file_names(&root), vec!["styles.json".to_string()]);
+    }
+
+    /// Refreshes the fixture's economy section under `policy`; returns (used fallback, filter text).
+    fn refresh_with(fx: &Fixture, policy: PriceSourcePolicy) -> (bool, String) {
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        let mut inp = input(&lf, EconomyPlan::Refresh);
+        inp.policy = policy;
+        let prepared = prepare(fx.root.path(), Some(&cfg), Some(inp), false).unwrap();
+        let used = prepared.used_fallback();
+        commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
+        (used, fs::read_to_string(&fx.filter).unwrap())
+    }
+
+    #[test]
+    fn policy_decides_the_price_pair_of_the_economy_section() {
+        let auto = Fixture::new();
+        let (used_auto, auto_text) = refresh_with(&auto, PriceSourcePolicy::Auto);
+        assert!(!used_auto, "usable live prices.json under Auto");
+
+        let forced = Fixture::new();
+        let (used_forced, forced_text) = refresh_with(&forced, PriceSourcePolicy::ForceFallback);
+        assert!(used_forced, "ForceFallback prices from the fallback pair");
+        assert_ne!(auto_text, forced_text);
+    }
+
+    #[test]
+    fn auto_without_prices_json_uses_the_fallback() {
+        let fx = Fixture::new();
+        fs::remove_file(fx.root.path().join("prices.json")).unwrap();
+        let (used, _) = refresh_with(&fx, PriceSourcePolicy::Auto);
+        assert!(used);
     }
 
     fn tier(s: &ConfigState, name: &str) -> f64 {
@@ -663,6 +699,7 @@ mod tests {
             loaded: &lf,
             styled: Ok(format!("Show # bad\n\tRarity =< Rare\n\n{}", lf.text())),
             plan: EconomyPlan::Refresh,
+            policy: PriceSourcePolicy::Auto,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(bad), false);
         assert!(matches!(r, Err(ApplyAllError::Invalid(ref m)) if m.contains("grammar")));
@@ -672,6 +709,7 @@ mod tests {
             loaded: &lf,
             styled: Err("styles are unreadable".to_string()),
             plan: EconomyPlan::Keep,
+            policy: PriceSourcePolicy::Auto,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(nostyle), false);
         assert_eq!(
@@ -688,6 +726,7 @@ mod tests {
                 1,
             )),
             plan: EconomyPlan::Refresh,
+            policy: PriceSourcePolicy::Auto,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(damaged), false);
         assert!(matches!(r, Err(ApplyAllError::Invalid(_))));
@@ -711,6 +750,7 @@ mod tests {
                     loaded: lf,
                     styled: Ok(lf.text().to_string()),
                     plan: EconomyPlan::Refresh,
+                    policy: PriceSourcePolicy::Auto,
                 }),
                 false,
             )
@@ -960,6 +1000,7 @@ mod tests {
                 loaded: lf,
                 styled: Ok(text.to_string()),
                 plan: EconomyPlan::Keep,
+                policy: PriceSourcePolicy::Auto,
             }
         }
 
@@ -1002,6 +1043,7 @@ mod tests {
             loaded: &lf,
             styled: Ok(String::new()),
             plan: EconomyPlan::Keep,
+            policy: PriceSourcePolicy::Auto,
         };
         let p = prepare(fx.root.path(), Some(&cfg), Some(filter), false).unwrap();
         let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();

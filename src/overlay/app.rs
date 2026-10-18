@@ -182,7 +182,11 @@ pub struct OverlayApp {
     /// The pending styles and tiers the economy preview (a staged add, or a pending refresh of the
     /// section in the file) was priced with, so it is re-priced only when they change (never per
     /// frame).
-    staged_econ_inputs: Option<(StyleSet, Vec<crate::models::tiers::TierEntry>)>,
+    staged_econ_inputs: Option<(
+        StyleSet,
+        Vec<crate::models::tiers::TierEntry>,
+        PriceSourcePolicy,
+    )>,
     /// The last economy preview for `staged_econ_inputs` could not be built; not retried until
     /// the inputs or the prices change.
     econ_preview_failed: bool,
@@ -343,16 +347,17 @@ fn resolve_root() -> Result<PathBuf, String> {
 const PREVIEW_FAILED_STATUS: &str =
     "Could not build the economy section preview. Nothing was staged.";
 
-fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<String, String> {
+fn staged_economy_body(
+    root: &Path,
+    config: Option<&ConfigState>,
+    policy: PriceSourcePolicy,
+) -> Result<String, String> {
     let paths = InputPaths::in_home(root);
     let priced = match config {
-        Some(c) => dynamic::economy_body_with(
-            &paths,
-            PriceSourcePolicy::Auto,
-            c.pending_styles(),
-            c.pending_tiers(),
-        ),
-        None => dynamic::economy_body(&paths, PriceSourcePolicy::Auto),
+        Some(c) => {
+            dynamic::economy_body_with(&paths, policy, c.pending_styles(), c.pending_tiers())
+        }
+        None => dynamic::economy_body(&paths, policy),
     };
     priced.map(|(body, _)| body).map_err(|e| e.to_string())
 }
@@ -567,6 +572,7 @@ fn apply_everything(
     root: &Path,
     mut config: Option<&mut ConfigState>,
     mut filter: Option<(&mut LoadedFilter, &mut WorkingFilter)>,
+    policy: PriceSourcePolicy,
     overwrite: bool,
 ) -> AllResult {
     let filter_path = filter.as_ref().map(|(l, _)| l.path().to_path_buf());
@@ -601,6 +607,7 @@ fn apply_everything(
                 loaded: &**loaded,
                 styled,
                 plan: working.economy_plan(),
+                policy,
             })
         }
         None => None,
@@ -1755,6 +1762,7 @@ impl OverlayApp {
     /// list's view state is re-keyed to the re-parsed document. `overwrite` is OVERWRITE after a
     /// changed-on-disk refusal; it otherwise behaves exactly like APPLY, in-game reload included.
     fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) -> bool {
+        self.sync_tiers_in_use();
         let Ok(root) = &self.root else {
             return false;
         };
@@ -1777,7 +1785,13 @@ impl OverlayApp {
             (Ok(loaded), Some(working)) => Some((loaded, working)),
             _ => None,
         };
-        let result = apply_everything(root, self.config.as_mut().ok(), filter_part, overwrite);
+        let result = apply_everything(
+            root,
+            self.config.as_mut().ok(),
+            filter_part,
+            self.settings.price_policy(),
+            overwrite,
+        );
         let AllResult {
             outcome,
             extras,
@@ -2322,11 +2336,17 @@ impl OverlayApp {
             return;
         };
         let config = self.config.as_ref().ok();
-        match staged_economy_body(root, config) {
+        let policy = self.settings.price_policy();
+        match staged_economy_body(root, config, policy) {
             Ok(body) => {
                 if working.stage_add_economy(&body) {
-                    self.staged_econ_inputs =
-                        config.map(|c| (c.pending_styles().clone(), c.pending_tiers().to_vec()));
+                    self.staged_econ_inputs = config.map(|c| {
+                        (
+                            c.pending_styles().clone(),
+                            c.pending_tiers().to_vec(),
+                            policy,
+                        )
+                    });
                     self.apply_state = ApplyState::Unapplied;
                 } else {
                     self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
@@ -2366,21 +2386,22 @@ impl OverlayApp {
             return;
         }
         let (styles, tiers) = (config.pending_styles(), config.pending_tiers());
+        let policy = self.settings.price_policy();
         if (working.has_economy_preview() || self.econ_preview_failed)
             && self
                 .staged_econ_inputs
                 .as_ref()
-                .is_some_and(|(s, t)| s == styles && t.as_slice() == tiers)
+                .is_some_and(|(s, t, p)| s == styles && t.as_slice() == tiers && *p == policy)
         {
             return;
         }
-        self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec()));
+        self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec(), policy));
         // Rows switch documents (file to preview, or one preview to the next, whose ids restart):
         // an open economy row would point elsewhere.
         let econ_open = self.list.expanded.is_some_and(|id| {
             rules::is_preview_id(id) || working.economy_rows().iter().any(|r| r.id == id)
         });
-        let shown = match staged_economy_body(root, Some(config)) {
+        let shown = match staged_economy_body(root, Some(config), policy) {
             Ok(body) if refresh => working.set_economy_refresh(Some(&body)),
             Ok(body) => working.set_staged_economy_body(&body),
             Err(err) => {
@@ -2416,6 +2437,15 @@ impl OverlayApp {
     /// RELOAD: re-resolves the app root when it could not be resolved, re-reads the filter and
     /// discards in-memory state (D-08). A resolved root is kept (the environment cannot change
     /// under a running process); the game folder is re-resolved outside unit tests.
+    /// Marks the tier cutoffs unused while the saved price source is Fallback, so their errors
+    /// cannot gate Apply (they return when Live is chosen again).
+    fn sync_tiers_in_use(&mut self) {
+        let in_use = self.settings.price_policy() != PriceSourcePolicy::ForceFallback;
+        if let Ok(config) = &mut self.config {
+            config.set_tiers_in_use(in_use);
+        }
+    }
+
     fn reload(&mut self) {
         let old_root = self.root.clone();
         let open_filter = self.settings.filter_name().to_string();
@@ -2468,6 +2498,7 @@ impl OverlayApp {
                 Err(message) => Err(message.clone()),
             };
         }
+        self.sync_tiers_in_use();
     }
 
     /// RELOAD on either tab: after a changed-on-disk refusal only the files that changed are
@@ -2494,6 +2525,7 @@ impl OverlayApp {
             &mut self.filter,
             &mut self.working,
         );
+        self.sync_tiers_in_use();
         if changed.contains(&DiskFile::Filter) {
             self.reset_filter_view();
         }
@@ -2670,6 +2702,7 @@ impl OverlayApp {
                             };
                             // A pending filter refusal stays for the RULES tab to resolve.
                             self.changed_on_disk.retain(|f| *f == DiskFile::Filter);
+                            self.sync_tiers_in_use();
                             self.config_message = None;
                             self.config_ui.reset_for_new_styles();
                         }
@@ -3978,6 +4011,7 @@ mod tests {
     // ---- controller helpers (Phase 19-06) ----
 
     use super::{AllOutcome, apply_everything, apply_row_actions};
+    use crate::compile::PriceSourcePolicy;
     use crate::dynamic::LoadedFilter;
     use crate::overlay::apply::{self, ApplyOutcome};
     use crate::overlay::rule_list::ListUi;
@@ -4000,7 +4034,13 @@ mod tests {
         working: &mut WorkingFilter,
         overwrite: bool,
     ) -> (ApplyOutcome, String, bool) {
-        let r = apply_everything(root, None, Some((loaded, working)), overwrite);
+        let r = apply_everything(
+            root,
+            None,
+            Some((loaded, working)),
+            PriceSourcePolicy::Auto,
+            overwrite,
+        );
         let outcome = match r.outcome {
             AllOutcome::Applied { filter: Some(path) } => ApplyOutcome::Written(path),
             AllOutcome::Applied { filter: None } => panic!("a filter was passed"),
@@ -4082,6 +4122,7 @@ mod tests {
                 self.root.path(),
                 Some(&mut self.config),
                 Some((&mut self.loaded, &mut self.working)),
+                PriceSourcePolicy::Auto,
                 overwrite,
             )
         }
@@ -4174,7 +4215,7 @@ mod tests {
             assert!(styles.get(name).is_some(), "{name}");
         }
         assert!(super::load_classes_at(root.path()).is_ok());
-        let body = super::staged_economy_body(root.path(), None).unwrap();
+        let body = super::staged_economy_body(root.path(), None, PriceSourcePolicy::Auto).unwrap();
         assert!(!body.is_empty());
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
@@ -4622,7 +4663,13 @@ mod tests {
         let mut config = ConfigState::load(root.path()).unwrap();
         assert!(config.edit_style("S", StyleEdit::Font(Some(41))));
         let tiers = std::fs::read(root.path().join("tiers.json")).unwrap();
-        let r = apply_everything(root.path(), Some(&mut config), None, false);
+        let r = apply_everything(
+            root.path(),
+            Some(&mut config),
+            None,
+            PriceSourcePolicy::Auto,
+            false,
+        );
         assert_eq!(r.outcome, AllOutcome::Applied { filter: None });
         assert!(r.styles_written && !r.tiers_written);
         assert!(!config.is_dirty());
@@ -5285,6 +5332,57 @@ Hide
     }
 
     #[test]
+    fn fallback_price_source_stops_a_bad_tier_from_gating_apply() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(app.config.is_ok(), "{:?}", app.config.as_ref().err());
+        app.config.as_mut().unwrap().set_tier_text("A", "abc");
+
+        app.sync_tiers_in_use();
+        assert!(app.config.as_ref().unwrap().validate().is_err());
+
+        app.settings.price_source = Some("fallback".to_string());
+        app.sync_tiers_in_use();
+        assert!(app.config.as_ref().unwrap().validate().is_ok());
+
+        app.settings.price_source = Some("live".to_string());
+        app.sync_tiers_in_use();
+        assert!(app.config.as_ref().unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn the_preview_key_includes_the_price_policy() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // A root with live prices: the frozen seed.
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("tests/fixtures/seed-styles.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+            ("tests/fixtures/seed-prices.json", "prices.json"),
+        ] {
+            std::fs::copy(root.join(src), dir.path().join(dst)).unwrap();
+        }
+        let live = super::staged_economy_body(dir.path(), None, PriceSourcePolicy::Auto).unwrap();
+        let fb =
+            super::staged_economy_body(dir.path(), None, PriceSourcePolicy::ForceFallback).unwrap();
+        assert_ne!(live, fb);
+
+        // refresh_staged_economy re-prices when only the policy changed.
+        let (mut app, _ctx) = popup_app(RULES);
+        app.root = Ok(dir.path().to_path_buf());
+        app.config = crate::overlay::config_state::ConfigState::load(dir.path());
+        app.working.as_mut().unwrap().stage_add_economy(&live);
+        app.refresh_staged_economy();
+        let key = app.staged_econ_inputs.clone().unwrap();
+        assert_eq!(key.2, PriceSourcePolicy::Auto);
+        app.settings.price_source = Some("fallback".to_string());
+        app.refresh_staged_economy();
+        assert_eq!(
+            app.staged_econ_inputs.clone().unwrap().2,
+            PriceSourcePolicy::ForceFallback
+        );
+    }
+
+    #[test]
     #[cfg(debug_assertions)]
     fn expand_seeds_the_nth_row() {
         let (app, _ctx) = popup_app(RULES);
@@ -5847,7 +5945,7 @@ Hide
         use crate::models::config::StyleAction;
         use crate::overlay::config_state::StyleEdit;
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let body = super::staged_economy_body(&root, None).unwrap();
+        let body = super::staged_economy_body(&root, None, PriceSourcePolicy::Auto).unwrap();
         let text = crate::filter::section::add(RULES, &body).unwrap();
         let (mut app, _ctx) = popup_app(&text);
         app.root = Ok(root);

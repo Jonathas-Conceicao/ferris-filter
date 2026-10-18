@@ -665,12 +665,15 @@ impl ConfigState {
                 .unwrap_or_else(|| "Fix the tier errors first".to_string());
             return Err(ConfigApplyError::Invalid(reason));
         }
-        // Defensive re-check: never render something the loaders would reject.
+        // Defensive re-check: never render something the loaders would reject. Unused cutoffs
+        // (Fallback price source) are neither checked nor written, so they cannot refuse Apply.
         self.styles
             .validate()
             .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
-        ValidatedTiers::try_from(self.tiers.clone())
-            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        if self.tiers_in_use {
+            ValidatedTiers::try_from(self.tiers.clone())
+                .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -684,7 +687,9 @@ impl ConfigState {
     fn prepare_write_inner(&self, force: bool) -> Result<ConfigWrite, ConfigApplyError> {
         self.validate()?;
         let styles_changed = force || self.styles_changed() || self.ids_unpersisted;
-        let tiers_changed = force || !tiers_equal(&self.tiers, &self.tiers_applied);
+        // Unused cutoffs stay pending in memory and `tiers.json` keeps its bytes.
+        let tiers_changed =
+            self.tiers_in_use && (force || !tiers_equal(&self.tiers, &self.tiers_applied));
         let styles_new = if styles_changed {
             crate::loader::render_styles(&self.styles).into_bytes()
         } else {
@@ -913,6 +918,26 @@ mod tests {
 
         s.set_tiers_in_use(true);
         assert!(s.has_tier_errors());
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn unused_out_of_order_tiers_do_not_refuse_apply_and_are_not_written() {
+        let (_d, mut s) = loaded();
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        // Parses, so it reaches the model, but sits below B.
+        s.set_tier_text("A", "0.0001");
+        assert!(s.has_tier_errors());
+        assert!(s.prepare_write().is_err());
+
+        s.set_tiers_in_use(false);
+        assert!(s.validate().is_ok());
+        let w = s.prepare_write().unwrap();
+        assert!(w.styles_changed);
+        assert!(!w.tiers_changed);
+        assert_eq!(w.tiers_new, s.tiers_bytes);
+
+        s.set_tiers_in_use(true);
         assert!(s.validate().is_err());
     }
 

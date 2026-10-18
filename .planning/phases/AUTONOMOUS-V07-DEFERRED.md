@@ -24,6 +24,12 @@ human review and input to be stacked here and presented after Phase 41, before P
   game; minimap tile tooltip shows once (Config style editor and Custom rule style lines); both
   Reset buttons and popups (greyed tooltip "Already at the defaults.", custom styles kept, Revert /
   Apply).
+- **Phase 39** (`39-HUMAN-UAT.md`, 8 checks): live poe.ninja list, choice restored after relaunch,
+  Sync outcome names the league; Fallback greying and tooltips (Reset to defaults looked slightly
+  brighter in one capture though computed disabled); ended-league status line (ellipsis at window
+  width, full text on hover); price-source unapplied marker; tier edits pending under Fallback; Quit
+  popup and "Not quit" warning sharing the line with an in-game reload; a pending source switch
+  surviving a filter switch / Reload; offline refresh and a broken `ff-settings.json` left as is.
 - **Phase 40-07** (manual): install Inno Setup (`winget install --id JRSoftware.InnoSetup -e`),
   build the three assets locally, run the 8-step installer test, and confirm or drop installing
   `LICENSE.txt` next to `ff.exe` (step 8).
@@ -65,6 +71,13 @@ human review and input to be stacked here and presented after Phase 41, before P
   as Custom until hovered), IN-02 (Custom tooltip wording), IN-04 (Reset buttons over the heading's
   gold underline), IN-05 (a hand-made `tiers.json` with unknown / repeated tiers can stay invalid
   after Reset).
+- Phase 39 execution: tier edits pending under Fallback are kept (Economy ` *`) but Apply is not
+  live for them; switching back to Live makes the next Apply write them; a league / source choice
+  that cannot be saved applies for the session with a status message; when tier edits are the only
+  pending work, the Quit popup offers only Quit without applying / Cancel; the review loop hit its
+  3-iteration cap, so the last fix was read by hand, not re-reviewed (`39-REVIEW.md` shows the
+  iteration-3 state); open info items IN-01..IN-07, IN-09 (e.g. ended-league detection is
+  case-sensitive; the reload toggle still rewrites the whole settings file).
 - Phase 38 UI-SPEC / plans: strictness segments sized to their captions (usable width ~517pt,
   two-word names stacked, no label above the row); clicking the lit level or Custom does nothing; a
   level click also sets S and A to Show; custom styles never count toward "differs from defaults";
@@ -117,3 +130,7 @@ human review and input to be stacked here and presented after Phase 41, before P
   removed `Recycle` / `kite` / `exceptional` see "unknown style" (IN-03); `generate` without a live
   `styles.json` fails on those names. `cargo clippy` fails with ~125 errors in untouched code
   (`result_large_err`, collapsible `if`, ...): consider a cleanup or a lint config in REV-01.
+- Phase 39: CHANGELOG — league picker from poe.ninja with refresh (no per-league code change);
+  Live / Fallback price source (Fallback greys league, Sync, Tiers); new `ff-settings.json` keys
+  `league`, `price_source`; ended-league status line; a source switch is an unapplied change that
+  Revert does not undo; CLI keeps automatic league resolution and `--league`.

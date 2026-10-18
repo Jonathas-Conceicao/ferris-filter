@@ -35,8 +35,14 @@ human review and input to be stacked here and presented after Phase 41, before P
   run the 8-step installer test, confirm or drop installing `LICENSE.txt` next to `ff.exe` (step 8).
   Also check: uninstall answered No leaves a running `ff` alone; a failed quit during uninstall shows
   its message and removes nothing.
-- **Ordering:** 40-07 and 40-08 must run **before** Phase 42 writes the `0.7.0` CHANGELOG section,
-  because the rc tag's release notes come from `[Unreleased]`.
+- **rc tag target:** `v0.7.0-rc.1` goes on commit `c560333` (last commit before Phase 42: version
+  `0.7.0-rc.1`, notes from `[Unreleased]`); the workflow builds the tagged commit, so Phase 42's later
+  version / CHANGELOG changes do not affect it.
+- **Phase 41** (`41-MANUAL-VERIFICATION.md` / `41-HUMAN-UAT.md`, 8 live checks, need a published
+  final release newer than the build): check / download / ready; install with and without unapplied
+  edits; already current; offline; `%TEMP%` cleanup on quit; real GitHub field formats; rate limit.
+  Also hand-check: which status message wins when an update message arrives late; an rc build is
+  offered the final; the installer starting while its file is locked (admin-rights fallback untested).
 - **Phase 40-08** (outward, cleared by the author, run after 40-07): read-only checks, then one push
   of `refs/tags/v0.7.0-rc.1`, watch the run and release, verify checksums; at most one rerun /
   one `-rc.2`. Note: the tag's source archives include `.planning/` (the repo is already public).
@@ -45,9 +51,14 @@ human review and input to be stacked here and presented after Phase 41, before P
   40-08; pre-releases are ignored by `releases/latest`, so a real "newer version" test needs a
   non-rc release).
 
+- **Phase 42 REV-05** (author): review / rewrite README.md and the drafted `## [0.7.0]` CHANGELOG
+  section; README still needs the Config game-folder / strictness / reset text, the Economy changes,
+  the installer, update check and downloads. Optional Config-top render:
+  `%TEMP%\ff42-02-oGFz\new\config-top.png`.
+
 ## Open gaps after automatic gap closure
 
-(none yet)
+None: every phase verified 100% of its success criteria in code; only manual checks remain.
 
 ## Judgement calls made without asking
 
@@ -111,8 +122,10 @@ human review and input to be stacked here and presented after Phase 41, before P
   not extract one), so a third copy of the worker pattern is added; the download URL must be exactly
   the repo's `releases/download/<tag>/<name>`, https-only redirects; Install re-hashes the file;
   **versions compare on major.minor.patch, so a `0.7.0-rc.1` build is not offered the final
-  `v0.7.0`** (rc testers install 0.7.0 by hand); `semver` / `ring` not slopchecked (pip missing; both
-  already in Cargo.lock).
+  `v0.7.0`** (rc testers install 0.7.0 by hand) — *reversed in execution (review WR-03): an rc build
+  is now offered the final*; `semver` / `ring` not slopchecked (pip missing; both already in
+  Cargo.lock). Open info items in `41-REVIEW.md`, e.g. IN-07: a late "check failed" message queued
+  behind another is cleared by the next edit.
 
 ## For the Release Review (Phase 42)
 

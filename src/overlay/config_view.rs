@@ -26,7 +26,7 @@ use crate::skin::minimap;
 use crate::skin::palette as pal;
 
 /// Width of the Browse button.
-const BROWSE_WIDTH: f32 = 96.0;
+const BROWSE_WIDTH: f32 = 120.0;
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
 const ORDER_TIP: &str = "Built-in styles keep their order";
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";

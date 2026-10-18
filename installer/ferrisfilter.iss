@@ -108,12 +108,16 @@ begin
 end;
 
 { Uninstall asks a running ff to quit the same way before any file is removed, so ff.exe is
-  never left running in a half-removed install. The [UninstallRun] entry then finds nothing
-  running. }
-function InitializeUninstall(): Boolean;
+  never left running in a half-removed install. usUninstall comes after the "Are you sure"
+  prompt (so answering No leaves ff alone) and before the uninstall log is processed; Abort
+  there ends the uninstaller with nothing removed. The [UninstallRun] entry then finds
+  nothing running. }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  Result := QuitRunningFerrisFilter();
-  if not Result then
+  if (CurUninstallStep = usUninstall) and not QuitRunningFerrisFilter() then
+  begin
     SuppressibleMsgBox('FerrisFilter is still running. Quit it from its tray icon, then ' +
       'uninstall again.', mbError, MB_OK, IDOK);
+    Abort;
+  end;
 end;

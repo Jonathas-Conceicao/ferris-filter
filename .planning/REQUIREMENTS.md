@@ -38,7 +38,7 @@
   `.filter` files and `.mp3` / `.wav` sound files added since load appear in the filter dropdown and
   the Alert sound dropdowns without a restart; it never writes and never discards edits.
 
-- [ ] **GAME-06**: The refresh button uses the game's own refresh art (round arrow on a square
+- [x] **GAME-06**: The refresh button uses the game's own refresh art (round arrow on a square
   button), extracted by `ff-art` through a `manifest.toml` entry into `assets/poe2/` and compiled
   into the binary like the rest of the skin.
 
@@ -187,7 +187,7 @@
 | GAME-03 | Phase 37 | Pending |
 | GAME-04 | Phase 37 | Pending |
 | GAME-05 | Phase 37 | Pending |
-| GAME-06 | Phase 37 | Pending |
+| GAME-06 | Phase 37 | Complete |
 | BSTY-01 | Phase 38 | Pending |
 | BSTY-02 | Phase 38 | Pending |
 | BSTY-03 | Phase 38 | Pending |

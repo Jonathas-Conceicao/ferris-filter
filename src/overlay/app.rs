@@ -296,7 +296,7 @@ fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<Stri
 /// The styles under `root`: `styles.json`, else `styles-default.json` (DEF-03). Never writes.
 fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
     let path = InputPaths::relative_to(root)
-        .styles_source()
+        .styles_source_path()
         .map_err(|e| e.to_string())?;
     loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
 }
@@ -305,7 +305,7 @@ fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
 /// (styles from the effective source, as in [`load_styles_at`]).
 fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<String>), String> {
     let paths = InputPaths::relative_to(root);
-    let styles = paths.styles_source().map_err(|e| e.to_string())?;
+    let styles = paths.styles_source_path().map_err(|e| e.to_string())?;
     loader::load_config_with_live(
         &paths.config.to_string_lossy(),
         &styles.to_string_lossy(),
@@ -323,7 +323,7 @@ fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<Str
 /// The effective styles source under `root` and its modification time; `None` when neither
 /// `styles.json` nor `styles-default.json` can be stat'ed. Never creates a file.
 fn styles_stamp_at(root: &std::path::Path) -> Option<(std::path::PathBuf, std::time::SystemTime)> {
-    let path = InputPaths::relative_to(root).styles_source().ok()?;
+    let path = InputPaths::relative_to(root).styles_source_path().ok()?;
     let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
     Some((path, mtime))
 }

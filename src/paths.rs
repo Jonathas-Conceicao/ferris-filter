@@ -48,7 +48,7 @@ pub enum RootError {
 fn is_root(dir: &Path) -> bool {
     crate::compile::InputPaths::relative_to(dir)
         .styles_default
-        .is_some_and(|p| p.is_file())
+        .is_some_and(|d| d.as_file().is_some_and(|p| p.is_file()))
 }
 
 /// Pure resolver: see the module docs for the order.

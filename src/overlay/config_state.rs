@@ -157,7 +157,7 @@ impl ConfigState {
         let paths = InputPaths::relative_to(root);
 
         let (styles_src, styles_bytes, styles_live) =
-            read_effective(&paths.styles, || paths.styles_source())?;
+            read_effective(&paths.styles, || paths.styles_source_path())?;
         let mut styles: StyleSet = serde_json::from_slice(&styles_bytes)
             .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
         // Ids assigned to a default source are derived from the names, and the default is never
@@ -168,7 +168,7 @@ impl ConfigState {
             .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
 
         let (tiers_src, tiers_bytes, tiers_live) =
-            read_effective(&paths.tiers, || paths.tiers_source())?;
+            read_effective(&paths.tiers, || paths.tiers_source_path())?;
         let tiers: Vec<TierEntry> = serde_json::from_slice(&tiers_bytes)
             .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
         ValidatedTiers::try_from(tiers.clone())
@@ -408,7 +408,7 @@ impl ConfigState {
         let mut styles = None;
         let mut styles_live = None;
         if !self.styles_changed() {
-            let (src, now, live) = read_effective(&paths.styles, || paths.styles_source())?;
+            let (src, now, live) = read_effective(&paths.styles, || paths.styles_source_path())?;
             if now != self.styles_bytes {
                 let mut set: StyleSet = serde_json::from_slice(&now)
                     .map_err(|e| format!("{}: {e}", file_label(&src)))?;
@@ -424,7 +424,7 @@ impl ConfigState {
         let mut tiers = None;
         let mut tiers_live = None;
         if self.tiers_dirty_count() == 0 {
-            let (src, now, live) = read_effective(&paths.tiers, || paths.tiers_source())?;
+            let (src, now, live) = read_effective(&paths.tiers, || paths.tiers_source_path())?;
             if now != self.tiers_bytes {
                 let entries: Vec<TierEntry> = serde_json::from_slice(&now)
                     .map_err(|e| format!("{}: {e}", file_label(&src)))?;
@@ -943,7 +943,8 @@ mod tests {
         let default = d.path().join("styles-default.json");
         let paths = InputPaths::relative_to(d.path());
 
-        let (src, bytes, live_bytes) = read_effective(&live, || paths.styles_source()).unwrap();
+        let (src, bytes, live_bytes) =
+            read_effective(&live, || paths.styles_source_path()).unwrap();
         assert_eq!(src, default);
         assert_eq!(bytes, fs::read(&default).unwrap());
         assert_eq!(live_bytes, None);
@@ -953,7 +954,7 @@ mod tests {
         let created = b"{\"created\": true}".to_vec();
         let (src, bytes, live_bytes) = read_effective(&live, || {
             fs::write(&live, &created).unwrap();
-            paths.styles_source()
+            paths.styles_source_path()
         })
         .unwrap();
         assert_eq!(src, live);

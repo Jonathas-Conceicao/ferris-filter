@@ -143,10 +143,10 @@
 
 ### Release Review (REV)
 
-- [ ] **REV-01**: Code cleanup: duplication and mentions of in-milestone bugs removed, tests green.
-- [ ] **REV-02**: README screenshots refreshed where screens changed.
-- [ ] **REV-03**: `Cargo.toml` version set to `0.7.0`.
-- [ ] **REV-04**: A `CHANGELOG.md` draft for `0.7.0` from the net changes since v0.6.
+- [x] **REV-01**: Code cleanup: duplication and mentions of in-milestone bugs removed, tests green.
+- [x] **REV-02**: README screenshots refreshed where screens changed.
+- [x] **REV-03**: `Cargo.toml` version set to `0.7.0`.
+- [x] **REV-04**: A `CHANGELOG.md` draft for `0.7.0` from the net changes since v0.6.
 - [ ] **REV-05**: The author's review and rewrite of `README.md` and `CHANGELOG.md` closes the
   milestone.
 
@@ -217,10 +217,10 @@
 | UPD-01 | Phase 41 | Complete |
 | UPD-02 | Phase 41 | Complete |
 | UPD-03 | Phase 41 | Complete |
-| REV-01 | Phase 42 | Pending |
-| REV-02 | Phase 42 | Pending |
-| REV-03 | Phase 42 | Pending |
-| REV-04 | Phase 42 | Pending |
+| REV-01 | Phase 42 | Complete |
+| REV-02 | Phase 42 | Complete |
+| REV-03 | Phase 42 | Complete |
+| REV-04 | Phase 42 | Complete |
 | REV-05 | Phase 42 | Pending |
 
 **Coverage:** 45/45 v0.7 requirements mapped, no orphans, no duplicates.

@@ -240,7 +240,7 @@ Plans:
 | 39. League Picker & Price Source | 7/7 | Complete    | 2026-10-18 |
 | 40. Release Pipeline & Installer | 6/8 | In Progress|  |
 | 41. Check for Updates | 5/5 | Complete    | 2026-10-18 |
-| 42. Release Review | 0/5 | Planned | - |
+| 42. Release Review | 4/5 | In Progress |  |
 
 </details>
 

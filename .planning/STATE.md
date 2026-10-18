@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
-stopped_at: Phase 41 complete (5/5 plans, review fixed over 3 iterations, live update checks deferred); 40-07 and 40-08 still deferred to the end of the milestone; next Phase 42
-last_updated: "2026-10-18T15:04:45.609Z"
-last_activity: 2026-10-18 -- Phase 41 complete
+stopped_at: Phase 42 REV-01..REV-04 done (42-01..42-04); 42-05 (REV-05, author review of README and CHANGELOG) awaiting the author; 40-07 and 40-08 still deferred
+last_updated: "2026-10-18T22:00:00.000Z"
+last_activity: 2026-10-18 -- Phase 42 plans 42-01..42-04 executed; 42-05 awaits the author
 progress:
   total_phases: 24
   completed_phases: 5
-  total_plans: 40
-  completed_plans: 38
+  total_plans: 45
+  completed_plans: 42
   percent: 21
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 
 ## Current Position
 
-Phase: 41 (check-for-updates) — complete (5/5 plans); Phase 42 (release-review) is next
-Plan: Phase 42 not started. Phase 40 plans 40-07 and 40-08 stay deferred to the end of the milestone (40-07: the author installs Inno Setup 6 and runs the installer UAT; 40-08: the single v0.7.0-rc.1 tag push); Phase 40 is not marked complete until they run. Phase 41's live update checks are deferred to the same point (41-MANUAL-VERIFICATION.md, 41-HUMAN-UAT.md; they need a published final release).
-Status: Next is Phase 42
-Last activity: 2026-10-18 -- Phase 41 complete, verification human_needed (live checks deferred), code review fixed over 3 iterations (41-REVIEW-FIX.md)
+Phase: 42 (release-review) — 4/5 plans executed; not complete
+Plan: 42-01 (code cleanup), 42-02 (README screenshots + facts), 42-03 (version 0.7.0 + CHANGELOG 0.7.0 draft) and 42-04 (CLAUDE.md pass + ROADMAP Phase 40 wording) are done (REV-01..REV-04); code review clean after 2 iterations (42-REVIEW-FIX.md). 42-05 (REV-05: the author reviews and rewrites README.md and the 0.7.0 CHANGELOG section, then confirms) is a human checkpoint awaiting the author; Phase 42 is not marked complete until then. Phase 40 plans 40-07 (installer UAT) and 40-08 (the v0.7.0-rc.1 tag push, on commit c560333) stay deferred, as do Phase 41's live update checks (41-MANUAL-VERIFICATION.md, 41-HUMAN-UAT.md).
+Status: Awaiting the author (REV-05, 40-07, 40-08)
+Last activity: 2026-10-18 -- Phase 42 REV-01..REV-04 executed; REV-05 awaiting the author
 
 ## Performance Metrics
 

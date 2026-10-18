@@ -95,6 +95,9 @@ pub struct Skin {
     pub check_off: TextureHandle,
     /// Round red close button: normal, hover, pressed.
     pub close: [TextureHandle; 3],
+    /// The game's web-toolbar refresh button (`uiimages/common/webtoolbarrefresh*`): a round
+    /// arrow on a square button, painted as the whole button. Normal, hover, pressed.
+    pub refresh: [TextureHandle; 3],
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -151,6 +154,11 @@ impl Skin {
                 tex!(ctx, "poe2/common/close_normal.png"),
                 tex!(ctx, "poe2/common/close_hover.png"),
                 tex!(ctx, "poe2/common/close_down.png"),
+            ],
+            refresh: [
+                tex!(ctx, "poe2/common/refresh_normal.png"),
+                tex!(ctx, "poe2/common/refresh_hover.png"),
+                tex!(ctx, "poe2/common/refresh_down.png"),
             ],
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),

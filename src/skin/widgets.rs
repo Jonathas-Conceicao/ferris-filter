@@ -1205,6 +1205,41 @@ pub fn ff_button_ex(
     resp
 }
 
+/// A square icon button, [`ROW_HEIGHT`] points on a side, painted from a three-state texture set
+/// (normal, hover or focus, pressed) that is the whole button, such as `skin.refresh`. `label` is
+/// the accessible name. Disabled: dimmed normal art, never clicked, no hover state.
+pub fn ff_icon_button(
+    ui: &mut Ui,
+    textures: &[TextureHandle; 3],
+    label: &str,
+    enabled: bool,
+) -> Response {
+    let enabled = enabled && ui.is_enabled();
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(ROW_HEIGHT, ROW_HEIGHT), sense);
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    let state = if !enabled {
+        0
+    } else if resp.is_pointer_button_down_on() {
+        2
+    } else if resp.hovered() || resp.has_focus() {
+        1
+    } else {
+        0
+    };
+    let tint = if enabled {
+        Color32::WHITE
+    } else {
+        Color32::from_white_alpha(90)
+    };
+    slice::paint_image(ui.painter(), &textures[state], rect, tint);
+    resp
+}
+
 /// Padding of [`ff_arrow`]'s click target around its 16pt art. Vertically 3, not 4, so in a
 /// collapsed rule row (arrows at y 18..34) the target stays clear of the summary line's centre
 /// (y 38), where a click expands the row.
@@ -2032,6 +2067,55 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!(sel);
+    }
+
+    #[test]
+    fn icon_button_is_row_height_square() {
+        let (ctx, skin) = setup();
+        let size = rect_of(&ctx, |ui| {
+            ff_icon_button(ui, &skin.refresh, "Refresh", true).rect
+        })
+        .size();
+        assert_eq!(size, Vec2::splat(ROW_HEIGHT));
+    }
+
+    #[test]
+    fn icon_button_clicks_only_when_enabled() {
+        let (ctx, skin) = setup();
+        let rect = rect_of(&ctx, |ui| {
+            ff_icon_button(ui, &skin.refresh, "Refresh", true).rect
+        });
+        let mut on = false;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            on = ff_icon_button(ui, &skin.refresh, "Refresh", true).clicked();
+        })
+        .drop_without_applying_deltas();
+        assert!(on, "an enabled icon button reports the click");
+        let (ctx, skin) = setup();
+        let mut off = true;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            off = ff_icon_button(ui, &skin.refresh, "Refresh", false).clicked();
+        })
+        .drop_without_applying_deltas();
+        assert!(!off, "a disabled icon button never reports a click");
+    }
+
+    #[test]
+    fn icon_button_is_labelled_and_reports_enabled() {
+        let (ctx, skin) = setup();
+        ctx.enable_accesskit();
+        let out = ctx.run_ui(RawInput::default(), |ui| {
+            ff_icon_button(ui, &skin.refresh, "Refresh", false);
+        });
+        let update = out
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("update");
+        assert!(update.nodes.iter().any(|(_, n)| {
+            (n.label() == Some("Refresh") || n.value() == Some("Refresh")) && n.is_disabled()
+        }));
+        out.drop_without_applying_deltas();
     }
 
     #[test]

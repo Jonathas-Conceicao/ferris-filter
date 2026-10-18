@@ -103,7 +103,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 - [x] **Phase 38: Built-in Styles, Strictness & Reset** - Reworked built-in styles (one fixture re-baseline), the seven-level Strictness row, Reset to defaults for styles and tiers (completed 2026-10-18)
 - [x] **Phase 39: League Picker & Price Source** - Choose the league and Live or Fallback prices from the Economy tab (completed 2026-10-18)
 - [ ] **Phase 40: Release Pipeline & Installer** - Tag-triggered build, per-user installer, portable zip, checksums, public-release items
-- [ ] **Phase 41: Check for Updates** - About-tab update check that downloads, verifies and hands off to the installer
+- [x] **Phase 41: Check for Updates** - About-tab update check that downloads, verifies and hands off to the installer (completed 2026-10-18)
 - [ ] **Phase 42: Release Review** - Milestone close-out: cleanup, screenshots, version, changelog draft, author review
 
 ### Phase 36: Per-user Locations & Embedded Defaults
@@ -239,7 +239,7 @@ Plans:
 | 38. Built-in Styles, Strictness & Reset | 6/6 | Complete    | 2026-10-18 |
 | 39. League Picker & Price Source | 7/7 | Complete    | 2026-10-18 |
 | 40. Release Pipeline & Installer | 6/8 | In Progress|  |
-| 41. Check for Updates | 1/5 | In Progress|  |
+| 41. Check for Updates | 5/5 | Complete    | 2026-10-18 |
 | 42. Release Review | 0/0 | Not started | - |
 
 </details>

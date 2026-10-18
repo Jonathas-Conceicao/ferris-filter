@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
-status: verifying
-stopped_at: Completed 41-05-PLAN.md
-last_updated: "2026-10-18T14:15:26.016Z"
-last_activity: 2026-10-18
+status: executing
+stopped_at: Phase 41 complete (5/5 plans, review fixed over 3 iterations, live update checks deferred); 40-07 and 40-08 still deferred to the end of the milestone; next Phase 42
+last_updated: "2026-10-18T15:04:45.609Z"
+last_activity: 2026-10-18 -- Phase 41 complete
 progress:
   total_phases: 24
   completed_phases: 5
   total_plans: 40
   completed_plans: 38
-  percent: 95
+  percent: 21
 ---
 
 # Project State
@@ -21,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-17)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 41 — check-for-updates
+**Current focus:** Phase 42 — release-review
 
 ## Current Position
 
-Phase: 41 (check-for-updates) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-10-18
+Phase: 41 (check-for-updates) — complete (5/5 plans); Phase 42 (release-review) is next
+Plan: Phase 42 not started. Phase 40 plans 40-07 and 40-08 stay deferred to the end of the milestone (40-07: the author installs Inno Setup 6 and runs the installer UAT; 40-08: the single v0.7.0-rc.1 tag push); Phase 40 is not marked complete until they run. Phase 41's live update checks are deferred to the same point (41-MANUAL-VERIFICATION.md, 41-HUMAN-UAT.md; they need a published final release).
+Status: Next is Phase 42
+Last activity: 2026-10-18 -- Phase 41 complete, verification human_needed (live checks deferred), code review fixed over 3 iterations (41-REVIEW-FIX.md)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 177 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
+- Total plans completed: 182 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
 
 **By Milestone:**
 

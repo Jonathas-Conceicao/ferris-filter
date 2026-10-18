@@ -50,22 +50,58 @@ pub const NOT_RESPONDING_MESSAGE: &str = "FerrisFilter is already running but no
 /// WAIT_OBJECT_0: the only wait result that counts as an answer.
 const WAIT_OBJECT_0_CODE: u32 = 0;
 
-/// Names of the four kernel objects making up one instance gate.
+/// How long `ff --quit` waits for the instance to exit once it is ready, in ms. A user who
+/// takes longer with the Unapplied changes popup is covered by the installer's Retry box.
+pub const QUIT_TIMEOUT_MS: u32 = 10_000;
+
+/// Outcome of `ff --quit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitOutcome {
+    /// No instance holds the name.
+    NotRunning,
+    /// The instance went away after the request.
+    Exited,
+    /// Still running when the wait ran out (for example the user has not answered the
+    /// Unapplied changes popup).
+    StillRunning,
+    /// The running instance cannot be reached (events missing, access denied).
+    Unreachable,
+}
+
+/// Process exit code for a [`QuitOutcome`]: 0 = not running / exited, 1 = still running,
+/// 2 = unreachable.
+pub fn quit_exit_code(outcome: QuitOutcome) -> i32 {
+    match outcome {
+        QuitOutcome::NotRunning | QuitOutcome::Exited => 0,
+        QuitOutcome::StillRunning => 1,
+        QuitOutcome::Unreachable => 2,
+    }
+}
+
+/// True only for exactly one argument equal to `--quit` (the installer's hidden flag).
+pub fn is_quit_args(args: impl IntoIterator<Item = String>) -> bool {
+    let mut args = args.into_iter();
+    args.next().as_deref() == Some("--quit") && args.next().is_none()
+}
+
+/// Names of the five kernel objects making up one instance gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceNames {
     pub mutex: String,
     pub show: String,
     pub ack: String,
     pub ready: String,
+    pub quit: String,
 }
 
-/// Build the four object names from a base.
+/// Build the five object names from a base.
 pub fn names_for(base: &str) -> InstanceNames {
     InstanceNames {
         mutex: base.to_string(),
         show: format!("{base}-show"),
         ack: format!("{base}-ack"),
         ready: format!("{base}-ready"),
+        quit: format!("{base}-quit"),
     }
 }
 
@@ -146,16 +182,27 @@ pub enum Acquired {
 #[cfg(windows)]
 mod imp {
     use super::{
-        ACK_TIMEOUT_MS, Acquired, InstanceNames, RETRY_INTERVAL_MS, STARTUP_TIMEOUT_MS, Wait,
-        check_failed_message, classify_wait, instance_names, signal_message,
+        ACK_TIMEOUT_MS, Acquired, InstanceNames, QUIT_TIMEOUT_MS, QuitOutcome, RETRY_INTERVAL_MS,
+        STARTUP_TIMEOUT_MS, WAIT_OBJECT_0_CODE, Wait, check_failed_message, classify_wait,
+        instance_names, signal_message,
     };
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, GetLastError, HANDLE,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, GetLastError,
+        HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateEventW, CreateMutexW, ResetEvent, SetEvent, WaitForSingleObject,
+        CreateEventW, CreateMutexW, GetCurrentProcessId, OpenMutexW, OpenProcess,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, QueryFullProcessImageNameW,
+        ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
     };
+
+    /// Win32 limit on handles in one `WaitForMultipleObjects` call.
+    const MAXIMUM_WAIT_OBJECTS: u32 = 64;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
     };
@@ -171,6 +218,8 @@ mod imp {
         ack: HANDLE,
         /// Manual-reset; set once the first frame runs, i.e. once show requests are polled.
         ready: HANDLE,
+        /// Auto-reset; set by `ff --quit`, consumed by the instance's frame poll.
+        quit: HANDLE,
         ready_marked: bool,
     }
 
@@ -184,7 +233,7 @@ mod imp {
             // The mutex goes first: while it is held, this instance's `-ready` event
             // exists, which is how a launcher tells a starting instance from one that has
             // no show channel (WR-03).
-            for h in [self.mutex, self.show, self.ack, self.ready] {
+            for h in [self.mutex, self.show, self.ack, self.ready, self.quit] {
                 if !h.is_null() {
                     // SAFETY: the handle came from Create* in this module and is
                     // closed exactly once, here.
@@ -216,6 +265,16 @@ mod imp {
             }
             // SAFETY: `show` is a live event handle owned by this Guard.
             let code = unsafe { WaitForSingleObject(self.show, 0) };
+            classify_wait(code) == Wait::Signaled
+        }
+
+        /// Poll (zero timeout) for a quit request from `ff --quit`; auto-reset consumes it.
+        pub fn take_quit_request(&self) -> bool {
+            if self.quit.is_null() {
+                return false;
+            }
+            // SAFETY: `quit` is a live event handle owned by this Guard.
+            let code = unsafe { WaitForSingleObject(self.quit, 0) };
             classify_wait(code) == Wait::Signaled
         }
 
@@ -269,6 +328,7 @@ mod imp {
         let show_name = wide(&names.show);
         let ack_name = wide(&names.ack);
         let ready_name = wide(&names.ready);
+        let quit_name = wide(&names.quit);
 
         // Events BEFORE the mutex (WR-03): a running instance's `-ready` event then
         // exists for as long as it holds the mutex, so a launcher that finds the mutex
@@ -277,6 +337,7 @@ mod imp {
         let show = create_event(&show_name);
         let ack = create_event(&ack_name);
         let ready = create_ready_event(&ready_name);
+        let quit = create_event(&quit_name);
 
         // SAFETY: `mutex_name` is NUL-terminated and alive across the call.
         let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
@@ -284,7 +345,7 @@ mod imp {
         let err = unsafe { GetLastError() };
 
         if mutex.is_null() {
-            close_all(&[show, ack, ready]);
+            close_all(&[show, ack, ready, quit]);
             // An elevated first instance denies access to the object: treat as
             // running (the signal path then reports it as unreachable, never a
             // second window).
@@ -299,27 +360,29 @@ mod imp {
         if err == ERROR_ALREADY_EXISTS {
             // A launcher: the events belong to the running instance; leave their
             // state alone and let `signal_running` reopen them.
-            close_all(&[mutex, show, ack, ready]);
+            close_all(&[mutex, show, ack, ready, quit]);
             return Acquired::AlreadyRunning;
         }
 
-        let (show, ack, ready) = if show.is_null() || ack.is_null() || ready.is_null() {
-            // Keep running (this process holds the mutex, so it is the one window),
-            // but with no events at all, so the next launch reports that it cannot
-            // reach this instance instead of a false "not responding".
-            eprintln!("single-instance: CreateEventW failed; show requests disabled");
-            close_all(&[show, ack, ready]);
-            (
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        } else {
-            (show, ack, ready)
-        };
+        let (show, ack, ready, quit) =
+            if show.is_null() || ack.is_null() || ready.is_null() || quit.is_null() {
+                // Keep running (this process holds the mutex, so it is the one window),
+                // but with no events at all, so the next launch reports that it cannot
+                // reach this instance instead of a false "not responding".
+                eprintln!("single-instance: CreateEventW failed; show requests disabled");
+                close_all(&[show, ack, ready, quit]);
+                (
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            } else {
+                (show, ack, ready, quit)
+            };
         // The events may outlive a previous instance while a launcher still holds them
         // (e.g. mid-retry when it quit): start from a clean, not-ready state.
-        for h in [show, ack, ready] {
+        for h in [show, ack, ready, quit] {
             if !h.is_null() {
                 // SAFETY: live event handles created just above.
                 unsafe { ResetEvent(h) };
@@ -330,6 +393,7 @@ mod imp {
             show,
             ack,
             ready,
+            quit,
             ready_marked: false,
         })
     }
@@ -422,6 +486,176 @@ mod imp {
         result
     }
 
+    /// Open the instance mutex without creating it. `Ok(Some(handle))` = held by an
+    /// instance, `Ok(None)` = no such mutex, `Err(code)` = it exists but cannot be opened.
+    fn open_mutex(name: &[u16]) -> Result<Option<HANDLE>, u32> {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
+        let h = unsafe { OpenMutexW(PROCESS_SYNCHRONIZE, 0, name.as_ptr()) };
+        // SAFETY: plain thread-local error read, immediately after the call.
+        let err = unsafe { GetLastError() };
+        if !h.is_null() {
+            Ok(Some(h))
+        } else if err == ERROR_FILE_NOT_FOUND {
+            Ok(None)
+        } else {
+            Err(err)
+        }
+    }
+
+    /// Canonical, lower-cased form of a path for comparing two exe locations.
+    fn comparable(path: &std::path::Path) -> String {
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_lowercase()
+    }
+
+    /// The full image path of an open process, if it can be read.
+    fn image_path(process: HANDLE) -> Option<std::path::PathBuf> {
+        let mut buf = vec![0u16; 32_768];
+        let mut len = buf.len() as u32;
+        // SAFETY: `process` is a live handle with PROCESS_QUERY_LIMITED_INFORMATION; `buf`
+        // holds `len` u16 and `len` is updated to the number written.
+        let ok = unsafe { QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) };
+        if ok == 0 {
+            return None;
+        }
+        Some(std::path::PathBuf::from(String::from_utf16_lossy(
+            &buf[..len as usize],
+        )))
+    }
+
+    /// Open (SYNCHRONIZE) every other `ff.exe` process whose image is this exe. The caller
+    /// closes the handles.
+    fn same_exe_processes() -> Vec<HANDLE> {
+        let Ok(me) = std::env::current_exe() else {
+            return Vec::new();
+        };
+        let me = comparable(&me);
+        // SAFETY: plain call; the snapshot handle is closed below.
+        let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snap == INVALID_HANDLE_VALUE {
+            return Vec::new();
+        }
+        // SAFETY: PROCESSENTRY32W is plain data; all-zero is a valid initial value.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: plain call.
+        let own_pid = unsafe { GetCurrentProcessId() };
+        let mut found = Vec::new();
+        // SAFETY: `snap` is a live snapshot and `entry.dwSize` is set.
+        let mut more = unsafe { Process32FirstW(snap, &mut entry) } != 0;
+        while more {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
+            if entry.th32ProcessID != own_pid && exe.eq_ignore_ascii_case("ff.exe") {
+                // SAFETY: plain call; a null result (access denied, gone) is skipped.
+                let process = unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        entry.th32ProcessID,
+                    )
+                };
+                if !process.is_null() {
+                    match image_path(process) {
+                        Some(path) if comparable(&path) == me => found.push(process),
+                        _ => close_all(&[process]),
+                    }
+                }
+            }
+            // SAFETY: `snap` is a live snapshot and `entry.dwSize` is set.
+            more = unsafe { Process32NextW(snap, &mut entry) } != 0;
+        }
+        close_all(&[snap]);
+        found
+    }
+
+    /// True when every process handle is signalled (the process has exited).
+    fn all_exited(processes: &[HANDLE]) -> bool {
+        // SAFETY: every handle is a live process handle with SYNCHRONIZE access; the
+        // count is at most MAXIMUM_WAIT_OBJECTS because the list is truncated by the caller.
+        let code =
+            unsafe { WaitForMultipleObjects(processes.len() as u32, processes.as_ptr(), 1, 0) };
+        code == WAIT_OBJECT_0_CODE
+    }
+
+    /// Ask the running instance to quit (`ff --quit`). Only opens the instance's objects;
+    /// it never creates the mutex, so it can never become the instance itself.
+    pub fn quit_running_named(names: &InstanceNames, startup_ms: u32, wait_ms: u32) -> QuitOutcome {
+        let mutex_name = wide(&names.mutex);
+        match open_mutex(&mutex_name) {
+            Ok(None) => return QuitOutcome::NotRunning,
+            Err(_) => return QuitOutcome::Unreachable,
+            // Holding it would keep the name alive past the instance's exit.
+            Ok(Some(h)) => close_all(&[h]),
+        }
+        // Targets are collected BEFORE signalling so a fast exit cannot be missed.
+        let mut targets = same_exe_processes();
+        if targets.len() > MAXIMUM_WAIT_OBJECTS as usize {
+            close_all(&targets[MAXIMUM_WAIT_OBJECTS as usize..]);
+            targets.truncate(MAXIMUM_WAIT_OBJECTS as usize);
+        }
+
+        let (ready, ready_err) = open_event(&wide(&names.ready), true);
+        let (quit, quit_err) = open_event(&wide(&names.quit), false);
+        let outcome = if ready.is_null() || quit.is_null() {
+            QuitOutcome::Unreachable
+        } else if ready_err != ERROR_ALREADY_EXISTS || quit_err != ERROR_ALREADY_EXISTS {
+            QuitOutcome::Unreachable
+        } else {
+            // SAFETY: `ready` is a live event handle owned by this function.
+            let code = unsafe { WaitForSingleObject(ready, startup_ms) };
+            if classify_wait(code) != Wait::Signaled {
+                QuitOutcome::Unreachable
+            } else {
+                // One request only: a re-asserted one would reopen the Unapplied changes
+                // popup right after the user picked Cancel in it.
+                // SAFETY: `quit` is a live event handle owned by this function.
+                unsafe { SetEvent(quit) };
+                let deadline = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+                let interval = Duration::from_millis(u64::from(RETRY_INTERVAL_MS));
+                loop {
+                    let done = if targets.is_empty() {
+                        match open_mutex(&mutex_name) {
+                            Ok(None) => true,
+                            Ok(Some(h)) => {
+                                close_all(&[h]);
+                                false
+                            }
+                            Err(_) => false,
+                        }
+                    } else {
+                        all_exited(&targets)
+                    };
+                    if done {
+                        break QuitOutcome::Exited;
+                    }
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        // Withdraw the request so a later frame does not quit unexpectedly.
+                        // SAFETY: `quit` is a live event handle owned by this function.
+                        unsafe { ResetEvent(quit) };
+                        break QuitOutcome::StillRunning;
+                    }
+                    std::thread::sleep(remaining.min(interval));
+                }
+            }
+        };
+        close_all(&[ready, quit]);
+        close_all(&targets);
+        outcome
+    }
+
+    /// `ff --quit` against the real instance of this build profile.
+    pub fn quit_running() -> QuitOutcome {
+        quit_running_named(&instance_names(), STARTUP_TIMEOUT_MS, QUIT_TIMEOUT_MS)
+    }
+
     /// An informational message box (the release `ff` has no console).
     pub fn notify(message: &str) {
         let text = wide(message);
@@ -490,7 +724,7 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    use super::{Acquired, InstanceNames, Wait};
+    use super::{Acquired, InstanceNames, QuitOutcome, Wait};
 
     /// Non-Windows stand-in; the overlay is not supported off Windows.
     pub struct Guard;
@@ -498,6 +732,9 @@ mod imp {
     impl Guard {
         pub fn mark_ready(&mut self) {}
         pub fn take_show_request(&self) -> bool {
+            false
+        }
+        pub fn take_quit_request(&self) -> bool {
             false
         }
         pub fn ack(&self) {}
@@ -511,6 +748,18 @@ mod imp {
         Wait::TimedOut
     }
 
+    pub fn quit_running_named(
+        _names: &InstanceNames,
+        _startup_ms: u32,
+        _wait_ms: u32,
+    ) -> QuitOutcome {
+        QuitOutcome::NotRunning
+    }
+
+    pub fn quit_running() -> QuitOutcome {
+        QuitOutcome::NotRunning
+    }
+
     pub fn notify(_message: &str) {}
 
     /// No single-instance enforcement off Windows, where the overlay is not
@@ -520,7 +769,9 @@ mod imp {
     }
 }
 
-pub use imp::{Guard, acquire, acquire_named, notify, signal_running};
+pub use imp::{
+    Guard, acquire, acquire_named, notify, quit_running, quit_running_named, signal_running,
+};
 #[cfg(windows)]
 pub use imp::{Launch, launch_named};
 
@@ -538,7 +789,7 @@ mod tests {
     #[test]
     fn names_live_in_the_local_namespace() {
         for n in [names(true), names(false)] {
-            for s in [&n.mutex, &n.show, &n.ack, &n.ready] {
+            for s in [&n.mutex, &n.show, &n.ack, &n.ready, &n.quit] {
                 assert!(s.starts_with("Local\\"), "{s}");
             }
         }
@@ -551,10 +802,36 @@ mod tests {
         assert_eq!(n.show, "Local\\x-show");
         assert_eq!(n.ack, "Local\\x-ack");
         assert_eq!(n.ready, "Local\\x-ready");
+        assert_eq!(n.quit, "Local\\x-quit");
+        assert_ne!(n.quit, n.show);
         assert_ne!(n.ready, n.ack);
         assert_ne!(n.mutex, n.show);
         assert_ne!(n.show, n.ack);
         assert_ne!(n.mutex, n.ack);
+    }
+
+    #[test]
+    fn quit_exit_code_maps_each_outcome() {
+        assert_eq!(quit_exit_code(QuitOutcome::NotRunning), 0);
+        assert_eq!(quit_exit_code(QuitOutcome::Exited), 0);
+        assert_eq!(quit_exit_code(QuitOutcome::StillRunning), 1);
+        assert_eq!(quit_exit_code(QuitOutcome::Unreachable), 2);
+    }
+
+    #[test]
+    fn quit_flag_is_exactly_one_argument() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(!is_quit_args(args(&[])));
+        assert!(is_quit_args(args(&["--quit"])));
+        assert!(!is_quit_args(args(&["--quit", "x"])));
+        assert!(!is_quit_args(args(&["-quit"])));
+        assert!(!is_quit_args(args(&["--QUIT"])));
+        assert!(!is_quit_args(args(&["--screenshot", "a.png"])));
+    }
+
+    #[test]
+    fn quit_timeout_is_ten_seconds() {
+        assert_eq!(QUIT_TIMEOUT_MS, 10_000);
     }
 
     #[test]
@@ -724,6 +1001,55 @@ mod windows_tests {
         let n = test_names("noreq");
         let g = first(&n);
         assert!(!g.take_show_request());
+    }
+
+    #[test]
+    fn quit_on_a_free_name_reports_not_running() {
+        let n = test_names("quitfree");
+        assert_eq!(quit_running_named(&n, 100, 100), QuitOutcome::NotRunning);
+        // Quit never created the name, so the next acquire is still the first instance.
+        assert!(matches!(acquire_named(&n), Acquired::First(_)));
+    }
+
+    #[test]
+    fn no_quit_request_without_a_signal() {
+        let n = test_names("noquit");
+        let g = first(&n);
+        assert!(!g.take_quit_request());
+    }
+
+    #[test]
+    fn a_polling_instance_quits_on_request() {
+        let n = test_names("quitpoll");
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let t = {
+            let n = n.clone();
+            std::thread::spawn(move || {
+                let mut g = first(&n);
+                g.mark_ready();
+                acquired_tx.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < deadline {
+                    if g.take_quit_request() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                drop(g);
+            })
+        };
+        acquired_rx.recv().unwrap();
+        assert_eq!(quit_running_named(&n, 2000, 3000), QuitOutcome::Exited);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn an_instance_that_never_polls_times_out_and_the_request_is_withdrawn() {
+        let n = test_names("quitstuck");
+        let mut g = first(&n);
+        g.mark_ready();
+        assert_eq!(quit_running_named(&n, 2000, 300), QuitOutcome::StillRunning);
+        assert!(!g.take_quit_request());
     }
 
     #[test]

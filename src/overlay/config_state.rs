@@ -838,7 +838,7 @@ mod tests {
     fn load_falls_back_to_defaults_and_creates_nothing() {
         let d = defaults_root();
         let s = ConfigState::load(d.path()).unwrap();
-        assert_eq!(s.style_names().len(), 12);
+        assert_eq!(s.style_names().len(), 9);
         assert_eq!(
             s.baselines().0,
             &fs::read(d.path().join("styles-default.json")).unwrap()[..]
@@ -877,7 +877,7 @@ mod tests {
         fs::remove_file(d.path().join("styles-default.json")).unwrap();
         fs::remove_file(d.path().join("tiers-default.json")).unwrap();
         let s = ConfigState::load(d.path()).unwrap();
-        assert_eq!(s.style_names().len(), 12);
+        assert_eq!(s.style_names().len(), 9);
         assert_no_live(d.path());
     }
 

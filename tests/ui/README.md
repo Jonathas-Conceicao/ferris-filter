@@ -28,7 +28,7 @@ its own filter); close the game or turn **Reload filter in game after Apply** of
 |---|------|------------------|
 | 1 | Bare Show | Amber triangle: an enabled rule with no conditions hides every rule below it. |
 | 2 | Preset S | Style chip: the S minimap icon in its colour plus `S`. |
-| 3 | Preset kite | Chip with the orange kite icon; the legacy name-only tag is rewritten to `<id> kite` on Apply. |
+| 3 | Preset C | Chip with the cyan star icon; the legacy name-only tag is rewritten to `builtin:C C` on Apply. |
 | 4 | Unknown style | Amber ring with `?`; the status line reports it and a click jumps here. |
 | 5 | Grammar error | Red `!`; Apply is refused until it is fixed or disabled. |
 | 6 | Grammar warning | Amber triangle; `LinkedSockets` is PoE1-only and shows as a raw row. |

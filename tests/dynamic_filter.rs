@@ -38,7 +38,7 @@ fn workspace(tag: &str) -> PathBuf {
     fs::create_dir_all(dir.join("game")).expect("create temp dir");
     for (src, dst) in [
         ("tiers-default.json", "tiers.json"),
-        ("tests/fixtures/seed-styles.json", "styles.json"),
+        ("styles-default.json", "styles.json"),
     ] {
         fs::copy(manifest().join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
@@ -139,6 +139,12 @@ fn plain_apply_on_a_missing_filter_writes_nothing() {
 fn economy_section_matches_generate() {
     let dir = workspace("parity");
     fs::copy(manifest().join("config.json"), dir.join("config.json")).expect("copy config");
+    // generate is not reworked: it compiles the frozen pre-rework styles.
+    fs::copy(
+        manifest().join("tests/fixtures/seed-styles.json"),
+        dir.join("styles.json"),
+    )
+    .expect("copy frozen styles");
     Command::cargo_bin("ferrisfilter")
         .expect("binary")
         .current_dir(&dir)
@@ -325,10 +331,10 @@ fn app_root_from_ferrisfilter_home_wins_over_cwd() {
     let other = workspace("rootcwd");
     // The cwd copy differs in a value that reaches the output.
     let styles = fs::read_to_string(other.join("styles.json")).unwrap();
-    assert!(styles.contains("\"font\": 37"));
+    assert!(styles.contains("\"font\":37"));
     fs::write(
         other.join("styles.json"),
-        styles.replace("\"font\": 37", "\"font\": 44"),
+        styles.replace("\"font\":37", "\"font\":44"),
     )
     .unwrap();
 
@@ -486,7 +492,7 @@ fn apply_in_an_empty_folder_uses_the_built_in_defaults() {
     let live = empty_home("emptyhome_live");
     for (src, dst) in [
         ("tiers-default.json", "tiers.json"),
-        ("tests/fixtures/seed-styles.json", "styles.json"),
+        ("styles-default.json", "styles.json"),
     ] {
         fs::copy(manifest().join(src), live.join(dst)).unwrap();
     }

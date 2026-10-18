@@ -893,10 +893,7 @@ mod tests {
         let from_embedded =
             load_economy(&InputPaths::in_home(home.path()), PriceSourcePolicy::Auto).unwrap();
         let files = temp_inputs(&[
-            (
-                "styles-default.json",
-                &repo_file("tests/fixtures/seed-styles.json"),
-            ),
+            ("styles-default.json", &repo_file("styles-default.json")),
             ("tiers-default.json", &repo_file("tiers-default.json")),
             ("prices-fallback.json", &repo_file("prices-fallback.json")),
             ("tiers-fallback.json", &repo_file("tiers-fallback.json")),

@@ -17,12 +17,12 @@ Show
 	PlayEffect Pink
 	CustomAlertSound "uwu.mp3" 300
 
-# ff:name Preset kite
-# ff:style kite
+# ff:name Preset C
+# ff:style C
 Show
 	UnidentifiedItemTier >= 4
-	MinimapIcon 1 Orange Kite
-	PlayEffect Orange
+	MinimapIcon 2 Cyan Star
+	PlayEffect Yellow
 	PlayAlertSound 2 300
 
 # ff:name Unknown style

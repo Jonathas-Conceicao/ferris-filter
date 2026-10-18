@@ -33,6 +33,7 @@ pub mod strictness;
 pub mod style_lines;
 pub mod text_entry;
 pub mod tray;
+pub(crate) mod update_job;
 pub mod virtual_list;
 pub mod visibility;
 pub mod widgets;

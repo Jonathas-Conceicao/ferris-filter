@@ -281,7 +281,7 @@ v0.7 requirements: see `.planning/REQUIREMENTS.md`.
 2. **On `complete-milestone`**, in this exact order:
    1. **Push the milestone branch to remote** (preserves full development history).
    2. **Squash-merge** the branch into `main` with a single clean commit message summarizing the milestone.
-   3. **Tag** the resulting merge commit on `main` (annotated `vX.Y`), then push the tag.
+   3. **Tag** the resulting merge commit on `main` (annotated `vX.Y.Z` from v0.7.0 on; v0.1 to v0.6 were `vX.Y`), then push the tag. Pushing the tag runs `.github/workflows/release.yml`, which publishes the GitHub Release.
 
 GSD's `complete-milestone` natively does the squash-merge and tag; the branch push and tag-on-main ordering are enforced as this project convention.
 
@@ -307,7 +307,7 @@ steps, in order:
    with the debug `--screenshot` mode under a temp home (see CLAUDE.md, `ff` row), keeping the
    file names and framing.
 3. **Version.** Set `version` in the root `Cargo.toml` to the milestone's version (`X.Y.0` for
-   `vX.Y`) and refresh `Cargo.lock`. `ff-art` keeps its own version.
+   the tag `vX.Y.0`) and refresh `Cargo.lock`. `ff-art` keeps its own version.
 4. **Changelog draft.** Write the new `## [X.Y.0] - <date>` section of `CHANGELOG.md` from the
    milestone's net changes against the previous tag, folding in anything already under
    `[Unreleased]` (work landed between milestones): a one-line milestone summary, then
@@ -318,8 +318,10 @@ steps, in order:
    as the author directs. The author's confirmation closes the phase.
 
 During a milestone, agents do not add `CHANGELOG.md` entries; step 4 writes them once. Then
-`/gsd-complete-milestone` first checks that the root `Cargo.toml` version matches the tag it is
-about to create (and stops if not), moves any remaining `[Unreleased]` text into the version
+`/gsd-complete-milestone` first checks that the tag it is about to create equals `v` plus the root
+`Cargo.toml` version exactly (and stops if not) and that a non-empty `## [X.Y.Z]` `CHANGELOG.md`
+section exists (the release workflow fails otherwise). Pre-release tags (`vX.Y.Z-rc.N`) take their
+notes from `[Unreleased]` and are published as GitHub pre-releases. It then moves any remaining `[Unreleased]` text into the version
 section, and runs the Git Workflow steps above.
 
 ## Evolution

@@ -502,3 +502,42 @@ choice is explicit and visible). Raised by the author during v0.6 UAT on 2026-10
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.18: NVIDIA overlay treats `ff` as a game (BACKLOG)
+
+**Goal:** Stop the NVIDIA app's overlay / recorder from treating the `ff` window as a game
+(browsers and terminals are left alone; `ff` gets the "Alt+Z" overlay popup like a game). `ff` is
+left as is until then. Raised by the author on 2026-10-18.
+
+**Findings (2026-10-18, author's machine):**
+- `ff` renders through wgpu (eframe 0.36), which picks a backend at start-up; egui-wgpu honours
+  `WGPU_BACKEND`. Tested: `dx12` and `vulkan` trigger the NVIDIA overlay, `opengl` does not. The
+  author prefers not to switch the rendering library or backend just for this.
+- NVIDIA's Vulkan driver manifest (`nv-vk64.json`) declares implicit layers `VK_LAYER_NV_optimus`
+  (`DISABLE_LAYER_NV_OPTIMUS_1`) and `VK_LAYER_NV_present` (`DISABLE_LAYER_NV_PRESENT_1`).
+  `WGPU_BACKEND=vulkan` + `DISABLE_LAYER_NV_PRESENT_1=1` did **not** stop the overlay.
+- No official NVIDIA "not a game" flag was found. Known route: a per-application driver profile
+  with setting `0x809D5F60` = `0x10000000` (applied by hand with NVIDIA Profile Inspector; reported
+  to stop working on some drivers). Apps can write the same profile through NVAPI DRS
+  (`NvAPI_DRS_*`), reported to need administrator rights, which the per-user installer does not
+  have. Not tested yet: in Profile Inspector, create a profile for `ff.exe`, set `0x809D5F60` to
+  `0x10000000`, launch `ff`.
+- Other apps fixed the same symptom by switching to OpenGL (SignalRGB).
+
+**Options to evaluate:** test the driver-profile setting; if it works, an optional elevated "fix
+NVIDIA overlay" action or a README note; otherwise an OpenGL renderer (eframe `glow`, or wgpu's GL
+backend pinned), possibly behind a setting; ask NVIDIA to add `ff.exe` to their application
+database.
+
+**Sources:**
+- https://blog.senpaisilver.com/software/disable-nvidia-overlay-only-in-certain-apps/
+- https://www.nvidia.com/en-us/geforce/forums/discover/262665/how-to-fix-share-shadowplay-overlay-showing-up-in-non-game-application/
+- https://forums.developer.nvidia.com/t/gfe-and-g-sync-is-activated-by-a-regular-application/266188
+- https://forum.signalrgb.com/t/signalrgb-app-gets-picked-up-by-nvidia-shadowplay/2024
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

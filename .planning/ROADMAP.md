@@ -98,7 +98,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 <details open>
 <summary>🚧 v0.7 Initial Public Release and Strictness Selector (Phases 36-42) — IN PROGRESS</summary>
 
-- [ ] **Phase 36: Per-user Locations & Embedded Defaults** - Config and cache move to per-user folders; every shipped data file is built into the exe
+- [ ] **Phase 36: Per-user Locations & Embedded Defaults** - Config, settings and prices move to one per-user folder; every shipped data file is built into the exe
 - [ ] **Phase 37: Game Folder Resolver & Picker** - Documents-based default game folder with a Browse picker on the Config tab, and a refresh button (game art) that re-reads filters and sounds
 - [ ] **Phase 38: Built-in Styles, Strictness & Reset** - Reworked built-in styles (one fixture re-baseline), the seven-level Strictness row, Reset to defaults for styles and tiers
 - [ ] **Phase 39: League Picker & Price Source** - Choose the league and Live or Fallback prices from the Economy tab
@@ -112,10 +112,10 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 **Requirements**: LOC-01, LOC-02, LOC-03, LOC-04, LOC-05
 **Success Criteria** (what must be TRUE):
   1. Starting `ff` against an empty home (no `config.json`, `mapping.json`, defaults or fallback files on disk) shows the default styles, tiers, class catalog and fallback prices, and Apply works
-  2. Editing styles, tiers or settings and pressing Apply writes them under `%APPDATA%\FerrisFilter`, and Sync economy writes `prices.json` under `%LOCALAPPDATA%\FerrisFilter`
-  3. With `FERRISFILTER_HOME` set, both config and cache live in that one folder and nothing is written to the per-user folders (the repo dev workflow)
+  2. Editing styles, tiers or settings and pressing Apply writes them under `%APPDATA%\FerrisFilter` (created if missing), and Sync economy writes `prices.json` in the same folder
+  3. With `FERRISFILTER_HOME` set, everything lives in that folder and nothing is written to the per-user folder (the repo dev workflow)
   4. `ff-cli apply`, `sync` and `install` read and write the same folders as the overlay, while `generate` still reads the working directory and the byte-for-byte fixture test passes
-  5. The test suite and `--screenshot` mode refuse to touch the real config, cache or game folder
+  5. The test suite and `--screenshot` mode refuse to touch the real config or game folder
 **Plans**: TBD
 **UI hint**: yes
 
@@ -169,7 +169,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 **Success Criteria** (what must be TRUE):
   1. A `v0.7.0-rc` tag runs the tests and release build and yields a draft Release with the installer, portable zip, `SHA256SUMS.txt` and the CHANGELOG section as notes
   2. The workflow fails when the tag differs from the `Cargo.toml` version or the CHANGELOG section is missing or empty, and builds with a pinned toolchain
-  3. Running the installer needs no admin prompt, adds a Start menu entry and an uninstaller, and uninstalling keeps config and cache
+  3. Running the installer needs no admin prompt, installs only the `ff` overlay (no CLIs), creates the config folder, adds a Start menu entry and an uninstaller, and uninstalling keeps the config folder
   4. Installing over a running `ff` closes it first and keeps the user's settings
   5. `assets/README.md` records the decision to ship GGG art and Fontin credited and compiled in, and `Jonathas-Conceicao/ferris-filter` is the one repo name in `Cargo.toml`, the HTTP user agent and the updater (REL-06 already done: optimised release profile)
 **Plans**: TBD

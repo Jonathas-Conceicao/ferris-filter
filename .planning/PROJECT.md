@@ -19,10 +19,10 @@ fallback prices.
   installer and a zip, and publishes a GitHub Release whose notes are that version's
   `CHANGELOG.md` section.
 - **Windows installer:** a basic installer with a Start menu entry for the `ff` overlay.
-- **Per-user config location:** styles, tiers and settings in the platform config dir
-  (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`), the price cache in the cache dir
-  (`%LOCALAPPDATA%`, `~/.cache`); the defaults are built into the exe; `FERRISFILTER_HOME` still
-  overrides. Path handling stays cross-platform; Windows is the shipped target.
+- **Per-user config location:** styles, tiers, settings and synced prices in one per-user folder
+  (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`); the defaults are built into the exe;
+  `FERRISFILTER_HOME` still overrides. Path handling stays cross-platform; Windows is the shipped
+  target. The installer ships only the `ff` overlay; the CLIs are dev tools.
 - **Game folder picker:** the Config tab picks the game folder holding the filters. The default is
   the Windows Documents folder + `My Games\Path of Exile 2` (resolved through the OS, so OneDrive
   and localized Documents folders work).

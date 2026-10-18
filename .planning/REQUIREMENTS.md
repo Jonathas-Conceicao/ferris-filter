@@ -10,15 +10,14 @@
 
 - [ ] **LOC-01**: A fresh install with no files of its own works: the default styles, tiers,
   fallback prices, the class catalog (`config.json`) and `mapping.json` are built into the exe.
-- [ ] **LOC-02**: The user's styles, tiers and settings are saved in the per-user config dir
-  (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`); synced prices in the cache dir
-  (`%LOCALAPPDATA%\FerrisFilter`, `~/.cache/ferrisfilter`).
-- [ ] **LOC-03**: `FERRISFILTER_HOME` still overrides both, as one folder (the dev-from-repo
-  workflow).
-- [ ] **LOC-04**: `ff-cli apply` / `sync` / `install` use the same folders and game folder as the
-  overlay; `generate` stays working-directory relative.
-- [ ] **LOC-05**: Tests and the debug screenshot mode can never read or write the real config,
-  cache or game folder.
+- [ ] **LOC-02**: The user's styles, tiers, settings and synced prices are saved in one per-user
+  folder (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`), created by the installer and by
+  Apply / Sync when missing.
+- [ ] **LOC-03**: `FERRISFILTER_HOME` still overrides it (the dev-from-repo workflow).
+- [ ] **LOC-04**: `ff-cli apply` / `sync` / `install` (a dev tool, not installed) use the same
+  folder and game folder as the overlay; `generate` stays working-directory relative.
+- [ ] **LOC-05**: Tests and the debug screenshot mode can never read or write the real config or
+  game folder.
 
 ### Game folder (GAME)
 
@@ -84,9 +83,10 @@
 
 ### Installer (INST)
 
-- [ ] **INST-02**: A per-user installer (no admin prompt) with a Start menu entry for FerrisFilter
-  and an uninstaller.
-- [ ] **INST-03**: Uninstalling keeps the user's config and cache.
+- [ ] **INST-02**: A per-user installer (no admin prompt) that installs only the `ff` overlay (the
+  CLIs are dev tools and are not shipped in it), creates the config folder, adds a Start menu entry
+  for FerrisFilter and an uninstaller.
+- [ ] **INST-03**: Uninstalling keeps the user's config folder.
 - [ ] **INST-04**: Installing over a running `ff` closes it first and keeps the settings.
 
 ### Check for updates (UPD)

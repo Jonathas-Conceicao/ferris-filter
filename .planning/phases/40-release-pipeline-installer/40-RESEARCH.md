@@ -607,12 +607,18 @@ FerrisFilter <ver> portable: run `ff.exe`; settings live in `%APPDATA%\FerrisFil
 | A6 | Overlay tests pass on a GPU-less runner in reasonable time | Pitfall 10 | First CI run fails; fix locally, re-run |
 | A7 | Shipping `LICENSE.txt` in the zip is required (CONTEXT says so); the installer installs `ff.exe` only, and GPL text is reachable from the release page/repo | Pattern 3 | If the author wants the license in the install folder or on a wizard page, add one `[Files]` line or `InfoBeforeFile`; GPL-3 asks that recipients get a copy of the license with object code, so the planner may ask the author |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **License text in the installer.** CONTEXT: installer installs only `ff.exe`; the zip has `LICENSE`. GPL-3 section 4/6 expects the license to accompany object code. Recommendation: ask the author whether to add `LICENSE.txt` to `{app}` (not a program, so it does not contradict "no CLIs") or show it with `InfoBeforeFile` (no "I accept" page). Default if not asked: add `LICENSE.txt` to `{app}`.
 2. **Relaunch after a silent install (Phase 41).** `skipifsilent` on the Launch entry means `/SILENT` updates do not restart `ff`. Phase 41 decides how it runs the installer; nothing to change now, but note it in the Phase 41 handoff.
 3. **Timeout for `--quit`.** 10 s plus the installer Retry loop is the recommendation; the author may prefer waiting longer while the Unapplied changes popup is up.
 4. **CHANGELOG link references** (`poe2-myfilter`): fix now as a factual one-line-per-link edit, or leave to Phase 42 author review. Record in the plan either way (PUB-02 says "everywhere").
+
+Resolutions:
+1. RESOLVED in 40-05 (Decision: LICENSE.txt installed into `{app}`), confirmed by the author in 40-07 Task 3 step 8 (drop it there if they choose).
+2. RESOLVED in 40-05 (Decision: keep `skipifsilent`); handoff note for Phase 41 in 40-05's SUMMARY.
+3. RESOLVED in 40-01 (Decision: `QUIT_TIMEOUT_MS = 10_000`, request sent once, installer Retry box in 40-05).
+4. RESOLVED in 40-03 (Decision: not edited in Phase 40, no CHANGELOG edits; recorded for the Phase 42 author review in 40-03's SUMMARY).
 
 ## Environment Availability
 

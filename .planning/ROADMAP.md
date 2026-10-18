@@ -197,7 +197,7 @@ Plans:
   4. Installing over a running `ff` closes it first and keeps the user's settings
   5. `assets/README.md` records the decision to ship GGG art and Fontin credited and compiled in, and `Jonathas-Conceicao/ferris-filter` is the one repo name in `Cargo.toml`, the HTTP user agent and the updater (REL-06 already done: optimised release profile)
 
-**Plans**: TBD
+**Plans**: 8 plans in 6 waves (40-01 hidden `ff --quit` via the single-instance gate; 40-02 ci.yml + release.yml + release-check / verify-exe scripts; 40-03 Ferris .ico, assets/README.md distribution decision, ferris-filter user agent; 40-04 winresource exe icon + VERSIONINFO (legitimacy checkpoint); 40-05 Inno Setup script + package.sh + portable readme; 40-06 CLAUDE.md / PROJECT.md vX.Y.Z close-out, version 0.7.0-rc.1, local dry run without ISCC; 40-07 author installs Inno Setup, local installer build + installer UAT; 40-08 the single v0.7.0-rc.1 tag push, read-only monitoring, release verification)
 **Research**: needed (Inno Setup on the runner, `AppMutex` with a tray-hidden app, stable vs nightly toolchain, Fontin / GGG terms)
 
 ### Phase 41: Check for Updates

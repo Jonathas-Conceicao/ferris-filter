@@ -1432,7 +1432,7 @@ impl OverlayApp {
             apply_message: None,
             economy: economy::EconomySync::new(),
             leagues: super::leagues::LeagueList::default(),
-            reload:chat::ReloadSend::default(),
+            reload: chat::ReloadSend::default(),
             reload_pending: None,
             working,
             list: ListUi::default(),
@@ -3455,11 +3455,14 @@ impl eframe::App for OverlayApp {
                     self.leagues.start(fetch_leagues);
                 }
                 let view = self.league_view();
+                let fallback = self.settings.price_policy() == PriceSourcePolicy::ForceFallback;
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
                 let inputs = shell::EconomyTabInputs {
-                    league: &view.options[view.selected],
+                    league: &view,
+                    fallback,
+                    prices_league: self.economy_info.league.as_deref(),
                     mtime_secs: self.economy_info.mtime_secs,
                     now_secs,
                     utc_offset_minutes: win::utc_offset_minutes(),
@@ -3467,8 +3470,13 @@ impl eframe::App for OverlayApp {
                     live: self.economy_info.live,
                     problem: self.economy_info.problem.as_deref(),
                     syncing: self.economy.is_running(),
-                    sync_enabled: actions.sync,
-                    sync_disabled_tip: self.root.as_ref().err().map(String::as_str),
+                    sync_enabled: actions.sync && view.sync_league.is_some() && !fallback,
+                    sync_disabled_tip: self
+                        .root
+                        .as_ref()
+                        .err()
+                        .map(String::as_str)
+                        .or(view.sync_block_tip),
                     tiers_reset_enabled: self.config.as_ref().is_ok_and(|c| !c.tiers_at_defaults()),
                     section: shell::section_button(
                         self.working.as_ref().map(|w| w.economy()),
@@ -3673,6 +3681,27 @@ impl eframe::App for OverlayApp {
         }
         if economy_clicks.reset_tiers {
             self.config_ui.reset_armed = Some(RevertScope::Tiers);
+        }
+        let fallback_now = self.settings.price_policy() == PriceSourcePolicy::ForceFallback;
+        if let Some(source) = economy_clicks.source
+            && (source == 1) != fallback_now
+        {
+            self.set_price_source(source == 0);
+        }
+        if let Some(pick) = economy_clicks.league_pick {
+            let name = self.league_view().pick_name(pick).map(str::to_string);
+            if let Some(name) = name
+                && self.settings.saved_league() != Some(name.as_str())
+            {
+                self.set_league(&name);
+            }
+        }
+        if economy_clicks.refresh_leagues
+            && !self.is_shot()
+            && !self.leagues.is_fetching()
+            && !fallback_now
+        {
+            self.leagues.start(fetch_leagues);
         }
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
@@ -6454,7 +6483,10 @@ Hide
         app.set_league("Runes of Aldur");
         assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
         let (msg, problem) = app.config_message.clone().unwrap();
-        assert!(msg.starts_with("Could not save ff-settings.json: "), "{msg}");
+        assert!(
+            msg.starts_with("Could not save ff-settings.json: "),
+            "{msg}"
+        );
         assert!(problem);
     }
 

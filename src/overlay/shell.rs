@@ -552,11 +552,40 @@ pub(crate) struct EconomyClicks {
     pub add: bool,
     pub remove: bool,
     pub reset_tiers: bool,
+    /// The price-source segment picked (0 = Live, 1 = Fallback).
+    pub source: Option<usize>,
+    /// The league dropdown option picked (an index into the view's options).
+    pub league_pick: Option<usize>,
+    pub refresh_leagues: bool,
+}
+
+/// Tooltip of the tiers editor while Fallback prices are in use.
+const FALLBACK_TIERS_TIP: &str = "The fallback tiers are fixed.";
+
+/// The Price source switch's tooltip. `live` is whether prices.json is usable; `problem` why an
+/// existing one is not. The third line shows only under Live with no usable prices.
+pub(crate) fn price_source_tip(fallback: bool, live: bool, problem: Option<&str>) -> String {
+    let mut tip = "Live: prices from your last sync. Fallback: the built-in early-league prices.\nFallback is recommended at league start, and if you don't trade.".to_string();
+    if !fallback && !live {
+        match problem {
+            Some(p) => tip.push_str(&format!(
+                "\nprices.json could not be used ({p}). Using the built-in early-league prices until you sync."
+            )),
+            None => tip.push_str(
+                "\nNo prices.json yet. Using the built-in early-league prices until you sync.",
+            ),
+        }
+    }
+    tip
 }
 
 /// Everything the ECONOMY tab shows.
 pub(crate) struct EconomyTabInputs<'a> {
-    pub league: &'a str,
+    pub league: &'a crate::overlay::leagues::LeagueView,
+    /// The price source is the fallback pair by choice (greys the league, Sync and Tiers).
+    pub fallback: bool,
+    /// The league prices.json was synced for, appended to the Last sync hover.
+    pub prices_league: Option<&'a str>,
     pub mtime_secs: Option<u64>,
     pub now_secs: u64,
     pub utc_offset_minutes: i32,
@@ -591,10 +620,65 @@ pub(crate) fn economy_tab(
                     .color(color),
             )
         };
-        w::ff_row(ui, 0, "League", |ui| {
-            value(ui, inputs.league, pal::VALUE).on_hover_text("Pinned in this build.");
+        w::ff_row(ui, 0, "Price source", |ui| {
+            let mut idx = usize::from(inputs.fallback);
+            let r = crate::skin::editor::ff_segmented(
+                ui,
+                skin,
+                &mut idx,
+                &["Live", "Fallback"],
+                w::CONTROL_WIDTH,
+            )
+            .on_hover_text(price_source_tip(
+                inputs.fallback,
+                inputs.live,
+                inputs.problem,
+            ));
+            crate::overlay::style_lines::probe("price-source", r.rect);
+            if r.changed() {
+                clicks.source = Some(idx);
+            }
         });
-        w::ff_row(ui, 1, "Last sync", |ui| {
+        w::ff_row(ui, 1, "League", |ui| {
+            use crate::overlay::leagues::CaptionKind;
+            let view = inputs.league;
+            ui.spacing_mut().item_spacing.x = w::FIELD_GAP;
+            let color = match view.caption {
+                CaptionKind::Value => pal::VALUE,
+                CaptionKind::Disabled => pal::DISABLED,
+                CaptionKind::Warn => pal::WARN,
+            };
+            let options: Vec<&str> = view.options.iter().map(String::as_str).collect();
+            let mut sel = view.selected;
+            let combo = ui
+                .add_enabled_ui(view.dropdown_enabled, |ui| {
+                    w::ff_dropdown_ex(
+                        ui,
+                        skin,
+                        "economy-league",
+                        &mut sel,
+                        &options,
+                        w::CONTROL_WIDTH - w::ROW_HEIGHT - w::FIELD_GAP,
+                        Some(color),
+                    )
+                })
+                .inner;
+            combo
+                .clone()
+                .on_hover_text(&view.dropdown_tip)
+                .on_disabled_hover_text(&view.dropdown_tip);
+            if combo.changed() {
+                clicks.league_pick = Some(sel);
+            }
+            let refresh = w::ff_icon_button(ui, &skin.refresh, "Refresh", view.refresh_enabled)
+                .on_hover_text(&view.refresh_tip)
+                .on_disabled_hover_text(&view.refresh_tip);
+            crate::overlay::style_lines::probe("league-refresh", refresh.rect);
+            if view.refresh_enabled && refresh.clicked() {
+                clicks.refresh_leagues = true;
+            }
+        });
+        w::ff_row(ui, 2, "Last sync", |ui| {
             let r = value(
                 ui,
                 &relative_sync_text(
@@ -605,25 +689,15 @@ pub(crate) fn economy_tab(
                 pal::VALUE,
             );
             if inputs.mtime_secs.is_some() {
-                r.on_hover_text(last_sync_text(inputs.mtime_secs, inputs.utc_offset_minutes));
+                let mut tip = last_sync_text(inputs.mtime_secs, inputs.utc_offset_minutes);
+                if let Some(league) = inputs.prices_league {
+                    tip.push_str(&format!(" - {league}"));
+                }
+                r.on_hover_text(tip);
             }
         });
-        w::ff_row(ui, 2, "Priced items", |ui| {
+        w::ff_row(ui, 3, "Priced items", |ui| {
             value(ui, &thousands(inputs.priced_items), pal::VALUE);
-        });
-        w::ff_row(ui, 3, "Price source", |ui| {
-            if inputs.live {
-                value(ui, "Live prices", pal::VALUE)
-                    .on_hover_text("prices.json from the last sync.");
-            } else if let Some(problem) = inputs.problem {
-                value(ui, "Fallback prices", pal::WARN).on_hover_text(format!(
-                    "prices.json could not be used ({problem}) so the built-in early-league prices apply. Sync to replace it."
-                ));
-            } else {
-                value(ui, "Fallback prices", pal::WARN).on_hover_text(
-                    "No prices.json yet. Using the built-in early-league prices. Sync to get live ones.",
-                );
-            }
         });
         ui.add_space(16.0);
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
@@ -701,13 +775,15 @@ pub(crate) fn economy_tab(
                     .max_rect(heading.rect.shrink2(vec2(8.0, 0.0)))
                     .layout(Layout::right_to_left(Align::Center)),
             );
-            let enabled = inputs.tiers_reset_enabled;
+            let enabled = inputs.tiers_reset_enabled && !inputs.fallback;
             let mut r =
                 w::ff_button_ex(&mut right, skin, "Reset to defaults", 150.0, enabled, false);
             // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response
             // still counts as enabled: attach the tip both ways.
             let tip = if enabled {
                 "Restore the default cutoffs."
+            } else if inputs.fallback {
+                FALLBACK_TIERS_TIP
             } else {
                 "Already at the defaults."
             };
@@ -717,7 +793,17 @@ pub(crate) fn economy_tab(
                 clicks.reset_tiers = true;
             }
         }
-        tiers(ui);
+        let locked = ui.add_enabled_ui(!inputs.fallback, |ui| tiers(ui));
+        if inputs.fallback {
+            // A disabled Ui's response carries no hover of its own over the boxes, so the tip
+            // sits on an explicit hover area over the whole editor.
+            ui.interact(
+                locked.response.rect,
+                ui.id().with("tiers-locked"),
+                Sense::hover(),
+            )
+            .on_hover_text(FALLBACK_TIERS_TIP);
+        }
     });
     clicks
 }
@@ -1007,9 +1093,29 @@ mod tests {
         (clicks, ran)
     }
 
+    fn leagues_view(fallback: bool) -> &'static crate::overlay::leagues::LeagueView {
+        use crate::overlay::leagues::{ListState, ViewInputs, view};
+        let list = serde_json::from_str::<crate::sync::models::IndexState>(include_str!(
+            "../../tests/fixtures/index-state-2026-10-18.json"
+        ))
+        .unwrap()
+        .economy_leagues;
+        let state = ListState::Loaded(list);
+        Box::leak(Box::new(view(&ViewInputs {
+            saved: None,
+            state: &state,
+            fetching: false,
+            prices_league: None,
+            fallback,
+            syncing: false,
+        })))
+    }
+
     fn inputs(section: SectionButton) -> EconomyTabInputs<'static> {
         EconomyTabInputs {
-            league: "Test League",
+            league: leagues_view(false),
+            fallback: false,
+            prices_league: None,
             mtime_secs: None,
             now_secs: 1_700_000_000,
             utc_offset_minutes: 0,
@@ -1038,8 +1144,115 @@ mod tests {
                 sync: false,
                 add: false,
                 remove: false,
-                reset_tiers: false
+                reset_tiers: false,
+                source: None,
+                league_pick: None,
+                refresh_leagues: false,
             }
+        );
+    }
+
+    /// Draws the tab once to find `tag`'s rect, then clicks its centre (or `at`) in a second frame.
+    fn click_probe(
+        i: &EconomyTabInputs,
+        tag: &str,
+        at: impl Fn(egui::Rect) -> egui::Pos2,
+    ) -> (EconomyClicks, bool) {
+        use crate::overlay::style_lines::drain_probes;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::textures::load_light(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(535.0, 900.0));
+        let input = |events| egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        drain_probes();
+        ctx.run_ui(input(vec![]), |ui| {
+            economy_tab(ui, &skin, i, |_| {});
+        })
+        .drop_without_applying_deltas();
+        let rect = drain_probes()
+            .into_iter()
+            .find(|(t, _)| *t == tag)
+            .expect("the control is drawn")
+            .1;
+        let target = at(rect);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut clicks = EconomyClicks::default();
+        let mut tiers_enabled = true;
+        ctx.run_ui(
+            input(vec![
+                egui::Event::PointerMoved(target),
+                button(true),
+                button(false),
+            ]),
+            |ui| {
+                clicks = economy_tab(ui, &skin, i, |ui| tiers_enabled = ui.is_enabled());
+            },
+        )
+        .drop_without_applying_deltas();
+        (clicks, tiers_enabled)
+    }
+
+    #[test]
+    fn the_price_source_switch_reports_only_a_change() {
+        let i = inputs(ADD);
+        let right = |r: egui::Rect| egui::pos2(r.max.x - 10.0, r.center().y);
+        let left = |r: egui::Rect| egui::pos2(r.min.x + 10.0, r.center().y);
+        assert_eq!(click_probe(&i, "price-source", right).0.source, Some(1));
+        assert_eq!(click_probe(&i, "price-source", left).0.source, None);
+        let mut fb = inputs(ADD);
+        fb.fallback = true;
+        assert_eq!(click_probe(&fb, "price-source", left).0.source, Some(0));
+    }
+
+    #[test]
+    fn refresh_clicks_only_when_enabled() {
+        let center = |r: egui::Rect| r.center();
+        let i = inputs(ADD);
+        assert!(i.league.refresh_enabled);
+        assert!(click_probe(&i, "league-refresh", center).0.refresh_leagues);
+        let mut fb = inputs(ADD);
+        fb.fallback = true;
+        fb.league = leagues_view(true);
+        assert!(!click_probe(&fb, "league-refresh", center).0.refresh_leagues);
+    }
+
+    #[test]
+    fn fallback_locks_tiers_and_the_reset_button() {
+        let i = inputs(ADD);
+        assert!(click_probe(&i, "league-refresh", |r| r.center()).1);
+        let mut fb = inputs(ADD);
+        fb.fallback = true;
+        fb.league = leagues_view(true);
+        let (clicks, tiers_enabled) = click_probe(&fb, "reset-tiers", |r| r.center());
+        assert!(!tiers_enabled, "the Tiers editor is drawn disabled");
+        assert!(!clicks.reset_tiers);
+    }
+
+    #[test]
+    fn price_source_tip_copy() {
+        let base = "Live: prices from your last sync. Fallback: the built-in early-league prices.\nFallback is recommended at league start, and if you don't trade.";
+        assert_eq!(price_source_tip(true, false, None), base);
+        assert_eq!(price_source_tip(false, true, None), base);
+        assert_eq!(
+            price_source_tip(false, false, None),
+            format!(
+                "{base}\nNo prices.json yet. Using the built-in early-league prices until you sync."
+            )
+        );
+        assert_eq!(
+            price_source_tip(false, false, Some("bad")),
+            format!(
+                "{base}\nprices.json could not be used (bad). Using the built-in early-league prices until you sync."
+            )
         );
     }
 

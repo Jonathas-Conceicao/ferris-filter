@@ -5,9 +5,6 @@
 //! session and on refresh, never at start-up, in tests or in screenshot mode (the caller enforces
 //! that). One pure function, [`view`], decides the whole league UI so the view only draws it.
 
-// The view and app wiring that consume this model land in the next plans.
-#![allow(dead_code)]
-
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::compile::PriceSourcePolicy;
@@ -38,6 +35,7 @@ pub(crate) fn ended_tip(name: &str) -> String {
 }
 
 /// Status line shown when the saved league has ended.
+#[allow(dead_code)] // wired into the status line by the next plan
 pub(crate) fn ended_status(name: &str) -> String {
     format!("{name} is no longer on poe.ninja; pick a league")
 }
@@ -113,6 +111,7 @@ impl LeagueList {
     }
 
     /// Sets the state directly (screenshot mode and tests); drops any receiver.
+    #[allow(dead_code)] // used by tests; screenshot mode adopts it in a later plan
     pub(crate) fn inject(&mut self, state: ListState) {
         self.state = state;
         self.rx = None;
@@ -294,6 +293,7 @@ fn loaded_view(saved: Option<&str>, list: &[EconomyLeague]) -> LeagueView {
 }
 
 /// Whether the effective price source is the fallback pair.
+#[allow(dead_code)] // consumed by the unapplied marker in the next plan
 pub(crate) fn effective_fallback(policy: PriceSourcePolicy, prices_live: bool) -> bool {
     policy == PriceSourcePolicy::ForceFallback || !prices_live
 }
@@ -301,6 +301,7 @@ pub(crate) fn effective_fallback(policy: PriceSourcePolicy, prices_live: bool) -
 /// Whether switching the price source leaves the economy section out of date (OD-1: the cheap
 /// effective-source comparison, not an output diff; assumption A2: the start-up policy matches
 /// how the file was last written).
+#[allow(dead_code)] // consumed by the unapplied marker in the next plan
 pub(crate) fn source_pending(
     applied: PriceSourcePolicy,
     now: PriceSourcePolicy,
@@ -315,8 +316,8 @@ pub(crate) fn source_pending(
 mod tests {
     use super::*;
     use crate::sync::models::IndexState;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/index-state-2026-10-18.json");

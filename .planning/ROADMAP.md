@@ -161,7 +161,7 @@ Plans:
 - [x] 38-01-PLAN.md — Freeze old styles as tests/fixtures/seed-styles.json, repoint test readers, ship the nine reworked built-ins
 - [x] 38-02-PLAN.md — Skin ff_levels widget (content-proportional, one row) and FIX-01 single minimap tooltip
 - [x] 38-03-PLAN.md — Pure strictness model and ConfigState reset/strictness methods (TDD)
-- [ ] 38-04-PLAN.md — Strictness row on the Config tab wired to SetStrictness
+- [x] 38-04-PLAN.md — Strictness row on the Config tab wired to SetStrictness
 - [ ] 38-05-PLAN.md — Reset to defaults buttons (Styles, Tiers) and their two popups
 - [ ] 38-06-PLAN.md — CLAUDE.md update and phase gate with screenshot UAT
 
@@ -236,7 +236,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 36. Per-user Locations & Embedded Defaults | 7/7 | Complete    | 2026-10-18 |
 | 37. Game Folder Resolver & Picker | 7/7 | Complete    | 2026-10-18 |
-| 38. Built-in Styles, Strictness & Reset | 3/6 | In Progress|  |
+| 38. Built-in Styles, Strictness & Reset | 4/6 | In Progress|  |
 | 39. League Picker & Price Source | 0/0 | Not started | - |
 | 40. Release Pipeline & Installer | 0/0 | Not started | - |
 | 41. Check for Updates | 0/0 | Not started | - |

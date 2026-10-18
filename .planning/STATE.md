@@ -4,13 +4,13 @@ milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
 stopped_at: Completed 38-03-PLAN.md
-last_updated: "2026-10-18T08:24:19.202Z"
+last_updated: "2026-10-18T08:29:59.421Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 2
   total_plans: 40
-  completed_plans: 17
+  completed_plans: 18
   percent: 8
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 ## Current Position
 
 Phase: 38 (built-in-styles-strictness-reset) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-10-18
 
@@ -202,6 +202,7 @@ work (carried forward past the v0.3 close):
 - [Phase 33]: 33-02: Preview column yields below the 110pt Name minimum so all columns end by width-10
 - [Phase 33]: 33-04: style editor lines are one id scope each; tile sizes adapt (14-24pt) so shape rows never wrap; reset_for_new_styles bumps the epoch to orphan pickers and None-memory
 - [Phase 36]: Isolation guard scans for locations::from_env (free function), not AppDirs::from_env
+- [Phase ?]: 38-04: SetStrictness clears stale messages only on a real change
 
 ### Pending Todos
 

@@ -29,6 +29,7 @@ find_iscc() {
   fi
   for c in "$(command -v iscc.exe || true)" \
            "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+           "/c/Program Files/Inno Setup 6/ISCC.exe" \
            "$local_app"; do
     if [ -n "$c" ] && [ -f "$c" ]; then
       echo "$c"

@@ -54,6 +54,7 @@ use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
 use super::shell::{self, ConfigBarInputs, Popup, PopupData, ShellTab, StatusInputs, StatusLine};
 use super::tray::{self, OverlayCommand, TrayHandles};
+use super::update_job::{UpdateJob, UpdateState};
 use super::visibility::{self, Visibility};
 use super::win::{self, OverlayWindow};
 use crate::skin::Skin;
@@ -168,6 +169,10 @@ pub struct OverlayApp {
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
+    /// The About tab's update check; Ready survives message clears.
+    update: UpdateJob,
+    /// The update outcome shown in the status line (an event message).
+    update_message: Option<(String, w::StatusKind)>,
 
     /// poe.ninja's league list for the Economy tab's picker: fetched on a worker the first time
     /// the tab is shown in a session and on refresh, never at start-up, in tests or in
@@ -1188,6 +1193,17 @@ fn show_not_quit_warning(
     }
 }
 
+/// The status colour of an update message.
+fn update_kind(kind: crate::update::UpdateKind) -> w::StatusKind {
+    use crate::update::UpdateKind;
+    match kind {
+        UpdateKind::Info => w::StatusKind::Info,
+        UpdateKind::Ok => w::StatusKind::Ok,
+        UpdateKind::Warning => w::StatusKind::Warning,
+        UpdateKind::Error => w::StatusKind::Error,
+    }
+}
+
 /// The Apply status line after the window is concealed. Hiding normally clears it, but not while
 /// a reload is in flight and its interim line is still showing: the reload's own focus change is
 /// what hides the window (the click-away rule sees the game take focus), so clearing here would
@@ -1333,9 +1349,10 @@ impl OverlayApp {
         use crate::overlay::screenshot::ShotLeagues;
         match &shot.leagues {
             Some(ShotLeagues::List(names)) => {
-                app.leagues.inject(ListState::Loaded(
-                    crate::overlay::screenshot::fake_leagues(names),
-                ));
+                app.leagues
+                    .inject(ListState::Loaded(crate::overlay::screenshot::fake_leagues(
+                        names,
+                    )));
             }
             Some(ShotLeagues::Failed) => {
                 app.leagues
@@ -1503,6 +1520,8 @@ impl OverlayApp {
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
+            update: UpdateJob::new(),
+            update_message: None,
             leagues: super::leagues::LeagueList::default(),
             reload: chat::ReloadSend::default(),
             reload_pending: None,
@@ -1986,6 +2005,7 @@ impl OverlayApp {
     /// list's view state is re-keyed to the re-parsed document. `overwrite` is OVERWRITE after a
     /// changed-on-disk refusal; it otherwise behaves exactly like APPLY, in-game reload included.
     fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) -> bool {
+        self.update_message = None;
         self.sync_tiers_in_use();
         let Ok(root) = &self.root else {
             return false;
@@ -2159,7 +2179,24 @@ impl OverlayApp {
         });
         self.config_message = None;
         self.list_status = None;
+        self.update_message = None;
         self.economy.clear_message();
+    }
+
+    /// Start the update check. The only place a check begins, and only the About tab's button
+    /// calls it: never at start-up, never on a timer. A new user action supersedes older event
+    /// messages.
+    fn start_update_check(&mut self) {
+        self.clear_events_on_edit();
+        self.economy.clear_message();
+        if self.update.start(|progress| {
+            crate::update::check_for_update_blocking(progress.work_dir(), &mut |v| {
+                progress.downloading(v)
+            })
+        }) {
+            let (text, kind) = crate::update::checking_message();
+            self.update_message = Some((text, update_kind(kind)));
+        }
     }
 
     /// An edit or a revert on either tab clears every event message (the Apply outcome, the list
@@ -2167,6 +2204,7 @@ impl OverlayApp {
     /// standing lines or the action's own message (review WR-01, iterations 1 and 2).
     fn clear_events_on_edit(&mut self) {
         self.apply_message = None;
+        self.update_message = None;
         self.list_status = None;
         self.config_message = None;
     }
@@ -3398,6 +3436,17 @@ impl eframe::App for OverlayApp {
         if self.leagues.poll() {
             ui.ctx().request_repaint();
         }
+        if let Some((text, kind)) = self.update.poll(win::utc_offset_minutes()) {
+            self.update_message = Some((text, update_kind(kind)));
+            ui.ctx().request_repaint();
+        }
+        if matches!(
+            self.update.state(),
+            UpdateState::Checking | UpdateState::Downloading { .. }
+        ) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
 
         // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here; the
         // actual close-the-viewport send is deferred to after the body renders. Quit is still the
@@ -3708,6 +3757,7 @@ impl eframe::App for OverlayApp {
                 .layout(Layout::top_down(Align::Min)),
         );
         cui.set_clip_rect(shell_frame.content);
+        let mut about_action: Option<super::about_view::AboutAction> = None;
         match self.tab {
             ShellTab::Rules => self.rules_content(&mut cui, &skin, actions, &mut row_actions),
             ShellTab::Config => {
@@ -3763,7 +3813,15 @@ impl eframe::App for OverlayApp {
                 cui.ctx()
                     .request_repaint_after(std::time::Duration::from_secs(60));
             }
-            ShellTab::About => super::about_view::about_tab(&mut cui, &skin),
+            ShellTab::About => {
+                let view = super::about_view::UpdateView {
+                    caption: self.update.caption(),
+                    enabled: self.update.enabled(),
+                    ready: matches!(self.update.state(), UpdateState::Ready(_)),
+                    tooltip: self.update.tooltip(),
+                };
+                about_action = super::about_view::about_tab(&mut cui, &skin, &view);
+            }
         }
 
         // Bottom bar: the one status line plus Revert / Reload / Apply.
@@ -3794,6 +3852,7 @@ impl eframe::App for OverlayApp {
             _ => None,
         };
         let event = shell::event_from(
+            self.update_message.clone(),
             self.apply_message.clone(),
             self.config_message.clone(),
             sync_outcome,
@@ -3884,11 +3943,15 @@ impl eframe::App for OverlayApp {
                 self.run_apply(&egui_ctx, false);
             }
         }
+        if let Some(super::about_view::AboutAction::Check) = about_action {
+            self.start_update_check();
+        }
         if economy_clicks.sync
             && self.settings.price_policy() != PriceSourcePolicy::ForceFallback
             && let Some(league) = self.league_view().sync_league
             && let Ok(root) = &self.root
         {
+            self.update_message = None;
             // The app root, not the process working directory: the overlay can be launched from
             // anywhere, and prices.json must land where Apply will read it from. A sync is not
             // part of Apply (dozens of network round trips that can fail); it only refreshes
@@ -5893,7 +5956,8 @@ Hide
         );
         let (text, kind) = app.apply_message.clone().unwrap();
         assert_eq!(kind, StatusKind::Error, "{text}");
-        let event = crate::overlay::shell::event_from(app.apply_message.clone(), None, None, None);
+        let event =
+            crate::overlay::shell::event_from(None, app.apply_message.clone(), None, None, None);
         assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
     }
@@ -5960,6 +6024,7 @@ Hide
         let status = shell::status_for(StatusInputs {
             root_error: None,
             event: shell::event_from(
+                None,
                 app.apply_message.clone(),
                 app.config_message.clone(),
                 None,
@@ -6002,6 +6067,72 @@ Hide
         app.config_message = Some(("Reverted config changes.".to_string(), false));
         app.run_row_actions(vec![RowAction::AddRule]);
         assert_eq!(app.config_message, None);
+    }
+
+    fn settle_update(app: &mut super::OverlayApp) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Some((text, kind)) = app.update.poll(0) {
+                app.update_message = Some((text, super::update_kind(kind)));
+            }
+            if matches!(app.update.state(), super::UpdateState::Idle) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("update check did not settle");
+    }
+
+    #[test]
+    fn pressing_check_reports_checking_then_the_outcome() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.start_update_check();
+        assert_eq!(
+            app.update_message,
+            Some(("Checking for updates…".to_string(), StatusKind::Info))
+        );
+        settle_update(&mut app);
+        assert_eq!(
+            app.update_message,
+            Some((
+                "Could not reach GitHub. Check your connection and try again.".to_string(),
+                StatusKind::Warning
+            ))
+        );
+        assert_eq!(app.update.state(), &super::UpdateState::Idle);
+    }
+
+    #[test]
+    fn conceal_keeps_ready_and_clears_the_update_message() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        let ready = crate::update::ReadyUpdate {
+            version: "0.8.0".to_string(),
+            published_unix: None,
+            installer: std::path::PathBuf::from("x.exe"),
+            sha256: String::new(),
+        };
+        app.update.inject(super::UpdateState::Ready(ready));
+        app.update_message = Some(("msg".to_string(), StatusKind::Ok));
+        app.clear_events_on_conceal();
+        assert_eq!(app.update_message, None);
+        assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+
+        app.update_message = Some(("msg".to_string(), StatusKind::Ok));
+        app.clear_events_on_edit();
+        assert_eq!(app.update_message, None);
+        app.tab = ShellTab::Rules;
+        assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+    }
+
+    #[test]
+    fn starting_an_apply_clears_the_update_message() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, ctx) = popup_app(RULES);
+        app.update_message = Some(("msg".to_string(), StatusKind::Ok));
+        app.run_apply(&ctx, false);
+        assert_eq!(app.update_message, None);
     }
 
     /// WR-01 (iteration 2): a refused Apply's Error line gives way to each tab's revert message,

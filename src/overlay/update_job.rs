@@ -12,7 +12,8 @@
 //! down. Any other shutdown deletes the work folder: a partial download while Downloading, the
 //! verified but unused installer while Ready.
 
-// The model is wired into the About tab and the shutdown path by later plans of this phase.
+// The install side (`begin_install`, `cancel_install`, `shutdown`, `InstallClick`) is wired by the
+// next plan of this phase; remove this allow then.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};

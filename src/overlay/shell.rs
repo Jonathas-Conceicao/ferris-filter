@@ -242,11 +242,17 @@ pub(crate) fn apply_success_kind(text: &str) -> StatusKind {
 /// The Apply message carries the kind it was produced with (see [`apply_success_kind`]). A CONFIG
 /// message is `(text, is_problem)`. A sync outcome is `(text, is_failure)`.
 pub(crate) fn event_from(
+    update: Option<(String, StatusKind)>,
     apply_message: Option<(String, StatusKind)>,
     config_message: Option<(String, bool)>,
     sync: Option<(String, bool)>,
     list_status: Option<String>,
 ) -> Option<(String, StatusKind)> {
+    // The update message is the most recent explicit user action: the app clears it whenever
+    // another event action starts, so when it is present it is the newest.
+    if let Some(message) = update {
+        return Some(message);
+    }
     if let Some(message) = apply_message {
         return Some(message);
     }
@@ -1596,6 +1602,15 @@ mod tests {
     #[test]
     fn event_precedence_and_kinds() {
         let e = event_from(
+            Some(("Up to date (0.7.0)".into(), StatusKind::Ok)),
+            Some(("a".into(), StatusKind::Ok)),
+            Some(("c".into(), true)),
+            Some(("s".into(), true)),
+            Some("l".into()),
+        );
+        assert_eq!(e, Some(("Up to date (0.7.0)".into(), StatusKind::Ok)));
+        let e = event_from(
+            None,
             Some(("a".into(), StatusKind::Ok)),
             Some(("c".into(), true)),
             Some(("s".into(), true)),
@@ -1604,27 +1619,40 @@ mod tests {
         assert_eq!(e, Some(("a".into(), StatusKind::Ok)));
         // The stored kind passes through unchanged: a failure stays an Error whatever the
         // apply state is (CR-02).
-        let e = event_from(Some(("a".into(), StatusKind::Error)), None, None, None);
+        let e = event_from(
+            None,
+            Some(("a".into(), StatusKind::Error)),
+            None,
+            None,
+            None,
+        );
         assert_eq!(e, Some(("a".into(), StatusKind::Error)));
         let text = format!("Wrote x. {}", apply::RELOAD_INSTRUCTION);
         assert_eq!(apply_success_kind(&text), StatusKind::Warning);
         assert_eq!(apply_success_kind("Wrote x."), StatusKind::Ok);
         let e = event_from(
             None,
+            None,
             Some(("c".into(), true)),
             Some(("s".into(), true)),
             None,
         );
         assert_eq!(e, Some(("c".into(), StatusKind::Error)));
-        let e = event_from(None, Some(("c".into(), false)), None, None);
+        let e = event_from(None, None, Some(("c".into(), false)), None, None);
         assert_eq!(e, Some(("c".into(), StatusKind::Info)));
-        let e = event_from(None, None, Some(("s".into(), true)), Some("l".into()));
+        let e = event_from(None, None, None, Some(("s".into(), true)), Some("l".into()));
         assert_eq!(e, Some(("s".into(), StatusKind::Error)));
-        let e = event_from(None, None, Some(("s".into(), false)), Some("l".into()));
+        let e = event_from(
+            None,
+            None,
+            None,
+            Some(("s".into(), false)),
+            Some("l".into()),
+        );
         assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
-        let e = event_from(None, None, None, Some("l".into()));
+        let e = event_from(None, None, None, None, Some("l".into()));
         assert_eq!(e, Some(("l".into(), StatusKind::Info)));
-        assert_eq!(event_from(None, None, None, None), None);
+        assert_eq!(event_from(None, None, None, None, None), None);
     }
 
     #[test]

@@ -99,7 +99,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 <summary>🚧 v0.7 Initial Public Release and Strictness Selector (Phases 36-42) — IN PROGRESS</summary>
 
 - [ ] **Phase 36: Per-user Locations & Embedded Defaults** - Config and cache move to per-user folders; every shipped data file is built into the exe
-- [ ] **Phase 37: Game Folder Resolver & Picker** - Documents-based default game folder with a Browse picker on the Config tab
+- [ ] **Phase 37: Game Folder Resolver & Picker** - Documents-based default game folder with a Browse picker on the Config tab, and a refresh button (game art) that re-reads filters and sounds
 - [ ] **Phase 38: Built-in Styles, Strictness & Reset** - Reworked built-in styles (one fixture re-baseline), the seven-level Strictness row, Reset to defaults for styles and tiers
 - [ ] **Phase 39: League Picker & Price Source** - Choose the league and Live or Fallback prices from the Economy tab
 - [ ] **Phase 40: Release Pipeline & Installer** - Tag-triggered build, per-user installer, portable zip, checksums, public-release items
@@ -122,15 +122,16 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 ### Phase 37: Game Folder Resolver & Picker
 **Goal**: Users find their Path of Exile 2 folder automatically, or pick it themselves, on any Windows setup
 **Depends on**: Phase 36
-**Requirements**: GAME-01, GAME-02, GAME-03, GAME-04
+**Requirements**: GAME-01, GAME-02, GAME-03, GAME-04, GAME-05, GAME-06
 **Success Criteria** (what must be TRUE):
   1. On a machine with OneDrive-redirected or localized Documents, the default game folder resolves to the OS Documents folder + `My Games\Path of Exile 2` with no hard-coded path
   2. The Config tab shows the current game folder with a Browse button; the folder picked there is restored on the next launch
   3. Changing the game folder with unapplied rule edits opens the Switch filter? popup before anything is discarded
   4. With a missing game folder the status line says so and points to the picker
+  5. After dropping a new `.filter` or `.mp3` / `.wav` into the game folder, pressing the refresh button (the game's round-arrow-on-square art) lists it in the filter dropdown and the Alert sound dropdowns, with no restart, no write and no edit lost
 **Plans**: TBD
 **UI hint**: yes
-**Research**: needed (`rfd` parent window and threading under eframe; test-isolation override for the game folder)
+**Research**: needed (`rfd` parent window and threading under eframe; test-isolation override for the game folder; locate the game's refresh-button art with `ff-art list` / `dump` and add a manifest entry)
 
 ### Phase 38: Built-in Styles, Strictness & Reset
 **Goal**: The shipped built-in styles are the reworked set, one button row on the Config tab sets how strict the filter is, and styles and tiers can be reset to their defaults

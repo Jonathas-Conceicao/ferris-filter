@@ -29,6 +29,12 @@
 - [ ] **GAME-03**: Changing the game folder with unapplied rule edits asks first (the Switch
   filter? popup).
 - [ ] **GAME-04**: A missing game folder shows a clear status pointing to the picker.
+- [ ] **GAME-05**: A refresh button beside the filter selector re-reads the game folder, so
+  `.filter` files and `.mp3` / `.wav` sound files added since load appear in the filter dropdown and
+  the Alert sound dropdowns without a restart; it never writes and never discards edits.
+- [ ] **GAME-06**: The refresh button uses the game's own refresh art (round arrow on a square
+  button), extracted by `ff-art` through a `manifest.toml` entry into `assets/poe2/` and compiled
+  into the binary like the rest of the skin.
 
 ### Built-in styles (BSTY)
 
@@ -158,6 +164,8 @@
 | GAME-02 | Phase 37 | Pending |
 | GAME-03 | Phase 37 | Pending |
 | GAME-04 | Phase 37 | Pending |
+| GAME-05 | Phase 37 | Pending |
+| GAME-06 | Phase 37 | Pending |
 | BSTY-01 | Phase 38 | Pending |
 | BSTY-02 | Phase 38 | Pending |
 | BSTY-03 | Phase 38 | Pending |
@@ -193,7 +201,7 @@
 | REV-04 | Phase 42 | Pending |
 | REV-05 | Phase 42 | Pending |
 
-**Coverage:** 43/43 v0.7 requirements mapped, no orphans, no duplicates.
+**Coverage:** 45/45 v0.7 requirements mapped, no orphans, no duplicates.
 
 ---
 *Requirements defined: 2026-10-17*

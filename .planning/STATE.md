@@ -91,7 +91,7 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 ### Roadmap Evolution
 
 - v0.7 roadmap created (2026-10-18): Phases 36-42 - per-user locations + embedded defaults, game
-  folder picker, built-in styles + Strictness Selector + Reset to defaults (one fixture re-baseline), league + price
+  folder picker + refresh button, built-in styles + Strictness Selector + Reset to defaults (one fixture re-baseline), league + price
   source, release pipeline + installer + PUB items (v0.7.0-rc dry run), Check for updates, Release
   Review (last). Research flags: 37, 39, 40, 41. UI phases 36-39 and 41 carry UI hint: yes.
 

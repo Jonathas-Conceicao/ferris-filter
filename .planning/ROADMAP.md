@@ -163,7 +163,7 @@ Plans:
 - [x] 38-03-PLAN.md — Pure strictness model and ConfigState reset/strictness methods (TDD)
 - [x] 38-04-PLAN.md — Strictness row on the Config tab wired to SetStrictness
 - [x] 38-05-PLAN.md — Reset to defaults buttons (Styles, Tiers) and their two popups
-- [ ] 38-06-PLAN.md — CLAUDE.md update and phase gate with screenshot UAT
+- [x] 38-06-PLAN.md — CLAUDE.md update and phase gate with screenshot UAT
 
 **UI hint**: yes
 
@@ -236,7 +236,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 36. Per-user Locations & Embedded Defaults | 7/7 | Complete    | 2026-10-18 |
 | 37. Game Folder Resolver & Picker | 7/7 | Complete    | 2026-10-18 |
-| 38. Built-in Styles, Strictness & Reset | 5/6 | In Progress|  |
+| 38. Built-in Styles, Strictness & Reset | 6/6 | Complete   | 2026-10-18 |
 | 39. League Picker & Price Source | 0/0 | Not started | - |
 | 40. Release Pipeline & Installer | 0/0 | Not started | - |
 | 41. Check for Updates | 0/0 | Not started | - |

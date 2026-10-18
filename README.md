@@ -63,8 +63,8 @@ changes.
   overlay is the foreground window. The close button only hides it;
   **Quit** in the system tray icon exits.
 
-Your settings live in the FerrisFilter folder (the one holding
-`styles-default.json`): `styles.json`, `tiers.json`, `prices.json` and
+Your settings live in `%APPDATA%\FerrisFilter` (created on the first
+save): `styles.json`, `tiers.json`, `prices.json` and
 `ff-settings.json`. Delete `styles.json` or `tiers.json` to go back to
 the defaults.
 

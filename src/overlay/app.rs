@@ -1056,6 +1056,19 @@ fn settings_after_reload(
     current.clone()
 }
 
+/// With no saved filter, selects one from `game_dir`'s listing: `current` when listed, else the
+/// first `.filter`; an empty or unreadable folder leaves the name as it is. Held in memory only
+/// (nothing is written), so every place that replaces the settings from disk (startup, RELOAD)
+/// applies it again and the overlay stays on the filter it had open.
+fn choose_unsaved_filter(settings: &mut Settings, game_dir: Option<&Path>, current: &str) {
+    if settings.filter.is_none()
+        && let Some(list) = game_dir.and_then(|dir| settings::list_filters(dir).ok())
+        && !list.is_empty()
+    {
+        settings.filter = Some(settings::choose_filter(&list, current));
+    }
+}
+
 /// `current` with the reload-after-Apply preference replaced; the filter and unknown keys stay.
 fn settings_with_reload(current: &Settings, on: bool) -> Settings {
     Settings {
@@ -1310,14 +1323,8 @@ impl OverlayApp {
         };
         // A fresh install (no saved filter): use the folder's filter instead of a fixed name.
         // Held in memory only; opening the overlay never writes.
-        if settings.filter.is_none()
-            && let Some(list) = game_dir
-                .as_deref()
-                .and_then(|dir| settings::list_filters(dir).ok())
-            && !list.is_empty()
-        {
-            settings.filter = Some(settings::choose_filter(&list, settings.filter_name()));
-        }
+        let current = settings.filter_name().to_string();
+        choose_unsaved_filter(&mut settings, game_dir.as_deref(), &current);
         // Loading never writes (D-10).
         let filter = Self::load_filter(game_dir.as_deref(), settings.filter_name());
         let working = working_from(&filter);
@@ -2362,6 +2369,7 @@ impl OverlayApp {
     /// under a running process); the game folder is re-resolved outside unit tests.
     fn reload(&mut self) {
         let old_root = self.root.clone();
+        let open_filter = self.settings.filter_name().to_string();
         if self.root.is_err() {
             self.root = resolve_root();
         }
@@ -2389,6 +2397,8 @@ impl OverlayApp {
         {
             self.game_dir = crate::locations::game_dir(self.settings.game_folder_path());
         }
+        // No saved filter: keep the one that was open when the folder still lists it.
+        choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref(), &open_filter);
         self.reset_filter_state();
         self.refresh_inputs();
         if settings_warning.is_some() {
@@ -6282,6 +6292,24 @@ Hide
         assert_eq!(app.settings.filter_name(), "x.filter");
         assert!(!home.path().join("ff-settings.json").exists());
         assert!(app.filter.is_ok());
+    }
+
+    #[test]
+    fn reload_keeps_the_unsaved_folder_filter() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        assert!(app.filter.is_ok());
+        assert!(!home.path().join("ff-settings.json").exists());
+    }
+
+    #[test]
+    fn reload_keeps_the_open_unsaved_filter_among_several() {
+        let (mut app, _ctx, _home, _game) = folder_app(None, &["a.filter", "b.filter"]);
+        app.settings.filter = Some("b.filter".to_string());
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "b.filter");
     }
 
     #[test]

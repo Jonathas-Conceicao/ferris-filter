@@ -68,7 +68,7 @@ pub fn run() -> miette::Result<()> {
             sub,
         } => sync::cmd_sync(standard, hc, league, sub)?,
         Commands::Install { input, dest } => {
-            install::cmd_install(&input, dest, saved_game_folder().as_deref())?
+            install::cmd_install(&input, dest, saved_choice().game_folder.as_deref())?
         }
     }
     Ok(())
@@ -156,11 +156,15 @@ fn cmd_apply(
 ) -> miette::Result<()> {
     let path: PathBuf = match filter {
         Some(f) => PathBuf::from(f),
-        None => dynamic::default_filter_path(saved_game_folder().as_deref()).ok_or_else(|| {
-            miette::miette!(
-                "Cannot find the Documents folder; set FERRISFILTER_GAME_DIR or pass --filter <path>."
-            )
-        })?,
+        None => {
+            let choice = saved_choice();
+            dynamic::default_filter_path(choice.game_folder.as_deref(), &choice.filter)
+                .ok_or_else(|| {
+                    miette::miette!(
+                        "Cannot find the Documents folder; set FERRISFILTER_GAME_DIR or pass --filter <path>."
+                    )
+                })?
+        }
     };
     let shown = path.display().to_string();
     let mut loaded = dynamic::LoadedFilter::load(&path).map_err(miette::Error::from)?;
@@ -248,20 +252,40 @@ fn cmd_apply(
     Ok(())
 }
 
-/// The `game_folder` saved in `<root>/ff-settings.json`: absolute, or `None` when the file or the
-/// key is absent or unusable (a bad key already means "use the default", so the load warning is
-/// not needed here). Reads only; creates nothing.
-pub(crate) fn saved_game_folder_in(root: &Path) -> Option<PathBuf> {
-    crate::settings::load(root)
-        .0
-        .game_folder_path()
-        .map(Path::to_path_buf)
+/// The choices ff saved in `ff-settings.json` that the CLI defaults follow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SavedChoice {
+    /// The picked game folder (absolute), or `None` for the default.
+    pub game_folder: Option<PathBuf>,
+    /// The selected filter's file name (`dynamic.filter` when none is saved).
+    pub filter: String,
 }
 
-/// The saved game folder of the app root this process resolves, if any.
-fn saved_game_folder() -> Option<PathBuf> {
-    let dirs = crate::locations::from_env().ok()?;
-    saved_game_folder_in(&dirs.root)
+impl Default for SavedChoice {
+    fn default() -> Self {
+        Self {
+            game_folder: None,
+            filter: dynamic::FILTER_FILE.to_string(),
+        }
+    }
+}
+
+/// The game folder and filter saved in `<root>/ff-settings.json`, read in one load: an absent or
+/// unusable key gives the default (Documents folder, `dynamic.filter`). Reads only; creates
+/// nothing.
+pub(crate) fn saved_choice_in(root: &Path) -> SavedChoice {
+    let settings = crate::settings::load(root).0;
+    SavedChoice {
+        game_folder: settings.game_folder_path().map(Path::to_path_buf),
+        filter: settings.filter_name().to_string(),
+    }
+}
+
+/// The saved choice of the app root this process resolves, if any.
+fn saved_choice() -> SavedChoice {
+    crate::locations::from_env()
+        .map(|dirs| saved_choice_in(&dirs.root))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -271,7 +295,7 @@ mod tests {
     #[test]
     fn saved_game_folder_absent_file_is_none_and_creates_nothing() {
         let t = tempfile::tempdir().unwrap();
-        assert_eq!(saved_game_folder_in(t.path()), None);
+        assert_eq!(saved_choice_in(t.path()).game_folder, None);
         assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 0);
     }
 
@@ -281,7 +305,7 @@ mod tests {
         let game = t.path().join("game");
         let json = serde_json::json!({ "game_folder": game.to_string_lossy() });
         std::fs::write(t.path().join("ff-settings.json"), json.to_string()).unwrap();
-        assert_eq!(saved_game_folder_in(t.path()), Some(game));
+        assert_eq!(saved_choice_in(t.path()).game_folder, Some(game));
     }
 
     #[test]
@@ -292,6 +316,34 @@ mod tests {
             r#"{"game_folder":"relative/dir"}"#,
         )
         .unwrap();
-        assert_eq!(saved_game_folder_in(t.path()), None);
+        assert_eq!(saved_choice_in(t.path()).game_folder, None);
+    }
+
+    #[test]
+    fn saved_choice_reads_the_selected_filter_with_the_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let game = t.path().join("game");
+        let json =
+            serde_json::json!({ "game_folder": game.to_string_lossy(), "filter": "ssf.filter" });
+        std::fs::write(t.path().join("ff-settings.json"), json.to_string()).unwrap();
+        assert_eq!(
+            saved_choice_in(t.path()),
+            SavedChoice {
+                game_folder: Some(game),
+                filter: "ssf.filter".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn saved_choice_without_a_usable_filter_is_dynamic_filter() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(saved_choice_in(t.path()).filter, "dynamic.filter");
+        std::fs::write(
+            t.path().join("ff-settings.json"),
+            r#"{"filter":"../evil.filter"}"#,
+        )
+        .unwrap();
+        assert_eq!(saved_choice_in(t.path()).filter, "dynamic.filter");
     }
 }

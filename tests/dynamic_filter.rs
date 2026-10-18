@@ -418,6 +418,17 @@ fn default_filter_path_uses_game_dir_env() {
 }
 
 #[test]
+fn default_filter_path_uses_the_filter_selected_in_ff() {
+    let dir = workspace("selected");
+    fs::write(dir.join("ff-settings.json"), r#"{"filter":"ssf.filter"}"#).unwrap();
+    apply(&dir, &["--add-economy"]).success();
+    let ssf = dir.join("game").join("ssf.filter");
+    assert!(read(&ssf).contains(ECONOMY_LINE));
+    assert!(!gf(&dir).exists());
+    apply(&dir, &[]).success();
+}
+
+#[test]
 fn default_filter_path_refreshes_the_pinned_game_dir() {
     let dir = workspace("pinned");
     apply(&dir, &["--add-economy"]).success();

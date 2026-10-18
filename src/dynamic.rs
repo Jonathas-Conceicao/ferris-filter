@@ -100,9 +100,10 @@ pub enum DynamicError {
     Write(#[from] crate::safe_write::WriteError),
 }
 
-/// The default `dynamic.filter` location inside the PoE2 folder.
-pub fn default_filter_path(saved: Option<&Path>) -> Option<PathBuf> {
-    default_destination(saved).map(|d| d.join(FILTER_FILE))
+/// The default filter location: `filter` (the name selected in ff, else `dynamic.filter`) inside
+/// the PoE2 folder.
+pub fn default_filter_path(saved: Option<&Path>, filter: &str) -> Option<PathBuf> {
+    default_destination(saved).map(|d| d.join(filter))
 }
 
 /// An explicit operation on the economy section (D-05): only `AddEconomy` creates a section and

@@ -224,6 +224,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
 pub fn save(root: &Path, settings: &Settings) -> io::Result<()> {
     let mut text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
     text.push('\n');
+    std::fs::create_dir_all(root)?;
     let mut t = tempfile::NamedTempFile::new_in(root)?;
     t.write_all(text.as_bytes())?;
     t.as_file().sync_all()?;
@@ -245,6 +246,7 @@ pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> 
         }
         Err(_) => return Ok(false),
     };
+    // The file exists, so its folder does: no `create_dir_all` needed on this path.
     let Ok(mut map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
     else {
         return Ok(false);
@@ -370,6 +372,32 @@ pub fn contains_name(list: &[String], name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_creates_missing_folders() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("a").join("b");
+        save(&root, &Settings::default()).unwrap();
+        assert!(path(&root).is_file());
+    }
+
+    #[test]
+    fn save_section_state_creates_missing_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("fresh");
+        assert!(save_section_state(&root, &Settings::default()).unwrap());
+        assert!(path(&root).is_file());
+    }
+
+    #[test]
+    fn load_from_missing_folder_creates_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("missing");
+        let (s, w) = load(&root);
+        assert_eq!(s.filter, None);
+        assert_eq!(w, None);
+        assert!(!root.exists());
+    }
 
     #[test]
     fn missing_file_is_default_and_not_created() {

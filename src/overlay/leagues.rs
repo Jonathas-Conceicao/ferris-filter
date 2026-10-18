@@ -110,7 +110,7 @@ impl LeagueList {
     }
 
     /// Sets the state directly (screenshot mode and tests); drops any receiver.
-    #[allow(dead_code)] // used by tests; screenshot mode adopts it in a later plan
+    #[cfg_attr(not(debug_assertions), allow(dead_code))] // screenshot mode (debug) and tests
     pub(crate) fn inject(&mut self, state: ListState) {
         self.state = state;
         self.rx = None;

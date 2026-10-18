@@ -1,6 +1,7 @@
 //! Debug-only screenshot mode for `ff`: `ff --screenshot <png> [--tab t] [--popup p] [--status s]
 //! [--filter f] [--expand n] [--expand-economy n] [--search text] [--rename-section n] [--expand-style name]
-//! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT] [--stage-economy add|remove]` renders the
+//! [--picker text|border|background|rule] [--dropdown sound] [--tier-text TIER=TEXT] [--stage-economy add|remove]
+//! [--leagues <names>|none|loading] [--league <name>] [--price-source live|fallback]` renders the
 //! shell once, saves the frame as a PNG and exits.
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
@@ -36,6 +37,31 @@ pub(crate) const PICKERS: [&str; 4] = ["text", "border", "background", "rule"];
 /// list (expand a style or a Custom rule too).
 pub(crate) const DROPDOWNS: [&str; 1] = ["sound"];
 
+/// The price sources `--price-source` accepts.
+pub(crate) const PRICE_SOURCES: [&str; 2] = ["live", "fallback"];
+
+/// The league list `--leagues` injects (the list is never fetched in screenshot mode).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ShotLeagues {
+    List(Vec<String>),
+    Failed,
+    Loading,
+}
+
+/// Fake poe.ninja leagues for the given names. The slug is the lower-case name without spaces;
+/// a name starting with `HC ` or equal to `Hardcore` is hardcore. `indexed` is always false.
+pub(crate) fn fake_leagues(names: &[String]) -> Vec<crate::sync::models::EconomyLeague> {
+    names
+        .iter()
+        .map(|n| crate::sync::models::EconomyLeague {
+            name: n.clone(),
+            url: n.to_lowercase().replace(' ', ""),
+            hardcore: n == "Hardcore" || n.starts_with("HC "),
+            indexed: false,
+        })
+        .collect()
+}
+
 /// The parsed command line of the screenshot mode.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ShotArgs {
@@ -68,6 +94,12 @@ pub(crate) struct ShotArgs {
     pub dropdown: Option<String>,
     /// Seed this tier cutoff text on ECONOMY, e.g. `S=abc`, to show the inline validation.
     pub tier_text: Option<(String, String)>,
+    /// Inject this league list instead of fetching one.
+    pub leagues: Option<ShotLeagues>,
+    /// Save this league as the chosen one (temp root only).
+    pub league: Option<String>,
+    /// Save this price source (`live` or `fallback`) as the chosen one.
+    pub price_source: Option<String>,
 }
 
 /// Parses the arguments after the program name. `Ok(None)` when `--screenshot` is absent: a
@@ -92,6 +124,9 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut picker = None;
     let mut dropdown = None;
     let mut tier_text = None;
+    let mut leagues = None;
+    let mut league = None;
+    let mut price_source = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -171,6 +206,43 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                     _ => return Err(format!("--tier-text needs TIER=TEXT, got `{t}`")),
                 };
             }
+            "--leagues" => {
+                let v = value("--leagues")?;
+                leagues = Some(match v.trim() {
+                    "none" => ShotLeagues::Failed,
+                    "loading" => ShotLeagues::Loading,
+                    t => {
+                        let names: Vec<String> = t
+                            .split(',')
+                            .map(|n| n.trim().to_string())
+                            .filter(|n| !n.is_empty())
+                            .collect();
+                        if names.is_empty() {
+                            return Err(
+                                "--leagues needs a comma-separated list, none or loading".into()
+                            );
+                        }
+                        ShotLeagues::List(names)
+                    }
+                });
+            }
+            "--league" => {
+                let v = value("--league")?;
+                if v.trim().is_empty() {
+                    return Err("--league needs a league name".into());
+                }
+                league = Some(v);
+            }
+            "--price-source" => {
+                let v = value("--price-source")?;
+                if !PRICE_SOURCES.contains(&v.as_str()) {
+                    return Err(format!(
+                        "unknown price source `{v}` ({})",
+                        PRICE_SOURCES.join("|")
+                    ));
+                }
+                price_source = Some(v);
+            }
             "--search" => search = Some(value("--search")?),
             other => return Err(format!("unknown argument `{other}`")),
         }
@@ -190,6 +262,9 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         picker,
         dropdown,
         tier_text,
+        leagues,
+        league,
+        price_source,
     }))
 }
 
@@ -438,6 +513,83 @@ mod tests {
         let e = p(&["--screenshot", "o.png", "--tier-text", "noequals"]).unwrap_err();
         assert!(e.contains("--tier-text needs TIER=TEXT"), "{e}");
         assert!(p(&["--screenshot", "o.png", "--tier-text", "=x"]).is_err());
+    }
+
+    #[test]
+    fn league_flags_are_read() {
+        let names = "Forbidden Rites, Runes of Aldur,HC Forbidden Rites,HC Runes of Aldur,Standard,Hardcore";
+        let a = p(&[
+            "--screenshot",
+            "o.png",
+            "--leagues",
+            names,
+            "--league",
+            "Runes of Aldur",
+            "--price-source",
+            "fallback",
+        ])
+        .unwrap()
+        .unwrap();
+        let Some(ShotLeagues::List(l)) = &a.leagues else {
+            panic!("list expected");
+        };
+        assert_eq!(l.len(), 6);
+        assert_eq!(l[1], "Runes of Aldur");
+        assert_eq!(a.league.as_deref(), Some("Runes of Aldur"));
+        assert_eq!(a.price_source.as_deref(), Some("fallback"));
+        let n = p(&["--screenshot", "o.png", "--leagues", "none"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(n.leagues, Some(ShotLeagues::Failed));
+        let l = p(&["--screenshot", "o.png", "--leagues", "loading"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(l.leagues, Some(ShotLeagues::Loading));
+        let e = p(&["--screenshot", "o.png", "--leagues", ""]).unwrap_err();
+        assert!(e.contains("--leagues"), "{e}");
+        assert!(p(&["--screenshot", "o.png", "--leagues", " , "]).is_err());
+        let e = p(&["--screenshot", "o.png", "--price-source", "maybe"]).unwrap_err();
+        assert!(e.contains("live|fallback"), "{e}");
+        let live = p(&["--screenshot", "o.png", "--price-source", "live"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(live.price_source.as_deref(), Some("live"));
+        let none = p(&["--screenshot", "o.png"]).unwrap().unwrap();
+        assert_eq!(
+            (none.leagues, none.league, none.price_source),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn fake_leagues_have_slugs_and_hardcore_flags() {
+        let names: Vec<String> = [
+            "Forbidden Rites",
+            "HC Forbidden Rites",
+            "Standard",
+            "Hardcore",
+            "Runes of Aldur",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let l = fake_leagues(&names);
+        assert_eq!(
+            (l[0].url.as_str(), l[0].hardcore),
+            ("forbiddenrites", false)
+        );
+        assert_eq!(
+            (l[1].url.as_str(), l[1].hardcore),
+            ("hcforbiddenrites", true)
+        );
+        assert_eq!((l[2].url.as_str(), l[2].hardcore), ("standard", false));
+        assert_eq!((l[3].url.as_str(), l[3].hardcore), ("hardcore", true));
+        assert_eq!(l[4].url, "runesofaldur");
+        assert!(l.iter().all(|x| !x.indexed));
+        assert_eq!(
+            crate::sync::league::default_league(&l).map(|x| x.name.clone()),
+            Some("Forbidden Rites".to_string())
+        );
     }
 
     #[test]

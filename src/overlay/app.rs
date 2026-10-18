@@ -1285,6 +1285,26 @@ impl OverlayApp {
         if let (Some((tier, text)), Ok(state)) = (&shot.tier_text, &mut app.config) {
             state.set_tier_text(tier, text);
         }
+        use crate::overlay::screenshot::ShotLeagues;
+        match &shot.leagues {
+            Some(ShotLeagues::List(names)) => {
+                app.leagues.inject(ListState::Loaded(
+                    crate::overlay::screenshot::fake_leagues(names),
+                ));
+            }
+            Some(ShotLeagues::Failed) => {
+                app.leagues
+                    .inject(ListState::Failed("screenshot mode: no league list".into()));
+            }
+            Some(ShotLeagues::Loading) => app.leagues.inject(ListState::Loading),
+            None => {}
+        }
+        if let Some(name) = &shot.league {
+            app.set_league(name);
+        }
+        if let Some(src) = &shot.price_source {
+            app.set_price_source(src == "live");
+        }
         app.shot = Some(ShotState {
             args: shot,
             frames: 0,

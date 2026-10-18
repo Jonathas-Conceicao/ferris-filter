@@ -704,11 +704,14 @@ pub(crate) fn economy_tab(
             let enabled = inputs.tiers_reset_enabled;
             let mut r =
                 w::ff_button_ex(&mut right, skin, "Reset to defaults", 150.0, enabled, false);
-            r = if enabled {
-                r.on_hover_text("Restore the default cutoffs.")
+            // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response
+            // still counts as enabled: attach the tip both ways.
+            let tip = if enabled {
+                "Restore the default cutoffs."
             } else {
-                r.on_disabled_hover_text("Already at the defaults.")
+                "Already at the defaults."
             };
+            r = r.on_hover_text(tip).on_disabled_hover_text(tip);
             crate::overlay::style_lines::probe("reset-tiers", r.rect);
             if r.clicked() && enabled {
                 clicks.reset_tiers = true;

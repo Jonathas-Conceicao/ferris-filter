@@ -802,11 +802,14 @@ fn show_styles(
             enabled,
             false,
         );
-        r = if enabled {
-            r.on_hover_text("Restore the built-in styles. Your custom styles are kept.")
+        // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response still
+        // counts as enabled: attach the tip both ways.
+        let tip = if enabled {
+            "Restore the built-in styles. Your custom styles are kept."
         } else {
-            r.on_disabled_hover_text("Already at the defaults.")
+            "Already at the defaults."
         };
+        r = r.on_hover_text(tip).on_disabled_hover_text(tip);
         probe("reset-styles", r.rect);
         if r.clicked() && enabled {
             cfg.reset_armed = Some(RevertScope::Styles);

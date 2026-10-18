@@ -13,9 +13,6 @@
 //! `ViewportCommand::WindowLevel(WindowLevel::Normal)` when the pick starts and
 //! `WindowLevel::AlwaysOnTop` when [`FolderPick::poll`] finishes (wired by the app only if needed).
 
-// Not used by the app yet; remove this allow when the Config tab starts the dialog.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};

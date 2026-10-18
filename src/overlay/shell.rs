@@ -126,6 +126,8 @@ pub(crate) struct StatusLine {
     pub kind: StatusKind,
     /// The rule a click on the line jumps to.
     pub jump: Option<BlockId>,
+    /// The tab a click on the line opens.
+    pub open_tab: Option<ShellTab>,
     /// A hover explanation for a short standing message (the unapplied indicator).
     pub tip: Option<&'static str>,
 }
@@ -137,6 +139,8 @@ pub(crate) struct StatusInputs {
     pub event: Option<(String, StatusKind)>,
     pub grammar_gate: Option<(String, BlockId)>,
     pub filter_error: Option<String>,
+    /// The "Game folder not found" text when the game folder is missing on disk.
+    pub game_folder_missing: Option<String>,
     pub syncing: bool,
     pub unknown: Option<(String, BlockId)>,
     pub migrated: bool,
@@ -150,6 +154,7 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
         text,
         kind,
         jump: None,
+        open_tab: None,
         tip: None,
     };
     if let Some(text) = inputs.root_error {
@@ -163,11 +168,18 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
             text,
             kind: StatusKind::Error,
             jump: Some(id),
+            open_tab: None,
             tip: None,
         };
     }
     if let Some(text) = inputs.filter_error {
         return plain(text, StatusKind::Error);
+    }
+    if let Some(text) = inputs.game_folder_missing {
+        return StatusLine {
+            open_tab: Some(ShellTab::Config),
+            ..plain(text, StatusKind::Error)
+        };
     }
     if inputs.syncing {
         return plain(SYNC_RUNNING.to_string(), StatusKind::Info);
@@ -177,6 +189,7 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
             text,
             kind: StatusKind::Warning,
             jump: Some(id),
+            open_tab: None,
             tip: None,
         };
     }
@@ -1043,6 +1056,7 @@ mod tests {
             event: None,
             grammar_gate: None,
             filter_error: None,
+            game_folder_missing: None,
             syncing: false,
             unknown: None,
             migrated: false,
@@ -1057,6 +1071,7 @@ mod tests {
             event: Some(("event".into(), StatusKind::Ok)),
             grammar_gate: Some(("gate".into(), id())),
             filter_error: Some("load".into()),
+            game_folder_missing: Some("missing".into()),
             syncing: true,
             unknown: Some(("unknown".into(), id())),
             migrated: true,
@@ -1105,11 +1120,38 @@ mod tests {
     }
 
     #[test]
+    fn row4b_game_folder_missing_opens_the_config_tab() {
+        let mut i = full();
+        i.event = None;
+        i.grammar_gate = None;
+        i.filter_error = None;
+        let s = status_for(i);
+        assert_eq!(s.text, "missing");
+        assert_eq!(s.kind, StatusKind::Error);
+        assert_eq!(s.jump, None);
+        assert_eq!(s.open_tab, Some(ShellTab::Config));
+        let mut only = empty();
+        only.game_folder_missing = Some("x".into());
+        assert_eq!(status_for(only).open_tab, Some(ShellTab::Config));
+    }
+
+    #[test]
+    fn game_folder_missing_is_outranked_by_load_failure() {
+        let mut i = full();
+        i.event = None;
+        i.grammar_gate = None;
+        let s = status_for(i);
+        assert_eq!(s.text, "load");
+        assert_eq!(s.open_tab, None);
+    }
+
+    #[test]
     fn row5_syncing() {
         let mut i = full();
         i.event = None;
         i.grammar_gate = None;
         i.filter_error = None;
+        i.game_folder_missing = None;
         let s = status_for(i);
         assert_eq!(s.text, SYNC_RUNNING);
         assert_eq!(s.kind, StatusKind::Info);
@@ -1121,6 +1163,7 @@ mod tests {
         i.event = None;
         i.grammar_gate = None;
         i.filter_error = None;
+        i.game_folder_missing = None;
         i.syncing = false;
         let s = status_for(i);
         assert_eq!(s.text, "unknown");

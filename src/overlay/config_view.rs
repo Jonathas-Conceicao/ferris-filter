@@ -47,6 +47,10 @@ pub enum ConfigAction {
     SelectFilter(String),
     CreateFilter(String),
     ConfirmSwitch,
+    /// Open the native folder dialog to pick the game folder (the app starts it where the frame is at hand).
+    BrowseFolder,
+    /// Re-list the game folder's `.filter` files and the sound files: no write, no selection change.
+    RefreshLists,
     CancelSwitch,
     SetReloadAfterApply(bool),
     AddStyle(String),

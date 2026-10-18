@@ -234,6 +234,25 @@ pub struct OverlayApp {
     /// A filter picked while the rules have unapplied edits, awaiting confirmation.
     pending_switch: Option<String>,
 
+    /// A game folder picked while the rules have unapplied edits, awaiting confirmation.
+    pending_folder: Option<std::path::PathBuf>,
+
+    /// The CONFIG tab asked for the folder dialog; started where the frame is at hand.
+    want_browse: bool,
+
+    /// The native folder dialog worker.
+    folder_pick: super::folder_dialog::FolderPick,
+
+    /// `FERRISFILTER_GAME_DIR` pins the folder, so a pick is ignored.
+    game_dir_pinned: bool,
+
+    /// The default game folder (Documents\My Games\Path of Exile 2), for the Config tab.
+    #[allow(dead_code)]
+    default_game_dir: Option<std::path::PathBuf>,
+
+    /// The game folder does not exist on disk. Read only when the lists are refreshed.
+    game_dir_missing: bool,
+
     /// The sound-file listing of the filter folder needs re-reading (startup, reload, switch);
     /// done on the next frame, where the egui context is at hand.
     sound_dir_stale: bool,
@@ -1006,6 +1025,16 @@ fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     }
 }
 
+/// The settings to save when `path` becomes the game folder and `name` the filter in it; unknown
+/// keys are preserved. The path is stored exactly as picked (never canonicalized).
+fn settings_with_folder(current: &Settings, path: &std::path::Path, name: &str) -> Settings {
+    Settings {
+        game_folder: Some(path.to_string_lossy().into_owned()),
+        filter: Some(name.to_string()),
+        ..current.clone()
+    }
+}
+
 /// The settings RELOAD keeps after re-reading `ff-settings.json`.
 ///
 /// A clean load, or a load from a different root, replaces the session's settings. A load that
@@ -1276,10 +1305,20 @@ impl OverlayApp {
         game_dir: Option<PathBuf>,
     ) -> Self {
         // Settings: the remembered filter. Without a root nothing is read and nothing is saved.
-        let (settings, settings_warning) = match &root {
+        let (mut settings, settings_warning) = match &root {
             Ok(root) => settings::load(root),
             Err(_) => (Settings::default(), None),
         };
+        // A fresh install (no saved filter): use the folder's filter instead of a fixed name.
+        // Held in memory only; opening the overlay never writes.
+        if settings.filter.is_none()
+            && let Some(list) = game_dir
+                .as_deref()
+                .and_then(|dir| settings::list_filters(dir).ok())
+            && !list.is_empty()
+        {
+            settings.filter = Some(settings::choose_filter(&list, settings.filter_name()));
+        }
         // Loading never writes (D-10).
         let filter = Self::load_filter(game_dir.as_deref(), settings.filter_name());
         let working = working_from(&filter);
@@ -1342,11 +1381,25 @@ impl OverlayApp {
             game_dir,
             filters_cache: None,
             pending_switch: None,
+            pending_folder: None,
+            want_browse: false,
+            folder_pick: super::folder_dialog::FolderPick::default(),
+            // Tests never reach the real environment or Documents folder.
+            #[cfg(test)]
+            game_dir_pinned: false,
+            #[cfg(not(test))]
+            game_dir_pinned: crate::locations::game_dir_is_pinned(),
+            #[cfg(test)]
+            default_game_dir: None,
+            #[cfg(not(test))]
+            default_game_dir: crate::locations::default_game_dir(),
+            game_dir_missing: false,
             sound_dir_stale: true,
             #[cfg(test)]
             test_home: None,
         };
         app.refresh_inputs();
+        app.refresh_filters();
         app.refresh_economy_info();
         if settings_warning.is_some() {
             app.list_status = settings_warning;
@@ -1418,6 +1471,71 @@ impl OverlayApp {
             .game_dir
             .as_deref()
             .and_then(|dir| settings::list_filters(dir).ok());
+        // The one place the folder's existence is read (never per frame).
+        self.game_dir_missing = self.game_dir.as_deref().is_some_and(|d| !d.is_dir());
+    }
+
+    /// The status text for a game folder that is not on disk.
+    fn game_folder_missing_text(&self) -> Option<String> {
+        let dir = self.game_dir.as_deref()?;
+        self.game_dir_missing
+            .then(|| format!("Game folder not found: {}", dir.display()))
+    }
+
+    /// A game folder came back from the dialog. A pick equal to the current folder does nothing;
+    /// unapplied rule edits make it wait for confirmation (the Switch filter? popup).
+    fn on_folder_picked(&mut self, path: std::path::PathBuf) {
+        if self.game_dir_pinned {
+            return;
+        }
+        let same = self.game_dir.as_deref().is_some_and(|cur| {
+            cur.to_string_lossy()
+                .eq_ignore_ascii_case(&path.to_string_lossy())
+        });
+        if same {
+            return;
+        }
+        if self.working.as_ref().is_some_and(|w| w.is_dirty()) {
+            self.pending_folder = Some(path);
+        } else {
+            self.apply_folder(path);
+        }
+    }
+
+    /// Makes `path` the game folder now: the filter is chosen from its listing (same name, else the
+    /// first `.filter`, else the current name), and both are saved in one write.
+    fn apply_folder(&mut self, path: std::path::PathBuf) {
+        self.pending_folder = None;
+        self.game_dir = Some(path.clone());
+        self.refresh_filters();
+        let name = settings::choose_filter(
+            self.filters_cache.as_deref().unwrap_or(&[]),
+            self.settings.filter_name(),
+        );
+        let next = settings_with_folder(&self.settings, &path, &name);
+        self.adopt_settings(next);
+    }
+
+    /// Saves `next` as the settings in force (a failed save still applies it for the session and
+    /// says so), then reloads everything that follows the filter and folder.
+    fn adopt_settings(&mut self, next: Settings) {
+        let save_error = match &self.root {
+            Ok(root) => settings::save(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
+        self.reset_filter_state();
+        self.refresh_inputs();
+        self.refresh_filters();
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Whether the folder dialog is open (read by the Config tab to grey Browse).
+    #[allow(dead_code)]
+    pub(crate) fn folder_dialog_open(&self) -> bool {
+        self.folder_pick.is_open()
     }
 
     /// (Re)reads `styles.json` into the working filter and `config.json` into the class
@@ -1504,6 +1622,7 @@ impl OverlayApp {
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
         self.pending_switch = None;
+        self.pending_folder = None;
         self.sound_dir_stale = true;
     }
 
@@ -1520,17 +1639,7 @@ impl OverlayApp {
     /// this session and says so.
     fn switch_to(&mut self, name: String) {
         let next = settings_with_filter(&self.settings, &name);
-        let save_error = match &self.root {
-            Ok(root) => settings::save(root, &next).err(),
-            Err(_) => None,
-        };
-        self.settings = next;
-        self.reset_filter_state();
-        self.refresh_inputs();
-        self.refresh_filters();
-        if let Some(err) = save_error {
-            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
-        }
+        self.adopt_settings(next);
     }
 
     /// Saves `next` as the settings now in force. A failed save still applies it for this
@@ -1841,7 +1950,7 @@ impl OverlayApp {
         shell::PopupFlags {
             quit: self.quit_confirm && !quit_requested,
             changed: self.changed_popup && !self.changed_on_disk.is_empty(),
-            switch: self.pending_switch.is_some(),
+            switch: self.pending_switch.is_some() || self.pending_folder.is_some(),
             delete_rule: self.list.confirm_delete.is_some(),
             delete_style: self.config_ui.delete_armed.is_some(),
             remove_economy: self.list.confirm_economy_remove,
@@ -1901,9 +2010,13 @@ impl OverlayApp {
                     block: self.overwrite_block(),
                 })
             }
-            Popup::SwitchFilter => shell::popup_spec(PopupData::SwitchFilter {
-                target: self.pending_switch.as_deref().unwrap_or(""),
-            }),
+            Popup::SwitchFilter => {
+                let target = match &self.pending_folder {
+                    Some(dir) => dir.display().to_string(),
+                    None => self.pending_switch.clone().unwrap_or_default(),
+                };
+                shell::popup_spec(PopupData::SwitchFilter { target: &target })
+            }
             Popup::DeleteRule => {
                 let row = self
                     .list
@@ -2498,11 +2611,30 @@ impl OverlayApp {
                     }
                 }
                 ConfigAction::ConfirmSwitch => {
-                    if let Some(name) = self.pending_switch.take() {
+                    if let Some(dir) = self.pending_folder.take() {
+                        self.pending_switch = None;
+                        self.apply_folder(dir);
+                    } else if let Some(name) = self.pending_switch.take() {
                         self.switch_to(name);
                     }
                 }
-                ConfigAction::CancelSwitch => self.pending_switch = None,
+                ConfigAction::CancelSwitch => {
+                    self.pending_switch = None;
+                    self.pending_folder = None;
+                }
+                ConfigAction::BrowseFolder => {
+                    if !self.game_dir_pinned
+                        && !self.folder_pick.is_open()
+                        && self.pending_switch.is_none()
+                        && self.pending_folder.is_none()
+                    {
+                        self.want_browse = true;
+                    }
+                }
+                ConfigAction::RefreshLists => {
+                    self.refresh_filters();
+                    super::sound_files::refresh(ctx);
+                }
             }
         }
     }
@@ -2711,7 +2843,7 @@ pub(crate) fn bottom_bar(
         status_rect,
         &status.text,
         status.kind,
-        status.jump.is_some(),
+        status.jump.is_some() || status.open_tab.is_some(),
     );
     let line = match status.tip {
         Some(tip) => line.on_hover_text(tip),
@@ -2721,7 +2853,7 @@ pub(crate) fn bottom_bar(
         revert: state.revert && revert.clicked(),
         reload: state.reload && reload.clicked(),
         apply: slot.enabled && apply.clicked(),
-        status: status.jump.is_some() && line.clicked(),
+        status: (status.jump.is_some() || status.open_tab.is_some()) && line.clicked(),
         rects: [revert.rect, reload.rect, apply.rect],
     }
 }
@@ -2736,6 +2868,10 @@ impl eframe::App for OverlayApp {
         if self.sound_dir_stale {
             self.sound_dir_stale = false;
             super::sound_files::set_dir(ui.ctx(), self.sound_dir());
+        }
+        // A folder the dialog worker handed back is applied here, on the UI thread.
+        if let Some(path) = self.folder_pick.poll() {
+            self.on_folder_picked(path);
         }
 
         // Dock on the game's monitor (the primary one without the game): once as soon as the
@@ -2875,12 +3011,27 @@ impl eframe::App for OverlayApp {
         // The frame decision: one call to the tested state machine, one
         // call to translate the transition into the single effect to
         // perform. No branching of our own.
-        let focused = ui.ctx().input(|i| i.viewport().focused).unwrap_or(false);
+        let real_focus = ui.ctx().input(|i| i.viewport().focused).unwrap_or(false);
+        if real_focus {
+            self.folder_pick.note_focused();
+        }
+        // The overlay neither hides while the folder dialog is open nor in the short grace after
+        // it closes, before focus comes back; the hotkey is ignored while the dialog is open.
+        let focused = super::folder_dialog::keep_visible(
+            real_focus,
+            self.folder_pick.is_open(),
+            self.folder_pick.since_close(),
+        );
+        if self.folder_pick.since_close().is_some() {
+            ui.ctx()
+                .request_repaint_after(super::folder_dialog::CLOSE_GRACE);
+        }
+        let toggle = self.toggle_requested && !self.folder_pick.is_open();
         // The screenshot mode keeps the window shown: nothing may hide it before the frame is saved.
         let next = if self.is_shot() {
             Visibility::ShownFocused
         } else {
-            visibility::advance(self.visibility, focused, self.toggle_requested)
+            visibility::advance(self.visibility, focused, toggle)
         };
         if let Some(effect) = visibility::effect_for(self.visibility, next) {
             if let Some(window) = &self.window {
@@ -3188,6 +3339,7 @@ impl eframe::App for OverlayApp {
                 )
             }),
             filter_error,
+            game_folder_missing: self.game_folder_missing_text(),
             syncing: self.economy.is_running(),
             unknown: unknown_styles.first().map(|(rule, id)| {
                 (
@@ -3205,6 +3357,9 @@ impl eframe::App for OverlayApp {
         let clicks = bottom_bar(ui, &skin, shell_frame.button_bar, &bar_state, &status);
         if clicks.status {
             jump_to = status.jump;
+            if let Some(tab) = status.open_tab {
+                picked_tab = Some(tab);
+            }
         }
 
         // Bar clicks run before the tab switch, against the tab they were drawn for.
@@ -3268,6 +3423,15 @@ impl eframe::App for OverlayApp {
         if !config_actions.is_empty() {
             let egui_ctx = ui.ctx().clone();
             self.handle_config_actions(&egui_ctx, config_actions);
+        }
+        // The dialog is owned by the overlay window, which is expected to keep it above the
+        // topmost overlay. If the in-game check shows it behind, send
+        // `egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal)` right after start and
+        // `egui::WindowLevel::AlwaysOnTop` when `poll()` returns (pick or cancel).
+        if std::mem::take(&mut self.want_browse) && !self.is_shot() {
+            let egui_ctx = ui.ctx().clone();
+            self.folder_pick
+                .start(frame, self.game_dir.as_deref(), &egui_ctx);
         }
 
         // Deferred mutations: jump from the grammar line, then row operations, then the economy
@@ -3664,6 +3828,7 @@ mod tests {
             text: "a very long status message ".repeat(20),
             kind: w::StatusKind::Warning,
             jump: None,
+            open_tab: None,
             tip: None,
         };
         let mut drawn = 0usize;
@@ -5171,6 +5336,7 @@ Hide
             ),
             grammar_gate: None,
             filter_error: None,
+            game_folder_missing: None,
             syncing: false,
             unknown: None,
             migrated: false,
@@ -5869,5 +6035,267 @@ Hide
         app.config_ui.revert_armed = true;
         app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
         assert!(!app.config_ui.revert_armed);
+    }
+
+    // ---- game folder pick (Phase 37-05) ----
+
+    use crate::overlay::config_state::RevertScope;
+    use crate::overlay::config_view::ConfigAction;
+    use crate::overlay::shell::{self, ShellTab, StatusInputs};
+    use crate::skin::widgets as w;
+
+    /// An app whose app root and game folder are fresh temp folders; `settings` is the text of
+    /// `ff-settings.json` when given, and `files` are created in the game folder first.
+    fn folder_app(
+        settings: Option<&str>,
+        files: &[&str],
+    ) -> (
+        super::OverlayApp,
+        egui::Context,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        let game = tempfile::tempdir().unwrap();
+        if let Some(text) = settings {
+            std::fs::write(home.path().join("ff-settings.json"), text).unwrap();
+        }
+        for f in files {
+            std::fs::write(game.path().join(f), "Show\n").unwrap();
+        }
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("test".to_string()),
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(game.path().to_path_buf()),
+        );
+        (app, ctx, home, game)
+    }
+
+    fn settings_text(home: &tempfile::TempDir) -> String {
+        std::fs::read_to_string(home.path().join("ff-settings.json")).unwrap_or_default()
+    }
+
+    #[test]
+    fn missing_game_folder_reports_on_the_status_line() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &[]);
+        assert!(!app.game_dir_missing);
+        assert_eq!(app.game_folder_missing_text(), None);
+        let gone = home.path().join("nope");
+        app.game_dir = Some(gone.clone());
+        app.refresh_filters();
+        assert!(app.game_dir_missing);
+        assert_eq!(
+            app.game_folder_missing_text(),
+            Some(format!("Game folder not found: {}", gone.display()))
+        );
+        app.game_dir = Some(home.path().to_path_buf());
+        app.refresh_filters();
+        assert!(!app.game_dir_missing);
+    }
+
+    #[test]
+    fn missing_game_folder_is_known_right_after_build() {
+        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("test".to_string()),
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("absent")),
+        );
+        assert!(app.game_dir_missing);
+    }
+
+    #[test]
+    fn picked_folder_applies_and_saves_in_one_write_keeping_unknown_keys() {
+        let (mut app, _ctx, home, _game) =
+            folder_app(Some(r#"{"filter":"old.filter","keep_me":7}"#), &[]);
+        let new = tempfile::tempdir().unwrap();
+        std::fs::write(new.path().join("a.filter"), "Show\n").unwrap();
+        std::fs::write(new.path().join("b.filter"), "Show\n").unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.game_dir.as_deref(), Some(new.path()));
+        assert_eq!(
+            app.filters_cache.as_deref(),
+            Some(&["a.filter".to_string(), "b.filter".to_string()][..])
+        );
+        let v: serde_json::Value = serde_json::from_str(&settings_text(&home)).unwrap();
+        assert_eq!(v["game_folder"], new.path().to_string_lossy().as_ref());
+        assert_eq!(v["filter"], "a.filter");
+        assert_eq!(v["keep_me"], 7);
+        assert!(app.pending_folder.is_none());
+        let config_edits = app.config.as_ref().map_or(0, |c| {
+            c.scope_dirty_count(RevertScope::Styles) + c.scope_dirty_count(RevertScope::Tiers)
+        });
+        assert_eq!(config_edits, 0, "CONFIG is never marked dirty");
+        assert!(app.sound_dir_stale);
+    }
+
+    #[test]
+    fn folder_pick_keeps_the_same_name_when_the_folder_has_it() {
+        let (mut app, _ctx, _home, _game) = folder_app(Some(r#"{"filter":"Mine.filter"}"#), &[]);
+        let new = tempfile::tempdir().unwrap();
+        std::fs::write(new.path().join("a.filter"), "Show\n").unwrap();
+        std::fs::write(new.path().join("mine.filter"), "Show\n").unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.settings.filter_name(), "mine.filter");
+    }
+
+    #[test]
+    fn folder_pick_without_filters_keeps_the_current_name_and_creates_nothing() {
+        let (mut app, _ctx, _home, _game) = folder_app(Some(r#"{"filter":"mine.filter"}"#), &[]);
+        let new = tempfile::tempdir().unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.settings.filter_name(), "mine.filter");
+        assert_eq!(std::fs::read_dir(new.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn dirty_rules_route_a_folder_pick_through_the_switch_popup() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx, home, _game) = folder_app(Some(r#"{"filter":"old.filter"}"#), &[]);
+        app.working = Some(WorkingFilter::from_text(RULES));
+        app.run_row_actions(vec![RowAction::AddRule]);
+        let before = settings_text(&home);
+        let new = tempfile::tempdir().unwrap();
+        std::fs::write(new.path().join("a.filter"), "Show\n").unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.pending_folder.as_deref(), Some(new.path()));
+        assert_eq!(settings_text(&home), before, "nothing written yet");
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::SwitchFilter)
+        );
+        let spec = app.popup_spec_for(Popup::SwitchFilter);
+        assert!(spec.body.contains(&new.path().display().to_string()));
+        // Stay.
+        app.dispatch_popup(&ctx, Popup::SwitchFilter, 1);
+        assert!(app.pending_folder.is_none());
+        assert_eq!(settings_text(&home), before);
+        assert_ne!(app.game_dir.as_deref(), Some(new.path()));
+        // Switch and discard.
+        app.on_folder_picked(new.path().to_path_buf());
+        app.dispatch_popup(&ctx, Popup::SwitchFilter, 0);
+        assert_eq!(app.game_dir.as_deref(), Some(new.path()));
+        assert!(app.pending_folder.is_none());
+        assert!(settings_text(&home).contains("game_folder"));
+    }
+
+    #[test]
+    fn picking_the_current_folder_does_nothing() {
+        let (mut app, _ctx, home, game) = folder_app(None, &["x.filter"]);
+        app.on_folder_picked(game.path().to_path_buf());
+        assert!(!home.path().join("ff-settings.json").exists());
+        assert!(app.pending_folder.is_none());
+    }
+
+    #[test]
+    fn browse_is_ignored_when_pinned_open_or_pending() {
+        let (mut app, ctx, _home, _game) = folder_app(None, &[]);
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(app.want_browse);
+        app.want_browse = false;
+        app.game_dir_pinned = true;
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        app.game_dir_pinned = false;
+        app.pending_switch = Some("x.filter".into());
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        app.pending_switch = None;
+        app.pending_folder = Some(std::path::PathBuf::from("C:/x"));
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        app.pending_folder = None;
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        assert!(app.folder_pick.start_with(
+            move || {
+                let _ = rx.recv();
+                None
+            },
+            || {}
+        ));
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        drop(tx);
+    }
+
+    #[test]
+    fn a_pinned_game_folder_ignores_a_pick() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &[]);
+        app.game_dir_pinned = true;
+        let new = tempfile::tempdir().unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_ne!(app.game_dir.as_deref(), Some(new.path()));
+        assert!(!home.path().join("ff-settings.json").exists());
+    }
+
+    #[test]
+    fn refresh_lists_relists_without_writing_or_discarding() {
+        let (mut app, ctx, home, game) = folder_app(Some(r#"{"filter":"sel.filter"}"#), &[]);
+        super::super::sound_files::set_dir(&ctx, Some(game.path().to_path_buf()));
+        app.working = Some(WorkingFilter::from_text(RULES));
+        app.run_row_actions(vec![RowAction::AddRule]);
+        let before = settings_text(&home);
+        std::fs::write(game.path().join("a.filter"), "Show\n").unwrap();
+        std::fs::write(game.path().join("b.mp3"), b"").unwrap();
+        app.handle_config_actions(&ctx, vec![ConfigAction::RefreshLists]);
+        assert!(
+            app.filters_cache
+                .as_deref()
+                .unwrap()
+                .contains(&"a.filter".to_string())
+        );
+        assert!(
+            super::super::sound_files::get(&ctx)
+                .files
+                .iter()
+                .any(|f| f == "b.mp3")
+        );
+        assert_eq!(settings_text(&home), before);
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        assert_eq!(app.settings.filter_name(), "sel.filter");
+        assert!(app.config_message.is_none());
+    }
+
+    #[test]
+    fn fresh_install_selects_the_folders_filter_in_memory_only() {
+        let (app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        assert!(!home.path().join("ff-settings.json").exists());
+        assert!(app.filter.is_ok());
+    }
+
+    #[test]
+    fn the_missing_folder_status_row_opens_the_config_tab() {
+        let s = shell::status_for(StatusInputs {
+            root_error: None,
+            event: None,
+            grammar_gate: None,
+            filter_error: None,
+            game_folder_missing: Some("Game folder not found: C:/x".into()),
+            syncing: false,
+            unknown: None,
+            migrated: false,
+            absent: false,
+            indicator: ("i", w::StatusKind::Info),
+        });
+        assert_eq!(s.open_tab, Some(ShellTab::Config));
     }
 }

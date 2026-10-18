@@ -1,7 +1,8 @@
 //! Bakes the ABOUT tab's version and repository link into the binary from git: the version from
 //! `git describe` (the release tag, `-dev` past it or with tracked edits), the link from the
 //! `origin` remote. Without git, a tag or a web remote it falls back to the `Cargo.toml` version
-//! and `repository`.
+//! and `repository`. It also embeds the Ferris icon and version info into `ff.exe` (Windows
+//! resource).
 
 use std::path::Path;
 use std::process::Command;
@@ -62,4 +63,31 @@ fn main() {
         build_info::link_text(&repo)
     );
     println!("cargo:rustc-env=FF_REPO_URL={repo}");
+
+    embed_resource();
+}
+
+/// Links the Ferris icon and VERSIONINFO into the `ff` binary only. A failure is a warning, or
+/// fatal when `FF_REQUIRE_RESOURCE` is set (the release workflow).
+fn embed_resource() {
+    println!("cargo:rerun-if-changed=assets/ferris/ferris.ico");
+    println!("cargo:rerun-if-env-changed=FF_REQUIRE_RESOURCE");
+    // Build scripts run on the host, so the target is read from the environment.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon("assets/ferris/ferris.ico")
+        .set("ProductName", "FerrisFilter")
+        .set("FileDescription", "FerrisFilter")
+        .set("InternalName", "ff")
+        .set("OriginalFilename", "ff.exe")
+        .set("LegalCopyright", "GPL-3.0-or-later")
+        .set("CompanyName", "Jonathas Conceicao");
+    if let Err(e) = res.compile_for("ff") {
+        if std::env::var_os("FF_REQUIRE_RESOURCE").is_some() {
+            panic!("Windows resource: {e}");
+        }
+        println!("cargo:warning=no exe icon/version resource: {e}");
+    }
 }

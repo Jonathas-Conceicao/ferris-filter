@@ -235,7 +235,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 36. Per-user Locations & Embedded Defaults | 7/7 | Complete    | 2026-10-18 |
-| 37. Game Folder Resolver & Picker | 6/7 | In Progress|  |
+| 37. Game Folder Resolver & Picker | 7/7 | Complete   | 2026-10-18 |
 | 38. Built-in Styles, Strictness & Reset | 0/0 | Not started | - |
 | 39. League Picker & Price Source | 0/0 | Not started | - |
 | 40. Release Pipeline & Installer | 0/0 | Not started | - |

@@ -2488,6 +2488,27 @@ impl OverlayApp {
         }
     }
 
+    /// A quit request (tray Quit or the installer's `ff --quit`): quits at once when nothing
+    /// is unapplied, otherwise opens the Unapplied changes popup. Returns true when the
+    /// shutdown began.
+    fn request_quit(&mut self) -> bool {
+        let dirty = self.quit_dirty();
+        let step = apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
+        if step == apply::QuitStep::QuitNow {
+            self.begin_shutdown();
+            return true;
+        }
+        if apply::quit_step_shows_confirm(step) {
+            self.quit_confirm = true;
+            // Reveal the window the way tray Show does (also when the window was hidden while
+            // the confirm was already up).
+            if self.visibility == Visibility::Hidden {
+                self.toggle_requested = true;
+            }
+        }
+        false
+    }
+
     /// Anything the Quit confirm guards: unapplied work, plus tier edits kept unused under
     /// Fallback (no Apply writes them, but quitting loses them).
     fn quit_dirty(&mut self) -> bool {
@@ -3358,24 +3379,19 @@ impl eframe::App for OverlayApp {
                     }
                 }
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
-                Some(OverlayCommand::Quit) => {
-                    let dirty = self.quit_dirty();
-                    let step =
-                        apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
-                    if step == apply::QuitStep::QuitNow {
-                        quit_requested = true;
-                        self.begin_shutdown();
-                    } else if apply::quit_step_shows_confirm(step) {
-                        self.quit_confirm = true;
-                        // Reveal the window the way tray Show does (also when the window was
-                        // hidden while the confirm was already up).
-                        if self.visibility == Visibility::Hidden {
-                            self.toggle_requested = true;
-                        }
-                    }
-                }
+                Some(OverlayCommand::Quit) => quit_requested = self.request_quit(),
                 None => {}
             }
+        }
+        // INST-04: the installer's `ff --quit` is the same request as tray Quit, so unapplied
+        // edits show the normal Unapplied changes popup.
+        if !quit_requested
+            && self
+                .instance
+                .as_ref()
+                .is_some_and(|g| g.take_quit_request())
+        {
+            quit_requested = self.request_quit();
         }
         // Apply & quit succeeded: leave once an in-game reload (if one started) has finished, so
         // it is never cut off mid-sequence. The quit itself sends no keystrokes.

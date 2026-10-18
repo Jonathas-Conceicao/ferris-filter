@@ -142,13 +142,18 @@ pub(crate) struct StatusInputs {
     /// The "Game folder not found" text when the game folder is missing on disk.
     pub game_folder_missing: Option<String>,
     pub syncing: bool,
+    /// The locked "no longer on poe.ninja" warning, built by the app (None unless the saved
+    /// league is missing from a loaded list under Live prices).
+    pub ended_league: Option<String>,
     pub unknown: Option<(String, BlockId)>,
     pub migrated: bool,
     pub absent: bool,
     pub indicator: (&'static str, StatusKind),
 }
 
-/// The status line for these inputs: the highest-priority row of the contract wins.
+/// The status line for these inputs: the highest-priority row of the contract wins. The order is
+/// missing app root, event, grammar gate, damaged markers / load failure, game folder not found,
+/// sync running, ended league, unknown styles, v0.4 notice, absent filter, the indicator.
 pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
     let plain = |text: String, kind| StatusLine {
         text,
@@ -183,6 +188,12 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
     }
     if inputs.syncing {
         return plain(SYNC_RUNNING.to_string(), StatusKind::Info);
+    }
+    if let Some(text) = inputs.ended_league {
+        return StatusLine {
+            open_tab: Some(ShellTab::Economy),
+            ..plain(text, StatusKind::Warning)
+        };
     }
     if let Some((text, id)) = inputs.unknown {
         return StatusLine {
@@ -1365,6 +1376,7 @@ mod tests {
             filter_error: None,
             game_folder_missing: None,
             syncing: false,
+            ended_league: None,
             unknown: None,
             migrated: false,
             absent: false,
@@ -1380,6 +1392,7 @@ mod tests {
             filter_error: Some("load".into()),
             game_folder_missing: Some("missing".into()),
             syncing: true,
+            ended_league: Some("ended".into()),
             unknown: Some(("unknown".into(), id())),
             migrated: true,
             absent: true,
@@ -1472,10 +1485,34 @@ mod tests {
         i.filter_error = None;
         i.game_folder_missing = None;
         i.syncing = false;
+        i.ended_league = None;
         let s = status_for(i);
         assert_eq!(s.text, "unknown");
         assert_eq!(s.kind, StatusKind::Warning);
         assert_eq!(s.jump, Some(id()));
+    }
+
+    #[test]
+    fn ended_league_warns_and_opens_the_economy_tab() {
+        let text = "Fate of the Vaal is no longer on poe.ninja; pick a league";
+        let mut only = empty();
+        only.ended_league = Some(text.into());
+        let s = status_for(only.clone());
+        assert_eq!(s.text, text);
+        assert_eq!(s.kind, StatusKind::Warning);
+        assert_eq!(s.open_tab, Some(ShellTab::Economy));
+        assert_eq!(s.jump, None);
+
+        // Sync running outranks it; unknown styles do not; the game folder does.
+        let mut i = only.clone();
+        i.syncing = true;
+        assert_eq!(status_for(i).text, SYNC_RUNNING);
+        let mut i = only.clone();
+        i.unknown = Some(("unknown".into(), id()));
+        assert_eq!(status_for(i).text, text);
+        let mut i = only;
+        i.game_folder_missing = Some("missing".into());
+        assert_eq!(status_for(i).text, "missing");
     }
 
     #[test]

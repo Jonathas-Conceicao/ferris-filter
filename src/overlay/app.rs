@@ -200,6 +200,11 @@ pub struct OverlayApp {
     /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
     applied_this_session: bool,
 
+    /// The price-source policy the filter on disk was last written under (start-up: the saved
+    /// one, assumed to match the file; then every Apply, and a switch to another filter). A
+    /// differing effective source makes the economy section stale ([`Self::source_pending`]).
+    applied_policy: PriceSourcePolicy,
+
     /// The class catalogue for the class picker, from `config.json`. `Err` degrades the picker
     /// to the generic chip list; it never blocks editing.
     classes: Result<ClassCatalog, String>,
@@ -1441,6 +1446,7 @@ impl OverlayApp {
             staged_econ_inputs: None,
             econ_preview_failed: false,
             applied_this_session: false,
+            applied_policy: settings.price_policy(),
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
             styles_checked: 0.0,
@@ -1598,6 +1604,8 @@ impl OverlayApp {
             Err(_) => None,
         };
         self.settings = next;
+        // Another filter is another file: assumed written under the policy now in force.
+        self.applied_policy = self.settings.price_policy();
         self.reset_filter_state();
         self.refresh_inputs();
         self.refresh_filters();
@@ -1797,6 +1805,38 @@ impl OverlayApp {
         let next = settings_with_price_source(&self.settings, live);
         self.save_view_setting(next);
         self.sync_tiers_in_use();
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let style_pending = self
+            .working
+            .as_mut()
+            .is_some_and(|w| w.style_rewrite_pending());
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let other_dirty = apply::combined_dirty(rules_dirty, style_pending, config_dirty);
+        let pending = self.source_pending();
+        if (pending || other_dirty) && self.apply_state == ApplyState::Applied {
+            self.apply_state = ApplyState::Unapplied;
+        } else if !pending && !other_dirty {
+            self.apply_state = apply::state_after_revert(self.applied_this_session, false);
+        }
+    }
+
+    /// Whether the loaded filter has an economy section (in the file, or staged to be added).
+    fn has_economy_section(&self) -> bool {
+        self.working
+            .as_ref()
+            .is_some_and(|w| matches!(w.economy(), EconomyView::Present { .. }))
+    }
+
+    /// A price-source switch that makes Apply write different economy blocks than the file has.
+    /// Counts as an unapplied change (marker, indicator, Apply, Quit prompt) but never as
+    /// something Revert undoes: the setting is saved at once.
+    fn source_pending(&self) -> bool {
+        super::leagues::source_pending(
+            self.applied_policy,
+            self.settings.price_policy(),
+            self.economy_info.live,
+            self.has_economy_section(),
+        )
     }
 
     /// The decided league UI for the Economy tab.
@@ -1949,6 +1989,7 @@ impl OverlayApp {
             }
         }
         self.apply_state = self.apply_state.on_apply_success();
+        self.applied_policy = self.settings.price_policy();
         self.config_message = None;
         self.config_ui.reset_for_new_styles();
         self.styles_stamp = styles_stamp_at(root);
@@ -2026,6 +2067,7 @@ impl OverlayApp {
             .working
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
+        let style_pending = style_pending || self.source_pending();
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
@@ -2331,6 +2373,7 @@ impl OverlayApp {
             .working
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
+        let style_pending = style_pending || self.source_pending();
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         apply::combined_dirty(rules_dirty, style_pending, config_dirty)
@@ -2369,8 +2412,10 @@ impl OverlayApp {
         // Per tab: CONFIG edits and a staged economy op survive a RULES revert, so the state may
         // stay out of date.
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        self.apply_state =
-            apply::state_after_revert(self.applied_this_session, config_dirty || still_dirty);
+        self.apply_state = apply::state_after_revert(
+            self.applied_this_session,
+            config_dirty || still_dirty || self.source_pending(),
+        );
     }
 
     /// The ECONOMY bar Revert: opens the Discard popup whenever there are tier edits or a staged
@@ -2392,6 +2437,7 @@ impl OverlayApp {
         working.unstage_economy();
         let rules_dirty = working.is_dirty();
         let style_pending = working.style_rewrite_pending();
+        let style_pending = style_pending || self.source_pending();
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         self.apply_state = apply::state_after_revert(
             self.applied_this_session,
@@ -2432,6 +2478,7 @@ impl OverlayApp {
     /// Re-prices the staged economy-add preview when the pending styles or tiers changed since it
     /// was built. On a pricing error the previous preview stays and the error is shown.
     fn refresh_staged_economy(&mut self) {
+        let source_pending = self.source_pending();
         let (Ok(root), Ok(config), Some(working)) =
             (&self.root, &self.config, self.working.as_mut())
         else {
@@ -2443,7 +2490,9 @@ impl OverlayApp {
         let refresh = plan == rules::EconomyPlan::Refresh;
         let wanted = match plan {
             rules::EconomyPlan::Add => true,
-            rules::EconomyPlan::Refresh => config.styles_dirty() || config.tiers_dirty(),
+            rules::EconomyPlan::Refresh => {
+                config.styles_dirty() || config.tiers_dirty() || source_pending
+            }
             _ => false,
         };
         if !wanted {
@@ -2614,7 +2663,10 @@ impl OverlayApp {
         // The tab whose edits were kept may still hold unapplied changes.
         let kept_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty())
             || self.working.as_ref().is_some_and(|w| w.is_dirty());
-        self.apply_state = apply::state_after_revert(self.applied_this_session, kept_dirty);
+        self.apply_state = apply::state_after_revert(
+            self.applied_this_session,
+            kept_dirty || self.source_pending(),
+        );
     }
 
     /// Applies the CONFIG tab's collected actions. Filter actions are handled by the filter
@@ -2724,8 +2776,10 @@ impl OverlayApp {
                     }
                     // Per tab: rule edits survive a CONFIG revert, so the state may stay stale.
                     let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
-                    self.apply_state =
-                        apply::state_after_revert(self.applied_this_session, rules_dirty);
+                    self.apply_state = apply::state_after_revert(
+                        self.applied_this_session,
+                        rules_dirty || self.source_pending(),
+                    );
                 }
                 ConfigAction::RevertScoped(scope) => {
                     if let Ok(state) = &mut self.config {
@@ -2743,7 +2797,7 @@ impl OverlayApp {
                     let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
                     self.apply_state = apply::state_after_revert(
                         self.applied_this_session,
-                        rules_dirty || config_dirty,
+                        rules_dirty || config_dirty || self.source_pending(),
                     );
                 }
                 ConfigAction::ResetStyles => {
@@ -3315,13 +3369,17 @@ impl eframe::App for OverlayApp {
         if let (Ok(config), Some(working)) = (&self.config, self.working.as_mut()) {
             sync_working_styles(config, working);
         }
+        self.sync_tiers_in_use();
         self.refresh_staged_economy();
         let state = self.filter_state();
-        // A changed styles.json makes the written filter stale even with no rule edited.
+        // A changed styles.json makes the written filter stale even with no rule edited, and so
+        // does a price-source switch that changes the economy blocks.
+        let source_pending = self.source_pending();
         let style_pending = self
             .working
             .as_mut()
-            .is_some_and(|w| w.style_rewrite_pending());
+            .is_some_and(|w| w.style_rewrite_pending())
+            || source_pending;
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         let styles_dirty = self.config.as_ref().is_ok_and(|c| c.styles_dirty());
         let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
@@ -3412,7 +3470,12 @@ impl eframe::App for OverlayApp {
         // Tabs: ` *` marks a tab when it holds unapplied edits (the selected tab included).
         // A staged economy add/remove belongs to ECONOMY, not to the RULES marker.
         let rules_edited = self.working.as_ref().is_some_and(|w| w.rules_edited());
-        let markers = shell::tab_markers(rules_edited, styles_dirty, tiers_dirty, economy_staged);
+        let markers = shell::tab_markers(
+            rules_edited,
+            styles_dirty,
+            tiers_dirty,
+            economy_staged || source_pending,
+        );
         let labels: Vec<String> = ShellTab::ALL
             .iter()
             .map(|t| apply::tab_label(t.label(), markers[t.index()]))
@@ -3563,6 +3626,11 @@ impl eframe::App for OverlayApp {
             filter_error,
             game_folder_missing: self.game_folder_missing_text(),
             syncing: self.economy.is_running(),
+            ended_league: self
+                .league_view()
+                .ended
+                .as_deref()
+                .map(crate::overlay::leagues::ended_status),
             unknown: unknown_styles.first().map(|(rule, id)| {
                 (
                     apply::unknown_styles_message(unknown_styles.len(), *rule),
@@ -5652,6 +5720,7 @@ Hide
             filter_error: None,
             game_folder_missing: None,
             syncing: false,
+            ended_league: None,
             unknown: None,
             migrated: false,
             absent: false,
@@ -6974,6 +7043,144 @@ Hide
         );
     }
 
+    // ---- price-source switch marker, tier gate and ended league (Phase 39-05) ----
+
+    fn with_economy_section() -> String {
+        format!(
+            "{RULES}\n{bar}\n# ff:economy-begin Economy (generated by FerrisFilter, do not edit)\n{bar}\n",
+            bar = "#".repeat(80)
+        )
+    }
+
+    /// An app on a rig root whose filter holds an economy section and whose prices are live.
+    fn economy_app() -> (super::OverlayApp, egui::Context, Rig) {
+        let (mut app, ctx) = popup_app(RULES);
+        let rig = rig(&with_economy_section());
+        app.root = Ok(rig.root.path().to_path_buf());
+        app.config = ConfigState::load(rig.root.path());
+        app.working = Some(WorkingFilter::from_text(&with_economy_section()));
+        app.economy_info.live = true;
+        app.apply_state = crate::overlay::apply::ApplyState::Applied;
+        app.applied_this_session = true;
+        (app, ctx, rig)
+    }
+
+    #[test]
+    fn a_source_switch_is_pending_only_while_the_effective_source_differs() {
+        let (mut app, _ctx, _rig) = economy_app();
+        assert!(app.has_economy_section());
+        assert!(!app.source_pending());
+        app.set_price_source(false);
+        assert!(app.source_pending());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+        assert!(app.quit_dirty());
+        app.set_price_source(true);
+        assert!(!app.source_pending());
+        assert_eq!(app.apply_state, crate::overlay::apply::ApplyState::Applied);
+        assert!(!app.quit_dirty());
+    }
+
+    #[test]
+    fn switching_back_with_a_rule_edit_pending_stays_unapplied() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.set_price_source(false);
+        let id = app.working.as_ref().unwrap().rows()[0].id;
+        app.working
+            .as_mut()
+            .unwrap()
+            .apply_action(super::RowAction::Delete(id));
+        app.set_price_source(true);
+        assert!(!app.source_pending());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+    }
+
+    #[test]
+    fn a_source_switch_never_marks_without_a_section_or_live_prices() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.working = Some(WorkingFilter::from_text(RULES));
+        app.set_price_source(false);
+        assert!(!app.source_pending());
+        assert_eq!(app.apply_state, crate::overlay::apply::ApplyState::Applied);
+
+        let (mut app, _ctx, _rig) = economy_app();
+        app.economy_info.live = false;
+        app.set_price_source(false);
+        assert!(!app.source_pending());
+        app.set_price_source(true);
+        assert!(!app.source_pending());
+    }
+
+    #[test]
+    fn a_league_pick_never_marks_and_a_source_switch_stays_out_of_revert() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.set_league("Runes of Aldur");
+        assert!(!app.source_pending());
+        app.set_price_source(false);
+        assert!(!app.rules_revertible());
+        app.economy_revert_pressed();
+        assert!(!app.config_ui.revert_armed, "no Discard popup for a switch");
+        assert!(app.source_pending());
+        app.revert();
+        assert!(app.source_pending());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+    }
+
+    #[test]
+    fn apply_clears_the_source_marker() {
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.set_price_source(false);
+        assert!(app.source_pending());
+        assert!(app.run_apply(&ctx, false), "{:?}", app.apply_message);
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+        assert!(!app.source_pending());
+    }
+
+    #[test]
+    fn the_economy_preview_is_repriced_while_a_switch_is_pending() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.refresh_staged_economy();
+        assert!(app.staged_econ_inputs.is_none());
+        app.set_price_source(false);
+        app.refresh_staged_economy();
+        let key = app.staged_econ_inputs.clone().expect("preview wanted");
+        assert_eq!(key.2, PriceSourcePolicy::ForceFallback);
+    }
+
+    #[test]
+    fn the_ended_league_line_shows_only_with_a_loaded_list_under_live() {
+        use crate::overlay::leagues::ListState;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.settings.league = Some("Fate of the Vaal".to_string());
+        let ended = |app: &super::OverlayApp| {
+            app.league_view()
+                .ended
+                .as_deref()
+                .map(crate::overlay::leagues::ended_status)
+        };
+        assert_eq!(ended(&app), None);
+        app.leagues.inject(ListState::Loading);
+        assert_eq!(ended(&app), None);
+        app.leagues.inject(ListState::Failed("x".into()));
+        assert_eq!(ended(&app), None);
+        app.leagues.inject(ListState::Loaded(six_leagues()));
+        assert_eq!(
+            ended(&app).as_deref(),
+            Some("Fate of the Vaal is no longer on poe.ninja; pick a league")
+        );
+        app.settings.price_source = Some("fallback".to_string());
+        assert_eq!(ended(&app), None);
+    }
+
     #[test]
     fn the_missing_folder_status_row_opens_the_config_tab() {
         let s = shell::status_for(StatusInputs {
@@ -6983,6 +7190,7 @@ Hide
             filter_error: None,
             game_folder_missing: Some("Game folder not found: C:/x".into()),
             syncing: false,
+            ended_league: None,
             unknown: None,
             migrated: false,
             absent: false,

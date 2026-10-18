@@ -35,7 +35,6 @@ pub(crate) fn ended_tip(name: &str) -> String {
 }
 
 /// Status line shown when the saved league has ended.
-#[allow(dead_code)] // wired into the status line by the next plan
 pub(crate) fn ended_status(name: &str) -> String {
     format!("{name} is no longer on poe.ninja; pick a league")
 }
@@ -293,7 +292,6 @@ fn loaded_view(saved: Option<&str>, list: &[EconomyLeague]) -> LeagueView {
 }
 
 /// Whether the effective price source is the fallback pair.
-#[allow(dead_code)] // consumed by the unapplied marker in the next plan
 pub(crate) fn effective_fallback(policy: PriceSourcePolicy, prices_live: bool) -> bool {
     policy == PriceSourcePolicy::ForceFallback || !prices_live
 }
@@ -301,7 +299,6 @@ pub(crate) fn effective_fallback(policy: PriceSourcePolicy, prices_live: bool) -
 /// Whether switching the price source leaves the economy section out of date (OD-1: the cheap
 /// effective-source comparison, not an output diff; assumption A2: the start-up policy matches
 /// how the file was last written).
-#[allow(dead_code)] // consumed by the unapplied marker in the next plan
 pub(crate) fn source_pending(
     applied: PriceSourcePolicy,
     now: PriceSourcePolicy,

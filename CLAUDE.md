@@ -286,7 +286,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 
 > **Check for updates (Phase 41):** the About tab's button is the only trigger (never at start-up or
 > on a timer). It asks GitHub `releases/latest` (drafts and pre-releases are invisible there) and
-> compares the Cargo version's major.minor.patch. A newer release's `FerrisFilter-<ver>-setup.exe`
+> compares the Cargo version's major.minor.patch (a release candidate such as `0.7.0-rc.1` counts
+> as older than its own final `v0.7.0`; a `-dev` build counts as the same). A newer release's `FerrisFilter-<ver>-setup.exe`
 > and `SHA256SUMS.txt` are downloaded into `%TEMP%\FerrisFilter-update-*` and hash-checked, then the
 > button reads `Install <ver> and quit`. The click re-checks the installer and goes through the
 > normal Quit path (the Unapplied changes popup; Cancel or a refused Apply drops the intent), and the

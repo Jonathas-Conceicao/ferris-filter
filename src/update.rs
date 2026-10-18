@@ -42,6 +42,20 @@ pub fn current_base(pkg_version: &str) -> Option<Version> {
     Some(Version::new(v.major, v.minor, v.patch))
 }
 
+/// The running version as the up-to-date message names it: the package version with any build
+/// metadata dropped (a pre-release part such as `-rc.1` is kept).
+pub fn running_version(pkg_version: &str) -> Option<Version> {
+    let mut v = Version::parse(pkg_version).ok()?;
+    v.build = semver::BuildMetadata::EMPTY;
+    Some(v)
+}
+
+/// A development build (`-dev`, `-dev.N`): compared on its base version only, so the release it
+/// is built from counts as the same version.
+fn is_dev_build(v: &Version) -> bool {
+    v.pre.as_str().split('.').next() == Some("dev")
+}
+
 /// How a release tag compares with the running build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Compare {
@@ -51,7 +65,9 @@ pub enum Compare {
 }
 
 /// Compare a release tag (one leading `v` allowed) with the running package version.
-/// A pre-release tag, or a pre-release / draft release, counts as `Older`.
+/// A pre-release tag, or a pre-release / draft release, counts as `Older`. A running
+/// pre-release (`0.7.0-rc.1`) is older than its own final release, as in semver; a development
+/// build (`0.7.0-dev`) compares on its base version, so its own final release is `Same`.
 #[allow(clippy::result_unit_err)]
 pub fn compare_release(
     tag: &str,
@@ -61,6 +77,7 @@ pub fn compare_release(
 ) -> Result<Compare, ()> {
     let raw = tag.strip_prefix('v').unwrap_or(tag);
     let parsed = Version::parse(raw).map_err(|_| ())?;
+    let running = running_version(current).ok_or(())?;
     let base = current_base(current).ok_or(())?;
     if prerelease || draft || !parsed.pre.is_empty() {
         return Ok(Compare::Older);
@@ -68,6 +85,9 @@ pub fn compare_release(
     let tag_base = Version::new(parsed.major, parsed.minor, parsed.patch);
     Ok(match tag_base.cmp(&base) {
         std::cmp::Ordering::Greater => Compare::Newer(tag_base),
+        std::cmp::Ordering::Equal if !running.pre.is_empty() && !is_dev_build(&running) => {
+            Compare::Newer(tag_base)
+        }
         std::cmp::Ordering::Equal => Compare::Same,
         std::cmp::Ordering::Less => Compare::Older,
     })
@@ -569,7 +589,7 @@ pub fn run_check(
         match classify_latest(http.get(LATEST_URL, "application/vnd.github+json", MAX_API_BYTES)) {
             LatestResponse::Release(r) => r,
             LatestResponse::NoReleases => {
-                return match current_base(current) {
+                return match running_version(current) {
                     Some(b) => CheckResult::UpToDate {
                         version: b.to_string(),
                         released: None,
@@ -582,7 +602,7 @@ pub fn run_check(
             LatestResponse::BadResponse => return CheckResult::Failed(Failure::BadResponse),
         };
 
-    let Some(base) = current_base(current) else {
+    let Some(running) = running_version(current) else {
         return CheckResult::Failed(Failure::BadResponse);
     };
     let v = match compare_release(
@@ -594,13 +614,13 @@ pub fn run_check(
         Err(()) => return CheckResult::Failed(Failure::BadResponse),
         Ok(Compare::Older) => {
             return CheckResult::UpToDate {
-                version: base.to_string(),
+                version: running.to_string(),
                 released: None,
             };
         }
         Ok(Compare::Same) => {
             return CheckResult::UpToDate {
-                version: base.to_string(),
+                version: running.to_string(),
                 released: release.published_at.as_deref().and_then(parse_published),
             };
         }
@@ -1191,6 +1211,20 @@ mod tests {
         assert_eq!(c("v0.6.1", false, false, "0.7.0"), Ok(Compare::Older));
         assert_eq!(c("v0.7.0", false, false, "0.7.0-dev"), Ok(Compare::Same));
         assert_eq!(
+            c("v0.7.0", false, false, "0.7.0-dev.2+abc"),
+            Ok(Compare::Same)
+        );
+        // A release candidate is older than its own final release.
+        assert_eq!(
+            c("v0.7.0", false, false, "0.7.0-rc.1"),
+            Ok(Compare::Newer(v("0.7.0")))
+        );
+        assert_eq!(c("v0.6.2", false, false, "0.7.0-rc.1"), Ok(Compare::Older));
+        assert_eq!(
+            c("v0.7.0", false, false, "0.7.0+build.5"),
+            Ok(Compare::Same)
+        );
+        assert_eq!(
             c("0.8.0", false, false, "0.7.0"),
             Ok(Compare::Newer(v("0.8.0")))
         );
@@ -1206,6 +1240,8 @@ mod tests {
     fn current_base_drops_pre_and_build() {
         assert_eq!(current_base("0.7.0-dev+abc"), Some(v("0.7.0")));
         assert_eq!(current_base("nope"), None);
+        assert_eq!(running_version("0.7.0-rc.1+abc"), Some(v("0.7.0-rc.1")));
+        assert_eq!(running_version("nope"), None);
     }
 
     #[test]
@@ -1569,6 +1605,17 @@ mod tests {
         ));
         assert_clean(&dev);
 
+        // A release candidate names itself while its final release is not out yet.
+        let rc = run(&good("v0.6.0"), "0.7.0-rc.1+abc");
+        assert_eq!(
+            rc.result,
+            CheckResult::UpToDate {
+                version: "0.7.0-rc.1".into(),
+                released: None
+            }
+        );
+        assert_clean(&rc);
+
         let mut pre = FakeHttp::default();
         pre.replies.insert(
             LATEST_URL.into(),
@@ -1583,6 +1630,16 @@ mod tests {
             }
         );
         assert_clean(&pre);
+    }
+
+    #[test]
+    fn a_release_candidate_is_offered_its_final_release() {
+        let rc = run(&good("v0.7.0"), "0.7.0-rc.1");
+        match &rc.result {
+            CheckResult::Ready(r) => assert_eq!(r.version, "0.7.0"),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+        assert_eq!(rc.announced, vec!["0.7.0".to_string()]);
     }
 
     #[test]

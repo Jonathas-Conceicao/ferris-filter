@@ -204,7 +204,7 @@
 | LEAGUE-02 | Phase 39 | Complete |
 | LEAGUE-03 | Phase 39 | Complete |
 | LEAGUE-04 | Phase 39 | Complete |
-| LEAGUE-05 | Phase 39 | Pending |
+| LEAGUE-05 | Phase 39 | Complete |
 | REL-01 | Phase 40 | Pending |
 | REL-02 | Phase 40 | Pending |
 | REL-03 | Phase 40 | Pending |

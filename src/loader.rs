@@ -108,14 +108,22 @@ pub fn load_json_str<T: serde::de::DeserializeOwned>(
 ///   with the dotted field path). The caller must abort; a corrupted prices.json is not
 ///   a recoverable situation.
 ///
-/// Uses `std::path::Path::exists()` to distinguish absence from malformation, rather than
+/// - Existence check fails (permission denied, a sharing violation) → `LoadError::Read` on
+///   that path, never "absent": an unreadable live file must not silently fall back to the
+///   built-in prices.
+///
+/// Uses `std::path::Path::try_exists()` to distinguish absence from malformation, rather than
 /// inspecting the error kind from a failed `fs::read_to_string`, because the underlying
 /// `io::Error` is wrapped and downcasting is fragile.
 pub fn load_prices_optional(path: &str) -> Result<Option<PricesFile>, LoadError> {
-    if !std::path::Path::new(path).exists() {
-        return Ok(None);
+    match std::path::Path::new(path).try_exists() {
+        Ok(false) => Ok(None),
+        Ok(true) => load_json(path).map(Some),
+        Err(source) => Err(LoadError::Read {
+            path: path.to_string(),
+            source,
+        }),
     }
-    load_json(path).map(Some)
 }
 
 /// Parse a `prices.json` held in memory (the embedded fallback has no "absent" case).
@@ -573,6 +581,21 @@ mod tests {
     fn load_config_rejects_a_null_inline_entry_for_a_defined_style() {
         let err = load_with_inline_styles(serde_json::json!({ "S": null })).unwrap_err();
         assert_eq!(rejected_names(err), vec!["S".to_string()]);
+    }
+
+    #[test]
+    fn load_prices_optional_absent_is_none_and_unstatable_is_read_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("prices.json");
+        assert!(
+            load_prices_optional(absent.to_str().unwrap())
+                .unwrap()
+                .is_none()
+        );
+        // A path the OS cannot stat is an error naming it, not "absent".
+        let err = load_prices_optional("bad\0name/prices.json").unwrap_err();
+        assert!(matches!(err, LoadError::Read { .. }), "{err}");
+        assert!(err.to_string().starts_with("Cannot read `"), "{err}");
     }
 
     #[test]

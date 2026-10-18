@@ -10,6 +10,7 @@
 pub mod build_info;
 pub mod cli;
 pub mod compile;
+pub mod defaults;
 pub mod dynamic;
 pub mod emitter;
 pub mod error;

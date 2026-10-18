@@ -22,6 +22,7 @@ pub mod grammar;
 pub mod hotkey;
 pub mod instance;
 pub mod layout;
+pub(crate) mod leagues;
 pub mod rule_list;
 pub mod rules;
 #[cfg(debug_assertions)]

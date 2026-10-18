@@ -211,7 +211,7 @@ Plans:
   2. For a newer version it downloads the installer, verifies its SHA-256 and offers Install and quit through the Unapplied changes popup
   3. Offline, rate-limited or missing-asset failures show a status message and change nothing
 
-**Plans**: TBD
+**Plans**: 5 plans (41-01 pure update core + semver/ring; 41-02 run_check download+verify, reqwest client, installer spawn; 41-03 update_job worker + install intent; 41-04 About button + status event + Check click; 41-05 Install and quit hand-off, screenshot flag, CLAUDE.md, deferred manual checks)
 **UI hint**: yes
 **Research**: needed (GitHub API details, installer handoff)
 

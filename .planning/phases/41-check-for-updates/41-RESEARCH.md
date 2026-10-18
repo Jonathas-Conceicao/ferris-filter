@@ -537,17 +537,17 @@ error mid-stream; oversize body; success (tempdir holds exactly the installer, h
 | A6 | A sharing violation (32) can occur right after writing the exe | Pattern 7 | Retry is a harmless no-op otherwise |
 | A7 | GitHub requires a User-Agent (403 without) | Pattern 1 | `USER_AGENT` is sent anyway |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Up to date with an OLDER latest tag: which date?**
    - Known: UI-SPEC says "same text". Text includes "released <date>".
    - Unclear: the only date available is the older release's.
-   - Recommendation: show the date only when `tag == current`; otherwise `Up to date (<version>)`. Flag to the author in the plan; trivial to change.
+   - Recommendation: show the date only when `tag == current`; otherwise `Up to date (<version>)`. Flag to the author in the plan; trivial to change. RESOLVED: plans decision 1 (no date when the latest tag is older).
 2. **Quit via tray while Ready (no install intent): delete the verified installer?**
-   - Recommendation: yes, best effort in `begin_shutdown` (UI-SPEC is silent; leaving ~MBs in %TEMP% per check is untidy). The 24 h sweep is the backstop.
-3. **Does Phase 40's `request_quit()` exist with that name?** It is created by 40-01 task 2. If the executor finds a different name, reuse the tray Quit arm body; the plan should say "the method 40-01 extracted from the tray Quit arm".
-4. **`OverlayApp::new` arity** changes in earlier phases (37 adds game-folder startup); the plan must say "add one parameter" rather than quote a signature.
-5. **Live end-to-end check** needs a published non-pre-release newer than the running build; defer to a manual UAT item (below), never a blocking task.
+   - Recommendation: yes, best effort in `begin_shutdown` (UI-SPEC is silent; leaving ~MBs in %TEMP% per check is untidy). The 24 h sweep is the backstop. RESOLVED: plans decision 2 (deleted at shutdown, 24 h sweep).
+3. **Does Phase 40's `request_quit()` exist with that name?** It is created by 40-01 task 2. If the executor finds a different name, reuse the tray Quit arm body; the plan should say "the method 40-01 extracted from the tray Quit arm". RESOLVED: plans name request_quit (40-01) with the tray Quit arm as fallback.
+4. **`OverlayApp::new` arity** changes in earlier phases (37 adds game-folder startup); the plan must say "add one parameter" rather than quote a signature. RESOLVED: plans say "add one parameter".
+5. **Live end-to-end check** needs a published non-pre-release newer than the running build; defer to a manual UAT item (below), never a blocking task. RESOLVED: 41-MANUAL-VERIFICATION.md (created by 41-05).
 
 ## Environment Availability
 

@@ -3,13 +3,13 @@ use std::collections::HashMap;
 // --- poe.ninja index-state ---
 // GET https://poe.ninja/poe2/api/data/index-state
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct IndexState {
     #[serde(rename = "economyLeagues")]
     pub economy_leagues: Vec<EconomyLeague>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct EconomyLeague {
     pub name: String, // e.g. "Fate of the Vaal" — USE THIS as league= query param
     pub url: String,  // slug e.g. "vaal" / "standard" / "hardcore"

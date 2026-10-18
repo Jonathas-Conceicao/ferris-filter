@@ -1,0 +1,65 @@
+{
+  "economyLeagues": [
+    {
+      "name": "Forbidden Rites",
+      "url": "forbiddenrites",
+      "displayName": "Forbidden Rites",
+      "hardcore": false,
+      "indexed": false
+    },
+    {
+      "name": "Runes of Aldur",
+      "url": "runesofaldur",
+      "displayName": "Runes of Aldur",
+      "hardcore": false,
+      "indexed": true
+    },
+    {
+      "name": "HC Forbidden Rites",
+      "url": "forbiddenriteshc",
+      "displayName": "HC Forbidden Rites",
+      "hardcore": true,
+      "indexed": false
+    },
+    {
+      "name": "HC Runes of Aldur",
+      "url": "runesofaldurhc",
+      "displayName": "HC Runes of Aldur",
+      "hardcore": true,
+      "indexed": false
+    },
+    {
+      "name": "Standard",
+      "url": "standard",
+      "displayName": "Standard",
+      "hardcore": false,
+      "indexed": false
+    },
+    {
+      "name": "Hardcore",
+      "url": "hardcore",
+      "displayName": "Hardcore",
+      "hardcore": true,
+      "indexed": false
+    }
+  ],
+  "oldEconomyLeagues": [
+    {
+      "name": "Fate of the Vaal",
+      "url": "vaal",
+      "displayName": "Fate of the Vaal",
+      "hardcore": false,
+      "indexed": false
+    },
+    {
+      "name": "HC Fate of the Vaal",
+      "url": "vaalhc",
+      "displayName": "HC Fate of the Vaal",
+      "hardcore": true,
+      "indexed": false
+    }
+  ],
+  "snapshotVersions": [],
+  "buildLeagues": [],
+  "oldBuildLeagues": []
+}

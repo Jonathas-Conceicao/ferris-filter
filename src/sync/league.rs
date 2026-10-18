@@ -1,7 +1,7 @@
 // League resolution from poe.ninja index-state.
 // Maps the (standard, hc) flag combination to the correct league display name.
 
-use crate::sync::models::IndexState;
+use crate::sync::models::{EconomyLeague, IndexState};
 
 pub const INDEX_STATE_URL: &str = "https://poe.ninja/poe2/api/data/index-state";
 
@@ -98,10 +98,108 @@ pub async fn fetch_index_state<C: crate::sync::client::HttpClient>(
         .map_err(|e| miette::miette!("Cannot parse index-state response: {e}"))
 }
 
+/// The leagues poe.ninja currently lists for the economy, in poe.ninja's order.
+pub async fn list_leagues<C: crate::sync::client::HttpClient>(
+    client: &C,
+) -> miette::Result<Vec<EconomyLeague>> {
+    Ok(fetch_index_state(client).await?.economy_leagues)
+}
+
+/// The overlay's default league when nothing is saved: the first softcore league that is
+/// neither Standard nor Hardcore.
+///
+/// `indexed` is deliberately ignored because poe.ninja flipped it between Forbidden Rites and
+/// Runes of Aldur within six hours (2026-09-10/11); the CLI's [`resolve_league`] keeps using it.
+pub fn default_league(leagues: &[EconomyLeague]) -> Option<&EconomyLeague> {
+    leagues
+        .iter()
+        .find(|l| !l.hardcore && l.url != "standard" && l.url != "hardcore")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::client::HttpClient;
     use crate::sync::models::{EconomyLeague, IndexState};
+
+    const FIXTURE_2026_10_18: &str =
+        include_str!("../../tests/fixtures/index-state-2026-10-18.json");
+
+    struct FakeClient(Result<String, String>);
+
+    impl HttpClient for FakeClient {
+        async fn get_json(&self, _url: &str, _query: &[(&str, &str)]) -> miette::Result<String> {
+            match &self.0 {
+                Ok(body) => Ok(body.clone()),
+                Err(e) => Err(miette::miette!("{e}")),
+            }
+        }
+    }
+
+    fn run<T>(f: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn fixture_parses_six_leagues_in_order() {
+        let state: IndexState = serde_json::from_str(FIXTURE_2026_10_18).unwrap();
+        let names: Vec<&str> = state
+            .economy_leagues
+            .iter()
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Forbidden Rites",
+                "Runes of Aldur",
+                "HC Forbidden Rites",
+                "HC Runes of Aldur",
+                "Standard",
+                "Hardcore"
+            ]
+        );
+    }
+
+    #[test]
+    fn default_league_ignores_indexed() {
+        let state: IndexState = serde_json::from_str(FIXTURE_2026_10_18).unwrap();
+        assert_eq!(
+            default_league(&state.economy_leagues).map(|l| l.name.as_str()),
+            Some("Forbidden Rites")
+        );
+    }
+
+    #[test]
+    fn default_league_none_for_standard_and_hardcore_only() {
+        let v = vec![
+            league("Standard", "standard", false, false),
+            league("Hardcore", "hardcore", true, false),
+        ];
+        assert!(default_league(&v).is_none());
+        assert!(default_league(&[]).is_none());
+    }
+
+    #[test]
+    fn default_league_never_picks_hardcore_challenge() {
+        let v = vec![
+            league("HC Forbidden Rites", "forbiddenriteshc", true, false),
+            league("Runes of Aldur", "runesofaldur", false, true),
+        ];
+        assert_eq!(default_league(&v).unwrap().name, "Runes of Aldur");
+    }
+
+    #[test]
+    fn list_leagues_reads_the_fixture() {
+        let got = run(list_leagues(&FakeClient(Ok(FIXTURE_2026_10_18.to_string())))).unwrap();
+        assert_eq!(got.len(), 6);
+    }
+
+    #[test]
+    fn list_leagues_errors_without_panicking() {
+        assert!(run(list_leagues(&FakeClient(Err("offline".into())))).is_err());
+        assert!(run(list_leagues(&FakeClient(Ok("not json".into())))).is_err());
+    }
 
     fn make_state(leagues: Vec<EconomyLeague>) -> IndexState {
         IndexState {

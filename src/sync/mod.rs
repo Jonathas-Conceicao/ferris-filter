@@ -71,6 +71,18 @@ pub fn sync_economy_blocking(base_dir: &std::path::Path) -> miette::Result<Strin
     })
 }
 
+/// Fetch poe.ninja's economy league list, blocking until it finishes.
+///
+/// Called only from the overlay's league-list worker thread; never from tests.
+pub fn fetch_leagues_blocking() -> miette::Result<Vec<models::EconomyLeague>> {
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| miette::miette!("Cannot create async runtime: {e}"))?;
+    rt.block_on(async {
+        let client = ReqwestClient::new()?;
+        league::list_leagues(&client).await
+    })
+}
+
 async fn run(
     standard: bool,
     hc: bool,

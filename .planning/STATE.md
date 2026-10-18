@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.6
-milestone_name: New PoE2-based Tool UI
-status: Awaiting next milestone
-stopped_at: Milestone v0.6 complete and archived
-last_updated: "2026-10-17T22:20:55.012Z"
-last_activity: 2026-10-17 — Milestone v0.6 completed and archived
+milestone: v0.7
+milestone_name: Initial Public Release and Strictness Selector
+status: planning
+last_updated: "2026-10-18T01:27:37.421Z"
+last_activity: 2026-10-18
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 30
-  completed_plans: 30
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 
 ## Current Position
 
-Phase: Milestone v0.6 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-10-17 — Milestone v0.6 completed and archived
+Status: Defining requirements
+Last activity: 2026-10-18 — Milestone v0.7 started
 
 ## Performance Metrics
 

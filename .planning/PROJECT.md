@@ -8,14 +8,39 @@ FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Next Milestone Goals
+## Current Milestone: v0.7 Initial Public Release and Strictness Selector
 
-Not started; `/gsd-new-milestone` defines the next one. Candidates: the open backlog in ROADMAP.md
-(999.3 load message for online filters, 999.4 economy change summary, 999.7 locked rules / `Import`
-layering, 999.8 rest of the configuration tab, 999.9 presets, 999.10 raw-text block editing, 999.12
-in-game keyword checks, 999.13 unmatchable-condition guidance, 999.14 `Minimal`), sound preview and
-long-distance rule reordering (deferred from v0.6), the v0.5 tech debt (audit W1-W4), and the
-Deferred list below.
+**Goal:** Ship FerrisFilter as a public tool anyone can download, install and use, and add the
+first features aimed at players other than the author: a strictness preset, a league picker and
+fallback prices.
+
+**Target features:**
+- **Release pipeline:** a GitHub Actions workflow on `v*` tags builds, runs the tests, produces the
+  installer and a zip, and publishes a GitHub Release whose notes are that version's
+  `CHANGELOG.md` section.
+- **Windows installer:** a basic installer with a Start menu entry for the `ff` overlay.
+- **Per-user config location:** styles, tiers and settings in the platform config dir
+  (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`), the price cache in the cache dir
+  (`%LOCALAPPDATA%`, `~/.cache`); the defaults are built into the exe; `FERRISFILTER_HOME` still
+  overrides. Path handling stays cross-platform; Windows is the shipped target.
+- **Game folder picker:** the Config tab picks the game folder holding the filters. The default is
+  the Windows Documents folder + `My Games\Path of Exile 2` (resolved through the OS, so OneDrive
+  and localized Documents folders work).
+- **Built-in style rework:** a revised `styles-default.json` (details from the author before
+  planning); built-in styles no longer use custom sound files.
+- **Strictness Selector (Config tab):** one row of exclusive buttons, `Custom | Flat Broke |
+  Scrounging | Getting By | Comfy | Loaded | Div Farmer`, hiding nothing, then F, E-F, D-F, C-F,
+  B-F of the built-in tier styles. The selection is derived from the S-F styles' visibility;
+  a hand edit of that visibility shows Custom.
+- **League and price source (Economy tab):** pick the league from poe.ninja's current list
+  (replacing the pinned `sync::OVERLAY_LEAGUE`) or price with the committed fallback pair
+  (recommended for league start / non-trade players), which disables Sync economy. Backlog 999.17.
+- **Check for updates (About tab):** asks GitHub Releases for a newer version and either downloads
+  the installer and offers to run it, or says the tool is up to date.
+- **Release Review** closing phase (PROJECT.md → Milestone Close-out).
+
+**Out of scope:** code signing (an unsigned installer shows a SmartScreen warning), Linux/macOS
+builds of the overlay.
 
 <details>
 <summary>✅ v0.6 New PoE2-based Tool UI — SHIPPED 2026-10-17</summary>
@@ -160,7 +185,7 @@ band logic with a declarative `rules` schema, making the full in-game filter rep
 
 ### Active
 
-None; the next milestone defines them (`/gsd-new-milestone`).
+v0.7 requirements: see `.planning/REQUIREMENTS.md`.
 
 ### Deferred (next-milestone candidates)
 
@@ -315,4 +340,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-17 after the v0.6 milestone*
+*Last updated: 2026-10-17 at the start of the v0.7 milestone*

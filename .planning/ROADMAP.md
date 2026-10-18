@@ -135,7 +135,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
   4. With a missing game folder the status line says so and points to the picker
   5. After dropping a new `.filter` or `.mp3` / `.wav` into the game folder, pressing the refresh button (the game's round-arrow-on-square art) lists it in the filter dropdown and the Alert sound dropdowns, with no restart, no write and no edit lost
 
-**Plans**: TBD
+**Plans**: 7 plans (37-01 resolver + game_folder key; 37-02 refresh art + icon button; 37-03 CLI defaults + overlay startup restore; 37-04 rfd + folder dialog worker; 37-05 overlay folder pick, popup, refresh, missing-folder status; 37-06 Config tab rows, screenshots, CLAUDE.md; 37-07 test isolation on FERRISFILTER_GAME_DIR)
 **UI hint**: yes
 **Research**: needed (`rfd` parent window and threading under eframe; test-isolation override for the game folder; locate the game's refresh-button art with `ff-art list` / `dump` and add a manifest entry)
 

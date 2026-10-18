@@ -332,14 +332,17 @@ Use a `Label::truncate()` with `.show_tooltip_text`/`on_hover_text(full)` inside
 | A4 | Windows disabling the owner from another thread behaves (modal to the overlay only) and the egui loop keeps rendering | Pattern 2 | Cosmetic; the dialog is still usable |
 | A5 | `trim = true` on the 4K refresh textures yields a square image | Art | Executor adjusts `crop`; no impact on design |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should hotkey toggling be ignored while the dialog is open?**
    - Known: the hotkey is gated to game/overlay foreground, and the dialog is neither.
    - Recommendation: ignore `toggle_requested` while `folder_pick.open`.
+   - RESOLVED: yes; plan 37-05 ignores the toggle while the dialog is open.
 2. **Should the CLI honour a saved `game_folder`?**
    - Recommendation: yes (consistency with "same resolver"); falls back to default when the app root or file is absent. Document in `--help`.
+   - RESOLVED: yes (orchestrator decision); plan 37-03.
 3. **Refresh art whole-button vs glyph.** Recommendation above (whole button); UI-SPEC wording says glyph, so the planner should note the deviation in the plan and keep `R` as fallback.
+   - RESOLVED: whole-button art accepted (orchestrator decision), `R` text button fallback; plan 37-02.
 
 ## Environment Availability
 

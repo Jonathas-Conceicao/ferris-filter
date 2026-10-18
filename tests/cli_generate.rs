@@ -262,7 +262,7 @@ fn sync_help_shows_league_flags() {
     Command::cargo_bin("ferrisfilter")
         .unwrap()
         .env("FERRISFILTER_HOME", &home)
-        .env("USERPROFILE", &home)
+        .env("FERRISFILTER_GAME_DIR", home.join("game"))
         .args(["sync", "--help"])
         .assert()
         .success()

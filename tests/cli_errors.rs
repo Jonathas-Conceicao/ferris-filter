@@ -329,7 +329,7 @@ fn apply_obsolete_flags_are_rejected() {
             .unwrap()
             .current_dir(&dir)
             .env("FERRISFILTER_HOME", &dir)
-            .env("USERPROFILE", &dir)
+            .env("FERRISFILTER_GAME_DIR", dir.join("game"))
             .arg("apply")
             .args(&args)
             .assert()

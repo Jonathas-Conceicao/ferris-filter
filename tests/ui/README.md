@@ -11,16 +11,16 @@ Run `ff` against a temp home and a temp game folder, so Apply never writes your 
 
 ```powershell
 $t = "$env:TEMP\ff-uitest"
-New-Item -ItemType Directory -Force "$t\home", "$t\up\OneDrive\Documentos\My Games\Path of Exile 2" | Out-Null
+New-Item -ItemType Directory -Force "$t\home", "$t\game" | Out-Null
 Copy-Item styles-default.json, tiers-default.json, config.json, prices-fallback.json, tiers-fallback.json "$t\home"
-Copy-Item tests\ui\test_ff.filter "$t\up\OneDrive\Documentos\My Games\Path of Exile 2\"
-$env:FERRISFILTER_HOME = "$t\home"; $env:USERPROFILE = "$t\up"
+Copy-Item tests\ui\test_ff.filter "$t\game\"
+$env:FERRISFILTER_HOME = "$t\home"; $env:FERRISFILTER_GAME_DIR = "$t\game"
 cargo run --bin ff
 ```
 
 Then pick `test_ff.filter` in CONFIG → Filter. Copy the filter again to reset it after an Apply.
-With `USERPROFILE` pointing at the temp folder, the in-game reload goes to the real game only if
-it is running; close it or turn **Reload filter in game after Apply** off.
+The game folder is the temp one, but the in-game reload still reaches a running game (which reads
+its own filter); close the game or turn **Reload filter in game after Apply** off.
 
 ## Cases
 

@@ -3,7 +3,7 @@
 //! Every case runs the binary hermetically in a fresh temp dir seeded from committed files —
 //! never against the repo root, whose `prices.json` is git-ignored and reflects whatever the last
 //! `sync` fetched. The only spawn point is [`apply`], which sets `FERRISFILTER_HOME` and
-//! `USERPROFILE` to the temp dir, so no test can reach the real PoE2 game folder even when
+//! `FERRISFILTER_GAME_DIR` to the temp dir, so no test can reach the real PoE2 game folder even when
 //! `--filter` is omitted.
 
 use assert_cmd::Command;

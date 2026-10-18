@@ -3,8 +3,9 @@
 //! Integration tests link the non-test library, so the `cfg(test)` panic in the folder resolver
 //! does not protect them: a spawned `apply`, `sync` or `ff` that is not pinned would resolve the
 //! real `%APPDATA%\FerrisFilter` and could overwrite the developer's live files. Every spawn that
-//! resolves the FerrisFilter folder must therefore pin `FERRISFILTER_HOME` (and `USERPROFILE`, for
-//! the game folder derived from it) to a temp dir.
+//! resolves the FerrisFilter folder must therefore pin `FERRISFILTER_HOME`, and the game folder is
+//! pinned by `FERRISFILTER_GAME_DIR` (`dirs::document_dir` ignores `USERPROFILE`), both to a temp
+//! dir.
 //!
 //! This file deliberately does not set `[env] FERRISFILTER_HOME` in `.cargo/config.toml`: that
 //! would hide a missing pin and defeat the first-run tests.
@@ -68,10 +69,13 @@ fn spawns_that_resolve_the_folder_set_home() {
                 .unwrap_or(text.len());
             let chain = &text[start..end];
             let is_ff = chain.starts_with(&format!("{spawn}\"ff\")"));
-            let resolves = is_ff || chain.contains("\"apply\"") || chain.contains("\"sync\"");
+            let resolves = is_ff
+                || chain.contains("\"apply\"")
+                || chain.contains("\"sync\"")
+                || (chain.contains("\"install\"") && !chain.contains("--dest"));
             if resolves
                 && !(chain.contains(".env(\"FERRISFILTER_HOME\"")
-                    && chain.contains(".env(\"USERPROFILE\""))
+                    && chain.contains(".env(\"FERRISFILTER_GAME_DIR\""))
             {
                 bad.push(format!("{}:{}", rel(&f), line_of(&text, start)));
             }
@@ -81,7 +85,7 @@ fn spawns_that_resolve_the_folder_set_home() {
     assert!(
         bad.is_empty(),
         "spawn resolves the FerrisFilter folder without .env(\"FERRISFILTER_HOME\") and \
-         .env(\"USERPROFILE\"): {bad:?}"
+         .env(\"FERRISFILTER_GAME_DIR\"): {bad:?}"
     );
 }
 

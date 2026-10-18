@@ -2,6 +2,7 @@
 phase: 40-release-pipeline-installer
 reviewed: 2026-10-18T00:00:00Z
 depth: standard
+iteration: 3
 files_reviewed: 19
 files_reviewed_list:
   - .github/workflows/ci.yml
@@ -25,236 +26,162 @@ files_reviewed_list:
   - assets/poe2/manifest.toml
 findings:
   critical: 0
-  warning: 6
-  info: 8
-  total: 14
+  warning: 0
+  info: 12
+  total: 12
 status: issues_found
 ---
 
-# Phase 40: Code Review Report
+# Phase 40: Code Review Report (iteration 3, final)
 
 **Reviewed:** 2026-10-18
 **Depth:** standard
 **Files Reviewed:** 19
-**Status:** issues_found
+**Status:** issues_found (Info only)
 
 ## Summary
 
-I reviewed the release pipeline (ci.yml and release.yml), the installer tooling (Inno script,
-package, release-check, verify-exe), the exe resource in `build.rs`, the `ff --quit` channel
-(`instance.rs`, `mod.rs`, `app.rs` hunks), the user-agent change and the ff-art icon renderer,
-all against `149d030`.
+This re-review covers the iteration-2 fix commits `12e9771`, `4668e8f`, `7475055` and `0e6d8ca`,
+against `149d030`. All four findings are fixed, and I found no regressions at Critical or Warning
+level.
 
-The design holds up. The tag and Cargo version gate, the CHANGELOG extraction (CRLF safe, stops
-at link references), publishing as a draft first, the per-user install, the single-request quit
-with its withdraw on timeout, and the "only open the mutex" rule are all sound, and I traced
-them through their edge cases.
+- **CR-01 (real CHANGELOG case):** fixed. The case now takes the newest `## [X.Y.Z] - ...`
+  heading (CR-tolerant, pre-release headings skipped) and runs it with `FF_CARGO_VERSION`, so it
+  never needs cargo and no longer depends on `[Unreleased]`. Today it resolves to `0.6.0`.
+  `bash installer/release-check.test.sh` passes. The 40-07 caveat still holds: the
+  `v0.7.0-rc.1` dry-run tag needs a non-empty `[Unreleased]`.
+- **WR-01 (owner-process test):** fixed. I traced both tests. The first one really does go
+  through `Some(process) => has_exited(process)`: the pid is overwritten with the child's pid
+  before `-ready`, so `owner_process` does not short-circuit on `GetCurrentProcessId`. The kept
+  `Child` handle stops the pid from being reused, and `OpenProcess` on an exited but still-held
+  process returns a signalled handle. On CI, `PING.EXE` sits under `%SystemRoot%\System32` on
+  `windows-latest`. Output is nulled, the names are per-process `Local\FerrisFilter-test-<pid>-<label>`,
+  and `Sleeper::drop` kills the child on panic. I ran `cargo test --lib overlay::instance` three
+  times in a row: 38/38 passed each time, in 0.70 s. The timing margins (300/600 ms StillRunning
+  windows against a 60 s child, 3000 ms for Exited) can only fail if an assertion is wrong, not
+  because the runner is slow. One weakness: the second test can pass without exercising its
+  scenario (IN-11).
+- **WR-02 (uninstall quit after confirm):** fixed as far as the code goes. `usUninstall` comes
+  after the confirmation prompt and before the uninstall log and `[UninstallRun]` are processed.
+  The Inno 6 `Abort` remarks list `CurUninstallStepChanged(usUninstall)` among the points where
+  Abort ends the uninstaller. The script is still ASCII-only (0 bytes >= 0x80), and the
+  `AppMutex` forbidden-word grep counts 0 (case-insensitive). It is uncompiled, so 40-07 still has
+  to confirm the three behaviours the fix report lists.
+- **WR-03 (deferred clean quit):** fixed. `quit_after_reload` is separate from
+  `quit_after_apply`. `run_deferred_quit` checks `reload.is_running()`, which stays true until the
+  later `reload.poll()` at `app.rs:3535` takes the result, so the deferral lags one frame and never
+  fires early. It then calls `request_quit()` again, which re-checks `quit_dirty()`. Both popup
+  outcomes (`OpenConfirm` and `KeepConfirm`) clear the flag, so a Cancel in the popup is not
+  followed by a quit. I checked every path that writes `quit_after_reload` (lines 2507, 2510,
+  2516, 2537, 2542), and none of them leaves it stuck at true. Apply & quit still shuts down
+  without re-checking, on purpose (IN-12).
 
-No blockers. The main problems:
-- The write-scoped token is reachable from every build and test step.
-- The release job assumes Inno Setup is already on the runner.
-- The uninstaller ignores the `--quit` result.
-- Two edge cases in how `--quit` detects that the instance has exited.
-- `--quit` can cut off an in-game reload that is still running.
-- The shell test suite is never run by CI.
-
-## Warnings
-
-### WR-01: The write-scoped GITHUB_TOKEN is reachable from every build and test step
-
-**File:** `.github/workflows/release.yml:13-14, 29-32, 49-50, 60-61`
-**Issue:** `permissions: contents: write` is set for the whole job, and `actions/checkout` keeps
-its default `persist-credentials: true`. The token is therefore stored in `.git/config` for every
-later step, including `cargo test --locked` and `cargo build --release`. Those steps run every
-dependency's build script and proc macros. A compromised crate, or a test that runs `git push`,
-could push to the repo or move tags. Only the final `gh release` step needs write access.
-**Fix:** Stop the checkout from saving the token, and pass it only to the publish step (which
-already uses `GH_TOKEN`):
-```yaml
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-```
-For stronger isolation, split the job: one job builds and tests with `contents: read` and
-uploads `dist/` as an artifact, and a second publish job with `contents: write` only downloads
-it and runs `gh release`.
-
-### WR-02: The release job assumes Inno Setup is preinstalled on the runner
-
-**File:** `.github/workflows/release.yml:74-78`, `installer/package.sh:24-40`
-**Issue:** No step installs Inno Setup. `package.sh` searches only `iscc.exe` on PATH,
-`C:\Program Files (x86)\Inno Setup 6` and `%LOCALAPPDATA%\Programs\Inno Setup 6`. Whether
-`windows-latest` has Inno Setup, and at which path, depends on the image, and the image
-changes underneath the workflow. This has not been checked yet: the planning notes say plan 40-07
-has not compiled the installer anywhere. If the image lacks Inno Setup, or installs it under
-`C:\Program Files\Inno Setup 6`, every tag fails at the packaging step, after a full test and
-release build. The failure is loud, but it costs a tag (rc re-tags are meant to be rare).
-**Fix:** Install a pinned version explicitly before packaging, and add the 64-bit path to the
-search list:
-```yaml
-      - name: Install Inno Setup
-        run: choco install innosetup --version=6.x.y --no-progress -y
-```
-```bash
-  for c in "$(command -v iscc.exe || true)" \
-           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
-           "/c/Program Files/Inno Setup 6/ISCC.exe" \
-           "$local_app"; do
-```
-
-### WR-03: Uninstall ignores the `--quit` outcome, so a running ff.exe is left behind
-
-**File:** `installer/ferrisfilter.iss:76-77`
-**Issue:** `[UninstallRun]` runs `ff.exe --quit` and ignores its exit code. If the instance has
-unapplied edits, its popup opens. After 10 s `--quit` returns 1 (StillRunning), and the
-uninstaller goes on to delete `{app}\ff.exe` while that file is still running. With
-`PrivilegesRequired=lowest` the uninstaller cannot schedule a delete on reboot (that needs
-admin). The exe stays behind next to a half-removed install, and the user sees an "some elements
-could not be removed" message. The installer path (`PrepareToInstall`) has a Retry loop for
-this case; the uninstall path does not.
-**Fix:** Do the uninstall quit in `[Code]`, reusing the installer's loop, and drop the
-`[UninstallRun]` entry:
-```pascal
-function InitializeUninstall(): Boolean;
-begin
-  Result := QuitRunningFerrisFilter();
-  if not Result then
-    MsgBox('FerrisFilter is still running. Quit it from its tray icon, then uninstall again.',
-      mbError, MB_OK);
-end;
-```
-`QuitRunningFerrisFilter` uses `{app}`, which is available during uninstall.
-
-### WR-04: `--quit` exit detection can be wrong in both directions
-
-**File:** `src/overlay/instance.rs:530-577, 579-585, 612-640`
-**Issue:**
-1. **Too strict:** when `targets` is not empty, success means that *every* `ff.exe` process with
-   the same image path has exited, not that the instance has. Other processes can share the
-   path: a second launch blocked in its "already running but not responding" message box, a
-   concurrent `--quit` from an uninstall started at the same time, or a launcher that took over
-   as the new instance once the old one quit (CLAUDE.md says such a launch "runs as the new
-   instance"). Any of these makes `all_exited` stay false, so the result is StillRunning (exit 1)
-   even though the instance quit. The installer then shows a misleading Retry box.
-2. **Too early:** when `targets` is empty (the instance runs from a different path than the
-   `--quit` exe, or its image path cannot be read), success means the mutex is gone. But
-   `begin_shutdown` (`app.rs:2558`) drops the guard *before* the viewport closes, so `Exited` is
-   reported while the process is still alive.
-**Fix:** Wait for the process that actually owns the instance. One approach: have the instance
-write its PID somewhere `--quit` can read (for example the payload of a named file mapping, or a
-`-pid` object name). Then `OpenProcess(SYNCHRONIZE, pid)` once and `WaitForSingleObject` on that
-handle. At a minimum, report success only when both the mutex is gone *and* the matching
-processes have exited, and leave out processes that never held the mutex.
-
-### WR-05: `ff --quit` can kill the process while an in-game reload is still running
-
-**File:** `src/overlay/app.rs:2494-2510, 3386-3404`
-**Issue:** `request_quit` calls `begin_shutdown` and returns true whenever `quit_dirty()` is
-false. It does not check `self.reload.is_running()`. Just after a successful Apply the state is
-clean, and the reload worker may still be pasting `/reloaditemfilter` or waiting about 120 ms to
-restore the clipboard. Closing the process at that point stops the sequence partway. The
-user's clipboard can be left holding `/reloaditemfilter`, or the chat line can be left open with
-the command typed. The Apply & quit path (`app.rs:3398`) waits for this worker on purpose. Tray
-Quit already had the same gap, but `--quit` now lets the installer trigger it with no user
-action.
-**Fix:** Defer the shutdown while the reload worker runs, as the Apply & quit path does:
-```rust
-if step == apply::QuitStep::QuitNow {
-    if self.reload.is_running() {
-        self.quit_after_apply = true; // reuse the "quit when idle" path
-        return false;
-    }
-    self.begin_shutdown();
-    return true;
-}
-```
-
-### WR-06: The release-check test suite is never executed
-
-**File:** `.github/workflows/ci.yml:39-40`, `installer/release-check.test.sh`
-**Issue:** `release-check.test.sh` covers the tag regex, the CHANGELOG extraction and CRLF
-handling, but no workflow and no Rust test runs it (a grep for `release-check.test` finds only
-the file itself). A regression in `release-check.sh` would only show up when a version tag is
-pushed, which is the exact failure the dry-run budget is meant to avoid.
-**Fix:** Run the suite in the PR workflow (it needs only bash, awk and grep):
-```yaml
-      - name: Test the release scripts
-        run: bash installer/release-check.test.sh
-```
+No new BLOCKER or WARNING. The nine iteration-2 Info items are still open, since none of the
+fix commits touched those lines. They are listed again below, along with three new Info items.
 
 ## Info
 
-### IN-01: `--quit` creates kernel objects, but the comments say it only opens them
+### IN-01: `--quit` still creates `-ready`/`-quit` events, and the comment says it does not
 
-**File:** `src/overlay/mod.rs:45-48`, `src/overlay/instance.rs:587-588, 604-605`
-**Issue:** The comments say `--quit` "only opens the instance objects, never creates them". That
-holds for the mutex. For `-ready` and `-quit`, `open_event` calls `CreateEventW`, which creates
-each event if it is missing; the `ERROR_ALREADY_EXISTS` check only notices this afterwards. The
-effect is harmless: a pre-`--quit` instance, or one whose events failed, is reported as
-Unreachable. If the instance exits between `open_mutex` and `open_event`, the result is also
-Unreachable (exit 2) instead of NotRunning.
-**Fix:** Use `OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, 0, name)` for the quit path, or reword
-the comments to say that only the mutex is never created.
+**File:** `src/overlay/mod.rs:45-48`, `src/overlay/instance.rs:655-656`
+**Issue:** Carried over. `open_event` calls `CreateEventW`. Yet the `mod.rs` comment says "It
+only opens the instance objects, never creates them".
+**Fix:** Use `OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, 0, name)` on the quit path, or reword
+the comment so it says only the mutex is never created.
 
-### IN-02: `OpenMutexW` is given a process access-right constant
+### IN-02: `OpenMutexW` is given `PROCESS_SYNCHRONIZE`
 
-**File:** `src/overlay/instance.rs:493`
-**Issue:** `PROCESS_SYNCHRONIZE` happens to equal `SYNCHRONIZE` (0x00100000), but it is a
-process access right being passed for a mutex, which misleads readers.
-**Fix:** Use `windows_sys::Win32::Foundation::SYNCHRONIZE` (or `Win32::Storage::FileSystem::SYNCHRONIZE`,
-depending on the windows-sys version).
+**File:** `src/overlay/instance.rs:606`
+**Issue:** Carried over. The value is the same, but the constant belongs to the wrong family.
+**Fix:** Use `windows_sys::Win32::Foundation::SYNCHRONIZE` (or the `Storage::FileSystem` one).
 
-### IN-03: A `const` sits between the `use` declarations
+### IN-03: The `Win32_System_Diagnostics_ToolHelp` feature is unused
 
-**File:** `src/overlay/instance.rs:204-208`
-**Issue:** `MAXIMUM_WAIT_OBJECTS` is declared between two `use` blocks of `mod imp`. rustfmt does
-not move it.
-**Fix:** Move it below the last `use`.
+**File:** `Cargo.toml:50`
+**Issue:** Carried over. Nothing uses ToolHelp any more, since WR-04 removed the process scan.
+**Fix:** Drop the feature and re-lock.
 
-### IN-04: The profile comment now sits above `[build-dependencies]`
+### IN-04: PID read and `OpenProcess` are not atomic; the fallback is silent
 
-**File:** `Cargo.toml:58-66`
-**Issue:** The new `[build-dependencies]` table was inserted between the comment that explains
-`[profile.dev.package."*"]` ("Optimise dependencies ... Our own crate stays at opt-level 0") and
-that profile. The comment now appears to describe winresource.
-**Fix:** Move `[build-dependencies]`, with its own comment, above the profile comment block.
+**File:** `src/overlay/instance.rs:418-427`
+**Issue:** Carried over. A pid reused between `published_pid` and `OpenProcess` would make the
+quit wait for an unrelated process. Separately, a failed `OpenProcess` falls back to the mutex
+wait and leaves no trace that it did.
+**Fix:** Re-read the pid after opening the handle and compare the two. Log when the fallback is
+taken while a section exists.
 
-### IN-05: `LegalCopyright` holds a license identifier
+### IN-05: The profile comment sits above `[build-dependencies]`
+
+**File:** `Cargo.toml:57-63`
+**Issue:** Carried over.
+**Fix:** Move `[build-dependencies]` above the "Optimise dependencies ..." comment.
+
+### IN-06: `LegalCopyright` holds a license identifier
 
 **File:** `build.rs:85`
-**Issue:** Explorer shows `LegalCopyright` as "Copyright". `GPL-3.0-or-later` is a license, not a
-copyright notice.
-**Fix:** `.set("LegalCopyright", "Copyright (C) 2026 Jonathas Conceicao. GPL-3.0-or-later.")`.
+**Issue:** Carried over.
+**Fix:** `"Copyright (C) 2026 Jonathas Conceicao. GPL-3.0-or-later."`
 
-### IN-06: `verify-exe.sh` matches the version as a substring
+### IN-07: `verify-exe.sh` matches the version as a substring
 
 **File:** `installer/verify-exe.sh:21-29`
-**Issue:** `grep -F "ProductVersion0.7.0"` also matches an exe stamped `0.7.0-rc.1` or `0.7.01`.
-In CI the exe is always freshly built after the Cargo gate, so the risk is low. As a gate,
-though, it can pass on a stale exe (for example a local `FF_EXE`).
-**Fix:** Check that the value ends right after the version. After the NULs are stripped, the next
-byte is the next key's length/type word, so match that `$version` is followed by a non-version
-character, for example `grep -a -E -q "ProductVersion${version//./\\.}([^0-9A-Za-z.+-]|$)"`.
+**Issue:** Carried over. A check for `ProductVersion0.7.0` also passes on `0.7.0-rc.1`.
+**Fix:** Anchor the version, for example `grep -a -E -q "ProductVersion${version//./\\.}([^0-9A-Za-z.+-]|$)"`.
 
-### IN-07: The icon downscale uses straight alpha, and frame sizes are not validated
+### IN-08: The icon downscale uses straight alpha; frame sizes are not validated
 
 **File:** `tools/ff-art/src/main.rs:584-612`
-**Issue:** The frames are resized with Lanczos3 on straight (demultiplied) RGBA. This bleeds the
-colour of transparent pixels (black) into the edges, which leaves dark fringes in the small
-16/24 px frames. Sizes of 0 or above 256 are not rejected up front: 0 makes a degenerate frame,
-and above 256 fails inside `IcoFrame::as_png` with a vague error.
-**Fix:** Resize the premultiplied pixmap data and demultiply afterwards, and
-`anyhow::ensure!((1..=256).contains(&s), ...)` for each size.
+**Issue:** Carried over.
+**Fix:** Resize premultiplied data, and add `anyhow::ensure!((1..=256).contains(&s), ...)`.
 
-### IN-08: Silent installs abort whenever ff is still running
+### IN-09: Silent install and uninstall abort when ff is still running
 
-**File:** `installer/ferrisfilter.iss:97-99`
-**Issue:** Under `/SUPPRESSMSGBOXES`, `SuppressibleMsgBox` returns its default `IDCANCEL`. A silent
-upgrade over an ff waiting on the Unapplied changes popup therefore fails with the
-PrepareToInstall message and never retries. This may be intended, but nothing documents it.
-**Fix:** Document it in the script header, or pass `IDRETRY` as the default once.
+**File:** `installer/ferrisfilter.iss:97-98, 117-122`
+**Issue:** Carried over, and it now covers the `usUninstall` path too. Under
+`/SUPPRESSMSGBOXES`, the Retry box returns `IDCANCEL`, so a silent install or uninstall over a
+running ff that has edits fails, with no retry. The script header does not say so.
+**Fix:** Document it in the header comment (lines 14-19).
+
+### IN-10: The frame-loop comment still describes the old deferral
+
+**File:** `src/overlay/app.rs:3432-3434`
+**Issue:** The comment says "Apply & quit succeeded, or a quit request arrived mid-reload: leave
+once the in-game reload ... has finished". Since `4668e8f`, a deferred clean quit no longer just
+leaves. It is asked again and can open the Unapplied changes popup. The doc comment on
+`run_deferred_quit` is accurate, but this inline comment contradicts it.
+**Fix:** "Apply & quit leaves once the in-game reload has finished; a quit request that came
+mid-reload is asked again then (see `run_deferred_quit`)."
+
+### IN-11: `an_instance_releasing_its_name_early_is_not_taken_as_its_exit` never checks that the name was released
+
+**File:** `src/overlay/instance.rs` (test added in `0e6d8ca`, after `quit_follows_the_published_owner_process_not_the_name`)
+**Issue:** The test asserts `StillRunning`, but `StillRunning` is also the result when the
+instance thread never sees the quit request and never drops its guard. That would happen if
+`take_quit_request` regressed, or if the request were withdrawn before the thread polled. In
+that case the mutex is still held, and even the mutex fallback reports `StillRunning`. So the
+test can pass without running the "early name release" scenario. Today the thread polls every
+10 ms against a 600 ms window, so in practice the scenario does run. The problem is that nothing
+asserts it.
+**Fix:** Have the thread report that it dropped the guard (for example `released_tx.send(())`
+after `drop(g)`). Then, before or right after the `quit_running_named` call, assert
+`released_rx.recv_timeout(Duration::from_millis(600)).is_ok()`, and assert the mutex is gone,
+for example via `quit_running_named` with a fresh call returning `NotRunning` once the child has
+ended.
+
+### IN-12: Apply & quit still shuts down without re-checking
+
+**File:** `src/overlay/app.rs:2531-2546`
+**Issue:** The fixer chose this on purpose. `quit_after_apply` calls `begin_shutdown()` as soon
+as the reload worker is idle. If the user summons the window during that sub-second reload
+(the game took focus, so the window was hidden) and edits something, the edit is lost without
+the popup. The user has just chosen to quit, so the risk is small. The opposite case goes the
+other way: if the user keeps working during a deferred *clean* quit and then presses Apply, the
+`request_quit` that was asked again quits the overlay as soon as that Apply's reload finishes,
+which they might not expect after they kept working. Both behaviours are defensible, but neither
+is documented in CLAUDE.md's quit notes.
+**Fix:** Optionally run the same `quit_dirty()` re-check for `quit_after_apply`. It costs nothing
+when nothing changed. Consider also clearing `quit_after_reload` whenever the user starts an
+Apply from the bottom bar, so new work cancels a quit that was still waiting.
 
 ---
 

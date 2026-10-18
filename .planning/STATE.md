@@ -4,13 +4,13 @@ milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
 stopped_at: Completed 39-04-PLAN.md
-last_updated: "2026-10-18T10:06:14.020Z"
+last_updated: "2026-10-18T10:18:59.655Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 3
   total_plans: 40
-  completed_plans: 24
+  completed_plans: 25
   percent: 13
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 ## Current Position
 
 Phase: 39 (league-picker-price-source) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-10-18
 
@@ -204,6 +204,7 @@ work (carried forward past the v0.3 close):
 - [Phase 36]: Isolation guard scans for locations::from_env (free function), not AppDirs::from_env
 - [Phase ?]: 38-04: SetStrictness clears stale messages only on a real change
 - [Phase 38-05] Reset buttons arm a popup; Reset is a pending edit (Revert undoes), expanded style row explicitly collapsed
+- [Phase 39]: 39-05: price-source marker is the effective-source comparison (OD-1); applied_policy moves on Apply and filter switch (A2)
 
 ### Pending Todos
 

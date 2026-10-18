@@ -18,6 +18,12 @@ human review and input to be stacked here and presented after Phase 41, before P
   missing-folder status and its click-through to Config; fresh install opens the folder's filter
   (also after Reload) and `ff-cli apply` follows the filter saved in ff; screenshot guard refuses
   without `FERRISFILTER_GAME_DIR` under temp; `tests/ui/README.md` screenshot steps.
+- **Phase 38** (`38-HUMAN-UAT.md`, 4 checks): strictness row fits one line at 660pt, captions and
+  tooltips read well, Flat Broke on a fresh install, Custom dim and unclickable; a level click marks
+  Config ` *`, Revert asks and restores, Apply writes, each level hides / shows the expected tiers in
+  game; minimap tile tooltip shows once (Config style editor and Custom rule style lines); both
+  Reset buttons and popups (greyed tooltip "Already at the defaults.", custom styles kept, Revert /
+  Apply).
 - **Phase 40-07** (manual): install Inno Setup (`winget install --id JRSoftware.InnoSetup -e`),
   build the three assets locally, run the 8-step installer test, and confirm or drop installing
   `LICENSE.txt` next to `ff.exe` (step 8).
@@ -53,6 +59,12 @@ human review and input to be stacked here and presented after Phase 41, before P
   `--filter` targets the filter saved in ff, else `dynamic.filter`; the CLI errors instead of
   falling back to Documents; leftover IN-06: with an unusable `ff-settings.json` that same click
   overwrites it with defaults.
+- Phase 38 execution: fixture `tests/fixtures/seed-styles.json`; a tier reset whose file order would
+  not validate restores the default F-to-S order; a CRLF-sensitive test normalises line endings
+  instead of a `.gitattributes` change; advisory leftovers IN-01 (live strictness levels look as dim
+  as Custom until hovered), IN-02 (Custom tooltip wording), IN-04 (Reset buttons over the heading's
+  gold underline), IN-05 (a hand-made `tiers.json` with unknown / repeated tiers can stay invalid
+  after Reset).
 - Phase 38 UI-SPEC / plans: strictness segments sized to their captions (usable width ~517pt,
   two-word names stacked, no label above the row); clicking the lit level or Custom does nothing; a
   level click also sets S and A to Show; custom styles never count toward "differs from defaults";
@@ -75,6 +87,15 @@ human review and input to be stacked here and presented after Phase 41, before P
   version (vetted with `cargo info` instead of a stop); CHANGELOG link references still say
   `poe2-myfilter` (Phase 42); ROADMAP Phase 40 criterion 1 says "draft Release" though the
   workflow auto-publishes (align in Phase 42).
+- Phase 41 UI-SPEC / plans: one 240pt button between the version line and the repo link; results
+  only on the status line; dates local `YYYY-MM-DD`; a latest release older than the running build
+  reads `Up to date (<running base version>)` without a date; a verified installer is deleted on a
+  normal quit, old `%TEMP%` update folders swept after 24h; no generic worker exists (Phase 39 did
+  not extract one), so a third copy of the worker pattern is added; the download URL must be exactly
+  the repo's `releases/download/<tag>/<name>`, https-only redirects; Install re-hashes the file;
+  **versions compare on major.minor.patch, so a `0.7.0-rc.1` build is not offered the final
+  `v0.7.0`** (rc testers install 0.7.0 by hand); `semver` / `ring` not slopchecked (pip missing; both
+  already in Cargo.lock).
 
 ## For the Release Review (Phase 42)
 
@@ -91,3 +112,8 @@ human review and input to be stacked here and presented after Phase 41, before P
   `assets/poe2/common/refresh_*.png` (covered by Credits). PROJECT.md deferred bullet "A
   destination override in the GUI" is now covered. `cargo fmt --check` diff in
   `tests/isolation_guard.rs` (pre-existing).
+- Phase 38: CHANGELOG — new built-in styles (only S-F, unchanged, hidden ship), the Strictness row,
+  Reset to defaults for styles and tiers, the single minimap tooltip. Users whose rules use the
+  removed `Recycle` / `kite` / `exceptional` see "unknown style" (IN-03); `generate` without a live
+  `styles.json` fails on those names. `cargo clippy` fails with ~125 errors in untouched code
+  (`result_large_err`, collapsible `if`, ...): consider a cleanup or a lint config in REV-01.

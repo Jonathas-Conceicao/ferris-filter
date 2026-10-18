@@ -4,13 +4,13 @@ milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
 stopped_at: Completed 36-07-PLAN.md
-last_updated: "2026-10-18T06:20:32.666Z"
+last_updated: "2026-10-18T06:26:25.856Z"
 last_activity: 2026-10-18
 progress:
   total_phases: 24
   completed_phases: 1
-  total_plans: 16
-  completed_plans: 10
+  total_plans: 20
+  completed_plans: 11
   percent: 4
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 ## Current Position
 
 Phase: 37 (game-folder-resolver-picker) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
 Last activity: 2026-10-18
 

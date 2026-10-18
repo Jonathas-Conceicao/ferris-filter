@@ -159,7 +159,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 Plans:
 
 - [x] 38-01-PLAN.md — Freeze old styles as tests/fixtures/seed-styles.json, repoint test readers, ship the nine reworked built-ins
-- [ ] 38-02-PLAN.md — Skin ff_levels widget (content-proportional, one row) and FIX-01 single minimap tooltip
+- [x] 38-02-PLAN.md — Skin ff_levels widget (content-proportional, one row) and FIX-01 single minimap tooltip
 - [ ] 38-03-PLAN.md — Pure strictness model and ConfigState reset/strictness methods (TDD)
 - [ ] 38-04-PLAN.md — Strictness row on the Config tab wired to SetStrictness
 - [ ] 38-05-PLAN.md — Reset to defaults buttons (Styles, Tiers) and their two popups
@@ -236,7 +236,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 36. Per-user Locations & Embedded Defaults | 7/7 | Complete    | 2026-10-18 |
 | 37. Game Folder Resolver & Picker | 7/7 | Complete    | 2026-10-18 |
-| 38. Built-in Styles, Strictness & Reset | 1/6 | In Progress|  |
+| 38. Built-in Styles, Strictness & Reset | 2/6 | In Progress|  |
 | 39. League Picker & Price Source | 0/0 | Not started | - |
 | 40. Release Pipeline & Installer | 0/0 | Not started | - |
 | 41. Check for Updates | 0/0 | Not started | - |

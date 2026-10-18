@@ -55,13 +55,13 @@
 
 ### Strictness Selector (STRICT)
 
-- [ ] **STRICT-01**: The Config tab shows one exclusive button row: `Custom | Flat Broke |
+- [x] **STRICT-01**: The Config tab shows one exclusive button row: `Custom | Flat Broke |
   Scrounging | Getting By | Comfy | Loaded | Div Farmer`.
 
 - [ ] **STRICT-02**: Clicking a level sets the built-in tier styles' visibility, hiding nothing, F,
   E-F, D-F, C-F, B-F respectively, as one pending edit (Revert undoes, Apply writes).
 
-- [ ] **STRICT-03**: The highlighted button is derived from the current S-F visibility; any other
+- [x] **STRICT-03**: The highlighted button is derived from the current S-F visibility; any other
   pattern shows Custom, which is display-only.
 
 - [ ] **STRICT-04**: Non-tier built-ins and custom styles are untouched; a tooltip says rules using
@@ -138,7 +138,7 @@
 
 ### Fixes (FIX)
 
-- [ ] **FIX-01**: Hovering a minimap icon shows its tooltip once (today the shape name, e.g.
+- [x] **FIX-01**: Hovering a minimap icon shows its tooltip once (today the shape name, e.g.
   "Triangle", is drawn twice, one on top of the other).
 
 ### Release Review (REV)
@@ -191,13 +191,13 @@
 | BSTY-01 | Phase 38 | Complete |
 | BSTY-02 | Phase 38 | Complete |
 | BSTY-03 | Phase 38 | Pending |
-| STRICT-01 | Phase 38 | Pending |
+| STRICT-01 | Phase 38 | Complete |
 | STRICT-02 | Phase 38 | Pending |
-| STRICT-03 | Phase 38 | Pending |
+| STRICT-03 | Phase 38 | Complete |
 | STRICT-04 | Phase 38 | Pending |
 | RESET-01 | Phase 38 | Pending |
 | RESET-02 | Phase 38 | Pending |
-| FIX-01 | Phase 38 | Pending |
+| FIX-01 | Phase 38 | Complete |
 | LEAGUE-01 | Phase 39 | Pending |
 | LEAGUE-02 | Phase 39 | Pending |
 | LEAGUE-03 | Phase 39 | Pending |

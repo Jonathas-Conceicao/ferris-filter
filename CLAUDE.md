@@ -6,10 +6,14 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 - **Project plan & workflow:** managed with GSD in `.planning/` — see `.planning/PROJECT.md`
   (context), `.planning/ROADMAP.md` (4 phases), `.planning/REQUIREMENTS.md`, and
   `.planning/STATE.md`. Git uses a **milestone branching** workflow (see PROJECT.md → Git Workflow).
-- **Changelog:** `CHANGELOG.md` (repo root) tracks notable changes. Keep `[Unreleased]` current
-  as work lands, and **always update `CHANGELOG.md` when a milestone is completed** (e.g. via
-  `/gsd-complete-milestone`): move the `[Unreleased]` entries into a new dated version section
-  with a one-line milestone summary.
+- **Milestone close-out:** milestones are atomic, and each one ends with a **Release Review**
+  phase (code cleanup, README screenshots, `Cargo.toml` version, changelog draft, then the
+  author's review of `README.md` and `CHANGELOG.md`). See PROJECT.md → Milestone Close-out.
+  A bug introduced and fixed inside a milestone is never mentioned outside `.planning/`
+  (changelog, README, this file, code comments, commit messages on `main`).
+- **Changelog / README:** `CHANGELOG.md` and `README.md` are read by people and mostly written by
+  the author. Agents don't add changelog entries during a milestone (the Release Review drafts
+  them once); work landed between milestones may add a short `[Unreleased]` entry.
 - **Domain spec (below):** the filter grammar, the Dracula style-tier system, and the design
   philosophy. `config.json` + `styles-default.json` are the executable spec the `generate` command compiles. The
   **byte-for-byte acceptance baseline** is now the committed fixture

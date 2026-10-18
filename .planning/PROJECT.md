@@ -246,6 +246,7 @@ None; the next milestone defines them (`/gsd-new-milestone`).
 | Economy blocks carry `# ff:name` / `# ff:style` only in the game-folder section | Economy rules read like any other rule in `ff`; `generate` output and fixtures stay byte-identical | ✓ Good (v0.6) |
 | Package version tracks milestone tags (0.6.0 at v0.6) | Version shown on ABOUT matches the tag | ✓ Good (v0.6) |
 | Overlay league pinned in `sync::OVERLAY_LEAGUE` | poe.ninja's `indexed` flag flips between leagues | ⚠️ Revisit (league picker) |
+| Milestones are atomic; each ends with a Release Review phase | README and CHANGELOG are read by people and mostly written by the author; bugs made and fixed inside a milestone never ship | — Pending (first applied in v0.7) |
 
 ## Git Workflow
 
@@ -258,6 +259,43 @@ None; the next milestone defines them (`/gsd-new-milestone`).
    3. **Tag** the resulting merge commit on `main` (annotated `vX.Y`), then push the tag.
 
 GSD's `complete-milestone` natively does the squash-merge and tag; the branch push and tag-on-main ordering are enforced as this project convention.
+
+## Milestone Close-out
+
+**Milestones are atomic.** What ships is the net difference from the previous release. A bug
+that is introduced and fixed inside the same milestone never existed as far as anything outside
+`.planning/` is concerned: it is not mentioned in `CHANGELOG.md`, `README.md`, `CLAUDE.md`, code
+or doc comments, test names, or the squash-merge commit message on `main`. Only internal planning
+files (phase SUMMARY / REVIEW / UAT files, STATE.md) record it. A bug in an already *released*
+version that the milestone fixes is changelog material as usual.
+
+**Every milestone ends with a Release Review phase.** `/gsd-new-milestone` adds it as the last
+phase of the roadmap, and `/gsd-complete-milestone` does not start until it is complete. Its
+steps, in order:
+
+1. **Code cleanup.** Remove duplication added during the milestone (merge near-identical
+   helpers, drop dead code and leftover scaffolding) and strip every mention of in-milestone bugs
+   from code and doc comments, test names, README.md and CLAUDE.md (e.g. "fixes the regression
+   from Phase N", UAT / review ids such as `UAT2-03` or `WR-02`). No behaviour change: the full
+   test suite passes before and after.
+2. **README screenshots.** Re-take any screenshot in `docs/screenshots/` whose screen changed,
+   with the debug `--screenshot` mode under a temp home (see CLAUDE.md, `ff` row), keeping the
+   file names and framing.
+3. **Version.** Set `version` in the root `Cargo.toml` to the milestone's version (`X.Y.0` for
+   `vX.Y`) and refresh `Cargo.lock`. `ff-art` keeps its own version.
+4. **Changelog draft.** Write the new `## [X.Y.0] - <date>` section of `CHANGELOG.md` from the
+   milestone's net changes against the previous tag, folding in anything already under
+   `[Unreleased]` (work landed between milestones): a one-line milestone summary, then
+   Added / Changed / Removed / Fixed, user-facing and short. Fixed lists only bugs that existed in
+   a released version. This is a draft for the author, not the final text.
+5. **Author review (the phase's UAT, last step).** The author reviews and, as they see fit,
+   rewrites `README.md` and the drafted `CHANGELOG.md` section. Agents change these two files only
+   as the author directs. The author's confirmation closes the phase.
+
+During a milestone, agents do not add `CHANGELOG.md` entries; step 4 writes them once. Then
+`/gsd-complete-milestone` first checks that the root `Cargo.toml` version matches the tag it is
+about to create (and stops if not), moves any remaining `[Unreleased]` text into the version
+section, and runs the Git Workflow steps above.
 
 ## Evolution
 

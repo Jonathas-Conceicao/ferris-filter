@@ -5,9 +5,8 @@ All notable changes to **FerrisFilter** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Maintenance:** keep `[Unreleased]` current as work lands, and **whenever a milestone is
-> completed** (e.g. via `/gsd-complete-milestone`) move its entries into a new dated version
-> section below with a one-line milestone summary.
+> **Maintenance:** each milestone's section is drafted once, at the end of the milestone, and
+> reviewed by the author. `[Unreleased]` holds only changes made between milestones.
 
 ## [Unreleased]
 

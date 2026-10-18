@@ -38,3 +38,6 @@ desktop.ini
 
 # My personal notes
 human_notes.org
+
+# installer/package.sh output (setup exe, zip, checksums); never committed
+/dist/

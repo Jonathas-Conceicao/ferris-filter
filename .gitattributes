@@ -14,3 +14,9 @@ tests/fixtures/v04-dynamic.filter -text
 
 # Aseprite sources (custom art) are binary.
 *.ase binary
+
+# Shell scripts must stay LF: bash on the Windows runner cannot run CRLF scripts.
+*.sh text eol=lf
+
+# Icons are binary.
+*.ico binary

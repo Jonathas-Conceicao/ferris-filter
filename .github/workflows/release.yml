@@ -1,0 +1,113 @@
+# Release pipeline. Workflows run on version tags (this file) and on pull
+# requests (ci.yml) only; push-to-main runs are deferred. The floating nightly
+# from rust-toolchain.toml is accepted by the author. Release artifacts come
+# only from this workflow.
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      FF_REQUIRE_RESOURCE: '1'
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install the toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustc -vV
+          cargo -V
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Validate the tag and extract the release notes
+        id: check
+        run: |
+          bash installer/release-check.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Run the tests
+        run: cargo test --locked
+
+      - name: Require a clean working tree
+        run: |
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            git status
+            echo "working tree is dirty; the baked version would end in -dirty" >&2
+            exit 1
+          fi
+
+      - name: Build ff in release
+        run: cargo build --release --locked --bin ff
+
+      - name: Check the baked version equals the tag
+        run: |
+          described="$(git describe --tags --match 'v*' --dirty)"
+          if [ "$described" != "$GITHUB_REF_NAME" ]; then
+            echo "git describe gives '$described', tag is '$GITHUB_REF_NAME'" >&2
+            exit 1
+          fi
+
+      - name: Verify the exe version resource
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: bash installer/verify-exe.sh target/release/ff.exe "$VERSION"
+
+      - name: Package the installer, zip and checksums
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: bash installer/package.sh "$VERSION"
+
+      - name: Check the release assets
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          test "$(ls dist | wc -l)" -eq 3
+          for f in "FerrisFilter-$VERSION-setup.exe" "FerrisFilter-$VERSION-windows-x64.zip" SHA256SUMS.txt; do
+            test -s "dist/$f"
+          done
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Publish the release (draft first, then public)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.check.outputs.version }}
+          PRERELEASE: ${{ steps.check.outputs.prerelease }}
+        run: |
+          state=$(gh release view "$GITHUB_REF_NAME" --json isDraft -q .isDraft 2>/dev/null || true)
+          if [ "$state" = "true" ]; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          elif [ "$state" = "false" ]; then
+            echo "release $GITHUB_REF_NAME is already published; refusing to modify it" >&2
+            exit 1
+          fi
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "FerrisFilter $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+            "${flags[@]}" \
+            "dist/FerrisFilter-$VERSION-setup.exe" \
+            "dist/FerrisFilter-$VERSION-windows-x64.zip" \
+            "dist/SHA256SUMS.txt"
+          gh release edit "$GITHUB_REF_NAME" --draft=false

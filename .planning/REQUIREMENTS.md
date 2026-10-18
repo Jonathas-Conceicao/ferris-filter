@@ -16,7 +16,7 @@
   Apply / Sync when missing.
 
 - [x] **LOC-03**: `FERRISFILTER_HOME` still overrides it (the dev-from-repo workflow).
-- [ ] **LOC-04**: `ff-cli apply` / `sync` / `install` (a dev tool, not installed) use the same
+- [x] **LOC-04**: `ff-cli apply` / `sync` / `install` (a dev tool, not installed) use the same
   folder and game folder as the overlay; `generate` stays working-directory relative.
 
 - [x] **LOC-05**: Tests and the debug screenshot mode can never read or write the real config or
@@ -180,7 +180,7 @@
 | LOC-01 | Phase 36 | Complete |
 | LOC-02 | Phase 36 | Complete |
 | LOC-03 | Phase 36 | Complete |
-| LOC-04 | Phase 36 | Pending |
+| LOC-04 | Phase 36 | Complete |
 | LOC-05 | Phase 36 | Complete |
 | GAME-01 | Phase 37 | Pending |
 | GAME-02 | Phase 37 | Pending |

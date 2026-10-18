@@ -106,3 +106,14 @@ begin
   else
     Result := 'FerrisFilter is still running. Quit it from its tray icon, then run Setup again.';
 end;
+
+{ Uninstall asks a running ff to quit the same way before any file is removed, so ff.exe is
+  never left running in a half-removed install. The [UninstallRun] entry then finds nothing
+  running. }
+function InitializeUninstall(): Boolean;
+begin
+  Result := QuitRunningFerrisFilter();
+  if not Result then
+    SuppressibleMsgBox('FerrisFilter is still running. Quit it from its tray icon, then ' +
+      'uninstall again.', mbError, MB_OK, IDOK);
+end;

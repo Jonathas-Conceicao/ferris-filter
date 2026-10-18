@@ -116,7 +116,8 @@ pub struct OverlayApp {
     /// The RULES Revert was clicked: the "Discard rule changes?" popup asks first.
     revert_rules_armed: bool,
 
-    /// Apply & quit succeeded; the shutdown runs once any in-game reload worker has finished.
+    /// Apply & quit succeeded, or a quit request came while an in-game reload was still being
+    /// sent; the shutdown runs once that reload worker has finished.
     quit_after_apply: bool,
 
     /// "Quit without applying" was chosen; the shutdown runs at the top of the next frame.
@@ -2490,11 +2491,17 @@ impl OverlayApp {
 
     /// A quit request (tray Quit or the installer's `ff --quit`): quits at once when nothing
     /// is unapplied, otherwise opens the Unapplied changes popup. Returns true when the
-    /// shutdown began.
+    /// shutdown began. While an in-game reload is still being sent (right after an Apply) the
+    /// shutdown waits for it, like Apply & quit, so the paste and the clipboard restore are
+    /// never cut off.
     fn request_quit(&mut self) -> bool {
         let dirty = self.quit_dirty();
         let step = apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
         if step == apply::QuitStep::QuitNow {
+            if self.reload.is_running() {
+                self.quit_after_apply = true;
+                return false;
+            }
             self.begin_shutdown();
             return true;
         }
@@ -3393,8 +3400,9 @@ impl eframe::App for OverlayApp {
         {
             quit_requested = self.request_quit();
         }
-        // Apply & quit succeeded: leave once an in-game reload (if one started) has finished, so
-        // it is never cut off mid-sequence. The quit itself sends no keystrokes.
+        // Apply & quit succeeded, or a quit request arrived mid-reload: leave once the in-game
+        // reload (if one started) has finished, so it is never cut off mid-sequence. The quit
+        // itself sends no keystrokes.
         if self.quit_after_apply && !self.reload.is_running() {
             self.quit_after_apply = false;
             quit_requested = true;
@@ -6835,6 +6843,35 @@ Hide
             active_popup(app.popup_flags(false)),
             Some(Popup::ChangedOnDisk)
         );
+    }
+
+    #[test]
+    fn a_clean_quit_waits_for_a_running_in_game_reload() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(!app.quit_dirty());
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        assert!(app.reload.start(
+            move || {
+                let _ = gate.recv();
+                Ok(())
+            },
+            || {}
+        ));
+        // The reload is still being sent: the quit is deferred, not begun, and no popup opens.
+        assert!(!app.request_quit());
+        assert!(app.quit_after_apply && !app.quit_confirm);
+        drop(release);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.reload.poll().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reload worker never finished"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Idle again: a quit request begins the shutdown at once.
+        app.quit_after_apply = false;
+        assert!(app.request_quit());
     }
 
     #[test]

@@ -255,26 +255,6 @@ impl InputPaths {
     pub fn tiers_source(&self) -> Result<Source, LoadError> {
         read_source(&self.tiers, self.tiers_default.as_ref())
     }
-
-    /// Transitional: removed in 36-07 once the overlay uses [`Source`].
-    pub fn styles_source_path(&self) -> Result<PathBuf, LoadError> {
-        file_only(&self.styles, self.styles_source()?)
-    }
-
-    /// Transitional: removed in 36-07 once the overlay uses [`Source`].
-    pub fn tiers_source_path(&self) -> Result<PathBuf, LoadError> {
-        file_only(&self.tiers, self.tiers_source()?)
-    }
-}
-
-fn file_only(live: &Path, src: Source) -> Result<PathBuf, LoadError> {
-    match src {
-        Source::File(p) => Ok(p),
-        Source::Embedded(b) => Err(LoadError::NoSource {
-            path: path_str(live),
-            default: b.label(),
-        }),
-    }
 }
 
 /// The built-in named by `given`, only when it is a bare file name (no separator, not absolute).

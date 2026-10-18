@@ -19,7 +19,6 @@ pub mod install;
 pub mod loader;
 pub mod locations;
 pub mod overlay;
-pub mod paths;
 pub mod run;
 pub mod safe_write;
 pub mod settings;

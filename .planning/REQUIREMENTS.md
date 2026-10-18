@@ -8,29 +8,36 @@
 
 ### Per-user locations (LOC)
 
-- [ ] **LOC-01**: A fresh install with no files of its own works: the default styles, tiers,
+- [x] **LOC-01**: A fresh install with no files of its own works: the default styles, tiers,
   fallback prices, the class catalog (`config.json`) and `mapping.json` are built into the exe.
-- [ ] **LOC-02**: The user's styles, tiers, settings and synced prices are saved in one per-user
+
+- [x] **LOC-02**: The user's styles, tiers, settings and synced prices are saved in one per-user
   folder (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`), created by the installer and by
   Apply / Sync when missing.
-- [ ] **LOC-03**: `FERRISFILTER_HOME` still overrides it (the dev-from-repo workflow).
+
+- [x] **LOC-03**: `FERRISFILTER_HOME` still overrides it (the dev-from-repo workflow).
 - [ ] **LOC-04**: `ff-cli apply` / `sync` / `install` (a dev tool, not installed) use the same
   folder and game folder as the overlay; `generate` stays working-directory relative.
-- [ ] **LOC-05**: Tests and the debug screenshot mode can never read or write the real config or
+
+- [x] **LOC-05**: Tests and the debug screenshot mode can never read or write the real config or
   game folder.
 
 ### Game folder (GAME)
 
 - [ ] **GAME-01**: The default game folder is the OS Documents folder + `My Games\Path of Exile 2`
   (OneDrive redirection and localized folder names work).
+
 - [ ] **GAME-02**: The Config tab shows the game folder and a Browse button to pick another; the
   choice is saved and restored on the next launch.
+
 - [ ] **GAME-03**: Changing the game folder with unapplied rule edits asks first (the Switch
   filter? popup).
+
 - [ ] **GAME-04**: A missing game folder shows a clear status pointing to the picker.
 - [ ] **GAME-05**: A refresh button beside the filter selector re-reads the game folder, so
   `.filter` files and `.mp3` / `.wav` sound files added since load appear in the filter dropdown and
   the Alert sound dropdowns without a restart; it never writes and never discards edits.
+
 - [ ] **GAME-06**: The refresh button uses the game's own refresh art (round arrow on a square
   button), extracted by `ff-art` through a `manifest.toml` entry into `assets/poe2/` and compiled
   into the binary like the rest of the skin.
@@ -42,6 +49,7 @@
   and `hidden` become `styles-default.json`; no custom style ships (`Recycle`, `kite`,
   `exceptional`, `Build Items`, `White bases` are the author's own). `tiers-default.json` is
   unchanged.
+
 - [ ] **BSTY-02**: No built-in style uses a custom sound file.
 - [ ] **BSTY-03**: A user's own `styles.json` is kept; built-in ids stay `builtin:S`..`builtin:F`.
 
@@ -49,10 +57,13 @@
 
 - [ ] **STRICT-01**: The Config tab shows one exclusive button row: `Custom | Flat Broke |
   Scrounging | Getting By | Comfy | Loaded | Div Farmer`.
+
 - [ ] **STRICT-02**: Clicking a level sets the built-in tier styles' visibility, hiding nothing, F,
   E-F, D-F, C-F, B-F respectively, as one pending edit (Revert undoes, Apply writes).
+
 - [ ] **STRICT-03**: The highlighted button is derived from the current S-F visibility; any other
   pattern shows Custom, which is display-only.
+
 - [ ] **STRICT-04**: Non-tier built-ins and custom styles are untouched; a tooltip says rules using
   tier styles (user rules included) are affected.
 
@@ -60,12 +71,15 @@
 
 - [ ] **LEAGUE-01**: The Economy tab has a league picker listing poe.ninja's current leagues; the
   choice is saved and replaces the pinned `sync::OVERLAY_LEAGUE`.
+
 - [ ] **LEAGUE-02**: Sync economy uses the chosen league and its outcome names it.
 - [ ] **LEAGUE-03**: A saved league no longer listed (league end) is reported explicitly, never
   switched silently.
+
 - [ ] **LEAGUE-04**: A price source choice, Live or Fallback; Fallback disables Sync and the league
   picker (tooltip: recommended for league start and non-trade players) and prices the economy
   section from the fallback pair on Apply.
+
 - [ ] **LEAGUE-05**: Under Fallback the Tiers editor is greyed with a tooltip (the fallback tiers
   are fixed).
 
@@ -73,10 +87,13 @@
 
 - [ ] **REL-01**: Pushing a version tag runs the tests and the release build and produces the
   installer, a portable zip and `SHA256SUMS.txt`.
+
 - [ ] **REL-02**: The workflow fails when the tag differs from the `Cargo.toml` version or the
   version's CHANGELOG section is missing or empty.
+
 - [ ] **REL-03**: A GitHub Release is created with that CHANGELOG section as its notes, kept a
   draft until every asset is uploaded, then published by the workflow.
+
 - [ ] **REL-04**: Workflows run on version tags and pull requests only, on the project's floating nightly toolchain (the author accepts the risk); a release is published automatically once every asset is uploaded.
 - [ ] **REL-05**: Tags are `vX.Y.Z` from `v0.7.0` on; the milestone close-out check is updated.
 - [x] **REL-06**: The release profile is optimised (`lto = "fat"`, `codegen-units = 1`,
@@ -87,6 +104,7 @@
 - [ ] **INST-02**: A per-user installer (no admin prompt) that installs only the `ff` overlay (the
   CLIs are dev tools and are not shipped in it), creates the config folder, adds a Start menu entry
   for FerrisFilter and an uninstaller.
+
 - [ ] **INST-03**: Uninstalling keeps the user's config folder.
 - [ ] **INST-04**: Installing over a running `ff` closes it first and keeps the settings.
 
@@ -94,8 +112,10 @@
 
 - [ ] **UPD-01**: Check for updates on the About tab reports "up to date" or the newer version
   found (GitHub Releases of `Jonathas-Conceicao/ferris-filter`).
+
 - [ ] **UPD-02**: For a newer version it downloads the installer, verifies its SHA-256 and offers
   Install and quit (through the existing Unapplied changes popup).
+
 - [ ] **UPD-03**: Offline, rate-limited or missing-asset failures show a status message and change
   nothing.
 
@@ -103,6 +123,7 @@
 
 - [ ] **PUB-01**: `assets/README.md` records the decision to ship the GGG art and Fontin fonts,
   credited and compiled into the binary (no asset files in the install or config folders).
+
 - [ ] **PUB-02**: One public repo name, `Jonathas-Conceicao/ferris-filter`, is used everywhere
   (`Cargo.toml`, HTTP user agent, updater).
 
@@ -111,6 +132,7 @@
 - [ ] **RESET-01**: A Reset to defaults button on the Config tab's Styles heading restores the
   built-in styles to their defaults and keeps every custom style; it asks first in a popup and is one pending edit (Revert
   undoes, Apply writes).
+
 - [ ] **RESET-02**: A Reset to defaults button on the Economy tab's Tiers heading restores the
   default tier cutoffs, with the same popup and pending-edit behaviour.
 
@@ -155,11 +177,11 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LOC-01 | Phase 36 | Pending |
-| LOC-02 | Phase 36 | Pending |
-| LOC-03 | Phase 36 | Pending |
+| LOC-01 | Phase 36 | Complete |
+| LOC-02 | Phase 36 | Complete |
+| LOC-03 | Phase 36 | Complete |
 | LOC-04 | Phase 36 | Pending |
-| LOC-05 | Phase 36 | Pending |
+| LOC-05 | Phase 36 | Complete |
 | GAME-01 | Phase 37 | Pending |
 | GAME-02 | Phase 37 | Pending |
 | GAME-03 | Phase 37 | Pending |

@@ -107,37 +107,45 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 - [ ] **Phase 42: Release Review** - Milestone close-out: cleanup, screenshots, version, changelog draft, author review
 
 ### Phase 36: Per-user Locations & Embedded Defaults
+
 **Goal**: A fresh install with no files of its own works, and the user's styles, tiers, settings and synced prices live in per-user folders that tests and screenshot mode can never confuse with real ones
 **Depends on**: Nothing (first phase of v0.7)
 **Requirements**: LOC-01, LOC-02, LOC-03, LOC-04, LOC-05
 **Success Criteria** (what must be TRUE):
+
   1. Starting `ff` against an empty home (no `config.json`, `mapping.json`, defaults or fallback files on disk) shows the default styles, tiers, class catalog and fallback prices, and Apply works
   2. Editing styles, tiers or settings and pressing Apply writes them under `%APPDATA%\FerrisFilter` (created if missing), and Sync economy writes `prices.json` in the same folder
   3. With `FERRISFILTER_HOME` set, everything lives in that folder and nothing is written to the per-user folder (the repo dev workflow)
   4. `ff-cli apply`, `sync` and `install` read and write the same folders as the overlay, while `generate` still reads the working directory and the byte-for-byte fixture test passes
   5. The test suite and `--screenshot` mode refuse to touch the real config or game folder
+
 **Plans**: 7 plans (36-01 resolver + embedded defaults; 36-02 text loaders + settings folder; 36-03 InputPaths Source + in_home; 36-04 CLI apply/sync; 36-05 overlay Config + Apply; 36-06 overlay root + class catalog + test isolation; 36-07 isolation guard, old resolver removed, docs)
 **UI hint**: yes
 
 ### Phase 37: Game Folder Resolver & Picker
+
 **Goal**: Users find their Path of Exile 2 folder automatically, or pick it themselves, on any Windows setup
 **Depends on**: Phase 36
 **Requirements**: GAME-01, GAME-02, GAME-03, GAME-04, GAME-05, GAME-06
 **Success Criteria** (what must be TRUE):
+
   1. On a machine with OneDrive-redirected or localized Documents, the default game folder resolves to the OS Documents folder + `My Games\Path of Exile 2` with no hard-coded path
   2. The Config tab shows the current game folder with a Browse button; the folder picked there is restored on the next launch
   3. Changing the game folder with unapplied rule edits opens the Switch filter? popup before anything is discarded
   4. With a missing game folder the status line says so and points to the picker
   5. After dropping a new `.filter` or `.mp3` / `.wav` into the game folder, pressing the refresh button (the game's round-arrow-on-square art) lists it in the filter dropdown and the Alert sound dropdowns, with no restart, no write and no edit lost
+
 **Plans**: TBD
 **UI hint**: yes
 **Research**: needed (`rfd` parent window and threading under eframe; test-isolation override for the game folder; locate the game's refresh-button art with `ff-art list` / `dump` and add a manifest entry)
 
 ### Phase 38: Built-in Styles, Strictness & Reset
+
 **Goal**: The shipped built-in styles are the reworked set, one button row on the Config tab sets how strict the filter is, and styles and tiers can be reset to their defaults
 **Depends on**: Phase 36 (embedded defaults)
 **Requirements**: BSTY-01, BSTY-02, BSTY-03, STRICT-01, STRICT-02, STRICT-03, STRICT-04, RESET-01, RESET-02, FIX-01
 **Success Criteria** (what must be TRUE):
+
   1. A fresh install shows only the reworked built-ins (S-F, unchanged, hidden), none using a custom sound file, and no custom styles
   2. An existing user's own `styles.json` is kept and built-in ids stay `builtin:S` to `builtin:F`
   3. The Config tab shows `Custom | Flat Broke | Scrounging | Getting By | Comfy | Loaded | Div Farmer`; clicking a level hides nothing, F, E-F, D-F, C-F or B-F as one pending edit that Revert undoes and Apply writes
@@ -145,65 +153,78 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
   5. Non-tier built-ins and custom styles are untouched by a level change, and the tooltip says rules using tier styles are affected
   6. Reset to defaults on the Styles heading (Config) and the Tiers heading (Economy) each ask first, then restore the defaults as one pending edit; every custom style is kept, and Revert undoes the reset
   7. Hovering a minimap icon shows its tooltip once
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 39: League Picker & Price Source
+
 **Goal**: Users choose their league and whether prices are live or fallback, without any code change per league
 **Depends on**: Phase 36
 **Requirements**: LEAGUE-01, LEAGUE-02, LEAGUE-03, LEAGUE-04, LEAGUE-05
 **Success Criteria** (what must be TRUE):
+
   1. The Economy tab lists poe.ninja's current leagues, and the saved choice is restored on the next launch
   2. Sync economy prices against the chosen league and its outcome message names that league
   3. When the saved league is no longer listed the user sees an explicit message and nothing is switched silently
   4. Choosing Fallback greys Sync and the league picker (with the recommendation tooltip) and the next Apply prices the economy section from the fallback pair
   5. Under Fallback the Tiers editor is greyed with a tooltip saying the fallback tiers are fixed
+
 **Plans**: TBD
 **UI hint**: yes
 **Research**: needed (live poe.ninja league spike; default-league rule)
 
 ### Phase 40: Release Pipeline & Installer
+
 **Goal**: Pushing a version tag produces a verified, draft-first GitHub Release with a per-user installer, a portable zip and checksums, and the repo is ready to go public
 **Depends on**: Phases 36, 37, 38, 39 (the code being released)
 **Requirements**: REL-01, REL-02, REL-03, REL-04, REL-05, REL-06, INST-02, INST-03, INST-04, PUB-01, PUB-02
 **Success Criteria** (what must be TRUE):
+
   1. A `v0.7.0-rc` tag runs the tests and release build and yields a draft Release with the installer, portable zip, `SHA256SUMS.txt` and the CHANGELOG section as notes
   2. The workflow fails when the tag differs from the `Cargo.toml` version or the CHANGELOG section is missing or empty; workflows run only on tags and pull requests
   3. Running the installer needs no admin prompt, installs only the `ff` overlay (no CLIs), creates the config folder, adds a Start menu entry and an uninstaller, and uninstalling keeps the config folder
   4. Installing over a running `ff` closes it first and keeps the user's settings
   5. `assets/README.md` records the decision to ship GGG art and Fontin credited and compiled in, and `Jonathas-Conceicao/ferris-filter` is the one repo name in `Cargo.toml`, the HTTP user agent and the updater (REL-06 already done: optimised release profile)
+
 **Plans**: TBD
 **Research**: needed (Inno Setup on the runner, `AppMutex` with a tray-hidden app, stable vs nightly toolchain, Fontin / GGG terms)
 
 ### Phase 41: Check for Updates
+
 **Goal**: Users can learn about and install a newer version from the About tab, safely
 **Depends on**: Phase 40 (needs a published release to test against)
 **Requirements**: UPD-01, UPD-02, UPD-03
 **Success Criteria** (what must be TRUE):
+
   1. Check for updates on the About tab reports "up to date" or names the newer version found
   2. For a newer version it downloads the installer, verifies its SHA-256 and offers Install and quit through the Unapplied changes popup
   3. Offline, rate-limited or missing-asset failures show a status message and change nothing
+
 **Plans**: TBD
 **UI hint**: yes
 **Research**: needed (GitHub API details, installer handoff)
 
 ### Phase 42: Release Review
+
 **Goal**: The milestone is clean, documented and versioned, and the author has signed off README.md and CHANGELOG.md (PROJECT.md → Milestone Close-out)
 **Depends on**: Phases 36-41
 **Requirements**: REV-01, REV-02, REV-03, REV-04, REV-05
 **Success Criteria** (what must be TRUE):
+
   1. No duplicated helpers, dead scaffolding or mentions of in-milestone bugs remain in code, comments, tests, README or CLAUDE.md, and the full test suite is green
   2. README screenshots for changed screens are re-taken with `--screenshot` under a temp home, keeping names and framing
   3. `Cargo.toml` and `Cargo.lock` say `0.7.0`
   4. `CHANGELOG.md` has a drafted `0.7.0` section from the net changes since v0.6
   5. The author has reviewed and rewritten `README.md` and the CHANGELOG section, and confirms the phase
+
 **Plans**: TBD
 
 ### Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 36. Per-user Locations & Embedded Defaults | 0/0 | Not started | - |
+| 36. Per-user Locations & Embedded Defaults | 1/7 | In Progress|  |
 | 37. Game Folder Resolver & Picker | 0/0 | Not started | - |
 | 38. Built-in Styles, Strictness & Reset | 0/0 | Not started | - |
 | 39. League Picker & Price Source | 0/0 | Not started | - |
@@ -212,7 +233,6 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 | 42. Release Review | 0/0 | Not started | - |
 
 </details>
-
 
 ## Backlog
 

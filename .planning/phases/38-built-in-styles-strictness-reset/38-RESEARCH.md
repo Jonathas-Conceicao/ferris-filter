@@ -300,12 +300,10 @@ if r.clicked() { cfg.reset_armed = Some(RevertScope::Styles); }
 | A3 | Real content width at a 660pt window is about 517-520pt | Pattern 5 | Low: derived from `frame_layout` (content 553 at 655), 10pt shrink each side and `SCROLLBAR_WIDTH + 4`; the existing `table_columns(517.0)` test agrees; confirm with a `--screenshot --tab config` run |
 | A4 | Integration tests (`cli_*`, `dynamic_filter`, `filter_roundtrip`, `sync_prices`) will fail on the new default | Fixture swap | Low: static grep only; repointing them is harmless either way |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does the author want the Reset button also greyed while the styles equal defaults but customs exist?**
-   - Known: UI-SPEC says customs never count. Recommendation: follow the UI-SPEC.
-2. **Strictness `Custom` on a fresh install where a built-in is hidden by the default?**
-   - None of the nine default styles is `Hide` except `hidden` (not a tier), so a fresh install reads Flat Broke. No action.
+1. **Does the author want the Reset button also greyed while the styles equal defaults but customs exist?** RESOLVED: follow the UI-SPEC (customs never count); recorded as a choice made in the author's place.
+2. **Strictness `Custom` on a fresh install where a built-in is hidden by the default?** RESOLVED: none of the nine default styles is `Hide` except `hidden` (not a tier), so a fresh install reads Flat Broke. No action.
 
 ## Project Constraints (from CLAUDE.md)
 

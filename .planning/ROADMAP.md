@@ -154,7 +154,17 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
   6. Reset to defaults on the Styles heading (Config) and the Tiers heading (Economy) each ask first, then restore the defaults as one pending edit; every custom style is kept, and Revert undoes the reset
   7. Hovering a minimap icon shows its tooltip once
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+
+- [ ] 38-01-PLAN.md — Freeze old styles as tests/fixtures/seed-styles.json, repoint test readers, ship the nine reworked built-ins
+- [ ] 38-02-PLAN.md — Skin ff_levels widget (content-proportional, one row) and FIX-01 single minimap tooltip
+- [ ] 38-03-PLAN.md — Pure strictness model and ConfigState reset/strictness methods (TDD)
+- [ ] 38-04-PLAN.md — Strictness row on the Config tab wired to SetStrictness
+- [ ] 38-05-PLAN.md — Reset to defaults buttons (Styles, Tiers) and their two popups
+- [ ] 38-06-PLAN.md — CLAUDE.md update and phase gate with screenshot UAT
+
 **UI hint**: yes
 
 ### Phase 39: League Picker & Price Source

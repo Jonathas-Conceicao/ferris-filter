@@ -238,11 +238,18 @@ pub fn verify_installer(path: &Path, expected_hex: &str) -> Result<(), Installer
 /// Why the installer was not started at quit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchError {
-    /// The file failed its last check (missing, unreadable or a different hash).
+    /// The file failed its last check (missing or a different hash).
     Check(InstallerCheck),
+    /// The file is there but could not be opened or read for the check (the cause).
+    Open(String),
     /// The checked file could not be started.
     Spawn(String),
 }
+
+/// How often a sharing violation on the locked open is retried, and the wait between tries (an
+/// antivirus or a backup agent may hold the fresh exe for a moment).
+const OPEN_RETRIES: u32 = 3;
+const OPEN_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 /// Start the downloaded installer, checking its SHA-256 right before: the file is opened with a
 /// handle that lets other processes read it but not write, rename or delete it, hashed through
@@ -257,17 +264,64 @@ fn launch_verified_with(
     expected_hex: &str,
     spawn: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<(), LaunchError> {
-    let mut file = open_read_locked(path).map_err(|_| LaunchError::Check(InstallerCheck::Gone))?;
+    launch_verified_inner(
+        path,
+        expected_hex,
+        open_read_locked,
+        OPEN_RETRY_DELAY,
+        spawn,
+    )
+}
+
+fn launch_verified_inner(
+    path: &Path,
+    expected_hex: &str,
+    open: impl FnMut(&Path) -> std::io::Result<std::fs::File>,
+    retry_delay: Duration,
+    spawn: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), LaunchError> {
+    let mut file = open_with_retry(path, open, retry_delay)?;
     if !file.metadata().is_ok_and(|m| m.is_file()) {
         return Err(LaunchError::Check(InstallerCheck::Gone));
     }
-    let actual = sha256_reader(&mut file).map_err(|_| LaunchError::Check(InstallerCheck::Gone))?;
+    let actual = sha256_reader(&mut file).map_err(|e| LaunchError::Open(e.to_string()))?;
     if !actual.eq_ignore_ascii_case(expected_hex) {
         return Err(LaunchError::Check(InstallerCheck::Mismatch));
     }
     let started = spawn(path).map_err(LaunchError::Spawn);
     drop(file);
     started
+}
+
+/// Open the installer for its check. A sharing violation (another process holds the file with
+/// write or delete access) is retried [`OPEN_RETRIES`] times; a missing path, or a path that is
+/// not a file, is [`InstallerCheck::Gone`]; any other failure is reported with its cause.
+fn open_with_retry(
+    path: &Path,
+    mut open: impl FnMut(&Path) -> std::io::Result<std::fs::File>,
+    retry_delay: Duration,
+) -> Result<std::fs::File, LaunchError> {
+    let mut attempt = 0;
+    loop {
+        match open(path) {
+            Ok(file) => return Ok(file),
+            Err(e) if e.raw_os_error() == Some(32) && attempt < OPEN_RETRIES => {
+                attempt += 1;
+                std::thread::sleep(retry_delay);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(LaunchError::Check(InstallerCheck::Gone));
+            }
+            Err(e) => {
+                // Opening a folder fails with access denied on Windows: that is still "no
+                // installer there", not an open failure.
+                if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+                    return Err(LaunchError::Check(InstallerCheck::Gone));
+                }
+                return Err(LaunchError::Open(e.to_string()));
+            }
+        }
+    }
 }
 
 /// The error box text when the installer was not started at quit.
@@ -281,6 +335,11 @@ pub fn launch_error_text(ready: &ReadyUpdate, err: &LaunchError) -> String {
         LaunchError::Check(InstallerCheck::Mismatch) => format!(
             "The FerrisFilter {version} installer changed after it was checked and no longer \
              matches its checksum, so it was not started. Check for updates again."
+        ),
+        LaunchError::Open(cause) => format!(
+            "Could not open the FerrisFilter {version} installer to check it ({cause}), so it \
+             was not started. It was saved to {}.",
+            ready.installer.display()
         ),
         LaunchError::Spawn(cause) => format!(
             "Could not start the FerrisFilter installer: {cause}. It was saved to {}.",
@@ -1001,6 +1060,93 @@ mod tests {
         );
     }
 
+    fn sharing_violation() -> std::io::Error {
+        std::io::Error::from_raw_os_error(32)
+    }
+
+    #[test]
+    fn launch_retries_a_sharing_violation_then_starts_the_installer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut opens = 0;
+        let mut started = false;
+        let r = launch_verified_inner(
+            &path,
+            &hex,
+            |p| {
+                opens += 1;
+                if opens <= 2 {
+                    Err(sharing_violation())
+                } else {
+                    open_read_locked(p)
+                }
+            },
+            Duration::ZERO,
+            |_| {
+                started = true;
+                Ok(())
+            },
+        );
+        assert_eq!(r, Ok(()));
+        assert_eq!(opens, 3);
+        assert!(started);
+    }
+
+    #[test]
+    fn launch_reports_a_sharing_violation_that_outlasts_the_retries() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut opens = 0;
+        let r = launch_verified_inner(
+            &path,
+            &hex,
+            |_| {
+                opens += 1;
+                Err(sharing_violation())
+            },
+            Duration::ZERO,
+            |_| panic!("must not start"),
+        );
+        assert_eq!(opens, 1 + OPEN_RETRIES);
+        assert_eq!(r, Err(LaunchError::Open(sharing_violation().to_string())));
+    }
+
+    #[test]
+    fn launch_maps_only_a_missing_file_to_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut opens = 0;
+        let not_found = launch_verified_inner(
+            &path,
+            &hex,
+            |_| {
+                opens += 1;
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+            },
+            Duration::ZERO,
+            |_| panic!("must not start"),
+        );
+        assert_eq!(not_found, Err(LaunchError::Check(InstallerCheck::Gone)));
+        assert_eq!(opens, 1);
+
+        // Access denied on a file that is still there: reported with its cause, no retry.
+        let denied = std::io::Error::from_raw_os_error(5);
+        let mut opens = 0;
+        let r = launch_verified_inner(
+            &path,
+            &hex,
+            |_| {
+                opens += 1;
+                Err(std::io::Error::from_raw_os_error(5))
+            },
+            Duration::ZERO,
+            |_| panic!("must not start"),
+        );
+        assert_eq!(r, Err(LaunchError::Open(denied.to_string())));
+        assert_eq!(opens, 1);
+        assert!(path.is_file());
+    }
+
     #[test]
     fn launch_error_texts() {
         let ready = ReadyUpdate {
@@ -1019,6 +1165,11 @@ mod tests {
             text(LaunchError::Check(InstallerCheck::Mismatch)),
             "The FerrisFilter 0.8.0 installer changed after it was checked and no longer \
              matches its checksum, so it was not started. Check for updates again."
+        );
+        assert_eq!(
+            text(LaunchError::Open("in use".to_string())),
+            "Could not open the FerrisFilter 0.8.0 installer to check it (in use), so it was \
+             not started. It was saved to x-setup.exe."
         );
         assert_eq!(
             text(LaunchError::Spawn("denied".to_string())),

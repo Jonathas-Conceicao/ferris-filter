@@ -174,9 +174,9 @@ pub struct OverlayApp {
     /// The update outcome shown in the status line (an event message).
     update_message: Option<(String, w::StatusKind)>,
     /// The update message came from the worker while another event message was showing (an
-    /// Apply, CONFIG, sync or list outcome of an action started during the check), so it ranks
-    /// below them instead of hiding them. A message set by a click on the UI thread is newest
-    /// and ranks first.
+    /// Apply, CONFIG, sync or list outcome of an action started during the check), or a sync
+    /// was still running then or finished after it, so it ranks below them instead of hiding
+    /// them. A message set by a click on the UI thread is newest and ranks first.
     update_behind: bool,
     /// Where `begin_shutdown` leaves the verified installer for `launch()` to start once the
     /// event loop has returned (only after an explicit Install click).
@@ -2239,14 +2239,41 @@ impl OverlayApp {
     }
 
     /// Takes a message the update worker delivered. It ranks first only when no other event
-    /// message is showing; otherwise that message belongs to an action the player started while
-    /// the check ran, and the update outcome waits behind it.
+    /// message is showing and no sync is running; otherwise that message or sync belongs to an
+    /// action the player started while the check ran, and the update outcome waits behind it.
     fn receive_update_message(&mut self, text: String, kind: crate::update::UpdateKind) {
         self.update_behind = self.apply_message.is_some()
             || self.config_message.is_some()
             || self.list_status.is_some()
-            || matches!(self.economy.state(), economy::SyncState::Finished(_));
+            || matches!(
+                self.economy.state(),
+                economy::SyncState::Running | economy::SyncState::Finished(_)
+            );
         self.update_message = Some((text, update_kind(kind)));
+    }
+
+    /// Collects a finished economy sync. Returns true when the sync state moved. A sync outcome
+    /// that lands while an update message is showing is the newer event, so the update message
+    /// then ranks behind it.
+    fn poll_economy(&mut self) -> bool {
+        if !self.economy.poll() {
+            return false;
+        }
+        if self.update_message.is_some() {
+            self.update_behind = true;
+        }
+        self.prices_changed();
+        true
+    }
+
+    /// A finished sync's line and whether it is a failure, for the status line.
+    fn sync_outcome(&self) -> Option<(String, bool)> {
+        match self.economy.state() {
+            economy::SyncState::Finished(outcome) => {
+                Some((outcome.message().to_string(), outcome.is_failure()))
+            }
+            _ => None,
+        }
     }
 
     /// An edit or a revert on either tab clears every event message (the Apply outcome, the list
@@ -3510,8 +3537,7 @@ impl eframe::App for OverlayApp {
         // run every frame. A landed result also forces a repaint: the window is drawn over a game
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
-        if self.economy.poll() {
-            self.prices_changed();
+        if self.poll_economy() {
             ui.ctx().request_repaint();
         }
         if self.leagues.poll() {
@@ -3926,12 +3952,7 @@ impl eframe::App for OverlayApp {
             },
             changed,
         );
-        let sync_outcome = match self.economy.state() {
-            economy::SyncState::Finished(outcome) => {
-                Some((outcome.message().to_string(), outcome.is_failure()))
-            }
-            _ => None,
-        };
+        let sync_outcome = self.sync_outcome();
         let event = shell::event_from(
             self.update_message.clone(),
             self.update_behind,
@@ -6382,6 +6403,80 @@ Hide
             event(&app),
             Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok))
         );
+    }
+
+    /// Check, then Sync: the check's message lands while the sync is still running and shows
+    /// until the sync finishes; the sync outcome (here a failure) is then the event shown.
+    #[test]
+    fn a_sync_started_after_a_check_shows_its_outcome_over_the_check_message() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let event = |app: &super::OverlayApp| {
+            shell::event_from(
+                app.update_message.clone(),
+                app.update_behind,
+                app.apply_message.clone(),
+                app.config_message.clone(),
+                app.sync_outcome(),
+                app.list_status.clone(),
+            )
+            .map(|(text, _)| text)
+        };
+        app.start_update_check();
+
+        // The Sync economy click: clears the update line and starts a sync that waits for `go`.
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        app.update_message = None;
+        app.economy.start(move || {
+            let _ = wait.recv();
+            Err("boom".to_string())
+        });
+        assert!(app.economy.is_running());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let (text, kind) = loop {
+            if let Some(m) = app.update.poll(0) {
+                break m;
+            }
+            assert!(std::time::Instant::now() < deadline, "no update message");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        app.receive_update_message(text.clone(), kind);
+        assert!(app.update_behind);
+        assert_eq!(event(&app), Some(text.clone()));
+
+        go.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.poll_economy() {
+            assert!(std::time::Instant::now() < deadline, "sync never finished");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(event(&app), Some(super::economy::failure_message("boom")));
+    }
+
+    /// A sync that finishes while an update message from before is showing outranks it.
+    #[test]
+    fn a_sync_outcome_landing_after_an_update_message_ranks_first() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.economy.start(|| Ok(String::new()));
+        app.update_message = Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok));
+        app.update_behind = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.poll_economy() {
+            assert!(std::time::Instant::now() < deadline, "sync never finished");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.update_behind);
+        let event = shell::event_from(
+            app.update_message.clone(),
+            app.update_behind,
+            app.apply_message.clone(),
+            app.config_message.clone(),
+            app.sync_outcome(),
+            app.list_status.clone(),
+        )
+        .map(|(text, _)| text);
+        assert_eq!(event, Some(super::economy::success_message("")));
     }
 
     #[test]

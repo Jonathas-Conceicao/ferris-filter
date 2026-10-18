@@ -116,9 +116,13 @@ pub struct OverlayApp {
     /// The RULES Revert was clicked: the "Discard rule changes?" popup asks first.
     revert_rules_armed: bool,
 
-    /// Apply & quit succeeded, or a quit request came while an in-game reload was still being
-    /// sent; the shutdown runs once that reload worker has finished.
+    /// Apply & quit succeeded; the shutdown runs once the in-game reload worker has finished.
     quit_after_apply: bool,
+
+    /// A quit request found nothing unapplied but came while an in-game reload was still being
+    /// sent. Once that reload has finished the request is made again, so edits made meanwhile
+    /// still get the Unapplied changes popup.
+    quit_after_reload: bool,
 
     /// "Quit without applying" was chosen; the shutdown runs at the top of the next frame.
     quit_next_frame: bool,
@@ -1480,6 +1484,7 @@ impl OverlayApp {
             quit_tier_edits_only: false,
             revert_rules_armed: false,
             quit_after_apply: false,
+            quit_after_reload: false,
             quit_next_frame: false,
             // The window created in `overlay::launch` starts visible
             // (`with_active(false)` only suppresses activation, not
@@ -2499,19 +2504,43 @@ impl OverlayApp {
         let step = apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
         if step == apply::QuitStep::QuitNow {
             if self.reload.is_running() {
-                self.quit_after_apply = true;
+                self.quit_after_reload = true;
                 return false;
             }
+            self.quit_after_reload = false;
             self.begin_shutdown();
             return true;
         }
         if apply::quit_step_shows_confirm(step) {
+            // The popup now owns the decision: its Cancel must not be followed by a quit.
+            self.quit_after_reload = false;
             self.quit_confirm = true;
             // Reveal the window the way tray Show does (also when the window was hidden while
             // the confirm was already up).
             if self.visibility == Visibility::Hidden {
                 self.toggle_requested = true;
             }
+        }
+        false
+    }
+
+    /// Runs a quit that waited for the in-game reload, once that reload has finished. Apply &
+    /// quit leaves at once; a deferred clean quit is asked again, so edits made while it waited
+    /// (the window summoned again, a `styles.json` change on disk) open the Unapplied changes
+    /// popup instead of being lost. Returns true when the shutdown began.
+    fn run_deferred_quit(&mut self) -> bool {
+        if self.reload.is_running() {
+            return false;
+        }
+        if self.quit_after_apply {
+            self.quit_after_apply = false;
+            self.quit_after_reload = false;
+            self.begin_shutdown();
+            return true;
+        }
+        if self.quit_after_reload {
+            self.quit_after_reload = false;
+            return self.request_quit();
         }
         false
     }
@@ -3403,10 +3432,8 @@ impl eframe::App for OverlayApp {
         // Apply & quit succeeded, or a quit request arrived mid-reload: leave once the in-game
         // reload (if one started) has finished, so it is never cut off mid-sequence. The quit
         // itself sends no keystrokes.
-        if self.quit_after_apply && !self.reload.is_running() {
-            self.quit_after_apply = false;
+        if !quit_requested && self.run_deferred_quit() {
             quit_requested = true;
-            self.begin_shutdown();
         }
         // "Quit without applying" was chosen in the confirm last frame. It runs here, before the
         // show-request poll below, like every other quit path (WR-08).
@@ -6859,8 +6886,41 @@ Hide
         ));
         // The reload is still being sent: the quit is deferred, not begun, and no popup opens.
         assert!(!app.request_quit());
-        assert!(app.quit_after_apply && !app.quit_confirm);
+        assert!(app.quit_after_reload && !app.quit_confirm);
+        assert!(!app.run_deferred_quit(), "still waiting for the reload");
         drop(release);
+        wait_for_reload(&mut app);
+        // Idle again: the deferred quit begins the shutdown.
+        assert!(app.run_deferred_quit());
+        assert!(!app.quit_after_reload && !app.quit_confirm);
+    }
+
+    #[test]
+    fn edits_made_while_a_clean_quit_waits_open_the_quit_popup() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(!app.quit_dirty());
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        assert!(app.reload.start(
+            move || {
+                let _ = gate.recv();
+                Ok(())
+            },
+            || {}
+        ));
+        assert!(!app.request_quit());
+        assert!(app.quit_after_reload);
+        // An edit lands while the quit waits.
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(app.quit_dirty());
+        drop(release);
+        wait_for_reload(&mut app);
+        // The quit is asked again: no shutdown, the Unapplied changes popup instead.
+        assert!(!app.run_deferred_quit());
+        assert!(app.quit_confirm && !app.quit_after_reload);
+        assert_eq!(s_tier_text(&app), "31");
+    }
+
+    fn wait_for_reload(app: &mut super::OverlayApp) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while app.reload.poll().is_none() {
             assert!(
@@ -6869,9 +6929,6 @@ Hide
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        // Idle again: a quit request begins the shutdown at once.
-        app.quit_after_apply = false;
-        assert!(app.request_quit());
     }
 
     #[test]

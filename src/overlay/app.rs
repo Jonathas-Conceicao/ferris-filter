@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
 
-use crate::compile::{InputPaths, PriceSourcePolicy};
+use crate::compile::{InputPaths, PriceSourcePolicy, Source};
 use crate::dynamic::{self, LoadedFilter};
 use crate::filter::{BlockId, LinePatch};
 use crate::loader;
@@ -194,10 +194,10 @@ pub struct OverlayApp {
     /// to the generic chip list; it never blocks editing.
     classes: Result<ClassCatalog, String>,
 
-    /// The styles source (`styles.json`, or `styles-default.json` when it is absent) and its
-    /// modification time when last read; a change of either reloads the styles, so creating or
+    /// The styles source (`styles.json`, or the built-in default when it is absent) and, for a
+    /// file, its modification time when last read; a change reloads the styles, so creating or
     /// deleting the live file switches the source.
-    styles_stamp: Option<(std::path::PathBuf, std::time::SystemTime)>,
+    styles_stamp: Option<StylesStamp>,
 
     /// Keeps a unit-test app's per-test home alive as long as the app.
     #[cfg(test)]
@@ -282,7 +282,7 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
 /// resolve it (they build apps on a per-test temp home instead).
 #[cfg(not(test))]
 fn resolve_root() -> Result<PathBuf, String> {
-    crate::locations::AppDirs::from_env()
+    crate::locations::from_env()
         .map(|d| d.root)
         .map_err(|e| e.to_string())
 }
@@ -299,7 +299,7 @@ const PREVIEW_FAILED_STATUS: &str =
     "Could not build the economy section preview. Nothing was staged.";
 
 fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<String, String> {
-    let paths = InputPaths::relative_to(root);
+    let paths = InputPaths::in_home(root);
     let priced = match config {
         Some(c) => dynamic::economy_body_with(
             &paths,
@@ -312,22 +312,43 @@ fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<Stri
     priced.map(|(body, _)| body).map_err(|e| e.to_string())
 }
 
-/// The styles under `root`: `styles.json`, else `styles-default.json` (DEF-03). Never writes.
-fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
-    let path = InputPaths::relative_to(root)
-        .styles_source_path()
-        .map_err(|e| e.to_string())?;
-    loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
+/// The styles source under `root` loaded with the name its errors use: `styles.json` when it
+/// exists, else the built-in default. Never writes.
+fn load_styles_named(root: &std::path::Path) -> Result<(StyleSet, String), String> {
+    match InputPaths::in_home(root)
+        .styles_source()
+        .map_err(|e| e.to_string())?
+    {
+        Source::File(p) => {
+            let name = p.to_string_lossy().into_owned();
+            loader::load_styles(&name)
+                .map(|s| (s, name))
+                .map_err(|e| e.to_string())
+        }
+        Source::Embedded(b) => {
+            let name = b.label();
+            loader::load_styles_str(b.text, &name)
+                .map(|s| (s, name))
+                .map_err(|e| e.to_string())
+        }
+    }
 }
 
-/// The class catalogue and the styles `config.json` references, from one load of `config.json`
-/// (styles from the effective source, as in [`load_styles_at`]).
+/// The styles under `root`: `styles.json`, else the built-in default. Never writes.
+fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
+    load_styles_named(root).map(|(s, _)| s)
+}
+
+/// The class catalogue and the styles the built-in `config.json` references (the overlay never
+/// reads a `config.json` from the folder), with styles from the effective source.
 fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<String>), String> {
-    let paths = InputPaths::relative_to(root);
-    let styles = paths.styles_source_path().map_err(|e| e.to_string())?;
-    loader::load_config_with_live(
-        &paths.config.to_string_lossy(),
-        &styles.to_string_lossy(),
+    let paths = InputPaths::in_home(root);
+    let (styles, styles_name) = load_styles_named(root)?;
+    loader::load_config_str_with_live(
+        crate::defaults::CONFIG.text,
+        &crate::defaults::CONFIG.label(),
+        styles,
+        &styles_name,
         &paths.styles.to_string_lossy(),
     )
     .map(|config| {
@@ -339,12 +360,24 @@ fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<Str
     .map_err(|e| e.to_string())
 }
 
-/// The effective styles source under `root` and its modification time; `None` when neither
-/// `styles.json` nor `styles-default.json` can be stat'ed. Never creates a file.
-fn styles_stamp_at(root: &std::path::Path) -> Option<(std::path::PathBuf, std::time::SystemTime)> {
-    let path = InputPaths::relative_to(root).styles_source_path().ok()?;
-    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-    Some((path, mtime))
+/// What the styles were last read from: the built-in default, or a live file and its
+/// modification time. A change of either reloads the styles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StylesStamp {
+    Embedded,
+    File(std::path::PathBuf, std::time::SystemTime),
+}
+
+/// The effective styles source under `root`; `None` when the source cannot be resolved or a
+/// live file cannot be stat'ed. Never creates a file.
+fn styles_stamp_at(root: &std::path::Path) -> Option<StylesStamp> {
+    match InputPaths::in_home(root).styles_source().ok()? {
+        Source::Embedded(_) => Some(StylesStamp::Embedded),
+        Source::File(path) => {
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            Some(StylesStamp::File(path, mtime))
+        }
+    }
 }
 
 /// Builds the working document from a loaded filter (the migrated text, never the raw bytes).
@@ -3746,22 +3779,60 @@ mod tests {
         let styles = super::load_styles_at(root.path()).unwrap();
         assert!(styles.get("S").is_some());
         assert!(super::load_classes_at(root.path()).is_ok());
-        assert!(super::styles_stamp_at(root.path()).is_some());
+        assert_eq!(
+            super::styles_stamp_at(root.path()),
+            Some(super::StylesStamp::Embedded)
+        );
         assert_no_live(root.path());
     }
 
     #[test]
-    fn no_styles_file_at_all_names_both() {
+    fn removing_the_default_files_from_the_root_changes_nothing() {
         let root = defaults_only_root();
         std::fs::remove_file(root.path().join("styles-default.json")).unwrap();
-        let err = super::load_styles_at(root.path()).unwrap_err();
         assert!(
-            err.contains("styles.json") && err.contains("styles-default.json"),
-            "{err}"
+            super::load_styles_at(root.path())
+                .unwrap()
+                .get("S")
+                .is_some()
         );
-        assert!(super::load_classes_at(root.path()).is_err());
-        assert!(super::styles_stamp_at(root.path()).is_none());
+        assert!(super::load_classes_at(root.path()).is_ok());
+        assert_eq!(
+            super::styles_stamp_at(root.path()),
+            Some(super::StylesStamp::Embedded)
+        );
         assert_no_live(root.path());
+    }
+
+    #[test]
+    fn first_run_overlay_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let styles = super::load_styles_at(root.path()).unwrap();
+        for name in ["S", "A", "B", "C", "D", "E", "F"] {
+            assert!(styles.get(name).is_some(), "{name}");
+        }
+        assert!(super::load_classes_at(root.path()).is_ok());
+        let body = super::staged_economy_body(root.path(), None).unwrap();
+        assert!(!body.is_empty());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_broken_live_styles_file_names_its_full_path() {
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("styles.json");
+        std::fs::write(&live, "{ not json").unwrap();
+        let err = super::load_styles_at(root.path()).unwrap_err();
+        assert!(err.contains(&live.display().to_string()), "{err}");
+    }
+
+    #[test]
+    fn the_class_catalogue_ignores_a_config_json_in_the_folder() {
+        let root = defaults_only_root();
+        let (_, expected) = super::load_classes_at(root.path()).unwrap();
+        std::fs::write(root.path().join("config.json"), "{ not json").unwrap();
+        let (_, refs) = super::load_classes_at(root.path()).unwrap();
+        assert_eq!(refs, expected);
     }
 
     #[test]
@@ -3770,16 +3841,19 @@ mod tests {
         let default = root.path().join("styles-default.json");
         let live = root.path().join("styles.json");
         let first = super::styles_stamp_at(root.path()).unwrap();
-        assert_eq!(first.0, default);
+        assert_eq!(first, super::StylesStamp::Embedded);
 
         std::fs::copy(&default, &live).unwrap();
         let created = super::styles_stamp_at(root.path()).unwrap();
-        assert_eq!(created.0, live);
+        assert!(
+            matches!(&created, super::StylesStamp::File(p, _) if *p == live),
+            "{created:?}"
+        );
         assert_ne!(created, first, "creating the live file is a change");
 
         std::fs::remove_file(&live).unwrap();
         let back = super::styles_stamp_at(root.path()).unwrap();
-        assert_eq!(back, first, "deleting it returns to the default stamp");
+        assert_eq!(back, first, "deleting it returns to the embedded stamp");
         assert_ne!(back, created);
     }
 

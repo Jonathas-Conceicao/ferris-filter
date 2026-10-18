@@ -51,20 +51,20 @@
   unchanged.
 
 - [x] **BSTY-02**: No built-in style uses a custom sound file.
-- [ ] **BSTY-03**: A user's own `styles.json` is kept; built-in ids stay `builtin:S`..`builtin:F`.
+- [x] **BSTY-03**: A user's own `styles.json` is kept; built-in ids stay `builtin:S`..`builtin:F`.
 
 ### Strictness Selector (STRICT)
 
 - [x] **STRICT-01**: The Config tab shows one exclusive button row: `Custom | Flat Broke |
   Scrounging | Getting By | Comfy | Loaded | Div Farmer`.
 
-- [ ] **STRICT-02**: Clicking a level sets the built-in tier styles' visibility, hiding nothing, F,
+- [x] **STRICT-02**: Clicking a level sets the built-in tier styles' visibility, hiding nothing, F,
   E-F, D-F, C-F, B-F respectively, as one pending edit (Revert undoes, Apply writes).
 
 - [x] **STRICT-03**: The highlighted button is derived from the current S-F visibility; any other
   pattern shows Custom, which is display-only.
 
-- [ ] **STRICT-04**: Non-tier built-ins and custom styles are untouched; a tooltip says rules using
+- [x] **STRICT-04**: Non-tier built-ins and custom styles are untouched; a tooltip says rules using
   tier styles (user rules included) are affected.
 
 ### League and price source (LEAGUE)
@@ -129,11 +129,11 @@
 
 ### Reset to defaults (RESET)
 
-- [ ] **RESET-01**: A Reset to defaults button on the Config tab's Styles heading restores the
+- [x] **RESET-01**: A Reset to defaults button on the Config tab's Styles heading restores the
   built-in styles to their defaults and keeps every custom style; it asks first in a popup and is one pending edit (Revert
   undoes, Apply writes).
 
-- [ ] **RESET-02**: A Reset to defaults button on the Economy tab's Tiers heading restores the
+- [x] **RESET-02**: A Reset to defaults button on the Economy tab's Tiers heading restores the
   default tier cutoffs, with the same popup and pending-edit behaviour.
 
 ### Fixes (FIX)
@@ -190,13 +190,13 @@
 | GAME-06 | Phase 37 | Complete |
 | BSTY-01 | Phase 38 | Complete |
 | BSTY-02 | Phase 38 | Complete |
-| BSTY-03 | Phase 38 | Pending |
+| BSTY-03 | Phase 38 | Complete |
 | STRICT-01 | Phase 38 | Complete |
-| STRICT-02 | Phase 38 | Pending |
+| STRICT-02 | Phase 38 | Complete |
 | STRICT-03 | Phase 38 | Complete |
-| STRICT-04 | Phase 38 | Pending |
-| RESET-01 | Phase 38 | Pending |
-| RESET-02 | Phase 38 | Pending |
+| STRICT-04 | Phase 38 | Complete |
+| RESET-01 | Phase 38 | Complete |
+| RESET-02 | Phase 38 | Complete |
 | FIX-01 | Phase 38 | Complete |
 | LEAGUE-01 | Phase 39 | Pending |
 | LEAGUE-02 | Phase 39 | Pending |

@@ -910,7 +910,11 @@ pub(crate) enum PopupData<'a> {
     SwitchFilter {
         target: &'a str,
     },
-    Quit,
+    Quit {
+        /// The only pending work is tier edits the Fallback price source does not use: no Apply
+        /// can write them, so the popup offers no Apply & quit.
+        tier_edits_only: bool,
+    },
     DeleteRule {
         /// 1-based position of the rule in the list.
         index: usize,
@@ -962,6 +966,20 @@ pub(crate) fn changed_on_disk_choice(overwrite: bool, clicked: usize) -> usize {
     }
 }
 
+/// The Quit popup's body when its only pending work is tier edits unused under Fallback.
+pub(crate) const QUIT_TIER_EDITS_ONLY_BODY: &str =
+    "Tier edits apply only with Live prices. Quit and lose them?";
+
+/// The Quit popup's choice as the full-set index (0 Apply & quit, 1 Quit without applying,
+/// 2 Cancel), from the index of the button clicked when Apply & quit was left out.
+pub(crate) fn quit_popup_choice(tier_edits_only: bool, clicked: usize) -> usize {
+    if tier_edits_only {
+        clicked + 1
+    } else {
+        clicked
+    }
+}
+
 /// Title, body and buttons of a popup.
 pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
     let (title, body, buttons): (&str, String, Vec<SpecButton>) = match data {
@@ -996,7 +1014,23 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
             format!("Unapplied rule changes will be discarded. Switching to {target}."),
             vec![(SWITCH_AND_DISCARD, true, None), (STAY, false, None)],
         ),
-        PopupData::Quit => (
+        PopupData::Quit {
+            tier_edits_only: true,
+        } => (
+            apply::QUIT_CONFIRM_TITLE,
+            QUIT_TIER_EDITS_ONLY_BODY.to_string(),
+            vec![
+                (
+                    apply::QUIT_DISCARD_LABEL,
+                    true,
+                    Some(apply::QUIT_DISCARD_TIP),
+                ),
+                (apply::QUIT_CANCEL_LABEL, false, None),
+            ],
+        ),
+        PopupData::Quit {
+            tier_edits_only: false,
+        } => (
             apply::QUIT_CONFIRM_TITLE,
             "Apply them before quitting?".to_string(),
             vec![
@@ -2022,7 +2056,24 @@ mod tests {
         assert_eq!(labels(&s), ["Switch and discard", "Stay"]);
         assert!(s.buttons[0].1);
 
-        let s = popup_spec(PopupData::Quit);
+        // Only tier edits Fallback cannot write: no Apply & quit, which could only stay open.
+        let s = popup_spec(PopupData::Quit {
+            tier_edits_only: true,
+        });
+        assert_eq!(s.title, apply::QUIT_CONFIRM_TITLE);
+        assert_eq!(s.body, QUIT_TIER_EDITS_ONLY_BODY);
+        assert_eq!(
+            labels(&s),
+            [apply::QUIT_DISCARD_LABEL, apply::QUIT_CANCEL_LABEL]
+        );
+        assert!(s.buttons[0].1);
+        assert_eq!(quit_popup_choice(true, 0), 1);
+        assert_eq!(quit_popup_choice(true, 1), 2);
+        assert_eq!(quit_popup_choice(false, 0), 0);
+
+        let s = popup_spec(PopupData::Quit {
+            tier_edits_only: false,
+        });
         assert_eq!(s.title, apply::QUIT_CONFIRM_TITLE);
         assert_eq!(s.body, "Apply them before quitting?");
         assert_eq!(
@@ -2145,7 +2196,12 @@ mod tests {
                 block: OverwriteBlock::Nothing,
             },
             PopupData::SwitchFilter { target: "t" },
-            PopupData::Quit,
+            PopupData::Quit {
+                tier_edits_only: false,
+            },
+            PopupData::Quit {
+                tier_edits_only: true,
+            },
             PopupData::DeleteRule {
                 index: 1,
                 label: "l",

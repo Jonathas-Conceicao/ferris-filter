@@ -109,6 +109,9 @@ pub struct OverlayApp {
 
     /// The tray-Quit confirm ("Unapplied changes") is showing.
     quit_confirm: bool,
+    /// The Quit confirm's only pending work is tier edits Fallback cannot write (refreshed each
+    /// frame while it shows): it then offers no Apply & quit.
+    quit_tier_edits_only: bool,
 
     /// The RULES Revert was clicked: the "Discard rule changes?" popup asks first.
     revert_rules_armed: bool,
@@ -1473,6 +1476,7 @@ impl OverlayApp {
             shot: None,
             toggle_requested: false,
             quit_confirm: false,
+            quit_tier_edits_only: false,
             revert_rules_armed: false,
             quit_after_apply: false,
             quit_next_frame: false,
@@ -2270,7 +2274,9 @@ impl OverlayApp {
     /// The text and buttons of an open popup, from the current state.
     fn popup_spec_for(&self, popup: Popup) -> shell::PopupSpec {
         match popup {
-            Popup::Quit => shell::popup_spec(PopupData::Quit),
+            Popup::Quit => shell::popup_spec(PopupData::Quit {
+                tier_edits_only: self.quit_tier_edits_only,
+            }),
             Popup::ChangedOnDisk => {
                 let fallback = Path::new("the filter");
                 let path = self.filter.as_ref().ok().map_or(fallback, |l| l.path());
@@ -2362,6 +2368,7 @@ impl OverlayApp {
         let on_config = self.tab == ShellTab::Config;
         match popup {
             Popup::Quit => {
+                let choice = shell::quit_popup_choice(self.quit_tier_edits_only, choice);
                 let quit_choice = match choice {
                     0 => apply::QuitChoice::ApplyAndQuit,
                     1 => apply::QuitChoice::QuitWithoutApplying,
@@ -2485,6 +2492,13 @@ impl OverlayApp {
     /// Fallback (no Apply writes them, but quitting loses them).
     fn quit_dirty(&mut self) -> bool {
         self.applicable_dirty() || self.has_unwritable_tier_edits()
+    }
+
+    /// Decides, while the Quit confirm shows, whether its only pending work is unused tier edits
+    /// (the popup then offers no Apply & quit, which could only stay open).
+    fn refresh_quit_tier_edits_only(&mut self) {
+        self.quit_tier_edits_only =
+            self.quit_confirm && self.has_unwritable_tier_edits() && !self.applicable_dirty();
     }
 
     /// Tier cutoff edits that stay pending because the Fallback price source does not use them.
@@ -3920,6 +3934,7 @@ impl eframe::App for OverlayApp {
         }
         // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
         self.overwrite_live = self.overwrite_decision();
+        self.refresh_quit_tier_edits_only();
         if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
             let spec = self.popup_spec_for(popup);
             let buttons: Vec<crate::skin::popup::PopupButton> = spec
@@ -7373,7 +7388,7 @@ Hide
     #[test]
     fn apply_and_quit_under_fallback_keeps_unused_tier_edits_and_stays_open() {
         use crate::overlay::shell::Popup;
-        // Only unused tier edits: no Apply runs, the window stays open with them kept.
+        // Only unused tier edits: the confirm offers no Apply & quit, only Quit or Cancel.
         let (mut app, ctx, rig) = economy_app();
         app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
         app.applied_policy = PriceSourcePolicy::ForceFallback;
@@ -7381,6 +7396,36 @@ Hide
         app.config.as_mut().unwrap().set_tier_text("S", "31");
         assert!(app.quit_dirty() && !app.applicable_dirty());
         app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        let spec = app.popup_spec_for(Popup::Quit);
+        assert_eq!(spec.body, crate::overlay::shell::QUIT_TIER_EDITS_ONLY_BODY);
+        let labels: Vec<&str> = spec.buttons.iter().map(|b| b.0).collect();
+        assert_eq!(
+            labels,
+            [
+                crate::overlay::apply::QUIT_DISCARD_LABEL,
+                crate::overlay::apply::QUIT_CANCEL_LABEL
+            ]
+        );
+        // Cancel keeps the window and the edits.
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(!app.quit_confirm && !app.quit_after_apply && !app.quit_next_frame);
+        assert_eq!(s_tier_text(&app), "31");
+        // The first button quits without applying.
+        app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(app.quit_next_frame && !app.quit_after_apply);
+
+        // The Apply & quit path itself never quits while only those edits remain: no Apply
+        // runs and the window stays open with them kept.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.applied_policy = PriceSourcePolicy::ForceFallback;
+        app.set_price_source(false);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.quit_confirm = true;
+        app.quit_tier_edits_only = false;
         app.dispatch_popup(&ctx, Popup::Quit, 0);
         assert!(!app.quit_after_apply && !app.quit_next_frame);
         assert_eq!(s_tier_text(&app), "31");
@@ -7388,13 +7433,20 @@ Hide
         assert_eq!(text, super::UNWRITABLE_TIERS_QUIT_STATUS);
         assert_eq!(kind, w::StatusKind::Warning);
 
-        // With other work pending too, that work is applied and the window still stays open.
+        // With other work pending too, Apply & quit is offered: that work is applied and the
+        // window still stays open.
         let (mut app, ctx, rig) = economy_app();
         app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
         app.config.as_mut().unwrap().set_tier_text("S", "31");
         app.set_price_source(false);
         assert!(app.applicable_dirty());
         app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        assert!(!app.quit_tier_edits_only);
+        assert_eq!(
+            app.popup_spec_for(Popup::Quit).buttons[0].0,
+            crate::overlay::apply::QUIT_APPLY_LABEL
+        );
         app.dispatch_popup(&ctx, Popup::Quit, 0);
         assert!(!app.quit_after_apply && !app.quit_next_frame);
         assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);

@@ -38,9 +38,10 @@
 ### Built-in styles (BSTY)
 
 - [ ] **BSTY-01**: The built-in styles are the author's reworked set (snapshot:
-  `.planning/research/author-styles-2026-10-17.json`): its `S`-`F`, `unchanged`, `hidden`,
-  `Recycle`, `kite` and `exceptional` entries become `styles-default.json`; the author's personal
-  `Build Items` and `White bases` are not shipped. `tiers-default.json` is unchanged.
+  `.planning/research/author-styles-2026-10-17.json`): only its built-ins `S`-`F`, `unchanged`
+  and `hidden` become `styles-default.json`; no custom style ships (`Recycle`, `kite`,
+  `exceptional`, `Build Items`, `White bases` are the author's own). `tiers-default.json` is
+  unchanged.
 - [ ] **BSTY-02**: No built-in style uses a custom sound file.
 - [ ] **BSTY-03**: A user's own `styles.json` is kept; built-in ids stay `builtin:S`..`builtin:F`.
 
@@ -108,8 +109,7 @@
 ### Reset to defaults (RESET)
 
 - [ ] **RESET-01**: A Reset to defaults button on the Config tab's Styles heading restores the
-  built-in styles and the shipped extras (`Recycle`, `kite`, `exceptional`) to their defaults and
-  keeps the user's other custom styles; it asks first in a popup and is one pending edit (Revert
+  built-in styles to their defaults and keeps every custom style; it asks first in a popup and is one pending edit (Revert
   undoes, Apply writes).
 - [ ] **RESET-02**: A Reset to defaults button on the Economy tab's Tiers heading restores the
   default tier cutoffs, with the same popup and pending-edit behaviour.

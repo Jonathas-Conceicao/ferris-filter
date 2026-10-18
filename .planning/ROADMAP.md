@@ -116,7 +116,7 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
   3. With `FERRISFILTER_HOME` set, everything lives in that folder and nothing is written to the per-user folder (the repo dev workflow)
   4. `ff-cli apply`, `sync` and `install` read and write the same folders as the overlay, while `generate` still reads the working directory and the byte-for-byte fixture test passes
   5. The test suite and `--screenshot` mode refuse to touch the real config or game folder
-**Plans**: TBD
+**Plans**: 7 plans (36-01 resolver + embedded defaults; 36-02 text loaders + settings folder; 36-03 InputPaths Source + in_home; 36-04 CLI apply/sync; 36-05 overlay Config + Apply; 36-06 overlay root + class catalog + test isolation; 36-07 isolation guard, old resolver removed, docs)
 **UI hint**: yes
 
 ### Phase 37: Game Folder Resolver & Picker
@@ -138,12 +138,12 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 **Depends on**: Phase 36 (embedded defaults)
 **Requirements**: BSTY-01, BSTY-02, BSTY-03, STRICT-01, STRICT-02, STRICT-03, STRICT-04, RESET-01, RESET-02, FIX-01
 **Success Criteria** (what must be TRUE):
-  1. A fresh install shows the reworked S-F, unchanged, hidden, Recycle, kite and exceptional styles, none using a custom sound file, and without the author's personal styles
+  1. A fresh install shows only the reworked built-ins (S-F, unchanged, hidden), none using a custom sound file, and no custom styles
   2. An existing user's own `styles.json` is kept and built-in ids stay `builtin:S` to `builtin:F`
   3. The Config tab shows `Custom | Flat Broke | Scrounging | Getting By | Comfy | Loaded | Div Farmer`; clicking a level hides nothing, F, E-F, D-F, C-F or B-F as one pending edit that Revert undoes and Apply writes
   4. The highlighted level follows the S-F visibility, including after manual switch edits; any other pattern shows Custom, which does nothing when clicked
   5. Non-tier built-ins and custom styles are untouched by a level change, and the tooltip says rules using tier styles are affected
-  6. Reset to defaults on the Styles heading (Config) and the Tiers heading (Economy) each ask first, then restore the defaults as one pending edit; custom styles other than the shipped extras are kept, and Revert undoes the reset
+  6. Reset to defaults on the Styles heading (Config) and the Tiers heading (Economy) each ask first, then restore the defaults as one pending edit; every custom style is kept, and Revert undoes the reset
   7. Hovering a minimap icon shows its tooltip once
 **Plans**: TBD
 **UI hint**: yes

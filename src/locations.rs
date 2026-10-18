@@ -8,12 +8,16 @@
 //! The folder is never created here: writers create it on a real write, so a first launch writes
 //! nothing. This module is the only code in the crate that asks the OS for a folder.
 //!
+//! It also resolves the game folder (where the `.filter` files live): `FERRISFILTER_GAME_DIR`,
+//! else the folder the user picked (`ff-settings.json`), else the OS Documents folder plus
+//! `My Games\Path of Exile 2`. That folder is never created here either.
+//!
 //! [`resolve_from`] is the pure core (every input is a parameter); [`from_env`] is the thin
 //! wrapper that reads the environment and the OS. Paths are never canonicalized (`\\?\` paths
 //! would change every rendered message).
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Environment variable that pins the FerrisFilter folder.
 pub const HOME_ENV: &str = "FERRISFILTER_HOME";
@@ -88,9 +92,128 @@ pub fn from_env() -> Result<AppDirs, RootError> {
     resolve_from(std::env::var_os(HOME_ENV).as_deref(), dirs::config_dir)
 }
 
+/// Environment variable that pins the game folder (it wins over everything else).
+pub const GAME_DIR_ENV: &str = "FERRISFILTER_GAME_DIR";
+
+/// Folders under the OS Documents folder that make up the default game folder.
+pub const GAME_SUBDIRS: [&str; 2] = ["My Games", "Path of Exile 2"];
+
+fn documents_game_dir(documents: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+    documents().map(|d| GAME_SUBDIRS.iter().fold(d, |p, s| p.join(s)))
+}
+
+/// Pure game-folder resolver. A non-empty `env` wins and is returned verbatim, even when it does
+/// not exist (so a missing override reaches the missing-folder status). Otherwise a `saved` path
+/// is used when absolute; otherwise the Documents folder (asked lazily) plus [`GAME_SUBDIRS`].
+pub fn game_dir_from(
+    env: Option<&OsStr>,
+    saved: Option<&Path>,
+    documents: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(value) = env.filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(value));
+    }
+    if let Some(p) = saved.filter(|p| p.is_absolute()) {
+        return Some(p.to_path_buf());
+    }
+    documents_game_dir(documents)
+}
+
+/// Resolve the game folder from the real environment and OS.
+pub fn game_dir(saved: Option<&Path>) -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        let set = std::env::var_os(GAME_DIR_ENV).is_some_and(|v| !v.is_empty());
+        if !set {
+            panic!("tests must not resolve the real game folder: pass a temp game_dir instead");
+        }
+    }
+    game_dir_from(
+        std::env::var_os(GAME_DIR_ENV).as_deref(),
+        saved,
+        dirs::document_dir,
+    )
+}
+
+/// The default game folder (Documents plus [`GAME_SUBDIRS`]), ignoring the override and any saved
+/// choice. Shown in the Browse tooltip.
+pub fn default_game_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        panic!("tests must not resolve the real game folder: pass a temp game_dir instead");
+    }
+    #[cfg(not(test))]
+    documents_game_dir(dirs::document_dir)
+}
+
+/// Whether `FERRISFILTER_GAME_DIR` pins the game folder (the user cannot pick another).
+pub fn game_dir_is_pinned() -> bool {
+    std::env::var_os(GAME_DIR_ENV).is_some_and(|v| !v.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn game_env_wins_verbatim_even_when_missing() {
+        let got = game_dir_from(Some(OsStr::new("C:\\tmp\\g")), Some(Path::new("/x")), boom);
+        assert_eq!(got, Some(PathBuf::from("C:\\tmp\\g")));
+    }
+
+    #[test]
+    fn game_empty_env_is_unset() {
+        let got = game_dir_from(Some(OsStr::new("")), None, || Some(PathBuf::from("D")));
+        assert_eq!(
+            got,
+            Some(PathBuf::from("D").join("My Games").join("Path of Exile 2"))
+        );
+    }
+
+    #[test]
+    fn game_saved_absolute_is_used_verbatim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = tmp.path().join("not-created");
+        assert_eq!(game_dir_from(None, Some(&saved), boom), Some(saved));
+    }
+
+    #[test]
+    fn game_saved_relative_is_ignored() {
+        let got = game_dir_from(None, Some(Path::new("rel/dir")), || {
+            Some(PathBuf::from("D"))
+        });
+        assert_eq!(
+            got,
+            Some(PathBuf::from("D").join("My Games").join("Path of Exile 2"))
+        );
+    }
+
+    #[test]
+    fn game_default_is_documents_plus_subdirs() {
+        let got = game_dir_from(None, None, || Some(PathBuf::from("Docs")));
+        assert_eq!(
+            got,
+            Some(
+                PathBuf::from("Docs")
+                    .join("My Games")
+                    .join("Path of Exile 2")
+            )
+        );
+    }
+
+    #[test]
+    fn game_no_documents_is_none() {
+        assert_eq!(game_dir_from(None, None, || None), None);
+    }
+
+    #[test]
+    fn game_resolver_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().to_path_buf();
+        let got = game_dir_from(None, None, || Some(base.clone())).unwrap();
+        assert!(!got.exists());
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
 
     fn boom() -> Option<PathBuf> {
         panic!("platform lookup must not be called");

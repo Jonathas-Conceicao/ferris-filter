@@ -29,6 +29,7 @@ use crate::defaults::{self, Builtin};
 use crate::emitter::{self, FilterIdentity, GenerateError};
 use crate::loader::{self, LoadError};
 use crate::models::config::{Config, StyleSet};
+use crate::models::prices::PricesFile;
 use crate::models::tiers::{TierEntry, ValidatedTiers};
 use crate::pricer::{self, PriceRateError, PricedData};
 
@@ -394,15 +395,32 @@ pub fn load_inputs(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<CompileInputs, CompileError> {
-    let styles = match paths.styles_source() {
-        Ok(p) => p.label(),
+    let styles_src = match paths.styles_source() {
+        Ok(p) => p,
         // Keep the historical order: a missing config.json is reported before the styles.
         // `load_config` reads the config first and fails on it, so this styles path is never read.
-        Err(_) if !paths.config.exists() => String::new(),
+        Err(_) if !paths.config.exists() => Source::File(PathBuf::new()),
         Err(e) => return Err(e.into()),
     };
-    let config: Config =
-        loader::load_config_with_live(&path_str(&paths.config), &styles, &path_str(&paths.styles))?;
+    let styles = styles_src.label();
+    let config: Config = match &styles_src {
+        Source::File(_) => loader::load_config_with_live(
+            &path_str(&paths.config),
+            &styles,
+            &path_str(&paths.styles),
+        )?,
+        Source::Embedded(_) => {
+            let config: Config = loader::load_json(&path_str(&paths.config))?;
+            let set = load_styles_from(&styles_src)?;
+            loader::attach_styles(
+                config,
+                set,
+                &path_str(&paths.config),
+                &styles,
+                &path_str(&paths.styles),
+            )?
+        }
+    };
     config
         .styles
         .check_rules(config.rules.as_deref().unwrap_or(&[]), &styles)
@@ -437,7 +455,7 @@ pub fn load_economy(
     paths: &InputPaths,
     policy: PriceSourcePolicy,
 ) -> Result<EconomyInputs, CompileError> {
-    let styles = loader::load_styles(&paths.styles_source()?.label())?;
+    let styles = load_styles_from(&paths.styles_source()?)?;
     let (priced, price_source) = load_priced(paths, policy)?;
     Ok(EconomyInputs {
         styles,
@@ -468,6 +486,30 @@ pub fn compile_economy(inputs: &EconomyInputs) -> Result<String, CompileError> {
     Ok(emitter::generate_economy(&inputs.styles, &inputs.priced)?)
 }
 
+/// Load styles from a file (path loader, messages unchanged) or an embedded copy.
+fn load_styles_from(src: &Source) -> Result<StyleSet, LoadError> {
+    match src {
+        Source::File(p) => loader::load_styles(&path_str(p)),
+        Source::Embedded(b) => loader::load_styles_str(b.text, &b.label()),
+    }
+}
+
+/// Load tier cutoffs from a file or an embedded copy.
+fn load_tiers_from(src: &Source) -> Result<ValidatedTiers, CompileError> {
+    Ok(match src {
+        Source::File(p) => loader::load_tiers(&path_str(p))?,
+        Source::Embedded(b) => loader::load_tiers_str(b.text, &b.label())?,
+    })
+}
+
+/// Load prices from a default: a file may be absent (`None`); an embedded copy never is.
+fn load_prices_from(src: &DefaultSource) -> Result<Option<PricesFile>, LoadError> {
+    match src {
+        DefaultSource::File(p) => loader::load_prices_optional(&path_str(p)),
+        DefaultSource::Embedded(b) => loader::load_prices_str(b.text, &b.label()).map(Some),
+    }
+}
+
 /// Pick the (prices, tiers) source for `policy` and price the tiers. Shared by [`load_inputs`]
 /// and [`load_economy`] so the source-selection arms exist exactly once.
 fn load_priced(
@@ -486,7 +528,7 @@ fn load_priced_with(
     let live = |paths: &InputPaths| -> Result<ValidatedTiers, CompileError> {
         match live_tiers {
             Some(t) => Ok(ValidatedTiers::try_from(t.to_vec()).map_err(LoadError::from)?),
-            None => Ok(loader::load_tiers(&paths.tiers_source()?.label())?),
+            None => load_tiers_from(&paths.tiers_source()?),
         }
     };
     // Pick the (prices, tiers) source pair. The early-league fallback always pairs
@@ -494,10 +536,12 @@ fn load_priced_with(
     // (exalt-denominated cutoffs), so they must travel together.
     let (prices_opt, tiers, price_source) = match policy {
         PriceSourcePolicy::ForceFallback => {
-            let fb = Source::from(&paths.prices_fallback).label();
-            let prices = loader::load_prices_optional(&fb)?
-                .ok_or_else(|| CompileError::ForcedFallbackMissing { path: fb.clone() })?;
-            let tiers = loader::load_tiers(&Source::from(&paths.tiers_fallback).label())?;
+            let prices = load_prices_from(&paths.prices_fallback)?.ok_or_else(|| {
+                CompileError::ForcedFallbackMissing {
+                    path: Source::from(&paths.prices_fallback).label(),
+                }
+            })?;
+            let tiers = load_tiers_from(&Source::from(&paths.tiers_fallback))?;
             (
                 Some(prices),
                 tiers,
@@ -512,12 +556,9 @@ fn load_priced_with(
                     (Some(prices), tiers, PriceSource::Live)
                 }
                 // Absent or empty → fall back to the committed early-league pair.
-                _ => match loader::load_prices_optional(
-                    &Source::from(&paths.prices_fallback).label(),
-                )? {
+                _ => match load_prices_from(&paths.prices_fallback)? {
                     Some(prices) => {
-                        let tiers =
-                            loader::load_tiers(&Source::from(&paths.tiers_fallback).label())?;
+                        let tiers = load_tiers_from(&Source::from(&paths.tiers_fallback))?;
                         (
                             Some(prices),
                             tiers,
@@ -832,6 +873,76 @@ mod tests {
         assert_eq!(
             p.tiers_source().unwrap(),
             Source::File(dir.path().join("tiers.json"))
+        );
+    }
+
+    #[test]
+    fn economy_from_an_empty_home_uses_the_built_ins_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = load_economy(&InputPaths::in_home(dir.path()), PriceSourcePolicy::Auto)
+            .expect("embedded defaults");
+        assert_eq!(
+            inputs.price_source,
+            PriceSource::Fallback(FallbackReason::LiveMissingOrEmpty)
+        );
+        assert!(!inputs.priced.category_blocks.is_empty());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        let forced = load_economy(
+            &InputPaths::in_home(dir.path()),
+            PriceSourcePolicy::ForceFallback,
+        )
+        .expect("embedded pair is never missing");
+        assert_eq!(
+            forced.price_source,
+            PriceSource::Fallback(FallbackReason::Forced)
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn economy_from_built_ins_equals_economy_from_the_committed_files() {
+        let home = tempfile::tempdir().unwrap();
+        let from_embedded =
+            load_economy(&InputPaths::in_home(home.path()), PriceSourcePolicy::Auto).unwrap();
+        let files = temp_inputs(&[
+            ("styles-default.json", &repo_file("styles-default.json")),
+            ("tiers-default.json", &repo_file("tiers-default.json")),
+            ("prices-fallback.json", &repo_file("prices-fallback.json")),
+            ("tiers-fallback.json", &repo_file("tiers-fallback.json")),
+        ]);
+        let from_files = load_economy(
+            &InputPaths::relative_to(files.path()),
+            PriceSourcePolicy::Auto,
+        )
+        .unwrap();
+        assert_eq!(
+            compile_economy(&from_embedded).unwrap(),
+            compile_economy(&from_files).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_broken_live_file_in_home_names_its_full_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("styles.json");
+        fs::write(&live, "{").unwrap();
+        let err = load_economy(&InputPaths::in_home(dir.path()), PriceSourcePolicy::Auto)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&live.display().to_string()), "{err}");
+    }
+
+    #[test]
+    fn a_broken_built_in_names_itself_as_built_in() {
+        static BAD: Builtin = Builtin {
+            file_name: "styles-default.json",
+            text: "{",
+        };
+        let err = load_styles_from(&Source::Embedded(&BAD)).unwrap_err();
+        assert!(
+            err.to_string().contains("styles-default.json (built in)"),
+            "{err}"
         );
     }
 

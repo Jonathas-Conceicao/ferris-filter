@@ -5,7 +5,7 @@
 //!
 //! The whole module is compiled out of release builds. The mode skips the single-instance guard,
 //! the hotkey and the tray, never applies, reloads or syncs, and refuses to run unless
-//! `FERRISFILTER_HOME`, `USERPROFILE` and the game folder derived from it all live under the
+//! `FERRISFILTER_HOME` and `FERRISFILTER_GAME_DIR` are both set and live under the
 //! system temp directory, which must itself have a `Temp`/`tmp` component (`TMP`/`TEMP` are
 //! environment variables too) -- so it can never read or write the real game folder or the user's
 //! live `styles.json` / `tiers.json` / `prices.json`. `--filter` is staged under the filter name
@@ -225,12 +225,7 @@ pub(crate) fn temp_looks_real(temp: &Path) -> bool {
 
 /// Pure core of [`guard_env`]: every path must lie under `temp`, which must itself look like a
 /// temp folder ([`temp_looks_real`]).
-pub(crate) fn paths_under_temp(
-    home: &Path,
-    profile: &Path,
-    game_dir: &Path,
-    temp: &Path,
-) -> Result<(), String> {
+pub(crate) fn paths_under_temp(home: &Path, game_dir: &Path, temp: &Path) -> Result<(), String> {
     let temp = canonical_lossy(temp);
     if !temp_looks_real(&temp) {
         return Err(format!(
@@ -241,8 +236,7 @@ pub(crate) fn paths_under_temp(
     }
     for (name, path) in [
         ("FERRISFILTER_HOME", home),
-        ("USERPROFILE", profile),
-        ("the game folder derived from USERPROFILE", game_dir),
+        ("FERRISFILTER_GAME_DIR", game_dir),
     ] {
         // A `..` could climb out of temp after the check; refuse such paths outright.
         let climbs = path
@@ -259,26 +253,27 @@ pub(crate) fn paths_under_temp(
     Ok(())
 }
 
-/// Requires `FERRISFILTER_HOME` and `USERPROFILE` (and so the derived game folder) to be under
-/// the system temp folder.
+/// Requires `FERRISFILTER_HOME` and `FERRISFILTER_GAME_DIR` to be set and under the system temp
+/// folder.
 pub(crate) fn guard_env() -> Result<(), String> {
-    let home = std::env::var_os(crate::locations::HOME_ENV).ok_or_else(|| {
-        "screenshot mode needs FERRISFILTER_HOME set to a temp folder".to_string()
-    })?;
-    let profile = std::env::var_os("USERPROFILE")
-        .ok_or_else(|| "screenshot mode needs USERPROFILE set to a temp folder".to_string())?;
+    let home = std::env::var_os(crate::locations::HOME_ENV)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            "screenshot mode needs FERRISFILTER_HOME set to a temp folder".to_string()
+        })?;
     let game_dir = game_dir()?;
-    paths_under_temp(
-        Path::new(&home),
-        Path::new(&profile),
-        &game_dir,
-        &std::env::temp_dir(),
-    )
+    paths_under_temp(Path::new(&home), &game_dir, &std::env::temp_dir())
 }
 
+/// The game folder screenshot mode stages into: `FERRISFILTER_GAME_DIR`, verbatim. There is no
+/// fallback to the real default folder.
 fn game_dir() -> Result<PathBuf, String> {
-    crate::dynamic::default_destination(None)
-        .ok_or_else(|| "screenshot mode needs USERPROFILE set".to_string())
+    std::env::var_os(crate::locations::GAME_DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "screenshot mode needs FERRISFILTER_GAME_DIR set to a temp folder".to_string()
+        })
 }
 
 /// The marker file the screenshot mode leaves in a game folder it created, so later runs may
@@ -464,8 +459,8 @@ mod tests {
         assert!(!temp_looks_real(Path::new("C:/")));
         // TEMP pointed at the profile: the real game folder would otherwise pass.
         let profile = Path::new("C:/Users/me");
-        let game = profile.join("OneDrive/Documentos/My Games/Path of Exile 2");
-        let err = paths_under_temp(&profile.join("ff"), profile, &game, profile).unwrap_err();
+        let game = profile.join("Documents/My Games/Path of Exile 2");
+        let err = paths_under_temp(&profile.join("ff"), &game, profile).unwrap_err();
         assert!(err.contains("TEMP"), "{err}");
     }
 
@@ -502,19 +497,18 @@ mod tests {
     fn only_temp_paths_pass_the_guard() {
         let temp = std::env::temp_dir();
         let ok_home = temp.join("ff-shot-test/home");
-        let ok_profile = temp.join("ff-shot-test/profile");
-        let ok_game = ok_profile.join("OneDrive/Documentos/My Games/Path of Exile 2");
-        assert!(paths_under_temp(&ok_home, &ok_profile, &ok_game, &temp).is_ok());
+        let ok_game = temp.join("ff-shot-test/game");
+        assert!(paths_under_temp(&ok_home, &ok_game, &temp).is_ok());
 
-        // A real-looking profile outside temp is refused, naming the variable.
+        // A game folder outside temp is refused, naming the variable.
         let real = Path::new("C:/Users/someone");
-        let real_game = real.join("OneDrive/Documentos/My Games/Path of Exile 2");
-        let err = paths_under_temp(&ok_home, real, &real_game, &temp).unwrap_err();
-        assert!(err.contains("USERPROFILE"), "{err}");
-        let err = paths_under_temp(real, &ok_profile, &ok_game, &temp).unwrap_err();
+        let real_game = real.join("Documents/My Games/Path of Exile 2");
+        let err = paths_under_temp(&ok_home, &real_game, &temp).unwrap_err();
+        assert!(err.contains("FERRISFILTER_GAME_DIR"), "{err}");
+        let err = paths_under_temp(real, &ok_game, &temp).unwrap_err();
         assert!(err.contains("FERRISFILTER_HOME"), "{err}");
         // A game folder that escapes temp via `..` is refused.
-        let sneaky = ok_profile.join("../../../Windows");
-        assert!(paths_under_temp(&ok_home, &ok_profile, &sneaky, &temp).is_err());
+        let sneaky = ok_game.join("../../../Windows");
+        assert!(paths_under_temp(&ok_home, &sneaky, &temp).is_err());
     }
 }

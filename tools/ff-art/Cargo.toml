@@ -3,6 +3,7 @@ name = "ff-art"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "GPL-3.0-or-later"
 description = "Dev tool: extracts Path of Exile 2 UI art into FerrisFilter's assets/ (never a dependency of ff)"
 
 # Member of the repo-root workspace but not a default member, so root `cargo build`/`cargo test`

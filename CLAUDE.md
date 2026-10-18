@@ -397,7 +397,7 @@ Show # Human description (optional-slug)
 **Sounds**
 - `PlayAlertSound Id Volume` — `Id` 1–16, `Volume` 0–300 (default 50).
 - `PlayAlertSoundPositional Id Volume` — positional variant.
-- `CustomAlertSound "file" [Volume]` — custom sound file (e.g. the bundled `uwu.mp3`),
+- `CustomAlertSound "file" [Volume]` — custom sound file (e.g. `uwu.mp3`),
   volume 0–300 (default 100). `CustomAlertSoundOptional` to tolerate a missing file.
 - `DisableDropSound` / `EnableDropSound` — toggle the default drop sound.
 
@@ -578,7 +578,7 @@ items, waystones, trials, etc.). See the `"fallthrough"` field in `config.json` 
   new filters — `universal.filter` already has it stripped.
 - Order blocks **most specific → most general**; tier F is the catch-all.
 - Keep block comments descriptive: `Show # What it matches (kebab-slug)`.
-- The `uwu.mp3` custom sound lives in `assets/` (version-controlled). For the filter to play
-  it in-game, the mp3 must also be in the game folder (it currently is).
+- The `uwu.mp3` custom sound used by the `S`/`A` styles is a personal file and is not in the
+  repo. For the filter to play it in-game, the mp3 must be in the game folder.
 - After editing a `.filter`, copy it into the game's config folder (path above) to take effect.
   We will not auto-copy unless asked.

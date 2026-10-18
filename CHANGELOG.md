@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The About tab shows the version from the git tag (`0.6`, or `0.6-dev` for unreleased
   changes) and links to the repository the build was cloned from.
+- FerrisFilter is now licensed under GPL-3.0-or-later (`LICENSE`), including the custom art in
+  `assets/custom/`; the other files in `assets/` keep their own terms, listed in
+  `assets/README.md` (renamed from `ASSETS.md`).
+
+### Removed
+
+- `assets/uwu.mp3`, a personal sound file that should not have been in the repository.
 
 ## [0.6.0] - 2026-10-17
 

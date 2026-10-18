@@ -4,6 +4,7 @@ version = "0.6.0"
 edition = "2024"
 default-run = "ff"
 repository = "https://github.com/Jonathas-Conceicao/ferris-filter"
+license = "GPL-3.0-or-later"
 
 [workspace]
 members = [".", "tools/ff-art"]

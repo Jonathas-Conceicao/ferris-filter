@@ -118,3 +118,10 @@ Gear Games in any way.
   Rust (Programming Language used for this tool) mascot by Karen Rustad
   Tölva, released to the public domain
   ([rustacean.net](https://rustacean.net/)).
+
+## License
+
+The FerrisFilter source code is licensed under GPL-3.0-or-later (see
+`LICENSE`), and so is my custom art in `assets/custom/`. Everything
+else in `assets/` keeps its own owner and terms, listed in
+`assets/README.md`.

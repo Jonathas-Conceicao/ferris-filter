@@ -2474,6 +2474,8 @@ impl OverlayApp {
                                 &mut self.apply_message,
                                 self.reload_pending.as_mut(),
                             );
+                            // The window stays open: no install on a later, unrelated quit.
+                            self.update.cancel_install();
                         // A refusal leaves the window open showing it (Overwrite/Reload as today).
                         } else if apply::quit_step(
                             dirty,
@@ -6172,6 +6174,12 @@ Hide
     /// under a temp dir (never the real %TEMP%). Nothing is ever spawned.
     fn ready_app() -> (super::OverlayApp, tempfile::TempDir, std::path::PathBuf) {
         let (mut app, _ctx) = popup_app(RULES);
+        let (root, installer) = make_ready(&mut app);
+        (app, root, installer)
+    }
+
+    /// Puts `app` in the Ready state with a real installer under a fresh temp dir.
+    fn make_ready(app: &mut super::OverlayApp) -> (tempfile::TempDir, std::path::PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("FerrisFilter-update-test");
         std::fs::create_dir_all(&dir).unwrap();
@@ -6185,7 +6193,7 @@ Hide
                 installer: installer.clone(),
                 sha256,
             }));
-        (app, root, installer)
+        (root, installer)
     }
 
     fn handed_off(app: &super::OverlayApp) -> Option<std::path::PathBuf> {
@@ -7875,6 +7883,47 @@ Hide
         app.quit_confirm = true;
         app.dispatch_popup(&ctx, Popup::Quit, 1);
         assert!(app.quit_next_frame);
+    }
+
+    /// Install, then Apply & quit that stays open for unused tier edits: the install intent is
+    /// dropped, so a later quit deletes the installer instead of starting it.
+    #[test]
+    fn install_click_then_apply_and_quit_kept_open_by_unused_tier_edits_clears_the_intent() {
+        use crate::overlay::shell::Popup;
+        // Other work plus unused tier edits: the Apply runs, the window stays open.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        let (_root, installer) = make_ready(&mut app);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.set_price_source(false);
+        assert!(app.applicable_dirty());
+        assert!(!app.install_and_quit());
+        assert!(app.quit_confirm && app.update.install_intended());
+        app.refresh_quit_tier_edits_only();
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert!(!app.update.install_intended());
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+
+        // Only unused tier edits, Apply & quit picked: nothing is applied, the window stays
+        // open, and the intent is dropped the same way.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        let (_root, installer) = make_ready(&mut app);
+        app.applied_policy = PriceSourcePolicy::ForceFallback;
+        app.set_price_source(false);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(!app.install_and_quit());
+        assert!(app.update.install_intended());
+        app.quit_tier_edits_only = false;
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert!(!app.update.install_intended());
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
     }
 
     #[test]

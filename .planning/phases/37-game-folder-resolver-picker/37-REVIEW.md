@@ -2,7 +2,8 @@
 phase: 37-game-folder-resolver-picker
 reviewed: 2026-10-18T00:00:00Z
 depth: standard
-files_reviewed: 22
+iteration: 4
+files_reviewed: 21
 files_reviewed_list:
   - Cargo.toml
   - src/cli.rs
@@ -24,228 +25,88 @@ files_reviewed_list:
   - tests/dynamic_filter.rs
   - tests/isolation_guard.rs
   - tests/ui/README.md
-  - assets/poe2/manifest.toml
   - CLAUDE.md
 findings:
-  critical: 1
-  warning: 5
-  info: 5
-  total: 11
-status: issues_found
+  critical: 0
+  warning: 0
+  info: 7
+  total: 7
+status: clean
 ---
 
-# Phase 37: Code Review Report
+# Phase 37: Code Review Report (final re-review)
 
 **Reviewed:** 2026-10-18
 **Depth:** standard
-**Files Reviewed:** 22
-**Status:** issues_found
+**Files Reviewed:** 21
+**Status:** clean (Info items only)
 
 ## Summary
 
-I reviewed the phase diff `994d560..HEAD`. That covers the pure game-folder resolver, the
-`game_folder` settings key and `choose_filter`, the CLI defaults, the `rfd` worker, the Browse and
-refresh rows, the missing-folder status line and the screenshot guard. The resolver, the
-settings salvage path, the screenshot guard and the dialog worker are sound and well tested.
+This pass reviews the phase diff `994d560..HEAD`, focusing on the iteration-2 fix commits
+`9e21743` (WR-01) and `348db27` (WR-02).
 
-The main defect is in the new "fresh install" filter choice. It is applied only once, in
-`build`, and only in memory. The Reload path does not apply it, so Reload switches the
-overlay to a different file. The same in-memory choice also makes the existing settings
-warnings false, because they still say `dynamic.filter` is in use. Two smaller problems: the
-refresh button cannot clear a stale "Game folder not found" state, and the CLI resolves the
-picked folder but still hard-codes `dynamic.filter`. CLAUDE.md also has a literal `$1` left over
-from a failed sed substitution, which deleted a sentence of the `ff-settings.json` row.
+| Finding | Verdict |
+|---|---|
+| WR-01: any settings warning suppresses the fresh-install pick | **Fixed.** `load_parts` returns `filter_fell_back = true` in three cases: the `unusable` closure, the salvage branch's `Some(_)` arm for `filter`, and the `(Some(f), _)` arms of the final match. A bad `game_folder`, `reload_after_apply` or `collapsed_sections` alone returns `false`. `build` (app.rs:1320-1334) and `reload` (app.rs:2403-2417) both gate on `!filter_fell_back`. `load` is a thin wrapper, and the table test checks that `load` and `load_detailed` agree. |
+| WR-02: the automatic pick is saved by unrelated writes | **Fixed.** `Settings::auto_filter` is marked `#[serde(skip)]`, so the whole-struct `save` writes no `filter` key for it. That covers the reload toggle, the `NotFound` branch of `save_section_state` and `remember_open_filter`. `choose_unsaved_filter` writes only `auto_filter`. `settings_with_filter` and `settings_with_folder` set `filter` and clear `auto_filter`. The salvage-path literal sets `auto_filter: None`. The CLI reads only serialized keys (`saved_choice_in` -> `load`), and so does `screenshot::stage`. |
 
-## Critical Issues
+I traced the new paths for regressions:
+- **`settings_after_reload`.** A warned load from the same root returns `current.clone()`, which still includes `auto_filter`. A clean load returns `loaded` (no `auto_filter`), and `choose_unsaved_filter` then re-picks. Both match what Reload did before.
+- **Section folds keyed by `filter_name()`.** These still resolve to the auto-picked name, so fold state for an unsaved pick is stored under the filter actually open. This is unchanged.
+- **`select_filter` `Noop` branch.** `remember_open_filter` saves without `reset_filter_state`, so unapplied rule edits survive. `CreateFilter` with the open name also lands in this branch and now saves the selection, which is the intended result.
+- **`run_row_actions` (`fold != self.settings`).** The derived `PartialEq` now includes `auto_filter`. The `fold` clone carries the same `auto_filter`, so the comparison is unaffected.
 
-### CR-01: Reload drops the fresh-install filter choice and switches to `dynamic.filter`
-
-**File:** `src/overlay/app.rs:1311-1319` (build), `src/overlay/app.rs:2363-2395` (reload), `src/overlay/app.rs:1044-1057` (`settings_after_reload`)
-
-**Issue:** When `ff-settings.json` has no `filter` key, `build` sets `settings.filter` in memory
-to `choose_filter(list, "dynamic.filter")`, i.e. the folder's first `.filter`. Nothing writes it
-to disk. `save_section_state` (used by every section fold) writes only the fold key. On
-**Reload**, `settings::load` returns a clean `Settings` with `filter: None`, and
-`settings_after_reload` returns that loaded value unchanged (`!warned`). So `filter_name()`
-becomes `dynamic.filter` again, and `reset_filter_state` loads `<game>/dynamic.filter`. In the
-case this rule exists for, a folder without `dynamic.filter`, that file is absent.
-
-Effect: the user was editing `x.filter`, presses Reload, and is now on an empty, non-existent
-`dynamic.filter`. The Config dropdown shows `dynamic.filter`, and the next Apply creates a new
-file instead of writing the filter the user had open. This is the GAME rule "dynamic.filter is
-not special anywhere" failing on an ordinary action. It is not tested:
-`fresh_install_selects_the_folders_filter_in_memory_only` only checks `build`.
-
-**Fix:** Apply the choice in one helper and call it from `build`, from `reload` (after the game
-folder is re-resolved) and anywhere else the settings are replaced:
-```rust
-fn choose_unsaved_filter(settings: &mut Settings, game_dir: Option<&Path>) {
-    if settings.filter.is_none()
-        && let Some(list) = game_dir.and_then(|d| settings::list_filters(d).ok())
-        && !list.is_empty()
-    {
-        settings.filter = Some(settings::choose_filter(&list, settings.filter_name()));
-    }
-}
-// in reload(), after self.game_dir is re-resolved and before reset_filter_state():
-choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref());
-```
-Add a test: build on a folder with only `x.filter`, call `reload()`, then assert
-`filter_name() == "x.filter"`.
-
-## Warnings
-
-### WR-01: Settings warnings say "using dynamic.filter" when the overlay actually loads another filter
-
-**File:** `src/settings.rs:143-160`, `src/overlay/app.rs:1311-1319`
-
-**Issue:** The new rule tests `settings.filter.is_none()`. That is true for a fresh install, but
-also in two other cases:
-- **Unusable file:** `load` returns `Settings::default()` with
-  "could not be used (...); using dynamic.filter, and reload after Apply is off."
-- **Invalid stored name:** the name is dropped, with "...; using dynamic.filter."
-
-In both cases `build` then picks the folder's first `.filter` whenever the folder has no
-`dynamic.filter`. The status line still says `dynamic.filter`, so the user is told one file is
-in use while another is loaded, and Apply would write it. This also breaks the documented
-fail-closed fallback (CLAUDE.md line 279: an unusable file "means `dynamic.filter`").
-
-**Fix:** Use one of these:
-- Apply `choose_filter` only for a genuinely fresh install: no file at all, or a file with no
-  `filter` key and no warning.
-- Or build the warning text from the name that was actually chosen.
-
-The simplest change is to gate the block on `settings_warning.is_none()`.
-
-### WR-02: Refresh is greyed while the folder is missing, so the missing state cannot be refreshed away
-
-**File:** `src/overlay/config_view.rs:394`, `src/overlay/app.rs:1467-1475`
-
-**Issue:** `game_dir_missing` is recomputed only in `refresh_filters`, which runs at build, folder
-pick, Reload and Refresh. But the Refresh button is disabled whenever `missing` is true
-(`enabled = ctx.filters.is_some() && !missing`). Example: the game creates `My Games\Path of
-Exile 2` on its first launch after the overlay has started. The status line keeps reading
-"Game folder not found", and the user's only ways out are:
-- **Reload**, which discards rule edits;
-- **Browse**, re-picking the same default folder. That one is a no-op too, because
-  `on_folder_picked` returns early when the pick equals the current `game_dir`, so even
-  `refresh_filters` is not run.
-
-**Fix:** Keep Refresh enabled whenever `game_dir.is_some()`. It is read-only and only re-lists.
-Also, in `on_folder_picked`, call `self.refresh_filters()` before the `same` early return, so
-re-picking the current folder re-checks it.
-
-### WR-03: CLAUDE.md `ff-settings.json` row corrupted by a literal `$1`; stale default-filter text
-
-**File:** `CLAUDE.md:34`, `CLAUDE.md:211`, `CLAUDE.md:279`
-
-**Issue:** Line 34 now reads "Written by the overlay's CONFIG tab; $1 also `game_folder` ...". A
-sed back-reference was not expanded, and the original clause was deleted with it: "holds the
-selected game-folder filter name (a bare `*.filter` file name, validated before it is ever
-joined onto the game folder), default `dynamic.filter` when absent or invalid". CLAUDE.md is the
-project's declared spec ("keep it accurate"). Lines 211 ("restored on the next launch (default
-`dynamic.filter`)") and 279 (an unusable file "means `dynamic.filter`") are also no longer true
-under the new fresh-install rule, which uses the folder's first `.filter` when there is no
-`dynamic.filter`.
-
-**Fix:** Restore the deleted clause in place of `$1`, updated to the new rule. For example: "holds
-the selected filter name (a bare `*.filter` file name, validated before it is ever joined onto
-the game folder); when absent, the folder's `dynamic.filter` if present, else its first
-`.filter`, else `dynamic.filter` as a new file". Then align lines 211 and 279 with the CR-01 and
-WR-01 fixes.
-
-### WR-04: `ff-cli apply` uses the picked folder but ignores the picked filter
-
-**File:** `src/run.rs:159`, `src/dynamic.rs:26,104-106`, `src/cli.rs:76`
-
-**Issue:** The CLI now reads `game_folder` from `ff-settings.json` but still targets the
-hard-coded `FILTER_FILE` (`dynamic.filter`). Example: the user picks a folder whose filter is
-`ssf.filter`, and the overlay saves `{"game_folder": ..., "filter": "ssf.filter"}`. A bare
-`ff-cli apply` then fails with "not found" (or refreshes a different `dynamic.filter` in that
-folder), even though the same settings file names the filter the user is working on. This
-contradicts the phase decision "`dynamic.filter` is not special anywhere", and half-honouring
-the file is surprising. The help text does say `dynamic.filter`, so this is documented, but it
-is inconsistent.
-
-**Fix:** Pick one and document it:
-- Use `Settings::filter_name()` from the same load. Read `game_folder` and `filter` together, for
-  example `saved_game_folder_in` returning `(Option<PathBuf>, String)`.
-- Or state explicitly in the help that the CLI default is always `dynamic.filter`, whatever is
-  selected in ff.
-
-### WR-05: CLI silently falls back to the Documents folder when the app root or the saved key is unusable
-
-**File:** `src/run.rs:254-265`, `src/run.rs:71`
-
-**Issue:** `saved_game_folder()` does `from_env().ok()?`, and `saved_game_folder_in` discards the
-`settings::load` warning. Two cases:
-- `FERRISFILTER_HOME` points at a non-directory.
-- `ff-settings.json` is malformed, or `game_folder` is relative.
-
-In either case `ff-cli install` (no `--dest`) quietly copies `universal.filter` into
-`Documents\My Games\Path of Exile 2` instead of the folder the user picked, and nothing says the
-pick was ignored. `apply` fails later on `from_env` in the first case, except with
-`--remove-economy`, which does not load inputs, so it edits the default folder's
-`dynamic.filter`.
-
-**Fix:** When `FERRISFILTER_GAME_DIR` is unset, propagate the `from_env` error, and print the
-settings warning to stderr (`eprintln!("warning: {w}")`) before resolving the default. Do this
-at least when `--dest` / `--filter` is omitted.
+I found no new Critical or Warning issues. IN-01 to IN-05 from the previous report are still present (the fix scope did not cover them). Two new Info items come from the WR-02 dropdown change.
 
 ## Info
 
-### IN-01: The close-grace timer never clears if focus does not return, so the hidden overlay repaints every 500 ms
+### IN-01: The close-grace timer never clears if focus does not return (carried over)
 
-**File:** `src/overlay/app.rs:3027-3030`, `src/overlay/folder_dialog.rs:112-114`
+**File:** `src/overlay/folder_dialog.rs:101-114`
+**Issue:** `note_focused()` is the only thing that clears `closed_at`. If the dialog closes while the game has focus, `since_close()` stays `Some` forever and the hidden overlay keeps repainting every `CLOSE_GRACE`.
+**Fix:** Clear `closed_at` (return `None`) once `elapsed() >= CLOSE_GRACE`.
 
-**Issue:** `closed_at` is cleared only by `note_focused()`. If the user clicks into the game as
-the dialog closes, the overlay hides after the grace period, but `since_close()` stays `Some`
-forever. `request_repaint_after(CLOSE_GRACE)` then keeps scheduling frames until the next
-summon.
+### IN-02: The startup tests exercise a test-only twin (carried over)
 
-**Fix:** Clear `closed_at` once `since_close() >= CLOSE_GRACE`, for example in
-`since_close()` itself or right after `keep_visible` is evaluated.
+**File:** `src/overlay/app.rs:312-324`
+**Issue:** `startup_game_dir` calls `locations::game_dir` directly instead of `startup_game_dir_from`, so the `startup_game_dir_*` tests do not cover the production function. This is why `startup_game_dir_from` needs `#[cfg_attr(not(test), allow(dead_code))]`.
+**Fix:** Use `startup_game_dir_from(root, std::env::var_os(GAME_DIR_ENV).as_deref(), dirs::document_dir)`.
 
-### IN-02: The startup tests exercise a test-only twin, not the production function
+### IN-03: The "no Documents folder" load error does not open the Config tab (carried over)
 
-**File:** `src/overlay/app.rs:308-319`
+**File:** `src/overlay/shell.rs:175-177`
+**Issue:** `filter_error` is shown through `plain(...)` with `open_tab: None`. When `game_dir` is `None` its text says "pick the game folder on the Config tab", but clicking the line does nothing. The missing-folder line below it does set `open_tab: Some(ShellTab::Config)`.
+**Fix:** Set `open_tab: Some(ShellTab::Config)` when there is no game folder.
 
-**Issue:** `startup_game_dir_from` exists only for tests (`allow(dead_code)` outside them).
-`startup_game_dir`, which production uses, duplicates its logic instead of calling it, so the five
-`startup_game_dir_*` tests do not cover the code that runs.
+### IN-04: The bad-`game_folder` warning says "using the default game folder" even when `FERRISFILTER_GAME_DIR` pins it (carried over)
 
-**Fix:** Make `startup_game_dir(root)` call
-`startup_game_dir_from(root, std::env::var_os(GAME_DIR_ENV).as_deref(), dirs::document_dir)`,
-or route it through `locations::game_dir`.
-
-### IN-03: The "no Documents folder" load error does not open the Config tab
-
-**File:** `src/overlay/shell.rs:175-177`, `src/overlay/app.rs:1011-1015`
-
-**Issue:** With `game_dir == None`, the `filter_error` status line says "pick the game folder on
-the Config tab". It is a `plain` line with no `open_tab`, unlike the new missing-folder row,
-whose click does open Config.
-
-**Fix:** Give that case `open_tab: Some(ShellTab::Config)`, for example by passing it through
-`game_folder_missing` when `game_dir` is `None`.
-
-### IN-04: The bad-`game_folder` warning says "using the default game folder" even when `FERRISFILTER_GAME_DIR` pins it
-
-**File:** `src/settings.rs:258-271`
-
-**Issue:** The message assumes the Documents default, but the environment override wins.
-
+**File:** `src/settings.rs:230,308,315`
+**Issue:** The CLI now prints this text to stderr through `saved_choice()`. Under a pinned folder the text is wrong.
 **Fix:** Word it neutrally, for example "the saved game folder is ignored".
 
-### IN-05: `install --dest` still reads `ff-settings.json` eagerly
+### IN-05: `install` prints filter-name warnings that do not apply to it (carried over)
 
-**File:** `src/run.rs:71`
+**File:** `src/run.rs:308-318`
+**Issue:** `install` without `--dest` uses only `game_folder`, but `saved_choice()` prints every load warning. For example, `{"filter":"../evil.filter"}` prints "...; using dynamic.filter." during an install.
+**Fix:** Have `install` print only warnings about the folder, or word the warning per consumer.
 
-**Issue:** `saved_game_folder()` is evaluated before `cmd_install`, even when `--dest` is given.
-It is read-only and harmless, but it resolves the real per-user folder needlessly. That is why
-the isolation guard had to special-case `--dest`.
+### IN-06: Clicking the highlighted unsaved filter now replaces an unusable `ff-settings.json` with defaults
 
-**Fix:** Pass a closure, or resolve inside the `None` arm, as `cmd_apply` does.
+**File:** `src/overlay/app.rs:1662-1675` (`remember_open_filter`), `src/overlay/config_view.rs:406-409`
+**Issue:**
+- **When it happens.** The file cannot be used at all, for example a hand-edited trailing comma. `filter` is then `None`, so `active_filter_selected` is false and the active `dynamic.filter` entry becomes clickable.
+- **What the click does.** It runs `settings::save` with the in-memory fallback `Settings` (defaults plus reload off). That overwrites the user's file and drops its `game_folder`, `collapsed_sections` and unknown keys.
+- **Why it matters.** `save_section_state` refuses exactly this case, so that "a hand-edited file is never replaced by fallback defaults".
+- **Why it is only Info.** `switch_to` to any other entry already behaved this way, so this is not a new kind of write. It is newly reachable from an entry that looks already selected, and before this change clicking it did nothing.
+
+**Fix:** In `select_filter`'s `Noop` branch, call `remember_open_filter` only when `self.settings.auto_filter.is_some()` (a real automatic pick). The alternative is to have `remember_open_filter` refuse when the last load fell back. If the overwrite is intended, write that down.
+
+### IN-07: The new clickable-active-entry branch has no view test
+
+**File:** `src/overlay/config_view.rs:1252-1255`
+**Issue:** The test context always sets `active_filter_selected: true`. No view test checks that an unselected active entry emits `ConfigAction::SelectFilter` or that a selected one does not. The app-level `picking_the_open_unselected_filter_saves_it` calls `select_filter` directly, so it skips the `(!is_active || !ctx.active_filter_selected)` guard.
+**Fix:** Add a kittest/harness case for both values of `active_filter_selected`, or extract the guard into a small pure function and test that.
 
 ---
 

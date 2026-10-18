@@ -1737,12 +1737,14 @@ mod tests {
         assert_eq!(s.dirty_count(), 0);
         let before = snapshot(d.path());
         let w = s.prepare_write().unwrap();
-        if !w.styles_changed() {
-            assert_eq!(
-                w.styles_new,
-                fs::read(d.path().join("styles.json")).unwrap()
-            );
-        }
+        assert!(
+            !w.styles_changed(),
+            "an untouched 12-style file must not be rewritten"
+        );
+        assert_eq!(
+            w.styles_new,
+            fs::read(d.path().join("styles.json")).unwrap()
+        );
         assert_eq!(snapshot(d.path()), before);
         for (n, st) in StyleSet::shipped_defaults().iter() {
             assert_eq!(st.id.as_deref(), Some(format!("builtin:{n}").as_str()));

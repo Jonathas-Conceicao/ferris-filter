@@ -227,20 +227,23 @@ impl InputPaths {
     }
 
     /// [`InputPaths::with_tiers`] for a user-given name: when `given` is a bare file name of a
-    /// built-in (`tiers-fallback.json`) and that file is absent, the embedded copy is read, so
+    /// tiers built-in (`tiers-default.json`, `tiers-fallback.json`) and that file is absent, the embedded copy is read, so
     /// `apply --tiers tiers-fallback.json` works with no file on disk. Any other missing
     /// explicit path stays a `Cannot read` error.
     pub fn with_tiers_or_builtin(self, path: impl Into<PathBuf>, given: &str) -> Self {
         let mut me = self.with_tiers(path);
-        me.tiers_default = builtin_for_bare_name(given).map(DefaultSource::Embedded);
+        me.tiers_default =
+            builtin_for_bare_name(given, &["tiers-default.json", "tiers-fallback.json"])
+                .map(DefaultSource::Embedded);
         me
     }
 
     /// [`InputPaths::with_styles`] with the same built-in rule as
-    /// [`InputPaths::with_tiers_or_builtin`].
+    /// [`InputPaths::with_tiers_or_builtin`], for `styles-default.json` only.
     pub fn with_styles_or_builtin(self, path: impl Into<PathBuf>, given: &str) -> Self {
         let mut me = self.with_styles(path);
-        me.styles_default = builtin_for_bare_name(given).map(DefaultSource::Embedded);
+        me.styles_default =
+            builtin_for_bare_name(given, &["styles-default.json"]).map(DefaultSource::Embedded);
         me
     }
 
@@ -257,9 +260,13 @@ impl InputPaths {
     }
 }
 
-/// The built-in named by `given`, only when it is a bare file name (no separator, not absolute).
-fn builtin_for_bare_name(given: &str) -> Option<&'static Builtin> {
+/// The built-in named by `given`, only when it is a bare file name (no separator, not absolute)
+/// and one of `allowed`, so `--tiers` never reads the prices or config text as cutoffs.
+fn builtin_for_bare_name(given: &str, allowed: &[&str]) -> Option<&'static Builtin> {
     if given.contains('/') || given.contains('\\') || Path::new(given).is_absolute() {
+        return None;
+    }
+    if !allowed.contains(&given) {
         return None;
     }
     defaults::by_file_name(given)
@@ -966,7 +973,20 @@ mod tests {
             bare.tiers_source().unwrap(),
             Source::Embedded(&defaults::TIERS_FALLBACK)
         );
-        for given in ["sub/tiers-fallback.json", "alt-tiers.json"] {
+        let default = base
+            .clone()
+            .with_tiers_or_builtin(dir.path().join("tiers-default.json"), "tiers-default.json");
+        assert_eq!(
+            default.tiers_source().unwrap(),
+            Source::Embedded(&defaults::TIERS_DEFAULT)
+        );
+        for given in [
+            "sub/tiers-fallback.json",
+            "alt-tiers.json",
+            "config.json",
+            "prices-fallback.json",
+            "styles-default.json",
+        ] {
             let p = base
                 .clone()
                 .with_tiers_or_builtin(dir.path().join(given), given);
@@ -997,6 +1017,11 @@ mod tests {
         let p = InputPaths::in_home(dir.path())
             .with_styles_or_builtin(dir.path().join("mine.json"), "mine.json");
         assert_eq!(p.styles_default, None);
+        for given in ["mapping.json", "tiers-default.json", "config.json"] {
+            let p = InputPaths::in_home(dir.path())
+                .with_styles_or_builtin(dir.path().join(given), given);
+            assert_eq!(p.styles_default, None, "{given}");
+        }
     }
 
     /// A root holding only the committed defaults (no live styles.json / tiers.json).

@@ -80,9 +80,7 @@
   picker (tooltip: recommended for league start and non-trade players) and prices the economy
   section from the fallback pair on Apply.
 
-- [x] **LEAGUE-05
-
-**: Under Fallback the Tiers editor is greyed with a tooltip (the fallback tiers
+- [x] **LEAGUE-05**: Under Fallback the Tiers editor is greyed with a tooltip (the fallback tiers
   are fixed).
 
 ### Release pipeline (REL)

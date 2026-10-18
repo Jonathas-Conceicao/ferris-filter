@@ -92,9 +92,16 @@ expect_ok "crlf-prerelease" "$tmp/cl-crlf.md" 0.7.0-rc.1 v0.7.0-rc.1 0.7.0-rc.1 
 expect_ok "crlf-final" "$tmp/cl-crlf.md" 0.7.0 v0.7.0 0.7.0 false "$tmp/want-final"
 expect_ok "stops-at-link-references" "$tmp/cl2.md" 0.7.0 v0.7.0 0.7.0 false "$tmp/want-last"
 
-# Real CHANGELOG: only that a pre-release yields non-empty notes.
-run CHANGELOG.md 0.7.0-rc.1 v0.7.0-rc.1
-if [ "$rc" -eq 0 ] && grep -q '[^[:space:]]' "$tmp/notes.md"; then pass "real-changelog-rc"; else fail "real-changelog-rc" "$(cat "$tmp/err")"; fi
+# Real CHANGELOG: the newest released section extracts to non-empty notes. [Unreleased] is
+# not used here, since it is legitimately empty between milestones.
+latest="$(sed -n 's/\r$//; s/^## \[\([0-9][0-9.]*\)\] - .*/\1/p' CHANGELOG.md | head -n1)"
+if [ -z "$latest" ]; then
+  fail "real-changelog-final" "no released section in CHANGELOG.md"
+else
+  run CHANGELOG.md "$latest" "v$latest"
+  if [ "$rc" -eq 0 ] && grep -q '[^[:space:]]' "$tmp/notes.md"; then pass "real-changelog-final"
+  else fail "real-changelog-final" "$(cat "$tmp/err")"; fi
+fi
 
 if [ "$fails" -ne 0 ]; then echo "$fails case(s) failed"; exit 1; fi
 echo "all cases passed"

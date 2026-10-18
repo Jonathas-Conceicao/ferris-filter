@@ -1323,8 +1323,12 @@ impl OverlayApp {
         };
         // A fresh install (no saved filter): use the folder's filter instead of a fixed name.
         // Held in memory only; opening the overlay never writes.
-        let current = settings.filter_name().to_string();
-        choose_unsaved_filter(&mut settings, game_dir.as_deref(), &current);
+        // A file that could not be used says it falls back to `dynamic.filter`, so that is what
+        // is opened then.
+        if settings_warning.is_none() {
+            let current = settings.filter_name().to_string();
+            choose_unsaved_filter(&mut settings, game_dir.as_deref(), &current);
+        }
         // Loading never writes (D-10).
         let filter = Self::load_filter(game_dir.as_deref(), settings.filter_name());
         let working = working_from(&filter);
@@ -2397,8 +2401,11 @@ impl OverlayApp {
         {
             self.game_dir = crate::locations::game_dir(self.settings.game_folder_path());
         }
-        // No saved filter: keep the one that was open when the folder still lists it.
-        choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref(), &open_filter);
+        // No saved filter: keep the one that was open when the folder still lists it. A warned
+        // load either kept the session's filter or says it falls back to `dynamic.filter`.
+        if settings_warning.is_none() {
+            choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref(), &open_filter);
+        }
         self.reset_filter_state();
         self.refresh_inputs();
         if settings_warning.is_some() {
@@ -6302,6 +6309,29 @@ Hide
         assert_eq!(app.settings.filter_name(), "x.filter");
         assert!(app.filter.is_ok());
         assert!(!home.path().join("ff-settings.json").exists());
+    }
+
+    #[test]
+    fn an_unusable_settings_file_opens_dynamic_filter_as_its_warning_says() {
+        let (app, _ctx, _home, _game) = folder_app(Some("{ not json"), &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "dynamic.filter");
+        assert!(
+            app.list_status
+                .as_deref()
+                .is_some_and(|s| s.contains("dynamic.filter"))
+        );
+    }
+
+    #[test]
+    fn an_invalid_stored_filter_name_opens_dynamic_filter_as_its_warning_says() {
+        let (app, _ctx, _home, _game) =
+            folder_app(Some(r#"{"filter":"../evil.filter"}"#), &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "dynamic.filter");
+        assert!(
+            app.list_status
+                .as_deref()
+                .is_some_and(|s| s.contains("dynamic.filter"))
+        );
     }
 
     #[test]

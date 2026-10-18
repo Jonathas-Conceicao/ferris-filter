@@ -238,7 +238,7 @@ Plans:
 | 37. Game Folder Resolver & Picker | 7/7 | Complete    | 2026-10-18 |
 | 38. Built-in Styles, Strictness & Reset | 6/6 | Complete    | 2026-10-18 |
 | 39. League Picker & Price Source | 7/7 | Complete    | 2026-10-18 |
-| 40. Release Pipeline & Installer | 0/0 | Not started | - |
+| 40. Release Pipeline & Installer | 6/8 | In Progress|  |
 | 41. Check for Updates | 0/0 | Not started | - |
 | 42. Release Review | 0/0 | Not started | - |
 

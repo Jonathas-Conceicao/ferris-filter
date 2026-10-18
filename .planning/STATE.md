@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
 status: executing
-stopped_at: Phase 39 complete (all 7 plans, review fixes over 3 iterations, verification human_needed)
-last_updated: "2026-10-18T11:46:46.293Z"
-last_activity: 2026-10-18
+stopped_at: Phase 40 plans 1-6 done (review fixes over 3 iterations); 40-07 and 40-08 deferred to the end of the milestone; next Phase 41
+last_updated: "2026-10-18T18:00:00.000Z"
+last_activity: 2026-10-18 -- Phase 40 plans 1-6 complete
 progress:
   total_phases: 24
   completed_phases: 4
   total_plans: 40
-  completed_plans: 27
+  completed_plans: 33
   percent: 17
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-10-17)
 
 ## Current Position
 
-Phase: 40
-Plan: Not started
-Status: Ready to execute Phase 40; Phase 39 finished 2026-10-18 with its 8 manual checks deferred to the end of the milestone (39-HUMAN-UAT.md)
-Last activity: 2026-10-18
+Phase: 40 (release-pipeline-installer) — plans 1-6 of 8 done
+Plan: 40-07 and 40-08 deferred to the end of the milestone (40-07: the author installs Inno Setup 6 and runs the installer UAT; 40-08: the single v0.7.0-rc.1 tag push). Phase 40 is not marked complete until they run.
+Status: Next is Phase 41
+Last activity: 2026-10-18 -- Phase 40 plans 1-6 complete, code review fixed over 3 iterations (40-REVIEW-FIX.md)
 
 ## Performance Metrics
 
@@ -375,11 +375,11 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18T10:06:14.011Z
-Stopped at: Completed 39-04-PLAN.md
+Last session: 2026-10-18
+Stopped at: Phase 40 plans 1-6 done; 40-07 and 40-08 deferred to the end of the milestone
 Resume file: None
 
-**Next step:** `/gsd-plan-phase 36`.
+**Next step:** Phase 41. At the end of the milestone run 40-07 (Inno Setup + installer UAT), then 40-08 (v0.7.0-rc.1 tag).
 
 ## Operator Next Steps
 

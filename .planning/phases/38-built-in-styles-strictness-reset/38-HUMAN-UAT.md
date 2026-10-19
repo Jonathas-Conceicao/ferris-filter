@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 38-built-in-styles-strictness-reset
 source: [38-VERIFICATION.md]
 started: 2026-10-18T00:00:00Z

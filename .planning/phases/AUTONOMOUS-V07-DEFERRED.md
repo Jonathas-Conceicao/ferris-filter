@@ -158,3 +158,19 @@ None: every phase verified 100% of its success criteria in code; only manual che
   the runner (unproven until 40-08). `cargo fmt --check` fails in `src/overlay/app.rs`,
   `src/sync/league.rs`, `tests/isolation_guard.rs` (CI doesn't check fmt). 12 info items open in
   `40-REVIEW.md`. Version is now `0.7.0-rc.1`; REV-03 sets `0.7.0`.
+
+## Author results (2026-10-18)
+
+- Phase 36: fresh user folder, Apply creating it, Sync writing `prices.json` there: pass.
+- Phase 37: all checks pass (reload button re-done twice to match the game's Item Filter button,
+  game-folder tooltip de-duplicated).
+- Phase 38: Economy Visibility levels in game, single minimap tooltip, both Reset buttons: pass.
+- Phase 39: league pick, Fallback, unapplied source switch, tier edits under Fallback, pending
+  switch surviving a filter switch / Reload: pass. Offline refresh not tested, assumed pass.
+- Phase 40: local installer UAT approved (LICENSE.txt kept); `v0.7.0-rc.1` dry run published and
+  checksums verified.
+- Phase 41: "Up to date" pass; the live newer-release flow stays deferred until a release newer
+  than 0.7.0 exists.
+- Judgement calls: clicking the highlighted unsaved filter saves it (keep); the price-source switch
+  is unapplied and not Revert-able (keep).
+- Remaining: Phase 42 REV-05 (author review of README.md and CHANGELOG.md).

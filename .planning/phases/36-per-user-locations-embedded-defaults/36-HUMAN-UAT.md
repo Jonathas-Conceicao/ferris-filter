@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 36-per-user-locations-embedded-defaults
 source: [36-VERIFICATION.md]
 started: 2026-10-18T00:00:00Z

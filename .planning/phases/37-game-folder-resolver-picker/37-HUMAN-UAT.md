@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 37-game-folder-resolver-picker
 source: [37-VERIFICATION.md, 37-0*-SUMMARY.md, 37-REVIEW-FIX.md]
 started: 2026-10-18T00:00:00Z

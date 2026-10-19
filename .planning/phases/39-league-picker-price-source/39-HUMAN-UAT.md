@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 39-league-picker-price-source
 source: [39-VERIFICATION.md, 39-06-SUMMARY.md]
 started: 2026-10-18T00:00:00Z

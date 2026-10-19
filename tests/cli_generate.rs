@@ -33,7 +33,7 @@ fn generate_on_seed() -> String {
     for (src, dst) in [
         ("config.json", "config.json"),
         ("tiers-default.json", "tiers.json"),
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
     ] {
         fs::copy(manifest.join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
@@ -71,7 +71,7 @@ fn generate_early_game() -> String {
     fs::create_dir_all(&dir).expect("create temp early-game gen dir");
     for (src, dst) in [
         ("config.json", "config.json"),
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
         ("prices-fallback.json", "prices-fallback.json"),
         ("tiers-fallback.json", "tiers-fallback.json"),
     ] {
@@ -225,7 +225,7 @@ fn generate_config_flag_reads_alternate_path() {
     fs::copy(manifest.join("config.json"), dir.join("custom-config.json"))
         .expect("copy config.json as custom-config.json");
     for (src, dst) in [
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
         ("prices-fallback.json", "prices-fallback.json"),
         ("tiers-fallback.json", "tiers-fallback.json"),
     ] {
@@ -258,8 +258,12 @@ fn generate_config_flag_reads_alternate_path() {
 /// which made `sync --standard` fail with "unexpected argument '--standard'".
 #[test]
 fn sync_help_shows_league_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
     Command::cargo_bin("ferrisfilter")
         .unwrap()
+        .env("FERRISFILTER_HOME", home)
+        .env("FERRISFILTER_GAME_DIR", home.join("game"))
         .args(["sync", "--help"])
         .assert()
         .success()
@@ -308,7 +312,7 @@ fn generate_in_repo_root_succeeds() {
         .args([
             "generate",
             "--styles",
-            "styles-default.json",
+            "tests/fixtures/seed-styles.json",
             "--tiers",
             "tiers-default.json",
             "--output",
@@ -509,7 +513,7 @@ fn cap_is_rule_driven() {
     // Write the mutated config + other required fallback files into the temp dir.
     std::fs::write(dir.join("config.json"), mutated_config).expect("write mutated config.json");
     for (src, dst) in [
-        ("styles-default.json", "styles.json"),
+        ("tests/fixtures/seed-styles.json", "styles.json"),
         ("prices-fallback.json", "prices-fallback.json"),
         ("tiers-fallback.json", "tiers-fallback.json"),
     ] {
@@ -643,8 +647,8 @@ fn new_style_in_styles_json_is_emitted_with_no_code_change() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = early_game_dir("new_style");
 
-    let styles =
-        fs::read_to_string(manifest.join("styles-default.json")).expect("read styles-default.json");
+    let styles = fs::read_to_string(manifest.join("tests/fixtures/seed-styles.json"))
+        .expect("read styles-default.json");
     let end = styles.rfind('}').expect("closing brace");
     let entry = r#",
   "craftable": { "text": [1,2,3], "border": [1,2,3], "background": [40,42,54], "font": 31, "minimap": null, "beam": null, "sound": null, "action": "Show", "disableDropSound": false }
@@ -685,7 +689,7 @@ fn generate_styles_flag_reads_alternate_path() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = early_game_dir("styles_flag");
     fs::copy(
-        manifest.join("styles-default.json"),
+        manifest.join("tests/fixtures/seed-styles.json"),
         dir.join("alt-styles.json"),
     )
     .unwrap();
@@ -740,8 +744,12 @@ fn seed_dir_with_defaults(tag: &str) -> std::path::PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(&dir).expect("create temp dir");
-    for f in ["config.json", "styles-default.json", "tiers-default.json"] {
-        fs::copy(manifest.join(f), dir.join(f)).unwrap_or_else(|e| panic!("copy {f}: {e}"));
+    for (src, dst) in [
+        ("config.json", "config.json"),
+        ("tests/fixtures/seed-styles.json", "styles-default.json"),
+        ("tiers-default.json", "tiers-default.json"),
+    ] {
+        fs::copy(manifest.join(src), dir.join(dst)).unwrap_or_else(|e| panic!("copy {src}: {e}"));
     }
     fs::copy(
         manifest.join("tests/fixtures/seed-prices.json"),

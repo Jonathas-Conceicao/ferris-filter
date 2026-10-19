@@ -14,6 +14,26 @@ pub trait HttpClient {
     ) -> impl std::future::Future<Output = miette::Result<String>>;
 }
 
+/// The one HTTP user agent FerrisFilter sends (the poe.ninja sync now, the update check later).
+/// It names the public repo and the running version.
+pub const USER_AGENT: &str = concat!(
+    "FerrisFilter/",
+    env!("CARGO_PKG_VERSION"),
+    " (github.com/Jonathas-Conceicao/ferris-filter; contact: jonathasaoc@gmail.com)"
+);
+
+#[cfg(test)]
+mod user_agent_tests {
+    use super::USER_AGENT;
+
+    #[test]
+    fn user_agent_names_the_public_repo() {
+        assert!(USER_AGENT.starts_with(concat!("FerrisFilter/", env!("CARGO_PKG_VERSION"))));
+        assert!(USER_AGENT.contains("github.com/Jonathas-Conceicao/ferris-filter"));
+        assert!(!USER_AGENT.to_lowercase().contains("myfilter"));
+    }
+}
+
 pub struct ReqwestClient {
     inner: reqwest::Client,
 }
@@ -25,7 +45,7 @@ impl ReqwestClient {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         let inner = reqwest::Client::builder()
-            .user_agent("FerrisFilter/0.1 (github.com/Jonathas-Conceicao/poe2_myfilter; contact: jonathasaoc@gmail.com)")
+            .user_agent(USER_AGENT)
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| miette::miette!("Cannot build HTTP client: {e}"))?;

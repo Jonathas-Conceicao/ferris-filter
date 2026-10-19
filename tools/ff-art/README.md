@@ -23,6 +23,7 @@ cargo ff-art list optionsmenu                      # find virtual paths
 cargo ff-art dump "uiimages/common/" <scratch-dir> # convert matches to PNG to look at
 cargo ff-art dump minimap/player <scratch-dir>     # the whole minimap icon sheet
 cargo ff-art ferris                                # only re-render the Ferris images
+cargo ff-art icon                                  # render assets/ferris/ferris.ico (7 sizes)
 ```
 
 `sheet`, `info` and `zoom` help inspect candidates (see `--help`). Outputs always land in the

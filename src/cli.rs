@@ -41,6 +41,9 @@ pub enum Commands {
         styles: Option<String>,
     },
     /// Fetch live PoE2 economy data from poe.ninja (default: prices)
+    ///
+    /// Writes prices.json into the FerrisFilter folder (FERRISFILTER_HOME, else
+    /// %APPDATA%\FerrisFilter; ~/.config/ferrisfilter on Linux), creating it if missing.
     Sync {
         /// Target the permanent Standard league
         #[arg(long)]
@@ -63,13 +66,14 @@ pub enum Commands {
     ///
     /// The filter itself is the store: only the blocks under the `# ff:economy-begin` banner (up
     /// to the next banner or the end of the file) are regenerated from prices.json, tiers.json
-    /// and styles.json found in
-    /// the FerrisFilter folder (FERRISFILTER_HOME, else the folder holding ff-cli.exe, else the
-    /// working directory). The first write keeps `<name>.filter.ffbak`; a v0.4 dynamic.filter is
+    /// and styles.json found in the FerrisFilter folder (FERRISFILTER_HOME, else
+    /// %APPDATA%\FerrisFilter; ~/.config/ferrisfilter on Linux). A missing styles.json,
+    /// tiers.json or prices.json falls back to the built-in defaults and fallback prices. The
+    /// first write keeps `<name>.filter.ffbak`; a v0.4 dynamic.filter is
     /// converted on its first apply. PoE2 still needs the filter reloaded in-game afterwards.
     Apply {
         /// Filter file to update
-        /// [default: dynamic.filter in %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        /// [default: the filter selected in ff (ff-settings.json filter, else dynamic.filter) in the game folder: FERRISFILTER_GAME_DIR, else the folder picked in ff (ff-settings.json game_folder), else Documents\My Games\Path of Exile 2]
         #[arg(long)]
         filter: Option<String>,
         /// Add an economy section at the end of the filter (creates the file if it does not
@@ -84,7 +88,8 @@ pub enum Commands {
         /// Use --tiers tiers-fallback.json early in a live league: its cutoffs are
         /// exalt-denominated, so Divine is not pinned to the A floor by an expensive chaos.
         /// Unlike --early-game this keeps your live prices.json. A relative path is resolved
-        /// against the FerrisFilter folder, like tiers.json itself.
+        /// against the FerrisFilter folder, like tiers.json itself. A bare built-in name
+        /// (tiers-fallback.json, tiers-default.json) that is not there uses the built-in copy.
         #[arg(long)]
         tiers: Option<String>,
         /// Styles file to use instead of styles.json.
@@ -92,7 +97,8 @@ pub enum Commands {
         /// Named styles live in styles.json beside the inputs; point this at another file to
         /// compile against a different style set (for example one carrying the styles of an
         /// experimental config) without editing the committed one. A relative path is resolved
-        /// against the FerrisFilter folder, like styles.json itself.
+        /// against the FerrisFilter folder, like styles.json itself. The bare name
+        /// styles-default.json uses the built-in copy when it is not there.
         #[arg(long)]
         styles: Option<String>,
     },
@@ -102,7 +108,7 @@ pub enum Commands {
         #[arg(long, default_value = "universal.filter")]
         input: String,
         /// Destination PoE2 config folder
-        /// [default: %USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2]
+        /// [default: the game folder: FERRISFILTER_GAME_DIR, else the folder picked in ff (ff-settings.json game_folder), else Documents\My Games\Path of Exile 2]
         #[arg(long)]
         dest: Option<String>,
     },
@@ -110,8 +116,10 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum SyncSubcommand {
-    /// Fetch prices from poe.ninja and write prices.json (default; honors --standard/--hc)
+    /// Fetch prices from poe.ninja and write prices.json into the FerrisFilter folder
+    /// (default; honors --standard/--hc)
     Prices,
-    /// Rebuild the committed item-class mapping from the RePoE-fork exports
+    /// Rebuild the repo mapping.json in the working directory from the RePoE-fork exports
+    /// (the binary embeds that file, so rebuild afterwards)
     Metadata,
 }

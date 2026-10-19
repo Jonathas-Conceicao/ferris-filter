@@ -1,165 +1,353 @@
-# Feature Landscape
+# Feature Research
 
-**Domain:** Generic PoE2 loot-filter editor embedded in an existing overlay (FerrisFilter v0.5)
-**Researched:** 2026-10-12
-**Overall confidence:** MEDIUM-HIGH (grammar vocabulary HIGH: official page + real samples; editor-UX comparisons LOW-MEDIUM: FilterBlade/poe2filter.com sites were not fetchable, 403/no results)
+**Domain:** First public release of a Windows desktop overlay and filter editor for Path of Exile 2 (milestone v0.7)
+**Researched:** 2026-10-17
+**Confidence:** MEDIUM overall. The web sources were thin. NeverSink's seven-level structure and Inno Setup's per-user mode were confirmed. FilterBlade's per-level contents, the league UIs of Exiled Exchange 2 and Awakened PoE Trade, and the updater conventions come from training knowledge and are marked as such.
 
-## A. Evidence base: the PoE2 grammar as it really exists
+Scope: only the v0.7 features. The rule editor, styles, economy section, sync and Apply are already built.
 
-### A1. Official vocabulary (pathofexile.com/item-filter/about, fetched 2026-10-12, HIGH)
+## Feature Landscape
 
-The official page is one document for both games and **does tag PoE2 additions** (`AlwaysShow`, `IsVaalUnique`, `HasVaalUniqueMod`, `TwiceCorrupted`, `UnidentifiedItemTier`, `WaystoneTier`). No action is PoE2-tagged. `Import` (with `Optional`), `Continue`, `Minimal` are listed as general. The parser must therefore accept the **whole** vocabulary, not a PoE2 subset: a hand-written filter may use any of it and the game ignores/warns on what does not apply.
+### 1. Strictness Selector (Config tab)
 
-| Value kind | Keywords |
-|---|---|
-| Boolean (`True`/`False`, no operator) | AlternateQuality, **AlwaysShow**, AnyEnchantment, BlightedMap, Corrupted, ElderItem, ElderMap, Exceptional, Foulborn, FracturedItem, HasCruciblePassiveTree, HasImplicitMod, **HasVaalUniqueMod**, Identified, Imbued, **IsVaalUnique**, MirageMap, Mirrored, Replica, Scourged, ShapedMap, ShaperItem, SynthesisedItem, TransfiguredGem (also takes a gem name), **TwiceCorrupted**, UberBlightedMap, Vestigial, ZanaMemory |
-| Numeric (operator + int) | ArchnemesisMod (name), AreaLevel, BaseArmour, BaseDefencePercentile, BaseEnergyShield, BaseEvasion, BaseWard, CorruptedMods, DropLevel, EnchantmentPassiveNum, GemLevel, Height, ItemLevel, LinkedSockets, MapTier, MemoryStrands, Quality, StackSize, **UnidentifiedItemTier**, **WaystoneTier**, Width |
-| Name / list | BaseType, Class, EnchantmentPassiveNode, GemQualityType, HasEaterOfWorldsImplicit, HasEnchantment, HasExplicitMod, HasInfluence, HasSearingExarchImplicit, Rarity (ordered Normal<Magic<Rare<Unique), SocketGroup, Sockets (number + optional colour letters, e.g. `5GGG`) |
-| Actions | PlayAlertSound, PlayAlertSoundPositional (id 1-16 or `None`, vol 0-300), CustomAlertSound, CustomAlertSoundOptional (semicolon-separated files = random pick), DisableDropSound, EnableDropSound, DisableDropSoundIfAlertSound, EnableDropSoundIfAlertSound, MinimapIcon (size 0-2 or -1, colour, shape), PlayEffect (colour [Temp] or `None`), SetBackgroundColor, SetBorderColor, SetTextColor (RGB[A]), SetFontSize (1-45) |
-| Operators | `=`, `==`, `!`, `!=`, `<`, `<=`, `>`, `>=`; Rarity uses ordering; bare value with no operator is legal for every condition |
+**How the reference tools behave**
 
-Caveat: `HasExplicitMod` takes `>=N "mod" "mod"` with **no space** between operator and count in real files (`HasExplicitMod >=1 "Hellion's"`), per the PoE1 patch note and the local sample. `Sockets`/`SocketGroup` values are not plain ints.
+| Fact | Source / confidence |
+|------|---------------------|
+| NeverSink's PoE2 filter has seven levels, Soft to Uber Plus Strict. Each step up hides more. | Confirmed by search. MEDIUM. |
+| New players are told to start at Semi-Strict. Players raise the level as the clutter starts to bother them. | Confirmed by search. MEDIUM. |
+| The Soft level exists because the game changed and Regular had to become stricter. Level names therefore drift between patches. | Confirmed by search. MEDIUM. |
+| For a specific item the user wants kept, the standard advice is to go up one level and add an override at the top of the file. | Confirmed by search. MEDIUM. |
+| Strictness is one global axis that touches every category: currency, gems, gear bases, flasks, waystones and uniques. Each level is a separate generated file, and switching means loading another file in game. FilterBlade adds per-section overrides on top. | Training knowledge. LOW to MEDIUM. The FilterBlade home page did not show the per-level contents. |
+| The levels are item-count labels (Soft, Regular, Strict) that mean nothing until previewed. | Training knowledge. LOW to MEDIUM. |
 
-### A2. What the real samples actually use (grep of local files, HIGH)
+**What users expect**
+- One control, and one obvious "more or less clutter" direction.
+- A fresh filter that is safe to start with.
+- Hidden items still reachable (Alt-reveal in PoE2).
+- A higher level never shows something a lower level hides.
+- Stable names.
 
-**filterblade.filter** (NeverSink 0.10.4, SOFT/DEFAULT, 5312 lines, 258 KB, **CRLF line endings**, tab indent, 447 Show / 13 Hide / 40 `Continue`, 0 `Import`, 0 `Minimal`):
+**Table stakes**
 
-- Conditions seen: Class, Rarity, BaseType, AreaLevel, ItemLevel, Corrupted, UnidentifiedItemTier, WaystoneTier, Mirrored, Quality, Sockets, StackSize, GemLevel, Width, Height, BaseEvasion/BaseEnergyShield/BaseArmour, HasExplicitMod, AnyEnchantment, Identified, TwiceCorrupted, IsVaalUnique, HasVaalUniqueMod, **AlwaysShow**.
-- Actions seen: SetFontSize, SetBorderColor, SetBackgroundColor, SetTextColor, PlayEffect, MinimapIcon, PlayAlertSound, DisableDropSound. (No CustomAlertSound in this variant; the CUSTOMSOUNDS style folder swaps it in.)
-- Operator spread: `==` on Class/BaseType; `>=` / `<=` / `<` / `>` on numerics; **bare (no operator)** on Rarity (`Rarity Normal Magic Rare` = multi-value list), BaseType (55x, substring semantics), Corrupted, Mirrored, Identified, WaystoneTier (15), GemLevel (12), `Class` once; `Sockets >` (strict) and `Quality >` appear. Rarity with multiple values and no operator is common.
-- `Continue` is used for decorator blocks (e.g. `Rarity Rare` + `AreaLevel >= 65` + `SetBorderColor` + `Continue`) -- ordering of Continue blocks relative to later blocks is semantically load-bearing.
-- **Commented-out blocks are common** (`#Show ...` followed by `#\tCondition` lines) and must round-trip as comments, not be mis-parsed as blocks.
-- Block headers carry machine tags: `Show # %D4 $type->currency->leveling $tier->jewellers !currency_c` -- `%D4`/`%H8` (strictness/visibility directive), `$type->a->b`, `$tier->x`, `!slug`. 92 distinct `!slug` values, 64 `# !! Waypoint` markers, and a table of contents using `# [[0100]] Name` section banners built from `#====` rulers. These are a **free structure index**: sections (banner), group (`$type`), tier (`$tier`).
-- NeverSink repo README (fetched): 7 strictness files (`0-SOFT` .. `6-UBER-PLUS-STRICT`) and 7 style folders (AURA, COBALT, CUSTOMSOUNDS, DARKMODE, MYTHIC, VAAL, ZEN). No documentation of `$type`/`$tier` tags in the README; treat as convention observed in the file, not a spec.
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Exclusive button row, one state shown at a time | This is the specified UI, and it is the same single-axis model as FilterBlade and NeverSink | LOW | Reuse the skin button and switch widgets from `src/skin/`. |
+| Selection derived from S-F `action` flags, with no stored "strictness" field | Specified. It means a hand edit shows Custom with no sync bug. | LOW | Pure function: styles → enum. A level matches only when the hidden set is exactly {} / {F} / {E,F} / {D,F-prefix}… up to {B..F}. Anything else, including S or A hidden or a gap such as E hidden and F shown, is Custom. |
+| Clicking a level writes the S-F visibility in memory, with the same Apply and Revert semantics as any style edit | The all-or-none Apply is the existing contract. The Config tab already shows ` *` and the Discard popup. | LOW | It must go through the existing Config edit model so Revert, the unapplied indicator and the pending-style rendering of the Rules tab and economy section all work. |
+| Level labels explain themselves on hover (which tiers are hidden) | A name like "Comfy" is opaque. NeverSink users always need the explainer. | LOW | A tooltip, not captions. The project memory says the overlay UI must not be texty. |
+| Only S-F are touched | The other built-ins (unchanged, hidden, Recycle, kite, exceptional) have their own meaning, and custom styles belong to the user | LOW | The tooltip or the status line should say "price tiers only". |
+| Clicking the already-selected level changes nothing | Idempotent | LOW | |
+| S and A are never hidden by any level | Hiding the top tier is never wanted, and the specified levels agree (Div Farmer hides B-F) | LOW | |
 
-**reference-old-filters/** (poe2filter.com exports + authored): Show/Hide/Continue(1), Class, BaseType, Rarity, HasExplicitMod (189), Identified, Corrupted, Sockets, Quality, ItemLevel, UnidentifiedItemTier, DropLevel, BaseEvasion/BaseEnergyShield, Height/Width, StackSize, IsVaalUnique, HasVaalUniqueMod, plus **CustomAlertSound** (27) and PlayAlertSound. Header-comment slug convention `Show # Description (slug)`. Trailing `### Filter Configuration` / `[[Config Start]]` commented JSON block (poe2filter.com) -- must be preserved as opaque trailing comments in generic mode.
+**Differentiators**
 
-Currently modelled by the overlay editor (v0.4): class, baseType, rarity, areaLevel (dynamic base has none), base defences, sockets, quality, corrupted, unidentifiedTier. **Gap versus real filters:** AlwaysShow, ItemLevel, DropLevel, WaystoneTier, Mirrored, Identified, TwiceCorrupted, GemLevel, StackSize, Width/Height, HasExplicitMod, AnyEnchantment, IsVaalUnique/HasVaalUniqueMod; multi-operator support (`!=`, `<`, `>`, `==` vs bare); all unmodelled actions (CustomAlertSound*, PlayAlertSoundPositional, Enable/DisableDropSound*, `None` forms, MinimapIcon size -1).
+| Feature | Value proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| Strictness measured in wealth (price tiers), not item count | The level follows the economy, so it adapts every league and every sync. NeverSink's lists are static and curated per patch. | LOW | It comes from the existing design, where tiers are price-driven. Do not expose a "what does Comfy hide" item list. |
+| Reflects hand edits live (Custom, with no lock) | Neither NeverSink nor FilterBlade lets you edit the result and still see where you stand | LOW | Free from the derived design. |
+| Per-style Show/Hide switches stay available under the selector | The user can go one level up and then keep one tier visible. This is the NeverSink "override" workaround built in. | none | Already built. |
 
-## B. How existing editors handle arbitrary filters (MEDIUM/LOW: only repo READMEs retrievable)
+**Anti-features**
 
-| Tool | Model | Takeaway |
-|---|---|---|
-| **Filtration** (PoE1 desktop, archived 2023; github.com/ben-wallis/Filtration) | Parses a script into a block list with sections; per-block condition/action editors with live colour preview; "Block Group Browser" to toggle Show/Hide for groups of blocks; copy/paste blocks between scripts; Theme Editor, Replace Colors. | The proven shape for generic editing: **ordered block list + per-block typed editors + group toggle + colour preview**. Archived -> no PoE2 grammar; confirms demand but offers no code to reuse. |
-| **FilterBlade** (web, NeverSink-specific) | Not a generic parser: edits the *source* via NeverSink's own tag model (strictness slider, per-tier style/sound/size editing, sign-in sync to the account). Customisations survive updates because the site regenerates from tags. | Generic editors cannot copy this; FerrisFilter has no tag-model source. But the **`$type`/`$tier` tags give the same grouping** for read-only structure and for "restyle a whole tier". |
-| **poe2filter.com** | Generator with advanced conditions (waystone tier, any-enchantment, since Jan 2025), exports commented config JSON at filter tail. | Output is plain grammar; load-and-save must survive its trailing config block. |
+| Anti-feature | Why requested | Why problematic | Alternative |
+|--------------|---------------|-----------------|-------------|
+| Strictness that also changes non-tier rules (gear fallback hiding, flask rules, area-level bands) | NeverSink's levels do this, so users may expect it | It couples the selector to `config.json` rules. It breaks the "derived from S-F visibility" invariant. It also makes Custom ambiguous. | Keep it tier-only and say so in the tooltip. Revisit for a later milestone only if users ask. |
+| A stored `strictness` value in `ff-settings.json` or the filter | Looks easier than deriving | It drifts from the real styles and needs a reconciliation path | Derive every frame. |
+| A clickable Custom that resets or "restores" the previous custom set | Looks symmetrical | Needs a saved copy of the previous visibility, which is more state to persist and keep honest | Custom is a display state. Revert already undoes a staged selection. |
+| Extra levels or a free slider | More granularity | Contradicts the specified seven-state row, and F-to-B is the only meaningful range | None. |
+| Hiding S or A | Completeness | It silences the most valuable items | Not offered. |
 
-Confidence note: FilterBlade/poe2filter.com UX descriptions are from search snippets and the NeverSink README only (LOW-MEDIUM). Nothing found suggests any tool offers *lossless round-trip of arbitrary third-party filters*; FerrisFilter's byte-identical promise is a genuine differentiator, and also a strict engineering constraint.
+**Complexity:** LOW to MEDIUM. The logic is a small pure function plus one widget row. The care is in wiring (see dependencies).
 
-## Table Stakes
+**Dependencies on existing code**
+- CONFIG tab style model: the pending-edit styles, the unapplied state, the Revert and Discard popup, and the `S`..`F` required styles in `styles.json`.
+- Economy section regeneration: hidden tier styles produce `Hide` blocks, because Apply already derives each block's header from its style's visibility.
+- Styled user rules: they follow the pending styles, so a level also hides user rules that use those tiers. This is correct behaviour but should be mentioned in the release notes.
+- Style table "Visibility" switches: the same state, which is what keeps the two views consistent.
 
-Missing = the "edit any filter" claim fails.
+### 2. League selector and fallback prices (Economy tab)
 
-| Feature | Why Expected | Complexity | Dependencies / Notes |
-|---|---|---|---|
-| Lossless parse of the full grammar (all conditions/actions in A1, all operators, bare values, multi-value lists, quoted strings with spaces/apostrophes, `Show`/`Hide`/`Minimal`/`Continue`/`Import [Optional]`) | The milestone goal; real filters use ~30 distinct keywords | High | New `filter` module (AST preserving trivia). Replaces use of `Config` serde model for the dynamic path only; `config.json` generate path untouched. |
-| **Byte-identical round-trip** of an unedited filter (CRLF, tabs, trailing whitespace, comments, blank lines, commented-out blocks, header banners, trailing config block) | Stated acceptance criterion | High | Store raw text per line/span; only re-serialize *edited* blocks. Add golden test on `filterblade.filter` and each `reference-old-filters/*.filter`. Detect and preserve dominant EOL (CRLF) and indent. |
-| Unknown keyword / unknown value preserved verbatim, shown read-only | Game adds conditions per patch; PoE2 gains new ones | Medium | "Raw line" node type attached to its block; UI shows it as a locked chip. Never drop, never reorder relative to siblings. |
-| Block list with show/hide badge, derived title (header comment), index | Parity with current accordion rows | Medium | Current `view_model.rs`/`rule_editor.rs` keyed by rule index -> re-key on block identity (stable id per parse). Rule `name` becomes the header comment text, already how v0.4 works. |
-| Section grouping from banner comments (`#=====` + `# [[0100]] Name`) -- collapsible groups of blocks | 447 blocks flat is unusable | Medium | Heuristic only; if no banners found, show a flat list. Do not make it required for correctness. |
-| Edit existing conditions: class, baseType, rarity, areaLevel, itemLevel, quality, sockets, defences, corrupted, unidentified tier + the missing common ones (waystone tier, mirrored, identified, stack size, gem level, drop level, width/height, twice-corrupted, AlwaysShow) with correct operator selector | Real filters use them | Medium-High | Generalise the existing numeric/boolean/list controls into a data-driven condition descriptor table (keyword -> kind -> widget). Reuse v0.4 widgets. |
-| Operator preservation: `==` vs bare vs `!=`/`<`/`>` re-emitted as read, changed only when the user touches it | Bare `BaseType` is substring match, `==` is exact; silently normalising changes behaviour | Medium | Store operator as parsed; UI exposes it. |
-| Edit actions: text/border/background colour, font size, alert sound, custom sound, minimap icon, play effect, drop-sound toggles | Needed to restyle any block | Medium | Style = set of actions; existing `Style` emit logic provides serialisation. |
-| Apply named style to a block (replace the block's action lines with a style's actions) | Existing v0.4 behaviour users rely on | Medium | Depends on config-driven styles (`styles.json`). Must define "block uses style X" for a parsed block: style is a **write operation** (stamp actions), not a stored reference (see Anti-features). |
-| Enable/disable block | v0.4 parity | Low | Disabled = comment-out the block (`#Show ...`), consistent with how NeverSink/poe2filter authors do it. Parser must recognise the commented block as disabled-but-editable only if it matches the exact form we write; otherwise leave as plain comment. |
-| Reorder / add / delete / duplicate block | v0.4 parity (order is precedence) | Medium | Moves a block's full text span incl. its leading comment. Duplicate is cheap and new. |
-| Unsaved-edit model: in-memory, Apply writes, Revert reloads | v0.4 contract, config tab must follow it | Low | Apply = write the .filter into the game folder directly (filter *is* the store). Atomic write via temp+rename; keep a one-time `.bak` of the original on first save. |
-| Open-file selection (pick which `.filter` to edit; remembered) | "any filter" implies choosing | Low-Med | New small config (last file). Overlay today only reads fixed repo-root paths; also hits the deferred CWD/anchoring issue -> settle path anchoring here. |
-| Search/filter the block list (by text, BaseType, class) | 447 blocks; users reach for a specific item | Medium | Substring over block text; no new parser work. |
-| Economy sections still refreshed from `prices.json`+`tiers.json` inside a hand-edited filter | Core product value survives | High | See section D. |
-| Config tab: edit styles (`styles.json`) and tier cutoffs (`tiers.json`) with Apply/Revert | Milestone feature 4 | Medium | Style editor reuses colour pickers; tier editor = ordered numeric fields with ordering validation (existing loader already checks completeness/order). |
-| Unknown style name caught at load time | Milestone feature 3 | Low | `styles.json` name->Style `HashMap`/`IndexMap`; validate all references on load, field-path error as elsewhere. |
-| Single-instance `ff` (second launch shows existing stripe) | Milestone feature 5 | Low-Med | Named mutex + signal to the running instance reusing `visibility.rs` show path (Windows). |
+**How other tools present it** (training knowledge, LOW to MEDIUM; the search returned nothing usable for Exiled Exchange 2)
+- Price checkers (Exiled Exchange 2, Awakened PoE Trade) keep a league drop-down fed from GGG's league list and cache the last choice. A league that disappears at the end of an event forces a re-pick.
+- poe.ninja uses a league switch at the top of the page and lists Standard, Hardcore and the current temporary leagues. SSF variants have no market and so no prices. SSF players use the matching trade league's prices as a guide.
+- FilterBlade's home page showed only a "Game mode: Softcore" setting and a paid economy auto-sync. It has no per-league picker that I could verify.
+- League transitions are the pain point for everyone. At league start data is sparse and volatile. At the end of the league the old league vanishes or Standard becomes the default. The project's own note records `indexed` flipping within hours.
 
-## Differentiators
+**Table stakes**
 
-Not expected, valued; pick cheap ones.
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Drop-down fed live from poe.ninja's league list, plus a default selection | Specified. A hardcoded league is the bug this removes. | MEDIUM | Network call on a worker thread, as Sync already does. Cache the last list so the UI works offline. |
+| The selection persisted per user and used by Sync | Without persistence every launch re-picks | LOW | Goes in `ff-settings.json` (the per-user settings file). Today's pin is `sync::OVERLAY_LEAGUE`. |
+| Selected league named in the Sync outcome and in "League" on the tab | Already the visible guard against a wrong pin | LOW | Keep. |
+| Selected league missing from the new list (event ended) shows a clear message and a fallback pick, never a silent switch | The league-end transition is the main failure mode | MEDIUM | Reuse the existing "pin no longer matches, list available ones" failure path. |
+| Standard, Hardcore and the temporary leagues all selectable; SSF treated honestly | Players of every mode will install this | LOW | Show what poe.ninja offers. If SSF variants are absent from the feed, say prices come from the trade league. Do not invent SSF data. |
+| A price source choice: Live (Sync) or Fallback, exclusive | Specified. At league start live data is thin. | MEDIUM | Choosing Fallback disables the Sync button and the League drop-down becomes irrelevant (grey it with a tooltip). The existing `price_source` and Fallback readout on the tab already show the state. |
+| Fallback is identified as recommended for league start and non-trade players | These users are the audience for the option | LOW | A tooltip, not a paragraph. |
 
-| Feature | Value Proposition | Complexity | Notes |
-|---|---|---|---|
-| Lossless guarantee + visible "unchanged blocks are untouched" diff before Apply | Nobody else promises it; builds trust for editing a 258 KB community filter | Medium | Block-level dirty flags give this nearly free; show "N blocks edited" in the stripe. |
-| Tag-aware grouping: browse by `$type->` / `$tier->` and bulk-restyle a tier (e.g. all `$tier->s` blocks) | NeverSink's own tag model gives instant semantic grouping | Medium | Tags are optional metadata parsed from the header comment; absent = feature hidden. Uses same stamp-style operation applied to N blocks. |
-| Economy refresh via marker-delimited managed sections (section D) | The unique selling point vs FilterBlade (no price-driven sections) | High | See D. |
-| Block-level "what does this match?" plain-language summary | Makes unreadable `Class ==` mega-lists scannable | Low-Med | Derived from AST; truncate lists. |
-| Show/Hide whole section toggle (Filtration's Block Group Browser) | Proven useful feature | Low-Med | Comment/uncomment spans; same disable mechanism. |
-| Raw-text escape hatch per block (edit the block's text directly) | Covers anything the typed UI cannot model; also a safety net for parser gaps | Medium | Re-parse on commit; reject if it doesn't parse into a single block. Cheap insurance, recommend building. |
-| Colour preview chip of the block as it renders (text on background, border, font scale) | Filtration/FilterBlade parity | Low-Med | v0.4 theme code already paints Dracula chips; extend to arbitrary RGBA. |
-| Style "reverse lookup": mark blocks whose action set exactly equals a named style | Lets styles.json act as a palette over foreign filters | Medium | Pure comparison; optional. |
+**Differentiators**
 
-## Anti-Features
+| Feature | Value proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| Warning when the synced `prices.json` league differs from the selected league | Closes a silent failure the pin comment already worries about | LOW | The data already carries the league name. |
+| Fallback pair works offline and with no setup | A new player on day one has a working tiered filter at once | none | Already built. |
+| "Last sync" age shown next to the selection | Stale prices are visible | none | Already shown. |
 
-| Anti-Feature | Why Avoid | What to Do Instead |
-|---|---|---|
-| Full regeneration of the filter from a model (dropped on purpose) | Cannot be lossless; destroys hand edits | Patch only edited blocks / managed sections. |
-| Storing "style: X" references inside the .filter (custom directive that the game would not understand) | Foreign syntax breaks the lossless/any-filter promise and may load-fail in-game | Stamp the style's concrete actions; optionally record the style name in the header comment as a plain comment hint. |
-| Normalising/pretty-printing the user's filter on save | Violates byte-identical; creates giant diffs against upstream NeverSink updates | Touch only edited spans. |
-| Validating BaseType/Class names against a bundled list | Goes stale each league; game warns on load (already a v0.4 decision) | Warn nothing; keep as-is. |
-| Rewriting NeverSink's `Continue` semantics, collapsing blocks, or auto-merging duplicates | Order and `Continue` change item behaviour | Show `Continue` as a flag, preserve order, warn only when the user reorders across a Continue block. |
-| Building a FilterBlade-style strictness slider / tier-regeneration engine | Requires NeverSink's source domain language; out of scope | Leave strictness to FilterBlade; FerrisFilter edits the exported result. |
-| In-game load message / online-filter header | Online-only (spike 2026-10-12) | Deferred. |
-| `Import` layering / locked rules, presets, economy change summary | Explicitly out of scope (999.4/999.7/999.9) | Parse `Import` and preserve it as a raw node only. |
-| Auto-save on every keystroke | v0.4 accepted trade-off: explicit Apply/Revert | Keep model. |
-| Auto-installing/overwriting an upstream filter file without backup | Users lose their only copy of a downloaded filter | `.bak` on first write; atomic rename. |
-| Supporting multiple filters open at once / diff-merging upstream updates | Large scope, not needed | Single file at a time. Re-import upstream = reopen. |
+**Anti-features**
 
-## D. Economy-priced sections inside a hand-edited filter (the open design question)
+| Anti-feature | Why requested | Why problematic | Alternative |
+|--------------|---------------|-----------------|-------------|
+| Automatic league detection with no override | Convenient | `indexed` is unreliable, which is the original reason for the pin | Default to the best guess, always show the choice, name the league in the result. |
+| Background auto-sync on a timer or at startup | Fresh prices | Surprise network traffic. It also changes the price data between Applies, and the filter only changes on Apply. | Keep Sync a deliberate button. |
+| Blending fallback and live prices | Fills sparse early data | The fallback pair is calibrated together (exalt-denominated). Mixing breaks the cutoffs. | Exclusive choice only. |
+| Our own SSF price model | SSF players | There is no source for it | Use fallback or the parent league and say so. |
 
-How the ecosystem handles "generated section inside user-owned text":
+**Complexity:** MEDIUM. The UI is simple. The work is the poe.ninja league-list parse (the feed shape is a risk, so spike it first), the settings, and the removal of the constant.
 
-1. **Tag-addressed (NeverSink/FilterBlade).** Every block carries `$type->x $tier->y !slug` in its header comment. A tool can *find* blocks by tag and *replace their conditions* (e.g. `BaseType ==` list) without a fenced region. Works for NeverSink filters only.
-2. **Fenced managed region (generic pattern, e.g. `# >>> ferrisfilter:currency begin` / `end`).** Everything between the fences is owned by the tool and rewritten on Apply/Refresh; everything outside is untouched. Simple, robust to hand edits outside the fence, and visible to the user as a comment banner.
-3. **Per-block ownership marker** (`# ff:managed currency S`) on each generated block, so reorder by the user is respected and individual blocks can be regenerated in place.
+**Dependencies on existing code**
+- `sync::OVERLAY_LEAGUE` and the existing league resolution, including the CLI `--league` override, which stays.
+- `ff-settings.json`, which also has to move to the per-user config location (feature 4).
+- The `price_source` Fallback logic. Note the deferred W3 tech debt: tier edits have no effect while fallback prices are in use. Choosing Fallback explicitly makes that visible to many more users, so decide whether to fix it or put a tooltip on it.
+- The Economy tab tier editor, which is unaffected.
 
-Recommendation (opinionated): **(3) with (2)'s fallback**. Mark each price-driven block with a comment marker `# ff:economy <category> <tier>` in its header, discover them on load, and on "refresh economy" rewrite only the `BaseType` list/styling of marked blocks in place (preserving the user's chosen position). First-time insertion of the economy set into a foreign filter appends a fenced region (default: at the top, since first-match-wins and the economy blocks must precede hide rules) that the user can then drag. The marker is a plain `#` comment so the game and every other tool ignore it. Complexity: High. Depends on pricer/emitter output still being a list of blocks (it is: `emit_rules` and economy sections already compile to `Show` blocks) -> reuse their text, parse it with the new parser into block nodes, splice. Open questions for phase research: where to insert in a NeverSink file (its own `$type->currency` blocks overlap and would shadow/duplicate), whether a user should be able to point the tool at NeverSink's tag blocks instead (differentiator, defer), and what Refresh does to a block the user hand-edited inside the managed region (recommend: overwrite, with the warning "managed block").
+### 3. Check for updates (About tab)
+
+**Typical behaviour of small open-source desktop tools** (training knowledge, MEDIUM; the search did not cover it)
+- A button on the About page: "Check for updates". Results are "You are up to date (v0.7.0)", "Version X is available" or an error line.
+- GitHub Releases API: `GET https://api.github.com/repos/<owner>/<repo>/releases/latest`. This returns the latest non-draft, non-prerelease release. It needs a `User-Agent` header and is rate limited to 60 requests per hour per IP without a token. A 403 or 429 means "try again later".
+- Version compare is semver against the running package version.
+- The asset is found by file-name pattern. The tool downloads it to a temp file and then runs it.
+- Most tools of this size do not self-patch the exe. They download the installer and hand over to it, because a running exe is locked on Windows.
+- Many tools also check once on start-up. A check on demand is the less intrusive default and has fewer failure modes.
+
+**Table stakes**
+
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| On-demand check button, run on a worker thread | Specified, and the UI must never freeze | LOW | Same worker-thread pattern as Sync. |
+| Clear results: up to date / newer version X / failed with a reason | The user needs to know which | LOW | Use the one status line. Distinguish offline, rate-limited, no release found and no matching asset. |
+| Semver comparison against `CARGO_PKG_VERSION`; ignore drafts and prereleases | A tag like `v0.7.0-rc1` must not be offered as an update | LOW | The `/latest` endpoint already skips both. |
+| Download the installer asset, then ask before running it (a popup) | Specified. No silent install. | MEDIUM | Skinned popup, in the same style as the eight existing ones. |
+| Close `ff` before running the installer | The exe is locked, and the overlay has a tray and a hotkey, so closing is not trivial | MEDIUM | Reuse the Quit path including the Unapplied changes popup (Apply and quit / Quit without applying / Cancel). Start the installer detached, then exit. |
+| Failure never destroys the install | Download to a temp file, check size, delete on failure | LOW | Verify against the asset size. Also verify SHA-256 if the release publishes a `SHA256SUMS` file. |
+| HTTPS only; the tool sends nothing but the request | Trust, since this is a tool that runs near a game | LOW | |
+
+**Differentiators**
+
+| Feature | Value proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| Release notes of the new version shown in the popup | The CHANGELOG section already becomes the release body, so users see what they get | LOW | `body` from the same JSON response. |
+| Link to the release page as the fallback when the download fails | The user can always update by hand | LOW | |
+
+**Anti-features**
+
+| Anti-feature | Why requested | Why problematic | Alternative |
+|--------------|---------------|-----------------|-------------|
+| Silent auto-update or an in-place exe swap | Seamless | The installer is unsigned. Replacing a running exe is fragile, and silent installs of unsigned code erode trust. | Ask first, then run the normal installer. |
+| Check on every start-up with a notification | Awareness | It is network traffic the user did not ask for, and it can interrupt the game. It also risks a rate-limit error on shared IPs. | On demand only for v0.7. Later: an opt-in start-up check that shows a badge, not a popup. |
+| Update channels (beta / nightly) | Testers | Needs prerelease handling and extra settings | Not now. |
+| A GitHub token in the app | Avoids rate limits | A secret in the binary | Unnecessary at on-demand frequency. |
+
+**Complexity:** MEDIUM. The HTTP and JSON parts are small. The close-then-run handover and its failure messages carry the risk.
+
+**Dependencies on existing code**
+- The HTTP client already used by `sync` (reuse it; no second TLS stack).
+- Tray Quit and the single-instance guard (`src/overlay/instance.rs`): the installer must start after the old process has released the instance name. The installer should also wait for it (Inno `AppMutex`).
+- The release pipeline (feature 5): the asset name must be stable (for example `FerrisFilter-<ver>-setup.exe`) and the tag must match the package version.
+- The About tab layout, which must stay free of walls of text.
+
+### 4. Windows installer, per-user config and game folder picker
+
+**Typical expectations for a gamer tool**
+- Download a `-setup.exe`, double-click, accept an unsigned-publisher warning, find the tool in the Start menu, and it works with no admin prompt.
+- Uninstall appears in Settings → Apps.
+- Settings survive an update and an uninstall.
+- If the game folder is not found, the tool says so and offers to pick it, rather than failing.
+
+**Installer**
+
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Per-user install, no admin (Inno Setup `PrivilegesRequired=lowest`, default under `%LOCALAPPDATA%\Programs`) | The tool needs no machine-wide files, and a UAC prompt on an unsigned installer deters people. Confirmed in the Inno docs: `lowest` never elevates and uses the HKCU uninstall key. | LOW | Recommended: Inno Setup. Alternatives: cargo-wix (MSI), NSIS. Whether the Windows CI runner has Inno preinstalled needs checking (LOW confidence), else it is a one-line install step. |
+| Start menu shortcut to `ff.exe` | Specified | LOW | Optional desktop shortcut, off by default. |
+| Uninstaller | Table stakes for any installer | LOW | It must not delete `%APPDATA%\FerrisFilter` (the user's styles and tiers). Leaving it is the safer default. |
+| "Launch FerrisFilter" checkbox on the last page | Standard | LOW | Needed after an update so the user is back in the tool. |
+| Close a running instance before replacing files | The updater depends on this | MEDIUM | Inno `CloseApplications` and `AppMutex`. The overlay has a tray and may be hidden. |
+| A portable zip alongside the installer | Specified in the release pipeline, and some players avoid installers | LOW | The zip must still find defaults (built into the exe) and config in `%APPDATA%`, or `FERRISFILTER_HOME`. |
+| SmartScreen note in the README and release notes | The installer is unsigned (accepted as out of scope) | LOW | "More info → Run anyway" with one sentence. No code signing. |
+
+**Per-user config**
+
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Config (styles, tiers, `ff-settings.json`) in `%APPDATA%\FerrisFilter`; price cache in `%LOCALAPPDATA%` | Standard Windows layout, and it survives updates | MEDIUM | The `dirs`-style crates cover this and the Linux/macOS equivalents. |
+| Defaults compiled into the exe (`include_str!` of `styles-default.json` and `tiers-default.json`), the live files created on first Apply | No loose files to lose or to mis-install | MEDIUM | Today `styles-default.json` is also the app-root marker. That marker walk is replaced. The fallback pair must be embedded too (`prices-fallback.json`, `tiers-fallback.json`). |
+| `FERRISFILTER_HOME` still overrides everything | Specified. Keeps tests and the developer workflow unchanged. | LOW | The CLAUDE.md "Development warning" about writing live files to the repo goes away for packaged runs, but stays for repo runs. |
+| No migration step in the installer | v0.6 was never public, so there is no user base | none | The author can copy the old live files by hand. Do not build an importer. |
+
+**Game folder picker (Config tab)**
+
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Default folder found through the OS "Documents" known folder + `My Games\Path of Exile 2` | OneDrive redirection and localized folder names break any hardcoded path. The author's own machine is the OneDrive/`Documentos` case. | LOW to MEDIUM | `SHGetKnownFolderPath(FOLDERID_Documents)` or the `dirs` crate. Replaces the `%USERPROFILE%\OneDrive\Documentos` default. |
+| Native folder dialog (Browse) and a visible current path | Specified | MEDIUM | A new dependency (for example `rfd`). Run it off the UI thread and handle the overlay being always-on-top above the dialog. |
+| Validation: exists and is a directory. Warn (not block) if there are no `.filter` files | The folder may legitimately be empty | LOW | Keep the existing "folder not found" status and the Reload recovery. |
+| Persisted in `ff-settings.json`, applied at once like the filter choice | Matches the existing Filter-section behaviour | LOW | Switching folders with unapplied Rules edits should use the existing **Switch filter?** popup. |
+| Feeds everything that used the game folder: filter list, sound-file listing, the Apply target and the in-game reload | One source of truth | MEDIUM | `install` and the CLI `apply` default also use it. |
+
+**First run** (a gamer on a clean machine)
+
+| Situation | Expected behaviour | Complexity | Notes |
+|-----------|--------------------|------------|-------|
+| Game folder not found | One status-line message with the cause. The Config tab shows the picker. No crash. | LOW | Reuses the "folder not found" state. |
+| Folder found, no filter yet | Offer to create `dynamic.filter` or a named empty filter. The first Apply creates it, with no backup (there is nothing to back up). | LOW | The Filter section already creates new empty filters. Say clearly that the user then has to select it in game under Options → Game → Item Filter. |
+| Game not running | The window opens on the primary monitor. The reload step says "Wrote <path>". | none | Already handled. |
+| Game in exclusive fullscreen | A blank window | LOW | A short README line. The overlay cannot detect it. |
+| Elevated game | The reload keys are silently dropped | none | Already documented. Add it to the README. |
+| No network at first sync | The failure message, plus the choice of fallback prices | LOW | The fallback option in feature 2 covers this case. |
+| First-time user has no economy section | Rules and Economy tabs behave as today (plain Apply never adds one) | none | **Add economy section** stays an explicit action. Consider a one-line hint on the Economy tab. |
+
+**Anti-features**
+
+| Anti-feature | Why requested | Why problematic | Alternative |
+|--------------|---------------|-----------------|-------------|
+| A first-run wizard | Hand-holding | Contradicts the "not texty" overlay and adds a flow to test and maintain | Status-line messages and the Config tab. |
+| Auto-installing a filter into the game or choosing the in-game filter for the user | Fewer steps | Touches files the user did not name. The game selects the filter itself. | Tell the user the one in-game step. |
+| Machine-wide (admin) install | "Proper" installers | A UAC prompt on an unsigned installer, and nothing needs it | Per-user. |
+| Registry-stored settings | Windows convention | Hard to inspect or reset by hand | JSON in `%APPDATA%`. |
+| Bundling the game's sound files or scanning outside the chosen folder | Convenience | Scope creep | Current read-only folder listing. |
+| Code signing in this milestone | Removes SmartScreen | Declared out of scope (cost) | Document the warning. |
+
+**Complexity:** MEDIUM to HIGH overall. The path refactor is the widest-reaching change in the milestone.
+
+**Dependencies on existing code**
+- The app-root resolution (`FERRISFILTER_HOME`, walk up to `styles-default.json`). This is the core change. `generate` / `install` / `sync` are working-directory relative today (v0.5 tech debt W1), and the packaged app needs one rule.
+- `styles-default.json`, `tiers-default.json`, `prices-fallback.json`, `tiers-fallback.json`: embedded. The tests and `artifact_guard` currently read the files from disk, so keep both paths.
+- `ff-settings.json` and its fail-closed parsing rules, which move location but not behaviour.
+- The default game-folder constants in `install` and `apply`.
+- The `--screenshot` safety checks, which depend on `FERRISFILTER_HOME` and `USERPROFILE` being under the temp folder. Check that the new `%APPDATA%` and `%LOCALAPPDATA%` lookups cannot escape the temp home.
+- The built-in style rework (`styles-default.json` with no custom sound files). If it changes, `seed-universal.filter` must be re-baselined, and `artifact_guard` is the check.
+
+### 5. GitHub release with changelog notes
+
+**Typical behaviour**
+- A tag `vX.Y.Z` triggers a workflow that builds on a Windows runner, tests, produces artifacts and creates the release.
+- The release body comes from the matching `CHANGELOG.md` section (Keep a Changelog format), not from auto-generated commit lists.
+
+**Table stakes**
+
+| Feature | Why expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Workflow on `v*` tags: build (release profile), run `cargo test`, build installer, zip, publish | Specified | MEDIUM | `windows-latest`. Upload the installer, the zip and a `SHA256SUMS` file. |
+| Release notes extracted from the `## [X.Y.Z]` section of `CHANGELOG.md` | Specified. The author writes the changelog by hand. | LOW | A small script, or an action, plus `gh release create --notes-file`. Fail the workflow if the section is missing or empty. |
+| Check that the tag equals `Cargo.toml` `version` | The About tab shows the package version, and the updater compares against it | LOW | `/gsd-complete-milestone` already checks this. Repeat it in CI. |
+| Stable asset names | The updater finds the asset by pattern | LOW | |
+| A pinned Rust toolchain in CI | `rust-toolchain.toml` is a floating nightly, which the repo itself notes can break `poe_data_tools`. A tag build that fails to compile, or compiles differently, on release day is the worst failure. | LOW | Pin a dated nightly for CI, or confirm the root build does not need nightly. Needs a quick check of what actually requires nightly (`ff-art` is a non-default member, so the root crate may build on stable). |
+| A dry run before the first real tag | The first public release should not be the first workflow run | LOW | `workflow_dispatch` or a prerelease tag that builds but publishes as a draft. |
+
+**Differentiators**
+
+| Feature | Value | Complexity | Notes |
+|---------|-------|------------|-------|
+| README install section with SmartScreen guidance and the windowed-mode requirement | The first user-facing text | LOW | The Release Review phase already hands the README to the author. Agents should not write it. |
+
+**Anti-features**
+
+| Anti-feature | Why problematic | Alternative |
+|--------------|-----------------|-------------|
+| Auto-generated release notes from commits | The project defines the CHANGELOG as the human-written record | Use the CHANGELOG section. |
+| Publishing on every push or on main | Unreviewed releases, and the updater would offer them | Tag only. |
+| Publishing the repo's `reference-old-filters/` or live data files in the zip | Git-ignored for a reason | Ship exe plus docs only. |
+
+**Complexity:** MEDIUM. Mostly CI plumbing. The toolchain pin and the installer step are the risks.
+
+**Dependencies:** the installer (4), the version in `Cargo.toml` (set in the Release Review phase), and the CHANGELOG draft (the same phase). The updater (3) depends on this feature's asset naming.
 
 ## Feature Dependencies
 
 ```
-styles.json (name -> Style map, load-time validation)
-   -> Config tab: style editor
-   -> "apply style to block" in the rule editor
-   -> economy block emission (tier styles)
+Per-user config location (embedded defaults, app-root refactor)
+    ├──required by──> Game folder picker (stored in ff-settings.json)
+    ├──required by──> League selector (selection persisted in ff-settings.json, price cache in LOCALAPPDATA)
+    └──required by──> Installer (installer must not ship loose default files; uninstall keeps APPDATA)
 
-Lossless filter parser/AST (trivia-preserving)
-   -> byte-identical round-trip test (filterblade.filter + reference-old-filters/*)
-   -> block list / sections / tags
-   -> condition+action typed editors (data-driven descriptor table)
-        -> raw-line preservation for unknown keywords
-   -> filter-as-store (drop dynamic.json, dynamic_base.json, compile_store)
-        -> Apply writes the .filter in place (+ .bak)
-        -> economy managed blocks (marker discovery + refresh)
-             <- pricer/emitter (unchanged) + tiers.json
-   -> disable (comment-out) / reorder / duplicate / delete operate on spans
+Strictness Selector ──requires──> existing Config style edit model (pending styles, one Apply)
+Built-in style rework ──affects──> Strictness derivation (the S-F set must stay required and ordered)
+                      ──affects──> seed-universal.filter fixture (re-baseline once)
 
-tiers.json editor (Config tab) -> independent of parser; shares Apply/Revert plumbing
-Single-instance guard -> independent (win.rs / visibility.rs)
-Open-file selection + path anchoring -> prerequisite for the overlay to find any filter
+League selector ──conflicts (exclusive)──> Fallback price source (fallback disables Sync and the league picker)
+
+Release pipeline ──requires──> Installer (artifact) + Cargo.toml version + CHANGELOG section
+Update check ──requires──> Release pipeline asset naming + Quit path + installer AppMutex/close handling
 ```
 
-## MVP Recommendation
+### Dependency Notes
 
-Build in this order (parser is the critical path):
+- **Per-user config is the foundation.** Three other features store state in it. Do it first, and do the style rework in the same phase window, since both touch `styles-default.json` and the fixture.
+- **Strictness is independent of the path work.** It only needs the Config tab's existing style model, so it can go in any phase after the style rework settles.
+- **The updater is last.** It cannot be tested against a real release until the pipeline has published one. Plan a prerelease or a throwaway tag to exercise it.
+- **League and fallback share the Economy tab.** Build them together. They are one exclusive control.
 
-1. Lossless parser + serializer with byte-identical golden tests (filterblade.filter, every reference filter). Everything else depends on it. No UI.
-2. `styles.json` + config-driven style lookup (small, unblocks both the config tab and style application).
-3. Filter-as-store: open file, block list with sections/search, existing v0.4 controls retargeted onto parsed blocks; Apply/Revert/.bak.
-4. Generalised condition/action editors (descriptor table) + unknown-keyword chips + raw-block text editor.
-5. Economy managed blocks with `# ff:economy` markers and refresh.
-6. Config tab (styles, tier cutoffs) and single-instance guard (independent, can be parallel).
+## MVP Definition
 
-Defer: tag-based bulk restyle, style reverse lookup, section-level toggles (cheap once spans exist, but not required), plain-language summaries.
+### Launch with (v0.7)
 
-## Phase research flags
+- [ ] Per-user config location with embedded defaults, `FERRISFILTER_HOME` override kept. A public tool cannot require a repo checkout.
+- [ ] Game folder default via the OS Documents folder, plus the Browse picker, with clear not-found messages.
+- [ ] Per-user Inno Setup installer with Start menu entry and uninstaller, and the portable zip.
+- [ ] League drop-down from poe.ninja plus the Live/Fallback exclusive choice.
+- [ ] Strictness Selector with the derived Custom state.
+- [ ] Release workflow with CHANGELOG notes, a version check, a pinned toolchain and a dry run.
+- [ ] On-demand update check that downloads the installer and asks before running it.
 
-- Parser/round-trip: deeper research needed on edge cases (`Continue` position, quote escaping, comment-only blocks, Windows CRLF handling, `Sockets >= 5GGG`, bare multi-value lists); likely best driven by corpus tests rather than documentation.
-- Economy marker design in a foreign filter: needs a design spike (insertion point vs NeverSink shadowing).
-- Single-instance, tiers/styles editor: standard patterns.
+### Add after validation (v0.7.x / v0.8)
+
+- [ ] Optional start-up update check with a non-blocking badge. Trigger: users ask, and rate limits turn out not to matter.
+- [ ] Strictness affecting non-tier rules. Trigger: feedback that "Div Farmer" still shows too much gear.
+- [ ] Release asset checksum verification in the updater, if not done in the first cut.
+- [ ] Surface `price_source` in the status line (carried-over backlog), and the W3 fallback tier-edit fix.
+
+### Future consideration (v1+)
+
+- [ ] Code signing. Cost and certificate trust.
+- [ ] Update channels, winget or Scoop packaging.
+- [ ] Linux and macOS overlay builds (out of scope here).
+
+## Feature Prioritization Matrix
+
+| Feature | User value | Implementation cost | Priority |
+|---------|------------|---------------------|----------|
+| Per-user config and embedded defaults | HIGH (nothing works installed without it) | MEDIUM-HIGH | P1 |
+| Installer, Start menu | HIGH | MEDIUM | P1 |
+| Release pipeline with notes | HIGH | MEDIUM | P1 |
+| Game folder default and picker | HIGH | MEDIUM | P1 |
+| League selector | HIGH (the pinned league goes stale on day one of the next league) | MEDIUM | P1 |
+| Fallback price option | HIGH at league start | LOW-MEDIUM | P1 |
+| Strictness Selector | HIGH (headline feature for new players) | LOW-MEDIUM | P1 |
+| Update check | MEDIUM | MEDIUM | P2 |
+| Release notes shown in the update popup | LOW-MEDIUM | LOW | P3 |
+| League-mismatch warning on stale prices | MEDIUM | LOW | P2 |
+| SHA-256 verification of downloads | MEDIUM | LOW | P2 |
+
+## Competitor Feature Analysis
+
+| Feature | NeverSink / FilterBlade | Exiled Exchange 2 / Awakened PoE Trade | Our approach |
+|---------|-------------------------|----------------------------------------|--------------|
+| Strictness | Seven static levels, whole filter, separate file per level, per-section overrides in FilterBlade | n/a | Seven wealth-named levels, tier-only, one live derived state on top of editable per-style switches |
+| League choice | FilterBlade has a game-mode setting; economy sync is a paid tier. NeverSink ships per-patch lists | League drop-down, last pick remembered (unverified) | Drop-down from poe.ninja, a named league in every result, an explicit stale warning |
+| Updates | Manual download | Built-in auto-updater (Electron) | On-demand check, download then ask, installer handover |
+| Install | Web download, no installer | Installer or portable | Per-user unsigned installer plus portable zip |
+| Config location | Files in the game folder | App data folder | `%APPDATA%\FerrisFilter`, `FERRISFILTER_HOME` override |
 
 ## Sources
 
-- Official filter language reference (PoE2-tagged conditions, HIGH): https://www.pathofexile.com/item-filter/about
-- NeverSink PoE2 filter repo README (strictness/style structure, MEDIUM): https://github.com/NeverSinkDev/NeverSink-Filter-for-PoE2
-- Filtration (archived PoE1 editor, features list, MEDIUM): https://github.com/ben-wallis/Filtration
-- poe2filter.com thread/changelog (advanced waystone/enchantment conditions, LOW): https://de.pathofexile.com/forum/view-thread/3630063/page/36
-- Local corpus (HIGH, primary): `C:\Users\jonat\OneDrive\Documentos\My Games\Path of Exile 2\filterblade.filter`; `reference-old-filters/*.filter`
-- FilterBlade site (403 on fetch; editing model from search snippets only, LOW): https://filterblade.xyz/
+- NeverSink filter and seven strictness levels, beginner advice and the Soft level history: search results for NeverSink forum threads and the filter's repository mirror (https://gitee.com/agg/NeverSink-Filter, https://maxroll.gg/poe2/news/filterblade-launch-for-path-of-exile-2). MEDIUM. The level contents were not listed in any source.
+- FilterBlade home page (https://www.filterblade.xyz/), fetched 2026-10-17: shows a Strictness setting, "Get all strictnesses as ZIP", a Softcore game mode, and a premium auto-sync. It had no per-level text or league picker. MEDIUM for those facts.
+- Inno Setup `PrivilegesRequired` documentation (https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm). HIGH for the per-user mode.
+- Updater behaviour, the GitHub Releases API (`/releases/latest`, the 60 requests per hour limit, `User-Agent`) and the league UIs of Exiled Exchange 2 and Awakened PoE Trade: training knowledge only; web searches returned nothing relevant. LOW to MEDIUM. Verify against https://docs.github.com/en/rest/releases/releases before implementing.
+- The project's own records: `.planning/PROJECT.md`, `CLAUDE.md`. HIGH for everything about the existing code.
+
+---
+*Feature research for: the v0.7 public release of FerrisFilter*
+*Researched: 2026-10-17*

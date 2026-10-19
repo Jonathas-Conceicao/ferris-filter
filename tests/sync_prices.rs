@@ -665,7 +665,7 @@ fn generate_loop_with_sync_produced_prices() {
     fs::copy(&config_src, tmp_dir.path().join("config.json"))
         .expect("copy config.json to temp dir");
     fs::copy(
-        std::path::Path::new(manifest).join("styles-default.json"),
+        std::path::Path::new(manifest).join("tests/fixtures/seed-styles.json"),
         tmp_dir.path().join("styles.json"),
     )
     .expect("copy styles.json to temp dir");

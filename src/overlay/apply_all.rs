@@ -9,6 +9,9 @@
 //! earlier files from the in-memory baselines. Baselines in [`ConfigState`] and [`LoadedFilter`]
 //! move only after the write succeeded.
 //!
+//! The config files live in the FerrisFilter folder (`root`); the defaults are built in, so the
+//! folder may be missing or empty. It is created only when a config file is actually written.
+//!
 //! Layer rule (same as `config_state.rs` / `apply.rs`): no GUI-framework types here, so every
 //! rule is provable with temp roots.
 
@@ -51,6 +54,9 @@ pub struct FilterInput<'a> {
     /// The working document's text rendered with the pending styles, or why that failed.
     pub styled: Result<String, String>,
     pub plan: EconomyPlan,
+    /// The price source the economy section is priced with. The overlay passes the saved
+    /// Live/Fallback choice (Live = `Auto`).
+    pub policy: PriceSourcePolicy,
 }
 
 /// Why an Apply did not happen. Nothing was changed in any of these cases.
@@ -179,15 +185,15 @@ pub fn prepare(
         }
         let body = match input.plan {
             EconomyPlan::Refresh | EconomyPlan::Add => {
-                let paths = InputPaths::relative_to(root);
+                let paths = InputPaths::in_home(root);
                 let priced = match config {
                     Some(c) => dynamic::economy_body_with(
                         &paths,
-                        PriceSourcePolicy::Auto,
+                        input.policy,
                         c.pending_styles(),
                         c.pending_tiers(),
                     ),
-                    None => dynamic::economy_body(&paths, PriceSourcePolicy::Auto),
+                    None => dynamic::economy_body(&paths, input.policy),
                 };
                 let (text, source) = priced.map_err(|e| ApplyAllError::Invalid(e.to_string()))?;
                 used_fallback = matches!(source, PriceSource::Fallback(_));
@@ -230,8 +236,8 @@ pub fn prepare(
     // 3. Changed on disk: every participating file against its baseline. A config file without a
     // pending change does not participate: it is neither guarded nor written (CR-01). The guard
     // compares the LIVE file with its live baseline, `None` meaning it was absent at load (the
-    // config was read from the `-default.json`): still absent is no conflict and the write creates
-    // it; created or deleted since is a conflict (DEF-03). The default files are never guarded or
+    // config was read from the built-in default): still absent is no conflict and the write creates
+    // it; created or deleted since is a conflict (DEF-03). The defaults are never guarded or
     // written.
     let mut changed = Vec::new();
     let mut config_part = None;
@@ -310,6 +316,25 @@ pub(crate) fn commit_with(
         filter: filter_part,
         used_fallback,
     } = p;
+
+    // The FerrisFilter folder may not exist yet (nothing is created before the first real config
+    // write). Only the parent of a config file that is actually written is created.
+    if let Some(c) = &config_part {
+        let written = [
+            (c.write.styles_changed(), &c.styles_path),
+            (c.write.tiers_changed(), &c.tiers_path),
+        ];
+        for (changed, path) in written {
+            if let Some(dir) = path.parent().filter(|_| changed) {
+                fs::create_dir_all(dir).map_err(|e| {
+                    ApplyAllError::Write(format!(
+                        "Nothing was applied: could not create {}: {e}.",
+                        dir.display()
+                    ))
+                })?;
+            }
+        }
+    }
 
     // Targets in write order; remember which slot is which.
     let mut targets: Vec<Target> = Vec::new();
@@ -436,7 +461,7 @@ mod tests {
         /// The defaults copied in as the live `styles.json` / `tiers.json`.
         fn new() -> Fixture {
             Fixture::build(&[
-                ("styles-default.json", "styles.json"),
+                ("tests/fixtures/seed-styles.json", "styles.json"),
                 ("tiers-default.json", "tiers.json"),
             ])
         }
@@ -444,7 +469,7 @@ mod tests {
         /// Only the committed defaults under their own names: no live file (DEF-03).
         fn with_defaults() -> Fixture {
             Fixture::build(&[
-                ("styles-default.json", "styles-default.json"),
+                ("tests/fixtures/seed-styles.json", "styles-default.json"),
                 ("tiers-default.json", "tiers-default.json"),
             ])
         }
@@ -498,7 +523,102 @@ mod tests {
             loaded: l,
             styled: Ok(l.text().to_string()),
             plan,
+            policy: PriceSourcePolicy::Auto,
         }
+    }
+
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn first_run_apply_writes_only_the_filter() {
+        let root = tempfile::tempdir().unwrap();
+        let game = tempfile::tempdir().unwrap();
+        let filter = game.path().join("dynamic.filter");
+        fs::write(&filter, RULES).unwrap();
+
+        let mut cfg = ConfigState::load(root.path()).unwrap();
+        assert!(!cfg.is_dirty());
+        let mut lf = LoadedFilter::load(&filter).unwrap();
+        let prepared = prepare(
+            root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Add)),
+            false,
+        )
+        .unwrap();
+        assert!(
+            prepared.used_fallback(),
+            "no prices.json: built-in fallback"
+        );
+        let done = commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(!done.styles_written && !done.tiers_written);
+
+        let text = fs::read_to_string(&filter).unwrap();
+        assert!(text.contains("# ff:economy-begin"), "{text}");
+        assert!(file_names(root.path()).is_empty(), "root must stay empty");
+    }
+
+    #[test]
+    fn apply_creates_the_folder_for_config_edits() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("FerrisFilter");
+        let game = tempfile::tempdir().unwrap();
+        let filter = game.path().join("dynamic.filter");
+        fs::write(&filter, RULES).unwrap();
+
+        let mut cfg = ConfigState::load(&root).unwrap();
+        assert!(!root.exists(), "load creates nothing");
+        assert!(cfg.edit_style("S", StyleEdit::Font(Some(41))));
+        let mut lf = LoadedFilter::load(&filter).unwrap();
+        let prepared = prepare(
+            &root,
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Keep)),
+            false,
+        )
+        .unwrap();
+        let done = commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert!(done.styles_written && !done.tiers_written);
+        assert_eq!(file_names(&root), vec!["styles.json".to_string()]);
+    }
+
+    /// Refreshes the fixture's economy section under `policy`; returns (used fallback, filter text).
+    fn refresh_with(fx: &Fixture, policy: PriceSourcePolicy) -> (bool, String) {
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        let mut inp = input(&lf, EconomyPlan::Refresh);
+        inp.policy = policy;
+        let prepared = prepare(fx.root.path(), Some(&cfg), Some(inp), false).unwrap();
+        let used = prepared.used_fallback();
+        commit(prepared, Some(&mut cfg), Some(&mut lf)).unwrap();
+        (used, fs::read_to_string(&fx.filter).unwrap())
+    }
+
+    #[test]
+    fn policy_decides_the_price_pair_of_the_economy_section() {
+        let auto = Fixture::new();
+        let (used_auto, auto_text) = refresh_with(&auto, PriceSourcePolicy::Auto);
+        assert!(!used_auto, "usable live prices.json under Auto");
+
+        let forced = Fixture::new();
+        let (used_forced, forced_text) = refresh_with(&forced, PriceSourcePolicy::ForceFallback);
+        assert!(used_forced, "ForceFallback prices from the fallback pair");
+        assert_ne!(auto_text, forced_text);
+    }
+
+    #[test]
+    fn auto_without_prices_json_uses_the_fallback() {
+        let fx = Fixture::new();
+        fs::remove_file(fx.root.path().join("prices.json")).unwrap();
+        let (used, _) = refresh_with(&fx, PriceSourcePolicy::Auto);
+        assert!(used);
     }
 
     fn tier(s: &ConfigState, name: &str) -> f64 {
@@ -579,6 +699,7 @@ mod tests {
             loaded: &lf,
             styled: Ok(format!("Show # bad\n\tRarity =< Rare\n\n{}", lf.text())),
             plan: EconomyPlan::Refresh,
+            policy: PriceSourcePolicy::Auto,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(bad), false);
         assert!(matches!(r, Err(ApplyAllError::Invalid(ref m)) if m.contains("grammar")));
@@ -588,6 +709,7 @@ mod tests {
             loaded: &lf,
             styled: Err("styles are unreadable".to_string()),
             plan: EconomyPlan::Keep,
+            policy: PriceSourcePolicy::Auto,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(nostyle), false);
         assert_eq!(
@@ -604,6 +726,7 @@ mod tests {
                 1,
             )),
             plan: EconomyPlan::Refresh,
+            policy: PriceSourcePolicy::Auto,
         };
         let r = prepare(fx.root.path(), Some(&cfg), Some(damaged), false);
         assert!(matches!(r, Err(ApplyAllError::Invalid(_))));
@@ -627,6 +750,7 @@ mod tests {
                     loaded: lf,
                     styled: Ok(lf.text().to_string()),
                     plan: EconomyPlan::Refresh,
+                    policy: PriceSourcePolicy::Auto,
                 }),
                 false,
             )
@@ -876,6 +1000,7 @@ mod tests {
                 loaded: lf,
                 styled: Ok(text.to_string()),
                 plan: EconomyPlan::Keep,
+                policy: PriceSourcePolicy::Auto,
             }
         }
 
@@ -918,6 +1043,7 @@ mod tests {
             loaded: &lf,
             styled: Ok(String::new()),
             plan: EconomyPlan::Keep,
+            policy: PriceSourcePolicy::Auto,
         };
         let p = prepare(fx.root.path(), Some(&cfg), Some(filter), false).unwrap();
         let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();

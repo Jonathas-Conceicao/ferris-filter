@@ -15,6 +15,10 @@
 //! quit (tray Quit releases the name at once) or crashed, this launch runs as the new
 //! first instance; otherwise a MessageBox is shown (the release `ff` has no console).
 //!
+//! `ff --quit` sets an auto-reset `-quit` event, then waits for the instance's own process to
+//! exit: the instance writes its process id into a small named `-pid` section once it holds
+//! the mutex.
+//!
 //! Failure policy (WR-03): if the mutex itself cannot be created, the launch fails
 //! closed with a MessageBox naming the Win32 error, because the same failure would
 //! repeat on every launch and each would open another window. If the first instance
@@ -50,22 +54,62 @@ pub const NOT_RESPONDING_MESSAGE: &str = "FerrisFilter is already running but no
 /// WAIT_OBJECT_0: the only wait result that counts as an answer.
 const WAIT_OBJECT_0_CODE: u32 = 0;
 
-/// Names of the four kernel objects making up one instance gate.
+/// How long `ff --quit` waits for the instance to exit once it is ready, in ms. A user who
+/// takes longer with the Unapplied changes popup is covered by the installer's Retry box.
+pub const QUIT_TIMEOUT_MS: u32 = 10_000;
+
+/// Outcome of `ff --quit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitOutcome {
+    /// No instance holds the name.
+    NotRunning,
+    /// The instance went away after the request.
+    Exited,
+    /// Still running when the wait ran out (for example the user has not answered the
+    /// Unapplied changes popup).
+    StillRunning,
+    /// The running instance cannot be reached (events missing, access denied).
+    Unreachable,
+}
+
+/// Process exit code for a [`QuitOutcome`]: 0 = not running / exited, 1 = still running,
+/// 2 = unreachable.
+pub fn quit_exit_code(outcome: QuitOutcome) -> i32 {
+    match outcome {
+        QuitOutcome::NotRunning | QuitOutcome::Exited => 0,
+        QuitOutcome::StillRunning => 1,
+        QuitOutcome::Unreachable => 2,
+    }
+}
+
+/// True only for exactly one argument equal to `--quit` (the installer's hidden flag).
+pub fn is_quit_args(args: impl IntoIterator<Item = String>) -> bool {
+    let mut args = args.into_iter();
+    args.next().as_deref() == Some("--quit") && args.next().is_none()
+}
+
+/// Names of the six kernel objects making up one instance gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceNames {
     pub mutex: String,
     pub show: String,
     pub ack: String,
     pub ready: String,
+    pub quit: String,
+    /// A small shared-memory section holding the running instance's process id, so
+    /// `ff --quit` can wait for that exact process to exit.
+    pub pid: String,
 }
 
-/// Build the four object names from a base.
+/// Build the six object names from a base.
 pub fn names_for(base: &str) -> InstanceNames {
     InstanceNames {
         mutex: base.to_string(),
         show: format!("{base}-show"),
         ack: format!("{base}-ack"),
         ready: format!("{base}-ready"),
+        quit: format!("{base}-quit"),
+        pid: format!("{base}-pid"),
     }
 }
 
@@ -146,18 +190,26 @@ pub enum Acquired {
 #[cfg(windows)]
 mod imp {
     use super::{
-        ACK_TIMEOUT_MS, Acquired, InstanceNames, RETRY_INTERVAL_MS, STARTUP_TIMEOUT_MS, Wait,
-        check_failed_message, classify_wait, instance_names, signal_message,
+        ACK_TIMEOUT_MS, Acquired, InstanceNames, QUIT_TIMEOUT_MS, QuitOutcome, RETRY_INTERVAL_MS,
+        STARTUP_TIMEOUT_MS, WAIT_OBJECT_0_CODE, Wait, check_failed_message, classify_wait,
+        instance_names, signal_message,
     };
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, GetLastError, HANDLE,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, GetLastError,
+        HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Memory::{
+        CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MapViewOfFile, OpenFileMappingW,
+        PAGE_READWRITE, UnmapViewOfFile,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateEventW, CreateMutexW, ResetEvent, SetEvent, WaitForSingleObject,
+        CreateEventW, CreateMutexW, GetCurrentProcessId, OpenMutexW, OpenProcess,
+        PROCESS_SYNCHRONIZE, ResetEvent, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
+        WaitForSingleObject,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
+        MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
     };
 
     fn wide(s: &str) -> Vec<u16> {
@@ -171,6 +223,10 @@ mod imp {
         ack: HANDLE,
         /// Manual-reset; set once the first frame runs, i.e. once show requests are polled.
         ready: HANDLE,
+        /// Auto-reset; set by `ff --quit`, consumed by the instance's frame poll.
+        quit: HANDLE,
+        /// The `-pid` section holding this process id (null if it could not be created).
+        pid: HANDLE,
         ready_marked: bool,
     }
 
@@ -184,7 +240,9 @@ mod imp {
             // The mutex goes first: while it is held, this instance's `-ready` event
             // exists, which is how a launcher tells a starting instance from one that has
             // no show channel (WR-03).
-            for h in [self.mutex, self.show, self.ack, self.ready] {
+            for h in [
+                self.mutex, self.show, self.ack, self.ready, self.quit, self.pid,
+            ] {
                 if !h.is_null() {
                     // SAFETY: the handle came from Create* in this module and is
                     // closed exactly once, here.
@@ -216,6 +274,16 @@ mod imp {
             }
             // SAFETY: `show` is a live event handle owned by this Guard.
             let code = unsafe { WaitForSingleObject(self.show, 0) };
+            classify_wait(code) == Wait::Signaled
+        }
+
+        /// Poll (zero timeout) for a quit request from `ff --quit`; auto-reset consumes it.
+        pub fn take_quit_request(&self) -> bool {
+            if self.quit.is_null() {
+                return false;
+            }
+            // SAFETY: `quit` is a live event handle owned by this Guard.
+            let code = unsafe { WaitForSingleObject(self.quit, 0) };
             classify_wait(code) == Wait::Signaled
         }
 
@@ -262,6 +330,103 @@ mod imp {
         }
     }
 
+    /// Size of the `-pid` section: one `u32` process id.
+    const PID_BYTES: usize = std::mem::size_of::<u32>();
+
+    /// Create the `-pid` section and write this process id into it. Returns the section
+    /// handle (kept open by the Guard), or null when it cannot be created; `ff --quit` then
+    /// falls back to waiting for the mutex to be released.
+    fn publish_pid(name: &[u16]) -> HANDLE {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call; a
+        // pagefile-backed section (INVALID_HANDLE_VALUE) with the default same-user DACL.
+        let h = unsafe {
+            CreateFileMappingW(
+                INVALID_HANDLE_VALUE,
+                std::ptr::null(),
+                PAGE_READWRITE,
+                0,
+                PID_BYTES as u32,
+                name.as_ptr(),
+            )
+        };
+        if h.is_null() {
+            return h;
+        }
+        // SAFETY: `h` is a live section handle of at least PID_BYTES bytes.
+        let view = unsafe { MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, PID_BYTES) };
+        if view.Value.is_null() {
+            close_all(&[h]);
+            return std::ptr::null_mut();
+        }
+        // SAFETY: `view` maps at least PID_BYTES writable bytes and is unmapped once, here.
+        unsafe {
+            view.Value
+                .cast::<u32>()
+                .write_unaligned(GetCurrentProcessId());
+            UnmapViewOfFile(view);
+        }
+        h
+    }
+
+    /// The process id the running instance published, if its `-pid` section exists.
+    pub(super) fn published_pid(name: &[u16]) -> Option<u32> {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
+        let h = unsafe { OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr()) };
+        if h.is_null() {
+            return None;
+        }
+        // SAFETY: `h` is a live section handle; the instance created it PID_BYTES long.
+        let view = unsafe { MapViewOfFile(h, FILE_MAP_READ, 0, 0, PID_BYTES) };
+        let pid = if view.Value.is_null() {
+            None
+        } else {
+            // SAFETY: `view` maps at least PID_BYTES readable bytes and is unmapped once, here.
+            let pid = unsafe { view.Value.cast::<u32>().read_unaligned() };
+            // SAFETY: as above.
+            unsafe { UnmapViewOfFile(view) };
+            Some(pid)
+        };
+        close_all(&[h]);
+        pid.filter(|&p| p != 0)
+    }
+
+    /// Tests only: make an existing `-pid` section name another process, so `ff --quit` can be
+    /// pointed at a real process other than the test binary. False when there is no section.
+    #[cfg(test)]
+    pub(super) fn overwrite_published_pid(name: &[u16], pid: u32) -> bool {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
+        let h = unsafe { OpenFileMappingW(FILE_MAP_WRITE, 0, name.as_ptr()) };
+        if h.is_null() {
+            return false;
+        }
+        // SAFETY: `h` is a live section handle; the instance created it PID_BYTES long.
+        let view = unsafe { MapViewOfFile(h, FILE_MAP_WRITE, 0, 0, PID_BYTES) };
+        let ok = !view.Value.is_null();
+        if ok {
+            // SAFETY: `view` maps at least PID_BYTES writable bytes and is unmapped once, here.
+            unsafe {
+                view.Value.cast::<u32>().write_unaligned(pid);
+                UnmapViewOfFile(view);
+            }
+        }
+        close_all(&[h]);
+        ok
+    }
+
+    /// Open (SYNCHRONIZE) the process that published itself as the running instance. `None`
+    /// when there is no `-pid` section, it names this very process (the in-process tests),
+    /// or the process cannot be opened. The caller closes the handle.
+    fn owner_process(pid_name: &[u16]) -> Option<HANDLE> {
+        let pid = published_pid(pid_name)?;
+        // SAFETY: plain call.
+        if pid == unsafe { GetCurrentProcessId() } {
+            return None;
+        }
+        // SAFETY: plain call; a null result (access denied, gone) means no owner handle.
+        let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        (!h.is_null()).then_some(h)
+    }
+
     pub fn acquire_named(names: &InstanceNames) -> Acquired {
         // Build every wide name before CreateMutexW so nothing runs between it
         // and GetLastError.
@@ -269,6 +434,8 @@ mod imp {
         let show_name = wide(&names.show);
         let ack_name = wide(&names.ack);
         let ready_name = wide(&names.ready);
+        let quit_name = wide(&names.quit);
+        let pid_name = wide(&names.pid);
 
         // Events BEFORE the mutex (WR-03): a running instance's `-ready` event then
         // exists for as long as it holds the mutex, so a launcher that finds the mutex
@@ -277,6 +444,7 @@ mod imp {
         let show = create_event(&show_name);
         let ack = create_event(&ack_name);
         let ready = create_ready_event(&ready_name);
+        let quit = create_event(&quit_name);
 
         // SAFETY: `mutex_name` is NUL-terminated and alive across the call.
         let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
@@ -284,7 +452,7 @@ mod imp {
         let err = unsafe { GetLastError() };
 
         if mutex.is_null() {
-            close_all(&[show, ack, ready]);
+            close_all(&[show, ack, ready, quit]);
             // An elevated first instance denies access to the object: treat as
             // running (the signal path then reports it as unreachable, never a
             // second window).
@@ -299,37 +467,47 @@ mod imp {
         if err == ERROR_ALREADY_EXISTS {
             // A launcher: the events belong to the running instance; leave their
             // state alone and let `signal_running` reopen them.
-            close_all(&[mutex, show, ack, ready]);
+            close_all(&[mutex, show, ack, ready, quit]);
             return Acquired::AlreadyRunning;
         }
 
-        let (show, ack, ready) = if show.is_null() || ack.is_null() || ready.is_null() {
-            // Keep running (this process holds the mutex, so it is the one window),
-            // but with no events at all, so the next launch reports that it cannot
-            // reach this instance instead of a false "not responding".
-            eprintln!("single-instance: CreateEventW failed; show requests disabled");
-            close_all(&[show, ack, ready]);
-            (
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        } else {
-            (show, ack, ready)
-        };
+        let (show, ack, ready, quit) =
+            if show.is_null() || ack.is_null() || ready.is_null() || quit.is_null() {
+                // Keep running (this process holds the mutex, so it is the one window),
+                // but with no events at all, so the next launch reports that it cannot
+                // reach this instance instead of a false "not responding".
+                eprintln!("single-instance: CreateEventW failed; show requests disabled");
+                close_all(&[show, ack, ready, quit]);
+                (
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            } else {
+                (show, ack, ready, quit)
+            };
         // The events may outlive a previous instance while a launcher still holds them
         // (e.g. mid-retry when it quit): start from a clean, not-ready state.
-        for h in [show, ack, ready] {
+        for h in [show, ack, ready, quit] {
             if !h.is_null() {
                 // SAFETY: live event handles created just above.
                 unsafe { ResetEvent(h) };
             }
+        }
+        // Only the process that won the mutex publishes its id, and it does so before it can
+        // be marked ready, which is when `ff --quit` reads it.
+        let pid = publish_pid(&pid_name);
+        if pid.is_null() {
+            eprintln!("single-instance: CreateFileMappingW failed; ff --quit waits on the name");
         }
         Acquired::First(Guard {
             mutex,
             show,
             ack,
             ready,
+            quit,
+            pid,
             ready_marked: false,
         })
     }
@@ -422,6 +600,112 @@ mod imp {
         result
     }
 
+    /// Open the instance mutex without creating it. `Ok(Some(handle))` = held by an
+    /// instance, `Ok(None)` = no such mutex, `Err(code)` = it exists but cannot be opened.
+    fn open_mutex(name: &[u16]) -> Result<Option<HANDLE>, u32> {
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer alive across the call.
+        let h = unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, 0, name.as_ptr()) };
+        // SAFETY: plain thread-local error read, immediately after the call.
+        let err = unsafe { GetLastError() };
+        if !h.is_null() {
+            Ok(Some(h))
+        } else if err == ERROR_FILE_NOT_FOUND {
+            Ok(None)
+        } else {
+            Err(err)
+        }
+    }
+
+    /// True once the instance mutex no longer exists (every holder closed it).
+    fn mutex_gone(name: &[u16]) -> bool {
+        match open_mutex(name) {
+            Ok(None) => true,
+            Ok(Some(h)) => {
+                close_all(&[h]);
+                false
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// True when the process handle is signalled (the process has exited).
+    fn has_exited(process: HANDLE) -> bool {
+        // SAFETY: `process` is a live process handle with SYNCHRONIZE access.
+        let code = unsafe { WaitForSingleObject(process, 0) };
+        code == WAIT_OBJECT_0_CODE
+    }
+
+    /// Ask the running instance to quit (`ff --quit`). It never creates the mutex, so it can
+    /// never become the instance itself.
+    ///
+    /// Success means the process that owns the instance has exited: the instance publishes
+    /// its process id in the `-pid` section, and that one process is waited for. Other `ff.exe`
+    /// processes (a launch showing a message box, another `--quit`, a launch that becomes the
+    /// next instance) do not count, and the instance releasing its name early in its shutdown
+    /// is not mistaken for its exit. Without a readable `-pid` section the wait falls back to
+    /// the mutex being released.
+    pub fn quit_running_named(names: &InstanceNames, startup_ms: u32, wait_ms: u32) -> QuitOutcome {
+        let mutex_name = wide(&names.mutex);
+        match open_mutex(&mutex_name) {
+            Ok(None) => return QuitOutcome::NotRunning,
+            Err(_) => return QuitOutcome::Unreachable,
+            // Holding it would keep the name alive past the instance's exit.
+            Ok(Some(h)) => close_all(&[h]),
+        }
+
+        let (ready, ready_err) = open_event(&wide(&names.ready), true);
+        let (quit, quit_err) = open_event(&wide(&names.quit), false);
+        let mut owner: Option<HANDLE> = None;
+        let outcome = if ready.is_null() || quit.is_null() {
+            QuitOutcome::Unreachable
+        } else if ready_err != ERROR_ALREADY_EXISTS || quit_err != ERROR_ALREADY_EXISTS {
+            QuitOutcome::Unreachable
+        } else {
+            // SAFETY: `ready` is a live event handle owned by this function.
+            let code = unsafe { WaitForSingleObject(ready, startup_ms) };
+            if classify_wait(code) != Wait::Signaled {
+                QuitOutcome::Unreachable
+            } else {
+                // The instance publishes its id before it is marked ready. Read it BEFORE
+                // signalling so a fast exit cannot be missed.
+                owner = owner_process(&wide(&names.pid));
+                // One request only: a re-asserted one would reopen the Unapplied changes
+                // popup right after the user picked Cancel in it.
+                // SAFETY: `quit` is a live event handle owned by this function.
+                unsafe { SetEvent(quit) };
+                let deadline = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+                let interval = Duration::from_millis(u64::from(RETRY_INTERVAL_MS));
+                loop {
+                    let done = match owner {
+                        Some(process) => has_exited(process),
+                        None => mutex_gone(&mutex_name),
+                    };
+                    if done {
+                        break QuitOutcome::Exited;
+                    }
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        // Withdraw the request so a later frame does not quit unexpectedly.
+                        // SAFETY: `quit` is a live event handle owned by this function.
+                        unsafe { ResetEvent(quit) };
+                        break QuitOutcome::StillRunning;
+                    }
+                    std::thread::sleep(remaining.min(interval));
+                }
+            }
+        };
+        close_all(&[ready, quit]);
+        if let Some(process) = owner {
+            close_all(&[process]);
+        }
+        outcome
+    }
+
+    /// `ff --quit` against the real instance of this build profile.
+    pub fn quit_running() -> QuitOutcome {
+        quit_running_named(&instance_names(), STARTUP_TIMEOUT_MS, QUIT_TIMEOUT_MS)
+    }
+
     /// An informational message box (the release `ff` has no console).
     pub fn notify(message: &str) {
         let text = wide(message);
@@ -434,6 +718,22 @@ mod imp {
                 text.as_ptr(),
                 title.as_ptr(),
                 MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST,
+            );
+        }
+    }
+
+    /// An error message box (same as `notify`, with the error icon).
+    pub fn notify_error(message: &str) {
+        let text = wide(message);
+        let title = wide("FerrisFilter");
+        // SAFETY: both buffers are NUL-terminated and alive across the call; a
+        // null owner window is allowed.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST,
             );
         }
     }
@@ -490,7 +790,7 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    use super::{Acquired, InstanceNames, Wait};
+    use super::{Acquired, InstanceNames, QuitOutcome, Wait};
 
     /// Non-Windows stand-in; the overlay is not supported off Windows.
     pub struct Guard;
@@ -498,6 +798,9 @@ mod imp {
     impl Guard {
         pub fn mark_ready(&mut self) {}
         pub fn take_show_request(&self) -> bool {
+            false
+        }
+        pub fn take_quit_request(&self) -> bool {
             false
         }
         pub fn ack(&self) {}
@@ -511,7 +814,21 @@ mod imp {
         Wait::TimedOut
     }
 
+    pub fn quit_running_named(
+        _names: &InstanceNames,
+        _startup_ms: u32,
+        _wait_ms: u32,
+    ) -> QuitOutcome {
+        QuitOutcome::NotRunning
+    }
+
+    pub fn quit_running() -> QuitOutcome {
+        QuitOutcome::NotRunning
+    }
+
     pub fn notify(_message: &str) {}
+
+    pub fn notify_error(_message: &str) {}
 
     /// No single-instance enforcement off Windows, where the overlay is not
     /// supported anyway.
@@ -520,7 +837,10 @@ mod imp {
     }
 }
 
-pub use imp::{Guard, acquire, acquire_named, notify, signal_running};
+pub use imp::{
+    Guard, acquire, acquire_named, notify, notify_error, quit_running, quit_running_named,
+    signal_running,
+};
 #[cfg(windows)]
 pub use imp::{Launch, launch_named};
 
@@ -538,7 +858,7 @@ mod tests {
     #[test]
     fn names_live_in_the_local_namespace() {
         for n in [names(true), names(false)] {
-            for s in [&n.mutex, &n.show, &n.ack, &n.ready] {
+            for s in [&n.mutex, &n.show, &n.ack, &n.ready, &n.quit, &n.pid] {
                 assert!(s.starts_with("Local\\"), "{s}");
             }
         }
@@ -551,10 +871,37 @@ mod tests {
         assert_eq!(n.show, "Local\\x-show");
         assert_eq!(n.ack, "Local\\x-ack");
         assert_eq!(n.ready, "Local\\x-ready");
+        assert_eq!(n.quit, "Local\\x-quit");
+        assert_eq!(n.pid, "Local\\x-pid");
+        assert_ne!(n.quit, n.show);
         assert_ne!(n.ready, n.ack);
         assert_ne!(n.mutex, n.show);
         assert_ne!(n.show, n.ack);
         assert_ne!(n.mutex, n.ack);
+    }
+
+    #[test]
+    fn quit_exit_code_maps_each_outcome() {
+        assert_eq!(quit_exit_code(QuitOutcome::NotRunning), 0);
+        assert_eq!(quit_exit_code(QuitOutcome::Exited), 0);
+        assert_eq!(quit_exit_code(QuitOutcome::StillRunning), 1);
+        assert_eq!(quit_exit_code(QuitOutcome::Unreachable), 2);
+    }
+
+    #[test]
+    fn quit_flag_is_exactly_one_argument() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(!is_quit_args(args(&[])));
+        assert!(is_quit_args(args(&["--quit"])));
+        assert!(!is_quit_args(args(&["--quit", "x"])));
+        assert!(!is_quit_args(args(&["-quit"])));
+        assert!(!is_quit_args(args(&["--QUIT"])));
+        assert!(!is_quit_args(args(&["--screenshot", "a.png"])));
+    }
+
+    #[test]
+    fn quit_timeout_is_ten_seconds() {
+        assert_eq!(QUIT_TIMEOUT_MS, 10_000);
     }
 
     #[test]
@@ -724,6 +1071,158 @@ mod windows_tests {
         let n = test_names("noreq");
         let g = first(&n);
         assert!(!g.take_show_request());
+    }
+
+    #[test]
+    fn quit_on_a_free_name_reports_not_running() {
+        let n = test_names("quitfree");
+        assert_eq!(quit_running_named(&n, 100, 100), QuitOutcome::NotRunning);
+        // Quit never created the name, so the next acquire is still the first instance.
+        assert!(matches!(acquire_named(&n), Acquired::First(_)));
+    }
+
+    #[test]
+    fn no_quit_request_without_a_signal() {
+        let n = test_names("noquit");
+        let g = first(&n);
+        assert!(!g.take_quit_request());
+    }
+
+    #[test]
+    fn a_polling_instance_quits_on_request() {
+        let n = test_names("quitpoll");
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let t = {
+            let n = n.clone();
+            std::thread::spawn(move || {
+                let mut g = first(&n);
+                g.mark_ready();
+                acquired_tx.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < deadline {
+                    if g.take_quit_request() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                drop(g);
+            })
+        };
+        acquired_rx.recv().unwrap();
+        assert_eq!(quit_running_named(&n, 2000, 3000), QuitOutcome::Exited);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn the_instance_publishes_its_process_id_until_it_drops() {
+        let n = test_names("pid");
+        let pid_name = n
+            .pid
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        assert_eq!(imp::published_pid(&pid_name), None);
+        let g = first(&n);
+        assert_eq!(imp::published_pid(&pid_name), Some(std::process::id()));
+        // A launcher never touches it.
+        assert!(matches!(acquire_named(&n), Acquired::AlreadyRunning));
+        assert_eq!(imp::published_pid(&pid_name), Some(std::process::id()));
+        drop(g);
+        assert_eq!(imp::published_pid(&pid_name), None);
+    }
+
+    fn wide_name(name: &str) -> Vec<u16> {
+        name.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// A harmless long-running child process (a system `PING.EXE` with no output), killed
+    /// when dropped so a failing test never leaves it behind.
+    struct Sleeper(std::process::Child);
+
+    impl Sleeper {
+        fn spawn() -> Self {
+            let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+            let child = std::process::Command::new(format!(r"{root}\System32\PING.EXE"))
+                .args(["-n", "60", "127.0.0.1"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn PING.EXE");
+            Self(child)
+        }
+
+        /// Ends the process; the `Child` (and so its handle, which keeps the pid from being
+        /// reused) stays alive until the Sleeper drops.
+        fn end(&mut self) {
+            let _ = self.0.kill();
+            self.0.wait().expect("wait for PING.EXE");
+        }
+    }
+
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn quit_follows_the_published_owner_process_not_the_name() {
+        let n = test_names("owner");
+        let mut child = Sleeper::spawn();
+        let mut g = first(&n);
+        assert!(imp::overwrite_published_pid(
+            &wide_name(&n.pid),
+            child.0.id()
+        ));
+        g.mark_ready();
+        // The owner is alive: still running.
+        assert_eq!(quit_running_named(&n, 2000, 300), QuitOutcome::StillRunning);
+        // The owner has exited while the name is still held: that exit is what counts.
+        child.end();
+        assert_eq!(quit_running_named(&n, 2000, 3000), QuitOutcome::Exited);
+        drop(g);
+    }
+
+    #[test]
+    fn an_instance_releasing_its_name_early_is_not_taken_as_its_exit() {
+        let n = test_names("earlyname");
+        let mut child = Sleeper::spawn();
+        let child_pid = child.0.id();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let t = {
+            let n = n.clone();
+            std::thread::spawn(move || {
+                let mut g = first(&n);
+                assert!(imp::overwrite_published_pid(&wide_name(&n.pid), child_pid));
+                g.mark_ready();
+                ready_tx.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < deadline {
+                    if g.take_quit_request() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                // Release the name (and every other object) while the owner process runs on,
+                // the way a shutting-down instance gives up its name before it exits.
+                drop(g);
+            })
+        };
+        ready_rx.recv().unwrap();
+        assert_eq!(quit_running_named(&n, 2000, 600), QuitOutcome::StillRunning);
+        t.join().unwrap();
+        child.end();
+    }
+
+    #[test]
+    fn an_instance_that_never_polls_times_out_and_the_request_is_withdrawn() {
+        let n = test_names("quitstuck");
+        let mut g = first(&n);
+        g.mark_ready();
+        assert_eq!(quit_running_named(&n, 2000, 300), QuitOutcome::StillRunning);
+        assert!(!g.take_quit_request());
     }
 
     #[test]

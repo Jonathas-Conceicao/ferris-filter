@@ -695,8 +695,11 @@ mod tests {
     use super::*;
 
     fn committed_styles() -> StyleSet {
-        crate::loader::load_styles(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
-            .unwrap()
+        crate::loader::load_styles(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-styles.json"
+        ))
+        .unwrap()
     }
 
     #[test]

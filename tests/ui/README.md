@@ -11,16 +11,16 @@ Run `ff` against a temp home and a temp game folder, so Apply never writes your 
 
 ```powershell
 $t = "$env:TEMP\ff-uitest"
-New-Item -ItemType Directory -Force "$t\home", "$t\up\OneDrive\Documentos\My Games\Path of Exile 2" | Out-Null
+New-Item -ItemType Directory -Force "$t\home", "$t\game" | Out-Null
 Copy-Item styles-default.json, tiers-default.json, config.json, prices-fallback.json, tiers-fallback.json "$t\home"
-Copy-Item tests\ui\test_ff.filter "$t\up\OneDrive\Documentos\My Games\Path of Exile 2\"
-$env:FERRISFILTER_HOME = "$t\home"; $env:USERPROFILE = "$t\up"
+Copy-Item tests\ui\test_ff.filter "$t\game\"
+$env:FERRISFILTER_HOME = "$t\home"; $env:FERRISFILTER_GAME_DIR = "$t\game"
 cargo run --bin ff
 ```
 
 Then pick `test_ff.filter` in CONFIG → Filter. Copy the filter again to reset it after an Apply.
-With `USERPROFILE` pointing at the temp folder, the in-game reload goes to the real game only if
-it is running; close it or turn **Reload filter in game after Apply** off.
+The game folder is the temp one, but the in-game reload still reaches a running game (which reads
+its own filter); close the game or turn **Reload filter in game after Apply** off.
 
 ## Cases
 
@@ -28,7 +28,7 @@ it is running; close it or turn **Reload filter in game after Apply** off.
 |---|------|------------------|
 | 1 | Bare Show | Amber triangle: an enabled rule with no conditions hides every rule below it. |
 | 2 | Preset S | Style chip: the S minimap icon in its colour plus `S`. |
-| 3 | Preset kite | Chip with the orange kite icon; the legacy name-only tag is rewritten to `<id> kite` on Apply. |
+| 3 | Preset C | Chip with the cyan star icon; the legacy name-only tag is rewritten to `builtin:C C` on Apply. |
 | 4 | Unknown style | Amber ring with `?`; the status line reports it and a click jumps here. |
 | 5 | Grammar error | Red `!`; Apply is refused until it is fixed or disabled. |
 | 6 | Grammar warning | Amber triangle; `LinkedSockets` is PoE1-only and shows as a raw row. |

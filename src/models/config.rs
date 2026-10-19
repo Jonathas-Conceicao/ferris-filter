@@ -527,6 +527,21 @@ impl StyleSet {
         self.0.get(name)
     }
 
+    /// The embedded `styles-default.json`, parsed and validated once, ids assigned. The source
+    /// of every reset; a parse failure is a programming error pinned by the defaults tests.
+    pub fn shipped_defaults() -> &'static StyleSet {
+        static SET: std::sync::OnceLock<StyleSet> = std::sync::OnceLock::new();
+        SET.get_or_init(|| {
+            let b = &crate::defaults::STYLES_DEFAULT;
+            let mut set: StyleSet = serde_json::from_str(b.text)
+                .unwrap_or_else(|e| panic!("{} failed to parse: {e}", b.label()));
+            set.assign_missing_ids();
+            set.validate()
+                .unwrap_or_else(|e| panic!("{} failed validation: {e}", b.label()));
+            set
+        })
+    }
+
     /// Style names in file order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)
@@ -935,7 +950,7 @@ impl StyleSet {
     pub(crate) fn committed_for_tests() -> StyleSet {
         let mut set: StyleSet = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/styles-default.json"
+            "/tests/fixtures/seed-styles.json"
         )))
         .unwrap_or_else(|e| panic!("styles-default.json failed to parse: {e}"));
         set.assign_missing_ids();
@@ -1513,7 +1528,10 @@ mod tests {
     #[test]
     fn config_rejects_bad_enum_color() {
         // inject an invalid color name "Mauve" into styles.json
-        let styles_json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
+        let styles_json = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/seed-styles.json"
+        ));
         let bad = styles_json.replace("\"Pink\"", "\"Mauve\"");
         let result: Result<StyleSet, _> = serde_json::from_str(&bad);
         assert!(
@@ -2137,8 +2155,10 @@ mod tests {
     // StyleSet (Phase 17)
     // -----------------------------------------------------------------------
 
-    const STYLES_JSON: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
+    const STYLES_JSON: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/seed-styles.json"
+    ));
     const DYNAMIC_BASE_JSON: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/v04-dynamic-base.json"

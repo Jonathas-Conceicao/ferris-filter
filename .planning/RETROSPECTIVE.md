@@ -230,6 +230,58 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
   on sonnet; phases and feedback rounds run largely autonomously.
 - Notable: 7 phases plus 7 quick tasks and 281 commits in three calendar days (2026-10-15 → 2026-10-17).
 
+## Milestone: v0.7 — Initial Public Release and Strictness Selector
+
+**Shipped:** 2026-10-18
+**Phases:** 7 (36-42) | **Plans:** 45 | **Commits:** 261
+
+### What Was Built
+
+- One per-user folder with every default compiled into the exe, and an isolation guard so tests and
+  screenshot mode never touch the real folders.
+- A game folder picker with the game's own reload button; the Economy Visibility (strictness) row;
+  Reset to defaults for styles and tiers; only the nine required built-in styles ship.
+- A league picker and a Live / Fallback price source on the Economy tab.
+- A tag-triggered release workflow, a per-user Inno Setup installer, zip and checksums, and an
+  on-demand Check for updates on the About tab.
+
+### What Worked
+
+- **One autonomous run, reviews stacked at the end.** `/gsd-autonomous --from 36 --to 42` ran all
+  seven phases, and the author answered one numbered list of checks instead of per-phase stops.
+- **A release-candidate dry run before the real tag.** `v0.7.0-rc.1` exercised the whole workflow
+  (release-check, build, version resource, packaging, publish) in one push, so the real `v0.7.0`
+  tag carries no workflow risk.
+- **Tests that reproduce a UI crash.** An egui id clash (tooltip id equal to a child segment id)
+  was pinned by hover tests that crashed on the old id formula before the fix.
+
+### What Was Inefficient
+
+- **Game-art matching took several rounds.** The reload button went through three art choices and
+  two tuning passes (glyph, mirror, tint, size, turn) before matching the in-game button; a
+  side-by-side render against the author's screenshot from the start would have saved rounds.
+- **The rc dry run needed a side commit.** Phase 42 had already emptied `[Unreleased]`, which an rc
+  tag needs for its notes; ordering the dry run before the changelog draft avoids that.
+- **UAT files again lagged the verdicts** for per-scenario lines (statuses were updated at close).
+
+### Patterns Established
+
+- `release.yml` is the only source of release assets; `installer/package.sh` is for local checks.
+- Tags are `vX.Y.Z` and must equal `v` + the Cargo version; rc tags publish pre-releases.
+- README.md and CHANGELOG.md prose wraps at 70 characters; the CHANGELOG starts at 0.7.0.
+- Hand manual checks to the author as one numbered list, answerable per item.
+
+### Key Lessons
+
+- For anything that must look like the game, compare against a screenshot of the game first.
+- Run release-pipeline dry runs before the Release Review edits the changelog.
+
+### Cost Observations
+
+- Model mix: `balanced` profile, `yolo` gate mode; phases run autonomously with planner,
+  executor, reviewer and verifier agents; close-out and UAT fixes in the main session.
+- Notable: 7 phases, 45 plans and 261 commits in two calendar days (2026-10-17 → 2026-10-18).
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Commits | LOC (cumulative) | Span |
@@ -240,6 +292,7 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | ~16,093 | 14 days |
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | ~50,244 | 4 days |
 | v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | ~70,900 | 3 days |
+| v0.7 Initial Public Release and Strictness Selector | 7 | 45 | 261 | ~82,800 | 2 days |
 
 **Trend — phases are getting smaller and cheaper.** Plans per phase fell from 3.5 (v0.1) to 2.3
 (v0.2) to 1.7 (v0.3) as the declarative rule model absorbed work that used to require code. v0.3's

@@ -1,182 +1,444 @@
-# Domain Pitfalls (v0.5)
+# Pitfalls Research
 
-**Domain:** Lossless filter parse/edit, filter-as-rule-store, config-driven styles, overlay config tab, single-instance guard, added to an existing deterministic Rust compiler plus egui overlay
-**Researched:** 2026-10-12
-**Scope:** Only pitfalls new to v0.5. The v0.4 pitfalls (egui transparency defects, no hot-reload, windowed mode, atomic writes, ordinal identity, hardcoded class lists, fixture regeneration from the repo root) are in `_archive-pre-v0.5/PITFALLS.md` and are not repeated. Exceptions are called out where v0.5 re-triggers them.
-**Confidence:** HIGH on facts measured from the real sample file. MEDIUM on Win32 mutex behavior (well documented, not run on this machine). LOW on NeverSink/FilterBlade grammar edge cases not present in the one sample.
-
-## Facts measured from the sample (`filterblade.filter`, 258,094 bytes)
-
-These shape every parser pitfall below:
-
-- Pure CRLF: 5312 `\r` and 5312 `\n`, and the file ends with `\r\n`. A LF-only writer changes every line.
-- Tab indentation: 3768 lines contain a tab (conditions and actions are tab-indented). Preserve the exact indent string per line, never re-indent.
-- 460 `Show`/`Hide` header lines, including commented-out ones.
-- Commented-out blocks look like `#Show  # # %D9 $type->chancing $tier->chances !apex_stier`, with two spaces and a doubled `#`. Their bodies are also commented (`#<tab>Continue`). Some blocks are live and some are commented in the same section.
-- `Continue` is used on its own line in live blocks (lines 604, 637, 652, ...).
-- 2 lines have trailing whitespace. Lines such as `#   [2905] Tier 3 uniques $` contain `$` and `[...]` inside comments.
-- `BaseType == "Gold"` and `StackSize >= 5000` use spaced operators. No `Import` was found in this sample, but other FilterBlade/NeverSink outputs can have one.
-- The header has a long `#====` banner and a `# VERSION:` line. Nothing in it is semantically meaningful, so it must pass through untouched.
+**Domain:** First public release of an existing Rust/egui Windows overlay (FerrisFilter v0.7): release CI, unsigned installer, config relocation, self-updater, strictness presets, league picker
+**Researched:** 2026-10-17
+**Confidence:** MEDIUM. Repo-specific findings (HIGH) come from reading `CLAUDE.md`, `PROJECT.md`, `rust-toolchain.toml`, `build.rs`, `src/paths.rs`, `.gitattributes`, `assets/README.md`, `src/overlay/screenshot.rs`. Ecosystem claims (SmartScreen, GitHub API limits, runner behaviour, Inno Setup behaviour) are from training knowledge and were not re-verified online in this pass; they are marked MEDIUM/LOW and should be confirmed in the phase that uses them.
 
 ## Critical Pitfalls
 
-### 1. Rebuilding text from an AST instead of preserving source spans
-**What goes wrong:** The parser produces `Block { conditions, actions }` and the writer re-emits them. Indentation, spacing, comments, blank lines, line endings and key casing are lost on the first save, even when the user changed nothing.
-**Why it happens:** The existing `emit` path is generator-shaped. It writes canonical text from a model, so reusing it for editing is the path of least resistance.
-**Consequences:** The "byte-identical round trip" requirement fails. A 258 KB FilterBlade file gets a giant diff, and the user can no longer diff against upstream.
-**Prevention:** Use a lossless concrete syntax tree. Every line keeps its raw text (leading whitespace, keyword token, value text, trailing comment, original EOL). A line is re-serialized only when its parsed fields are mutated. Unmutated lines are emitted verbatim, and unmutated blocks are emitted verbatim including their inter-block blank lines. Treat the parser as "tokenize with trivia" and the model as a view over it.
-**Detection:** A property test: `serialize(parse(bytes)) == bytes` over the sample, over every file in `reference-old-filters/`, over `tests/fixtures/seed-universal.filter`, and over generated mutations (CRLF/LF, no trailing newline, BOM). Run it as a hard gate before any edit code is written.
-**Phase:** Parser phase. Must be first, with the round-trip test as its exit criterion.
+### Pitfall 1: Tag name `vX.Y` vs Cargo version `X.Y.0` vs CHANGELOG heading
 
-### 2. Line-ending, BOM and final-newline normalization
-**What goes wrong:** Rust `str::lines()` strips `\r\n` and `\n` alike. The writer then emits `\n`, or emits the repo's own `\n`-or-`\r\n` convention. A BOM may be dropped, or a missing final newline may be added.
-**Prevention:** Parse over `&[u8]` or `&str` with an explicit splitter that keeps the terminator as part of each line. Store the EOL per line, because mixed endings occur in hand-edited files. Store the BOM flag and the "has final newline" flag. Newly inserted lines inherit the EOL of their neighbor, so the file stays uniformly CRLF. Never use `std::fs::read_to_string` followed by `write`, which is fine for UTF-8 but is easy to combine with `lines()`/`join("\n")`. Check that Windows git `autocrlf` does not rewrite committed fixtures: add `*.filter -text` (or `binary`) in `.gitattributes`, otherwise a CRLF fixture silently becomes LF on checkout and the byte-identical test passes locally but fails elsewhere. Also check the existing `seed-universal.filter` against this rule.
-**Detection:** Round-trip test on a file with CRLF, a file with LF, a mixed file and a file without a trailing newline. A `git diff --stat` after a no-op save must show zero changes.
-**Phase:** Parser phase.
+**What goes wrong:**
+The project's tags are `v0.6`, `v0.5`, ... (two components; `git tag` confirms), while `Cargo.toml` is `0.6.0` and CHANGELOG headings are `## [X.Y.0]`. A workflow that triggers on `v*` will fire, but anything that strips the `v` and compares, parses with a semver parser, or greps CHANGELOG for the tag text gets `0.7` and fails or mismatches. The release can publish with empty notes, a wrong installer version, or an updater that thinks `0.7` is not newer than `0.7.0`.
 
-### 3. Comments mis-split at `#` (quoted strings, commented-out blocks)
-**What goes wrong:** Splitting a line at the first `#` breaks `BaseType == "Foo #1"`. Conversely, treating `#Show  # ...` as plain prose loses the fact that it is a disabled block that the user may want to enable.
-**Prevention:** Write a small tokenizer that tracks quote state, so `#` only starts a comment outside quotes. Classify full-line comments into three kinds: prose, a commented block header (`#\s*(Show|Hide|Minimal)` followed by commented conditions and actions), and a section banner. Commented blocks stay opaque and verbatim by default. Do not auto-parse them into rules in v0.5 unless the roadmap explicitly wants "enable disabled block". If that is wanted, enabling means stripping exactly one leading `#` from each line of the contiguous run, which is reversible only if the original spacing is retained. Trailing comments on a value line (`SetFontSize 37 # big`) must be kept as trivia, and the leading spaces before `#` kept too.
-**Detection:** Tests with `"a # b"`, a trailing comment after a quoted list, `#Show` with no space, `# Show` with a space, and the real line 449.
-**Phase:** Parser phase.
+**Why it happens:**
+Three naming schemes grew independently. `build.rs` already derives `FF_VERSION` from `git describe --match v*`, so the ABOUT tab version and Cargo version can also disagree.
 
-### 4. Keyword case, operator spacing and quoting normalization on edit
-**What goes wrong:** PoE filters are case-insensitive for keywords (`show`, `SHOW`) and accept operators with or without spaces (`Rarity>=Magic`, `Class "Bows"` with no operator). An editor that edits a field and re-serializes it as `Rarity >= Magic` rewrites the user's style on every touched line. Unquoted values (`Rarity Rare`, `Corrupted True`) get quoted, or the reverse.
-**Prevention:** When mutating, change only the value token's byte range and keep the keyword, operator, and separators verbatim. Newly added lines use the neighbor-line style (the same indent string, with the keyword in the generator's canonical case). Quote a value only if it contains spaces or the neighboring list was quoted. For list conditions (`BaseType`, `Class`), add or remove one quoted element without reflowing the list.
-**Detection:** A test that edits one value on a line like `\tRarity>=magic # x` and asserts that the diff is limited to that value's span.
-**Phase:** Edit-model phase.
+**How to avoid:**
+- Decide once: either keep `vX.Y` tags and normalise to `X.Y.0` in exactly one helper (shared by workflow script and the in-app updater), or switch to `vX.Y.0` tags starting v0.7. Recommended: switch to `vX.Y.0` (matches Cargo and GitHub Releases convention, semver crates parse it) and document the one-time break.
+- First workflow step: fail if tag (minus `v`) != root `Cargo.toml` version, and fail if CHANGELOG has no `## [<version>]` section. Extract notes with that same version.
+- `/gsd-complete-milestone` already checks Cargo version vs tag; update it to the new tag format.
+- Updater parses both `FF_VERSION` and the release tag with the same function; treat `0.7` as `0.7.0`; ignore `-dev` / `-N-gSHA` suffixes of local builds (a dev build must compare as a pre-release of its base, not as newer than the release).
 
-### 5. Semantic mismatch: PoE1 docs vs PoE2 grammar
-**What goes wrong:** The parser hard-rejects or mis-types a condition or action it does not know (newer PoE2 keywords, `SetFontSize` limits, `Continue`, `Import`, `PlayAlertSoundPositional`, `CustomAlertSoundOptional`, `MinimapIcon -1`, PoE1-only `LinkedSockets`, `HasInfluence`). The official docs page describes PoE1, so a closed enum of keywords drifts.
-**Prevention:** The syntax layer must be keyword-agnostic. An unknown keyword is still a valid line, stored as raw text with a generic `(keyword, rest)` shape. Give only the conditions/actions the editor UI understands a typed view (the existing `when` vocabulary plus actions that styles use). Everything else round-trips as opaque. Never fail the whole file on an unknown keyword: warn and continue. Do not validate values (the game itself warns on load, per the existing base-type decision).
-**Detection:** Round-trip a fixture with a made-up keyword, and a real file with every keyword used in the sample.
-**Phase:** Parser phase, then edit-model phase for the typed view.
+**Warning signs:**
+Release page shows empty or whole-file notes; installer filename says `0.7`; "Check for updates" says up to date on an older build, or offers the release you already run.
 
-### 6. `Continue` semantics and block order get lost in the rule model
-**What goes wrong:** The existing model says "one rule is one block, first match wins". A filter with `Continue` has multi-match layering. If the editor presents blocks as a first-match-wins list, the user reorders or deletes a block and silently changes the effective behavior of blocks that rely on `Continue` falling through to later ones. Inserting a new block at the "end" lands it after a catch-all, so it never fires.
-**Prevention:** Model `Continue` as a first-class flag on a block, show it in the row, and warn when a reorder moves a `Continue` block across another block that overlaps it. Keep file order as the only ordering truth. New blocks insert before the economy section or catch-all, not at the end, and the insertion point should be an explicit anchor, not "append". The existing ordinal-identity pitfall (v0.4 #9) applies to a file with 460 blocks even more. Identify blocks by stable ID assigned at parse time (not by index), and re-resolve after moves.
-**Detection:** A test that reorders around a `Continue` block and asserts a warning or an unchanged effective order. A test that inserts a rule into a file that ends with a catch-all.
-**Phase:** Edit-model phase, UI phase for the warning.
+**Phase to address:** Release pipeline phase (workflow + tag policy), re-checked in the updater phase and the Release Review phase.
 
-### 7. Economy-section refresh clobbering user edits (the file is now the store)
-**What goes wrong:** Today `dynamic.json` holds the rules and `dynamic.filter` is regenerated whole, so economy sections are rebuilt from `prices.json` on every Apply. When the `.filter` itself becomes the store, regenerating the economy sections must replace only those sections. A naive "recompile and overwrite" erases the user's hand edits, and a naive "leave the economy alone" leaves stale prices. If the economy region is not delimited, a rule the user placed between generated blocks gets deleted on the next sync.
-**Prevention:** Fence the generated economy region with unambiguous marker comments (for example `# ==== FERRISFILTER:ECONOMY BEGIN ====` / `END`) and only ever rewrite the bytes between them. Everything outside the fence is the user's and is never touched by sync. Missing or duplicated markers is a hard error that stops the write, not a silent fallback to "regenerate everything". A foreign file (FilterBlade) has no fence: in that case, do not inject economy sections unless the user explicitly asks, and say so in the UI. The migration from `dynamic.json` needs a one-time, explicit import step that writes the first fenced file and keeps `dynamic.json` as a backup, not a delete.
-**Detection:** A test: parse, edit a rule above and below the fence, run economy refresh, assert that bytes outside the fence are identical. A test with the fence removed.
-**Phase:** Store-migration phase (dropping dynamic.json). Needs its own design decision before coding.
+---
 
-### 8. Breaking the static path's byte-for-byte guarantee
-**What goes wrong:** Refactoring the emitter to take config-driven styles (replacing the hardcoded `Styles` struct), or to share code with the new editor, changes a space, a key order, or a `HashMap` iteration order and `artifact_guard` or the insta snapshot moves. The temptation is to re-baseline.
-**Prevention:** The v0.4 rule still holds: a behavior-preserving refactor produces zero fixture changes. Specific traps for this milestone: (a) `styles.json` is a new file, so its serialization of `HashMap`s is nondeterministic, so use `BTreeMap` or an ordered `Vec` for anything that influences emission or is round-tripped; (b) a style that was a struct field becomes a map lookup, so the field order in the emitted block (text color, border, background, font, sound, beam, icon) must stay a fixed order in the emitter, not the JSON key order; (c) the default `styles.json` must be generated from the current hardcoded values and tested for equality with them before the struct is deleted; (d) test the old struct and the loaded styles side by side for one commit, then delete the struct. Never regenerate `tests/fixtures/seed-universal.filter` in the same commit as a refactor.
-**Detection:** `artifact_guard` red. Run it after every commit in the styles phase.
-**Phase:** Styles-config phase, before any UI.
+### Pitfall 2: Floating `nightly` toolchain in CI breaks (or silently changes) the release
 
-### 9. Style rename or delete orphaning rules
-**What goes wrong:** Rules reference styles by name (`"style": "S"`). Renaming `S` in `styles.json`, or deleting it, leaves rules that fail at generate time ("unknown style is a hard error"). In the filter-as-store world, a block has no style reference at all, because it is just inlined lines, so "this block uses style S" is only a matching heuristic.
-**Prevention:** Decide the model explicitly. Option A: style names are immutable keys, and the UI offers add/edit/delete but not rename (simplest, recommended for v0.5). Option B: rename is an atomic operation that rewrites every referencing rule and fails if any referencing source is unwritable. For delete, block it while references exist and list the referencing rules. Keep `unchanged`, `hidden` and `kite` as reserved built-ins that the UI cannot delete, because compiled code (such as the recycle and unidentified rules) references them by name. In the filter-store world, record the style as a marker comment on the block (`Show # name`) or ignore it and treat applying a style as "overwrite these action lines", and say which. Validate the whole styles file on load, and refuse Apply with a clear message rather than writing a partial filter.
-**Detection:** Tests: rename referenced style, delete referenced style, delete a built-in, duplicate name, name differing only by case.
-**Phase:** Styles-config phase and config-tab phase.
+**What goes wrong:**
+`rust-toolchain.toml` says `channel = "nightly"`. CI installs whatever nightly is current on tag day. A nightly regression, a `poe_data_tools`-style nightly break, a new clippy/rustc lint, or a rustfmt change can fail the tag build, and re-tagging is awkward with milestone-squash flow. Two releases built from the same commit weeks apart can differ.
 
-### 10. Tier cutoff edits producing invalid tiers
-**What goes wrong:** `ValidatedTiers` enforces ordering. A live editor lets the user type values one keystroke at a time, so intermediate states are invalid (an empty field, a cutoff below the next tier, a negative number, NaN, a unit mismatch). If the editor validates only at Apply, the user finds the failure late. If it validates on every keystroke and rejects, they cannot type through an invalid intermediate state. If the editor writes through the existing `serde` path, the output may drop or reorder fields and break `prices-fallback`/`tiers-fallback` pairing (those two are calibrated to each other).
-**Prevention:** Hold the text buffer separately from the parsed value. Parse and validate on every change, show the error inline, and keep the last valid value as the one Apply would use. Disable Apply while any field is invalid, and keep Revert always enabled. Reuse `ValidatedTiers` as the single validator (never reimplement the ordering check in the GUI). Edit only the live `tiers.json`. Never write to the committed `tiers-fallback.json`. If the tiers unit (`chaos` vs `exalt`) must match the prices file, show the unit read-only. Write atomically (tempfile then rename), as in v0.4 #7.
-**Detection:** Tests: tier ordering violations, empty, equal values, huge values, unit mismatch, and a round-trip of `tiers.json` with no edits that produces an identical file.
-**Phase:** Config-tab phase.
+**Why it happens:**
+The floating channel was a conscious dev convenience (the file's own comment says to pin a dated nightly if a nightly breaks `poe_data_tools`). A release pipeline needs reproducibility.
 
-### 11. Config tab Apply/Revert has two files and two failure modes
-**What goes wrong:** Apply writes `styles.json` and `tiers.json` and then the filter. If the second write fails, the first has already changed, so the stripe shows "applied" while disk state is inconsistent. Revert restores in-memory edits to the "last applied" state, which is undefined if the app launched with files that were edited externally. A file edited on disk (by hand, by git) while the overlay is open is overwritten on Apply without a warning.
-**Prevention:** Validate everything first, then write in order, with temp files for all of them, and rename only after all temps succeeded. Record file mtime or hash on load, and warn or refuse on Apply if the file changed underneath (the stripe already has a "stale" concept, so extend it). Revert re-reads from disk and does not use a cached snapshot. A single "dirty" state per document, and a single Apply that is all-or-nothing from the user's point of view. Keep all logic in the library (v0.4 #8).
-**Detection:** Tests with a read-only second target and with an externally modified file.
-**Phase:** Config-tab phase.
+**How to avoid:**
+- Pin a dated nightly (`nightly-YYYY-MM-DD`) in `rust-toolchain.toml` for the release; bump deliberately. Verify whether the root package really needs nightly (only `ff-art`'s dependency is documented as nightly-only); if not, ship the release from stable or a pinned nightly and keep `ff-art` out of CI.
+- Use `cargo build --release --locked` and `cargo test --locked`; commit `Cargo.lock` (already committed). Build only the root package (`ff`, `ff-cli`, `ferrisfilter`); `ff-art` is a non-default workspace member and needs a game install.
+- Do not use `-D warnings` in CI: clippy is at a 121-warning baseline. Run fmt check only, or clippy without deny.
+- Cache with `Swatinem/rust-cache`, but never publish from a cache-poisoned job without a clean `--locked` build.
+- Run a dry-run workflow (manual `workflow_dispatch` or a `v0.7.0-rc.N` tag) before the real tag.
 
-### 12. Single-instance guard: Local vs Global namespace, and abandoned mutexes
-**What goes wrong:** `CreateMutexW(name)` with a bare name is session-local (`Local\`). That is usually correct for a per-user overlay. `Global\` requires privileges in some configurations, and a mutex shared across sessions is not wanted. The classic mistake is to treat `ERROR_ALREADY_EXISTS` as the only signal while ignoring `GetLastError` timing: you must read the error immediately after `CreateMutexW`, before any other API call overwrites it. Another trap: a crashed instance. Windows releases a named mutex automatically when the owning process dies, so the "stale lock file" problem of file-based guards does not apply. Do not use a lock file (a crash leaves it behind and permanently blocks launch). Keep the handle alive for the process lifetime (store it in a `static` or in the `main` frame): if it is dropped early (`let _ = ...` instead of `let _guard = ...`), the guard silently stops working.
-**Prevention:** Use `CreateMutexW` through the `windows` crate (or `windows-sys`), a name that includes an app-specific GUID and is `Local\` scoped, hold the handle in a binding that lives for the whole of `main`, and read `GetLastError` right after the call. Do not call `WaitForSingleObject` (that would hang the second launch or return `WAIT_ABANDONED`). Debug and release builds use the same name unless you intentionally want to run both, in which case suffix the debug build, otherwise `cargo run` fails while a release build lives in the tray, which will confuse development.
-**Detection:** Manually launch twice, kill the first with Task Manager, launch again (must succeed), and launch twice as different users or from an elevated shell.
-**Phase:** Single-instance phase.
+**Warning signs:**
+CI green last week, red today with no commit; `rustup` downloading components mid-job; release binary size differs between identical commits.
 
-### 13. Second launch must signal the first, and the first may be hidden
-**What goes wrong:** The user launches `ff` again because the stripe is hidden (it lives in the tray, hidden via the hotkey or the `✕`). The second process silently exits, and the user sees nothing happen and concludes the app is broken. Or the second process tries to `SetForegroundWindow` on a hidden window, which does nothing, and Windows' foreground-lock rules block focus stealing from a non-foreground process anyway.
-**Prevention:** On detecting an existing instance, the second process sends a "show" request and then exits. Mechanisms, in order of simplicity: a registered window message (`RegisterWindowMessageW`) broadcast with `PostMessage(HWND_BROADCAST)`, a named event (`CreateEventW`, which the first instance's UI thread waits on), or a localhost pipe. The first instance reacts by showing the stripe through the same code path as the `Ctrl+Shift+Z` toggle, not by a new path. The egui event loop only runs when repainted, so a hidden window may not poll the event: wake it with `ctx.request_repaint()` from the watcher thread, or the show request will be delayed until the next input. The existing hotkey is gated on "PoE2 or stripe is foreground", so the second-launch show request must bypass that gate, because the user explicitly asked. Let the second instance call `AllowSetForegroundWindow` (it is the process that has the foreground rights, being the one just launched by the user) before signaling.
-**Detection:** Manual: hide the stripe, launch again, and it must appear. Also with the stripe visible, with the stripe visible but behind the game, and with PoE2 in the foreground.
-**Phase:** Single-instance phase.
+**Phase to address:** Release pipeline phase (first task: pin toolchain + dry-run).
 
-### 14. Tray app lifetime and exit paths
-**What goes wrong:** The tray `Quit` is the only way to exit (existing decision). If the guard's handle is tied to an object that the tray quit path does not drop, or the process exits via `std::process::exit` without cleanup, nothing breaks (Windows reclaims the mutex), but a hung process with a dead window still holds the mutex and blocks every future launch. The user has to find the process in Task Manager.
-**Prevention:** Ensure Quit actually terminates the process, including worker threads (the SYNC ECONOMY worker, the watcher thread, the tray thread). Make the watcher thread a daemon that does not block exit. Surface a message on the second launch if the first does not respond to the show signal within a short time ("another ff is running but not responding") instead of silently exiting.
-**Detection:** Quit during an in-flight sync, then relaunch.
-**Phase:** Single-instance phase.
+---
 
-### 15. Working-directory-relative paths (known defect, re-triggered by every new file)
-**What goes wrong:** `ff` cannot be launched by double-click because `styles.json`, `tiers.json`, `dynamic_base.json` and `prices.json` all resolve relative to the CWD. v0.5 adds `styles.json` and a user-chosen filter path, so there are more paths that break, and the single-instance work makes double-click launching (and launching from a shortcut or autostart) much more likely. With the guard, a mis-launched first instance with the wrong CWD would also hold the mutex and silently misdirect the second.
-**Prevention:** Resolve all data paths from one function, anchored in a decided order: explicit CLI flag, then the exe's directory (`std::env::current_exe()`), then CWD, with the choice logged in the stripe or a log line. Never call `Path::new("styles.json")` in new code. Treat the filter file path as persisted user state (a small settings file next to the exe), not as something derived from CWD. Show the resolved absolute path of each file in the config tab, so a wrong file is visible. Decide this once, early, before the new files multiply the problem. A candidate for a prerequisite task in the first phase.
-**Detection:** Launch the release exe by double-click and from a different directory. The overlay must find its files or show a clear error with the path it tried.
-**Phase:** Foundation phase (before styles/config).
+### Pitfall 3: Build-time version/`git describe` and dirty-tree in CI
 
-## Moderate Pitfalls
+**What goes wrong:**
+`build.rs` bakes `FF_VERSION` from `git describe --tags --match v* --dirty`. In CI: (a) a shallow checkout (`fetch-depth: 1`) may lack the tag history, silently falling back to `CARGO_PKG_VERSION`; (b) if any step before the build modifies tracked files (tests that regenerate fixtures, `cargo` refreshing `Cargo.lock`, CRLF normalisation), `--dirty` appends `-dev` and the shipped ABOUT tab and updater compare see `0.7.0-dev`; (c) `git remote get-url origin` yields the Actions token-bearing URL form, which `web_url` must not leak into the ABOUT link text.
 
-### 16. Edit-in-place of a 460-block file in an immediate-mode UI
-**What goes wrong:** egui redraws the full list each frame. Walking 460 blocks, formatting each row header, and re-parsing on every frame makes the stripe sluggish, and re-parsing the file every frame also destroys the trivia/IDs the UI holds.
-**Prevention:** Parse once, keep the tree in memory, and cache per-block summary strings, invalidated on mutation. Use `ScrollArea::show_rows` or collapse sections by banner so only visible rows are laid out. Add a search or filter for blocks, since the old "accordion of a dozen rules" will not scale to 460.
-**Phase:** UI phase.
+**How to avoid:**
+Checkout with `fetch-depth: 0` and `fetch-tags`; build the release artifacts first (clean tree, `--locked`), then run tests; assert in CI that `ff --version`-equivalent (or a tiny smoke) prints exactly the tag version with no suffix; check the ABOUT repo link in a built exe contains no credentials. Prefer injecting the version from the workflow env over `describe` for release builds.
 
-### 17. Generated-section blocks vs foreign blocks in one list
-**What goes wrong:** The user sees economy-fenced blocks in the same editable list, edits one, and the edit disappears on the next sync (see #7).
-**Prevention:** Render fenced blocks as read-only and visibly different (or collapse them to a single "economy: N blocks, refreshed by sync" row).
-**Phase:** UI phase.
+**Warning signs:**
+Release exe reports `-dev`; ABOUT link text contains `x-access-token`; update check offers the same version as installed.
 
-### 18. Re-parsing generated output with the editor's parser
-**What goes wrong:** The generator's current output is the parser's most important regression sample, but its `Show # name` comments carry meaning (the rule name). The parser's treatment of a trailing `# comment` on a header as a "name" must be consistent with the emitter, or an unnamed rule gets `rule 3` shown as a name.
-**Prevention:** Round-trip `seed-universal.filter` and a generated `dynamic.filter` through the new parser as tests. Read the header comment as a name only when it is not a derived `rule <index>` label.
-**Phase:** Parser phase.
+**Phase to address:** Release pipeline phase; verified again in updater phase.
 
-### 19. Reset/restore semantics after dropping `dynamic.json`
-**What goes wrong:** `apply --reset` currently restores from `dynamic_base.json`. When the filter is the store, "reset" now means overwrite the user's own file. A blind reset destroys a hand-tuned or imported filter.
-**Prevention:** Back up before reset (timestamped copy beside the file), ask for confirmation in the UI, and keep `dynamic_base.json` as the template for new files only. Keep a CLI deprecation path for `dynamic.json` for one release, and note it in `CHANGELOG.md`.
-**Phase:** Store-migration phase.
+---
 
-### 20. Writing into the game folder (OneDrive path)
-**What goes wrong:** The game folder is under OneDrive (`OneDrive\Documentos\...`). Atomic temp-then-rename across a synced folder can trigger sync conflicts, and a temp file in a different directory makes rename non-atomic across volumes. Editing a file the game or a sync client has open can fail with a sharing violation.
-**Prevention:** Create the temp file in the same directory as the destination. Retry a rename briefly on `ERROR_SHARING_VIOLATION`. Surface a clear error rather than falling back to a non-atomic copy.
-**Phase:** Store-migration phase.
+### Pitfall 4: Tests that depend on the real Windows profile, and a new path layer that ignores the env vars the tests set
 
-## Minor Pitfalls
+**What goes wrong:**
+Existing code and tests key off `USERPROFILE` (`src/install.rs`, `src/run.rs`, `src/cli.rs`, `tests/cli_errors.rs`, `tests/dynamic_filter.rs`, screenshot guard) and `FERRISFILTER_HOME`. If the new config dir / game folder resolution calls the Windows known-folder API (`SHGetKnownFolderPath`, or the `dirs`/`directories` crates, which do this on Windows), it ignores `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` overrides. Result: tests silently read/write the developer's (or CI runner's) real `%APPDATA%\FerrisFilter` and real Documents folder; and the debug `--screenshot` mode, whose safety guard only checks that `FERRISFILTER_HOME`, `USERPROFILE` and the derived game folder are under temp, would now write the author's real live `styles.json` / settings. This is the worst data-loss path in the milestone.
 
-### 21. Trailing whitespace and `$` in the sample
-Two lines in the sample have trailing whitespace, and comments contain `$` and `[...]`. Any regex-based parser written with `\s*$` and `trim()` will eat them. Use `trim_end_matches(['\r','\n'])` only, never `trim()`, on the stored raw line.
+**Why it happens:**
+OS-correct resolution (OneDrive/localized Documents) and env-var-based test isolation are opposites. The v0.5/v0.6 isolation story is built entirely on env vars.
 
-### 22. Duplicate `Show` banner sections and repeated headers
-Comment banners such as `[2905] Tier 3 uniques` appear twice (lines 100 and 4051). Do not use banner text as a unique key. Use position-derived IDs.
+**How to avoid:**
+- One path module with an injectable provider: `Dirs { config, cache, documents }` resolved once; production uses known-folder APIs, tests and screenshot mode inject temp dirs. `FERRISFILTER_HOME` keeps overriding everything (config and cache both under it, so existing tests and the dev workflow keep working).
+- Extend the screenshot guard (`paths_under_temp`) to the new directories (config dir, cache dir, resolved documents/game folder) and make it refuse if any resolves outside temp. Add a test that fails if screenshot mode can resolve a real known folder.
+- Add a lint-style test: no production code path reads config/cache/documents except through the provider (grep test for `APPDATA`, `dirs::`).
+- On the CI runner assume no PoE2 install and an arbitrary profile path; no test may assume `Documents\My Games\Path of Exile 2` exists.
 
-### 23. Style name collisions with reserved names
-`hidden`, `unchanged`, `kite` and the tier letters are referenced by compiled logic. Reject new styles that shadow them (case-insensitively), see #9.
+**Warning signs:**
+`%APPDATA%\FerrisFilter` appears after `cargo test`; tests pass locally but differ in CI; screenshot run changes the author's live files.
 
-### 24. Crate name and binary naming
-Carried over from the v0.4 guard: do not name anything `overlay` in a way that triggers egui #5512 if a new crate or binary is added for the parser.
+**Phase to address:** Config relocation phase (provider + guard first, before any feature uses the new dirs). Game-folder picker phase reuses it.
 
-## Phase-Specific Warnings
+---
 
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| Foundation: path resolution | CWD-relative paths multiply with each new file (#15) | One path-resolver function, exe-dir anchor, show resolved paths |
-| Lossless parser | Rebuild-from-AST, EOL/BOM, `#` in quotes, unknown keywords (#1-#5, #18, #21) | Trivia-preserving tree, per-line EOL, round-trip property test as exit gate, `.gitattributes -text` |
-| Edit model | Spacing/case normalization, `Continue`, stable block IDs (#4, #6) | Span-based mutation, `Continue` as a flag, ID not index |
-| Store migration (drop dynamic.json) | Economy refresh clobbering edits, destructive reset, OneDrive writes (#7, #19, #20) | Fenced economy region, backups, same-dir temp file |
-| Styles config | `artifact_guard` regression, rename/delete orphaning, HashMap order (#8, #9, #23) | Equality test vs hardcoded struct before deleting it, immutable names, ordered maps |
-| Config tab | Invalid tiers mid-typing, two-file Apply, external edits (#10, #11) | Buffer vs value, `ValidatedTiers` as single validator, all-or-nothing writes, mtime check |
-| Overlay UI scale | 460-block immediate-mode lists, generated blocks looking editable (#16, #17) | Cached summaries, virtualized rows, read-only economy row |
-| Single instance | Mutex scope, dropped handle, signaling a hidden window, hotkey gate, hung first instance (#12-#14) | Local mutex held in `main`, registered message or named event plus `request_repaint`, bypass the foreground gate, timeout message |
+### Pitfall 5: Migrating the author's (and v0.6 users') live app-root files
 
-## Research flags
+**What goes wrong:**
+Today `styles.json`, `tiers.json`, `prices.json`, `ff-settings.json` live beside the exe/repo root, and the app root is located by walking up to `styles-default.json`. After the change: (a) the author's edited `styles.json`/`tiers.json` are "lost" because the new location is empty and defaults are embedded, silently resetting their palette; (b) an auto-migration that moves or deletes the old files destroys the only copy; (c) running the dev build from the repo (`cargo run`) now reads the real `%APPDATA%` instead of the repo copies, mixing dev and installed state; (d) the old walk-up marker (`styles-default.json` beside the exe) no longer exists in an installed layout, so `resolve_from` returns `NotFound` or latches onto an unrelated ancestor; (e) `ff-settings.json` holds a game-folder filter name relative to the old game folder assumption, now must coexist with a new game-folder field.
 
-- Parser phase: needs a design spike on the trivia model and on whether commented-out blocks are enabled-able in v0.5. The sample proves they exist in volume (`#Show  # # $type->...`).
-- Store migration: needs a decision on the economy fence for foreign files (inject, or leave alone).
-- Single instance: standard Win32 patterns, unlikely to need research beyond a manual test matrix.
-- Not verified: NeverSink/FilterBlade variants other than the one sample (for example `Import` lines, `Minimal`, mixed EOL). Treat as LOW confidence and cover through the opaque-line fallback.
+**How to avoid:**
+- One-time, copy-only migration: if the new config dir has no `styles.json`/`tiers.json`/`ff-settings.json` and a legacy app-root copy exists (legacy resolution = old `FERRISFILTER_HOME` / walk-up / cwd), copy it, leave the original untouched, record a `migrated_from` note, and say so once in the status line. Never overwrite existing new-location files. Never delete legacy files.
+- Keep ids intact: files with ids must round-trip byte-identically (existing guarantee); migration copies bytes, it does not reparse and rewrite.
+- Prices cache is regenerable: do not migrate `prices.json`; just resync (but see Pitfall 9 on stale league).
+- Define the dev story explicitly: repo runs set `FERRISFILTER_HOME=<repo>` (a `.cargo/config.toml` `[env]` entry or documented), keeping the existing "Development warning" true.
+- Remove the `styles-default.json` app-root marker semantics from `paths.rs`; defaults come from `include_str!`. Keep a compatibility read path only for the migration.
+- Unknown-key preservation in `ff-settings.json` must survive the move (existing guarantee); add a test with an old-format file.
+- Test on the author's real files (copy to a temp home) before release.
+
+**Warning signs:**
+First launch after upgrade shows default colours; `FerrisFilter` folder created empty; migration test uses synthetic files only.
+
+**Phase to address:** Config relocation phase (migration is its own task with a real-file fixture).
+
+---
+
+### Pitfall 6: Embedded defaults drift from the committed fixtures and `artifact_guard`
+
+**What goes wrong:**
+`styles-default.json` / `tiers-default.json` are read from disk by tests and `artifact_guard` (in `tests/cli_generate.rs`) and are the app-root marker. Embedding them with `include_str!` while tests keep reading the file path creates two sources that can diverge (e.g. someone adds a second copy under `assets/`). The style rework (no custom sounds, revised built-ins) changes the generated filter, so `tests/fixtures/seed-universal.filter` and snapshots must be re-baselined; doing it piecemeal across phases triggers repeated churn, and a half-done rework can leave `generate` output and the economy section disagreeing about `uwu.mp3`/`CustomAlertSound`. `CLAUDE.md` also documents `CustomAlertSound "uwu.mp3"` in the S/A tiers and the `assets/uwu.mp3` requirement in many places.
+
+**How to avoid:**
+- Single source: keep the repo-root `styles-default.json` and embed that exact file with `include_str!`; tests and runtime then read the same bytes. Add a test asserting the embedded string equals the file (cheap guard).
+- Land the style rework in one phase and re-baseline fixtures once, deliberately, as the last emitter-affecting task (precedent: v0.3 "one consolidated fixture re-baseline").
+- Treat `generate` (reads beside the inputs, uses `-default` fallback) and the overlay differently only in resolution, not content.
+- Sweep docs/tests for `uwu.mp3` and `CustomAlertSound`; keep the custom-sound capability in the editor (users still may pick folder sounds) but not in built-ins. Check the sound validation tests that reference built-in custom sounds.
+- Resist the temptation to edit `styles-default.json` for strictness reasons; strictness only changes the live `styles.json` visibility, never defaults.
+
+**Warning signs:**
+`artifact_guard` diff after an unrelated change; two `styles-default.json` files in the tree; `grep uwu` still hits `styles-default.json` or tests.
+
+**Phase to address:** Style rework phase (must precede or be coordinated with Strictness Selector); config relocation phase owns embedding.
+
+---
+
+### Pitfall 7: Strictness Selector derived-state edge cases
+
+**What goes wrong:**
+The selection is derived from S-F built-in visibility (`Show`/`Hide` `action`), with seven modes (Custom + hide nothing, F, E-F, D-F, C-F, B-F). Failure modes: (a) the matcher treats "F hidden only" the same as the `hidden` required style or confuses the `F` style (Show action, font 25) with the `hidden` style; (b) a user who hid only `S` or a non-suffix set sees Custom, but clicking a preset overwrites their hand-chosen visibility without a warning; (c) the preset also flips nothing about custom styles or rules that carry their own Hide; (d) clicking a preset marks the CONFIG tab as edited (` *`) but "Custom" has no defined click effect (should it revert to the last custom state? do nothing?); (e) Revert/Apply/Discard interplay: preset click is an in-memory style edit that must go through the same all-or-none Apply and undo as a switch toggle; (f) economy tier blocks for hidden tiers become `Hide` blocks, and the generated economy for a hidden tier S must not be possible via presets, but is via hand edit; (g) it silently changes `generate` output only through `styles.json`, so the byte-for-byte fixture baseline must use defaults (hide nothing).
+
+**How to avoid:**
+- Implement as a pure function `strictness_from_styles(&Styles) -> Mode` and `apply_mode(&mut Styles, Mode)` with unit tests for all 7 modes plus each non-suffix pattern, and property-style test: apply_mode then derive is identity for the six presets.
+- Define Custom click: no-op (it is a state, not an action), tooltip says so; or have it restore the pre-preset snapshot. Pick one in the plan.
+- Only touch the `action` of the nine required built-ins S, A, B, C, D, E, F by id (`builtin:S` ...), not by name, and never `unchanged`, `hidden`, `Recycle`, `kite`, `exceptional`.
+- Show a tooltip on each button naming exactly which tiers it hides. Do not add a text wall (overlay UI is intentionally not texty).
+- Tests: preset change is one revertible edit; Apply writes `styles.json` with the existing byte-stable formatting; rules styled with S-F update on Apply (existing mechanism).
+
+**Warning signs:**
+Selector shows Custom right after clicking a preset; hand edit of one switch flips to a wrong preset; fixture diff after adding the selector.
+
+**Phase to address:** Strictness Selector phase.
+
+---
+
+### Pitfall 8: Self-updater replacing a running, tray-resident exe
+
+**What goes wrong:**
+`ff` hides to the tray and keeps running; the user rarely quits it. An updater that downloads and launches the installer while `ff.exe` is running hits a locked exe (installer fails or schedules a reboot replace), or the installer succeeds but the old process keeps running (single-instance guard then makes the new launch just summon the old window). Overwriting the exe in place from within itself fails on Windows. Worse, quitting `ff` to let the installer proceed must follow the existing Quit rules (unapplied changes popup, waiting for an in-game reload).
+
+**How to avoid:**
+- Do not self-overwrite. Download the installer to a temp dir, verify, spawn it detached, then run the existing Quit path (respecting the Unapplied-changes popup; only quit after Apply or explicit discard). The installer must handle "already running" itself.
+- Installer: use Inno Setup `AppMutex` (the overlay already has a named single-instance object; expose or create a dedicated mutex) with `CloseApplications=yes`/`RestartApplications` so the old `ff.exe` is closed; add a prompt-free `/SILENT`-like flow only if tested.
+- Keep a stable installer `AppId` and install location so upgrades are in-place, shortcuts persist and Add/Remove Programs has one entry.
+- Verify the downloaded file: HTTPS only, expected asset name pattern, size > 0, and compare the SHA-256 published in the release (generate `SHA256SUMS` in CI and download it). Without signing, the checksum is the only integrity signal; note it does not defend against a compromised release account.
+- Never auto-run the installer; the requirement already says "offers to run it". Make the confirm button explicit and state the version.
+- Test the upgrade path (install v0.7.0 -> run -> update to a test v0.7.1) on a clean VM before release, with `ff` running in the tray.
+
+**Warning signs:**
+"File in use" dialog from installer; after update the About tab still shows the old version; two Start menu entries; update flow leaves the tray icon of the old process.
+
+**Phase to address:** Updater phase (after installer phase exists so both can be tested together).
+
+---
+
+### Pitfall 9: poe.ninja league list instability (the `indexed` flag problem) leaks into the picker
+
+**What goes wrong:**
+The pinned `OVERLAY_LEAGUE` exists because `indexed` flips between leagues. Replacing the pin with a picker populated from poe.ninja can: (a) default-select the outgoing league during a transition; (b) list leagues with no PoE2 economy data (empty price sets that look like a successful sync); (c) persist a league name that disappears at league end, so every later sync fails with "no such league", or worse a cached `prices.json` for last league is silently used; (d) offer SSF/hardcore/Standard variants with confusing names; (e) the list fetch failing leaves the picker empty and Sync disabled with no recovery; (f) league + price source choices interact: "fallback prices" is exclusive with Sync, and tier cutoffs edited in CONFIG already have no effect with fallback (documented debt).
+
+**How to avoid:**
+- Default = persisted choice if still in the fetched list; else pick by an explicit rule (newest non-Standard softcore trade league, not by `indexed` alone); never silently change a persisted league: show "league X is no longer available" and require a pick.
+- Record the league in `prices.json` (already done) and show a mismatch between picker and last-synced league in the status line/economy panel.
+- Treat a sync that returns an empty/very small item set as failure (the lenient parser makes success likely). Keep failing loudly, as the pin did.
+- Cache the league list (short TTL) so an offline start still offers the persisted league; handle timeouts without blocking the UI thread (existing worker-thread pattern).
+- Price source toggle is stored; Sync disabled with a clear tooltip when fallback is selected; Apply with fallback must say so in the status line (the deferred "surface `price_source`" debt becomes user-facing now; do it here).
+- Network layer: keep `reqwest` + rustls ring (existing); set a real `User-Agent`; sensible timeouts.
+
+**Warning signs:**
+Sync "succeeds" with few items; picker lists a league you cannot sync; post-league-end Sync errors on first launch.
+
+**Phase to address:** League/price source phase. Needs a short live-API spike at phase start (`needs research`).
+
+---
+
+### Pitfall 10: GitHub Releases API: rate limits, prereleases, drafts, assets
+
+**What goes wrong:**
+Unauthenticated GitHub API calls are limited per IP (60/hour, MEDIUM confidence, verify); shared IPs (campus, VPN, CGNAT) hit 403/429 fast. Requests without a `User-Agent` are rejected. `/releases/latest` excludes prereleases and drafts, so an `-rc` release is never offered (fine) but a beta tester on a prerelease is never told about newer prereleases. A newer release whose installer asset is not yet uploaded (workflow still running) is offered but has no asset. Asset name matching by substring picks the zip instead of the installer. Parsing errors on an unexpected JSON shape produce a crash on the UI thread.
+
+**How to avoid:**
+- Only check on explicit click (as specified, About tab), never at startup; cache the last result for the session; treat 403/429 as "could not check, try later" with the reset time, not as an error dialog.
+- Use `https://api.github.com/repos/<owner>/<repo>/releases/latest` with `User-Agent: FerrisFilter/<version>` and `Accept: application/vnd.github+json`; ignore `draft`/`prerelease` explicitly; require the expected installer asset (`FerrisFilter-<version>-setup.exe`) and the checksums asset; if absent say "release is still being published".
+- Workflow: create the release as a draft, upload all assets, publish last, so `latest` never points at an incomplete release.
+- Repository link comes from build info; make sure it points at the public repo and the repo is public before the tag; a private repo makes every unauthenticated check 404.
+- Keep the HTTP code in a function with the transport injectable so tests use canned JSON (rate-limited, no assets, prerelease first, malformed).
+
+**Warning signs:**
+"Up to date" when a newer release exists (prerelease filtering, wrong tag compare); 404 in testing before the repo is public.
+
+**Phase to address:** Updater phase.
+
+---
+
+### Pitfall 11: Unsigned Rust GUI exe and installer: SmartScreen and antivirus false positives
+
+**What goes wrong:**
+A new unsigned installer from an unknown publisher triggers the SmartScreen "Windows protected your PC" screen (stated out of scope but still the first user experience), and unsigned Rust executables that register a global hotkey, send synthetic keystrokes (`SendInput`), touch the clipboard, enumerate windows by process name, and download and run an installer are heuristic bait for antivirus (Defender and third-party engines) and some Rust-built binaries are flagged more often than average (MEDIUM, community reports). A self-updater that downloads an exe and runs it looks like a dropper.
+
+**How to avoid:**
+- Be honest in README and release notes: tell users about the SmartScreen "More info -> Run anyway" step, give the SHA-256, and state that the project is open source with CI-built artifacts. Keep the Out of Scope decision, but document it.
+- Build artifacts only in public GitHub Actions from the tag (no locally built uploads) so provenance is verifiable; consider GitHub artifact attestations (check availability; LOW confidence).
+- Reduce heuristic triggers: `strip`/`lto` are fine but avoid UPX packing (strongly raises detection); embed a Windows resource with product name, version, company and icon (via `winres`/`embed-resource`); add an application manifest (DPI awareness already set at runtime; a manifest also avoids compat shims).
+- Submit the release exes to Microsoft's false-positive portal and VirusTotal after each release and note results; budget time for it.
+- Updater: HTTPS-only fixed repo URL, no arbitrary URL from the response (derive from the asset `browser_download_url` host check `github.com`/`githubusercontent`), checksum check, user confirmation.
+
+**Warning signs:**
+Defender quarantines the zip on first download; VirusTotal shows more than a couple of generic ML detections; users report the installer vanishing.
+
+**Phase to address:** Installer phase (resources/manifest), Release pipeline phase (provenance, checksums), Release Review (docs wording).
+
+---
+
+### Pitfall 12: Installer scope, uninstall behaviour and per-user config
+
+**What goes wrong:**
+(a) Installing to Program Files needs elevation, and then the `ff` process (user level) and the game must "run at the same privilege level" or the in-game reload silently fails; an installer that launches `ff` elevated at the end of setup (the default "Run after install" checkbox from an elevated installer) starts an elevated overlay that can no longer be seen at same level... or the reverse. (b) Uninstall deletes `%APPDATA%\FerrisFilter` (users lose their styles) or leaves it forever with no mention; deleting the game-folder filter or `.ffbak` would be catastrophic. (c) Start menu shortcut and "Run at startup" confusion; a tray app that is never quit blocks uninstall. (d) No upgrade-in-place identity, producing duplicates. (e) The zip portable distribution has no config location story (it must use the same `%APPDATA%` unless `FERRISFILTER_HOME` is set or a `portable` marker is present).
+
+**How to avoid:**
+- Prefer a per-user install (Inno Setup `PrivilegesRequired=lowest`, install under `{localappdata}\Programs\FerrisFilter`) so no elevation, matches the user-level game and avoids the elevated-child problem; launch `ff` after install with `runasoriginaluser`.
+- Uninstall removes only the installed program directory and shortcuts. Never touch `%APPDATA%\FerrisFilter`, `%LOCALAPPDATA%` cache (optional prompt "also remove settings?" default No is acceptable), and never anything in the game folder. State this in the uninstall page.
+- Use `AppId`, `AppMutex` and `CloseApplications` (Pitfall 8). Pick Inno Setup (scriptable, easy CI via `iscc`, available on windows runners via choco; MEDIUM) unless the author prefers WiX; avoid MSI complexity for a "basic installer".
+- Zip build: document that it writes to `%APPDATA%` too, or add a documented `FERRISFILTER_HOME`/portable marker.
+- Include LICENSE and third-party notices in the installer (Pitfall 14).
+
+**Warning signs:**
+UAC prompt at install; overlay running elevated after setup; uninstall leaves `Programs\FerrisFilter` because ff is running; user config gone after reinstall.
+
+**Phase to address:** Installer phase.
+
+---
+
+### Pitfall 13: Exclusive-fullscreen and first-run experience for strangers
+
+**What goes wrong:**
+New users who run PoE2 in exclusive fullscreen see nothing when pressing `Ctrl+Shift+Z`; the app cannot detect it. The hotkey only works while the game or overlay is foreground, so pressing it on the desktop does nothing. First launch with no game folder found (non-default Documents location, Steam/Standalone differences, non-English "My Games") shows a failing state. Autostart expectations: they double-click, a tray icon appears, no window (window may start hidden?). Elevated game blocks the hotkey and reload silently.
+
+**How to avoid:**
+- First-run state (once, not a text wall): the game-folder row in CONFIG shows the resolved path with a found/not-found indicator; the status line names the exact next step ("Set windowed mode in PoE2: Options -> Graphics", via tooltip). README gets a short "Requirements" box: windowed or windowed-fullscreen, same privilege level, press `Ctrl+Shift+Z`.
+- Show the window on first launch (not tray-only) and on every launch (existing summon behaviour on second launch).
+- Game-folder picker: resolve default via `SHGetKnownFolderPath(FOLDERID_Documents)` (handles OneDrive/localized), validate that the folder exists and contains or can create filters; accept a user pick via a native folder dialog (new dependency, e.g. `rfd`; check it works with egui/eframe event loop and does not freeze the overlay) or a text field with Browse; save in settings; do not create the `My Games` tree on a guess. `ferrisfilter install`/`apply` default `--filter` still hardcode `OneDrive\Documentos`: replace with the same resolver or users with English paths break (existing code in `install.rs`, `cli.rs`, `run.rs`).
+- Keep the existing test discipline: resolver is pure with injected known-folder result.
+
+**Warning signs:**
+"I press the hotkey and nothing happens" issues; CLI help text still says `OneDrive\Documentos`; path with spaces/accents breaks `Path`-to-string conversions.
+
+**Phase to address:** Game-folder picker phase; README wording in Release Review.
+
+---
+
+### Pitfall 14: Redistributing GGG art and Fontin fonts in a public binary
+
+**What goes wrong:**
+The repo is private-ish today; making it public and shipping binaries embeds GGG-owned UI art (`assets/poe2/`, minimap atlas, edited title bar) and the Fontin fonts (exljbris, shipped with the game). `assets/README.md` records "will be replaced if GGG objects" but the license of Fontin is not stated as redistributable (Fontin is distributed by exljbris under its own terms; the free fonts have a EULA that, MEDIUM/LOW, generally allows free use but restricts redistribution of the font files themselves, so copying from the game and shipping may be a violation independent of GGG). GPL-3.0 on the source plus embedded non-GPL assets also needs a clear statement that assets are excluded. A takedown after release means rebuilding every release.
+
+**How to avoid:**
+- Decision before the first public tag, not after: check GGG's published fan-content/asset policy and Fontin's license text (read, don't assume). If Fontin redistribution is not clearly allowed, plan a replacement face (an OFL font that looks similar, or keep Fontin out and load it from the user's local game install at runtime with a fallback font) and make the skin tolerate a missing file.
+- Keep art isolated behind `skin::` so a replacement set can ship in a point release; mark the exact swap path in docs. Keep the disclaimer ("not affiliated with or endorsed by GGG") in README, installer license page and ABOUT (already there).
+- Ship `LICENSE`, `assets/README.md` provenance and third-party notices in installer and zip.
+- Mention in the release notes that art belongs to GGG.
+- The `ff-art` tool and manifest are fine (extraction is local), but ensure the release workflow does not need the game files.
+
+**Warning signs:**
+No explicit permission found in a quick search; font license mentions "embedding" restrictions; the public repo contains the whole game-art set.
+
+**Phase to address:** A short legal/provenance task in the Release pipeline phase (blocking before the tag); font fallback implementation in a skin task if needed. Likely needs research.
+
+---
+
+### Pitfall 15: In-game reload (key sending) surprises for new users
+
+**What goes wrong:**
+Existing behaviour (focus game, Enter, paste `/reloaditemfilter`, Enter) is on by default. For strangers: (a) if chat is open with text, the first Enter sends that text as a chat message; (b) it clobbers non-text clipboard content; (c) other tools' global hotkeys or keyloggers-lookalike behaviour: synthetic input is an AV heuristic (Pitfall 11) and might be construed as botting by players worrying about GGG's third-party tool policy (it sends no gameplay input, but strangers will ask); (d) a different filter than the one selected in game is reloaded; (e) elevated game drops the keys but status says `Reloaded in game`.
+
+**How to avoid:**
+- Default decision: consider shipping the toggle default **off** for first run (or ask once) since the opt-out default is author-tuned; at minimum put the clipboard/chat/privilege caveats in README and the toggle's tooltip, and name the exact keys sent.
+- Document it in the README as "sends Enter, Ctrl+V, Enter to the game window; nothing else", and link GGG's third-party policy statement after checking it.
+- Detect elevation mismatch if feasible (compare process integrity level of the game vs `ff` with `OpenProcessToken`) and change the status from "Reloaded in game" to a warning; if not feasible, keep wording hedged (already: "every key was sent").
+- Never retry; keep as is.
+
+**Warning signs:**
+Bug reports about stray chat messages; users claiming "reload does nothing" (elevation); AV reports citing keyboard hooks.
+
+**Phase to address:** Game-folder picker / first-run phase (default), Release Review (README).
+
+---
+
+### Pitfall 16: CRLF/line-ending and OS differences on the Windows runner break byte-exact tests
+
+**What goes wrong:**
+Fixtures are compared byte-for-byte (`seed-universal.filter`, parser fixtures with exact CRLF/LF). `.gitattributes` has `* text=auto`, so a CI checkout converts LF to CRLF on Windows runners when `core.autocrlf` is true; `*.filter text` makes the committed fixtures subject to conversion, so `artifact_guard` and snapshot (`insta`) tests can fail only in CI, or pass only because both sides are converted. Windows runners also have no display, no clipboard owner, and a shared session, so tests that register the global hotkey, create the named single-instance mutex, or touch the clipboard may fail or leak across tests, and parallel tests sharing a named object collide.
+
+**How to avoid:**
+- Make the test platform explicit: the release workflow runs the suite on `windows-latest` (the shipped target) and compare byte output with `text eol=lf` for fixtures that `generate` compares (set `*.filter text eol=lf` for non-parser fixtures; parser fixtures already `-text`). Run the suite once on the author's machine and once in CI from a clean clone before the first tag.
+- Tests touching OS singletons (mutex name, hotkey, clipboard) are `#[ignore]`d or use unique per-test names (debug builds already use a separate instance name); confirm none run in CI by default or that they pass headless.
+- Locally, `cargo test` while `ff.exe` runs: the linker cannot overwrite `target\debug\ff.exe` (existing note: use `CARGO_TARGET_DIR`); in CI this does not happen, but the release job must not start the built exe as a smoke test and then try to overwrite it. Smoke-test the installer by installing to a temp dir with `/VERYSILENT /DIR=...` and then uninstalling.
+- Use `--test-threads` defaults but isolate any test that sets process env (env vars are process-global; `USERPROFILE`/`APPDATA` changes race with other tests). Prefer the injected provider (Pitfall 4).
+
+**Warning signs:**
+Snapshot diffs that show only `\r`; tests flaky only in CI; "Access is denied" when copying `ff.exe`.
+
+**Phase to address:** Release pipeline phase (first green CI run on a throwaway branch/tag before relying on it).
+
+---
+
+## Technical Debt Patterns
+
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Keep `rust-toolchain.toml` floating nightly in release CI | Zero config | Release breaks or changes on tag day | Never for releases; pin a dated nightly |
+| `dirs` crate called directly in many modules | Fast to write | Untestable, breaks env-var isolation and screenshot guard | Never; one provider module |
+| Updater overwrites `ff.exe` in place | No installer needed | Locked file, partial writes, AV flags | Never |
+| Skip checksum file in release | Simpler workflow | No integrity signal for unsigned downloads | Never; trivial to add |
+| Auto-delete legacy app-root files after migration | Tidy | Loses author's only copy if migration has a bug | Never in v0.7; revisit later |
+| Hardcode `releases/latest` + one asset name | Quick | Breaks when asset naming changes (zip vs setup) | OK if tested by canned-JSON unit tests |
+| Embed defaults by copying JSON into a Rust const | Avoids `include_str!` path | Drift from `styles-default.json` and fixtures | Never |
+| Ship Fontin/GGG art without checking terms | Avoids delay | Takedown forces re-release | Only if the author accepts the risk knowingly, documented |
+| Leave `--filter`/`--dest` defaults at `OneDrive\Documentos` | No CLI change | Wrong for every other user | Never; reuse the known-folder resolver |
+
+## Integration Gotchas
+
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| GitHub Actions | Default `GITHUB_TOKEN` lacks write; release step 403s | `permissions: contents: write` on the release job only; upload with `gh release` or `softprops/action-gh-release` |
+| GitHub Actions | Tag trigger `v*` also fires for `v0.7-rc1` or odd tags | Validate tag shape and version match first; mark rc tags prerelease |
+| GitHub Releases API | No `User-Agent`; treats 403 as hard error; ignores prerelease/draft flags | Send UA, handle rate-limit as soft failure, filter draft/prerelease |
+| poe.ninja leagues | Trusting `indexed` or list order; assuming list is stable | Persisted choice, explicit default rule, empty-result = failure |
+| Windows known folders | `std::env::var("USERPROFILE").join("Documents")` | `SHGetKnownFolderPath` (or crate using it) behind an injectable provider |
+| Installer (Inno) | Install to Program Files, elevate, leave `ff` running | Per-user install, `AppMutex` + `CloseApplications`, stable `AppId` |
+| Windows Defender / SmartScreen | Assuming "out of scope" means no user comms | README note, checksums, FP submissions, public CI provenance |
+| Existing `ff-settings.json` | Rewriting known keys only and dropping unknown | Keep the "unknown keys preserved" guarantee through the move; test with old file |
+| Existing single-instance + tray Quit | Updater kills the process | Use the app's Quit path including Unapplied-changes popup |
+
+## Performance Traps
+
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Network call (league list, update check) on the UI thread | Overlay freezes over the game | Worker thread + channel as Sync already does; timeouts of a few seconds | Any slow/offline network |
+| League list fetched every frame/open of the Economy tab | Rate limiting, jank | Fetch on explicit refresh and first open, cache for the session | Immediately with repaint loops |
+| Installer download without progress/cancel | UI appears hung on slow links | Stream to temp file with progress and cancel | Downloads of several MB on slow connections |
+| Release exe growth from embedded art + defaults | Large download, slower AV scan | Already ~0.5 MB atlas; check `cargo bloat` once, `opt-level`/`lto`/`strip` | Not a scale issue; matters for AV heuristics |
+
+## Security Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Updater runs a downloaded exe without verification | Supply-chain/MITM or account-compromise executes arbitrary code | HTTPS, fixed repo, host allowlist on download URL, SHA-256 check, explicit user confirm, temp dir with unique name |
+| Download URL taken verbatim from API JSON | Redirect to attacker host if response tampered | Validate host and expected asset name; do not follow redirects off GitHub CDN hosts |
+| Predictable temp installer path | Another local process swaps the file | Per-run random temp dir, verify hash after write and before run |
+| Release notes/changelog text rendered unfiltered | Odd content in UI | Show plain text only, truncated |
+| `ff-settings.json` game folder path joined unvalidated | Path traversal when picker adds free paths | Keep the bare-filename validation for filter names; canonicalize and require directory for the game folder |
+| Tokens or credentials in the baked `origin` URL | Leaks into the shipped binary | Strip userinfo in `web_url`; assert in CI |
+| Committing a signing/installer secret later | Leakage | None needed now (unsigned); keep it out of scope |
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Strictness row text-heavy (descriptions of each preset) | Clutter, contradicts the "not texty" UI preference | Seven buttons, tooltips only; names carry the meaning |
+| Picker changes silently overwrite hand-tuned style visibility | User loses custom Hide setup | Custom state clearly shown; presets are in-memory edits that Revert undoes |
+| Update check shows raw errors (HTTP 403) | Looks broken | One status-line message: "Could not check (rate limited), try again later" |
+| Fallback prices selected but Economy tab still looks live | Wrong expectations at league start | Visible price source in status line; Sync greyed with tooltip |
+| Game folder not found shows an empty Rules tab | Dead end on first run | Config tab opens with the game-folder row focused and a clear status line |
+| Install finishes with no visible window | "Did it work?" | Launch window on first run, tray tooltip names hotkey |
+| Uninstall removes config without asking | Lost customizations | Keep config; offer opt-in removal |
+
+## "Looks Done But Isn't" Checklist
+
+- [ ] **Release workflow:** often missing tag-vs-Cargo-version check, `--locked`, draft-then-publish, checksum asset — verify with a throwaway `v0.7.0-rc.1` tag.
+- [ ] **Release notes:** often an empty or whole-file CHANGELOG body — verify the extracted section equals the `## [0.7.0]` text only.
+- [ ] **Installer:** often leaves a running `ff` unhandled — verify install over a running tray instance, upgrade over the previous version, and uninstall; confirm config under `%APPDATA%\FerrisFilter` survives.
+- [ ] **Config relocation:** often tested only with synthetic files — verify with a copy of the author's real `styles.json`/`tiers.json`/`ff-settings.json`, byte-identical after migration, originals untouched.
+- [ ] **Isolation:** `cargo test` and `--screenshot` leave `%APPDATA%`, `%LOCALAPPDATA%` and Documents untouched — verify by listing them before and after.
+- [ ] **Embedded defaults:** exe works from an empty folder with no `styles-default.json` beside it — verify by running the release exe from a temp dir with `FERRISFILTER_HOME` unset.
+- [ ] **CLI defaults:** `install`/`apply` no longer say `OneDrive\Documentos` — grep help text and defaults.
+- [ ] **Game folder picker:** works with OneDrive-redirected, localized and non-ASCII paths — test with at least one.
+- [ ] **Strictness:** all seven states round-trip; hand edit shows Custom; Revert and Apply behave like other CONFIG edits.
+- [ ] **Style rework:** no `CustomAlertSound`/`uwu.mp3` in `styles-default.json`, fixtures re-baselined once, `CLAUDE.md` tables updated.
+- [ ] **League picker:** persisted league that vanished is handled; empty sync result is an error.
+- [ ] **Updater:** tested against canned JSON for rate limit, prerelease, missing asset, newer/older/equal/dev-suffix versions.
+- [ ] **Public repo:** license files, asset provenance, and no personal paths/emails or `reference-old-filters` content in the tree or release artifacts.
+- [ ] **Version surfaces:** Cargo, tag, installer, ABOUT and CHANGELOG all show the same version.
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Wrong tag/version mismatch published | LOW | Delete the release and tag, fix, retag (before anyone downloads); otherwise cut a patch version |
+| Nightly broke the tag build | LOW | Pin a dated nightly, rerun with `workflow_dispatch` on the tag |
+| Migration lost the author's styles | LOW if originals kept | Copy back from the legacy location (migration never deletes) |
+| Tests wrote to real `%APPDATA%` | MEDIUM | Restore from legacy copies; add guard test; delete stray files |
+| Updater bricked an install | MEDIUM | Document manual reinstall from the Releases page; keep older installers available |
+| AV/SmartScreen flags a release | MEDIUM | Submit FP report, mention in release notes, re-release only if packaging changed |
+| GGG/Fontin takedown request | HIGH | Swap art set/font behind `skin::`, ship patch release, rewrite git history only if asked |
+| Wrong league defaulted/stale prices | LOW | Re-sync with the right league; add the mismatch warning |
+
+## Pitfall-to-Phase Mapping
+
+Suggested phase ordering implied by dependencies: path provider and embedded defaults first (everything else reads config), then style rework, strictness, game-folder picker, league/price source, release pipeline and installer, updater last (needs installer and published asset names), Release Review.
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| 1 Tag/version/CHANGELOG mismatch | Release pipeline (+ updater, Release Review) | Workflow fails on mismatch in dry run; updater unit tests for `0.7` vs `0.7.0` |
+| 2 Floating nightly | Release pipeline | Dated nightly in `rust-toolchain.toml`; rerun of the same tag yields same result |
+| 3 `git describe` / dirty in CI | Release pipeline | Built exe version equals tag; ABOUT link has no credentials |
+| 4 Env-var tests vs known folders | Config relocation (first) | No real-profile writes after tests/screenshot; guard test |
+| 5 Migration of live files | Config relocation | Real-file migration test, originals untouched |
+| 6 Embedded defaults vs fixtures | Config relocation + Style rework | `include_str!` equality test; single fixture re-baseline |
+| 7 Strictness derivation | Strictness Selector | Pure-function tests for all modes and non-suffix sets |
+| 8 Updater and running exe | Installer + Updater | Upgrade over running tray instance on a clean VM |
+| 9 League list instability | League/price source (spike first) | Vanished-league and empty-sync tests; manual check across a league transition if available |
+| 10 GitHub API limits/prereleases | Updater | Canned-JSON tests; draft-then-publish workflow |
+| 11 SmartScreen/AV | Installer + Release pipeline + Release Review | VirusTotal/Defender scan results recorded; README note |
+| 12 Installer scope/uninstall | Installer | Per-user install, config survives uninstall |
+| 13 Fullscreen/first-run | Game-folder picker + Release Review | Fresh-profile VM run-through |
+| 14 GGG art/Fontin redistribution | Release pipeline (blocking pre-tag task) | Written decision recorded in `assets/README.md` |
+| 15 Reload key sending | Game-folder picker/first-run + Release Review | Default and README wording reviewed by author |
+| 16 CRLF and runner differences | Release pipeline | First green `windows-latest` run on a throwaway branch |
+
+Phases likely needing deeper research: League/price source (live poe.ninja behaviour), Installer (Inno Setup vs WiX, mutex/close behaviour), legal/provenance of Fontin and GGG art, Updater (API behaviour, attestation options).
 
 ## Sources
 
-- Measured directly from `C:\Users\jonat\OneDrive\Documentos\My Games\Path of Exile 2\filterblade.filter` (byte counts, CRLF/tab/comment samples), HIGH confidence.
-- `C:\Users\jonat\Repositories\poe2_myfilter\CLAUDE.md` (overlay decisions, `ValidatedTiers`, fallback pair, known CWD defect), HIGH.
-- `.planning/research/_archive-pre-v0.5/PITFALLS.md` (prior pitfalls not repeated).
-- Win32 named-mutex semantics (`CreateMutexW`, `ERROR_ALREADY_EXISTS`, automatic release on process exit, `Local\` vs `Global\`) and foreground-lock rules (`AllowSetForegroundWindow`) from general Windows API knowledge, not re-verified against Microsoft docs in this session, MEDIUM.
-- Filter grammar notes: https://www.pathofexile.com/item-filter/about (documents PoE1; PoE2 differences per CLAUDE.md), MEDIUM.
+- Repository files read: `CLAUDE.md`, `.planning/PROJECT.md`, `rust-toolchain.toml`, `build.rs`, `Cargo.toml`, `src/paths.rs`, `src/overlay/screenshot.rs`, `.gitattributes`, `assets/README.md`, `README.md` credits, `git tag` (tags are `v0.2`..`v0.6`). (HIGH)
+- GitHub REST API docs (rate limits, `releases/latest` semantics, User-Agent requirement) — from training knowledge, not re-fetched in this pass. (MEDIUM; verify at phase start)
+- Inno Setup documentation (`AppMutex`, `CloseApplications`, `PrivilegesRequired`) — training knowledge. (MEDIUM)
+- Windows known-folder API behaviour (ignores `USERPROFILE` overrides; follows OneDrive Known Folder Move) — training knowledge. (MEDIUM)
+- SmartScreen/AV heuristics for unsigned Rust binaries — community reports, not verified. (LOW)
+- Fontin and GGG asset redistribution terms — not verified; must be read from primary sources. (LOW)
+
+---
+*Pitfalls research for: FerrisFilter v0.7 public release and new features*
+*Researched: 2026-10-17*

@@ -1,0 +1,2134 @@
+//! The update check behind the About tab's Check for updates button (UPD-01..03).
+//!
+//! Framework-free: no egui and no overlay types. Everything here is a pure, table-tested function
+//! (version rule, date text, checksum parsing, file hash, release JSON, response classification,
+//! and the one function that turns an outcome into its status message) plus the `UpdateHttp` seam
+//! the network code plugs into. The check runs only on a click, never at startup.
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use semver::Version;
+use serde::Deserialize;
+
+/// GitHub owner of the project's releases.
+pub const OWNER: &str = "Jonathas-Conceicao";
+/// GitHub repository of the project's releases.
+pub const REPO: &str = "ferris-filter";
+/// The one URL the check asks; no environment variable or CLI switch overrides it.
+pub const LATEST_URL: &str =
+    "https://api.github.com/repos/Jonathas-Conceicao/ferris-filter/releases/latest";
+/// Name of the checksum asset attached to every release.
+pub const SUMS_NAME: &str = "SHA256SUMS.txt";
+/// Prefix of the per-download work folder name.
+pub const WORK_PREFIX: &str = "FerrisFilter-update-";
+/// Largest accepted release JSON.
+pub const MAX_API_BYTES: u64 = 1 << 20;
+/// Largest accepted checksum file.
+pub const MAX_SUMS_BYTES: u64 = 64 << 10;
+/// Largest accepted installer download.
+pub const MAX_INSTALLER_BYTES: u64 = 200 << 20;
+/// A downloaded installer older than this is considered stale.
+pub const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+// ---------------------------------------------------------------------------------------------
+// Version rule
+// ---------------------------------------------------------------------------------------------
+
+/// The running version reduced to major.minor.patch (pre-release and build metadata dropped).
+pub fn current_base(pkg_version: &str) -> Option<Version> {
+    let v = Version::parse(pkg_version).ok()?;
+    Some(Version::new(v.major, v.minor, v.patch))
+}
+
+/// The running version as the up-to-date message names it: the package version with any build
+/// metadata dropped (a pre-release part such as `-rc.1` is kept).
+pub fn running_version(pkg_version: &str) -> Option<Version> {
+    let mut v = Version::parse(pkg_version).ok()?;
+    v.build = semver::BuildMetadata::EMPTY;
+    Some(v)
+}
+
+/// A development build (`-dev`, `-dev.N`): compared on its base version only, so the release it
+/// is built from counts as the same version.
+fn is_dev_build(v: &Version) -> bool {
+    v.pre.as_str().split('.').next() == Some("dev")
+}
+
+/// How a release tag compares with the running build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Compare {
+    Newer(Version),
+    Same,
+    Older,
+}
+
+/// Compare a release tag (one leading `v` allowed) with the running package version.
+/// A pre-release tag, or a pre-release / draft release, counts as `Older`. A running
+/// pre-release (`0.7.0-rc.1`) is older than its own final release, as in semver; a development
+/// build (`0.7.0-dev`) compares on its base version, so its own final release is `Same`.
+#[allow(clippy::result_unit_err)]
+pub fn compare_release(
+    tag: &str,
+    prerelease: bool,
+    draft: bool,
+    current: &str,
+) -> Result<Compare, ()> {
+    let raw = tag.strip_prefix('v').unwrap_or(tag);
+    let parsed = Version::parse(raw).map_err(|_| ())?;
+    let running = running_version(current).ok_or(())?;
+    let base = current_base(current).ok_or(())?;
+    if prerelease || draft || !parsed.pre.is_empty() {
+        return Ok(Compare::Older);
+    }
+    let tag_base = Version::new(parsed.major, parsed.minor, parsed.patch);
+    Ok(match tag_base.cmp(&base) {
+        std::cmp::Ordering::Greater => Compare::Newer(tag_base),
+        std::cmp::Ordering::Equal if !running.pre.is_empty() && !is_dev_build(&running) => {
+            Compare::Newer(tag_base)
+        }
+        std::cmp::Ordering::Equal => Compare::Same,
+        std::cmp::Ordering::Less => Compare::Older,
+    })
+}
+
+/// The installer file name for a validated version.
+pub fn installer_name(v: &Version) -> String {
+    format!("FerrisFilter-{v}-setup.exe")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dates
+// ---------------------------------------------------------------------------------------------
+
+/// Days since 1970-01-01 for a civil date (proleptic Gregorian).
+pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = i64::from((m + 9) % 12);
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Parse `YYYY-MM-DDTHH:MM:SSZ` (and nothing else) to unix seconds.
+pub fn parse_published(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() != 20 {
+        return None;
+    }
+    for (i, c) in b.iter().enumerate() {
+        let ok = match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            19 => *c == b'Z',
+            _ => c.is_ascii_digit(),
+        };
+        if !ok {
+            return None;
+        }
+    }
+    let num = |a: usize, z: usize| -> i64 { s[a..z].parse::<i64>().unwrap_or(-1) };
+    let (y, mo, d) = (num(0, 4), num(5, 7), num(8, 10));
+    let (h, mi, se) = (num(11, 13), num(14, 16), num(17, 19));
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h >= 24 || mi >= 60 || se >= 60 {
+        return None;
+    }
+    Some(days_from_civil(y, mo as u32, d as u32) * 86_400 + h * 3600 + mi * 60 + se)
+}
+
+/// The local `YYYY-MM-DD` date of a unix time, given the UTC offset in minutes.
+pub fn release_date_text(unix: i64, utc_offset_minutes: i32) -> String {
+    let local = (unix + i64::from(utc_offset_minutes) * 60).max(0) as u64;
+    let (year, month, day) = crate::sync::prices::days_to_ymd(local / 86_400);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+// ---------------------------------------------------------------------------------------------
+// Checksums
+// ---------------------------------------------------------------------------------------------
+
+/// The checksum file has no usable line for the requested name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SumsError {
+    Invalid,
+}
+
+/// Find the SHA-256 (lowercase hex) of `file_name` in a `sha256sum`-style text.
+pub fn parse_sums(text: &str, file_name: &str) -> Result<String, SumsError> {
+    let mut found: Option<String> = None;
+    for line in text.lines() {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let Some((hash, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let rest = rest.trim_start_matches(' ');
+        let name = rest.strip_prefix('*').unwrap_or(rest);
+        if name != file_name {
+            continue;
+        }
+        if hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err(SumsError::Invalid);
+        }
+        let hash = hash.to_ascii_lowercase();
+        match &found {
+            Some(prev) if *prev != hash => return Err(SumsError::Invalid),
+            _ => found = Some(hash),
+        }
+    }
+    found.ok_or(SumsError::Invalid)
+}
+
+// ---------------------------------------------------------------------------------------------
+// File hash
+// ---------------------------------------------------------------------------------------------
+
+/// Lowercase hex of a byte slice.
+pub fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+/// SHA-256 of a file, streamed in 64 KiB reads.
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    sha256_reader(&mut std::fs::File::open(path)?)
+}
+
+/// SHA-256 of everything `f` yields, as lowercase hex.
+fn sha256_reader(f: &mut impl Read) -> std::io::Result<String> {
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        ctx.update(&buf[..n]);
+    }
+    Ok(hex_lower(ctx.finish().as_ref()))
+}
+
+/// Why a downloaded installer failed its last check before launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallerCheck {
+    Gone,
+    Mismatch,
+}
+
+/// Re-check an installer file against its expected lowercase hex digest.
+pub fn verify_installer(path: &Path, expected_hex: &str) -> Result<(), InstallerCheck> {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return Err(InstallerCheck::Gone);
+    }
+    let actual = sha256_file(path).map_err(|_| InstallerCheck::Gone)?;
+    if actual.eq_ignore_ascii_case(expected_hex) {
+        Ok(())
+    } else {
+        Err(InstallerCheck::Mismatch)
+    }
+}
+
+/// Why the installer was not started at quit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchError {
+    /// The file failed its last check (missing or a different hash).
+    Check(InstallerCheck),
+    /// The file is there but could not be opened or read for the check (the cause).
+    Open(String),
+    /// The checked file could not be started.
+    Spawn(String),
+}
+
+/// How often a sharing violation on the locked open is retried, and the wait between tries (an
+/// antivirus or a backup agent may hold the fresh exe for a moment).
+const OPEN_RETRIES: u32 = 3;
+const OPEN_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// Start the downloaded installer, checking its SHA-256 right before: the file is opened with a
+/// handle that lets other processes read it but not write, rename or delete it, hashed through
+/// that handle, and the handle stays open until the child process has started. So the file that
+/// runs is the file that was checked.
+pub fn launch_verified_installer(path: &Path, expected_hex: &str) -> Result<(), LaunchError> {
+    launch_verified_with(path, expected_hex, spawn_installer)
+}
+
+fn launch_verified_with(
+    path: &Path,
+    expected_hex: &str,
+    spawn: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), LaunchError> {
+    launch_verified_inner(
+        path,
+        expected_hex,
+        open_read_locked,
+        OPEN_RETRY_DELAY,
+        spawn,
+    )
+}
+
+fn launch_verified_inner(
+    path: &Path,
+    expected_hex: &str,
+    open: impl FnMut(&Path) -> std::io::Result<std::fs::File>,
+    retry_delay: Duration,
+    spawn: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), LaunchError> {
+    let mut file = open_with_retry(path, open, retry_delay)?;
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(LaunchError::Check(InstallerCheck::Gone));
+    }
+    let actual = sha256_reader(&mut file).map_err(|e| LaunchError::Open(e.to_string()))?;
+    if !actual.eq_ignore_ascii_case(expected_hex) {
+        return Err(LaunchError::Check(InstallerCheck::Mismatch));
+    }
+    let started = spawn(path).map_err(LaunchError::Spawn);
+    drop(file);
+    started
+}
+
+/// Open the installer for its check. A sharing violation (another process holds the file with
+/// write or delete access) is retried [`OPEN_RETRIES`] times; a missing path, or a path that is
+/// not a file, is [`InstallerCheck::Gone`]; any other failure is reported with its cause.
+fn open_with_retry(
+    path: &Path,
+    mut open: impl FnMut(&Path) -> std::io::Result<std::fs::File>,
+    retry_delay: Duration,
+) -> Result<std::fs::File, LaunchError> {
+    let mut attempt = 0;
+    loop {
+        match open(path) {
+            Ok(file) => return Ok(file),
+            Err(e) if e.raw_os_error() == Some(32) && attempt < OPEN_RETRIES => {
+                attempt += 1;
+                std::thread::sleep(retry_delay);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(LaunchError::Check(InstallerCheck::Gone));
+            }
+            Err(e) => {
+                // Opening a folder fails with access denied on Windows: that is still "no
+                // installer there", not an open failure.
+                if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+                    return Err(LaunchError::Check(InstallerCheck::Gone));
+                }
+                return Err(LaunchError::Open(e.to_string()));
+            }
+        }
+    }
+}
+
+/// The error box text when the installer was not started at quit.
+pub fn launch_error_text(ready: &ReadyUpdate, err: &LaunchError) -> String {
+    let version = &ready.version;
+    match err {
+        LaunchError::Check(InstallerCheck::Gone) => format!(
+            "The FerrisFilter {version} installer is no longer there, so it was not started. \
+             Check for updates again."
+        ),
+        LaunchError::Check(InstallerCheck::Mismatch) => format!(
+            "The FerrisFilter {version} installer changed after it was checked and no longer \
+             matches its checksum, so it was not started. Check for updates again."
+        ),
+        LaunchError::Open(cause) => format!(
+            "Could not open the FerrisFilter {version} installer to check it ({cause}), so it \
+             was not started. It was saved to {}.",
+            ready.installer.display()
+        ),
+        LaunchError::Spawn(cause) => format!(
+            "Could not start the FerrisFilter installer: {cause}. It was saved to {}.",
+            ready.installer.display()
+        ),
+    }
+}
+
+/// Open `path` for reading while refusing writers and deleters for as long as the handle lives.
+#[cfg(windows)]
+fn open_read_locked(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_read_locked(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Release JSON
+// ---------------------------------------------------------------------------------------------
+
+/// The parts of a GitHub release this check reads.
+#[derive(Deserialize, Debug, Clone)]
+pub struct Release {
+    pub tag_name: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub assets: Vec<Asset>,
+}
+
+/// One attached file of a release.
+#[derive(Deserialize, Debug, Clone)]
+pub struct Asset {
+    pub name: String,
+    pub browser_download_url: String,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// The fully uploaded asset with exactly this name.
+pub fn find_asset<'a>(release: &'a Release, name: &str) -> Option<&'a Asset> {
+    release
+        .assets
+        .iter()
+        .find(|a| a.name == name && a.state.as_deref() == Some("uploaded"))
+}
+
+/// True only for `https://github.com/<owner>/<repo>/releases/download/<tag>/<name>` (ASCII case
+/// ignored); every other scheme, host, path or query is refused.
+pub fn asset_url_is_trusted(url: &str, tag: &str, name: &str) -> bool {
+    let expected = format!("https://github.com/{OWNER}/{REPO}/releases/download/{tag}/{name}");
+    url.eq_ignore_ascii_case(&expected)
+}
+
+// ---------------------------------------------------------------------------------------------
+// HTTP seam and classification
+// ---------------------------------------------------------------------------------------------
+
+/// A buffered GET reply.
+#[derive(Debug, Clone)]
+pub struct Reply {
+    pub status: u16,
+    pub ratelimit_remaining: Option<u64>,
+    pub retry_after: Option<u64>,
+    pub body: Vec<u8>,
+}
+
+/// A request that produced no usable reply.
+#[derive(Debug)]
+pub enum FetchError {
+    Transport(String),
+    TooLarge,
+    Sink(std::io::Error),
+}
+
+/// The network seam; tests plug in a fake, the overlay plugs in the reqwest implementation.
+pub trait UpdateHttp {
+    /// GET `url` with an `Accept` header, buffering at most `max_bytes` of body.
+    fn get(&self, url: &str, accept: &str, max_bytes: u64) -> Result<Reply, FetchError>;
+    /// GET `url`, streaming the body into `sink`; returns the HTTP status.
+    fn download(
+        &self,
+        url: &str,
+        max_bytes: u64,
+        sink: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> Result<u16, FetchError>;
+}
+
+/// What the latest-release request came back as.
+#[derive(Debug, Clone)]
+pub enum LatestResponse {
+    Release(Release),
+    NoReleases,
+    RateLimited,
+    Offline,
+    BadResponse,
+}
+
+/// Sort a latest-release reply into one of the outcomes. A plain 403 is not a rate limit.
+pub fn classify_latest(r: Result<Reply, FetchError>) -> LatestResponse {
+    let Ok(reply) = r else {
+        return LatestResponse::Offline;
+    };
+    match reply.status {
+        200 => match serde_json::from_slice::<Release>(&reply.body) {
+            Ok(rel) => LatestResponse::Release(rel),
+            Err(_) => LatestResponse::BadResponse,
+        },
+        404 => LatestResponse::NoReleases,
+        429 => LatestResponse::RateLimited,
+        403 if reply.ratelimit_remaining == Some(0) || reply.retry_after.is_some() => {
+            LatestResponse::RateLimited
+        }
+        _ => LatestResponse::BadResponse,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Outcomes and messages
+// ---------------------------------------------------------------------------------------------
+
+/// A verified installer waiting to be launched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadyUpdate {
+    pub version: String,
+    pub published_unix: Option<i64>,
+    pub installer: PathBuf,
+    pub sha256: String,
+}
+
+/// Why a check or download did not end well.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    Offline,
+    RateLimited,
+    NoInstaller { version: String },
+    NoSums { version: String },
+    BadSums { version: String },
+    Mismatch { version: String },
+    DownloadFailed { version: String },
+    InstallerGone { version: String },
+    BadResponse,
+}
+
+/// The end of one check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckResult {
+    UpToDate {
+        version: String,
+        released: Option<i64>,
+    },
+    Ready(ReadyUpdate),
+    Failed(Failure),
+}
+
+/// Framework-free mirror of the skin's status kinds; the overlay maps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateKind {
+    Info,
+    Ok,
+    Warning,
+    Error,
+}
+
+/// The status text and kind for an outcome.
+pub fn message_for(result: &CheckResult, utc_offset_minutes: i32) -> (String, UpdateKind) {
+    let date = |u: Option<i64>| u.map(|u| release_date_text(u, utc_offset_minutes));
+    match result {
+        CheckResult::UpToDate { version, released } => match date(*released) {
+            Some(d) => (
+                format!("Up to date ({version}, released {d})"),
+                UpdateKind::Ok,
+            ),
+            None => (format!("Up to date ({version})"), UpdateKind::Ok),
+        },
+        CheckResult::Ready(r) => match date(r.published_unix) {
+            Some(d) => (
+                format!("{} available, released {d}", r.version),
+                UpdateKind::Info,
+            ),
+            None => (format!("{} available", r.version), UpdateKind::Info),
+        },
+        CheckResult::Failed(f) => match f {
+            Failure::Offline => (
+                "Could not reach GitHub. Check your connection and try again.".to_string(),
+                UpdateKind::Warning,
+            ),
+            Failure::RateLimited => (
+                "GitHub is limiting requests. Try again in a few minutes.".to_string(),
+                UpdateKind::Warning,
+            ),
+            Failure::NoInstaller { version } => (
+                format!(
+                    "Release {version} has no installer. Download it from the repository page."
+                ),
+                UpdateKind::Error,
+            ),
+            Failure::NoSums { version } => (
+                format!("Release {version} has no checksum file, so it was not downloaded."),
+                UpdateKind::Error,
+            ),
+            Failure::BadSums { version } => (
+                format!("The checksum file for {version} is not valid, so it was not downloaded."),
+                UpdateKind::Error,
+            ),
+            Failure::Mismatch { version } => (
+                format!("The download of {version} did not match its checksum and was deleted."),
+                UpdateKind::Error,
+            ),
+            Failure::DownloadFailed { version } => (
+                format!("Could not download {version}. Try again."),
+                UpdateKind::Error,
+            ),
+            Failure::InstallerGone { version } => (
+                format!("The installer for {version} is no longer there. Check for updates again."),
+                UpdateKind::Error,
+            ),
+            Failure::BadResponse => (
+                "Could not read the latest version from GitHub.".to_string(),
+                UpdateKind::Error,
+            ),
+        },
+    }
+}
+
+/// Status while the check runs.
+pub fn checking_message() -> (String, UpdateKind) {
+    ("Checking for updates…".to_string(), UpdateKind::Info)
+}
+
+/// Status while the installer downloads.
+pub fn downloading_message(version: &str) -> (String, UpdateKind) {
+    (format!("Downloading {version}…"), UpdateKind::Info)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Check and download
+// ---------------------------------------------------------------------------------------------
+
+/// Best-effort removal of `FerrisFilter-update-*` directories not modified for `STALE_AFTER`.
+/// Files, symlinks, junctions and directories with another prefix are never touched.
+pub fn sweep_stale(tmp_root: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(tmp_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(WORK_PREFIX) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.file_type().is_dir() || meta.file_type().is_symlink() {
+            continue;
+        }
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if now
+            .duration_since(modified)
+            .is_ok_and(|age| age > STALE_AFTER)
+        {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// The work folder of a running check, shared between the worker and the shutdown that may
+/// delete it. Both sides change it only under its lock, so a shutdown either sees the folder or
+/// stops the worker before it creates one.
+#[derive(Debug, Default)]
+pub struct WorkSlot {
+    /// The folder the worker created, once it exists.
+    pub dir: Option<PathBuf>,
+    /// Set at shutdown: from then on the worker creates no folder and stops its download (its
+    /// own cleanup then deletes the folder it made).
+    pub cancelled: bool,
+}
+
+fn set_slot(slot: &std::sync::Mutex<WorkSlot>, value: Option<PathBuf>) {
+    if let Ok(mut g) = slot.lock() {
+        g.dir = value;
+    }
+}
+
+/// Whether shutdown has stopped the check. A poisoned lock counts as stopped.
+fn is_cancelled(slot: &std::sync::Mutex<WorkSlot>) -> bool {
+    slot.lock().map(|g| g.cancelled).unwrap_or(true)
+}
+
+/// Run one update check: ask GitHub for the latest release and, when it is newer, download its
+/// installer into a fresh folder under `tmp_root` and verify it against `SHA256SUMS.txt`.
+/// Every failure deletes the folder; `work_dir` holds the folder only while it exists.
+pub fn run_check(
+    http: &dyn UpdateHttp,
+    current: &str,
+    tmp_root: &Path,
+    now: std::time::SystemTime,
+    work_dir: &std::sync::Mutex<WorkSlot>,
+    on_downloading: &mut dyn FnMut(&str),
+) -> CheckResult {
+    use std::io::Write;
+
+    sweep_stale(tmp_root, now);
+    set_slot(work_dir, None);
+
+    let release =
+        match classify_latest(http.get(LATEST_URL, "application/vnd.github+json", MAX_API_BYTES)) {
+            LatestResponse::Release(r) => r,
+            LatestResponse::NoReleases => {
+                return match running_version(current) {
+                    Some(b) => CheckResult::UpToDate {
+                        version: b.to_string(),
+                        released: None,
+                    },
+                    None => CheckResult::Failed(Failure::BadResponse),
+                };
+            }
+            LatestResponse::RateLimited => return CheckResult::Failed(Failure::RateLimited),
+            LatestResponse::Offline => return CheckResult::Failed(Failure::Offline),
+            LatestResponse::BadResponse => return CheckResult::Failed(Failure::BadResponse),
+        };
+
+    let Some(running) = running_version(current) else {
+        return CheckResult::Failed(Failure::BadResponse);
+    };
+    let v = match compare_release(
+        &release.tag_name,
+        release.prerelease,
+        release.draft,
+        current,
+    ) {
+        Err(()) => return CheckResult::Failed(Failure::BadResponse),
+        Ok(Compare::Older) => {
+            return CheckResult::UpToDate {
+                version: running.to_string(),
+                released: None,
+            };
+        }
+        Ok(Compare::Same) => {
+            return CheckResult::UpToDate {
+                version: running.to_string(),
+                released: release.published_at.as_deref().and_then(parse_published),
+            };
+        }
+        Ok(Compare::Newer(v)) => v,
+    };
+    let version = v.to_string();
+    let name = installer_name(&v);
+    let failed = |f: fn(String) -> Failure| CheckResult::Failed(f(version.clone()));
+
+    let Some(installer) = find_asset(&release, &name) else {
+        return failed(|version| Failure::NoInstaller { version });
+    };
+    let Some(sums) = find_asset(&release, SUMS_NAME) else {
+        return failed(|version| Failure::NoSums { version });
+    };
+    if !asset_url_is_trusted(&installer.browser_download_url, &release.tag_name, &name)
+        || !asset_url_is_trusted(&sums.browser_download_url, &release.tag_name, SUMS_NAME)
+    {
+        return CheckResult::Failed(Failure::BadResponse);
+    }
+    if installer.size > MAX_INSTALLER_BYTES {
+        return failed(|version| Failure::DownloadFailed { version });
+    }
+
+    on_downloading(&version);
+
+    let sums_reply = match http.get(
+        &sums.browser_download_url,
+        "application/octet-stream",
+        MAX_SUMS_BYTES,
+    ) {
+        Ok(r) if (200..300).contains(&r.status) => r,
+        _ => return failed(|version| Failure::DownloadFailed { version }),
+    };
+    let expected = match std::str::from_utf8(&sums_reply.body)
+        .ok()
+        .and_then(|t| parse_sums(t, &name).ok())
+    {
+        Some(h) => h,
+        None => return failed(|version| Failure::BadSums { version }),
+    };
+
+    // Created and published under the slot's lock: a shutdown either finds the folder or has
+    // already stopped the check, so no folder is ever left behind unseen.
+    let dir = {
+        let Ok(mut slot) = work_dir.lock() else {
+            return failed(|version| Failure::DownloadFailed { version });
+        };
+        if slot.cancelled {
+            return failed(|version| Failure::DownloadFailed { version });
+        }
+        let Ok(dir) = tempfile::Builder::new()
+            .prefix(WORK_PREFIX)
+            .tempdir_in(tmp_root)
+        else {
+            return failed(|version| Failure::DownloadFailed { version });
+        };
+        slot.dir = Some(dir.path().to_path_buf());
+        dir
+    };
+    let fail = |f: Failure| {
+        set_slot(work_dir, None);
+        CheckResult::Failed(f)
+    };
+
+    let path = dir.path().join(&name);
+    let Ok(mut file) = std::fs::File::create(&path) else {
+        return fail(Failure::DownloadFailed { version });
+    };
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let status = {
+        let mut sink = |chunk: &[u8]| -> std::io::Result<()> {
+            // Shutdown stopped the check: end the download; the folder is deleted on return.
+            if is_cancelled(work_dir) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "update check stopped at shutdown",
+                ));
+            }
+            ctx.update(chunk);
+            file.write_all(chunk)
+        };
+        http.download(
+            &installer.browser_download_url,
+            MAX_INSTALLER_BYTES,
+            &mut sink,
+        )
+    };
+    match status {
+        Ok(s) if (200..300).contains(&s) => {}
+        _ => {
+            drop(file);
+            return fail(Failure::DownloadFailed { version });
+        }
+    }
+    if file.sync_all().is_err() {
+        drop(file);
+        return fail(Failure::DownloadFailed { version });
+    }
+    drop(file);
+    if !hex_lower(ctx.finish().as_ref()).eq_ignore_ascii_case(&expected) {
+        return fail(Failure::Mismatch { version });
+    }
+
+    // Kept only while the check still runs; after a shutdown the folder goes with `dir`.
+    let kept = {
+        let Ok(mut slot) = work_dir.lock() else {
+            return CheckResult::Failed(Failure::DownloadFailed { version });
+        };
+        if slot.cancelled {
+            slot.dir = None;
+            return CheckResult::Failed(Failure::DownloadFailed { version });
+        }
+        let kept = dir.keep();
+        slot.dir = Some(kept.clone());
+        kept
+    };
+    CheckResult::Ready(ReadyUpdate {
+        version,
+        published_unix: release.published_at.as_deref().and_then(parse_published),
+        installer: kept.join(&name),
+        sha256: expected,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Production HTTP, entry point and installer spawn
+// ---------------------------------------------------------------------------------------------
+
+/// The reqwest implementation of `UpdateHttp`. Never constructed by tests.
+pub struct ReqwestUpdateHttp {
+    rt: tokio::runtime::Runtime,
+    client: reqwest::Client,
+}
+
+impl ReqwestUpdateHttp {
+    pub fn new() -> Result<Self, String> {
+        // The ring provider is required with `rustls-no-provider`; installing twice is harmless.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        // No client-wide `.timeout()`: it would bound the whole installer body.
+        let client = reqwest::Client::builder()
+            .user_agent(crate::sync::client::USER_AGENT)
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(15))
+            .read_timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Cannot build HTTP client: {e}"))?;
+        let rt =
+            tokio::runtime::Runtime::new().map_err(|e| format!("Cannot start runtime: {e}"))?;
+        Ok(Self { rt, client })
+    }
+}
+
+fn header_u64(resp: &reqwest::Response, name: &str) -> Option<u64> {
+    resp.headers()
+        .get(name)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
+impl UpdateHttp for ReqwestUpdateHttp {
+    fn get(&self, url: &str, accept: &str, max_bytes: u64) -> Result<Reply, FetchError> {
+        self.rt.block_on(async {
+            let mut req = self
+                .client
+                .get(url)
+                .header(reqwest::header::ACCEPT, accept)
+                .timeout(Duration::from_secs(30));
+            if url == LATEST_URL {
+                req = req.header("X-GitHub-Api-Version", "2022-11-28");
+            }
+            let mut resp = req
+                .send()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?;
+            let status = resp.status().as_u16();
+            let ratelimit_remaining = header_u64(&resp, "x-ratelimit-remaining");
+            let retry_after = header_u64(&resp, "retry-after");
+            let mut body = Vec::new();
+            while let Some(chunk) = resp
+                .chunk()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?
+            {
+                if (body.len() + chunk.len()) as u64 > max_bytes {
+                    return Err(FetchError::TooLarge);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(Reply {
+                status,
+                ratelimit_remaining,
+                retry_after,
+                body,
+            })
+        })
+    }
+
+    fn download(
+        &self,
+        url: &str,
+        max_bytes: u64,
+        sink: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> Result<u16, FetchError> {
+        self.rt.block_on(async {
+            let mut resp = self
+                .client
+                .get(url)
+                .header(reqwest::header::ACCEPT, "application/octet-stream")
+                .send()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?;
+            let status = resp.status().as_u16();
+            if !resp.status().is_success() {
+                return Ok(status);
+            }
+            let mut total = 0u64;
+            while let Some(chunk) = resp
+                .chunk()
+                .await
+                .map_err(|e| FetchError::Transport(e.to_string()))?
+            {
+                total += chunk.len() as u64;
+                if total > max_bytes {
+                    return Err(FetchError::TooLarge);
+                }
+                sink(&chunk).map_err(FetchError::Sink)?;
+            }
+            Ok(status)
+        })
+    }
+}
+
+/// The production check, run on the overlay's worker thread: the real GitHub, the real `%TEMP%`.
+#[cfg(not(test))]
+pub fn check_for_update_blocking(
+    work_dir: &std::sync::Mutex<WorkSlot>,
+    on_downloading: &mut dyn FnMut(&str),
+) -> CheckResult {
+    let Ok(http) = ReqwestUpdateHttp::new() else {
+        return CheckResult::Failed(Failure::Offline);
+    };
+    run_check(
+        &http,
+        env!("CARGO_PKG_VERSION"),
+        &std::env::temp_dir(),
+        std::time::SystemTime::now(),
+        work_dir,
+        on_downloading,
+    )
+}
+
+/// Test twin: unit tests never reach GitHub, so a press of Check ends offline without any I/O.
+#[cfg(test)]
+pub fn check_for_update_blocking(
+    _work_dir: &std::sync::Mutex<WorkSlot>,
+    _on_downloading: &mut dyn FnMut(&str),
+) -> CheckResult {
+    CheckResult::Failed(Failure::Offline)
+}
+
+/// Start the verified installer: a normal visible wizard, no arguments, default working
+/// directory (a cwd inside the temp folder would block its later deletion). The child is
+/// neither waited for nor killed.
+pub fn spawn_installer(path: &Path) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let mut attempt = 0;
+    loop {
+        let r = Command::new(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        match r {
+            Ok(_child) => return Ok(()),
+            // A sharing violation while an antivirus scans the fresh exe: wait and retry.
+            Err(e) if e.raw_os_error() == Some(32) && attempt < 3 => {
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            // ERROR_ELEVATION_REQUIRED: let the shell show the elevation prompt.
+            Err(e) if e.raw_os_error() == Some(740) => {
+                return crate::overlay::win::shell_execute_open(path);
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_installer_missing_path_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(spawn_installer(&dir.path().join("nope-setup.exe")).is_err());
+    }
+
+    fn installer_in(dir: &Path) -> (PathBuf, String) {
+        let path = dir.join("FerrisFilter-0.8.0-setup.exe");
+        std::fs::write(&path, b"installer bytes").unwrap();
+        let hex = sha256_file(&path).unwrap();
+        (path, hex)
+    }
+
+    #[test]
+    fn launch_starts_a_matching_installer_while_it_is_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut started = false;
+        let r = launch_verified_with(&path, &hex.to_uppercase(), |p| {
+            assert_eq!(p, path.as_path());
+            started = true;
+            // The checked file stays readable but cannot be rewritten or deleted meanwhile.
+            assert_eq!(std::fs::read(p).unwrap(), b"installer bytes");
+            #[cfg(windows)]
+            {
+                assert!(std::fs::OpenOptions::new().write(true).open(p).is_err());
+                assert!(std::fs::remove_file(p).is_err());
+            }
+            Ok(())
+        });
+        assert_eq!(r, Ok(()));
+        assert!(started);
+        // The lock ends once the child has started.
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn launch_refuses_a_changed_or_missing_installer_without_starting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        std::fs::write(&path, b"other bytes").unwrap();
+        let never = |_: &Path| -> Result<(), String> { panic!("must not start") };
+        assert_eq!(
+            launch_verified_with(&path, &hex, never),
+            Err(LaunchError::Check(InstallerCheck::Mismatch))
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            launch_verified_with(&path, &hex, never),
+            Err(LaunchError::Check(InstallerCheck::Gone))
+        );
+        assert_eq!(
+            launch_verified_with(dir.path(), &hex, never),
+            Err(LaunchError::Check(InstallerCheck::Gone))
+        );
+    }
+
+    #[test]
+    fn launch_reports_a_spawn_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        assert_eq!(
+            launch_verified_with(&path, &hex, |_| Err("denied".to_string())),
+            Err(LaunchError::Spawn("denied".to_string()))
+        );
+    }
+
+    fn sharing_violation() -> std::io::Error {
+        std::io::Error::from_raw_os_error(32)
+    }
+
+    #[test]
+    fn launch_retries_a_sharing_violation_then_starts_the_installer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut opens = 0;
+        let mut started = false;
+        let r = launch_verified_inner(
+            &path,
+            &hex,
+            |p| {
+                opens += 1;
+                if opens <= 2 {
+                    Err(sharing_violation())
+                } else {
+                    open_read_locked(p)
+                }
+            },
+            Duration::ZERO,
+            |_| {
+                started = true;
+                Ok(())
+            },
+        );
+        assert_eq!(r, Ok(()));
+        assert_eq!(opens, 3);
+        assert!(started);
+    }
+
+    #[test]
+    fn launch_reports_a_sharing_violation_that_outlasts_the_retries() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut opens = 0;
+        let r = launch_verified_inner(
+            &path,
+            &hex,
+            |_| {
+                opens += 1;
+                Err(sharing_violation())
+            },
+            Duration::ZERO,
+            |_| panic!("must not start"),
+        );
+        assert_eq!(opens, 1 + OPEN_RETRIES);
+        assert_eq!(r, Err(LaunchError::Open(sharing_violation().to_string())));
+    }
+
+    #[test]
+    fn launch_maps_only_a_missing_file_to_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, hex) = installer_in(dir.path());
+        let mut opens = 0;
+        let not_found = launch_verified_inner(
+            &path,
+            &hex,
+            |_| {
+                opens += 1;
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+            },
+            Duration::ZERO,
+            |_| panic!("must not start"),
+        );
+        assert_eq!(not_found, Err(LaunchError::Check(InstallerCheck::Gone)));
+        assert_eq!(opens, 1);
+
+        // Access denied on a file that is still there: reported with its cause, no retry.
+        let denied = std::io::Error::from_raw_os_error(5);
+        let mut opens = 0;
+        let r = launch_verified_inner(
+            &path,
+            &hex,
+            |_| {
+                opens += 1;
+                Err(std::io::Error::from_raw_os_error(5))
+            },
+            Duration::ZERO,
+            |_| panic!("must not start"),
+        );
+        assert_eq!(r, Err(LaunchError::Open(denied.to_string())));
+        assert_eq!(opens, 1);
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn launch_error_texts() {
+        let ready = ReadyUpdate {
+            version: "0.8.0".to_string(),
+            published_unix: None,
+            installer: PathBuf::from("x-setup.exe"),
+            sha256: String::new(),
+        };
+        let text = |e: LaunchError| launch_error_text(&ready, &e);
+        assert_eq!(
+            text(LaunchError::Check(InstallerCheck::Gone)),
+            "The FerrisFilter 0.8.0 installer is no longer there, so it was not started. \
+             Check for updates again."
+        );
+        assert_eq!(
+            text(LaunchError::Check(InstallerCheck::Mismatch)),
+            "The FerrisFilter 0.8.0 installer changed after it was checked and no longer \
+             matches its checksum, so it was not started. Check for updates again."
+        );
+        assert_eq!(
+            text(LaunchError::Open("in use".to_string())),
+            "Could not open the FerrisFilter 0.8.0 installer to check it (in use), so it was \
+             not started. It was saved to x-setup.exe."
+        );
+        assert_eq!(
+            text(LaunchError::Spawn("denied".to_string())),
+            "Could not start the FerrisFilter installer: denied. It was saved to x-setup.exe."
+        );
+    }
+
+    #[test]
+    fn production_entry_point_is_offline_in_tests() {
+        let slot = std::sync::Mutex::new(WorkSlot::default());
+        assert_eq!(
+            check_for_update_blocking(&slot, &mut |_| panic!("no download")),
+            CheckResult::Failed(Failure::Offline)
+        );
+    }
+
+    fn reply(status: u16, rem: Option<u64>, retry: Option<u64>, body: &str) -> Reply {
+        Reply {
+            status,
+            ratelimit_remaining: rem,
+            retry_after: retry,
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    const JSON: &str = r#"{"tag_name":"v0.8.0","published_at":"2026-11-02T14:03:11Z","extra":{"x":1},
+        "assets":[{"name":"FerrisFilter-0.8.0-setup.exe","browser_download_url":"https://github.com/x","state":"uploaded","size":5,"id":9},
+                  {"name":"SHA256SUMS.txt","browser_download_url":"https://github.com/y","state":"starter"}]}"#;
+
+    #[test]
+    fn release_json_parses_and_find_asset() {
+        let rel: Release = serde_json::from_str(JSON).unwrap();
+        assert_eq!(rel.tag_name, "v0.8.0");
+        assert_eq!(rel.assets.len(), 2);
+        assert!(find_asset(&rel, "FerrisFilter-0.8.0-setup.exe").is_some());
+        assert!(find_asset(&rel, "SHA256SUMS.txt").is_none());
+        assert!(find_asset(&rel, "ferrisfilter-0.8.0-setup.exe").is_none());
+    }
+
+    #[test]
+    fn trusted_urls() {
+        let ok =
+            "https://github.com/Jonathas-Conceicao/ferris-filter/releases/download/v0.8.0/a.exe";
+        assert!(asset_url_is_trusted(ok, "v0.8.0", "a.exe"));
+        assert!(asset_url_is_trusted(
+            &ok.to_ascii_lowercase(),
+            "v0.8.0",
+            "a.exe"
+        ));
+        assert!(!asset_url_is_trusted(
+            &ok.replace("https", "http"),
+            "v0.8.0",
+            "a.exe"
+        ));
+        assert!(!asset_url_is_trusted(
+            &ok.replace("ferris-filter", "other"),
+            "v0.8.0",
+            "a.exe"
+        ));
+        assert!(!asset_url_is_trusted(ok, "v0.9.0", "a.exe"));
+        assert!(!asset_url_is_trusted(ok, "v0.8.0", "b.exe"));
+        assert!(!asset_url_is_trusted(
+            &ok.replace("v0.8.0/", "v0.8.0/../"),
+            "v0.8.0",
+            "a.exe"
+        ));
+        assert!(!asset_url_is_trusted(
+            &format!("{ok}?x=1"),
+            "v0.8.0",
+            "a.exe"
+        ));
+    }
+
+    #[test]
+    fn classify_latest_rows() {
+        use LatestResponse as L;
+        assert!(matches!(
+            classify_latest(Err(FetchError::Transport("x".into()))),
+            L::Offline
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(200, None, None, JSON))),
+            L::Release(_)
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(200, None, None, "nope"))),
+            L::BadResponse
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(404, None, None, ""))),
+            L::NoReleases
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(429, None, None, ""))),
+            L::RateLimited
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(403, Some(0), None, ""))),
+            L::RateLimited
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(403, None, Some(60), ""))),
+            L::RateLimited
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(403, Some(5), None, ""))),
+            L::BadResponse
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(403, None, None, ""))),
+            L::BadResponse
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(500, None, None, ""))),
+            L::BadResponse
+        ));
+        assert!(matches!(
+            classify_latest(Ok(reply(301, None, None, ""))),
+            L::BadResponse
+        ));
+    }
+
+    #[test]
+    fn message_table() {
+        use UpdateKind::*;
+        let ver = || "0.8.0".to_string();
+        let t = parse_published("2026-11-02T14:03:11Z");
+        let rows: Vec<(CheckResult, &str, UpdateKind)> = vec![
+            (
+                CheckResult::UpToDate {
+                    version: "0.7.0".into(),
+                    released: parse_published("2026-10-18T12:00:00Z"),
+                },
+                "Up to date (0.7.0, released 2026-10-18)",
+                Ok,
+            ),
+            (
+                CheckResult::UpToDate {
+                    version: "0.7.0".into(),
+                    released: None,
+                },
+                "Up to date (0.7.0)",
+                Ok,
+            ),
+            (
+                CheckResult::Ready(ReadyUpdate {
+                    version: ver(),
+                    published_unix: t,
+                    installer: PathBuf::new(),
+                    sha256: String::new(),
+                }),
+                "0.8.0 available, released 2026-11-02",
+                Info,
+            ),
+            (
+                CheckResult::Ready(ReadyUpdate {
+                    version: ver(),
+                    published_unix: None,
+                    installer: PathBuf::new(),
+                    sha256: String::new(),
+                }),
+                "0.8.0 available",
+                Info,
+            ),
+            (
+                CheckResult::Failed(Failure::Offline),
+                "Could not reach GitHub. Check your connection and try again.",
+                Warning,
+            ),
+            (
+                CheckResult::Failed(Failure::RateLimited),
+                "GitHub is limiting requests. Try again in a few minutes.",
+                Warning,
+            ),
+            (
+                CheckResult::Failed(Failure::NoInstaller { version: ver() }),
+                "Release 0.8.0 has no installer. Download it from the repository page.",
+                Error,
+            ),
+            (
+                CheckResult::Failed(Failure::NoSums { version: ver() }),
+                "Release 0.8.0 has no checksum file, so it was not downloaded.",
+                Error,
+            ),
+            (
+                CheckResult::Failed(Failure::BadSums { version: ver() }),
+                "The checksum file for 0.8.0 is not valid, so it was not downloaded.",
+                Error,
+            ),
+            (
+                CheckResult::Failed(Failure::Mismatch { version: ver() }),
+                "The download of 0.8.0 did not match its checksum and was deleted.",
+                Error,
+            ),
+            (
+                CheckResult::Failed(Failure::DownloadFailed { version: ver() }),
+                "Could not download 0.8.0. Try again.",
+                Error,
+            ),
+            (
+                CheckResult::Failed(Failure::InstallerGone { version: ver() }),
+                "The installer for 0.8.0 is no longer there. Check for updates again.",
+                Error,
+            ),
+            (
+                CheckResult::Failed(Failure::BadResponse),
+                "Could not read the latest version from GitHub.",
+                Error,
+            ),
+        ];
+        for (r, text, kind) in rows {
+            assert_eq!(message_for(&r, 0), (text.to_string(), kind), "{r:?}");
+        }
+        assert_eq!(
+            checking_message(),
+            ("Checking for updates…".to_string(), Info)
+        );
+        assert_eq!(
+            downloading_message("0.8.0"),
+            ("Downloading 0.8.0…".to_string(), Info)
+        );
+    }
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn compare_release_rows() {
+        let c = compare_release;
+        assert_eq!(
+            c("v0.8.0", false, false, "0.7.0"),
+            Ok(Compare::Newer(v("0.8.0")))
+        );
+        assert_eq!(c("v0.7.0", false, false, "0.7.0"), Ok(Compare::Same));
+        assert_eq!(c("v0.6.1", false, false, "0.7.0"), Ok(Compare::Older));
+        assert_eq!(c("v0.7.0", false, false, "0.7.0-dev"), Ok(Compare::Same));
+        assert_eq!(
+            c("v0.7.0", false, false, "0.7.0-dev.2+abc"),
+            Ok(Compare::Same)
+        );
+        // A release candidate is older than its own final release.
+        assert_eq!(
+            c("v0.7.0", false, false, "0.7.0-rc.1"),
+            Ok(Compare::Newer(v("0.7.0")))
+        );
+        assert_eq!(c("v0.6.2", false, false, "0.7.0-rc.1"), Ok(Compare::Older));
+        assert_eq!(
+            c("v0.7.0", false, false, "0.7.0+build.5"),
+            Ok(Compare::Same)
+        );
+        assert_eq!(
+            c("0.8.0", false, false, "0.7.0"),
+            Ok(Compare::Newer(v("0.8.0")))
+        );
+        assert_eq!(c("v0.8.0-rc.1", false, false, "0.7.0"), Ok(Compare::Older));
+        assert_eq!(c("v0.8.0", true, false, "0.7.0"), Ok(Compare::Older));
+        assert_eq!(c("v0.8.0", false, true, "0.7.0"), Ok(Compare::Older));
+        assert_eq!(c("vbanana", false, false, "0.7.0"), Err(()));
+        assert_eq!(c("v0.8", false, false, "0.7.0"), Err(()));
+        assert_eq!(c("v0.8.0", false, false, "junk"), Err(()));
+    }
+
+    #[test]
+    fn current_base_drops_pre_and_build() {
+        assert_eq!(current_base("0.7.0-dev+abc"), Some(v("0.7.0")));
+        assert_eq!(current_base("nope"), None);
+        assert_eq!(running_version("0.7.0-rc.1+abc"), Some(v("0.7.0-rc.1")));
+        assert_eq!(running_version("nope"), None);
+    }
+
+    #[test]
+    fn installer_name_from_version() {
+        assert_eq!(installer_name(&v("0.8.0")), "FerrisFilter-0.8.0-setup.exe");
+    }
+
+    #[test]
+    fn parse_published_rows() {
+        assert_eq!(parse_published("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_published("2026-11-02T14:03:11Z"), Some(1_793_628_191));
+        assert_eq!(parse_published("2026-11-02"), None);
+        assert_eq!(parse_published("2026-11-02T14:03:11.5Z"), None);
+        assert_eq!(parse_published(""), None);
+        assert_eq!(parse_published("2026-13-02T14:03:11Z"), None);
+        assert_eq!(parse_published("2026-11-02T24:03:11Z"), None);
+    }
+
+    #[test]
+    fn release_date_text_applies_offset() {
+        let t = parse_published("2026-11-02T23:30:00Z").unwrap();
+        assert_eq!(release_date_text(t, 120), "2026-11-03");
+        assert_eq!(release_date_text(t, 0), "2026-11-02");
+        let u = parse_published("2026-11-02T01:00:00Z").unwrap();
+        assert_eq!(release_date_text(u, -180), "2026-11-01");
+        let leap = parse_published("2028-02-29T12:00:00Z").unwrap();
+        assert_eq!(release_date_text(leap, 0), "2028-02-29");
+        assert_eq!(release_date_text(0, -60), "1970-01-01");
+    }
+
+    const H1: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const H2: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    #[test]
+    fn parse_sums_rows() {
+        let name = "FerrisFilter-0.8.0-setup.exe";
+        let text = format!("{H1}  {name}\n{H2}  ff-cli.exe\n");
+        assert_eq!(parse_sums(&text, name), Ok(H1.to_string()));
+        assert_eq!(
+            parse_sums(&format!("{H1} {name}\n"), name),
+            Ok(H1.to_string())
+        );
+        assert_eq!(
+            parse_sums(&format!("{H1} *{name}\n"), name),
+            Ok(H1.to_string())
+        );
+        assert_eq!(
+            parse_sums(&format!("{H1}  {name}\r\n{H2}  x\r\n"), name),
+            Ok(H1.to_string())
+        );
+        assert_eq!(
+            parse_sums(&format!("{}  {name}\n", H1.to_uppercase()), name),
+            Ok(H1.to_string())
+        );
+        assert_eq!(
+            parse_sums(&format!("{H1}  other\n"), name),
+            Err(SumsError::Invalid)
+        );
+        assert_eq!(
+            parse_sums(&format!("{}  {name}\n", &H1[..63]), name),
+            Err(SumsError::Invalid)
+        );
+        assert_eq!(
+            parse_sums(&format!("{}  {name}\n", "z".repeat(64)), name),
+            Err(SumsError::Invalid)
+        );
+        assert_eq!(
+            parse_sums(&format!("{H1}  {name}\n{H2}  {name}\n"), name),
+            Err(SumsError::Invalid)
+        );
+        assert_eq!(
+            parse_sums(&format!("{H1}  {name}\n{H1}  {name}\n"), name),
+            Ok(H1.to_string())
+        );
+    }
+
+    #[test]
+    fn sha256_and_verify() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("f.bin");
+        std::fs::write(&p, b"abc").unwrap();
+        assert_eq!(sha256_file(&p).unwrap(), H1);
+        assert_eq!(verify_installer(&p, H1), Ok(()));
+        assert_eq!(verify_installer(&p, H2), Err(InstallerCheck::Mismatch));
+        assert_eq!(
+            verify_installer(&dir.path().join("missing"), H1),
+            Err(InstallerCheck::Gone)
+        );
+        assert_eq!(verify_installer(dir.path(), H1), Err(InstallerCheck::Gone));
+    }
+
+    // ---- run_check against a fake GitHub ----
+
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+
+    #[derive(Clone)]
+    struct FakeReply {
+        status: u16,
+        remaining: Option<u64>,
+        body: Vec<u8>,
+        transport_error: bool,
+        /// Fail with a transport error after this many chunks were delivered.
+        fail_after_chunks: Option<usize>,
+        /// Report the body as larger than the caller's cap after the first chunk.
+        oversize: bool,
+    }
+
+    fn ok(body: &[u8]) -> FakeReply {
+        FakeReply {
+            status: 200,
+            remaining: None,
+            body: body.to_vec(),
+            transport_error: false,
+            fail_after_chunks: None,
+            oversize: false,
+        }
+    }
+
+    fn status(code: u16) -> FakeReply {
+        FakeReply {
+            status: code,
+            ..ok(b"")
+        }
+    }
+
+    fn transport() -> FakeReply {
+        FakeReply {
+            transport_error: true,
+            ..ok(b"")
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeHttp {
+        replies: HashMap<String, FakeReply>,
+        requests: Mutex<Vec<String>>,
+    }
+
+    impl UpdateHttp for FakeHttp {
+        fn get(&self, url: &str, _accept: &str, max_bytes: u64) -> Result<Reply, FetchError> {
+            self.requests.lock().unwrap().push(url.to_string());
+            let r = self
+                .replies
+                .get(url)
+                .cloned()
+                .unwrap_or_else(|| status(404));
+            if r.transport_error {
+                return Err(FetchError::Transport("offline".into()));
+            }
+            if r.body.len() as u64 > max_bytes {
+                return Err(FetchError::TooLarge);
+            }
+            Ok(Reply {
+                status: r.status,
+                ratelimit_remaining: r.remaining,
+                retry_after: None,
+                body: r.body,
+            })
+        }
+
+        fn download(
+            &self,
+            url: &str,
+            max_bytes: u64,
+            sink: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+        ) -> Result<u16, FetchError> {
+            self.requests.lock().unwrap().push(url.to_string());
+            let r = self
+                .replies
+                .get(url)
+                .cloned()
+                .unwrap_or_else(|| status(404));
+            if r.transport_error {
+                return Err(FetchError::Transport("offline".into()));
+            }
+            if !(200..300).contains(&r.status) {
+                return Ok(r.status);
+            }
+            let chunk = r.body.len().div_ceil(3).max(1);
+            let mut total = 0u64;
+            for (i, c) in r.body.chunks(chunk).enumerate() {
+                if r.oversize && i == 1 {
+                    return Err(FetchError::TooLarge);
+                }
+                if r.fail_after_chunks == Some(i) {
+                    return Err(FetchError::Transport("reset".into()));
+                }
+                total += c.len() as u64;
+                if total > max_bytes {
+                    return Err(FetchError::TooLarge);
+                }
+                sink(c).map_err(FetchError::Sink)?;
+            }
+            Ok(r.status)
+        }
+    }
+
+    const BASE: &str = "https://github.com/Jonathas-Conceicao/ferris-filter/releases/download";
+    const INSTALLER: &[u8] = b"pretend installer bytes for the fake";
+
+    fn sums_for(bytes: &[u8], name: &str) -> String {
+        let h = hex_lower(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref());
+        format!("{h}  {name}\n")
+    }
+
+    fn release_json(tag: &str, extra: &str, assets: &str) -> String {
+        format!(
+            r#"{{"tag_name":"{tag}","published_at":"2026-11-02T14:03:11Z"{extra},"assets":[{assets}]}}"#
+        )
+    }
+
+    fn asset(name: &str, tag: &str, state: &str, size: u64) -> String {
+        format!(
+            r#"{{"name":"{name}","browser_download_url":"{BASE}/{tag}/{name}","state":"{state}","size":{size}}}"#
+        )
+    }
+
+    fn full_assets(tag: &str) -> String {
+        let name = format!("FerrisFilter-{}-setup.exe", tag.trim_start_matches('v'));
+        format!(
+            "{},{}",
+            asset(&name, tag, "uploaded", INSTALLER.len() as u64),
+            asset(SUMS_NAME, tag, "uploaded", 100)
+        )
+    }
+
+    /// A fake where `tag` is the latest release with both assets and correct bytes.
+    fn good(tag: &str) -> FakeHttp {
+        let name = format!("FerrisFilter-{}-setup.exe", tag.trim_start_matches('v'));
+        let mut h = FakeHttp::default();
+        h.replies.insert(
+            LATEST_URL.into(),
+            ok(release_json(tag, "", &full_assets(tag)).as_bytes()),
+        );
+        h.replies.insert(
+            format!("{BASE}/{tag}/{SUMS_NAME}"),
+            ok(sums_for(INSTALLER, &name).as_bytes()),
+        );
+        h.replies
+            .insert(format!("{BASE}/{tag}/{name}"), ok(INSTALLER));
+        h
+    }
+
+    struct Run {
+        result: CheckResult,
+        root: tempfile::TempDir,
+        slot: Mutex<WorkSlot>,
+        announced: Vec<String>,
+    }
+
+    fn run(http: &FakeHttp, current: &str) -> Run {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Mutex::new(WorkSlot::default());
+        let mut announced = Vec::new();
+        let result = run_check(
+            http,
+            current,
+            root.path(),
+            SystemTime::now(),
+            &slot,
+            &mut |v| announced.push(v.to_string()),
+        );
+        Run {
+            result,
+            root,
+            slot,
+            announced,
+        }
+    }
+
+    fn entries(root: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect()
+    }
+
+    fn assert_clean(r: &Run) {
+        assert!(entries(r.root.path()).is_empty(), "temp root not empty");
+        assert!(r.slot.lock().unwrap().dir.is_none());
+    }
+
+    fn failure(r: &Run) -> Failure {
+        match &r.result {
+            CheckResult::Failed(f) => f.clone(),
+            other => panic!("expected failure, got {other:?}"),
+        }
+    }
+
+    fn ver() -> String {
+        "0.8.0".to_string()
+    }
+
+    #[test]
+    fn newer_release_downloads_and_verifies() {
+        let r = run(&good("v0.8.0"), "0.7.0");
+        let CheckResult::Ready(ready) = &r.result else {
+            panic!("{:?}", r.result);
+        };
+        assert_eq!(ready.version, "0.8.0");
+        assert_eq!(
+            ready.published_unix,
+            parse_published("2026-11-02T14:03:11Z")
+        );
+        assert_eq!(
+            ready.sha256,
+            hex_lower(ring::digest::digest(&ring::digest::SHA256, INSTALLER).as_ref())
+        );
+        let folders = entries(r.root.path());
+        assert_eq!(folders.len(), 1);
+        assert!(
+            folders[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(WORK_PREFIX)
+        );
+        let files = entries(&folders[0]);
+        assert_eq!(files, vec![ready.installer.clone()]);
+        assert_eq!(
+            ready.installer.file_name().unwrap(),
+            "FerrisFilter-0.8.0-setup.exe"
+        );
+        assert_eq!(std::fs::read(&ready.installer).unwrap(), INSTALLER);
+        assert_eq!(r.announced, vec!["0.8.0".to_string()]);
+        assert_eq!(r.slot.lock().unwrap().dir.clone(), Some(folders[0].clone()));
+    }
+
+    #[test]
+    fn equal_older_dev_and_prerelease_are_up_to_date() {
+        let same = run(&good("v0.7.0"), "0.7.0");
+        assert_eq!(
+            same.result,
+            CheckResult::UpToDate {
+                version: "0.7.0".into(),
+                released: parse_published("2026-11-02T14:03:11Z")
+            }
+        );
+        assert_clean(&same);
+        assert!(same.announced.is_empty());
+
+        let older = run(&good("v0.6.0"), "0.7.0");
+        assert_eq!(
+            older.result,
+            CheckResult::UpToDate {
+                version: "0.7.0".into(),
+                released: None
+            }
+        );
+        assert_clean(&older);
+
+        let dev = run(&good("v0.7.0"), "0.7.0-dev");
+        assert!(matches!(
+            dev.result,
+            CheckResult::UpToDate {
+                released: Some(_),
+                ..
+            }
+        ));
+        assert_clean(&dev);
+
+        // A release candidate names itself while its final release is not out yet.
+        let rc = run(&good("v0.6.0"), "0.7.0-rc.1+abc");
+        assert_eq!(
+            rc.result,
+            CheckResult::UpToDate {
+                version: "0.7.0-rc.1".into(),
+                released: None
+            }
+        );
+        assert_clean(&rc);
+
+        let mut pre = FakeHttp::default();
+        pre.replies.insert(
+            LATEST_URL.into(),
+            ok(release_json("v0.8.0", r#","prerelease":true"#, &full_assets("v0.8.0")).as_bytes()),
+        );
+        let pre = run(&pre, "0.7.0");
+        assert_eq!(
+            pre.result,
+            CheckResult::UpToDate {
+                version: "0.7.0".into(),
+                released: None
+            }
+        );
+        assert_clean(&pre);
+    }
+
+    #[test]
+    fn a_release_candidate_is_offered_its_final_release() {
+        let rc = run(&good("v0.7.0"), "0.7.0-rc.1");
+        match &rc.result {
+            CheckResult::Ready(r) => assert_eq!(r.version, "0.7.0"),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+        assert_eq!(rc.announced, vec!["0.7.0".to_string()]);
+    }
+
+    #[test]
+    fn api_failures_map_to_failures() {
+        let mut h = FakeHttp::default();
+        h.replies.insert(LATEST_URL.into(), status(404));
+        let r = run(&h, "0.7.0");
+        assert_eq!(
+            r.result,
+            CheckResult::UpToDate {
+                version: "0.7.0".into(),
+                released: None
+            }
+        );
+        assert_clean(&r);
+
+        let cases: Vec<(FakeReply, Failure)> = vec![
+            (transport(), Failure::Offline),
+            (status(429), Failure::RateLimited),
+            (
+                FakeReply {
+                    remaining: Some(0),
+                    ..status(403)
+                },
+                Failure::RateLimited,
+            ),
+            (status(403), Failure::BadResponse),
+            (status(500), Failure::BadResponse),
+            (ok(b"not json"), Failure::BadResponse),
+            (
+                ok(release_json("vbanana", "", "").as_bytes()),
+                Failure::BadResponse,
+            ),
+        ];
+        for (reply, want) in cases {
+            let mut h = FakeHttp::default();
+            h.replies.insert(LATEST_URL.into(), reply);
+            let r = run(&h, "0.7.0");
+            assert_eq!(failure(&r), want);
+            assert_clean(&r);
+            assert!(r.announced.is_empty());
+        }
+    }
+
+    fn with_release(assets: &str) -> FakeHttp {
+        let mut h = good("v0.8.0");
+        h.replies.insert(
+            LATEST_URL.into(),
+            ok(release_json("v0.8.0", "", assets).as_bytes()),
+        );
+        h
+    }
+
+    #[test]
+    fn asset_problems_fail_before_any_download() {
+        let installer =
+            |state: &str, size: u64| asset("FerrisFilter-0.8.0-setup.exe", "v0.8.0", state, size);
+        let sums = asset(SUMS_NAME, "v0.8.0", "uploaded", 100);
+
+        let r = run(&with_release(&sums), "0.7.0");
+        assert_eq!(failure(&r), Failure::NoInstaller { version: ver() });
+        assert_clean(&r);
+
+        let r = run(
+            &with_release(&format!("{},{sums}", installer("open", 5))),
+            "0.7.0",
+        );
+        assert_eq!(failure(&r), Failure::NoInstaller { version: ver() });
+        assert_clean(&r);
+
+        let r = run(&with_release(&installer("uploaded", 5)), "0.7.0");
+        assert_eq!(failure(&r), Failure::NoSums { version: ver() });
+        assert_clean(&r);
+
+        let evil = format!(
+            r#"{{"name":"FerrisFilter-0.8.0-setup.exe","browser_download_url":"https://evil.example/FerrisFilter-0.8.0-setup.exe","state":"uploaded","size":5}},{sums}"#
+        );
+        let r = run(&with_release(&evil), "0.7.0");
+        assert_eq!(failure(&r), Failure::BadResponse);
+        assert_clean(&r);
+
+        let big = with_release(&format!(
+            "{},{sums}",
+            installer("uploaded", MAX_INSTALLER_BYTES + 1)
+        ));
+        let r = run(&big, "0.7.0");
+        assert_eq!(failure(&r), Failure::DownloadFailed { version: ver() });
+        assert_clean(&r);
+        assert!(r.announced.is_empty());
+        assert_eq!(big.requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sums_problems() {
+        let sums_url = format!("{BASE}/v0.8.0/{SUMS_NAME}");
+        let cases: Vec<(FakeReply, Failure)> = vec![
+            (status(404), Failure::DownloadFailed { version: ver() }),
+            (transport(), Failure::DownloadFailed { version: ver() }),
+            (
+                ok(b"abc  FerrisFilter-0.8.0-setup.exe\n"),
+                Failure::BadSums { version: ver() },
+            ),
+            (
+                ok(format!("{}  other.exe\n", "a".repeat(64)).as_bytes()),
+                Failure::BadSums { version: ver() },
+            ),
+            (ok(&[0xff, 0xfe, 0xfd]), Failure::BadSums { version: ver() }),
+            (
+                ok(&vec![b'a'; (MAX_SUMS_BYTES + 1) as usize]),
+                Failure::DownloadFailed { version: ver() },
+            ),
+        ];
+        for (reply, want) in cases {
+            let mut h = good("v0.8.0");
+            h.replies.insert(sums_url.clone(), reply);
+            let r = run(&h, "0.7.0");
+            assert_eq!(failure(&r), want);
+            assert_clean(&r);
+            assert_eq!(r.announced, vec!["0.8.0".to_string()]);
+        }
+    }
+
+    #[test]
+    fn download_problems_leave_no_folder() {
+        let url = format!("{BASE}/v0.8.0/FerrisFilter-0.8.0-setup.exe");
+
+        let mut h = good("v0.8.0");
+        h.replies.insert(url.clone(), ok(b"tampered bytes"));
+        let r = run(&h, "0.7.0");
+        assert_eq!(failure(&r), Failure::Mismatch { version: ver() });
+        assert_clean(&r);
+
+        let mut h = good("v0.8.0");
+        h.replies.insert(url.clone(), status(404));
+        let r = run(&h, "0.7.0");
+        assert_eq!(failure(&r), Failure::DownloadFailed { version: ver() });
+        assert_clean(&r);
+
+        let mut h = good("v0.8.0");
+        h.replies.insert(
+            url.clone(),
+            FakeReply {
+                fail_after_chunks: Some(2),
+                ..ok(INSTALLER)
+            },
+        );
+        let r = run(&h, "0.7.0");
+        assert_eq!(failure(&r), Failure::DownloadFailed { version: ver() });
+        assert_clean(&r);
+
+        let mut h = good("v0.8.0");
+        h.replies.insert(url.clone(), transport());
+        let r = run(&h, "0.7.0");
+        assert_eq!(failure(&r), Failure::DownloadFailed { version: ver() });
+        assert_clean(&r);
+
+        let mut h = good("v0.8.0");
+        h.replies.insert(
+            url,
+            FakeReply {
+                oversize: true,
+                ..ok(INSTALLER)
+            },
+        );
+        let r = run(&h, "0.7.0");
+        assert_eq!(failure(&r), Failure::DownloadFailed { version: ver() });
+        assert_clean(&r);
+    }
+
+    /// Wraps a fake and stops the check (as shutdown does) after `after` downloaded chunks.
+    struct StopAfter<'a> {
+        after: usize,
+        inner: &'a FakeHttp,
+        slot: &'a Mutex<WorkSlot>,
+    }
+
+    impl UpdateHttp for StopAfter<'_> {
+        fn get(&self, url: &str, accept: &str, max_bytes: u64) -> Result<Reply, FetchError> {
+            self.inner.get(url, accept, max_bytes)
+        }
+
+        fn download(
+            &self,
+            url: &str,
+            max_bytes: u64,
+            sink: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+        ) -> Result<u16, FetchError> {
+            let mut chunks = 0;
+            self.inner.download(url, max_bytes, &mut |c| {
+                let r = sink(c);
+                chunks += 1;
+                if chunks == self.after {
+                    self.slot.lock().unwrap().cancelled = true;
+                }
+                r
+            })
+        }
+    }
+
+    #[test]
+    fn a_stopped_check_creates_no_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Mutex::new(WorkSlot {
+            dir: None,
+            cancelled: true,
+        });
+        let result = run_check(
+            &good("v0.8.0"),
+            "0.7.0",
+            root.path(),
+            SystemTime::now(),
+            &slot,
+            &mut |_| {},
+        );
+        assert_eq!(
+            result,
+            CheckResult::Failed(Failure::DownloadFailed { version: ver() })
+        );
+        assert!(entries(root.path()).is_empty());
+        assert!(slot.lock().unwrap().dir.is_none());
+    }
+
+    #[test]
+    fn a_check_stopped_mid_download_ends_it_and_deletes_its_folder() {
+        // After the first chunk (the download ends early) and after the last one (the verified
+        // installer is not kept).
+        for after in [1, 3] {
+            let root = tempfile::tempdir().unwrap();
+            let slot = Mutex::new(WorkSlot::default());
+            let fake = good("v0.8.0");
+            let http = StopAfter {
+                after,
+                inner: &fake,
+                slot: &slot,
+            };
+            let result = run_check(
+                &http,
+                "0.7.0",
+                root.path(),
+                SystemTime::now(),
+                &slot,
+                &mut |_| {},
+            );
+            assert_eq!(
+                result,
+                CheckResult::Failed(Failure::DownloadFailed { version: ver() }),
+                "after {after}"
+            );
+            assert!(entries(root.path()).is_empty(), "after {after}");
+            assert!(slot.lock().unwrap().dir.is_none());
+        }
+    }
+
+    #[test]
+    fn sweep_stale_deletes_only_old_update_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join(format!("{WORK_PREFIX}abc"));
+        let other = root.path().join("SomethingElse-abc");
+        let file = root.path().join(format!("{WORK_PREFIX}x"));
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("a.exe"), b"x").unwrap();
+        std::fs::create_dir(&other).unwrap();
+        std::fs::write(&file, b"x").unwrap();
+
+        sweep_stale(root.path(), SystemTime::now());
+        assert!(old.exists(), "fresh folder is kept");
+
+        sweep_stale(
+            root.path(),
+            SystemTime::now() + Duration::from_secs(25 * 3600),
+        );
+        assert!(!old.exists(), "stale folder is deleted");
+        assert!(other.exists());
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn run_check_sweeps_before_asking() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join(format!("{WORK_PREFIX}old"));
+        std::fs::create_dir(&old).unwrap();
+        let mut h = FakeHttp::default();
+        h.replies.insert(LATEST_URL.into(), status(404));
+        let slot = Mutex::new(WorkSlot::default());
+        let _ = run_check(
+            &h,
+            "0.7.0",
+            root.path(),
+            SystemTime::now() + Duration::from_secs(25 * 3600),
+            &slot,
+            &mut |_| {},
+        );
+        assert!(!old.exists());
+    }
+}

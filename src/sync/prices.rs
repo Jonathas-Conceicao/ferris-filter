@@ -420,7 +420,12 @@ pub fn write_prices_atomic(path: &str, prices: &PricesFile) -> miette::Result<()
 
     // Create temp file in SAME directory as target (Pitfall 4: cross-device)
     let target = std::path::Path::new(path);
-    let dir = target.parent().unwrap_or(std::path::Path::new("."));
+    let dir = match target.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => std::path::Path::new("."),
+    };
+    std::fs::create_dir_all(dir)
+        .map_err(|e| miette::miette!("Cannot create {}: {e}", dir.display()))?;
 
     let mut temp = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| miette::miette!("Cannot create temp file in {}: {e}", dir.display()))?;
@@ -436,13 +441,13 @@ pub fn write_prices_atomic(path: &str, prices: &PricesFile) -> miette::Result<()
 
 /// Full sync prices pipeline:
 /// 1. Fetch index-state → resolve league name.
-/// 2. Load committed mapping.json.
+/// 2. Parse the built-in mapping.json.
 /// 3. Fetch each overviewType + gemFilter type from poe.ninja.
 /// 4. build_prices → validate anchors → write prices.json atomically.
-/// `base_dir` is the directory holding `mapping.json` and receiving `prices.json`. It is a
-/// parameter rather than the process working directory because the overlay can be launched from
-/// anywhere — a desktop shortcut, a tray relaunch — while its store lives beside the repo. The CLI
-/// passes `.`, preserving its existing behaviour exactly.
+/// `base_dir` only receives `prices.json` (created if missing); the mapping is the copy built
+/// into the binary. It is a parameter rather than the process working directory because the
+/// overlay can be launched from anywhere; the overlay and the CLI both pass the FerrisFilter
+/// folder.
 pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     client: &C,
     standard: bool,
@@ -451,16 +456,17 @@ pub async fn run_sync_prices<C: crate::sync::client::HttpClient>(
     base_dir: &std::path::Path,
 ) -> miette::Result<String> {
     use crate::sync::league::{fetch_index_state, resolve_league_with_override};
-    use crate::sync::mapping::load_mapping;
 
     // Step 1: resolve league
     let state = fetch_index_state(client).await?;
     let league_name = resolve_league_with_override(&state, standard, hc, league)?;
     println!("Resolved league: {league_name}");
 
-    // Step 2: load committed mapping
-    let mapping_path = base_dir.join("mapping.json");
-    let mapping = load_mapping(&mapping_path.to_string_lossy())?;
+    // Step 2: the mapping is always the built-in copy
+    let mapping = crate::sync::mapping::load_mapping_str(
+        crate::defaults::MAPPING.text,
+        &crate::defaults::MAPPING.label(),
+    )?;
 
     // Step 3: fetch each overview type
     let mut overviews: Vec<(String, ExchangeOverview)> = Vec::new();
@@ -1316,6 +1322,42 @@ mod tests {
             !std::path::Path::new("prices-test-empty.json").exists(),
             "no file should be created for empty items"
         );
+    }
+
+    #[test]
+    fn write_prices_atomic_creates_a_missing_folder() {
+        use crate::models::prices::{PriceItem, PricesFile};
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("a").join("b").join("prices.json");
+        let prices = PricesFile {
+            league: "Test".to_string(),
+            fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            items: vec![PriceItem {
+                name: "Chaos Orb".into(),
+                base_type: "Chaos Orb".into(),
+                class: "Stackable Currency".into(),
+                category: "Currency".into(),
+                exalt: Some(1.0),
+                chaos: Some(1.0),
+                div: None,
+            }],
+        };
+        super::write_prices_atomic(&target.to_string_lossy(), &prices).unwrap();
+        assert!(target.is_file());
+    }
+
+    #[test]
+    fn write_prices_atomic_empty_creates_no_folder() {
+        use crate::models::prices::PricesFile;
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("nope").join("prices.json");
+        let prices = PricesFile {
+            league: "Test".to_string(),
+            fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            items: vec![],
+        };
+        assert!(super::write_prices_atomic(&target.to_string_lossy(), &prices).is_err());
+        assert!(!tmp.path().join("nope").exists());
     }
 
     // -----------------------------------------------------------------------

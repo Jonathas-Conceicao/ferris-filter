@@ -39,8 +39,11 @@ fn valid_tiers() -> String {
 
 /// The committed default `styles-default.json` (valid).
 fn valid_styles() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"))
-        .expect("read styles-default.json")
+    fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/seed-styles.json"
+    ))
+    .expect("read styles-default.json")
 }
 
 /// A missing `config.json` (cwd has no config.json) must produce a non-zero exit
@@ -329,7 +332,7 @@ fn apply_obsolete_flags_are_rejected() {
             .unwrap()
             .current_dir(&dir)
             .env("FERRISFILTER_HOME", &dir)
-            .env("USERPROFILE", &dir)
+            .env("FERRISFILTER_GAME_DIR", dir.join("game"))
             .arg("apply")
             .args(&args)
             .assert()

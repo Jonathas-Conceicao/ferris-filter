@@ -17,19 +17,23 @@ pub mod conditions;
 pub mod config_state;
 pub mod config_view;
 pub mod economy;
+pub(crate) mod folder_dialog;
 pub mod grammar;
 pub mod hotkey;
 pub mod instance;
 pub mod layout;
+pub(crate) mod leagues;
 pub mod rule_list;
 pub mod rules;
 #[cfg(debug_assertions)]
 pub(crate) mod screenshot;
 pub(crate) mod shell;
 pub mod sound_files;
+pub mod strictness;
 pub mod style_lines;
 pub mod text_entry;
 pub mod tray;
+pub(crate) mod update_job;
 pub mod virtual_list;
 pub mod visibility;
 pub mod widgets;
@@ -39,6 +43,16 @@ use hotkey::HotkeyStatus;
 
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
+    // Hidden flag for the installer (it runs before copying files and on uninstall): ask the
+    // running instance to quit and exit with the outcome's code. It never creates the instance
+    // mutex, so it can never become the running instance. The `-ready` / `-quit` events are
+    // opened through CreateEventW; if the instance vanished in between, that creates a fresh
+    // event, which is detected (no ERROR_ALREADY_EXISTS) and reported as Unreachable. It
+    // registers no hotkey, tray or window.
+    if instance::is_quit_args(std::env::args().skip(1)) {
+        std::process::exit(instance::quit_exit_code(instance::quit_running()));
+    }
+
     // Debug builds only: `ff --screenshot <png> ...` renders the shell from a temp home and
     // exits, with no instance guard, hotkey or tray (see `screenshot`).
     #[cfg(debug_assertions)]
@@ -89,7 +103,10 @@ pub fn launch() -> eframe::Result<()> {
         .expect("failed to build the system tray icon");
     let options = native_options();
 
-    eframe::run_native(
+    let pending_install =
+        std::sync::Arc::new(std::sync::Mutex::new(None::<crate::update::ReadyUpdate>));
+    let app_slot = pending_install.clone();
+    let result = eframe::run_native(
         "ferrisfilter",
         options,
         Box::new(move |cc| {
@@ -103,9 +120,22 @@ pub fn launch() -> eframe::Result<()> {
                 hotkey_status,
                 instance_guard,
                 skin,
+                app_slot,
             )))
         }),
-    )
+    );
+
+    // eframe 0.36 `run_and_return` defaults to true, so `run_native` returns once the window
+    // closed. By then `begin_shutdown` released the hotkey, tray and instance name, so the
+    // installer's own `ff --quit` finds nothing running.
+    // The installer is hashed once more right before it starts.
+    let installer = pending_install.lock().ok().and_then(|mut p| p.take());
+    if let Some(ready) = installer
+        && let Err(err) = crate::update::launch_verified_installer(&ready.installer, &ready.sha256)
+    {
+        instance::notify_error(&crate::update::launch_error_text(&ready, &err));
+    }
+    result
 }
 
 /// The window: opaque, undecorated, always-on-top, fixed at the shell width (660pt) and docked

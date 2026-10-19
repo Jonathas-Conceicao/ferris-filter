@@ -7,8 +7,9 @@
 //! filter-as-store footer (Phase 18).
 //!
 //! **Filter-as-store (Phase 18) and the rule list (Phase 19).** The game-folder `dynamic.filter`
-//! is the store. On launch the overlay resolves the app root ([`crate::paths::app_root`], never
-//! the working directory, so a double-click launch works) and loads the filter
+//! is the store. On launch the overlay resolves the app root ([`crate::locations::AppDirs`]:
+//! `FERRISFILTER_HOME`, else the per-user folder; no walk-up from the exe, and never the
+//! working directory, so a double-click launch works) and loads the filter
 //! ([`dynamic::LoadedFilter::load`], which never writes); RELOAD repeats both, and is offered
 //! whenever the root, the load, or the economy markers are broken, so every such state can be
 //! recovered without a restart.
@@ -32,7 +33,7 @@ use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyManager;
 
-use crate::compile::{InputPaths, PriceSourcePolicy};
+use crate::compile::{InputPaths, PriceSourcePolicy, Source};
 use crate::dynamic::{self, LoadedFilter};
 use crate::filter::{BlockId, LinePatch};
 use crate::loader;
@@ -48,10 +49,12 @@ use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
 use super::hotkey::{self, HotkeyStatus};
 use super::instance;
+use super::leagues::ListState;
 use super::rule_list::{self, ListUi};
 use super::rules::{self, EconomyView, RowAction, WorkingFilter};
 use super::shell::{self, ConfigBarInputs, Popup, PopupData, ShellTab, StatusInputs, StatusLine};
 use super::tray::{self, OverlayCommand, TrayHandles};
+use super::update_job::{InstallClick, UpdateJob, UpdateState};
 use super::visibility::{self, Visibility};
 use super::win::{self, OverlayWindow};
 use crate::skin::Skin;
@@ -107,12 +110,20 @@ pub struct OverlayApp {
 
     /// The tray-Quit confirm ("Unapplied changes") is showing.
     quit_confirm: bool,
+    /// The Quit confirm's only pending work is tier edits Fallback cannot write (refreshed each
+    /// frame while it shows): it then offers no Apply & quit.
+    quit_tier_edits_only: bool,
 
     /// The RULES Revert was clicked: the "Discard rule changes?" popup asks first.
     revert_rules_armed: bool,
 
-    /// Apply & quit succeeded; the shutdown runs once any in-game reload worker has finished.
+    /// Apply & quit succeeded; the shutdown runs once the in-game reload worker has finished.
     quit_after_apply: bool,
+
+    /// A quit request found nothing unapplied but came while an in-game reload was still being
+    /// sent. Once that reload has finished the request is made again, so edits made meanwhile
+    /// still get the Unapplied changes popup.
+    quit_after_reload: bool,
 
     /// "Quit without applying" was chosen; the shutdown runs at the top of the next frame.
     quit_next_frame: bool,
@@ -158,6 +169,23 @@ pub struct OverlayApp {
     /// drawn over a live game never freezes on network I/O. It writes prices only -- the game sees
     /// them on the next **Apply**, which is what makes it safe to press mid-map.
     economy: economy::EconomySync,
+    /// The About tab's update check; Ready survives message clears.
+    update: UpdateJob,
+    /// The update outcome shown in the status line (an event message).
+    update_message: Option<(String, w::StatusKind)>,
+    /// The update message came from the worker while another event message was showing (an
+    /// Apply, CONFIG, sync or list outcome of an action started during the check), or a sync
+    /// was still running then or finished after it, so it ranks below them instead of hiding
+    /// them. A message set by a click on the UI thread is newest and ranks first.
+    update_behind: bool,
+    /// Where `begin_shutdown` leaves the verified installer for `launch()` to start once the
+    /// event loop has returned (only after an explicit Install click).
+    pending_install: std::sync::Arc<std::sync::Mutex<Option<crate::update::ReadyUpdate>>>,
+
+    /// poe.ninja's league list for the Economy tab's picker: fetched on a worker the first time
+    /// the tab is shown in a session and on refresh, never at start-up, in tests or in
+    /// screenshot mode.
+    leagues: super::leagues::LeagueList,
 
     /// The one-shot `/reloaditemfilter` worker. At most one in flight: one Apply click, one
     /// command.
@@ -181,7 +209,11 @@ pub struct OverlayApp {
     /// The pending styles and tiers the economy preview (a staged add, or a pending refresh of the
     /// section in the file) was priced with, so it is re-priced only when they change (never per
     /// frame).
-    staged_econ_inputs: Option<(StyleSet, Vec<crate::models::tiers::TierEntry>)>,
+    staged_econ_inputs: Option<(
+        StyleSet,
+        Vec<crate::models::tiers::TierEntry>,
+        PriceSourcePolicy,
+    )>,
     /// The last economy preview for `staged_econ_inputs` could not be built; not retried until
     /// the inputs or the prices change.
     econ_preview_failed: bool,
@@ -189,14 +221,27 @@ pub struct OverlayApp {
     /// Whether an Apply has succeeded this session; decides what Revert returns the indicator to.
     applied_this_session: bool,
 
+    /// The price-source policy the filter on disk was last written under (start-up: the saved
+    /// one, assumed to match the file; then every Apply, and a switch to another filter). A
+    /// differing effective source makes the economy section stale ([`Self::source_pending`]).
+    applied_policy: PriceSourcePolicy,
+
+    /// `applied_policy` of every filter left this session, by path, so switching away and back
+    /// keeps a pending price-source change on that filter.
+    left_policies: std::collections::HashMap<PathBuf, PriceSourcePolicy>,
+
     /// The class catalogue for the class picker, from `config.json`. `Err` degrades the picker
     /// to the generic chip list; it never blocks editing.
     classes: Result<ClassCatalog, String>,
 
-    /// The styles source (`styles.json`, or `styles-default.json` when it is absent) and its
-    /// modification time when last read; a change of either reloads the styles, so creating or
+    /// The styles source (`styles.json`, or the built-in default when it is absent) and, for a
+    /// file, its modification time when last read; a change reloads the styles, so creating or
     /// deleting the live file switches the source.
-    styles_stamp: Option<(std::path::PathBuf, std::time::SystemTime)>,
+    styles_stamp: Option<StylesStamp>,
+
+    /// Keeps a unit-test app's per-test home alive as long as the app.
+    #[cfg(test)]
+    test_home: Option<tempfile::TempDir>,
 
     /// `ctx.input(|i| i.time)` of the last `styles.json` poll.
     styles_checked: f64,
@@ -228,6 +273,24 @@ pub struct OverlayApp {
 
     /// A filter picked while the rules have unapplied edits, awaiting confirmation.
     pending_switch: Option<String>,
+
+    /// A game folder picked while the rules have unapplied edits, awaiting confirmation.
+    pending_folder: Option<std::path::PathBuf>,
+
+    /// The CONFIG tab asked for the folder dialog; started where the frame is at hand.
+    want_browse: bool,
+
+    /// The native folder dialog worker.
+    folder_pick: super::folder_dialog::FolderPick,
+
+    /// `FERRISFILTER_GAME_DIR` pins the folder, so a pick is ignored.
+    game_dir_pinned: bool,
+
+    /// The default game folder (Documents\My Games\Path of Exile 2), for the Config tab.
+    default_game_dir: Option<std::path::PathBuf>,
+
+    /// The game folder does not exist on disk. Read only when the lists are refreshed.
+    game_dir_missing: bool,
 
     /// The sound-file listing of the filter folder needs re-reading (startup, reload, switch);
     /// done on the next frame, where the egui context is at hand.
@@ -273,42 +336,123 @@ fn sync_working_styles(config: &ConfigState, working: &mut WorkingFilter) -> boo
     true
 }
 
+/// The saved `game_folder` of a resolved app root (none for an unresolved root).
+fn saved_game_folder(root: &Result<PathBuf, String>) -> Option<PathBuf> {
+    let root = root.as_ref().ok()?;
+    settings::load(root)
+        .0
+        .game_folder_path()
+        .map(Path::to_path_buf)
+}
+
+/// The game folder at startup, with every input injected: `env` (FERRISFILTER_GAME_DIR) wins,
+/// then the `game_folder` saved in the root's `ff-settings.json` (restored on the next launch),
+/// then the Documents default. Reads only; creates nothing.
+#[cfg_attr(not(test), allow(dead_code))]
+fn startup_game_dir_from(
+    root: &Result<PathBuf, String>,
+    env: Option<&std::ffi::OsStr>,
+    documents: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let saved = saved_game_folder(root);
+    crate::locations::game_dir_from(env, saved.as_deref(), documents)
+}
+
+/// [`startup_game_dir_from`] with the real environment; never called from unit tests.
+fn startup_game_dir(root: &Result<PathBuf, String>) -> Option<PathBuf> {
+    crate::locations::game_dir(saved_game_folder(root).as_deref())
+}
+
+/// The FerrisFilter folder: `FERRISFILTER_HOME`, else the per-user folder. Unit tests never
+/// resolve it (they build apps on a per-test temp home instead).
+#[cfg(not(test))]
+fn resolve_root() -> Result<PathBuf, String> {
+    crate::locations::from_env()
+        .map(|d| d.root)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn resolve_root() -> Result<PathBuf, String> {
+    Err("unit tests never resolve the FerrisFilter folder".to_string())
+}
+
+/// poe.ninja's economy league list. Unit tests never reach the network.
+#[cfg(not(test))]
+fn fetch_leagues() -> Result<Vec<crate::sync::models::EconomyLeague>, String> {
+    crate::sync::fetch_leagues_blocking().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+fn fetch_leagues() -> Result<Vec<crate::sync::models::EconomyLeague>, String> {
+    Err("unit tests never fetch the league list".to_string())
+}
+
 /// The economy body a staged **Add economy section** previews: priced with the CONFIG tab's pending
 /// styles and tiers when loaded (what `apply_all::prepare` will write), else from disk.
 /// Shown when the priced economy body cannot be previewed as a section (nothing is staged).
 const PREVIEW_FAILED_STATUS: &str =
     "Could not build the economy section preview. Nothing was staged.";
 
-fn staged_economy_body(root: &Path, config: Option<&ConfigState>) -> Result<String, String> {
-    let paths = InputPaths::relative_to(root);
+/// Why a league pick or price-source switch was not saved: the file exists but cannot be used,
+/// and is never replaced (the choice holds for this session).
+const UNUSABLE_SETTINGS_NOT_SAVED: &str = "the file cannot be used, fix or delete it";
+
+/// Apply & quit with tier edits pending under Fallback: the window stays open with them kept.
+const UNWRITABLE_TIERS_QUIT_STATUS: &str = "Not quit: tier edits apply only with Live prices. Switch to Live and Apply, or quit without applying.";
+
+fn staged_economy_body(
+    root: &Path,
+    config: Option<&ConfigState>,
+    policy: PriceSourcePolicy,
+) -> Result<String, String> {
+    let paths = InputPaths::in_home(root);
     let priced = match config {
-        Some(c) => dynamic::economy_body_with(
-            &paths,
-            PriceSourcePolicy::Auto,
-            c.pending_styles(),
-            c.pending_tiers(),
-        ),
-        None => dynamic::economy_body(&paths, PriceSourcePolicy::Auto),
+        Some(c) => {
+            dynamic::economy_body_with(&paths, policy, c.pending_styles(), c.pending_tiers())
+        }
+        None => dynamic::economy_body(&paths, policy),
     };
     priced.map(|(body, _)| body).map_err(|e| e.to_string())
 }
 
-/// The styles under `root`: `styles.json`, else `styles-default.json` (DEF-03). Never writes.
-fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
-    let path = InputPaths::relative_to(root)
+/// The styles source under `root` loaded with the name its errors use: `styles.json` when it
+/// exists, else the built-in default. Never writes.
+fn load_styles_named(root: &std::path::Path) -> Result<(StyleSet, String), String> {
+    match InputPaths::in_home(root)
         .styles_source()
-        .map_err(|e| e.to_string())?;
-    loader::load_styles(&path.to_string_lossy()).map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
+    {
+        Source::File(p) => {
+            let name = p.to_string_lossy().into_owned();
+            loader::load_styles(&name)
+                .map(|s| (s, name))
+                .map_err(|e| e.to_string())
+        }
+        Source::Embedded(b) => {
+            let name = b.label();
+            loader::load_styles_str(b.text, &name)
+                .map(|s| (s, name))
+                .map_err(|e| e.to_string())
+        }
+    }
 }
 
-/// The class catalogue and the styles `config.json` references, from one load of `config.json`
-/// (styles from the effective source, as in [`load_styles_at`]).
+/// The styles under `root`: `styles.json`, else the built-in default. Never writes.
+fn load_styles_at(root: &std::path::Path) -> Result<StyleSet, String> {
+    load_styles_named(root).map(|(s, _)| s)
+}
+
+/// The class catalogue and the styles the built-in `config.json` references (the overlay never
+/// reads a `config.json` from the folder), with styles from the effective source.
 fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<String>), String> {
-    let paths = InputPaths::relative_to(root);
-    let styles = paths.styles_source().map_err(|e| e.to_string())?;
-    loader::load_config_with_live(
-        &paths.config.to_string_lossy(),
-        &styles.to_string_lossy(),
+    let paths = InputPaths::in_home(root);
+    let (styles, styles_name) = load_styles_named(root)?;
+    loader::load_config_str_with_live(
+        crate::defaults::CONFIG.text,
+        &crate::defaults::CONFIG.label(),
+        styles,
+        &styles_name,
         &paths.styles.to_string_lossy(),
     )
     .map(|config| {
@@ -320,12 +464,24 @@ fn load_classes_at(root: &std::path::Path) -> Result<(ClassCatalog, BTreeSet<Str
     .map_err(|e| e.to_string())
 }
 
-/// The effective styles source under `root` and its modification time; `None` when neither
-/// `styles.json` nor `styles-default.json` can be stat'ed. Never creates a file.
-fn styles_stamp_at(root: &std::path::Path) -> Option<(std::path::PathBuf, std::time::SystemTime)> {
-    let path = InputPaths::relative_to(root).styles_source().ok()?;
-    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-    Some((path, mtime))
+/// What the styles were last read from: the built-in default, or a live file and its
+/// modification time. A change of either reloads the styles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StylesStamp {
+    Embedded,
+    File(std::path::PathBuf, std::time::SystemTime),
+}
+
+/// The effective styles source under `root`; `None` when the source cannot be resolved or a
+/// live file cannot be stat'ed. Never creates a file.
+fn styles_stamp_at(root: &std::path::Path) -> Option<StylesStamp> {
+    match InputPaths::in_home(root).styles_source().ok()? {
+        Source::Embedded(_) => Some(StylesStamp::Embedded),
+        Source::File(path) => {
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            Some(StylesStamp::File(path, mtime))
+        }
+    }
 }
 
 /// Builds the working document from a loaded filter (the migrated text, never the raw bytes).
@@ -470,6 +626,7 @@ fn apply_everything(
     root: &Path,
     mut config: Option<&mut ConfigState>,
     mut filter: Option<(&mut LoadedFilter, &mut WorkingFilter)>,
+    policy: PriceSourcePolicy,
     overwrite: bool,
 ) -> AllResult {
     let filter_path = filter.as_ref().map(|(l, _)| l.path().to_path_buf());
@@ -504,6 +661,7 @@ fn apply_everything(
                 loaded: &**loaded,
                 styled,
                 plan: working.economy_plan(),
+                policy,
             })
         }
         None => None,
@@ -854,6 +1012,8 @@ struct EconomyInfo {
     /// Why an existing prices.json is unusable (unreadable, malformed or without items). The
     /// file's mtime is then not a sync time, so `mtime_secs` is `None`.
     problem: Option<String>,
+    /// The league the file was synced for (None when absent, unusable or blank).
+    league: Option<String>,
 }
 
 impl EconomyInfo {
@@ -865,20 +1025,26 @@ impl EconomyInfo {
             .and_then(|meta| meta.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
-        let (priced_items, problem) =
+        let (priced_items, problem, league) =
             match crate::loader::load_prices_optional(&path.to_string_lossy()) {
-                Ok(Some(p)) if p.items.is_empty() => {
-                    (0, Some("prices.json has no priced items.".to_string()))
+                Ok(Some(p)) if p.items.is_empty() => (
+                    0,
+                    Some("prices.json has no priced items.".to_string()),
+                    None,
+                ),
+                Ok(Some(p)) => {
+                    let league = (!p.league.trim().is_empty()).then(|| p.league.clone());
+                    (p.items.len(), None, league)
                 }
-                Ok(Some(p)) => (p.items.len(), None),
-                Ok(None) => (0, None),
-                Err(err) => (0, Some(err.to_string())),
+                Ok(None) => (0, None, None),
+                Err(err) => (0, Some(err.to_string()), None),
             };
         EconomyInfo {
             mtime_secs: if problem.is_some() { None } else { mtime_secs },
             priced_items,
             live: priced_items > 0,
             problem,
+            league,
         }
     }
 }
@@ -914,7 +1080,7 @@ fn filter_target(
     match game_dir {
         Some(dir) => Ok(dir.join(name)),
         None => Err(
-            "Cannot resolve the default PoE2 config folder (USERPROFILE is not set).".to_string(),
+            "Cannot find the Documents folder; pick the game folder on the Config tab.".to_string(),
         ),
     }
 }
@@ -923,6 +1089,18 @@ fn filter_target(
 fn settings_with_filter(current: &Settings, name: &str) -> Settings {
     Settings {
         filter: Some(name.to_string()),
+        auto_filter: None,
+        ..current.clone()
+    }
+}
+
+/// The settings to save when `path` becomes the game folder and `name` the filter in it; unknown
+/// keys are preserved. The path is stored exactly as picked (never canonicalized).
+fn settings_with_folder(current: &Settings, path: &std::path::Path, name: &str) -> Settings {
+    Settings {
+        game_folder: Some(path.to_string_lossy().into_owned()),
+        filter: Some(name.to_string()),
+        auto_filter: None,
         ..current.clone()
     }
 }
@@ -949,10 +1127,40 @@ fn settings_after_reload(
     current.clone()
 }
 
+/// With no saved filter, selects one from `game_dir`'s listing: `current` when listed, else the
+/// first `.filter`; an empty or unreadable folder leaves the name as it is. The pick goes to
+/// [`Settings::auto_filter`], which is never written (not even by a later save of another
+/// preference), so every place that replaces the settings from disk (startup, RELOAD) applies it
+/// again and the overlay stays on the filter it had open.
+fn choose_unsaved_filter(settings: &mut Settings, game_dir: Option<&Path>, current: &str) {
+    if settings.filter.is_none()
+        && let Some(list) = game_dir.and_then(|dir| settings::list_filters(dir).ok())
+        && !list.is_empty()
+    {
+        settings.auto_filter = Some(settings::choose_filter(&list, current));
+    }
+}
+
 /// `current` with the reload-after-Apply preference replaced; the filter and unknown keys stay.
 fn settings_with_reload(current: &Settings, on: bool) -> Settings {
     Settings {
         reload_after_apply: Some(on),
+        ..current.clone()
+    }
+}
+
+/// `current` with the economy league replaced; every other field and unknown key stays.
+fn settings_with_league(current: &Settings, name: &str) -> Settings {
+    Settings {
+        league: Some(name.to_string()),
+        ..current.clone()
+    }
+}
+
+/// `current` with the price source replaced (`true` = live prices, `false` = fallback pair).
+fn settings_with_price_source(current: &Settings, live: bool) -> Settings {
+    Settings {
+        price_source: Some(if live { "live" } else { "fallback" }.to_string()),
         ..current.clone()
     }
 }
@@ -965,6 +1173,43 @@ struct PendingReload {
     extras: String,
     /// The interim status line; the result replaces it only while it is still showing.
     interim: String,
+    /// The landed line is a warning whatever the reload result (it carries the "Not quit" note).
+    warning: bool,
+}
+
+/// Shows the "Not quit" warning of an Apply & quit that stays open for unused tier edits. While a
+/// reload's interim line is showing, the warning is folded into it and into the line the reload
+/// result will become, so it survives the conceal the reload causes and the result still lands.
+fn show_not_quit_warning(
+    message: &mut Option<(String, w::StatusKind)>,
+    pending: Option<&mut PendingReload>,
+) {
+    match pending {
+        Some(p) if message.as_ref().is_some_and(|(t, _)| *t == p.interim) => {
+            let note = format!(" {UNWRITABLE_TIERS_QUIT_STATUS}");
+            p.interim.push_str(&note);
+            p.extras.push_str(&note);
+            p.warning = true;
+            *message = Some((p.interim.clone(), w::StatusKind::Warning));
+        }
+        _ => {
+            *message = Some((
+                UNWRITABLE_TIERS_QUIT_STATUS.to_string(),
+                w::StatusKind::Warning,
+            ));
+        }
+    }
+}
+
+/// The status colour of an update message.
+fn update_kind(kind: crate::update::UpdateKind) -> w::StatusKind {
+    use crate::update::UpdateKind;
+    match kind {
+        UpdateKind::Info => w::StatusKind::Info,
+        UpdateKind::Ok => w::StatusKind::Ok,
+        UpdateKind::Warning => w::StatusKind::Warning,
+        UpdateKind::Error => w::StatusKind::Error,
+    }
 }
 
 /// The Apply status line after the window is concealed. Hiding normally clears it, but not while
@@ -1029,20 +1274,37 @@ impl OverlayApp {
         hotkey_status: HotkeyStatus,
         instance: instance::Guard,
         skin: Skin,
+        pending_install: std::sync::Arc<std::sync::Mutex<Option<crate::update::ReadyUpdate>>>,
     ) -> Self {
-        Self::build(tray, hotkey_manager, hotkey_status, Some(instance), skin)
+        let root = resolve_root();
+        let game_dir = startup_game_dir(&root);
+        let mut app = Self::build(
+            tray,
+            hotkey_manager,
+            hotkey_status,
+            Some(instance),
+            skin,
+            root,
+            game_dir,
+        );
+        app.pending_install = pending_install;
+        app
     }
 
     /// The debug screenshot app: an inert tray, no hotkey, no instance guard, the requested tab
     /// shown and the window kept visible until the frame is saved.
     #[cfg(debug_assertions)]
     pub(crate) fn new_screenshot(skin: Skin, shot: super::screenshot::ShotArgs) -> Self {
+        let root = resolve_root();
+        let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             TrayHandles::inert(),
             None,
             HotkeyStatus::Failed("screenshot mode".to_string()),
             None,
             skin,
+            root,
+            game_dir,
         );
         app.tab = shot.tab;
         app.visibility = Visibility::ShownFocused;
@@ -1052,6 +1314,31 @@ impl OverlayApp {
         app.open_shot_popup(shot.popup.as_deref());
         if let Some(q) = &shot.search {
             app.query = q.clone();
+        }
+        match shot.update_state.as_deref() {
+            Some("checking") => app.update.inject(UpdateState::Checking),
+            Some("downloading") => app.update.inject(UpdateState::Downloading {
+                version: "0.8.0".to_string(),
+            }),
+            Some(s) if s.starts_with("ready:") => {
+                let mut parts = s.splitn(3, ':').skip(1);
+                let version = parts.next().unwrap_or_default().to_string();
+                let date = parts.next().unwrap_or_default().to_string();
+                app.update
+                    .inject(UpdateState::Ready(crate::update::ReadyUpdate {
+                        version: version.clone(),
+                        published_unix: crate::update::parse_published(&format!(
+                            "{date}T12:00:00Z"
+                        )),
+                        installer: PathBuf::new(),
+                        sha256: String::new(),
+                    }));
+                app.update_message = Some((
+                    format!("{version} available, released {date}"),
+                    w::StatusKind::Info,
+                ));
+            }
+            _ => {}
         }
         match shot.stage_economy.as_deref() {
             Some("add") => app.stage_add_economy(),
@@ -1095,6 +1382,27 @@ impl OverlayApp {
         if let (Some((tier, text)), Ok(state)) = (&shot.tier_text, &mut app.config) {
             state.set_tier_text(tier, text);
         }
+        use crate::overlay::screenshot::ShotLeagues;
+        match &shot.leagues {
+            Some(ShotLeagues::List(names)) => {
+                app.leagues
+                    .inject(ListState::Loaded(crate::overlay::screenshot::fake_leagues(
+                        names,
+                    )));
+            }
+            Some(ShotLeagues::Failed) => {
+                app.leagues
+                    .inject(ListState::Failed("screenshot mode: no league list".into()));
+            }
+            Some(ShotLeagues::Loading) => app.leagues.inject(ListState::Loading),
+            None => {}
+        }
+        if let Some(name) = &shot.league {
+            app.set_league(name);
+        }
+        if let Some(src) = &shot.price_source {
+            app.set_price_source(src == "live");
+        }
         app.shot = Some(ShotState {
             args: shot,
             frames: 0,
@@ -1133,6 +1441,13 @@ impl OverlayApp {
                 self.config_ui.delete_armed = Some(name.unwrap_or_else(|| "kite".to_string()));
             }
             Some("remove-economy") => self.list.confirm_economy_remove = true,
+            Some("reset-styles") => {
+                if let Ok(state) = &mut self.config {
+                    state.edit_style("S", config_state::StyleEdit::Font(Some(41)));
+                }
+                self.config_ui.reset_armed = Some(RevertScope::Styles);
+            }
+            Some("reset-tiers") => self.config_ui.reset_armed = Some(RevertScope::Tiers),
             Some("discard-config") => {
                 if let Ok(state) = &mut self.config {
                     state.edit_style("S", config_state::StyleEdit::Font(Some(41)));
@@ -1179,14 +1494,25 @@ impl OverlayApp {
         hotkey_status: HotkeyStatus,
         instance: Option<instance::Guard>,
         skin: Skin,
+        root: Result<PathBuf, String>,
+        game_dir: Option<PathBuf>,
     ) -> Self {
-        let root = crate::paths::app_root().map_err(|e| e.to_string());
-        let game_dir = dynamic::default_destination();
         // Settings: the remembered filter. Without a root nothing is read and nothing is saved.
-        let (settings, settings_warning) = match &root {
-            Ok(root) => settings::load(root),
-            Err(_) => (Settings::default(), None),
+        let (mut settings, settings_warning, filter_fell_back) = match &root {
+            Ok(root) => {
+                let loaded = settings::load_detailed(root);
+                (loaded.settings, loaded.warning, loaded.filter_fell_back)
+            }
+            Err(_) => (Settings::default(), None, false),
         };
+        // A fresh install (no saved filter): use the folder's filter instead of a fixed name.
+        // Held in memory only; opening the overlay never writes.
+        // A stored name or a file that could not be used says it falls back to `dynamic.filter`,
+        // so that is what is opened then; a warning about another key changes nothing here.
+        if !filter_fell_back {
+            let current = settings.filter_name().to_string();
+            choose_unsaved_filter(&mut settings, game_dir.as_deref(), &current);
+        }
         // Loading never writes (D-10).
         let filter = Self::load_filter(game_dir.as_deref(), settings.filter_name());
         let working = working_from(&filter);
@@ -1208,8 +1534,10 @@ impl OverlayApp {
             shot: None,
             toggle_requested: false,
             quit_confirm: false,
+            quit_tier_edits_only: false,
             revert_rules_armed: false,
             quit_after_apply: false,
+            quit_after_reload: false,
             quit_next_frame: false,
             // The window created in `overlay::launch` starts visible
             // (`with_active(false)` only suppresses activation, not
@@ -1228,6 +1556,11 @@ impl OverlayApp {
             apply_state: ApplyState::NeverApplied,
             apply_message: None,
             economy: economy::EconomySync::new(),
+            update: UpdateJob::new(),
+            update_message: None,
+            update_behind: false,
+            pending_install: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            leagues: super::leagues::LeagueList::default(),
             reload: chat::ReloadSend::default(),
             reload_pending: None,
             working,
@@ -1237,6 +1570,8 @@ impl OverlayApp {
             staged_econ_inputs: None,
             econ_preview_failed: false,
             applied_this_session: false,
+            applied_policy: settings.price_policy(),
+            left_policies: std::collections::HashMap::new(),
             classes: Err("not loaded".to_string()),
             styles_stamp: None,
             styles_checked: 0.0,
@@ -1249,9 +1584,25 @@ impl OverlayApp {
             game_dir,
             filters_cache: None,
             pending_switch: None,
+            pending_folder: None,
+            want_browse: false,
+            folder_pick: super::folder_dialog::FolderPick::default(),
+            // Tests never reach the real environment or Documents folder.
+            #[cfg(test)]
+            game_dir_pinned: false,
+            #[cfg(not(test))]
+            game_dir_pinned: crate::locations::game_dir_is_pinned(),
+            #[cfg(test)]
+            default_game_dir: None,
+            #[cfg(not(test))]
+            default_game_dir: crate::locations::default_game_dir(),
+            game_dir_missing: false,
             sound_dir_stale: true,
+            #[cfg(test)]
+            test_home: None,
         };
         app.refresh_inputs();
+        app.refresh_filters();
         app.refresh_economy_info();
         if settings_warning.is_some() {
             app.list_status = settings_warning;
@@ -1323,6 +1674,94 @@ impl OverlayApp {
             .game_dir
             .as_deref()
             .and_then(|dir| settings::list_filters(dir).ok());
+        // The one place the folder's existence is read (never per frame).
+        self.game_dir_missing = self.game_dir.as_deref().is_some_and(|d| !d.is_dir());
+    }
+
+    /// The status text for a game folder that is not on disk.
+    fn game_folder_missing_text(&self) -> Option<String> {
+        let dir = self.game_dir.as_deref()?;
+        self.game_dir_missing
+            .then(|| format!("Game folder not found: {}", dir.display()))
+    }
+
+    /// A game folder came back from the dialog. A pick equal to the current folder only re-lists
+    /// it; unapplied rule edits make it wait for confirmation (the Switch filter? popup).
+    fn on_folder_picked(&mut self, path: std::path::PathBuf) {
+        if self.game_dir_pinned {
+            return;
+        }
+        let same = self.game_dir.as_deref().is_some_and(|cur| {
+            cur.to_string_lossy()
+                .eq_ignore_ascii_case(&path.to_string_lossy())
+        });
+        if same {
+            // Re-picking the current folder re-checks it (it may have appeared since).
+            self.refresh_filters();
+            return;
+        }
+        if self.working.as_ref().is_some_and(|w| w.is_dirty()) {
+            self.pending_folder = Some(path);
+        } else {
+            self.apply_folder(path);
+        }
+    }
+
+    /// Makes `path` the game folder now: the filter is chosen from its listing (same name, else the
+    /// first `.filter`, else the current name), and both are saved in one write.
+    fn apply_folder(&mut self, path: std::path::PathBuf) {
+        self.pending_folder = None;
+        let left = self.open_filter_path();
+        self.game_dir = Some(path.clone());
+        self.refresh_filters();
+        let name = settings::choose_filter(
+            self.filters_cache.as_deref().unwrap_or(&[]),
+            self.settings.filter_name(),
+        );
+        let next = settings_with_folder(&self.settings, &path, &name);
+        self.adopt_settings(next, left);
+    }
+
+    /// The path of the filter the settings select, when the game folder is known.
+    fn open_filter_path(&self) -> Option<PathBuf> {
+        filter_target(self.game_dir.as_deref(), self.settings.filter_name()).ok()
+    }
+
+    /// Saves `next` as the settings in force (a failed save still applies it for the session and
+    /// says so), then reloads everything that follows the filter and folder. `left` is the
+    /// filter being left, whose `applied_policy` is kept for a later return.
+    fn adopt_settings(&mut self, next: Settings, left: Option<PathBuf>) {
+        let save_error = match &self.root {
+            Ok(root) => settings::save(root, &next).err(),
+            Err(_) => None,
+        };
+        self.settings = next;
+        self.rebind_applied_policy(left);
+        self.reset_filter_state();
+        self.refresh_inputs();
+        self.refresh_filters();
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Call once the settings and game folder name the filter now open: `left` (the filter open
+    /// before) keeps its `applied_policy` for a later return. A filter left earlier this session
+    /// gets back the policy it was written under; any other is assumed written under the policy
+    /// now in force.
+    fn rebind_applied_policy(&mut self, left: Option<PathBuf>) {
+        if let Some(left) = left {
+            self.left_policies.insert(left, self.applied_policy);
+        }
+        self.applied_policy = self
+            .open_filter_path()
+            .and_then(|p| self.left_policies.get(&p).copied())
+            .unwrap_or_else(|| self.settings.price_policy());
+    }
+
+    /// Whether the folder dialog is open (read by the Config tab to grey Browse).
+    pub(crate) fn folder_dialog_open(&self) -> bool {
+        self.folder_pick.is_open()
     }
 
     /// (Re)reads `styles.json` into the working filter and `config.json` into the class
@@ -1409,6 +1848,7 @@ impl OverlayApp {
         self.applied_this_session = false;
         self.apply_state = ApplyState::NeverApplied;
         self.pending_switch = None;
+        self.pending_folder = None;
         self.sound_dir_stale = true;
     }
 
@@ -1424,15 +1864,21 @@ impl OverlayApp {
     /// Makes `name` the active filter now and remembers it. A failed save still switches for
     /// this session and says so.
     fn switch_to(&mut self, name: String) {
+        let left = self.open_filter_path();
+        let next = settings_with_filter(&self.settings, &name);
+        self.adopt_settings(next, left);
+    }
+
+    /// Saves the open filter as the selected one, without reloading anything (it is already
+    /// open). A failed save still selects it for this session and says so.
+    fn remember_open_filter(&mut self) {
+        let name = self.settings.filter_name().to_string();
         let next = settings_with_filter(&self.settings, &name);
         let save_error = match &self.root {
             Ok(root) => settings::save(root, &next).err(),
             Err(_) => None,
         };
         self.settings = next;
-        self.reset_filter_state();
-        self.refresh_inputs();
-        self.refresh_filters();
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
@@ -1478,6 +1924,11 @@ impl OverlayApp {
     /// edit: it never touches the loaded filter or the CONFIG pending state.
     fn set_reload_after_apply(&mut self, on: bool) {
         let next = settings_with_reload(&self.settings, on);
+        self.save_view_setting(next);
+    }
+
+    /// Saves `next` at once; a failed save still applies it for the session and says so.
+    fn save_view_setting(&mut self, next: Settings) {
         let save_error = match &self.root {
             Ok(root) => settings::save(root, &next).err(),
             Err(_) => None,
@@ -1486,6 +1937,86 @@ impl OverlayApp {
         if let Some(err) = save_error {
             self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
         }
+    }
+
+    /// Saves one key of `next` at once, every other key of the file left as it is. An unusable
+    /// file is never replaced: the choice applies for the session and the status line says it
+    /// was not saved, as does a failed save.
+    fn save_view_key(
+        &mut self,
+        next: Settings,
+        save: fn(&Path, &Settings) -> std::io::Result<bool>,
+    ) {
+        let save_error = match &self.root {
+            Ok(root) => match save(root, &next) {
+                Ok(true) => None,
+                Ok(false) => Some(UNUSABLE_SETTINGS_NOT_SAVED.to_string()),
+                Err(e) => Some(e.to_string()),
+            },
+            Err(_) => None,
+        };
+        self.settings = next;
+        if let Some(err) = save_error {
+            self.config_message = Some((format!("Could not save ff-settings.json: {err}"), true));
+        }
+    }
+
+    /// Persist the picked economy league at once. Never touches the loaded filter or CONFIG
+    /// edits.
+    fn set_league(&mut self, name: &str) {
+        let next = settings_with_league(&self.settings, name);
+        self.save_view_key(next, settings::save_league);
+    }
+
+    /// Persist the price source at once (`true` = Live) and re-gate the tier cutoffs.
+    fn set_price_source(&mut self, live: bool) {
+        let next = settings_with_price_source(&self.settings, live);
+        self.save_view_key(next, settings::save_price_source);
+        self.sync_tiers_in_use();
+        let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
+        let style_pending = self
+            .working
+            .as_mut()
+            .is_some_and(|w| w.style_rewrite_pending());
+        let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
+        let other_dirty = apply::combined_dirty(rules_dirty, style_pending, config_dirty);
+        let pending = self.source_pending();
+        if (pending || other_dirty) && self.apply_state == ApplyState::Applied {
+            self.apply_state = ApplyState::Unapplied;
+        } else if !pending && !other_dirty {
+            self.apply_state = apply::state_after_revert(self.applied_this_session, false);
+        }
+    }
+
+    /// Whether the loaded filter has an economy section (in the file, or staged to be added).
+    fn has_economy_section(&self) -> bool {
+        self.working
+            .as_ref()
+            .is_some_and(|w| matches!(w.economy(), EconomyView::Present { .. }))
+    }
+
+    /// A price-source switch that makes Apply write different economy blocks than the file has.
+    /// Counts as an unapplied change (marker, indicator, Apply, Quit prompt) but never as
+    /// something Revert undoes: the setting is saved at once.
+    fn source_pending(&self) -> bool {
+        super::leagues::source_pending(
+            self.applied_policy,
+            self.settings.price_policy(),
+            self.economy_info.live,
+            self.has_economy_section(),
+        )
+    }
+
+    /// The decided league UI for the Economy tab.
+    fn league_view(&self) -> super::leagues::LeagueView {
+        super::leagues::view(&super::leagues::ViewInputs {
+            saved: self.settings.saved_league(),
+            state: self.leagues.state(),
+            fetching: self.leagues.is_fetching(),
+            prices_league: self.economy_info.league.as_deref(),
+            fallback: self.settings.price_policy() == PriceSourcePolicy::ForceFallback,
+            syncing: self.economy.is_running(),
+        })
     }
 
     /// What the footer knows about the filter, for [`apply::footer_actions`]. The economy part
@@ -1512,6 +2043,8 @@ impl OverlayApp {
     /// list's view state is re-keyed to the re-parsed document. `overwrite` is OVERWRITE after a
     /// changed-on-disk refusal; it otherwise behaves exactly like APPLY, in-game reload included.
     fn run_apply(&mut self, ctx: &egui::Context, overwrite: bool) -> bool {
+        self.update_message = None;
+        self.sync_tiers_in_use();
         let Ok(root) = &self.root else {
             return false;
         };
@@ -1534,7 +2067,13 @@ impl OverlayApp {
             (Ok(loaded), Some(working)) => Some((loaded, working)),
             _ => None,
         };
-        let result = apply_everything(root, self.config.as_mut().ok(), filter_part, overwrite);
+        let result = apply_everything(
+            root,
+            self.config.as_mut().ok(),
+            filter_part,
+            self.settings.price_policy(),
+            overwrite,
+        );
         let AllResult {
             outcome,
             extras,
@@ -1588,6 +2127,7 @@ impl OverlayApp {
                                 prefix: prefix.clone(),
                                 extras: extras.clone(),
                                 interim,
+                                warning: false,
                             });
                         } else {
                             self.apply_message = applied_message(format!(
@@ -1619,6 +2159,7 @@ impl OverlayApp {
             }
         }
         self.apply_state = self.apply_state.on_apply_success();
+        self.applied_policy = self.settings.price_policy();
         self.config_message = None;
         self.config_ui.reset_for_new_styles();
         self.styles_stamp = styles_stamp_at(root);
@@ -1676,7 +2217,63 @@ impl OverlayApp {
         });
         self.config_message = None;
         self.list_status = None;
+        self.update_message = None;
         self.economy.clear_message();
+    }
+
+    /// Start the update check. The only place a check begins, and only the About tab's button
+    /// calls it: never at start-up, never on a timer. A new user action supersedes older event
+    /// messages.
+    fn start_update_check(&mut self) {
+        self.clear_events_on_edit();
+        self.economy.clear_message();
+        if self.update.start(|progress| {
+            crate::update::check_for_update_blocking(progress.work_dir(), &mut |v| {
+                progress.downloading(v)
+            })
+        }) {
+            let (text, kind) = crate::update::checking_message();
+            self.update_message = Some((text, update_kind(kind)));
+            self.update_behind = false;
+        }
+    }
+
+    /// Takes a message the update worker delivered. It ranks first only when no other event
+    /// message is showing and no sync is running; otherwise that message or sync belongs to an
+    /// action the player started while the check ran, and the update outcome waits behind it.
+    fn receive_update_message(&mut self, text: String, kind: crate::update::UpdateKind) {
+        self.update_behind = self.apply_message.is_some()
+            || self.config_message.is_some()
+            || self.list_status.is_some()
+            || matches!(
+                self.economy.state(),
+                economy::SyncState::Running | economy::SyncState::Finished(_)
+            );
+        self.update_message = Some((text, update_kind(kind)));
+    }
+
+    /// Collects a finished economy sync. Returns true when the sync state moved. A sync outcome
+    /// that lands while an update message is showing is the newer event, so the update message
+    /// then ranks behind it.
+    fn poll_economy(&mut self) -> bool {
+        if !self.economy.poll() {
+            return false;
+        }
+        if self.update_message.is_some() {
+            self.update_behind = true;
+        }
+        self.prices_changed();
+        true
+    }
+
+    /// A finished sync's line and whether it is a failure, for the status line.
+    fn sync_outcome(&self) -> Option<(String, bool)> {
+        match self.economy.state() {
+            economy::SyncState::Finished(outcome) => {
+                Some((outcome.message().to_string(), outcome.is_failure()))
+            }
+            _ => None,
+        }
     }
 
     /// An edit or a revert on either tab clears every event message (the Apply outcome, the list
@@ -1684,6 +2281,7 @@ impl OverlayApp {
     /// standing lines or the action's own message (review WR-01, iterations 1 and 2).
     fn clear_events_on_edit(&mut self) {
         self.apply_message = None;
+        self.update_message = None;
         self.list_status = None;
         self.config_message = None;
     }
@@ -1696,6 +2294,7 @@ impl OverlayApp {
             .working
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
+        let style_pending = style_pending || self.source_pending();
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         let blocking = self.working.as_ref().map_or(0, |w| w.blocking().len());
@@ -1746,10 +2345,12 @@ impl OverlayApp {
         shell::PopupFlags {
             quit: self.quit_confirm && !quit_requested,
             changed: self.changed_popup && !self.changed_on_disk.is_empty(),
-            switch: self.pending_switch.is_some(),
+            switch: self.pending_switch.is_some() || self.pending_folder.is_some(),
             delete_rule: self.list.confirm_delete.is_some(),
             delete_style: self.config_ui.delete_armed.is_some(),
             remove_economy: self.list.confirm_economy_remove,
+            reset_styles: self.config_ui.reset_armed == Some(RevertScope::Styles),
+            reset_tiers: self.config_ui.reset_armed == Some(RevertScope::Tiers),
             discard_config: self.config_ui.revert_armed && self.config_discard_count() > 0,
             discard_rules: self.revert_rules_armed && self.rules_revertible(),
         }
@@ -1794,7 +2395,9 @@ impl OverlayApp {
     /// The text and buttons of an open popup, from the current state.
     fn popup_spec_for(&self, popup: Popup) -> shell::PopupSpec {
         match popup {
-            Popup::Quit => shell::popup_spec(PopupData::Quit),
+            Popup::Quit => shell::popup_spec(PopupData::Quit {
+                tier_edits_only: self.quit_tier_edits_only,
+            }),
             Popup::ChangedOnDisk => {
                 let fallback = Path::new("the filter");
                 let path = self.filter.as_ref().ok().map_or(fallback, |l| l.path());
@@ -1806,9 +2409,13 @@ impl OverlayApp {
                     block: self.overwrite_block(),
                 })
             }
-            Popup::SwitchFilter => shell::popup_spec(PopupData::SwitchFilter {
-                target: self.pending_switch.as_deref().unwrap_or(""),
-            }),
+            Popup::SwitchFilter => {
+                let target = match &self.pending_folder {
+                    Some(dir) => dir.display().to_string(),
+                    None => self.pending_switch.clone().unwrap_or_default(),
+                };
+                shell::popup_spec(PopupData::SwitchFilter { target: &target })
+            }
             Popup::DeleteRule => {
                 let row = self
                     .list
@@ -1849,6 +2456,8 @@ impl OverlayApp {
                 shell::popup_spec(PopupData::DeleteStyle { prompt })
             }
             Popup::RemoveEconomy => shell::popup_spec(PopupData::RemoveEconomy),
+            Popup::ResetStyles => shell::popup_spec(PopupData::ResetStyles),
+            Popup::ResetTiers => shell::popup_spec(PopupData::ResetTiers),
             Popup::DiscardConfig => {
                 let scope = self.config_ui.revert_scope;
                 let economy = scope == RevertScope::Tiers;
@@ -1880,6 +2489,7 @@ impl OverlayApp {
         let on_config = self.tab == ShellTab::Config;
         match popup {
             Popup::Quit => {
+                let choice = shell::quit_popup_choice(self.quit_tier_edits_only, choice);
                 let quit_choice = match choice {
                     0 => apply::QuitChoice::ApplyAndQuit,
                     1 => apply::QuitChoice::QuitWithoutApplying,
@@ -1887,7 +2497,10 @@ impl OverlayApp {
                 };
                 let dirty = self.quit_dirty();
                 match apply::quit_step(dirty, true, apply::QuitEvent::Choice(quit_choice)) {
-                    apply::QuitStep::CloseConfirm => self.quit_confirm = false,
+                    apply::QuitStep::CloseConfirm => {
+                        self.quit_confirm = false;
+                        self.update.cancel_install();
+                    }
                     apply::QuitStep::QuitNow => {
                         // Deferred to the top of the next frame so the Phase 22 order holds:
                         // shutdown before that frame's instance show-request poll (WR-08).
@@ -1897,12 +2510,28 @@ impl OverlayApp {
                     }
                     apply::QuitStep::RunApply => {
                         self.quit_confirm = false;
-                        let ok = self.run_apply(ctx, false);
+                        // Unused tier edits alone leave nothing to write: no Apply, no reload.
+                        let ok = !self.applicable_dirty() || self.run_apply(ctx, false);
+                        if ok && self.has_unwritable_tier_edits() {
+                            // No Apply can write cutoffs while Fallback is on: stay open with
+                            // them kept rather than quit and lose them.
+                            show_not_quit_warning(
+                                &mut self.apply_message,
+                                self.reload_pending.as_mut(),
+                            );
+                            // The window stays open: no install on a later, unrelated quit.
+                            self.update.cancel_install();
                         // A refusal leaves the window open showing it (Overwrite/Reload as today).
-                        if apply::quit_step(dirty, false, apply::QuitEvent::ApplyFinished { ok })
-                            == apply::QuitStep::QuitWhenIdle
+                        } else if apply::quit_step(
+                            dirty,
+                            false,
+                            apply::QuitEvent::ApplyFinished { ok },
+                        ) == apply::QuitStep::QuitWhenIdle
                         {
                             self.quit_after_apply = true;
+                        } else {
+                            // A refused Apply keeps the window open: no install on a later quit.
+                            self.update.cancel_install();
                         }
                     }
                     _ => {}
@@ -1949,6 +2578,17 @@ impl OverlayApp {
                     self.stage_remove_economy();
                 }
             }
+            Popup::ResetStyles | Popup::ResetTiers => {
+                self.config_ui.reset_armed = None;
+                if choice == 0 {
+                    let action = if popup == Popup::ResetStyles {
+                        ConfigAction::ResetStyles
+                    } else {
+                        ConfigAction::ResetTiers
+                    };
+                    self.handle_config_actions(ctx, vec![action]);
+                }
+            }
             Popup::DiscardConfig => {
                 self.config_ui.revert_armed = false;
                 if choice == 0 {
@@ -1977,11 +2617,85 @@ impl OverlayApp {
         }
     }
 
+    /// A quit request (tray Quit or the installer's `ff --quit`): quits at once when nothing
+    /// is unapplied, otherwise opens the Unapplied changes popup. Returns true when the
+    /// shutdown began. While an in-game reload is still being sent (right after an Apply) the
+    /// shutdown waits for it, like Apply & quit, so the paste and the clipboard restore are
+    /// never cut off.
+    fn request_quit(&mut self) -> bool {
+        let dirty = self.quit_dirty();
+        let step = apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
+        if step == apply::QuitStep::QuitNow {
+            if self.reload.is_running() {
+                self.quit_after_reload = true;
+                return false;
+            }
+            self.quit_after_reload = false;
+            self.begin_shutdown();
+            return true;
+        }
+        if apply::quit_step_shows_confirm(step) {
+            // The popup now owns the decision: its Cancel must not be followed by a quit.
+            self.quit_after_reload = false;
+            self.quit_confirm = true;
+            // Reveal the window the way tray Show does (also when the window was hidden while
+            // the confirm was already up).
+            if self.visibility == Visibility::Hidden {
+                self.toggle_requested = true;
+            }
+        }
+        false
+    }
+
+    /// Runs a quit that waited for the in-game reload, once that reload has finished. Apply &
+    /// quit leaves at once; a deferred clean quit is asked again, so edits made while it waited
+    /// (the window summoned again, a `styles.json` change on disk) open the Unapplied changes
+    /// popup instead of being lost. Returns true when the shutdown began.
+    fn run_deferred_quit(&mut self) -> bool {
+        if self.reload.is_running() {
+            return false;
+        }
+        if self.quit_after_apply {
+            self.quit_after_apply = false;
+            self.quit_after_reload = false;
+            self.begin_shutdown();
+            return true;
+        }
+        if self.quit_after_reload {
+            self.quit_after_reload = false;
+            return self.request_quit();
+        }
+        false
+    }
+
+    /// Anything the Quit confirm guards: unapplied work, plus tier edits kept unused under
+    /// Fallback (no Apply writes them, but quitting loses them).
     fn quit_dirty(&mut self) -> bool {
+        self.applicable_dirty() || self.has_unwritable_tier_edits()
+    }
+
+    /// Decides, while the Quit confirm shows, whether its only pending work is unused tier edits
+    /// (the popup then offers no Apply & quit, which could only stay open).
+    fn refresh_quit_tier_edits_only(&mut self) {
+        self.quit_tier_edits_only =
+            self.quit_confirm && self.has_unwritable_tier_edits() && !self.applicable_dirty();
+    }
+
+    /// Tier cutoff edits that stay pending because the Fallback price source does not use them.
+    fn has_unwritable_tier_edits(&self) -> bool {
+        self.config
+            .as_ref()
+            .is_ok_and(|c| c.has_unwritable_tier_edits())
+    }
+
+    /// Unapplied work an Apply would write: rule edits, a pending style rewrite or source
+    /// switch, CONFIG edits.
+    fn applicable_dirty(&mut self) -> bool {
         let style_pending = self
             .working
             .as_mut()
             .is_some_and(|w| w.style_rewrite_pending());
+        let style_pending = style_pending || self.source_pending();
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         apply::combined_dirty(rules_dirty, style_pending, config_dirty)
@@ -2001,6 +2715,29 @@ impl OverlayApp {
         // relaunch becomes the new first instance rather than waiting on (or being acked by) a
         // process that is about to close.
         self.instance = None;
+        // Hand a clicked-for installer to `launch()`, which starts it after the event loop has
+        // returned; any other quit deletes the download here.
+        if let Some(ready) = self.update.shutdown()
+            && let Ok(mut slot) = self.pending_install.lock()
+        {
+            *slot = Some(ready);
+        }
+    }
+
+    /// The Install click: re-checks the installer, sets the install-on-quit intent and asks to
+    /// quit through the normal path (quits at once when clean, else the Unapplied changes popup).
+    /// Returns true when the shutdown began. Never starts the installer.
+    fn install_and_quit(&mut self) -> bool {
+        self.clear_events_on_edit();
+        match self.update.begin_install() {
+            InstallClick::Failed((text, kind)) => {
+                self.update_message = Some((text, update_kind(kind)));
+                self.update_behind = false;
+                false
+            }
+            InstallClick::NotReady => false,
+            InstallClick::Proceed => self.request_quit(),
+        }
     }
 
     /// RULES REVERT: discard the rule edits. A staged economy add/remove is the ECONOMY tab's and
@@ -2020,8 +2757,10 @@ impl OverlayApp {
         // Per tab: CONFIG edits and a staged economy op survive a RULES revert, so the state may
         // stay out of date.
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        self.apply_state =
-            apply::state_after_revert(self.applied_this_session, config_dirty || still_dirty);
+        self.apply_state = apply::state_after_revert(
+            self.applied_this_session,
+            config_dirty || still_dirty || self.source_pending(),
+        );
     }
 
     /// The ECONOMY bar Revert: opens the Discard popup whenever there are tier edits or a staged
@@ -2043,6 +2782,7 @@ impl OverlayApp {
         working.unstage_economy();
         let rules_dirty = working.is_dirty();
         let style_pending = working.style_rewrite_pending();
+        let style_pending = style_pending || self.source_pending();
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         self.apply_state = apply::state_after_revert(
             self.applied_this_session,
@@ -2060,11 +2800,17 @@ impl OverlayApp {
             return;
         };
         let config = self.config.as_ref().ok();
-        match staged_economy_body(root, config) {
+        let policy = self.settings.price_policy();
+        match staged_economy_body(root, config, policy) {
             Ok(body) => {
                 if working.stage_add_economy(&body) {
-                    self.staged_econ_inputs =
-                        config.map(|c| (c.pending_styles().clone(), c.pending_tiers().to_vec()));
+                    self.staged_econ_inputs = config.map(|c| {
+                        (
+                            c.pending_styles().clone(),
+                            c.pending_tiers().to_vec(),
+                            policy,
+                        )
+                    });
                     self.apply_state = ApplyState::Unapplied;
                 } else {
                     self.list_status = Some(PREVIEW_FAILED_STATUS.to_string());
@@ -2077,6 +2823,7 @@ impl OverlayApp {
     /// Re-prices the staged economy-add preview when the pending styles or tiers changed since it
     /// was built. On a pricing error the previous preview stays and the error is shown.
     fn refresh_staged_economy(&mut self) {
+        let source_pending = self.source_pending();
         let (Ok(root), Ok(config), Some(working)) =
             (&self.root, &self.config, self.working.as_mut())
         else {
@@ -2088,7 +2835,9 @@ impl OverlayApp {
         let refresh = plan == rules::EconomyPlan::Refresh;
         let wanted = match plan {
             rules::EconomyPlan::Add => true,
-            rules::EconomyPlan::Refresh => config.styles_dirty() || config.tiers_dirty(),
+            rules::EconomyPlan::Refresh => {
+                config.styles_dirty() || config.tiers_dirty() || source_pending
+            }
             _ => false,
         };
         if !wanted {
@@ -2104,21 +2853,22 @@ impl OverlayApp {
             return;
         }
         let (styles, tiers) = (config.pending_styles(), config.pending_tiers());
+        let policy = self.settings.price_policy();
         if (working.has_economy_preview() || self.econ_preview_failed)
             && self
                 .staged_econ_inputs
                 .as_ref()
-                .is_some_and(|(s, t)| s == styles && t.as_slice() == tiers)
+                .is_some_and(|(s, t, p)| s == styles && t.as_slice() == tiers && *p == policy)
         {
             return;
         }
-        self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec()));
+        self.staged_econ_inputs = Some((styles.clone(), tiers.to_vec(), policy));
         // Rows switch documents (file to preview, or one preview to the next, whose ids restart):
         // an open economy row would point elsewhere.
         let econ_open = self.list.expanded.is_some_and(|id| {
             rules::is_preview_id(id) || working.economy_rows().iter().any(|r| r.id == id)
         });
-        let shown = match staged_economy_body(root, Some(config)) {
+        let shown = match staged_economy_body(root, Some(config), policy) {
             Ok(body) if refresh => working.set_economy_refresh(Some(&body)),
             Ok(body) => working.set_staged_economy_body(&body),
             Err(err) => {
@@ -2151,16 +2901,31 @@ impl OverlayApp {
         }
     }
 
-    /// RELOAD: re-resolves the app root, re-reads the filter and discards in-memory state (D-08).
-    /// Re-resolving the root here is what lets a window launched before the FerrisFilter folder
-    /// was in place recover without a restart.
+    /// Marks the tier cutoffs unused while the saved price source is Fallback, so their errors
+    /// cannot gate Apply (they return when Live is chosen again).
+    fn sync_tiers_in_use(&mut self) {
+        let in_use = self.settings.price_policy() != PriceSourcePolicy::ForceFallback;
+        if let Ok(config) = &mut self.config {
+            config.set_tiers_in_use(in_use);
+        }
+    }
+
+    /// RELOAD: re-resolves the app root when it could not be resolved, re-reads the filter and
+    /// discards in-memory state (D-08). A resolved root is kept (the environment cannot change
+    /// under a running process); the game folder is re-resolved outside unit tests.
     fn reload(&mut self) {
         let old_root = self.root.clone();
-        self.root = crate::paths::app_root().map_err(|e| e.to_string());
-        self.game_dir = dynamic::default_destination();
+        let open_filter = self.settings.filter_name().to_string();
+        let left = self.open_filter_path();
+        if self.root.is_err() {
+            self.root = resolve_root();
+        }
+        let mut filter_fell_back = false;
         let settings_warning = match &self.root {
             Ok(root) => {
-                let (settings, warning) = settings::load(root);
+                let loaded = settings::load_detailed(root);
+                let (settings, warning) = (loaded.settings, loaded.warning);
+                filter_fell_back = loaded.filter_fell_back;
                 // A momentarily unreadable file must not reset the session's chosen filter (nor
                 // drop unknown keys held in memory), but a reload-off from the file always wins.
                 self.settings = settings_after_reload(
@@ -2176,6 +2941,22 @@ impl OverlayApp {
                 None
             }
         };
+        // The game folder follows the (just re-read) settings; unit tests keep the folder they
+        // were built with.
+        #[cfg(not(test))]
+        {
+            self.game_dir = crate::locations::game_dir(self.settings.game_folder_path());
+        }
+        // No saved filter: keep the one that was open when the folder still lists it. A load
+        // whose filter name fell back either kept the session's filter or says it uses
+        // `dynamic.filter`; a warning about another key changes nothing here.
+        if !filter_fell_back {
+            choose_unsaved_filter(&mut self.settings, self.game_dir.as_deref(), &open_filter);
+        }
+        // The re-read settings or folder may name another filter than the one open before.
+        if self.open_filter_path() != left {
+            self.rebind_applied_policy(left);
+        }
         self.reset_filter_state();
         self.refresh_inputs();
         if settings_warning.is_some() {
@@ -2189,6 +2970,7 @@ impl OverlayApp {
                 Err(message) => Err(message.clone()),
             };
         }
+        self.sync_tiers_in_use();
     }
 
     /// RELOAD on either tab: after a changed-on-disk refusal only the files that changed are
@@ -2215,6 +2997,7 @@ impl OverlayApp {
             &mut self.filter,
             &mut self.working,
         );
+        self.sync_tiers_in_use();
         if changed.contains(&DiskFile::Filter) {
             self.reset_filter_view();
         }
@@ -2230,7 +3013,10 @@ impl OverlayApp {
         // The tab whose edits were kept may still hold unapplied changes.
         let kept_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty())
             || self.working.as_ref().is_some_and(|w| w.is_dirty());
-        self.apply_state = apply::state_after_revert(self.applied_this_session, kept_dirty);
+        self.apply_state = apply::state_after_revert(
+            self.applied_this_session,
+            kept_dirty || self.source_pending(),
+        );
     }
 
     /// Applies the CONFIG tab's collected actions. Filter actions are handled by the filter
@@ -2248,6 +3034,8 @@ impl OverlayApp {
                     | ConfigAction::TierText { .. }
                     | ConfigAction::Revert
                     | ConfigAction::RevertScoped(_)
+                    | ConfigAction::ResetStyles
+                    | ConfigAction::ResetTiers
             )
         }) {
             // A revert sets its own CONFIG message below, after this clear.
@@ -2274,6 +3062,13 @@ impl OverlayApp {
                         && state.edit_style(&name, edit)
                     {
                         self.config_message = None;
+                    }
+                }
+                ConfigAction::SetStrictness(level) => {
+                    if let Ok(state) = &mut self.config
+                        && state.set_strictness(level)
+                    {
+                        self.clear_events_on_edit();
                     }
                 }
                 ConfigAction::DeleteStyle(name) => {
@@ -2331,8 +3126,10 @@ impl OverlayApp {
                     }
                     // Per tab: rule edits survive a CONFIG revert, so the state may stay stale.
                     let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
-                    self.apply_state =
-                        apply::state_after_revert(self.applied_this_session, rules_dirty);
+                    self.apply_state = apply::state_after_revert(
+                        self.applied_this_session,
+                        rules_dirty || self.source_pending(),
+                    );
                 }
                 ConfigAction::RevertScoped(scope) => {
                     if let Ok(state) = &mut self.config {
@@ -2350,8 +3147,22 @@ impl OverlayApp {
                     let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
                     self.apply_state = apply::state_after_revert(
                         self.applied_this_session,
-                        rules_dirty || config_dirty,
+                        rules_dirty || config_dirty || self.source_pending(),
                     );
+                }
+                ConfigAction::ResetStyles => {
+                    if let Ok(state) = &mut self.config {
+                        state.reset_styles();
+                        self.config_ui.reset_for_new_styles();
+                        self.config_ui.expanded = None;
+                        self.config_message = None;
+                    }
+                }
+                ConfigAction::ResetTiers => {
+                    if let Ok(state) = &mut self.config {
+                        state.reset_tiers();
+                        self.config_message = None;
+                    }
                 }
                 ConfigAction::Apply => {
                     self.run_apply(ctx, false);
@@ -2368,6 +3179,7 @@ impl OverlayApp {
                             };
                             // A pending filter refusal stays for the RULES tab to resolve.
                             self.changed_on_disk.retain(|f| *f == DiskFile::Filter);
+                            self.sync_tiers_in_use();
                             self.config_message = None;
                             self.config_ui.reset_for_new_styles();
                         }
@@ -2396,11 +3208,30 @@ impl OverlayApp {
                     }
                 }
                 ConfigAction::ConfirmSwitch => {
-                    if let Some(name) = self.pending_switch.take() {
+                    if let Some(dir) = self.pending_folder.take() {
+                        self.pending_switch = None;
+                        self.apply_folder(dir);
+                    } else if let Some(name) = self.pending_switch.take() {
                         self.switch_to(name);
                     }
                 }
-                ConfigAction::CancelSwitch => self.pending_switch = None,
+                ConfigAction::CancelSwitch => {
+                    self.pending_switch = None;
+                    self.pending_folder = None;
+                }
+                ConfigAction::BrowseFolder => {
+                    if !self.game_dir_pinned
+                        && !self.folder_pick.is_open()
+                        && self.pending_switch.is_none()
+                        && self.pending_folder.is_none()
+                    {
+                        self.want_browse = true;
+                    }
+                }
+                ConfigAction::RefreshLists => {
+                    self.refresh_filters();
+                    super::sound_files::refresh(ctx);
+                }
             }
         }
     }
@@ -2411,7 +3242,13 @@ impl OverlayApp {
     fn select_filter(&mut self, name: String) {
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         match switch_decision(rules_dirty, self.settings.filter_name(), &name) {
-            SwitchDecision::Noop => self.pending_switch = None,
+            SwitchDecision::Noop => {
+                self.pending_switch = None;
+                // Picking the filter the overlay opened on its own makes it the selection.
+                if self.settings.filter.is_none() {
+                    self.remember_open_filter();
+                }
+            }
             SwitchDecision::Switch => self.switch_to(name),
             SwitchDecision::Confirm => self.pending_switch = Some(name),
         }
@@ -2435,7 +3272,12 @@ impl OverlayApp {
         let ctx = ConfigViewCtx {
             filters: filters.as_deref(),
             active_filter: self.settings.filter_name(),
+            active_filter_selected: self.settings.filter.is_some(),
             game_dir: self.game_dir.as_deref(),
+            game_dir_missing: self.game_dir_missing,
+            game_dir_pinned: self.game_dir_pinned,
+            default_game_dir: self.default_game_dir.as_deref(),
+            folder_dialog_open: self.folder_dialog_open(),
             rule_users: &users,
             config_refs: &self.config_refs,
             changed_on_disk: !self.changed_on_disk.is_empty(),
@@ -2609,7 +3451,7 @@ pub(crate) fn bottom_bar(
         status_rect,
         &status.text,
         status.kind,
-        status.jump.is_some(),
+        status.jump.is_some() || status.open_tab.is_some(),
     );
     let line = match status.tip {
         Some(tip) => line.on_hover_text(tip),
@@ -2619,7 +3461,7 @@ pub(crate) fn bottom_bar(
         revert: state.revert && revert.clicked(),
         reload: state.reload && reload.clicked(),
         apply: slot.enabled && apply.clicked(),
-        status: status.jump.is_some() && line.clicked(),
+        status: (status.jump.is_some() || status.open_tab.is_some()) && line.clicked(),
         rects: [revert.rect, reload.rect, apply.rect],
     }
 }
@@ -2634,6 +3476,10 @@ impl eframe::App for OverlayApp {
         if self.sound_dir_stale {
             self.sound_dir_stale = false;
             super::sound_files::set_dir(ui.ctx(), self.sound_dir());
+        }
+        // A folder the dialog worker handed back is applied here, on the UI thread.
+        if let Some(path) = self.folder_pick.poll() {
+            self.on_folder_picked(path);
         }
 
         // Dock on the game's monitor (the primary one without the game): once as soon as the
@@ -2691,9 +3537,22 @@ impl eframe::App for OverlayApp {
         // run every frame. A landed result also forces a repaint: the window is drawn over a game
         // that may not be generating input events, so without this the "SYNCING…" label could sit
         // stale until the player happened to move the mouse over the window.
-        if self.economy.poll() {
-            self.prices_changed();
+        if self.poll_economy() {
             ui.ctx().request_repaint();
+        }
+        if self.leagues.poll() {
+            ui.ctx().request_repaint();
+        }
+        if let Some((text, kind)) = self.update.poll(win::utc_offset_minutes()) {
+            self.receive_update_message(text, kind);
+            ui.ctx().request_repaint();
+        }
+        if matches!(
+            self.update.state(),
+            UpdateState::Checking | UpdateState::Downloading { .. }
+        ) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
         }
 
         // Poll the tray menu's Show/Quit events. Quit itself is only *requested* here; the
@@ -2712,31 +3571,25 @@ impl eframe::App for OverlayApp {
                     }
                 }
                 Some(OverlayCommand::Toggle) => self.toggle_requested = true,
-                Some(OverlayCommand::Quit) => {
-                    let dirty = self.quit_dirty();
-                    let step =
-                        apply::quit_step(dirty, self.quit_confirm, apply::QuitEvent::TrayQuit);
-                    if step == apply::QuitStep::QuitNow {
-                        quit_requested = true;
-                        self.begin_shutdown();
-                    } else if apply::quit_step_shows_confirm(step) {
-                        self.quit_confirm = true;
-                        // Reveal the window the way tray Show does (also when the window was
-                        // hidden while the confirm was already up).
-                        if self.visibility == Visibility::Hidden {
-                            self.toggle_requested = true;
-                        }
-                    }
-                }
+                Some(OverlayCommand::Quit) => quit_requested = self.request_quit(),
                 None => {}
             }
         }
-        // Apply & quit succeeded: leave once an in-game reload (if one started) has finished, so
-        // it is never cut off mid-sequence. The quit itself sends no keystrokes.
-        if self.quit_after_apply && !self.reload.is_running() {
-            self.quit_after_apply = false;
+        // INST-04: the installer's `ff --quit` is the same request as tray Quit, so unapplied
+        // edits show the normal Unapplied changes popup.
+        if !quit_requested
+            && self
+                .instance
+                .as_ref()
+                .is_some_and(|g| g.take_quit_request())
+        {
+            quit_requested = self.request_quit();
+        }
+        // Apply & quit leaves once the in-game reload has finished; a quit request that came
+        // mid-reload is asked again then (see `run_deferred_quit`). The quit itself sends no
+        // keystrokes.
+        if !quit_requested && self.run_deferred_quit() {
             quit_requested = true;
-            self.begin_shutdown();
         }
         // "Quit without applying" was chosen in the confirm last frame. It runs here, before the
         // show-request poll below, like every other quit path (WR-08).
@@ -2773,12 +3626,27 @@ impl eframe::App for OverlayApp {
         // The frame decision: one call to the tested state machine, one
         // call to translate the transition into the single effect to
         // perform. No branching of our own.
-        let focused = ui.ctx().input(|i| i.viewport().focused).unwrap_or(false);
+        let real_focus = ui.ctx().input(|i| i.viewport().focused).unwrap_or(false);
+        if real_focus {
+            self.folder_pick.note_focused();
+        }
+        // The overlay neither hides while the folder dialog is open nor in the short grace after
+        // it closes, before focus comes back; the hotkey is ignored while the dialog is open.
+        let focused = super::folder_dialog::keep_visible(
+            real_focus,
+            self.folder_pick.is_open(),
+            self.folder_pick.since_close(),
+        );
+        if self.folder_pick.since_close().is_some() {
+            ui.ctx()
+                .request_repaint_after(super::folder_dialog::CLOSE_GRACE);
+        }
+        let toggle = self.toggle_requested && !self.folder_pick.is_open();
         // The screenshot mode keeps the window shown: nothing may hide it before the frame is saved.
         let next = if self.is_shot() {
             Visibility::ShownFocused
         } else {
-            visibility::advance(self.visibility, focused, self.toggle_requested)
+            visibility::advance(self.visibility, focused, toggle)
         };
         if let Some(effect) = visibility::effect_for(self.visibility, next) {
             if let Some(window) = &self.window {
@@ -2828,7 +3696,11 @@ impl eframe::App for OverlayApp {
                     &result,
                 )
             {
-                self.apply_message = applied_message(msg);
+                self.apply_message = if p.warning {
+                    Some((msg, w::StatusKind::Warning))
+                } else {
+                    applied_message(msg)
+                };
             }
             ui.ctx().request_repaint();
         }
@@ -2855,13 +3727,17 @@ impl eframe::App for OverlayApp {
         if let (Ok(config), Some(working)) = (&self.config, self.working.as_mut()) {
             sync_working_styles(config, working);
         }
+        self.sync_tiers_in_use();
         self.refresh_staged_economy();
         let state = self.filter_state();
-        // A changed styles.json makes the written filter stale even with no rule edited.
+        // A changed styles.json makes the written filter stale even with no rule edited, and so
+        // does a price-source switch that changes the economy blocks.
+        let source_pending = self.source_pending();
         let style_pending = self
             .working
             .as_mut()
-            .is_some_and(|w| w.style_rewrite_pending());
+            .is_some_and(|w| w.style_rewrite_pending())
+            || source_pending;
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
         let styles_dirty = self.config.as_ref().is_ok_and(|c| c.styles_dirty());
         let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
@@ -2952,7 +3828,12 @@ impl eframe::App for OverlayApp {
         // Tabs: ` *` marks a tab when it holds unapplied edits (the selected tab included).
         // A staged economy add/remove belongs to ECONOMY, not to the RULES marker.
         let rules_edited = self.working.as_ref().is_some_and(|w| w.rules_edited());
-        let markers = shell::tab_markers(rules_edited, styles_dirty, tiers_dirty, economy_staged);
+        let markers = shell::tab_markers(
+            rules_edited,
+            styles_dirty,
+            tiers_dirty,
+            economy_staged || source_pending,
+        );
         let labels: Vec<String> = ShellTab::ALL
             .iter()
             .map(|t| apply::tab_label(t.label(), markers[t.index()]))
@@ -2983,17 +3864,27 @@ impl eframe::App for OverlayApp {
                 .layout(Layout::top_down(Align::Min)),
         );
         cui.set_clip_rect(shell_frame.content);
+        let mut about_action: Option<super::about_view::AboutAction> = None;
         match self.tab {
             ShellTab::Rules => self.rules_content(&mut cui, &skin, actions, &mut row_actions),
             ShellTab::Config => {
                 config_actions = self.config_body(&mut cui, &skin, config_footer);
             }
             ShellTab::Economy => {
+                // The list is fetched the first time the tab is shown in a session (never in
+                // screenshot mode; unit tests get an error from the `fetch_leagues` twin).
+                if !self.is_shot() && matches!(self.leagues.state(), ListState::NotStarted) {
+                    self.leagues.start(fetch_leagues);
+                }
+                let view = self.league_view();
+                let fallback = self.settings.price_policy() == PriceSourcePolicy::ForceFallback;
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
                 let inputs = shell::EconomyTabInputs {
-                    league: crate::sync::OVERLAY_LEAGUE,
+                    league: &view,
+                    fallback,
+                    prices_league: self.economy_info.league.as_deref(),
                     mtime_secs: self.economy_info.mtime_secs,
                     now_secs,
                     utc_offset_minutes: win::utc_offset_minutes(),
@@ -3001,8 +3892,14 @@ impl eframe::App for OverlayApp {
                     live: self.economy_info.live,
                     problem: self.economy_info.problem.as_deref(),
                     syncing: self.economy.is_running(),
-                    sync_enabled: actions.sync,
-                    sync_disabled_tip: self.root.as_ref().err().map(String::as_str),
+                    sync_enabled: actions.sync && view.sync_league.is_some() && !fallback,
+                    sync_disabled_tip: self
+                        .root
+                        .as_ref()
+                        .err()
+                        .map(String::as_str)
+                        .or(view.sync_block_tip),
+                    tiers_reset_enabled: self.config.as_ref().is_ok_and(|c| !c.tiers_at_defaults()),
                     section: shell::section_button(
                         self.working.as_ref().map(|w| w.economy()),
                         self.root.is_ok(),
@@ -3023,7 +3920,15 @@ impl eframe::App for OverlayApp {
                 cui.ctx()
                     .request_repaint_after(std::time::Duration::from_secs(60));
             }
-            ShellTab::About => super::about_view::about_tab(&mut cui, &skin),
+            ShellTab::About => {
+                let view = super::about_view::UpdateView {
+                    caption: self.update.caption(),
+                    enabled: self.update.enabled(),
+                    ready: matches!(self.update.state(), UpdateState::Ready(_)),
+                    tooltip: self.update.tooltip(),
+                };
+                about_action = super::about_view::about_tab(&mut cui, &skin, &view);
+            }
         }
 
         // Bottom bar: the one status line plus Revert / Reload / Apply.
@@ -3047,13 +3952,10 @@ impl eframe::App for OverlayApp {
             },
             changed,
         );
-        let sync_outcome = match self.economy.state() {
-            economy::SyncState::Finished(outcome) => {
-                Some((outcome.message().to_string(), outcome.is_failure()))
-            }
-            _ => None,
-        };
+        let sync_outcome = self.sync_outcome();
         let event = shell::event_from(
+            self.update_message.clone(),
+            self.update_behind,
             self.apply_message.clone(),
             self.config_message.clone(),
             sync_outcome,
@@ -3086,7 +3988,13 @@ impl eframe::App for OverlayApp {
                 )
             }),
             filter_error,
+            game_folder_missing: self.game_folder_missing_text(),
             syncing: self.economy.is_running(),
+            ended_league: self
+                .league_view()
+                .ended
+                .as_deref()
+                .map(crate::overlay::leagues::ended_status),
             unknown: unknown_styles.first().map(|(rule, id)| {
                 (
                     apply::unknown_styles_message(unknown_styles.len(), *rule),
@@ -3103,6 +4011,9 @@ impl eframe::App for OverlayApp {
         let clicks = bottom_bar(ui, &skin, shell_frame.button_bar, &bar_state, &status);
         if clicks.status {
             jump_to = status.jump;
+            if let Some(tab) = status.open_tab {
+                picked_tab = Some(tab);
+            }
         }
 
         // Bar clicks run before the tab switch, against the tab they were drawn for.
@@ -3135,16 +4046,27 @@ impl eframe::App for OverlayApp {
                 self.run_apply(&egui_ctx, false);
             }
         }
+        if let Some(super::about_view::AboutAction::Check) = about_action {
+            self.start_update_check();
+        }
+        if let Some(super::about_view::AboutAction::InstallAndQuit) = about_action
+            && self.install_and_quit()
+        {
+            quit_requested = true;
+        }
         if economy_clicks.sync
+            && self.settings.price_policy() != PriceSourcePolicy::ForceFallback
+            && let Some(league) = self.league_view().sync_league
             && let Ok(root) = &self.root
         {
+            self.update_message = None;
             // The app root, not the process working directory: the overlay can be launched from
             // anywhere, and prices.json must land where Apply will read it from. A sync is not
             // part of Apply (dozens of network round trips that can fail); it only refreshes
             // prices, and the game sees them on the next Apply (author, 2026-09-10).
             let base_dir = root.clone();
             self.economy.start(move || {
-                crate::sync::sync_economy_blocking(&base_dir).map_err(|e| e.to_string())
+                crate::sync::sync_economy_blocking(&base_dir, &league).map_err(|e| e.to_string())
             });
         }
 
@@ -3166,6 +4088,15 @@ impl eframe::App for OverlayApp {
         if !config_actions.is_empty() {
             let egui_ctx = ui.ctx().clone();
             self.handle_config_actions(&egui_ctx, config_actions);
+        }
+        // The dialog is owned by the overlay window, which is expected to keep it above the
+        // topmost overlay. If the in-game check shows it behind, send
+        // `egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal)` right after start and
+        // `egui::WindowLevel::AlwaysOnTop` when `poll()` returns (pick or cancel).
+        if std::mem::take(&mut self.want_browse) && !self.is_shot() {
+            let egui_ctx = ui.ctx().clone();
+            self.folder_pick
+                .start(frame, self.game_dir.as_deref(), &egui_ctx);
         }
 
         // Deferred mutations: jump from the grammar line, then row operations, then the economy
@@ -3189,6 +4120,30 @@ impl eframe::App for OverlayApp {
         if economy_clicks.remove {
             self.list.confirm_economy_remove = true;
         }
+        if economy_clicks.reset_tiers {
+            self.config_ui.reset_armed = Some(RevertScope::Tiers);
+        }
+        let fallback_now = self.settings.price_policy() == PriceSourcePolicy::ForceFallback;
+        if let Some(source) = economy_clicks.source
+            && (source == 1) != fallback_now
+        {
+            self.set_price_source(source == 0);
+        }
+        if let Some(pick) = economy_clicks.league_pick {
+            let name = self.league_view().pick_name(pick).map(str::to_string);
+            if let Some(name) = name
+                && self.settings.saved_league() != Some(name.as_str())
+            {
+                self.set_league(&name);
+            }
+        }
+        if economy_clicks.refresh_leagues
+            && !self.is_shot()
+            && !self.leagues.is_fetching()
+            && !fallback_now
+        {
+            self.leagues.start(fetch_leagues);
+        }
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags
         // survive hiding and re-summoning the window, so an open popup is still there.
@@ -3201,6 +4156,7 @@ impl eframe::App for OverlayApp {
         }
         // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
         self.overwrite_live = self.overwrite_decision();
+        self.refresh_quit_tier_edits_only();
         if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
             let spec = self.popup_spec_for(popup);
             let buttons: Vec<crate::skin::popup::PopupButton> = spec
@@ -3236,6 +4192,68 @@ impl eframe::App for OverlayApp {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    fn boom() -> Option<PathBuf> {
+        panic!("Documents must not be asked for");
+    }
+
+    fn root_with_game_folder(
+        game: Option<&std::path::Path>,
+    ) -> (tempfile::TempDir, Result<PathBuf, String>) {
+        let t = tempfile::tempdir().unwrap();
+        if let Some(g) = game {
+            let json = serde_json::json!({ "game_folder": g.to_string_lossy() });
+            std::fs::write(t.path().join("ff-settings.json"), json.to_string()).unwrap();
+        }
+        let root = Ok(t.path().to_path_buf());
+        (t, root)
+    }
+
+    #[test]
+    fn startup_game_dir_restores_the_saved_folder() {
+        let want = std::env::temp_dir().join("ff-picked-game");
+        let (_t, root) = root_with_game_folder(Some(&want));
+        assert_eq!(super::startup_game_dir_from(&root, None, boom), Some(want));
+    }
+
+    #[test]
+    fn startup_game_dir_env_wins_over_the_saved_folder() {
+        let saved = std::env::temp_dir().join("ff-picked-game");
+        let (_t, root) = root_with_game_folder(Some(&saved));
+        let env = std::env::temp_dir().join("ff-env-game");
+        assert_eq!(
+            super::startup_game_dir_from(&root, Some(OsStr::new(&env)), boom),
+            Some(env)
+        );
+    }
+
+    #[test]
+    fn startup_game_dir_without_settings_uses_documents() {
+        let (t, root) = root_with_game_folder(None);
+        let docs = PathBuf::from("D");
+        let got = super::startup_game_dir_from(&root, None, || Some(docs.clone()));
+        assert_eq!(got, Some(docs.join("My Games").join("Path of Exile 2")));
+        assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn startup_game_dir_with_an_unresolved_root_uses_documents() {
+        let root = Err("no root".to_string());
+        let docs = PathBuf::from("D");
+        let got = super::startup_game_dir_from(&root, None, || Some(docs.clone()));
+        assert_eq!(got, Some(docs.join("My Games").join("Path of Exile 2")));
+    }
+
+    #[test]
+    fn startup_game_dir_ignores_a_relative_saved_folder() {
+        let (_t, root) = root_with_game_folder(Some(std::path::Path::new("relative")));
+        let docs = PathBuf::from("D");
+        let got = super::startup_game_dir_from(&root, None, || Some(docs.clone()));
+        assert_eq!(got, Some(docs.join("My Games").join("Path of Exile 2")));
+    }
+
     #[test]
     fn filter_target_refuses_traversal_and_a_missing_folder() {
         use super::filter_target;
@@ -3245,7 +4263,7 @@ mod tests {
         assert!(filter_target(Some(dir), "notafilter.txt").is_err());
         assert_eq!(
             filter_target(None, "ssf.filter").unwrap_err(),
-            "Cannot resolve the default PoE2 config folder (USERPROFILE is not set)."
+            "Cannot find the Documents folder; pick the game folder on the Config tab."
         );
         assert_eq!(
             filter_target(Some(dir), "ssf.filter").unwrap(),
@@ -3288,7 +4306,53 @@ mod tests {
             prefix: String::new(),
             extras: " [x]".to_string(),
             interim: interim.to_string(),
+            warning: false,
         }
+    }
+
+    #[test]
+    fn the_not_quit_warning_rides_on_a_pending_reload_line() {
+        use super::{
+            UNWRITABLE_TIERS_QUIT_STATUS, apply_message_after_conceal, landed_reload_message,
+            show_not_quit_warning,
+        };
+        // A reload is in flight with its interim line showing.
+        let mut p = pending("interim");
+        let mut message = Some(("interim".to_string(), w::StatusKind::Ok));
+        show_not_quit_warning(&mut message, Some(&mut p));
+        let (text, kind) = message.clone().unwrap();
+        assert_eq!(kind, w::StatusKind::Warning);
+        assert!(text.starts_with("interim") && text.ends_with(UNWRITABLE_TIERS_QUIT_STATUS));
+        assert!(p.warning);
+        // The reload's own focus change hides the window: the line is kept.
+        assert_eq!(
+            apply_message_after_conceal(Some(text.clone()), Some(&p)),
+            Some(text.clone())
+        );
+        // The result still lands and still carries the warning, success or failure.
+        let landed = landed_reload_message(Some(&text), &p, &Ok(())).unwrap();
+        assert!(landed.contains("Reloaded in game"), "{landed}");
+        assert!(landed.ends_with(UNWRITABLE_TIERS_QUIT_STATUS), "{landed}");
+        let failed = landed_reload_message(Some(&text), &p, &Err("x".to_string())).unwrap();
+        assert!(failed.contains("could not reload in game: x"), "{failed}");
+        assert!(failed.ends_with(UNWRITABLE_TIERS_QUIT_STATUS), "{failed}");
+
+        // No reload line showing (already replaced, or no reload at all): the warning alone.
+        let mut message = Some(("other".to_string(), w::StatusKind::Ok));
+        let mut p = pending("interim");
+        show_not_quit_warning(&mut message, Some(&mut p));
+        assert_eq!(
+            message,
+            Some((
+                UNWRITABLE_TIERS_QUIT_STATUS.to_string(),
+                w::StatusKind::Warning
+            ))
+        );
+        assert_eq!(p.interim, "interim");
+        assert!(!p.warning);
+        let mut message = None;
+        show_not_quit_warning(&mut message, None);
+        assert_eq!(message.unwrap().0, UNWRITABLE_TIERS_QUIT_STATUS);
     }
 
     #[test]
@@ -3500,6 +4564,7 @@ mod tests {
             text: "a very long status message ".repeat(20),
             kind: w::StatusKind::Warning,
             jump: None,
+            open_tab: None,
             tip: None,
         };
         let mut drawn = 0usize;
@@ -3547,6 +4612,7 @@ mod tests {
     // ---- controller helpers (Phase 19-06) ----
 
     use super::{AllOutcome, apply_everything, apply_row_actions};
+    use crate::compile::PriceSourcePolicy;
     use crate::dynamic::LoadedFilter;
     use crate::overlay::apply::{self, ApplyOutcome};
     use crate::overlay::rule_list::ListUi;
@@ -3569,7 +4635,13 @@ mod tests {
         working: &mut WorkingFilter,
         overwrite: bool,
     ) -> (ApplyOutcome, String, bool) {
-        let r = apply_everything(root, None, Some((loaded, working)), overwrite);
+        let r = apply_everything(
+            root,
+            None,
+            Some((loaded, working)),
+            PriceSourcePolicy::Auto,
+            overwrite,
+        );
         let outcome = match r.outcome {
             AllOutcome::Applied { filter: Some(path) } => ApplyOutcome::Written(path),
             AllOutcome::Applied { filter: None } => panic!("a filter was passed"),
@@ -3603,7 +4675,7 @@ mod tests {
     fn config_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -3651,6 +4723,7 @@ mod tests {
                 self.root.path(),
                 Some(&mut self.config),
                 Some((&mut self.loaded, &mut self.working)),
+                PriceSourcePolicy::Auto,
                 overwrite,
             )
         }
@@ -3710,22 +4783,60 @@ mod tests {
         let styles = super::load_styles_at(root.path()).unwrap();
         assert!(styles.get("S").is_some());
         assert!(super::load_classes_at(root.path()).is_ok());
-        assert!(super::styles_stamp_at(root.path()).is_some());
+        assert_eq!(
+            super::styles_stamp_at(root.path()),
+            Some(super::StylesStamp::Embedded)
+        );
         assert_no_live(root.path());
     }
 
     #[test]
-    fn no_styles_file_at_all_names_both() {
+    fn removing_the_default_files_from_the_root_changes_nothing() {
         let root = defaults_only_root();
         std::fs::remove_file(root.path().join("styles-default.json")).unwrap();
-        let err = super::load_styles_at(root.path()).unwrap_err();
         assert!(
-            err.contains("styles.json") && err.contains("styles-default.json"),
-            "{err}"
+            super::load_styles_at(root.path())
+                .unwrap()
+                .get("S")
+                .is_some()
         );
-        assert!(super::load_classes_at(root.path()).is_err());
-        assert!(super::styles_stamp_at(root.path()).is_none());
+        assert!(super::load_classes_at(root.path()).is_ok());
+        assert_eq!(
+            super::styles_stamp_at(root.path()),
+            Some(super::StylesStamp::Embedded)
+        );
         assert_no_live(root.path());
+    }
+
+    #[test]
+    fn first_run_overlay_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let styles = super::load_styles_at(root.path()).unwrap();
+        for name in ["S", "A", "B", "C", "D", "E", "F"] {
+            assert!(styles.get(name).is_some(), "{name}");
+        }
+        assert!(super::load_classes_at(root.path()).is_ok());
+        let body = super::staged_economy_body(root.path(), None, PriceSourcePolicy::Auto).unwrap();
+        assert!(!body.is_empty());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_broken_live_styles_file_names_its_full_path() {
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("styles.json");
+        std::fs::write(&live, "{ not json").unwrap();
+        let err = super::load_styles_at(root.path()).unwrap_err();
+        assert!(err.contains(&live.display().to_string()), "{err}");
+    }
+
+    #[test]
+    fn the_class_catalogue_ignores_a_config_json_in_the_folder() {
+        let root = defaults_only_root();
+        let (_, expected) = super::load_classes_at(root.path()).unwrap();
+        std::fs::write(root.path().join("config.json"), "{ not json").unwrap();
+        let (_, refs) = super::load_classes_at(root.path()).unwrap();
+        assert_eq!(refs, expected);
     }
 
     #[test]
@@ -3734,16 +4845,19 @@ mod tests {
         let default = root.path().join("styles-default.json");
         let live = root.path().join("styles.json");
         let first = super::styles_stamp_at(root.path()).unwrap();
-        assert_eq!(first.0, default);
+        assert_eq!(first, super::StylesStamp::Embedded);
 
         std::fs::copy(&default, &live).unwrap();
         let created = super::styles_stamp_at(root.path()).unwrap();
-        assert_eq!(created.0, live);
+        assert!(
+            matches!(&created, super::StylesStamp::File(p, _) if *p == live),
+            "{created:?}"
+        );
         assert_ne!(created, first, "creating the live file is a change");
 
         std::fs::remove_file(&live).unwrap();
         let back = super::styles_stamp_at(root.path()).unwrap();
-        assert_eq!(back, first, "deleting it returns to the default stamp");
+        assert_eq!(back, first, "deleting it returns to the embedded stamp");
         assert_ne!(back, created);
     }
 
@@ -4150,7 +5264,13 @@ mod tests {
         let mut config = ConfigState::load(root.path()).unwrap();
         assert!(config.edit_style("S", StyleEdit::Font(Some(41))));
         let tiers = std::fs::read(root.path().join("tiers.json")).unwrap();
-        let r = apply_everything(root.path(), Some(&mut config), None, false);
+        let r = apply_everything(
+            root.path(),
+            Some(&mut config),
+            None,
+            PriceSourcePolicy::Auto,
+            false,
+        );
         assert_eq!(r.outcome, AllOutcome::Applied { filter: None });
         assert!(r.styles_written && !r.tiers_written);
         assert!(!config.is_dirty());
@@ -4357,7 +5477,8 @@ mod tests {
     fn styles_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("styles-default.json"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/seed-styles.json"),
             dir.path().join("styles.json"),
         )
         .unwrap();
@@ -4796,15 +5917,70 @@ Hide
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
         let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
         let mut app = super::OverlayApp::build(
             TrayHandles::inert(),
             None,
             HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("game")),
         );
+        app.test_home = Some(home);
         app.working = Some(WorkingFilter::from_text(filter_text));
         (app, ctx)
+    }
+
+    #[test]
+    fn fallback_price_source_stops_a_bad_tier_from_gating_apply() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(app.config.is_ok(), "{:?}", app.config.as_ref().err());
+        app.config.as_mut().unwrap().set_tier_text("A", "abc");
+
+        app.sync_tiers_in_use();
+        assert!(app.config.as_ref().unwrap().validate().is_err());
+
+        app.settings.price_source = Some("fallback".to_string());
+        app.sync_tiers_in_use();
+        assert!(app.config.as_ref().unwrap().validate().is_ok());
+
+        app.settings.price_source = Some("live".to_string());
+        app.sync_tiers_in_use();
+        assert!(app.config.as_ref().unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn the_preview_key_includes_the_price_policy() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // A root with live prices: the frozen seed.
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [
+            ("tests/fixtures/seed-styles.json", "styles.json"),
+            ("tiers-default.json", "tiers.json"),
+            ("tests/fixtures/seed-prices.json", "prices.json"),
+        ] {
+            std::fs::copy(root.join(src), dir.path().join(dst)).unwrap();
+        }
+        let live = super::staged_economy_body(dir.path(), None, PriceSourcePolicy::Auto).unwrap();
+        let fb =
+            super::staged_economy_body(dir.path(), None, PriceSourcePolicy::ForceFallback).unwrap();
+        assert_ne!(live, fb);
+
+        // refresh_staged_economy re-prices when only the policy changed.
+        let (mut app, _ctx) = popup_app(RULES);
+        app.root = Ok(dir.path().to_path_buf());
+        app.config = crate::overlay::config_state::ConfigState::load(dir.path());
+        app.working.as_mut().unwrap().stage_add_economy(&live);
+        app.refresh_staged_economy();
+        let key = app.staged_econ_inputs.clone().unwrap();
+        assert_eq!(key.2, PriceSourcePolicy::Auto);
+        app.settings.price_source = Some("fallback".to_string());
+        app.refresh_staged_economy();
+        assert_eq!(
+            app.staged_econ_inputs.clone().unwrap().2,
+            PriceSourcePolicy::ForceFallback
+        );
     }
 
     #[test]
@@ -4888,7 +6064,14 @@ Hide
         );
         let (text, kind) = app.apply_message.clone().unwrap();
         assert_eq!(kind, StatusKind::Error, "{text}");
-        let event = crate::overlay::shell::event_from(app.apply_message.clone(), None, None, None);
+        let event = crate::overlay::shell::event_from(
+            None,
+            false,
+            app.apply_message.clone(),
+            None,
+            None,
+            None,
+        );
         assert_eq!(event.map(|(_, k)| k), Some(StatusKind::Error));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Show\n");
     }
@@ -4955,6 +6138,8 @@ Hide
         let status = shell::status_for(StatusInputs {
             root_error: None,
             event: shell::event_from(
+                None,
+                false,
                 app.apply_message.clone(),
                 app.config_message.clone(),
                 None,
@@ -4962,7 +6147,9 @@ Hide
             ),
             grammar_gate: None,
             filter_error: None,
+            game_folder_missing: None,
             syncing: false,
+            ended_league: None,
             unknown: None,
             migrated: false,
             absent: false,
@@ -4997,7 +6184,311 @@ Hide
         assert_eq!(app.config_message, None);
     }
 
-    /// WR-01 (iteration 2): a refused Apply's Error line gives way to each tab's revert message,
+    fn settle_update(app: &mut super::OverlayApp) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Some((text, kind)) = app.update.poll(0) {
+                app.update_message = Some((text, super::update_kind(kind)));
+            }
+            if matches!(app.update.state(), super::UpdateState::Idle) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("update check did not settle");
+    }
+
+    #[test]
+    fn pressing_check_reports_checking_then_the_outcome() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.start_update_check();
+        assert_eq!(
+            app.update_message,
+            Some(("Checking for updates…".to_string(), StatusKind::Info))
+        );
+        settle_update(&mut app);
+        assert_eq!(
+            app.update_message,
+            Some((
+                "Could not reach GitHub. Check your connection and try again.".to_string(),
+                StatusKind::Warning
+            ))
+        );
+        assert_eq!(app.update.state(), &super::UpdateState::Idle);
+    }
+
+    /// An app in the Ready state holding a real installer in a `FerrisFilter-update-*` folder
+    /// under a temp dir (never the real %TEMP%). Nothing is ever spawned.
+    fn ready_app() -> (super::OverlayApp, tempfile::TempDir, std::path::PathBuf) {
+        let (mut app, _ctx) = popup_app(RULES);
+        let (root, installer) = make_ready(&mut app);
+        (app, root, installer)
+    }
+
+    /// Puts `app` in the Ready state with a real installer under a fresh temp dir.
+    fn make_ready(app: &mut super::OverlayApp) -> (tempfile::TempDir, std::path::PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("FerrisFilter-update-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let installer = dir.join("FerrisFilter-0.8.0-setup.exe");
+        std::fs::write(&installer, b"installer bytes").unwrap();
+        let sha256 = crate::update::sha256_file(&installer).unwrap();
+        app.update
+            .inject(super::UpdateState::Ready(crate::update::ReadyUpdate {
+                version: "0.8.0".to_string(),
+                published_unix: None,
+                installer: installer.clone(),
+                sha256,
+            }));
+        (root, installer)
+    }
+
+    fn handed_off(app: &super::OverlayApp) -> Option<std::path::PathBuf> {
+        app.pending_install
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|r| r.installer.clone())
+    }
+
+    #[test]
+    fn install_click_with_nothing_unapplied_quits_and_hands_off_the_installer() {
+        let (mut app, _root, installer) = ready_app();
+        assert!(app.install_and_quit());
+        assert_eq!(handed_off(&app), Some(installer.clone()));
+        assert!(installer.exists(), "the wizard runs from this file");
+    }
+
+    #[test]
+    fn install_click_with_unapplied_edits_asks_and_cancel_clears_the_intent() {
+        use crate::overlay::shell::Popup;
+        let (mut app, _root, installer) = ready_app();
+        let ctx = egui::Context::default();
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(!app.install_and_quit());
+        assert!(app.quit_confirm);
+        assert!(app.update.install_intended());
+        assert_eq!(handed_off(&app), None);
+
+        app.dispatch_popup(&ctx, Popup::Quit, 2);
+        assert!(!app.update.install_intended());
+        assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+        assert_eq!(handed_off(&app), None);
+
+        // A later plain quit never launches it.
+        app.quit_confirm = false;
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+    }
+
+    #[test]
+    fn install_click_then_refused_apply_clears_the_intent() {
+        use crate::overlay::shell::Popup;
+        let (mut app, _root, _installer) = ready_app();
+        let ctx = egui::Context::default();
+        // A cutoff that is not a number refuses the Apply.
+        app.config
+            .as_mut()
+            .unwrap()
+            .set_tier_text("S", "not a number");
+        assert!(!app.install_and_quit());
+        assert!(app.quit_confirm && app.update.install_intended());
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply, "the refused Apply keeps the window");
+        assert!(!app.update.install_intended());
+        assert_eq!(handed_off(&app), None);
+    }
+
+    #[test]
+    fn install_click_then_quit_without_applying_hands_off() {
+        use crate::overlay::shell::Popup;
+        let (mut app, _root, installer) = ready_app();
+        let ctx = egui::Context::default();
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(!app.install_and_quit());
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(app.quit_next_frame);
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), Some(installer));
+    }
+
+    #[test]
+    fn plain_quit_while_ready_deletes_the_installer_and_launches_nothing() {
+        let (mut app, _root, installer) = ready_app();
+        assert!(app.request_quit());
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+        assert!(!installer.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn install_click_with_the_installer_gone_reports_it_and_stays_open() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _root, installer) = ready_app();
+        std::fs::remove_file(&installer).unwrap();
+        assert!(!app.install_and_quit());
+        assert_eq!(
+            app.update_message,
+            Some((
+                "The installer for 0.8.0 is no longer there. Check for updates again.".to_string(),
+                StatusKind::Error
+            ))
+        );
+        assert_eq!(app.update.state(), &super::UpdateState::Idle);
+        assert_eq!(handed_off(&app), None);
+    }
+
+    #[test]
+    fn conceal_keeps_ready_and_clears_the_update_message() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        let ready = crate::update::ReadyUpdate {
+            version: "0.8.0".to_string(),
+            published_unix: None,
+            installer: std::path::PathBuf::from("x.exe"),
+            sha256: String::new(),
+        };
+        app.update.inject(super::UpdateState::Ready(ready));
+        app.update_message = Some(("msg".to_string(), StatusKind::Ok));
+        app.clear_events_on_conceal();
+        assert_eq!(app.update_message, None);
+        assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+
+        app.update_message = Some(("msg".to_string(), StatusKind::Ok));
+        app.clear_events_on_edit();
+        assert_eq!(app.update_message, None);
+        app.tab = ShellTab::Rules;
+        assert!(matches!(app.update.state(), super::UpdateState::Ready(_)));
+    }
+
+    /// A worker message landing after the player started another action (here an Apply that was
+    /// refused) does not hide that action's outcome; with nothing else showing it ranks first.
+    #[test]
+    fn a_late_update_message_waits_behind_a_newer_apply_outcome() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.start_update_check();
+        assert!(!app.update_behind);
+        app.clear_events_on_edit();
+        app.apply_message = Some(("Apply refused.".to_string(), StatusKind::Error));
+        app.receive_update_message(
+            "Up to date (0.7.0)".to_string(),
+            crate::update::UpdateKind::Ok,
+        );
+        assert!(app.update_behind);
+        let event = |app: &super::OverlayApp| {
+            shell::event_from(
+                app.update_message.clone(),
+                app.update_behind,
+                app.apply_message.clone(),
+                app.config_message.clone(),
+                None,
+                app.list_status.clone(),
+            )
+        };
+        assert_eq!(
+            event(&app),
+            Some(("Apply refused.".to_string(), StatusKind::Error))
+        );
+
+        app.clear_events_on_edit();
+        app.receive_update_message(
+            "Up to date (0.7.0)".to_string(),
+            crate::update::UpdateKind::Ok,
+        );
+        assert!(!app.update_behind);
+        assert_eq!(
+            event(&app),
+            Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok))
+        );
+    }
+
+    /// Check, then Sync: the check's message lands while the sync is still running and shows
+    /// until the sync finishes; the sync outcome (here a failure) is then the event shown.
+    #[test]
+    fn a_sync_started_after_a_check_shows_its_outcome_over_the_check_message() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let event = |app: &super::OverlayApp| {
+            shell::event_from(
+                app.update_message.clone(),
+                app.update_behind,
+                app.apply_message.clone(),
+                app.config_message.clone(),
+                app.sync_outcome(),
+                app.list_status.clone(),
+            )
+            .map(|(text, _)| text)
+        };
+        app.start_update_check();
+
+        // The Sync economy click: clears the update line and starts a sync that waits for `go`.
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        app.update_message = None;
+        app.economy.start(move || {
+            let _ = wait.recv();
+            Err("boom".to_string())
+        });
+        assert!(app.economy.is_running());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let (text, kind) = loop {
+            if let Some(m) = app.update.poll(0) {
+                break m;
+            }
+            assert!(std::time::Instant::now() < deadline, "no update message");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        app.receive_update_message(text.clone(), kind);
+        assert!(app.update_behind);
+        assert_eq!(event(&app), Some(text.clone()));
+
+        go.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.poll_economy() {
+            assert!(std::time::Instant::now() < deadline, "sync never finished");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(event(&app), Some(super::economy::failure_message("boom")));
+    }
+
+    /// A sync that finishes while an update message from before is showing outranks it.
+    #[test]
+    fn a_sync_outcome_landing_after_an_update_message_ranks_first() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.economy.start(|| Ok(String::new()));
+        app.update_message = Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok));
+        app.update_behind = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.poll_economy() {
+            assert!(std::time::Instant::now() < deadline, "sync never finished");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.update_behind);
+        let event = shell::event_from(
+            app.update_message.clone(),
+            app.update_behind,
+            app.apply_message.clone(),
+            app.config_message.clone(),
+            app.sync_outcome(),
+            app.list_status.clone(),
+        )
+        .map(|(text, _)| text);
+        assert_eq!(event, Some(super::economy::success_message("")));
+    }
+
+    #[test]
+    fn starting_an_apply_clears_the_update_message() {
+        use crate::skin::widgets::StatusKind;
+        let (mut app, ctx) = popup_app(RULES);
+        app.update_message = Some(("msg".to_string(), StatusKind::Ok));
+        app.run_apply(&ctx, false);
+        assert_eq!(app.update_message, None);
+    }
+
+    /// A refused Apply's Error line gives way to each tab's revert message,
     /// economy staging clears a stale success, and a CONFIG edit clears the list status.
     #[test]
     fn reverts_staging_and_config_edits_clear_stale_events() {
@@ -5053,7 +6544,7 @@ Hide
         let (mut app, ctx) = popup_app(RULES);
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -5126,7 +6617,7 @@ Hide
         let (mut app, ctx) = popup_app(RULES);
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -5145,10 +6636,80 @@ Hide
         }
     }
 
+    #[test]
+    fn strictness_click_is_a_pending_style_edit_that_revert_undoes() {
+        use crate::models::config::StyleAction;
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::shell::Popup;
+        use crate::overlay::strictness::Strictness;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        assert_eq!(
+            app.config.as_ref().unwrap().strictness(),
+            Strictness::FlatBroke
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::SetStrictness(Strictness::Loaded)]);
+        let c = app.config.as_ref().unwrap();
+        assert_eq!(c.strictness(), Strictness::Loaded);
+        assert!(c.styles_dirty() && c.is_dirty());
+        for n in ["C", "D", "E", "F"] {
+            assert_eq!(c.style(n).unwrap().action, StyleAction::Hide, "{n}");
+        }
+        app.config_ui.revert_scope = crate::overlay::config_state::RevertScope::Styles;
+        app.config_ui.revert_armed = true;
+        app.dispatch_popup(&ctx, Popup::DiscardConfig, 0);
+        let c = app.config.as_ref().unwrap();
+        assert_eq!(c.strictness(), Strictness::FlatBroke);
+        assert!(!c.styles_dirty());
+    }
+
+    #[test]
+    fn strictness_apply_writes_styles_json_into_the_temp_home_only() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::strictness::Strictness;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = config_with_defaults(&mut app);
+        app.root = Ok(dir.path().to_path_buf());
+        // No filter loaded: Apply writes the config files only.
+        app.filter = Err("no filter".to_string());
+        app.working = None;
+        let defaults = std::fs::read_to_string(dir.path().join("styles.json")).unwrap();
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::SetStrictness(Strictness::Scrounging)],
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::Apply]);
+
+        let written = std::fs::read_to_string(dir.path().join("styles.json")).unwrap();
+        let styles: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(styles["F"]["action"], "Hide");
+        assert_ne!(written, defaults);
+        let before: serde_json::Value = serde_json::from_str(&defaults).unwrap();
+        for k in ["unchanged", "hidden"] {
+            assert_eq!(styles[k], before[k], "{k}");
+        }
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn strictness_of_the_current_level_changes_nothing() {
+        use crate::overlay::config_view::ConfigAction;
+        use crate::overlay::strictness::Strictness;
+        let (mut app, ctx) = popup_app(RULES);
+        let _dir = config_with_defaults(&mut app);
+        app.config_message = Some(("kept".to_string(), true));
+        app.handle_config_actions(
+            &ctx,
+            vec![ConfigAction::SetStrictness(Strictness::FlatBroke)],
+        );
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+        assert!(app.config_message.is_some());
+    }
+
     fn config_with_defaults(app: &mut super::OverlayApp) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             std::fs::copy(
@@ -5254,7 +6815,15 @@ Hide
     #[test]
     fn staged_economy_preview_follows_pending_tier_edits() {
         let (mut app, _ctx) = popup_app(RULES);
-        app.root = Ok(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        // Live-priced economy needs a prices.json: a temp root holding the frozen seed prices.
+        let priced_root = tempfile::tempdir().unwrap();
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/seed-prices.json"),
+            priced_root.path().join("prices.json"),
+        )
+        .unwrap();
+        app.root = Ok(priced_root.path().to_path_buf());
         let Ok(_) = &app.config else {
             panic!("rig has no CONFIG state");
         };
@@ -5291,7 +6860,7 @@ Hide
         use crate::models::config::StyleAction;
         use crate::overlay::config_state::StyleEdit;
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let body = super::staged_economy_body(&root, None).unwrap();
+        let body = super::staged_economy_body(&root, None, PriceSourcePolicy::Auto).unwrap();
         let text = crate::filter::section::add(RULES, &body).unwrap();
         let (mut app, _ctx) = popup_app(&text);
         app.root = Ok(root);
@@ -5357,6 +6926,56 @@ Hide
         app.refresh_staged_economy();
         let after = app.working.as_ref().unwrap().economy_rows().len();
         assert_ne!(before, after, "the preview must follow the new prices");
+    }
+
+    #[test]
+    fn reset_popups_apply_one_pending_edit_and_keep_does_nothing() {
+        use crate::overlay::shell::Popup;
+        let (mut app, ctx) = popup_app(RULES);
+        let dir = config_root();
+        app.config = ConfigState::load(dir.path());
+        assert!(app.config.as_mut().unwrap().add_style("glow").is_ok());
+        app.config
+            .as_mut()
+            .unwrap()
+            .edit_style("S", StyleEdit::Font(Some(41)));
+        app.config.as_mut().unwrap().set_tier_text("S", "999");
+        app.config_ui.expanded = Some("S".to_string());
+        let before = app.config.as_ref().unwrap().pending_styles().clone();
+
+        // Keep: nothing changes, the arm clears.
+        app.config_ui.reset_armed = Some(RevertScope::Styles);
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::ResetStyles)
+        );
+        app.dispatch_popup(&ctx, Popup::ResetStyles, 1);
+        assert_eq!(app.config_ui.reset_armed, None);
+        assert_eq!(*app.config.as_ref().unwrap().pending_styles(), before);
+
+        // Reset: built-ins back, custom kept, row collapsed, still pending.
+        app.config_ui.reset_armed = Some(RevertScope::Styles);
+        app.dispatch_popup(&ctx, Popup::ResetStyles, 0);
+        let state = app.config.as_ref().unwrap();
+        assert!(state.styles_at_defaults());
+        assert!(state.style("glow").is_some());
+        assert_eq!(app.config_ui.expanded, None);
+        assert_eq!(app.config_ui.reset_armed, None);
+        assert!(state.is_dirty());
+
+        // Tiers likewise.
+        assert!(!app.config.as_ref().unwrap().tiers_at_defaults());
+        app.config_ui.reset_armed = Some(RevertScope::Tiers);
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::ResetTiers)
+        );
+        app.dispatch_popup(&ctx, Popup::ResetTiers, 1);
+        assert!(!app.config.as_ref().unwrap().tiers_at_defaults());
+        app.config_ui.reset_armed = Some(RevertScope::Tiers);
+        app.dispatch_popup(&ctx, Popup::ResetTiers, 0);
+        assert!(app.config.as_ref().unwrap().tiers_at_defaults());
+        assert_eq!(app.config_ui.reset_armed, None);
     }
 
     #[test]
@@ -5592,6 +7211,122 @@ Hide
         // A missing file is simply absent: no problem to report.
         std::fs::remove_file(dir.path().join("prices.json")).unwrap();
         assert_eq!(super::EconomyInfo::read(dir.path()).problem, None);
+        assert_eq!(super::EconomyInfo::read(dir.path()).league, None);
+    }
+
+    #[test]
+    fn economy_info_reads_the_prices_league() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/seed-prices.json");
+        let mut text: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&seed).unwrap()).unwrap();
+        text["league"] = serde_json::json!("Runes of Aldur");
+        std::fs::write(dir.path().join("prices.json"), text.to_string()).unwrap();
+        assert_eq!(
+            super::EconomyInfo::read(dir.path()).league.as_deref(),
+            Some("Runes of Aldur")
+        );
+        text["league"] = serde_json::json!("");
+        std::fs::write(dir.path().join("prices.json"), text.to_string()).unwrap();
+        assert_eq!(super::EconomyInfo::read(dir.path()).league, None);
+    }
+
+    #[test]
+    fn league_and_price_source_setters_keep_the_rest() {
+        let mut current = crate::settings::Settings {
+            filter: Some("a.filter".into()),
+            ..Default::default()
+        };
+        current.extra.insert("future".into(), serde_json::json!(1));
+        let next = super::settings_with_league(&current, "Runes of Aldur");
+        assert_eq!(next.league.as_deref(), Some("Runes of Aldur"));
+        assert_eq!(next.filter.as_deref(), Some("a.filter"));
+        assert_eq!(next.extra.get("future"), current.extra.get("future"));
+        assert_eq!(
+            super::settings_with_price_source(&current, false)
+                .price_source
+                .as_deref(),
+            Some("fallback")
+        );
+        assert_eq!(
+            super::settings_with_price_source(&current, true)
+                .price_source
+                .as_deref(),
+            Some("live")
+        );
+    }
+
+    fn six_leagues() -> Vec<crate::sync::models::EconomyLeague> {
+        const FIXTURE: &str = include_str!("../../tests/fixtures/index-state-2026-10-18.json");
+        serde_json::from_str::<crate::sync::models::IndexState>(FIXTURE)
+            .unwrap()
+            .economy_leagues
+    }
+
+    #[test]
+    fn set_league_saves_at_once_and_leaves_the_rest() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let dirty_before = app.config.as_ref().unwrap().is_dirty();
+        app.set_league("Runes of Aldur");
+        assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
+        let root = app.root.clone().unwrap();
+        let text = std::fs::read_to_string(crate::settings::path(&root)).unwrap();
+        assert!(text.contains("Runes of Aldur"), "{text}");
+        assert_eq!(app.config.as_ref().unwrap().is_dirty(), dirty_before);
+    }
+
+    #[test]
+    fn set_league_with_an_unwritable_root_keeps_the_choice_and_reports() {
+        let (mut app, _ctx) = popup_app(RULES);
+        let file = app.root.clone().unwrap().join("not-a-folder");
+        std::fs::write(&file, "x").unwrap();
+        app.root = Ok(file);
+        app.set_league("Runes of Aldur");
+        assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
+        let (msg, problem) = app.config_message.clone().unwrap();
+        assert!(
+            msg.starts_with("Could not save ff-settings.json: "),
+            "{msg}"
+        );
+        assert!(problem);
+    }
+
+    #[test]
+    fn set_price_source_saves_and_gates_the_tiers() {
+        let (mut app, _ctx) = popup_app(RULES);
+        app.config.as_mut().unwrap().set_tier_text("A", "abc");
+        app.set_price_source(false);
+        assert_eq!(
+            app.settings.price_policy(),
+            crate::compile::PriceSourcePolicy::ForceFallback
+        );
+        let root = app.root.clone().unwrap();
+        let text = std::fs::read_to_string(crate::settings::path(&root)).unwrap();
+        assert!(text.contains("\"price_source\": \"fallback\""), "{text}");
+        assert!(app.config.as_ref().unwrap().validate().is_ok());
+        app.set_price_source(true);
+        assert!(app.config.as_ref().unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn league_view_follows_the_list_and_the_price_source() {
+        use crate::overlay::leagues::ListState;
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(matches!(app.leagues.state(), ListState::NotStarted));
+        app.leagues.inject(ListState::Loaded(six_leagues()));
+        assert_eq!(
+            app.league_view().sync_league.as_deref(),
+            Some("Forbidden Rites")
+        );
+        app.set_price_source(false);
+        assert_eq!(app.league_view().sync_league, None);
+    }
+
+    #[test]
+    fn the_test_fetch_twin_never_reaches_the_network() {
+        let err = super::fetch_leagues().unwrap_err();
+        assert_eq!(err, "unit tests never fetch the league list");
     }
 
     #[test]
@@ -5619,6 +7354,65 @@ Hide
             active_popup(app.popup_flags(false)),
             Some(Popup::ChangedOnDisk)
         );
+    }
+
+    #[test]
+    fn a_clean_quit_waits_for_a_running_in_game_reload() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(!app.quit_dirty());
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        assert!(app.reload.start(
+            move || {
+                let _ = gate.recv();
+                Ok(())
+            },
+            || {}
+        ));
+        // The reload is still being sent: the quit is deferred, not begun, and no popup opens.
+        assert!(!app.request_quit());
+        assert!(app.quit_after_reload && !app.quit_confirm);
+        assert!(!app.run_deferred_quit(), "still waiting for the reload");
+        drop(release);
+        wait_for_reload(&mut app);
+        // Idle again: the deferred quit begins the shutdown.
+        assert!(app.run_deferred_quit());
+        assert!(!app.quit_after_reload && !app.quit_confirm);
+    }
+
+    #[test]
+    fn edits_made_while_a_clean_quit_waits_open_the_quit_popup() {
+        let (mut app, _ctx) = popup_app(RULES);
+        assert!(!app.quit_dirty());
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        assert!(app.reload.start(
+            move || {
+                let _ = gate.recv();
+                Ok(())
+            },
+            || {}
+        ));
+        assert!(!app.request_quit());
+        assert!(app.quit_after_reload);
+        // An edit lands while the quit waits.
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(app.quit_dirty());
+        drop(release);
+        wait_for_reload(&mut app);
+        // The quit is asked again: no shutdown, the Unapplied changes popup instead.
+        assert!(!app.run_deferred_quit());
+        assert!(app.quit_confirm && !app.quit_after_reload);
+        assert_eq!(s_tier_text(&app), "31");
+    }
+
+    fn wait_for_reload(app: &mut super::OverlayApp) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.reload.poll().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reload worker never finished"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[test]
@@ -5652,5 +7446,800 @@ Hide
         app.config_ui.revert_armed = true;
         app.dispatch_popup(&ctx, Popup::DiscardConfig, 1);
         assert!(!app.config_ui.revert_armed);
+    }
+
+    // ---- game folder pick ----
+
+    use crate::overlay::config_state::RevertScope;
+    use crate::overlay::config_view::ConfigAction;
+    use crate::overlay::shell::{self, ShellTab, StatusInputs};
+    use crate::skin::widgets as w;
+
+    /// An app whose app root and game folder are fresh temp folders; `settings` is the text of
+    /// `ff-settings.json` when given, and `files` are created in the game folder first.
+    fn folder_app(
+        settings: Option<&str>,
+        files: &[&str],
+    ) -> (
+        super::OverlayApp,
+        egui::Context,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        let game = tempfile::tempdir().unwrap();
+        if let Some(text) = settings {
+            std::fs::write(home.path().join("ff-settings.json"), text).unwrap();
+        }
+        for f in files {
+            std::fs::write(game.path().join(f), "Show\n").unwrap();
+        }
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("test".to_string()),
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(game.path().to_path_buf()),
+        );
+        (app, ctx, home, game)
+    }
+
+    fn settings_text(home: &tempfile::TempDir) -> String {
+        std::fs::read_to_string(home.path().join("ff-settings.json")).unwrap_or_default()
+    }
+
+    #[test]
+    fn missing_game_folder_reports_on_the_status_line() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &[]);
+        assert!(!app.game_dir_missing);
+        assert_eq!(app.game_folder_missing_text(), None);
+        let gone = home.path().join("nope");
+        app.game_dir = Some(gone.clone());
+        app.refresh_filters();
+        assert!(app.game_dir_missing);
+        assert_eq!(
+            app.game_folder_missing_text(),
+            Some(format!("Game folder not found: {}", gone.display()))
+        );
+        app.game_dir = Some(home.path().to_path_buf());
+        app.refresh_filters();
+        assert!(!app.game_dir_missing);
+    }
+
+    #[test]
+    fn a_folder_that_appears_later_is_found_by_refresh_or_a_re_pick() {
+        let (mut app, ctx, home, _game) = folder_app(None, &[]);
+        let later = home.path().join("later");
+        app.game_dir = Some(later.clone());
+        app.refresh_filters();
+        assert!(app.game_dir_missing);
+        std::fs::create_dir(&later).unwrap();
+        app.handle_config_actions(&ctx, vec![ConfigAction::RefreshLists]);
+        assert!(!app.game_dir_missing);
+
+        std::fs::remove_dir(&later).unwrap();
+        app.refresh_filters();
+        assert!(app.game_dir_missing);
+        std::fs::create_dir(&later).unwrap();
+        app.on_folder_picked(later.clone());
+        assert!(!app.game_dir_missing);
+        assert_eq!(app.game_dir.as_deref(), Some(later.as_path()));
+    }
+
+    #[test]
+    fn missing_game_folder_is_known_right_after_build() {
+        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            None,
+            HotkeyStatus::Failed("test".to_string()),
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("absent")),
+        );
+        assert!(app.game_dir_missing);
+    }
+
+    #[test]
+    fn picked_folder_applies_and_saves_in_one_write_keeping_unknown_keys() {
+        let (mut app, _ctx, home, _game) =
+            folder_app(Some(r#"{"filter":"old.filter","keep_me":7}"#), &[]);
+        let new = tempfile::tempdir().unwrap();
+        std::fs::write(new.path().join("a.filter"), "Show\n").unwrap();
+        std::fs::write(new.path().join("b.filter"), "Show\n").unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.game_dir.as_deref(), Some(new.path()));
+        assert_eq!(
+            app.filters_cache.as_deref(),
+            Some(&["a.filter".to_string(), "b.filter".to_string()][..])
+        );
+        let v: serde_json::Value = serde_json::from_str(&settings_text(&home)).unwrap();
+        assert_eq!(v["game_folder"], new.path().to_string_lossy().as_ref());
+        assert_eq!(v["filter"], "a.filter");
+        assert_eq!(v["keep_me"], 7);
+        assert!(app.pending_folder.is_none());
+        let config_edits = app.config.as_ref().map_or(0, |c| {
+            c.scope_dirty_count(RevertScope::Styles) + c.scope_dirty_count(RevertScope::Tiers)
+        });
+        assert_eq!(config_edits, 0, "CONFIG is never marked dirty");
+        assert!(app.sound_dir_stale);
+    }
+
+    #[test]
+    fn folder_pick_keeps_the_same_name_when_the_folder_has_it() {
+        let (mut app, _ctx, _home, _game) = folder_app(Some(r#"{"filter":"Mine.filter"}"#), &[]);
+        let new = tempfile::tempdir().unwrap();
+        std::fs::write(new.path().join("a.filter"), "Show\n").unwrap();
+        std::fs::write(new.path().join("mine.filter"), "Show\n").unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.settings.filter_name(), "mine.filter");
+    }
+
+    #[test]
+    fn folder_pick_without_filters_keeps_the_current_name_and_creates_nothing() {
+        let (mut app, _ctx, _home, _game) = folder_app(Some(r#"{"filter":"mine.filter"}"#), &[]);
+        let new = tempfile::tempdir().unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.settings.filter_name(), "mine.filter");
+        assert_eq!(std::fs::read_dir(new.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn dirty_rules_route_a_folder_pick_through_the_switch_popup() {
+        use crate::overlay::shell::{self, Popup};
+        let (mut app, ctx, home, _game) = folder_app(Some(r#"{"filter":"old.filter"}"#), &[]);
+        app.working = Some(WorkingFilter::from_text(RULES));
+        app.run_row_actions(vec![RowAction::AddRule]);
+        let before = settings_text(&home);
+        let new = tempfile::tempdir().unwrap();
+        std::fs::write(new.path().join("a.filter"), "Show\n").unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_eq!(app.pending_folder.as_deref(), Some(new.path()));
+        assert_eq!(settings_text(&home), before, "nothing written yet");
+        assert_eq!(
+            shell::active_popup(app.popup_flags(false)),
+            Some(Popup::SwitchFilter)
+        );
+        let spec = app.popup_spec_for(Popup::SwitchFilter);
+        assert!(spec.body.contains(&new.path().display().to_string()));
+        // Stay.
+        app.dispatch_popup(&ctx, Popup::SwitchFilter, 1);
+        assert!(app.pending_folder.is_none());
+        assert_eq!(settings_text(&home), before);
+        assert_ne!(app.game_dir.as_deref(), Some(new.path()));
+        // Switch and discard.
+        app.on_folder_picked(new.path().to_path_buf());
+        app.dispatch_popup(&ctx, Popup::SwitchFilter, 0);
+        assert_eq!(app.game_dir.as_deref(), Some(new.path()));
+        assert!(app.pending_folder.is_none());
+        assert!(settings_text(&home).contains("game_folder"));
+    }
+
+    #[test]
+    fn picking_the_current_folder_does_nothing() {
+        let (mut app, _ctx, home, game) = folder_app(None, &["x.filter"]);
+        app.on_folder_picked(game.path().to_path_buf());
+        assert!(!home.path().join("ff-settings.json").exists());
+        assert!(app.pending_folder.is_none());
+    }
+
+    #[test]
+    fn browse_is_ignored_when_pinned_open_or_pending() {
+        let (mut app, ctx, _home, _game) = folder_app(None, &[]);
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(app.want_browse);
+        app.want_browse = false;
+        app.game_dir_pinned = true;
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        app.game_dir_pinned = false;
+        app.pending_switch = Some("x.filter".into());
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        app.pending_switch = None;
+        app.pending_folder = Some(std::path::PathBuf::from("C:/x"));
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        app.pending_folder = None;
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        assert!(app.folder_pick.start_with(
+            move || {
+                let _ = rx.recv();
+                None
+            },
+            || {}
+        ));
+        app.handle_config_actions(&ctx, vec![ConfigAction::BrowseFolder]);
+        assert!(!app.want_browse);
+        drop(tx);
+    }
+
+    #[test]
+    fn a_pinned_game_folder_ignores_a_pick() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &[]);
+        app.game_dir_pinned = true;
+        let new = tempfile::tempdir().unwrap();
+        app.on_folder_picked(new.path().to_path_buf());
+        assert_ne!(app.game_dir.as_deref(), Some(new.path()));
+        assert!(!home.path().join("ff-settings.json").exists());
+    }
+
+    #[test]
+    fn refresh_lists_relists_without_writing_or_discarding() {
+        let (mut app, ctx, home, game) = folder_app(Some(r#"{"filter":"sel.filter"}"#), &[]);
+        super::super::sound_files::set_dir(&ctx, Some(game.path().to_path_buf()));
+        app.working = Some(WorkingFilter::from_text(RULES));
+        app.run_row_actions(vec![RowAction::AddRule]);
+        let before = settings_text(&home);
+        std::fs::write(game.path().join("a.filter"), "Show\n").unwrap();
+        std::fs::write(game.path().join("b.mp3"), b"").unwrap();
+        app.handle_config_actions(&ctx, vec![ConfigAction::RefreshLists]);
+        assert!(
+            app.filters_cache
+                .as_deref()
+                .unwrap()
+                .contains(&"a.filter".to_string())
+        );
+        assert!(
+            super::super::sound_files::get(&ctx)
+                .files
+                .iter()
+                .any(|f| f == "b.mp3")
+        );
+        assert_eq!(settings_text(&home), before);
+        assert!(app.working.as_ref().unwrap().is_dirty());
+        assert_eq!(app.settings.filter_name(), "sel.filter");
+        assert!(app.config_message.is_none());
+    }
+
+    #[test]
+    fn fresh_install_selects_the_folders_filter_in_memory_only() {
+        let (app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        assert_eq!(app.settings.filter, None);
+        assert!(!home.path().join("ff-settings.json").exists());
+        assert!(app.filter.is_ok());
+    }
+
+    #[test]
+    fn reload_keeps_the_unsaved_folder_filter() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        assert!(app.filter.is_ok());
+        assert!(!home.path().join("ff-settings.json").exists());
+    }
+
+    #[test]
+    fn an_unusable_settings_file_opens_dynamic_filter_as_its_warning_says() {
+        let (app, _ctx, _home, _game) = folder_app(Some("{ not json"), &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "dynamic.filter");
+        assert!(
+            app.list_status
+                .as_deref()
+                .is_some_and(|s| s.contains("dynamic.filter"))
+        );
+    }
+
+    #[test]
+    fn an_invalid_stored_filter_name_opens_dynamic_filter_as_its_warning_says() {
+        let (app, _ctx, _home, _game) =
+            folder_app(Some(r#"{"filter":"../evil.filter"}"#), &["x.filter"]);
+        assert_eq!(app.settings.filter_name(), "dynamic.filter");
+        assert!(
+            app.list_status
+                .as_deref()
+                .is_some_and(|s| s.contains("dynamic.filter"))
+        );
+    }
+
+    #[test]
+    fn a_warning_about_another_key_still_selects_the_folders_filter() {
+        for text in [
+            r#"{"game_folder":"relative"}"#,
+            r#"{"reload_after_apply":"yes"}"#,
+            r#"{"collapsed_sections":[]}"#,
+        ] {
+            let (mut app, _ctx, _home, _game) = folder_app(Some(text), &["x.filter"]);
+            assert!(app.list_status.is_some(), "{text}: warned");
+            assert_eq!(app.settings.filter_name(), "x.filter", "{text}: build");
+            assert!(app.filter.is_ok(), "{text}");
+            app.reload();
+            assert_eq!(app.settings.filter_name(), "x.filter", "{text}: reload");
+        }
+    }
+
+    #[test]
+    fn reload_keeps_the_open_unsaved_filter_among_several() {
+        let (mut app, _ctx, _home, _game) = folder_app(None, &["a.filter", "b.filter"]);
+        app.settings.auto_filter = Some("b.filter".to_string());
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "b.filter");
+        assert_eq!(app.settings.filter, None);
+    }
+
+    fn saved_keys(home: &tempfile::TempDir) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_str(&settings_text(home)).unwrap()
+    }
+
+    #[test]
+    fn saving_the_reload_preference_does_not_select_the_open_filter() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        assert_eq!(app.settings.filter, None);
+        app.set_reload_after_apply(false);
+        let keys = saved_keys(&home);
+        assert_eq!(
+            keys.get("reload_after_apply"),
+            Some(&serde_json::json!(false))
+        );
+        assert!(!keys.contains_key("filter"), "{keys:?}");
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "x.filter");
+        assert!(!saved_keys(&home).contains_key("filter"));
+    }
+
+    #[test]
+    fn a_fold_that_creates_the_settings_file_does_not_select_the_open_filter() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        app.set_section_collapsed("Mine", false, true);
+        let keys = saved_keys(&home);
+        assert!(keys.contains_key("collapsed_sections"), "{keys:?}");
+        assert!(!keys.contains_key("filter"), "{keys:?}");
+        assert!(app.settings.section_collapsed("x.filter", "Mine", false));
+        assert_eq!(app.settings.filter_name(), "x.filter");
+    }
+
+    #[test]
+    fn picking_the_open_unselected_filter_saves_it() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter"]);
+        app.select_filter("x.filter".to_string());
+        assert_eq!(app.settings.filter.as_deref(), Some("x.filter"));
+        assert_eq!(
+            saved_keys(&home).get("filter"),
+            Some(&serde_json::json!("x.filter"))
+        );
+    }
+
+    #[test]
+    fn picking_another_filter_or_a_folder_saves_the_selection() {
+        let (mut app, _ctx, home, _game) = folder_app(None, &["x.filter", "y.filter"]);
+        app.select_filter("y.filter".to_string());
+        assert_eq!(
+            saved_keys(&home).get("filter"),
+            Some(&serde_json::json!("y.filter"))
+        );
+        assert_eq!(app.settings.auto_filter, None);
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(other.path().join("z.filter"), "Show\n").unwrap();
+        app.on_folder_picked(other.path().to_path_buf());
+        let keys = saved_keys(&home);
+        assert_eq!(keys.get("filter"), Some(&serde_json::json!("z.filter")));
+        assert_eq!(
+            keys.get("game_folder"),
+            Some(&serde_json::json!(other.path().to_string_lossy()))
+        );
+    }
+
+    // ---- price-source switch marker, tier gate and ended league ----
+
+    fn with_economy_section() -> String {
+        format!(
+            "{RULES}\n{bar}\n# ff:economy-begin Economy (generated by FerrisFilter, do not edit)\n{bar}\n",
+            bar = "#".repeat(80)
+        )
+    }
+
+    /// An app on a rig root whose filter holds an economy section and whose prices are live.
+    fn economy_app() -> (super::OverlayApp, egui::Context, Rig) {
+        let (mut app, ctx) = popup_app(RULES);
+        let rig = rig(&with_economy_section());
+        app.root = Ok(rig.root.path().to_path_buf());
+        app.config = ConfigState::load(rig.root.path());
+        app.working = Some(WorkingFilter::from_text(&with_economy_section()));
+        app.economy_info.live = true;
+        app.apply_state = crate::overlay::apply::ApplyState::Applied;
+        app.applied_this_session = true;
+        (app, ctx, rig)
+    }
+
+    #[test]
+    fn a_source_switch_is_pending_only_while_the_effective_source_differs() {
+        let (mut app, _ctx, _rig) = economy_app();
+        assert!(app.has_economy_section());
+        assert!(!app.source_pending());
+        app.set_price_source(false);
+        assert!(app.source_pending());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+        assert!(app.quit_dirty());
+        app.set_price_source(true);
+        assert!(!app.source_pending());
+        assert_eq!(app.apply_state, crate::overlay::apply::ApplyState::Applied);
+        assert!(!app.quit_dirty());
+    }
+
+    #[test]
+    fn switching_back_with_a_rule_edit_pending_stays_unapplied() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.set_price_source(false);
+        let id = app.working.as_ref().unwrap().rows()[0].id;
+        app.working
+            .as_mut()
+            .unwrap()
+            .apply_action(super::RowAction::Delete(id));
+        app.set_price_source(true);
+        assert!(!app.source_pending());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+    }
+
+    #[test]
+    fn a_source_switch_never_marks_without_a_section_or_live_prices() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.working = Some(WorkingFilter::from_text(RULES));
+        app.set_price_source(false);
+        assert!(!app.source_pending());
+        assert_eq!(app.apply_state, crate::overlay::apply::ApplyState::Applied);
+
+        let (mut app, _ctx, _rig) = economy_app();
+        app.economy_info.live = false;
+        app.set_price_source(false);
+        assert!(!app.source_pending());
+        app.set_price_source(true);
+        assert!(!app.source_pending());
+    }
+
+    #[test]
+    fn a_league_pick_never_marks_and_a_source_switch_stays_out_of_revert() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.set_league("Runes of Aldur");
+        assert!(!app.source_pending());
+        app.set_price_source(false);
+        assert!(!app.rules_revertible());
+        app.economy_revert_pressed();
+        assert!(!app.config_ui.revert_armed, "no Discard popup for a switch");
+        assert!(app.source_pending());
+        app.revert();
+        assert!(app.source_pending());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+    }
+
+    #[test]
+    fn apply_clears_the_source_marker() {
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.set_price_source(false);
+        assert!(app.source_pending());
+        assert!(app.run_apply(&ctx, false), "{:?}", app.apply_message);
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+        assert!(!app.source_pending());
+    }
+
+    /// The tier cutoff `S` as currently typed in the CONFIG state.
+    fn s_tier_text(app: &super::OverlayApp) -> String {
+        let config = app.config.as_ref().unwrap();
+        config
+            .tier_rows()
+            .into_iter()
+            .find(|r| r.tier == "S")
+            .unwrap()
+            .buffer
+    }
+
+    #[test]
+    fn an_apply_under_fallback_leaves_unused_tier_edits_pending_but_not_unapplied() {
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        let tiers_before = std::fs::read(rig.root.path().join("tiers.json")).ok();
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.set_price_source(false);
+        assert!(app.has_unwritable_tier_edits());
+        assert!(app.run_apply(&ctx, false), "{:?}", app.apply_message);
+        // Nothing an Apply could write is left, so the state stays applied...
+        assert!(!app.applicable_dirty());
+        assert!(!app.config.as_ref().unwrap().is_dirty());
+        assert_eq!(app.apply_state, crate::overlay::apply::ApplyState::Applied);
+        // ...while the cutoffs are kept, unwritten, and still guarded by the Quit confirm.
+        assert_eq!(s_tier_text(&app), "31");
+        assert!(app.config.as_ref().unwrap().tiers_dirty());
+        assert_eq!(
+            std::fs::read(rig.root.path().join("tiers.json")).ok(),
+            tiers_before
+        );
+        assert!(app.quit_dirty());
+
+        // Back on Live they are unapplied work again, written by the next Apply.
+        app.set_price_source(true);
+        assert!(app.applicable_dirty());
+        assert_eq!(
+            app.apply_state,
+            crate::overlay::apply::ApplyState::Unapplied
+        );
+    }
+
+    #[test]
+    fn apply_and_quit_under_fallback_keeps_unused_tier_edits_and_stays_open() {
+        use crate::overlay::shell::Popup;
+        // Only unused tier edits: the confirm offers no Apply & quit, only Quit or Cancel.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.applied_policy = PriceSourcePolicy::ForceFallback;
+        app.set_price_source(false);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(app.quit_dirty() && !app.applicable_dirty());
+        app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        let spec = app.popup_spec_for(Popup::Quit);
+        assert_eq!(spec.body, crate::overlay::shell::QUIT_TIER_EDITS_ONLY_BODY);
+        let labels: Vec<&str> = spec.buttons.iter().map(|b| b.0).collect();
+        assert_eq!(
+            labels,
+            [
+                crate::overlay::apply::QUIT_DISCARD_LABEL,
+                crate::overlay::apply::QUIT_CANCEL_LABEL
+            ]
+        );
+        // Cancel keeps the window and the edits.
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(!app.quit_confirm && !app.quit_after_apply && !app.quit_next_frame);
+        assert_eq!(s_tier_text(&app), "31");
+        // The first button quits without applying.
+        app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(app.quit_next_frame && !app.quit_after_apply);
+
+        // The Apply & quit path itself never quits while only those edits remain: no Apply
+        // runs and the window stays open with them kept.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.applied_policy = PriceSourcePolicy::ForceFallback;
+        app.set_price_source(false);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.quit_confirm = true;
+        app.quit_tier_edits_only = false;
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert_eq!(s_tier_text(&app), "31");
+        let (text, kind) = app.apply_message.clone().unwrap();
+        assert_eq!(text, super::UNWRITABLE_TIERS_QUIT_STATUS);
+        assert_eq!(kind, w::StatusKind::Warning);
+
+        // With other work pending too, Apply & quit is offered: that work is applied and the
+        // window still stays open.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.set_price_source(false);
+        assert!(app.applicable_dirty());
+        app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        assert!(!app.quit_tier_edits_only);
+        assert_eq!(
+            app.popup_spec_for(Popup::Quit).buttons[0].0,
+            crate::overlay::apply::QUIT_APPLY_LABEL
+        );
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+        assert!(!app.applicable_dirty());
+        assert_eq!(s_tier_text(&app), "31");
+
+        // Quit without applying still leaves at once.
+        app.quit_confirm = true;
+        app.dispatch_popup(&ctx, Popup::Quit, 1);
+        assert!(app.quit_next_frame);
+    }
+
+    /// Install, then Apply & quit that stays open for unused tier edits: the install intent is
+    /// dropped, so a later quit deletes the installer instead of starting it.
+    #[test]
+    fn install_click_then_apply_and_quit_kept_open_by_unused_tier_edits_clears_the_intent() {
+        use crate::overlay::shell::Popup;
+        // Other work plus unused tier edits: the Apply runs, the window stays open.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        let (_root, installer) = make_ready(&mut app);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.set_price_source(false);
+        assert!(app.applicable_dirty());
+        assert!(!app.install_and_quit());
+        assert!(app.quit_confirm && app.update.install_intended());
+        app.refresh_quit_tier_edits_only();
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert!(!app.update.install_intended());
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+
+        // Only unused tier edits, Apply & quit picked: nothing is applied, the window stays
+        // open, and the intent is dropped the same way.
+        let (mut app, ctx, rig) = economy_app();
+        app.filter = Ok(LoadedFilter::load(&rig.path).unwrap());
+        let (_root, installer) = make_ready(&mut app);
+        app.applied_policy = PriceSourcePolicy::ForceFallback;
+        app.set_price_source(false);
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        assert!(!app.install_and_quit());
+        assert!(app.update.install_intended());
+        app.quit_tier_edits_only = false;
+        app.dispatch_popup(&ctx, Popup::Quit, 0);
+        assert!(!app.quit_after_apply && !app.quit_next_frame);
+        assert!(!app.update.install_intended());
+        app.begin_shutdown();
+        assert_eq!(handed_off(&app), None);
+        assert!(!installer.exists());
+    }
+
+    #[test]
+    fn a_pending_source_switch_survives_switching_to_another_filter_and_back() {
+        let (mut app, _ctx, rig) = economy_app();
+        let dir = rig.path.parent().unwrap().to_path_buf();
+        std::fs::write(dir.join("other.filter"), RULES).unwrap();
+        app.game_dir = Some(dir);
+        app.set_price_source(false);
+        assert!(app.source_pending());
+
+        app.switch_to("other.filter".to_string());
+        // The other filter is taken as written under the policy now in force.
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+        app.switch_to("dynamic.filter".to_string());
+        app.economy_info.live = true;
+        assert!(app.has_economy_section());
+        assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
+        assert!(app.source_pending());
+    }
+
+    #[test]
+    fn a_pending_source_switch_survives_a_reload_onto_another_filter_and_back() {
+        let (mut app, _ctx, rig) = economy_app();
+        let dir = rig.path.parent().unwrap().to_path_buf();
+        std::fs::write(dir.join("other.filter"), RULES).unwrap();
+        app.game_dir = Some(dir);
+        app.set_price_source(false);
+        assert!(app.source_pending());
+        let file = crate::settings::path(rig.root.path());
+        let select = |name: &str| {
+            let mut keys: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            keys["filter"] = serde_json::json!(name);
+            std::fs::write(&file, keys.to_string()).unwrap();
+        };
+
+        // ff-settings.json now names another filter: Reload opens it.
+        select("other.filter");
+        app.reload();
+        assert_eq!(app.settings.filter_name(), "other.filter");
+        assert_eq!(app.applied_policy, PriceSourcePolicy::ForceFallback);
+
+        select("dynamic.filter");
+        app.reload();
+        app.economy_info.live = true;
+        assert!(app.has_economy_section());
+        assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
+        assert!(app.source_pending());
+
+        // A reload that keeps the same filter leaves its applied policy alone.
+        app.reload();
+        assert_eq!(app.applied_policy, PriceSourcePolicy::Auto);
+    }
+
+    #[test]
+    fn a_league_pick_or_source_switch_never_overwrites_an_unusable_settings_file() {
+        let (mut app, _ctx, rig) = economy_app();
+        let file = crate::settings::path(rig.root.path());
+        let bad = "{ \"filter\": \"x.filter\", }";
+        std::fs::write(&file, bad).unwrap();
+        app.set_league("Runes of Aldur");
+        assert_eq!(app.settings.saved_league(), Some("Runes of Aldur"));
+        assert!(
+            app.config_message
+                .as_ref()
+                .is_some_and(|(m, err)| *err && m.starts_with("Could not save ff-settings.json"))
+        );
+        app.set_price_source(false);
+        assert_eq!(
+            app.settings.price_policy(),
+            PriceSourcePolicy::ForceFallback
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), bad);
+    }
+
+    #[test]
+    fn a_league_pick_writes_only_its_own_key() {
+        let (mut app, _ctx, rig) = economy_app();
+        let file = crate::settings::path(rig.root.path());
+        std::fs::write(
+            &file,
+            r#"{"filter":"ssf.filter","reload_after_apply":"yes","future":1}"#,
+        )
+        .unwrap();
+        app.set_league("Runes of Aldur");
+        app.set_price_source(false);
+        assert!(app.config_message.is_none(), "{:?}", app.config_message);
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(v["filter"], "ssf.filter");
+        assert_eq!(v["reload_after_apply"], "yes");
+        assert_eq!(v["future"], 1);
+        assert_eq!(v["league"], "Runes of Aldur");
+        assert_eq!(v["price_source"], "fallback");
+    }
+
+    #[test]
+    fn the_economy_preview_is_repriced_while_a_switch_is_pending() {
+        let (mut app, _ctx, _rig) = economy_app();
+        app.refresh_staged_economy();
+        assert!(app.staged_econ_inputs.is_none());
+        app.set_price_source(false);
+        app.refresh_staged_economy();
+        let key = app.staged_econ_inputs.clone().expect("preview wanted");
+        assert_eq!(key.2, PriceSourcePolicy::ForceFallback);
+    }
+
+    #[test]
+    fn the_ended_league_line_shows_only_with_a_loaded_list_under_live() {
+        use crate::overlay::leagues::ListState;
+        let (mut app, _ctx) = popup_app(RULES);
+        app.settings.league = Some("Fate of the Vaal".to_string());
+        let ended = |app: &super::OverlayApp| {
+            app.league_view()
+                .ended
+                .as_deref()
+                .map(crate::overlay::leagues::ended_status)
+        };
+        assert_eq!(ended(&app), None);
+        app.leagues.inject(ListState::Loading);
+        assert_eq!(ended(&app), None);
+        app.leagues.inject(ListState::Failed("x".into()));
+        assert_eq!(ended(&app), None);
+        app.leagues.inject(ListState::Loaded(six_leagues()));
+        assert_eq!(
+            ended(&app).as_deref(),
+            Some("Fate of the Vaal is no longer on poe.ninja; pick a league")
+        );
+        app.settings.price_source = Some("fallback".to_string());
+        assert_eq!(ended(&app), None);
+    }
+
+    #[test]
+    fn the_missing_folder_status_row_opens_the_config_tab() {
+        let s = shell::status_for(StatusInputs {
+            root_error: None,
+            event: None,
+            grammar_gate: None,
+            filter_error: None,
+            game_folder_missing: Some("Game folder not found: C:/x".into()),
+            syncing: false,
+            ended_league: None,
+            unknown: None,
+            migrated: false,
+            absent: false,
+            indicator: ("i", w::StatusKind::Info),
+        });
+        assert_eq!(s.open_tab, Some(ShellTab::Config));
     }
 }

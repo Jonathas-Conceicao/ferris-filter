@@ -8,6 +8,7 @@
 - ✅ **v0.4 Overlay Filter Editor Rework** — Phases 11-15 (shipped 2026-09-17) — [archive](milestones/v0.4-ROADMAP.md)
 - ✅ **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-28 (shipped 2026-10-15) — [archive](milestones/v0.5-ROADMAP.md)
 - ✅ **v0.6 New PoE2-based Tool UI** — Phases 29-35 (shipped 2026-10-17) — [archive](milestones/v0.6-ROADMAP.md)
+- ✅ **v0.7 Initial Public Release and Strictness Selector** — Phases 36-42 (shipped 2026-10-18) — [archive](milestones/v0.7-ROADMAP.md)
 
 ## Phases
 
@@ -91,6 +92,21 @@ Full detail: [milestones/v0.5-ROADMAP.md](milestones/v0.5-ROADMAP.md)
 - [x] Phase 35: Prototype Retirement & Docs (2/2 plans) — completed 2026-10-17
 
 Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
+
+</details>
+
+<details>
+<summary>✅ v0.7 Initial Public Release and Strictness Selector (Phases 36-42) — SHIPPED 2026-10-18</summary>
+
+- [x] Phase 36: Per-user Locations & Embedded Defaults (7/7 plans) — completed 2026-10-18
+- [x] Phase 37: Game Folder Resolver & Picker (7/7 plans) — completed 2026-10-18
+- [x] Phase 38: Built-in Styles, Strictness & Reset (6/6 plans) — completed 2026-10-18
+- [x] Phase 39: League Picker & Price Source (7/7 plans) — completed 2026-10-18
+- [x] Phase 40: Release Pipeline & Installer (8/8 plans) — completed 2026-10-18
+- [x] Phase 41: Check for Updates (5/5 plans) — completed 2026-10-18
+- [x] Phase 42: Release Review (5/5 plans) — completed 2026-10-18
+
+Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
 
 </details>
 
@@ -268,21 +284,7 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.11: Full overlay UI review — less "texty" (BACKLOG)
-
-**Goal:** A full visual and UX review of the overlay (RULES and CONFIG tabs, row headers, flags,
-status/outcome area, captions, confirmations). The author's main complaint after using v0.5
-(2026-10-13): parts of the UI read as a wall of text. Replace prose with visual affordances where
-possible: icons/chips instead of sentences, tooltips or on-demand help instead of standing captions,
-terser status lines, clearer visual hierarchy. Starting points: the per-phase UI reviews
-(19/20/21-UI-REVIEW.md, each 18/24, with Typography and Spacing the weakest pillars). Deferred by the
-author: v0.5 focuses on usability and minor fixes, not a visual redesign.
-**Requirements:** TBD
-**Plans:** TBD
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
+### Phase 999.11: Full overlay UI review — less "texty" — done in v0.6 (Phases 29-35)
 
 ### Phase 999.12: Keyword table: verify remaining keywords in game (BACKLOG)
 
@@ -360,6 +362,45 @@ code change), switch the league used by Sync economy, and choose to price with t
 default/fallback prices (`prices-fallback.json` + `tiers-fallback.json`) instead of a synced
 `prices.json`. Keep the "wrong side of a league transition" safety the pin gives today (the
 choice is explicit and visible). Raised by the author during v0.6 UAT on 2026-10-17.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.18: NVIDIA overlay treats `ff` as a game (BACKLOG)
+
+**Goal:** Stop the NVIDIA app's overlay / recorder from treating the `ff` window as a game
+(browsers and terminals are left alone; `ff` gets the "Alt+Z" overlay popup like a game). `ff` is
+left as is until then. Raised by the author on 2026-10-18.
+
+**Findings (2026-10-18, author's machine):**
+- `ff` renders through wgpu (eframe 0.36), which picks a backend at start-up; egui-wgpu honours
+  `WGPU_BACKEND`. Tested: `dx12` and `vulkan` trigger the NVIDIA overlay, `opengl` does not. The
+  author prefers not to switch the rendering library or backend just for this.
+- NVIDIA's Vulkan driver manifest (`nv-vk64.json`) declares implicit layers `VK_LAYER_NV_optimus`
+  (`DISABLE_LAYER_NV_OPTIMUS_1`) and `VK_LAYER_NV_present` (`DISABLE_LAYER_NV_PRESENT_1`).
+  `WGPU_BACKEND=vulkan` + `DISABLE_LAYER_NV_PRESENT_1=1` did **not** stop the overlay.
+- No official NVIDIA "not a game" flag was found. Known route: a per-application driver profile
+  with setting `0x809D5F60` = `0x10000000` (applied by hand with NVIDIA Profile Inspector; reported
+  to stop working on some drivers). Apps can write the same profile through NVAPI DRS
+  (`NvAPI_DRS_*`), reported to need administrator rights, which the per-user installer does not
+  have. Not tested yet: in Profile Inspector, create a profile for `ff.exe`, set `0x809D5F60` to
+  `0x10000000`, launch `ff`.
+- Other apps fixed the same symptom by switching to OpenGL (SignalRGB).
+
+**Options to evaluate:** test the driver-profile setting; if it works, an optional elevated "fix
+NVIDIA overlay" action or a README note; otherwise an OpenGL renderer (eframe `glow`, or wgpu's GL
+backend pinned), possibly behind a setting; ask NVIDIA to add `ff.exe` to their application
+database.
+
+**Sources:**
+- https://blog.senpaisilver.com/software/disable-nvidia-overlay-only-in-certain-apps/
+- https://www.nvidia.com/en-us/geforce/forums/discover/262665/how-to-fix-share-shadowplay-overlay-showing-up-in-non-game-application/
+- https://forums.developer.nvidia.com/t/gfe-and-g-sync-is-activated-by-a-regular-application/266188
+- https://forum.signalrgb.com/t/signalrgb-app-gets-picked-up-by-nvidia-shadowplay/2024
+
 **Requirements:** TBD
 **Plans:** TBD
 

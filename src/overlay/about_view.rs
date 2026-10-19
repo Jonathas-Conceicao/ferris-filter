@@ -6,6 +6,24 @@ use egui::{Align, Color32, Layout, Rect, Sense, UiBuilder, pos2, vec2};
 use crate::skin::Skin;
 use crate::skin::fonts;
 use crate::skin::palette as pal;
+use crate::skin::widgets as w;
+
+/// What the update button looks like, as plain data so the page stays stateless.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateView {
+    pub caption: String,
+    pub enabled: bool,
+    /// A verified installer is waiting: a click means install, not check.
+    pub ready: bool,
+    pub tooltip: &'static str,
+}
+
+/// What a click on the update button asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AboutAction {
+    Check,
+    InstallAndQuit,
+}
 
 /// The one-line description under the app name.
 pub const APP_DESCRIPTION: &str = "Loot filter editor for Path of Exile 2";
@@ -65,7 +83,8 @@ fn divider_mesh(rect: Rect) -> egui::Shape {
 }
 
 /// Draws the ABOUT page into the available rect. Not scrollable; no sections or rows.
-pub fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
+pub fn about_tab(ui: &mut egui::Ui, skin: &Skin, view: &UpdateView) -> Option<AboutAction> {
+    let mut action = None;
     let area = ui.available_rect_before_wrap();
 
     let mut col = ui.new_child(
@@ -95,8 +114,22 @@ pub fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
     if env!("FF_VERSION").ends_with("-dev") && !GIT_DESCRIBE.is_empty() {
         version.on_hover_text(format!("Unreleased build ({GIT_DESCRIBE})"));
     }
+    col.add_space(8.0);
+    let button = w::ff_button_ex(&mut col, skin, &view.caption, 240.0, view.enabled, false);
+    let button = if view.enabled {
+        button.on_hover_text(view.tooltip)
+    } else {
+        button.on_disabled_hover_text(view.tooltip)
+    };
+    if view.enabled && button.clicked() {
+        action = Some(if view.ready {
+            AboutAction::InstallAndQuit
+        } else {
+            AboutAction::Check
+        });
+    }
+    col.add_space(8.0);
     if !crate::skin::REPO_URL.is_empty() {
-        col.add_space(4.0);
         col.hyperlink_to(
             text(crate::skin::REPO_LINK_TEXT, 15.0, pal::GOLD),
             crate::skin::REPO_URL,
@@ -134,11 +167,14 @@ pub fn about_tab(ui: &mut egui::Ui, skin: &Skin) {
     fui.add_space(12.0);
     footer_label(&mut fui, OWNERSHIP, 15.0, pal::MUTED);
     footer_label(&mut fui, DISCLAIMER, 15.0, pal::LABEL);
+    action
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay::update_job::UpdateState;
+    use crate::update::ReadyUpdate;
 
     #[test]
     fn copy_matches_the_spec() {
@@ -166,7 +202,115 @@ mod tests {
         assert!(v.ends_with(env!("FF_VERSION")));
     }
 
-    fn render(w: f32, h: f32) {
+    fn states() -> Vec<UpdateState> {
+        vec![
+            UpdateState::Idle,
+            UpdateState::Checking,
+            UpdateState::Downloading {
+                version: "0.8.0".into(),
+            },
+            UpdateState::Ready(ReadyUpdate {
+                version: "0.8.0".into(),
+                published_unix: None,
+                installer: std::path::PathBuf::from("x.exe"),
+                sha256: String::new(),
+            }),
+        ]
+    }
+
+    fn view_of(state: &UpdateState) -> UpdateView {
+        UpdateView {
+            caption: state.caption(),
+            enabled: state.enabled(),
+            ready: matches!(state, UpdateState::Ready(_)),
+            tooltip: state.tooltip(),
+        }
+    }
+
+    #[test]
+    fn button_copy_matches_the_spec() {
+        let views: Vec<UpdateView> = states().iter().map(view_of).collect();
+        let captions: Vec<&str> = views.iter().map(|v| v.caption.as_str()).collect();
+        assert_eq!(
+            captions,
+            [
+                "Check for updates",
+                "Checking…",
+                "Downloading…",
+                "Install 0.8.0 and quit"
+            ]
+        );
+        let tips: Vec<&str> = views.iter().map(|v| v.tooltip).collect();
+        assert_eq!(
+            tips,
+            [
+                "Look for a newer version on GitHub.",
+                "Asking GitHub.",
+                "Downloading and checking the installer.",
+                "Closes FerrisFilter and starts the installer."
+            ]
+        );
+        let enabled: Vec<bool> = views.iter().map(|v| v.enabled).collect();
+        assert_eq!(enabled, [true, false, false, true]);
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        skin: &Skin,
+        view: &UpdateView,
+        click: Option<egui::Pos2>,
+    ) -> Option<AboutAction> {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(535.0, 760.0));
+        let mut input = egui::RawInput {
+            screen_rect: Some(area),
+            ..Default::default()
+        };
+        if let Some(p) = click {
+            input.events.push(egui::Event::PointerMoved(p));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos: p,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                });
+            }
+        }
+        let mut out = None;
+        ctx.run_ui(input, |ui| {
+            let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+            out = about_tab(&mut child, skin, view);
+        })
+        .drop_without_applying_deltas();
+        out
+    }
+
+    #[test]
+    fn click_returns_the_matching_action_and_disabled_returns_none() {
+        let expected = [
+            Some(AboutAction::Check),
+            None,
+            None,
+            Some(AboutAction::InstallAndQuit),
+        ];
+        for (state, expect) in states().iter().zip(expected) {
+            let ctx = egui::Context::default();
+            let skin = crate::skin::install(&ctx);
+            let view = view_of(state);
+            assert_eq!(frame(&ctx, &skin, &view, None), None);
+            // The button is centred in the 535pt page; scan down the centre for it.
+            let mut got = None;
+            for y in (120..420).step_by(3) {
+                if let Some(a) = frame(&ctx, &skin, &view, Some(pos2(267.0, y as f32))) {
+                    got = Some(a);
+                    break;
+                }
+            }
+            assert_eq!(got, expect, "{state:?}");
+        }
+    }
+
+    fn render(w: f32, h: f32, view: &UpdateView) {
         let ctx = egui::Context::default();
         let skin = crate::skin::install(&ctx);
         let input = egui::RawInput {
@@ -176,18 +320,22 @@ mod tests {
         ctx.run_ui(input, |ui| {
             let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h));
             let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-            about_tab(&mut child, &skin);
+            about_tab(&mut child, &skin, view);
         })
         .drop_without_applying_deltas();
     }
 
     #[test]
     fn about_renders_in_a_full_page() {
-        render(535.0, 760.0);
+        for s in states() {
+            render(535.0, 760.0, &view_of(&s));
+        }
     }
 
     #[test]
     fn about_renders_in_a_cramped_page() {
-        render(535.0, 300.0);
+        for s in states() {
+            render(535.0, 300.0, &view_of(&s));
+        }
     }
 }

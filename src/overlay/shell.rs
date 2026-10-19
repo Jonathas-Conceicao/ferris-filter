@@ -126,6 +126,8 @@ pub(crate) struct StatusLine {
     pub kind: StatusKind,
     /// The rule a click on the line jumps to.
     pub jump: Option<BlockId>,
+    /// The tab a click on the line opens.
+    pub open_tab: Option<ShellTab>,
     /// A hover explanation for a short standing message (the unapplied indicator).
     pub tip: Option<&'static str>,
 }
@@ -137,19 +139,27 @@ pub(crate) struct StatusInputs {
     pub event: Option<(String, StatusKind)>,
     pub grammar_gate: Option<(String, BlockId)>,
     pub filter_error: Option<String>,
+    /// The "Game folder not found" text when the game folder is missing on disk.
+    pub game_folder_missing: Option<String>,
     pub syncing: bool,
+    /// The locked "no longer on poe.ninja" warning, built by the app (None unless the saved
+    /// league is missing from a loaded list under Live prices).
+    pub ended_league: Option<String>,
     pub unknown: Option<(String, BlockId)>,
     pub migrated: bool,
     pub absent: bool,
     pub indicator: (&'static str, StatusKind),
 }
 
-/// The status line for these inputs: the highest-priority row of the contract wins.
+/// The status line for these inputs: the highest-priority row of the contract wins. The order is
+/// missing app root, event, grammar gate, damaged markers / load failure, game folder not found,
+/// sync running, ended league, unknown styles, v0.4 notice, absent filter, the indicator.
 pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
     let plain = |text: String, kind| StatusLine {
         text,
         kind,
         jump: None,
+        open_tab: None,
         tip: None,
     };
     if let Some(text) = inputs.root_error {
@@ -163,20 +173,34 @@ pub(crate) fn status_for(inputs: StatusInputs) -> StatusLine {
             text,
             kind: StatusKind::Error,
             jump: Some(id),
+            open_tab: None,
             tip: None,
         };
     }
     if let Some(text) = inputs.filter_error {
         return plain(text, StatusKind::Error);
     }
+    if let Some(text) = inputs.game_folder_missing {
+        return StatusLine {
+            open_tab: Some(ShellTab::Config),
+            ..plain(text, StatusKind::Error)
+        };
+    }
     if inputs.syncing {
         return plain(SYNC_RUNNING.to_string(), StatusKind::Info);
+    }
+    if let Some(text) = inputs.ended_league {
+        return StatusLine {
+            open_tab: Some(ShellTab::Economy),
+            ..plain(text, StatusKind::Warning)
+        };
     }
     if let Some((text, id)) = inputs.unknown {
         return StatusLine {
             text,
             kind: StatusKind::Warning,
             jump: Some(id),
+            open_tab: None,
             tip: None,
         };
     }
@@ -212,12 +236,36 @@ pub(crate) fn apply_success_kind(text: &str) -> StatusKind {
     }
 }
 
-/// The event message, if any: the Apply outcome wins over a CONFIG message, then a finished sync,
-/// then the list status.
+/// The event message, if any: the update message first, then the Apply outcome, a CONFIG
+/// message, a finished sync, then the list status.
+///
+/// The app clears the update message whenever another event action starts, so a message it sets
+/// on a click is the newest. A message the update worker delivers later while another event was
+/// showing comes with `update_behind` set and ranks last, so it never hides the outcome of an
+/// action started during the check (an Apply refusal, a sync result).
 ///
 /// The Apply message carries the kind it was produced with (see [`apply_success_kind`]). A CONFIG
 /// message is `(text, is_problem)`. A sync outcome is `(text, is_failure)`.
 pub(crate) fn event_from(
+    update: Option<(String, StatusKind)>,
+    update_behind: bool,
+    apply_message: Option<(String, StatusKind)>,
+    config_message: Option<(String, bool)>,
+    sync: Option<(String, bool)>,
+    list_status: Option<String>,
+) -> Option<(String, StatusKind)> {
+    let (first, last) = if update_behind {
+        (None, update)
+    } else {
+        (update, None)
+    };
+    first
+        .or_else(|| other_event(apply_message, config_message, sync, list_status))
+        .or(last)
+}
+
+/// [`event_from`] without the update message.
+fn other_event(
     apply_message: Option<(String, StatusKind)>,
     config_message: Option<(String, bool)>,
     sync: Option<(String, bool)>,
@@ -538,11 +586,41 @@ pub(crate) struct EconomyClicks {
     pub sync: bool,
     pub add: bool,
     pub remove: bool,
+    pub reset_tiers: bool,
+    /// The price-source segment picked (0 = Live, 1 = Fallback).
+    pub source: Option<usize>,
+    /// The league dropdown option picked (an index into the view's options).
+    pub league_pick: Option<usize>,
+    pub refresh_leagues: bool,
+}
+
+/// Tooltip of the tiers editor while Fallback prices are in use.
+const FALLBACK_TIERS_TIP: &str = "The fallback tiers are fixed.";
+
+/// The Price source switch's tooltip. `live` is whether prices.json is usable; `problem` why an
+/// existing one is not. The third line shows only under Live with no usable prices.
+pub(crate) fn price_source_tip(fallback: bool, live: bool, problem: Option<&str>) -> String {
+    let mut tip = "Live: prices from your last sync. Fallback: the built-in early-league prices.\nFallback is recommended at league start, and if you don't trade.".to_string();
+    if !fallback && !live {
+        match problem {
+            Some(p) => tip.push_str(&format!(
+                "\nprices.json could not be used ({p}). Using the built-in early-league prices until you sync."
+            )),
+            None => tip.push_str(
+                "\nNo prices.json yet. Using the built-in early-league prices until you sync.",
+            ),
+        }
+    }
+    tip
 }
 
 /// Everything the ECONOMY tab shows.
 pub(crate) struct EconomyTabInputs<'a> {
-    pub league: &'a str,
+    pub league: &'a crate::overlay::leagues::LeagueView,
+    /// The price source is the fallback pair by choice (greys the league, Sync and Tiers).
+    pub fallback: bool,
+    /// The league prices.json was synced for, appended to the Last sync hover.
+    pub prices_league: Option<&'a str>,
     pub mtime_secs: Option<u64>,
     pub now_secs: u64,
     pub utc_offset_minutes: i32,
@@ -554,6 +632,8 @@ pub(crate) struct EconomyTabInputs<'a> {
     pub sync_enabled: bool,
     pub sync_disabled_tip: Option<&'a str>,
     pub section: SectionButton,
+    /// The Tiers Reset to defaults button is live (the cutoffs differ from the defaults).
+    pub tiers_reset_enabled: bool,
 }
 
 /// The ECONOMY tab: league, last sync, price source, the Sync economy button, the economy
@@ -575,10 +655,65 @@ pub(crate) fn economy_tab(
                     .color(color),
             )
         };
-        w::ff_row(ui, 0, "League", |ui| {
-            value(ui, inputs.league, pal::VALUE).on_hover_text("Pinned in this build.");
+        w::ff_row(ui, 0, "Price source", |ui| {
+            let mut idx = usize::from(inputs.fallback);
+            let r = crate::skin::editor::ff_segmented(
+                ui,
+                skin,
+                &mut idx,
+                &["Live", "Fallback"],
+                w::CONTROL_WIDTH,
+            )
+            .on_hover_text(price_source_tip(
+                inputs.fallback,
+                inputs.live,
+                inputs.problem,
+            ));
+            crate::overlay::style_lines::probe("price-source", r.rect);
+            if r.changed() {
+                clicks.source = Some(idx);
+            }
         });
-        w::ff_row(ui, 1, "Last sync", |ui| {
+        w::ff_row(ui, 1, "League", |ui| {
+            use crate::overlay::leagues::CaptionKind;
+            let view = inputs.league;
+            ui.spacing_mut().item_spacing.x = w::FIELD_GAP;
+            let color = match view.caption {
+                CaptionKind::Value => pal::VALUE,
+                CaptionKind::Disabled => pal::DISABLED,
+                CaptionKind::Warn => pal::WARN,
+            };
+            let options: Vec<&str> = view.options.iter().map(String::as_str).collect();
+            let mut sel = view.selected;
+            let combo = ui
+                .add_enabled_ui(view.dropdown_enabled, |ui| {
+                    w::ff_dropdown_ex(
+                        ui,
+                        skin,
+                        "economy-league",
+                        &mut sel,
+                        &options,
+                        w::CONTROL_WIDTH - w::ROW_HEIGHT - w::FIELD_GAP,
+                        Some(color),
+                    )
+                })
+                .inner;
+            combo
+                .clone()
+                .on_hover_text(&view.dropdown_tip)
+                .on_disabled_hover_text(&view.dropdown_tip);
+            if combo.changed() {
+                clicks.league_pick = Some(sel);
+            }
+            let refresh = w::ff_reload_button(ui, skin, "Refresh", view.refresh_enabled)
+                .on_hover_text(&view.refresh_tip)
+                .on_disabled_hover_text(&view.refresh_tip);
+            crate::overlay::style_lines::probe("league-refresh", refresh.rect);
+            if view.refresh_enabled && refresh.clicked() {
+                clicks.refresh_leagues = true;
+            }
+        });
+        w::ff_row(ui, 2, "Last sync", |ui| {
             let r = value(
                 ui,
                 &relative_sync_text(
@@ -589,25 +724,15 @@ pub(crate) fn economy_tab(
                 pal::VALUE,
             );
             if inputs.mtime_secs.is_some() {
-                r.on_hover_text(last_sync_text(inputs.mtime_secs, inputs.utc_offset_minutes));
+                let mut tip = last_sync_text(inputs.mtime_secs, inputs.utc_offset_minutes);
+                if let Some(league) = inputs.prices_league {
+                    tip.push_str(&format!(" - {league}"));
+                }
+                r.on_hover_text(tip);
             }
         });
-        w::ff_row(ui, 2, "Priced items", |ui| {
+        w::ff_row(ui, 3, "Priced items", |ui| {
             value(ui, &thousands(inputs.priced_items), pal::VALUE);
-        });
-        w::ff_row(ui, 3, "Price source", |ui| {
-            if inputs.live {
-                value(ui, "Live prices", pal::VALUE)
-                    .on_hover_text("prices.json from the last sync.");
-            } else if let Some(problem) = inputs.problem {
-                value(ui, "Fallback prices", pal::WARN).on_hover_text(format!(
-                    "prices.json could not be used ({problem}) so the built-in early-league prices apply. Sync to replace it."
-                ));
-            } else {
-                value(ui, "Fallback prices", pal::WARN).on_hover_text(
-                    "No prices.json yet. Using the built-in early-league prices. Sync to get live ones.",
-                );
-            }
         });
         ui.add_space(16.0);
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
@@ -678,8 +803,42 @@ pub(crate) fn economy_tab(
                 .on_hover_text("Rules inside the section cannot be edited.");
         }
         ui.add_space(16.0);
-        w::ff_section(ui, skin, "Tiers");
-        tiers(ui);
+        let heading = w::ff_section(ui, skin, "Tiers");
+        {
+            let mut right = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(heading.rect.shrink2(vec2(8.0, 0.0)))
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            let enabled = inputs.tiers_reset_enabled && !inputs.fallback;
+            let mut r =
+                w::ff_button_ex(&mut right, skin, "Reset to defaults", 150.0, enabled, false);
+            // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response
+            // still counts as enabled: attach the tip both ways.
+            let tip = if enabled {
+                "Restore the default cutoffs."
+            } else if inputs.fallback {
+                FALLBACK_TIERS_TIP
+            } else {
+                "Already at the defaults."
+            };
+            r = r.on_hover_text(tip).on_disabled_hover_text(tip);
+            crate::overlay::style_lines::probe("reset-tiers", r.rect);
+            if r.clicked() && enabled {
+                clicks.reset_tiers = true;
+            }
+        }
+        let locked = ui.add_enabled_ui(!inputs.fallback, |ui| tiers(ui));
+        if inputs.fallback {
+            // A disabled Ui's response carries no hover of its own over the boxes, so the tip
+            // sits on an explicit hover area over the whole editor.
+            ui.interact(
+                locked.response.rect,
+                ui.id().with("tiers-locked"),
+                Sense::hover(),
+            )
+            .on_hover_text(FALLBACK_TIERS_TIP);
+        }
     });
     clicks
 }
@@ -688,7 +847,7 @@ pub(crate) fn economy_tab(
 // Popups (SHELL-07)
 // ---------------------------------------------------------------------------------------------
 
-/// The eight confirmations and choices the overlay asks, each shown as one skinned modal.
+/// The ten confirmations and choices the overlay asks, each shown as one skinned modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Popup {
     Quit,
@@ -697,6 +856,8 @@ pub(crate) enum Popup {
     DeleteRule,
     DeleteStyle,
     RemoveEconomy,
+    ResetStyles,
+    ResetTiers,
     DiscardConfig,
     DiscardRules,
 }
@@ -710,6 +871,8 @@ pub(crate) struct PopupFlags {
     pub delete_rule: bool,
     pub delete_style: bool,
     pub remove_economy: bool,
+    pub reset_styles: bool,
+    pub reset_tiers: bool,
     pub discard_config: bool,
     pub discard_rules: bool,
 }
@@ -724,6 +887,8 @@ pub(crate) fn active_popup(f: PopupFlags) -> Option<Popup> {
         (f.delete_rule, Popup::DeleteRule),
         (f.delete_style, Popup::DeleteStyle),
         (f.remove_economy, Popup::RemoveEconomy),
+        (f.reset_styles, Popup::ResetStyles),
+        (f.reset_tiers, Popup::ResetTiers),
         (f.discard_config, Popup::DiscardConfig),
         (f.discard_rules, Popup::DiscardRules),
     ]
@@ -739,6 +904,7 @@ pub(crate) const KEEP: &str = "Keep";
 pub(crate) const DELETE_STYLE: &str = "Delete style";
 pub(crate) const KEEP_STYLE: &str = "Keep style";
 pub(crate) const REMOVE: &str = "Remove";
+pub(crate) const RESET: &str = "Reset";
 pub(crate) const DISCARD: &str = "Discard";
 pub(crate) const RELOAD: &str = "Reload";
 pub(crate) const OVERWRITE: &str = "Overwrite";
@@ -768,7 +934,11 @@ pub(crate) enum PopupData<'a> {
     SwitchFilter {
         target: &'a str,
     },
-    Quit,
+    Quit {
+        /// The only pending work is tier edits the Fallback price source does not use: no Apply
+        /// can write them, so the popup offers no Apply & quit.
+        tier_edits_only: bool,
+    },
     DeleteRule {
         /// 1-based position of the rule in the list.
         index: usize,
@@ -780,6 +950,8 @@ pub(crate) enum PopupData<'a> {
         prompt: String,
     },
     RemoveEconomy,
+    ResetStyles,
+    ResetTiers,
     DiscardConfig {
         /// Unapplied edits in the reverted scope (styles on CONFIG, tiers on ECONOMY).
         count: usize,
@@ -818,6 +990,20 @@ pub(crate) fn changed_on_disk_choice(overwrite: bool, clicked: usize) -> usize {
     }
 }
 
+/// The Quit popup's body when its only pending work is tier edits unused under Fallback.
+pub(crate) const QUIT_TIER_EDITS_ONLY_BODY: &str =
+    "Tier edits apply only with Live prices. Quit and lose them?";
+
+/// The Quit popup's choice as the full-set index (0 Apply & quit, 1 Quit without applying,
+/// 2 Cancel), from the index of the button clicked when Apply & quit was left out.
+pub(crate) fn quit_popup_choice(tier_edits_only: bool, clicked: usize) -> usize {
+    if tier_edits_only {
+        clicked + 1
+    } else {
+        clicked
+    }
+}
+
 /// Title, body and buttons of a popup.
 pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
     let (title, body, buttons): (&str, String, Vec<SpecButton>) = match data {
@@ -852,7 +1038,23 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
             format!("Unapplied rule changes will be discarded. Switching to {target}."),
             vec![(SWITCH_AND_DISCARD, true, None), (STAY, false, None)],
         ),
-        PopupData::Quit => (
+        PopupData::Quit {
+            tier_edits_only: true,
+        } => (
+            apply::QUIT_CONFIRM_TITLE,
+            QUIT_TIER_EDITS_ONLY_BODY.to_string(),
+            vec![
+                (
+                    apply::QUIT_DISCARD_LABEL,
+                    true,
+                    Some(apply::QUIT_DISCARD_TIP),
+                ),
+                (apply::QUIT_CANCEL_LABEL, false, None),
+            ],
+        ),
+        PopupData::Quit {
+            tier_edits_only: false,
+        } => (
             apply::QUIT_CONFIRM_TITLE,
             "Apply them before quitting?".to_string(),
             vec![
@@ -889,6 +1091,16 @@ pub(crate) fn popup_spec(data: PopupData) -> PopupSpec {
             "Remove economy section?",
             "Your own rules are kept. Add the section back any time.".to_string(),
             vec![(REMOVE, true, None), (KEEP, false, None)],
+        ),
+        PopupData::ResetStyles => (
+            "Reset styles to defaults?",
+            "The built-in styles go back to their default look, names and order. Your custom styles are kept. Press Apply to save, or Revert to undo.".to_string(),
+            vec![(RESET, true, None), (KEEP, false, None)],
+        ),
+        PopupData::ResetTiers => (
+            "Reset tiers to defaults?",
+            "The tier cutoffs go back to their defaults. Press Apply to save, or Revert to undo.".to_string(),
+            vec![(RESET, true, None), (KEEP, false, None)],
         ),
         PopupData::DiscardConfig {
             count,
@@ -950,9 +1162,29 @@ mod tests {
         (clicks, ran)
     }
 
+    fn leagues_view(fallback: bool) -> &'static crate::overlay::leagues::LeagueView {
+        use crate::overlay::leagues::{ListState, ViewInputs, view};
+        let list = serde_json::from_str::<crate::sync::models::IndexState>(include_str!(
+            "../../tests/fixtures/index-state-2026-10-18.json"
+        ))
+        .unwrap()
+        .economy_leagues;
+        let state = ListState::Loaded(list);
+        Box::leak(Box::new(view(&ViewInputs {
+            saved: None,
+            state: &state,
+            fetching: false,
+            prices_league: None,
+            fallback,
+            syncing: false,
+        })))
+    }
+
     fn inputs(section: SectionButton) -> EconomyTabInputs<'static> {
         EconomyTabInputs {
-            league: "Test League",
+            league: leagues_view(false),
+            fallback: false,
+            prices_league: None,
             mtime_secs: None,
             now_secs: 1_700_000_000,
             utc_offset_minutes: 0,
@@ -963,6 +1195,7 @@ mod tests {
             sync_enabled: true,
             sync_disabled_tip: None,
             section,
+            tiers_reset_enabled: true,
         }
     }
 
@@ -979,8 +1212,116 @@ mod tests {
             EconomyClicks {
                 sync: false,
                 add: false,
-                remove: false
+                remove: false,
+                reset_tiers: false,
+                source: None,
+                league_pick: None,
+                refresh_leagues: false,
             }
+        );
+    }
+
+    /// Draws the tab once to find `tag`'s rect, then clicks its centre (or `at`) in a second frame.
+    fn click_probe(
+        i: &EconomyTabInputs,
+        tag: &str,
+        at: impl Fn(egui::Rect) -> egui::Pos2,
+    ) -> (EconomyClicks, bool) {
+        use crate::overlay::style_lines::drain_probes;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::textures::load_light(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(535.0, 900.0));
+        let input = |events| egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        drain_probes();
+        ctx.run_ui(input(vec![]), |ui| {
+            economy_tab(ui, &skin, i, |_| {});
+        })
+        .drop_without_applying_deltas();
+        let rect = drain_probes()
+            .into_iter()
+            .find(|(t, _)| *t == tag)
+            .expect("the control is drawn")
+            .1;
+        let target = at(rect);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut clicks = EconomyClicks::default();
+        let mut tiers_enabled = true;
+        ctx.run_ui(
+            input(vec![
+                egui::Event::PointerMoved(target),
+                button(true),
+                button(false),
+            ]),
+            |ui| {
+                clicks = economy_tab(ui, &skin, i, |ui| tiers_enabled = ui.is_enabled());
+            },
+        )
+        .drop_without_applying_deltas();
+        (clicks, tiers_enabled)
+    }
+
+    #[test]
+    fn the_price_source_switch_reports_only_a_change() {
+        let i = inputs(ADD);
+        let right = |r: egui::Rect| egui::pos2(r.max.x - 10.0, r.center().y);
+        let left = |r: egui::Rect| egui::pos2(r.min.x + 10.0, r.center().y);
+        assert_eq!(click_probe(&i, "price-source", right).0.source, Some(1));
+        assert_eq!(click_probe(&i, "price-source", left).0.source, None);
+        let mut fb = inputs(ADD);
+        fb.fallback = true;
+        assert_eq!(click_probe(&fb, "price-source", left).0.source, Some(0));
+    }
+
+    #[test]
+    fn refresh_clicks_only_when_enabled() {
+        let center = |r: egui::Rect| r.center();
+        let i = inputs(ADD);
+        assert!(i.league.refresh_enabled);
+        assert!(click_probe(&i, "league-refresh", center).0.refresh_leagues);
+        let mut fb = inputs(ADD);
+        fb.fallback = true;
+        fb.league = leagues_view(true);
+        assert!(!click_probe(&fb, "league-refresh", center).0.refresh_leagues);
+    }
+
+    #[test]
+    fn fallback_locks_tiers_and_the_reset_button() {
+        let i = inputs(ADD);
+        assert!(click_probe(&i, "league-refresh", |r| r.center()).1);
+        let mut fb = inputs(ADD);
+        fb.fallback = true;
+        fb.league = leagues_view(true);
+        let (clicks, tiers_enabled) = click_probe(&fb, "reset-tiers", |r| r.center());
+        assert!(!tiers_enabled, "the Tiers editor is drawn disabled");
+        assert!(!clicks.reset_tiers);
+    }
+
+    #[test]
+    fn price_source_tip_copy() {
+        let base = "Live: prices from your last sync. Fallback: the built-in early-league prices.\nFallback is recommended at league start, and if you don't trade.";
+        assert_eq!(price_source_tip(true, false, None), base);
+        assert_eq!(price_source_tip(false, true, None), base);
+        assert_eq!(
+            price_source_tip(false, false, None),
+            format!(
+                "{base}\nNo prices.json yet. Using the built-in early-league prices until you sync."
+            )
+        );
+        assert_eq!(
+            price_source_tip(false, false, Some("bad")),
+            format!(
+                "{base}\nprices.json could not be used (bad). Using the built-in early-league prices until you sync."
+            )
         );
     }
 
@@ -1009,6 +1350,54 @@ mod tests {
             let (clicks, ran) = draw(&i);
             assert_eq!(ran, 1);
             assert_eq!(clicks, EconomyClicks::default());
+        }
+    }
+
+    #[test]
+    fn the_tiers_reset_button_clicks_only_when_enabled() {
+        use crate::overlay::style_lines::drain_probes;
+        for enabled in [true, false] {
+            let mut i = inputs(ADD);
+            i.tiers_reset_enabled = enabled;
+            let ctx = egui::Context::default();
+            crate::skin::fonts::install(&ctx);
+            let skin = crate::skin::textures::load_light(&ctx);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(535.0, 900.0));
+            let input = |events| egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            drain_probes();
+            ctx.run_ui(input(vec![]), |ui| {
+                economy_tab(ui, &skin, &i, |_| {});
+            })
+            .drop_without_applying_deltas();
+            let target = drain_probes()
+                .into_iter()
+                .find(|(t, _)| *t == "reset-tiers")
+                .expect("the button is drawn")
+                .1
+                .center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let mut clicks = EconomyClicks::default();
+            ctx.run_ui(
+                input(vec![
+                    egui::Event::PointerMoved(target),
+                    button(true),
+                    button(false),
+                ]),
+                |ui| {
+                    clicks = economy_tab(ui, &skin, &i, |_| {});
+                },
+            )
+            .drop_without_applying_deltas();
+            assert_eq!(clicks.reset_tiers, enabled);
         }
     }
 
@@ -1043,7 +1432,9 @@ mod tests {
             event: None,
             grammar_gate: None,
             filter_error: None,
+            game_folder_missing: None,
             syncing: false,
+            ended_league: None,
             unknown: None,
             migrated: false,
             absent: false,
@@ -1057,7 +1448,9 @@ mod tests {
             event: Some(("event".into(), StatusKind::Ok)),
             grammar_gate: Some(("gate".into(), id())),
             filter_error: Some("load".into()),
+            game_folder_missing: Some("missing".into()),
             syncing: true,
+            ended_league: Some("ended".into()),
             unknown: Some(("unknown".into(), id())),
             migrated: true,
             absent: true,
@@ -1105,11 +1498,38 @@ mod tests {
     }
 
     #[test]
+    fn row4b_game_folder_missing_opens_the_config_tab() {
+        let mut i = full();
+        i.event = None;
+        i.grammar_gate = None;
+        i.filter_error = None;
+        let s = status_for(i);
+        assert_eq!(s.text, "missing");
+        assert_eq!(s.kind, StatusKind::Error);
+        assert_eq!(s.jump, None);
+        assert_eq!(s.open_tab, Some(ShellTab::Config));
+        let mut only = empty();
+        only.game_folder_missing = Some("x".into());
+        assert_eq!(status_for(only).open_tab, Some(ShellTab::Config));
+    }
+
+    #[test]
+    fn game_folder_missing_is_outranked_by_load_failure() {
+        let mut i = full();
+        i.event = None;
+        i.grammar_gate = None;
+        let s = status_for(i);
+        assert_eq!(s.text, "load");
+        assert_eq!(s.open_tab, None);
+    }
+
+    #[test]
     fn row5_syncing() {
         let mut i = full();
         i.event = None;
         i.grammar_gate = None;
         i.filter_error = None;
+        i.game_folder_missing = None;
         let s = status_for(i);
         assert_eq!(s.text, SYNC_RUNNING);
         assert_eq!(s.kind, StatusKind::Info);
@@ -1121,11 +1541,36 @@ mod tests {
         i.event = None;
         i.grammar_gate = None;
         i.filter_error = None;
+        i.game_folder_missing = None;
         i.syncing = false;
+        i.ended_league = None;
         let s = status_for(i);
         assert_eq!(s.text, "unknown");
         assert_eq!(s.kind, StatusKind::Warning);
         assert_eq!(s.jump, Some(id()));
+    }
+
+    #[test]
+    fn ended_league_warns_and_opens_the_economy_tab() {
+        let text = "Fate of the Vaal is no longer on poe.ninja; pick a league";
+        let mut only = empty();
+        only.ended_league = Some(text.into());
+        let s = status_for(only.clone());
+        assert_eq!(s.text, text);
+        assert_eq!(s.kind, StatusKind::Warning);
+        assert_eq!(s.open_tab, Some(ShellTab::Economy));
+        assert_eq!(s.jump, None);
+
+        // Sync running outranks it; unknown styles do not; the game folder does.
+        let mut i = only.clone();
+        i.syncing = true;
+        assert_eq!(status_for(i).text, SYNC_RUNNING);
+        let mut i = only.clone();
+        i.unknown = Some(("unknown".into(), id()));
+        assert_eq!(status_for(i).text, text);
+        let mut i = only;
+        i.game_folder_missing = Some("missing".into());
+        assert_eq!(status_for(i).text, "missing");
     }
 
     #[test]
@@ -1175,6 +1620,17 @@ mod tests {
     #[test]
     fn event_precedence_and_kinds() {
         let e = event_from(
+            Some(("Up to date (0.7.0)".into(), StatusKind::Ok)),
+            false,
+            Some(("a".into(), StatusKind::Ok)),
+            Some(("c".into(), true)),
+            Some(("s".into(), true)),
+            Some("l".into()),
+        );
+        assert_eq!(e, Some(("Up to date (0.7.0)".into(), StatusKind::Ok)));
+        let e = event_from(
+            None,
+            false,
             Some(("a".into(), StatusKind::Ok)),
             Some(("c".into(), true)),
             Some(("s".into(), true)),
@@ -1183,27 +1639,66 @@ mod tests {
         assert_eq!(e, Some(("a".into(), StatusKind::Ok)));
         // The stored kind passes through unchanged: a failure stays an Error whatever the
         // apply state is (CR-02).
-        let e = event_from(Some(("a".into(), StatusKind::Error)), None, None, None);
+        let e = event_from(
+            None,
+            false,
+            Some(("a".into(), StatusKind::Error)),
+            None,
+            None,
+            None,
+        );
         assert_eq!(e, Some(("a".into(), StatusKind::Error)));
         let text = format!("Wrote x. {}", apply::RELOAD_INSTRUCTION);
         assert_eq!(apply_success_kind(&text), StatusKind::Warning);
         assert_eq!(apply_success_kind("Wrote x."), StatusKind::Ok);
         let e = event_from(
             None,
+            false,
+            None,
             Some(("c".into(), true)),
             Some(("s".into(), true)),
             None,
         );
         assert_eq!(e, Some(("c".into(), StatusKind::Error)));
-        let e = event_from(None, Some(("c".into(), false)), None, None);
+        let e = event_from(None, false, None, Some(("c".into(), false)), None, None);
         assert_eq!(e, Some(("c".into(), StatusKind::Info)));
-        let e = event_from(None, None, Some(("s".into(), true)), Some("l".into()));
+        let e = event_from(
+            None,
+            false,
+            None,
+            None,
+            Some(("s".into(), true)),
+            Some("l".into()),
+        );
         assert_eq!(e, Some(("s".into(), StatusKind::Error)));
-        let e = event_from(None, None, Some(("s".into(), false)), Some("l".into()));
+        let e = event_from(
+            None,
+            false,
+            None,
+            None,
+            Some(("s".into(), false)),
+            Some("l".into()),
+        );
         assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
-        let e = event_from(None, None, None, Some("l".into()));
+        let e = event_from(None, false, None, None, None, Some("l".into()));
         assert_eq!(e, Some(("l".into(), StatusKind::Info)));
-        assert_eq!(event_from(None, None, None, None), None);
+        assert_eq!(event_from(None, false, None, None, None, None), None);
+        // A late worker message ranks below every other event, and still shows on its own.
+        let late = || Some(("Up to date (0.7.0)".to_string(), StatusKind::Ok));
+        let e = event_from(
+            late(),
+            true,
+            Some(("a".into(), StatusKind::Error)),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(e, Some(("a".into(), StatusKind::Error)));
+        let e = event_from(late(), true, None, None, Some(("s".into(), false)), None);
+        assert_eq!(e, Some(("s".into(), StatusKind::Ok)));
+        let e = event_from(late(), true, None, None, None, Some("l".into()));
+        assert_eq!(e, Some(("l".into(), StatusKind::Info)));
+        assert_eq!(event_from(late(), true, None, None, None, None), late());
     }
 
     #[test]
@@ -1484,6 +1979,8 @@ mod tests {
             delete_rule: true,
             delete_style: true,
             remove_economy: true,
+            reset_styles: true,
+            reset_tiers: true,
             discard_config: true,
             discard_rules: true,
         };
@@ -1509,6 +2006,16 @@ mod tests {
         assert_eq!(active_popup(f), Some(Popup::RemoveEconomy));
         let f = PopupFlags {
             remove_economy: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::ResetStyles));
+        let f = PopupFlags {
+            reset_styles: false,
+            ..f
+        };
+        assert_eq!(active_popup(f), Some(Popup::ResetTiers));
+        let f = PopupFlags {
+            reset_tiers: false,
             ..f
         };
         assert_eq!(active_popup(f), Some(Popup::DiscardConfig));
@@ -1623,7 +2130,24 @@ mod tests {
         assert_eq!(labels(&s), ["Switch and discard", "Stay"]);
         assert!(s.buttons[0].1);
 
-        let s = popup_spec(PopupData::Quit);
+        // Only tier edits Fallback cannot write: no Apply & quit, which could only stay open.
+        let s = popup_spec(PopupData::Quit {
+            tier_edits_only: true,
+        });
+        assert_eq!(s.title, apply::QUIT_CONFIRM_TITLE);
+        assert_eq!(s.body, QUIT_TIER_EDITS_ONLY_BODY);
+        assert_eq!(
+            labels(&s),
+            [apply::QUIT_DISCARD_LABEL, apply::QUIT_CANCEL_LABEL]
+        );
+        assert!(s.buttons[0].1);
+        assert_eq!(quit_popup_choice(true, 0), 1);
+        assert_eq!(quit_popup_choice(true, 1), 2);
+        assert_eq!(quit_popup_choice(false, 0), 0);
+
+        let s = popup_spec(PopupData::Quit {
+            tier_edits_only: false,
+        });
         assert_eq!(s.title, apply::QUIT_CONFIRM_TITLE);
         assert_eq!(s.body, "Apply them before quitting?");
         assert_eq!(
@@ -1669,6 +2193,22 @@ mod tests {
             "Your own rules are kept. Add the section back any time."
         );
         assert_eq!(labels(&s), ["Remove", "Keep"]);
+
+        let s = popup_spec(PopupData::ResetStyles);
+        assert_eq!(s.title, "Reset styles to defaults?");
+        assert_eq!(
+            s.body,
+            "The built-in styles go back to their default look, names and order. Your custom styles are kept. Press Apply to save, or Revert to undo."
+        );
+        assert_eq!(s.buttons, [(RESET, true, None), (KEEP, false, None)]);
+
+        let s = popup_spec(PopupData::ResetTiers);
+        assert_eq!(s.title, "Reset tiers to defaults?");
+        assert_eq!(
+            s.body,
+            "The tier cutoffs go back to their defaults. Press Apply to save, or Revert to undo."
+        );
+        assert_eq!(s.buttons, [(RESET, true, None), (KEEP, false, None)]);
 
         let s = popup_spec(PopupData::DiscardConfig {
             count: 2,
@@ -1730,7 +2270,12 @@ mod tests {
                 block: OverwriteBlock::Nothing,
             },
             PopupData::SwitchFilter { target: "t" },
-            PopupData::Quit,
+            PopupData::Quit {
+                tier_edits_only: false,
+            },
+            PopupData::Quit {
+                tier_edits_only: true,
+            },
             PopupData::DeleteRule {
                 index: 1,
                 label: "l",
@@ -1740,6 +2285,8 @@ mod tests {
                 prompt: String::new(),
             },
             PopupData::RemoveEconomy,
+            PopupData::ResetStyles,
+            PopupData::ResetTiers,
             PopupData::DiscardConfig {
                 count: 1,
                 economy: false,

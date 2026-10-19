@@ -141,6 +141,28 @@ out = "common/close_down.png"
 prefer_4k = true
 trim = true
 
+# Square icon button (dark plate, thin gold frame), three states: the background of the reload
+# button.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonnormal.dds"
+out = "common/icon_button_normal.png"
+prefer_4k = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonhover.dds"
+out = "common/icon_button_hover.png"
+prefer_4k = true
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/fouriconbuttonpressed.dds"
+out = "common/icon_button_pressed.png"
+prefer_4k = true
+
+# Reload glyph (round arrow): the game's hover art, which is the resting colour once tinted; drawn
+# mirrored and turned on the square icon button, as the game does.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonreloadhover.dds"
+out = "common/reload.png"
+prefer_4k = true
+
 # The gold dropdown triangle.
 [[image]]
 path = "art/textures/interface/2d/2dart/uiimages/common/buttoncomboboxnormal.dds"
@@ -264,3 +286,10 @@ line_radius = 2
 svg = "assets/ferris/rustacean-flat-happy.svg"
 out = "assets/ui/ferris-about.png"
 width = 336
+
+# Multi-size Windows icon for ff.exe, the installer and the Start menu (original colours, square
+# crop around the artwork; rendered from the committed SVG, no game install needed).
+[ferris_icon]
+svg = "assets/ferris/rustacean-flat-happy.svg"
+out = "assets/ferris/ferris.ico"
+sizes = [16, 24, 32, 48, 64, 128, 256]

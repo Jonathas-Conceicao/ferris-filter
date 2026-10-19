@@ -25,6 +25,8 @@ use crate::skin::fonts::{regular, small_caps};
 use crate::skin::minimap;
 use crate::skin::palette as pal;
 
+/// Width of the Browse button.
+const BROWSE_WIDTH: f32 = 120.0;
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
 const ORDER_TIP: &str = "Built-in styles keep their order";
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
@@ -47,8 +49,14 @@ pub enum ConfigAction {
     SelectFilter(String),
     CreateFilter(String),
     ConfirmSwitch,
+    /// Open the native folder dialog to pick the game folder (the app starts it where the frame is at hand).
+    BrowseFolder,
+    /// Re-list the game folder's `.filter` files and the sound files: no write, no selection change.
+    RefreshLists,
     CancelSwitch,
     SetReloadAfterApply(bool),
+    /// A strictness level was clicked: a pending edit of the tier styles' visibility.
+    SetStrictness(crate::overlay::strictness::Strictness),
     AddStyle(String),
     EditStyle {
         name: String,
@@ -73,6 +81,10 @@ pub enum ConfigAction {
     Revert,
     /// Revert one tab's CONFIG edits: styles from CONFIG, tiers from ECONOMY.
     RevertScoped(RevertScope),
+    /// Restore the built-in styles to their defaults (customs kept); a pending edit.
+    ResetStyles,
+    /// Restore the tier cutoffs to their defaults; a pending edit.
+    ResetTiers,
     Reload,
     Overwrite,
 }
@@ -97,6 +109,8 @@ pub struct ConfigUi {
     pub revert_armed: bool,
     /// What the armed Discard config changes? popup discards.
     pub revert_scope: RevertScope,
+    /// Which Reset to defaults? popup is armed (styles on CONFIG, tiers on ECONOMY).
+    pub reset_armed: Option<RevertScope>,
     /// A just-added style to scroll into view.
     pub scroll_to: Option<String>,
     /// A name draft was just opened; its text field takes focus once.
@@ -135,6 +149,7 @@ impl ConfigUi {
         self.delete_armed = None;
         self.revert_armed = false;
         self.revert_scope = RevertScope::Styles;
+        self.reset_armed = None;
     }
 
     /// Called when the styles are replaced (CONFIG Revert, reload, Apply, an outside edit
@@ -155,7 +170,18 @@ pub struct ConfigViewCtx<'a> {
     /// `*.filter` names in the game folder; `None` when the folder cannot be read.
     pub filters: Option<&'a [String]>,
     pub active_filter: &'a str,
+    /// `active_filter` is saved as the user's selection (not just the filter the overlay opened
+    /// because none is selected).
+    pub active_filter_selected: bool,
     pub game_dir: Option<&'a Path>,
+    /// The game folder is not on disk (refresh and the filter dropdown are disabled).
+    pub game_dir_missing: bool,
+    /// `FERRISFILTER_GAME_DIR` pins the folder (Browse is disabled).
+    pub game_dir_pinned: bool,
+    /// The default game folder, Browse's tooltip.
+    pub default_game_dir: Option<&'a Path>,
+    /// The native folder dialog is open (Browse is disabled).
+    pub folder_dialog_open: bool,
     /// Style name -> number of loaded rules using it.
     pub rule_users: &'a HashMap<String, usize>,
     /// Styles `config.json` itself references.
@@ -263,14 +289,10 @@ pub fn revert_prompt(n: usize) -> String {
 
 /// A section heading: the skin's gold rule heading, or a plain heading label when no skin is
 /// available (headless tests).
-fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) {
+fn section_title(ui: &mut egui::Ui, ctx: &ConfigViewCtx, title: &str) -> egui::Response {
     match ctx.skin {
-        Some(skin) => {
-            crate::skin::widgets::ff_section(ui, skin, title);
-        }
-        None => {
-            ui.label(RichText::new(title).size(21.0));
-        }
+        Some(skin) => crate::skin::widgets::ff_section(ui, skin, title),
+        None => ui.label(RichText::new(title).size(21.0)),
     }
 }
 
@@ -310,8 +332,66 @@ fn show_filter(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 4.0;
-            body::caption(ui, "GAME FOLDER FILTER");
+            let gap = crate::skin::widgets::FIELD_GAP;
+            let row_h = crate::skin::widgets::ROW_HEIGHT;
+            let missing = ctx.game_dir_missing;
 
+            // Row 1: the game folder and its Browse button.
+            crate::skin::widgets::ff_field_row(ui, 0, "Game folder", None, |ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let path_w = (ui.available_width() - BROWSE_WIDTH - gap).max(24.0);
+                let (text, color) = match ctx.game_dir {
+                    Some(dir) => (
+                        dir.display().to_string(),
+                        if missing { pal::WARN } else { pal::VALUE },
+                    ),
+                    None => ("(no Documents folder)".to_string(), pal::WARN),
+                };
+                ui.allocate_ui(vec2(path_w, row_h), |ui| {
+                    ui.set_width(path_w);
+                    let label = ui.add(
+                        egui::Label::new(
+                            RichText::new(text.clone())
+                                .size(crate::skin::fonts::SUMMARY_SIZE)
+                                .color(color),
+                        )
+                        .truncate()
+                        // The full path tooltip below is the only one: egui's own elided-text
+                        // tooltip would show the same path a second time.
+                        .show_tooltip_when_elided(false),
+                    );
+                    if ctx.game_dir.is_some() {
+                        label.on_hover_text(text);
+                    }
+                });
+                let enabled = !ctx.game_dir_pinned && !ctx.folder_dialog_open;
+                let browse = match ctx.skin {
+                    Some(skin) => crate::skin::widgets::ff_button_ex(
+                        ui,
+                        skin,
+                        "Browse",
+                        BROWSE_WIDTH,
+                        enabled,
+                        false,
+                    ),
+                    None => ui.add_enabled(enabled, small_button("Browse")),
+                };
+                let tip = if ctx.game_dir_pinned {
+                    Some("Set by FERRISFILTER_GAME_DIR".to_string())
+                } else {
+                    ctx.default_game_dir
+                        .map(|d| format!("Default: {}", d.display()))
+                };
+                let browse = match tip {
+                    Some(t) => browse.on_hover_text(t.clone()).on_disabled_hover_text(t),
+                    None => browse,
+                };
+                if enabled && browse.clicked() {
+                    actions.push(ConfigAction::BrowseFolder);
+                }
+            });
+
+            // Row 2: the filter dropdown with the refresh button beside it.
             let list: &[String] = ctx.filters.unwrap_or(&[]);
             let shown = if ctx.filters.is_some() {
                 ctx.active_filter.to_string()
@@ -319,37 +399,56 @@ fn show_filter(
                 "(game folder not found)".to_string()
             };
             let mut open_draft = false;
-            let combo = ui
-                .add_enabled_ui(ctx.filters.is_some(), |ui| {
-                    egui::ComboBox::from_id_salt("cfg-filter")
-                        .selected_text(shown)
-                        .width(ui.available_width() - 8.0)
-                        .show_ui(ui, |ui| {
-                            for name in list {
-                                let is_active = name == ctx.active_filter;
-                                if ui.selectable_label(is_active, name).clicked() && !is_active {
-                                    actions.push(ConfigAction::SelectFilter(name.clone()));
+            crate::skin::widgets::ff_field_row(ui, 1, "Filter", None, |ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let combo_w = (ui.available_width() - row_h - gap).max(24.0);
+                let enabled = ctx.filters.is_some() && !missing;
+                let combo = ui
+                    .add_enabled_ui(enabled, |ui| {
+                        egui::ComboBox::from_id_salt("cfg-filter")
+                            .selected_text(shown)
+                            .width(combo_w)
+                            .show_ui(ui, |ui| {
+                                for name in list {
+                                    let is_active = name == ctx.active_filter;
+                                    // The open filter, when the overlay chose it on its own, can
+                                    // still be picked: that saves it as the selection.
+                                    if ui.selectable_label(is_active, name).clicked()
+                                        && (!is_active || !ctx.active_filter_selected)
+                                    {
+                                        actions.push(ConfigAction::SelectFilter(name.clone()));
+                                    }
                                 }
-                            }
-                            ui.separator();
-                            if ui
-                                .selectable_label(false, "New empty filter\u{2026}")
-                                .clicked()
-                            {
-                                open_draft = true;
-                            }
-                        })
-                })
-                .inner;
-            let saved_note = "Saved on this computer. Default: dynamic.filter.";
-            if let Some(dir) = ctx.game_dir {
-                combo.response.on_hover_text(format!(
-                    "{}\n{saved_note}",
-                    dir.join(ctx.active_filter).display()
-                ));
-            } else {
-                combo.response.on_hover_text(saved_note);
-            }
+                                ui.separator();
+                                if ui
+                                    .selectable_label(false, "New empty filter\u{2026}")
+                                    .clicked()
+                                {
+                                    open_draft = true;
+                                }
+                            })
+                    })
+                    .inner;
+                if let Some(dir) = ctx.game_dir {
+                    combo
+                        .response
+                        .on_hover_text(dir.join(ctx.active_filter).display().to_string());
+                }
+                // Refresh only re-lists, so it stays live while the folder is missing: it is how
+                // a folder that appeared later (the game's first launch) is picked up.
+                let refresh_on = ctx.game_dir.is_some();
+                let refresh = match ctx.skin {
+                    Some(skin) => {
+                        crate::skin::widgets::ff_reload_button(ui, skin, "Refresh", refresh_on)
+                    }
+                    None => ui.add_enabled(refresh_on, small_button("Refresh")),
+                };
+                let tip = "Refresh the file lists";
+                let refresh = refresh.on_hover_text(tip).on_disabled_hover_text(tip);
+                if refresh_on && refresh.clicked() {
+                    actions.push(ConfigAction::RefreshLists);
+                }
+            });
             if open_draft && cfg.filter_draft.is_none() {
                 cfg.filter_draft = Some(String::new());
                 cfg.focus_draft = true;
@@ -639,6 +738,32 @@ fn group_heading(ui: &mut egui::Ui, title: &str) -> egui::Response {
     )
 }
 
+/// The one-line strictness switch; the selection is derived from the pending style set.
+fn strictness_row(ui: &mut egui::Ui, state: &ConfigState, actions: &mut Vec<ConfigAction>) {
+    use crate::overlay::strictness::Strictness;
+    let tips: Vec<String> = Strictness::ALL.iter().map(|l| l.tooltip()).collect();
+    let levels: Vec<crate::skin::editor::Level> = Strictness::ALL
+        .iter()
+        .zip(&tips)
+        .map(|(l, tip)| crate::skin::editor::Level {
+            lines: l.caption_lines(),
+            tip,
+            clickable: *l != Strictness::Custom,
+        })
+        .collect();
+    let current = state.strictness();
+    let selected = Strictness::ALL
+        .iter()
+        .position(|l| *l == current)
+        .unwrap_or(0);
+    let (resp, clicked) =
+        crate::skin::editor::ff_levels(ui, &crate::skin::of(ui.ctx()), selected, &levels);
+    probe("strictness-row", resp.rect);
+    if let Some(i) = clicked {
+        actions.push(ConfigAction::SetStrictness(Strictness::ALL[i]));
+    }
+}
+
 fn show_styles(
     ui: &mut egui::Ui,
     state: &ConfigState,
@@ -646,7 +771,7 @@ fn show_styles(
     ctx: &ConfigViewCtx,
     actions: &mut Vec<ConfigAction>,
 ) {
-    section_title(ui, ctx, "Styles");
+    let heading = section_title(ui, ctx, "Styles");
 
     let (builtin, custom) = style_groups(state);
     if builtin.is_empty() && custom.is_empty() {
@@ -659,6 +784,45 @@ fn show_styles(
         return;
     }
     let skin = crate::skin::of(ui.ctx());
+    {
+        let enabled = !state.styles_at_defaults();
+        let mut right = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(
+                    heading.rect.min,
+                    egui::pos2(ui.max_rect().right() - 8.0, heading.rect.max.y),
+                ))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        let mut r = crate::skin::widgets::ff_button_ex(
+            &mut right,
+            &skin,
+            "Reset to defaults",
+            150.0,
+            enabled,
+            false,
+        );
+        // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response still
+        // counts as enabled: attach the tip both ways.
+        let tip = if enabled {
+            "Restore the built-in styles. Your custom styles are kept."
+        } else {
+            "Already at the defaults."
+        };
+        r = r.on_hover_text(tip).on_disabled_hover_text(tip);
+        probe("reset-styles", r.rect);
+        if r.clicked() && enabled {
+            cfg.reset_armed = Some(RevertScope::Styles);
+        }
+    }
+    ui.add_space(4.0);
+    let heading = group_heading(ui, "Economy Visibility").on_hover_text(
+        "Which economy tiers show: hides the tier styles S to F that the FF economy section uses, \
+         lowest first.",
+    );
+    probe("strictness-heading", heading.rect);
+    strictness_row(ui, state, actions);
+    ui.add_space(8.0);
     if !builtin.is_empty() {
         let heading = group_heading(ui, "Built-in");
         probe("builtin-heading", heading.rect);
@@ -849,9 +1013,10 @@ fn style_row(
                 ui.add(
                     egui::Label::new(RichText::new(name).font(small_caps(17.0)).color(pal::VALUE))
                         .truncate()
+                        .show_tooltip_when_elided(false)
                         .sense(egui::Sense::hover()),
                 )
-                .on_hover_text(RENAME_TIP);
+                .on_hover_text(format!("{name}\n{RENAME_TIP}"));
             }
         });
         probe("row-name", name_cell);
@@ -1119,7 +1284,7 @@ mod tests {
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             fs::copy(
@@ -1158,7 +1323,12 @@ mod tests {
         ConfigViewCtx {
             filters,
             active_filter: "dynamic.filter",
+            active_filter_selected: true,
             game_dir: None,
+            game_dir_missing: false,
+            game_dir_pinned: false,
+            default_game_dir: None,
+            folder_dialog_open: false,
             rule_users: users,
             config_refs: refs,
             changed_on_disk: false,
@@ -1169,6 +1339,106 @@ mod tests {
             reload_after_apply: true,
             skin: None,
         }
+    }
+
+    /// Every action produced by clicking, one point at a time, over the Filter section's two
+    /// rows (headless, so the buttons are plain egui buttons).
+    fn actions_over_rows(set: impl Fn(&mut ConfigViewCtx)) -> Vec<ConfigAction> {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let filters = vec!["dynamic.filter".to_string()];
+        let default_dir = Path::new("C:/default/game");
+        let mut found = Vec::new();
+        for y in (30..170).step_by(6) {
+            for x in (200..456).step_by(6) {
+                let mut vctx = view_ctx(Some(filters.as_slice()), &users, &refs);
+                vctx.game_dir = Some(Path::new("C:/game"));
+                vctx.default_game_dir = Some(default_dir);
+                set(&mut vctx);
+                let (ctx, input) = headless();
+                let mut cfg = ConfigUi::default();
+                ctx.run_ui(input, |ui| {
+                    show_sections(ui, &state, &mut cfg, &vctx);
+                })
+                .drop_without_applying_deltas();
+                let pos = egui::pos2(x as f32, y as f32);
+                let click = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(460.0, 600.0),
+                    )),
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: Default::default(),
+                        },
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                };
+                ctx.run_ui(click, |ui| {
+                    found.extend(show_sections(ui, &state, &mut cfg, &vctx));
+                })
+                .drop_without_applying_deltas();
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn browse_and_refresh_push_their_actions() {
+        let found = actions_over_rows(|_| {});
+        assert!(found.contains(&ConfigAction::BrowseFolder));
+        assert!(found.contains(&ConfigAction::RefreshLists));
+    }
+
+    #[test]
+    fn browse_is_off_when_pinned_or_while_the_dialog_is_open() {
+        for set in [
+            (|c: &mut ConfigViewCtx| c.game_dir_pinned = true) as fn(&mut ConfigViewCtx),
+            |c| c.folder_dialog_open = true,
+        ] {
+            let found = actions_over_rows(set);
+            assert!(!found.contains(&ConfigAction::BrowseFolder));
+            assert!(found.contains(&ConfigAction::RefreshLists));
+        }
+    }
+
+    #[test]
+    fn a_missing_folder_keeps_browse_and_refresh_live() {
+        let found = actions_over_rows(|c| {
+            c.game_dir_missing = true;
+            c.filters = None;
+        });
+        assert!(found.contains(&ConfigAction::BrowseFolder));
+        assert!(found.contains(&ConfigAction::RefreshLists));
+    }
+
+    #[test]
+    fn refresh_is_off_without_a_game_folder() {
+        let found = actions_over_rows(|c| {
+            c.game_dir = None;
+            c.filters = None;
+        });
+        assert!(!found.contains(&ConfigAction::RefreshLists));
+    }
+
+    #[test]
+    fn the_removed_captions_stay_removed() {
+        let src = include_str!("config_view.rs");
+        let old_caption = ["GAME FOLDER", " FILTER"].concat();
+        let old_default = ["Default: dynamic", ".filter"].concat();
+        assert_eq!(src.matches(old_caption.as_str()).count(), 0);
+        assert_eq!(src.matches(old_default.as_str()).count(), 0);
     }
 
     #[test]
@@ -1572,6 +1842,124 @@ mod tests {
             )),
             ..Default::default()
         }
+    }
+
+    /// Run `show_styles` once, then again with a click at the point `click` picks from the first
+    /// frame's probes; returns those probes and the click frame's actions.
+    fn styles_frames(
+        state: &ConfigState,
+        click: impl Fn(&[(&'static str, egui::Rect)]) -> Option<egui::Pos2>,
+    ) -> (Vec<(&'static str, egui::Rect)>, Vec<ConfigAction>) {
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        actions.clear();
+        if let Some(pos) = click(&probes) {
+            let ev = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            let mut input = tall_input();
+            input.events = vec![egui::Event::PointerMoved(pos), ev(true), ev(false)];
+            ctx.run_ui(input, |ui| {
+                show_styles(ui, state, &mut cfg, &vctx, &mut actions);
+            })
+            .drop_without_applying_deltas();
+        }
+        (probes, actions)
+    }
+
+    /// Centre of segment `index` of the strictness row, from the widget's own layout.
+    fn segment_centre(probes: &[(&'static str, egui::Rect)], index: usize) -> egui::Pos2 {
+        let row = probes
+            .iter()
+            .find(|(t, _)| *t == "strictness-row")
+            .unwrap()
+            .1;
+        let (ctx, _) = headless();
+        let mut nat = Vec::new();
+        ctx.run_ui(tall_input(), |ui| {
+            for l in crate::overlay::strictness::Strictness::ALL {
+                let widest = l
+                    .caption_lines()
+                    .iter()
+                    .map(|t| {
+                        ui.painter()
+                            .layout_no_wrap((*t).to_owned(), small_caps(14.0), pal::LABEL)
+                            .size()
+                            .x
+                    })
+                    .fold(0.0, f32::max);
+                nat.push(widest);
+            }
+        })
+        .drop_without_applying_deltas();
+        let widths = ed::levels_layout(row.width(), &nat);
+        let x = row.min.x + widths[..index].iter().sum::<f32>() + widths[index] / 2.0;
+        egui::pos2(x, row.center().y)
+    }
+
+    #[test]
+    fn strictness_row_sits_above_the_built_in_group_and_selects_flat_broke() {
+        use crate::overlay::strictness::Strictness;
+        let (_d, state) = loaded();
+        assert_eq!(state.strictness(), Strictness::FlatBroke);
+        let (probes, _) = styles_frames(&state, |_| None);
+        let rows: Vec<_> = probes
+            .iter()
+            .filter(|(t, _)| *t == "strictness-row")
+            .collect();
+        assert_eq!(rows.len(), 1);
+        let heading = probes
+            .iter()
+            .find(|(t, _)| *t == "builtin-heading")
+            .unwrap()
+            .1;
+        assert!(rows[0].1.bottom() <= heading.top());
+    }
+
+    #[test]
+    fn clicking_a_level_emits_set_strictness_once() {
+        use crate::overlay::strictness::Strictness;
+        let (_d, state) = loaded();
+        let idx = Strictness::ALL
+            .iter()
+            .position(|l| *l == Strictness::Comfy)
+            .unwrap();
+        let (_, actions) = styles_frames(&state, |p| Some(segment_centre(p, idx)));
+        assert_eq!(
+            actions,
+            vec![ConfigAction::SetStrictness(Strictness::Comfy)]
+        );
+    }
+
+    #[test]
+    fn clicking_the_selected_level_or_custom_emits_nothing() {
+        let (_d, state) = loaded();
+        // Flat Broke is selected (index 1); Custom is index 0.
+        for idx in [0, 1] {
+            let (_, actions) = styles_frames(&state, |p| Some(segment_centre(p, idx)));
+            assert!(actions.is_empty(), "{idx}: {actions:?}");
+        }
+    }
+
+    #[test]
+    fn a_manual_switch_flip_reads_as_custom() {
+        use crate::overlay::strictness::Strictness;
+        let (_d, mut state) = loaded();
+        state.edit_style("E", StyleEdit::Action(StyleAction::Hide));
+        assert_eq!(state.strictness(), Strictness::Custom);
     }
 
     #[test]
@@ -2006,6 +2394,42 @@ mod tests {
         })
         .drop_without_applying_deltas();
         actions
+    }
+
+    fn loaded_edited() -> (tempfile::TempDir, ConfigState) {
+        let (d, mut state) = loaded();
+        state.reset_styles();
+        let (builtin, _) = style_groups(&state);
+        assert!(state.edit_style(&builtin[0], StyleEdit::Action(StyleAction::Hide)));
+        (d, state)
+    }
+
+    #[test]
+    fn reset_styles_button_is_greyed_at_defaults_and_arms_when_edited() {
+        let (_d, mut state) = loaded();
+        state.reset_styles();
+        assert!(state.styles_at_defaults());
+        let mut cfg = ConfigUi::default();
+        let at_defaults = render_probes(&state, &mut cfg, "reset-styles");
+        assert_eq!(at_defaults.len(), 1);
+        let (ctx, _) = headless();
+        click_styles(&ctx, &state, &mut cfg, at_defaults[0].center());
+        assert_eq!(cfg.reset_armed, None, "a disabled button must not arm");
+
+        let (_d2, state) = loaded_edited();
+        let mut cfg = ConfigUi::default();
+        let rects = render_probes(&state, &mut cfg, "reset-styles");
+        let (ctx, _) = headless();
+        let actions = click_styles(&ctx, &state, &mut cfg, rects[0].center());
+        assert_eq!(cfg.reset_armed, Some(RevertScope::Styles));
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, ConfigAction::ResetStyles)),
+            "the click only arms the confirmation"
+        );
+        cfg.disarm_all();
+        assert_eq!(cfg.reset_armed, None);
     }
 
     fn moves(actions: &[ConfigAction]) -> Vec<&ConfigAction> {

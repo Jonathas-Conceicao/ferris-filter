@@ -71,15 +71,28 @@ pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, LoadEr
         path: path.to_string(),
         source: e,
     })?;
-    let de = &mut serde_json::Deserializer::from_str(&content);
+    load_json_str(&content, path)
+}
+
+/// [`load_json`] over text already in memory. `name` labels the source in errors (a full path for
+/// a file, `styles-default.json (built in)` for an embedded copy).
+///
+/// # Errors
+///
+/// `LoadError::Parse` if the JSON is malformed or a field fails type validation.
+pub fn load_json_str<T: serde::de::DeserializeOwned>(
+    content: &str,
+    name: &str,
+) -> Result<T, LoadError> {
+    let de = &mut serde_json::Deserializer::from_str(content);
     serde_path_to_error::deserialize(de).map_err(|e| {
         let inner = e.inner();
-        let offset = SourceOffset::from_location(&content, inner.line(), inner.column());
+        let offset = SourceOffset::from_location(content, inner.line(), inner.column());
         JsonLoadError {
-            file: path.to_string(),
+            file: name.to_string(),
             field_path: e.path().to_string(),
             cause: inner.to_string(),
-            src: miette::NamedSource::new(path, content),
+            src: miette::NamedSource::new(name, content.to_string()),
             location: offset,
         }
         .into()
@@ -95,14 +108,31 @@ pub fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, LoadEr
 ///   with the dotted field path). The caller must abort; a corrupted prices.json is not
 ///   a recoverable situation.
 ///
-/// Uses `std::path::Path::exists()` to distinguish absence from malformation, rather than
+/// - Existence check fails (permission denied, a sharing violation) → `LoadError::Read` on
+///   that path, never "absent": an unreadable live file must not silently fall back to the
+///   built-in prices.
+///
+/// Uses `std::path::Path::try_exists()` to distinguish absence from malformation, rather than
 /// inspecting the error kind from a failed `fs::read_to_string`, because the underlying
 /// `io::Error` is wrapped and downcasting is fragile.
 pub fn load_prices_optional(path: &str) -> Result<Option<PricesFile>, LoadError> {
-    if !std::path::Path::new(path).exists() {
-        return Ok(None);
+    match std::path::Path::new(path).try_exists() {
+        Ok(false) => Ok(None),
+        Ok(true) => load_json(path).map(Some),
+        Err(source) => Err(LoadError::Read {
+            path: path.to_string(),
+            source,
+        }),
     }
-    load_json(path).map(Some)
+}
+
+/// Parse a `prices.json` held in memory (the embedded fallback has no "absent" case).
+///
+/// # Errors
+///
+/// `LoadError::Parse` as [`load_json_str`].
+pub fn load_prices_str(content: &str, name: &str) -> Result<PricesFile, LoadError> {
+    load_json_str(content, name)
 }
 
 /// Load and validate `tiers.json`.
@@ -118,6 +148,16 @@ pub fn load_prices_optional(path: &str) -> Result<Option<PricesFile>, LoadError>
 /// - If tier validation fails, returns `LoadError::Tiers`.
 pub fn load_tiers(path: &str) -> Result<ValidatedTiers, LoadError> {
     let entries: Vec<TierEntry> = load_json(path)?;
+    Ok(ValidatedTiers::try_from(entries)?)
+}
+
+/// [`load_tiers`] over text already in memory, with the same validation.
+///
+/// # Errors
+///
+/// `LoadError::Parse` / `LoadError::Tiers` as [`load_tiers`].
+pub fn load_tiers_str(content: &str, name: &str) -> Result<ValidatedTiers, LoadError> {
+    let entries: Vec<TierEntry> = load_json_str(content, name)?;
     Ok(ValidatedTiers::try_from(entries)?)
 }
 
@@ -154,10 +194,43 @@ pub fn load_config_with_live(
     styles_path: &str,
     live_styles_path: &str,
 ) -> Result<Config, LoadError> {
-    let mut config: Config = load_json(path)?;
+    let config: Config = load_json(path)?;
     let styles = load_styles(styles_path)?;
+    attach_styles(config, styles, path, styles_path, live_styles_path)
+}
+
+/// [`load_config_with_live`] over config text already in memory; the caller loads `styles` from
+/// its own source first. `name` / `styles_name` label the two sources in errors.
+///
+/// # Errors
+///
+/// `LoadError::Parse` for the config text, `LoadError::Styles` for a differing inline section.
+pub fn load_config_str_with_live(
+    content: &str,
+    name: &str,
+    styles: StyleSet,
+    styles_name: &str,
+    live_styles_path: &str,
+) -> Result<Config, LoadError> {
+    let config: Config = load_json_str(content, name)?;
+    attach_styles(config, styles, name, styles_name, live_styles_path)
+}
+
+/// Attach loaded `styles` to a parsed `config`, applying the inline-`styles` rule of
+/// [`load_config`].
+///
+/// # Errors
+///
+/// `LoadError::Styles` when an inline section differs from `styles`.
+pub fn attach_styles(
+    mut config: Config,
+    styles: StyleSet,
+    name: &str,
+    styles_name: &str,
+    live_styles_path: &str,
+) -> Result<Config, LoadError> {
     if let Some(legacy) = config.legacy_styles.take() {
-        check_legacy_styles(&legacy, &styles, path, styles_path, live_styles_path)?;
+        check_legacy_styles(&legacy, &styles, name, styles_name, live_styles_path)?;
     }
     config.styles = styles;
     Ok(config)
@@ -218,7 +291,20 @@ fn check_legacy_styles(
 /// - Unreadable file or bad JSON/duplicate name: `LoadError::Read` / `LoadError::Parse`.
 /// - Failed validation: `LoadError::Styles`.
 pub fn load_styles(path: &str) -> Result<StyleSet, LoadError> {
-    let mut set: StyleSet = load_json(path)?;
+    let content = std::fs::read_to_string(path).map_err(|e| LoadError::Read {
+        path: path.to_string(),
+        source: e,
+    })?;
+    load_styles_str(&content, path)
+}
+
+/// [`load_styles`] over text already in memory, with the same id assignment and validation.
+///
+/// # Errors
+///
+/// `LoadError::Parse` / `LoadError::Styles` as [`load_styles`].
+pub fn load_styles_str(content: &str, name: &str) -> Result<StyleSet, LoadError> {
+    let mut set: StyleSet = load_json_str(content, name)?;
     set.assign_missing_ids();
     set.validate()?;
     Ok(set)
@@ -282,6 +368,69 @@ mod tests {
 
     const TIERS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-default.json"));
 
+    fn repo(file: &str) -> String {
+        format!("{}/{file}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn text(file: &str) -> String {
+        std::fs::read_to_string(repo(file)).unwrap()
+    }
+
+    #[test]
+    fn styles_str_equals_file_loader() {
+        let from_text = load_styles_str(&text("tests/fixtures/seed-styles.json"), "x").unwrap();
+        let from_file = load_styles(&repo("tests/fixtures/seed-styles.json")).unwrap();
+        assert_eq!(format!("{from_text:?}"), format!("{from_file:?}"));
+    }
+
+    #[test]
+    fn tiers_str_equals_file_loader() {
+        for f in ["tiers-default.json", "tiers-fallback.json"] {
+            let from_text = load_tiers_str(&text(f), "x").unwrap();
+            let from_file = load_tiers(&repo(f)).unwrap();
+            assert_eq!(format!("{from_text:?}"), format!("{from_file:?}"), "{f}");
+        }
+    }
+
+    #[test]
+    fn prices_str_equals_file_loader() {
+        let from_text = load_prices_str(&text("prices-fallback.json"), "x").unwrap();
+        let from_file: PricesFile = load_json(&repo("prices-fallback.json")).unwrap();
+        assert_eq!(format!("{from_text:?}"), format!("{from_file:?}"));
+    }
+
+    #[test]
+    fn styles_str_parse_error_names_the_label() {
+        let label = "styles-default.json (built in)";
+        let err = load_styles_str("{", label).unwrap_err();
+        match &err {
+            LoadError::Parse(e) => assert_eq!(e.file, label),
+            other => panic!("expected Parse, got {other:?}"),
+        }
+        assert!(err.to_string().contains(label));
+    }
+
+    #[test]
+    fn config_str_equals_file_loader() {
+        let styles_path = repo("tests/fixtures/seed-styles.json");
+        let styles = load_styles(&styles_path).unwrap();
+        let from_text = load_config_str_with_live(
+            &text("config.json"),
+            "config.json (built in)",
+            styles,
+            &styles_path,
+            &styles_path,
+        )
+        .unwrap();
+        let from_file =
+            load_config_with_live(&repo("config.json"), &styles_path, &styles_path).unwrap();
+        // Compared as JSON values: Debug output of the config's HashMaps is unordered.
+        assert_eq!(
+            serde_json::to_value(&from_text).unwrap(),
+            serde_json::to_value(&from_file).unwrap()
+        );
+    }
+
     #[test]
     fn render_styles_shape_and_round_trip() {
         let set = StyleSet::committed_for_tests();
@@ -341,7 +490,10 @@ mod tests {
         ValidatedTiers::try_from(back).unwrap();
     }
 
-    const STYLES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
+    const STYLES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/seed-styles.json"
+    ));
 
     fn load_text(text: &str) -> Result<StyleSet, LoadError> {
         let dir = tempfile::tempdir().unwrap();
@@ -432,6 +584,21 @@ mod tests {
     fn load_config_rejects_a_null_inline_entry_for_a_defined_style() {
         let err = load_with_inline_styles(serde_json::json!({ "S": null })).unwrap_err();
         assert_eq!(rejected_names(err), vec!["S".to_string()]);
+    }
+
+    #[test]
+    fn load_prices_optional_absent_is_none_and_unstatable_is_read_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir.path().join("prices.json");
+        assert!(
+            load_prices_optional(absent.to_str().unwrap())
+                .unwrap()
+                .is_none()
+        );
+        // A path the OS cannot stat is an error naming it, not "absent".
+        let err = load_prices_optional("bad\0name/prices.json").unwrap_err();
+        assert!(matches!(err, LoadError::Read { .. }), "{err}");
+        assert!(err.to_string().starts_with("Cannot read `"), "{err}");
     }
 
     #[test]

@@ -63,10 +63,9 @@ changes.
   overlay is the foreground window. The close button only hides it;
   **Quit** in the system tray icon exits.
 
-Your settings live in the FerrisFilter folder (the one holding
-`styles-default.json`): `styles.json`, `tiers.json`, `prices.json` and
-`ff-settings.json`. Delete `styles.json` or `tiers.json` to go back to
-the defaults.
+Your settings live in `%APPDATA%\FerrisFilter` (created on the first
+save): `styles.json`, `tiers.json`, `prices.json` and
+`ff-settings.json`.
 
 ## Building
 
@@ -77,7 +76,8 @@ cargo build --release
 This produces `target/release/ff.exe`. `rust-toolchain.toml` selects
 the nightly channel.
 
-You can also get the pre-compiled binaries from the release tab.
+You can also get the pre-compiled binaries from the [release
+tab](https://github.com/Jonathas-Conceicao/ferris-filter/releases).
 
 ## References
 
@@ -90,6 +90,8 @@ You can also get the pre-compiled binaries from the release tab.
   inspiration and the tool I used before this one.
 - [FilterBlade](https://www.filterblade.xyz/?game=Poe2): Some more
   inspiration as the most popular PoE Filter tool.
+- [Dracula](https://draculatheme.com/): The high-contrast colour
+  scheme behind the default styles, a personal favourite of mine.
 
 ## AI Disclaimer
 

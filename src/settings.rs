@@ -22,11 +22,30 @@ const MAX_NAME_LEN: usize = 200;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
+    /// The filter the user selected (a filter choice or a game-folder pick); saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    /// The filter the overlay opened on its own because none is selected (the folder's
+    /// `dynamic.filter`, else its first `.filter`). [`Settings::filter_name`] reads it after
+    /// `filter`, but it is never serialized: saving another preference does not turn it into a
+    /// selection, so `ff-cli apply` only ever targets a filter the user picked.
+    #[serde(skip)]
+    pub auto_filter: Option<String>,
+    /// The game folder the user picked on the Config tab; absent means the default
+    /// (`FERRISFILTER_GAME_DIR`, else Documents\My Games\Path of Exile 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_folder: Option<String>,
     /// Send /reloaditemfilter to the game after a RULES Apply that wrote the filter; absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload_after_apply: Option<bool>,
+    /// The league Sync economy prices against, written only when the user picks one; absent means
+    /// the computed default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub league: Option<String>,
+    /// `"live"` or `"fallback"`; absent or any other string means Live. Read by the overlay only,
+    /// the CLI ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_source: Option<String>,
     /// Collapsed state of the RULES list sections: filter name -> section name -> `true` when
     /// collapsed. Absent means the default (user sections expanded, the economy section collapsed).
     /// Display state only: it never marks a filter unapplied.
@@ -102,15 +121,48 @@ impl Settings {
         next
     }
 
-    /// The stored filter name, or `dynamic.filter`.
+    /// The selected filter name, else the automatic pick, else `dynamic.filter`.
     pub fn filter_name(&self) -> &str {
-        self.filter.as_deref().unwrap_or(DEFAULT_FILTER)
+        self.filter
+            .as_deref()
+            .or(self.auto_filter.as_deref())
+            .unwrap_or(DEFAULT_FILTER)
+    }
+
+    /// The saved game folder, only when it is a non-empty absolute path.
+    pub fn game_folder_path(&self) -> Option<&Path> {
+        self.game_folder
+            .as_deref()
+            .filter(|s| usable_folder(s))
+            .map(Path::new)
     }
 
     /// Whether Apply should reload the filter in game; on unless explicitly turned off.
     pub fn reload_after_apply(&self) -> bool {
         self.reload_after_apply.unwrap_or(true)
     }
+
+    /// The saved league name: the trimmed value when non-empty.
+    pub fn saved_league(&self) -> Option<&str> {
+        self.league
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The price source policy: Fallback only when saved as `fallback` (any case), else Auto.
+    pub fn price_policy(&self) -> crate::compile::PriceSourcePolicy {
+        match self.price_source.as_deref() {
+            Some(s) if s.eq_ignore_ascii_case("fallback") => {
+                crate::compile::PriceSourcePolicy::ForceFallback
+            }
+            _ => crate::compile::PriceSourcePolicy::Auto,
+        }
+    }
+}
+
+fn usable_folder(s: &str) -> bool {
+    !s.is_empty() && Path::new(s).is_absolute()
 }
 
 /// `<root>/ff-settings.json`.
@@ -124,6 +176,33 @@ pub fn path(root: &Path) -> PathBuf {
 /// synthetic keystrokes that can no longer be read, so it fails closed (review iteration 2, WR-02).
 /// A wrongly typed key or an invalid stored name falls back per key, with a warning. Never writes.
 pub fn load(root: &Path) -> (Settings, Option<String>) {
+    let loaded = load_detailed(root);
+    (loaded.settings, loaded.warning)
+}
+
+/// What [`load_detailed`] read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Loaded {
+    pub settings: Settings,
+    /// The warning [`load`] returns.
+    pub warning: Option<String>,
+    /// The `filter` key was present but unusable, or the whole file was: the filter name fell
+    /// back to `dynamic.filter`, as the warning says. A warning about other keys only leaves it
+    /// `false`.
+    pub filter_fell_back: bool,
+}
+
+/// [`load`], also saying whether the filter name itself fell back.
+pub fn load_detailed(root: &Path) -> Loaded {
+    let (settings, warning, filter_fell_back) = load_parts(root);
+    Loaded {
+        settings,
+        warning,
+        filter_fell_back,
+    }
+}
+
+fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
     let warn = |reason: String| {
         Some(format!(
             "{SETTINGS_FILE} could not be used ({reason}); using {DEFAULT_FILTER}."
@@ -139,11 +218,14 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                 "{SETTINGS_FILE} could not be used ({reason}); using {DEFAULT_FILTER}, \
                  and reload after Apply is off."
             )),
+            true,
         )
     };
     let text = match fs::read_to_string(path(root)) {
         Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return (Settings::default(), None, false);
+        }
         Err(e) => return unusable(e.to_string()),
     };
     let mut settings: Settings = match serde_json::from_str(&text) {
@@ -154,6 +236,7 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
             return match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
                 Ok(mut extra) => {
                     let mut fallbacks = Vec::new();
+                    let mut filter_fell_back = false;
                     let filter = match extra.remove("filter") {
                         Some(serde_json::Value::String(n)) if valid_filter_name(&n).is_ok() => {
                             Some(n)
@@ -161,6 +244,18 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                         None => None,
                         Some(_) => {
                             fallbacks.push(format!("using {DEFAULT_FILTER}"));
+                            filter_fell_back = true;
+                            None
+                        }
+                    };
+                    let game_folder = match extra.remove("game_folder") {
+                        Some(serde_json::Value::String(s)) if usable_folder(&s) => Some(s),
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`game_folder` is not an absolute folder path, so the default game folder is used"
+                                    .to_string(),
+                            );
                             None
                         }
                     };
@@ -175,6 +270,26 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                                     .to_string(),
                             );
                             Some(false)
+                        }
+                    };
+                    let league = match extra.remove("league") {
+                        Some(serde_json::Value::String(s)) => Some(s),
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`league` is not text, so the default league is used".to_string(),
+                            );
+                            None
+                        }
+                    };
+                    let price_source = match extra.remove("price_source") {
+                        Some(serde_json::Value::String(s)) => Some(s),
+                        None => None,
+                        Some(_) => {
+                            fallbacks.push(
+                                "`price_source` is not text, so Live prices are used".to_string(),
+                            );
+                            None
                         }
                     };
                     let collapsed_sections = match extra.remove("collapsed_sections") {
@@ -197,7 +312,11 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                     (
                         Settings {
                             filter,
+                            auto_filter: None,
+                            game_folder,
                             reload_after_apply,
+                            league,
+                            price_source,
                             collapsed_sections,
                             extra,
                         },
@@ -205,25 +324,65 @@ pub fn load(root: &Path) -> (Settings, Option<String>) {
                             "{SETTINGS_FILE} could not be fully used ({e}); {}.",
                             fallbacks.join("; ")
                         )),
+                        filter_fell_back,
                     )
                 }
                 Err(_) => unusable(e.to_string()),
             };
         }
     };
+    let mut bad_filter = None;
     if let Some(name) = settings.filter.clone()
         && let Err(problem) = valid_filter_name(&name)
     {
         settings.filter = None;
-        return (settings, warn(format!("`{name}`: {problem}")));
+        bad_filter = Some(format!("`{name}`: {problem}"));
     }
-    (settings, None)
+    let mut bad_folder = None;
+    if let Some(folder) = settings.game_folder.clone()
+        && !usable_folder(&folder)
+    {
+        settings.game_folder = None;
+        bad_folder = Some(format!(
+            "`game_folder` `{folder}` is not an absolute folder path"
+        ));
+    }
+    match (bad_filter, bad_folder) {
+        (None, None) => (settings, None, false),
+        (Some(f), None) => (settings, warn(f), true),
+        (None, Some(g)) => (
+            settings,
+            Some(format!(
+                "{SETTINGS_FILE} could not be fully used ({g}); using the default game folder."
+            )),
+            false,
+        ),
+        (Some(f), Some(g)) => (
+            settings,
+            Some(format!(
+                "{SETTINGS_FILE} could not be fully used ({f}; {g}); using {DEFAULT_FILTER} and the default game folder."
+            )),
+            true,
+        ),
+    }
+}
+
+/// The filter to select after the game folder changed: the listed entry with the same name (listed
+/// spelling), else the first listed `.filter`, else `current` (a new file the first Apply creates).
+/// `dynamic.filter` is not special: it is just the default current name.
+pub fn choose_filter(list: &[String], current: &str) -> String {
+    list.iter()
+        .find(|n| n.eq_ignore_ascii_case(current))
+        .or_else(|| list.first())
+        .cloned()
+        .unwrap_or_else(|| current.to_string())
 }
 
 /// Persist the settings atomically (same-directory temp file, then replace).
 pub fn save(root: &Path, settings: &Settings) -> io::Result<()> {
     let mut text = serde_json::to_string_pretty(settings).map_err(io::Error::other)?;
     text.push('\n');
+    std::fs::create_dir_all(root)?;
     let mut t = tempfile::NamedTempFile::new_in(root)?;
     t.write_all(text.as_bytes())?;
     t.as_file().sync_all()?;
@@ -237,6 +396,24 @@ pub fn save(root: &Path, settings: &Settings) -> io::Result<()> {
 /// left alone and `Ok(false)` is returned, so a hand-edited file is never replaced by fallback
 /// defaults. `Ok(true)` means the key was written.
 pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> {
+    save_keys(root, settings, &["collapsed_sections"])
+}
+
+/// Persist only the `league` key (a league pick); same rules as [`save_section_state`].
+pub fn save_league(root: &Path, settings: &Settings) -> io::Result<bool> {
+    save_keys(root, settings, &["league"])
+}
+
+/// Persist only the `price_source` key (a Live / Fallback switch); same rules as
+/// [`save_section_state`].
+pub fn save_price_source(root: &Path, settings: &Settings) -> io::Result<bool> {
+    save_keys(root, settings, &["price_source"])
+}
+
+/// Write `keys` of `settings` into the file on disk, every other key left as it is. A key that
+/// `settings` does not serialize (unset, empty) is removed. A missing file is created whole; an
+/// unusable one is left alone (`Ok(false)`).
+fn save_keys(root: &Path, settings: &Settings, keys: &[&str]) -> io::Result<bool> {
     let text = match fs::read_to_string(path(root)) {
         Ok(t) => t,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -245,15 +422,21 @@ pub fn save_section_state(root: &Path, settings: &Settings) -> io::Result<bool> 
         }
         Err(_) => return Ok(false),
     };
+    // The file exists, so its folder does: no `create_dir_all` needed on this path.
     let Ok(mut map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text)
     else {
         return Ok(false);
     };
-    if settings.collapsed_sections.is_empty() {
-        map.remove("collapsed_sections");
-    } else {
-        let value = serde_json::to_value(&settings.collapsed_sections).map_err(io::Error::other)?;
-        map.insert("collapsed_sections".to_string(), value);
+    let serde_json::Value::Object(mut wanted) =
+        serde_json::to_value(settings).map_err(io::Error::other)?
+    else {
+        return Err(io::Error::other("settings did not serialize to an object"));
+    };
+    for key in keys {
+        match wanted.remove(*key) {
+            Some(value) => map.insert((*key).to_string(), value),
+            None => map.remove(*key),
+        };
     }
     let mut out = serde_json::to_string_pretty(&map).map_err(io::Error::other)?;
     out.push('\n');
@@ -371,6 +554,153 @@ pub fn contains_name(list: &[String], name: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn abs_folder() -> &'static str {
+        if cfg!(windows) {
+            r"C:\Games\PoE2"
+        } else {
+            "/games/poe2"
+        }
+    }
+
+    #[test]
+    fn game_folder_absent_round_trips_byte_identically() {
+        let t = tempfile::tempdir().unwrap();
+        let body = "{\n  \"filter\": \"a.filter\",\n  \"future\": 1\n}\n";
+        fs::write(path(t.path()), body).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.game_folder, None);
+        save(t.path(), &s).unwrap();
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), body);
+    }
+
+    #[test]
+    fn game_folder_valid_loads() {
+        let t = tempfile::tempdir().unwrap();
+        let body = format!(
+            r#"{{"game_folder":"{}"}}"#,
+            abs_folder().replace('\\', "\\\\")
+        );
+        fs::write(path(t.path()), body).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.game_folder_path(), Some(Path::new(abs_folder())));
+    }
+
+    #[test]
+    fn game_folder_empty_or_relative_is_dropped_with_warning() {
+        for bad in ["", r"relative\\dir"] {
+            let t = tempfile::tempdir().unwrap();
+            let body = format!(
+                r#"{{"game_folder":"{bad}","filter":"a.filter","reload_after_apply":false,"future":1}}"#
+            );
+            fs::write(path(t.path()), &body).unwrap();
+            let (s, w) = load(t.path());
+            let w = w.unwrap_or_else(|| panic!("{bad:?}: no warning"));
+            assert!(w.contains("game_folder"), "{w}");
+            assert!(w.contains("default game folder"), "{w}");
+            assert_eq!(s.game_folder, None);
+            assert_eq!(s.game_folder_path(), None);
+            assert_eq!(s.filter_name(), "a.filter");
+            assert!(!s.reload_after_apply());
+            assert!(s.extra.contains_key("future"));
+            assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
+        }
+    }
+
+    #[test]
+    fn game_folder_and_filter_both_bad_names_both() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"game_folder":"rel","filter":"C:/x.filter"}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(w.contains("game_folder") && w.contains("filter"), "{w}");
+        assert_eq!(s.game_folder, None);
+        assert_eq!(s.filter, None);
+    }
+
+    #[test]
+    fn game_folder_wrong_type_is_salvaged() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"game_folder":42,"filter":"ssf.filter","reload_after_apply":false,"future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(w.contains("default game folder"), "{w}");
+        assert_eq!(s.game_folder, None);
+        assert_eq!(s.filter_name(), "ssf.filter");
+        assert!(!s.reload_after_apply());
+        assert!(!s.extra.contains_key("game_folder"));
+    }
+
+    #[test]
+    fn game_folder_unusable_file_is_none() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), "{not json").unwrap();
+        let (s, _) = load(t.path());
+        assert_eq!(s.game_folder, None);
+    }
+
+    #[test]
+    fn game_folder_saved_keeps_unknown_keys() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"future":{"a":1}}"#).unwrap();
+        let (mut s, _) = load(t.path());
+        s.game_folder = Some(abs_folder().to_string());
+        save(t.path(), &s).unwrap();
+        let (s2, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s2.game_folder_path(), Some(Path::new(abs_folder())));
+        assert_eq!(s2.extra["future"]["a"], 1);
+    }
+
+    #[test]
+    fn choose_filter_rule() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            choose_filter(&l(&["a.filter", "Dynamic.filter"]), "dynamic.filter"),
+            "Dynamic.filter"
+        );
+        assert_eq!(
+            choose_filter(&l(&["a.filter", "b.filter"]), "dynamic.filter"),
+            "a.filter"
+        );
+        assert_eq!(choose_filter(&[], "mine.filter"), "mine.filter");
+    }
+
+    #[test]
+    fn save_creates_missing_folders() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("a").join("b");
+        save(&root, &Settings::default()).unwrap();
+        assert!(path(&root).is_file());
+    }
+
+    #[test]
+    fn save_section_state_creates_missing_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("fresh");
+        assert!(save_section_state(&root, &Settings::default()).unwrap());
+        assert!(path(&root).is_file());
+    }
+
+    #[test]
+    fn load_from_missing_folder_creates_nothing() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("missing");
+        let (s, w) = load(&root);
+        assert_eq!(s.filter, None);
+        assert_eq!(w, None);
+        assert!(!root.exists());
+    }
+
     #[test]
     fn missing_file_is_default_and_not_created() {
         let t = tempfile::tempdir().unwrap();
@@ -389,6 +719,31 @@ mod tests {
         assert!(w.is_some());
         assert_eq!(s.filter, None);
         assert_eq!(s.extra["future"]["a"], 1);
+    }
+
+    #[test]
+    fn the_automatic_filter_is_read_but_never_saved() {
+        let t = tempfile::tempdir().unwrap();
+        let s = Settings {
+            auto_filter: Some("x.filter".to_string()),
+            ..Settings::default()
+        };
+        assert_eq!(s.filter_name(), "x.filter");
+        save(t.path(), &s).unwrap();
+        assert!(
+            !fs::read_to_string(path(t.path()))
+                .unwrap()
+                .contains("x.filter")
+        );
+        assert!(save_section_state(t.path(), &s).unwrap());
+        let (back, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(back.filter_name(), "dynamic.filter");
+        let chosen = Settings {
+            filter: Some("y.filter".to_string()),
+            ..s
+        };
+        assert_eq!(chosen.filter_name(), "y.filter");
     }
 
     #[test]
@@ -585,6 +940,81 @@ mod tests {
     }
 
     #[test]
+    fn league_and_price_source_default_unset_and_unserialized() {
+        use crate::compile::PriceSourcePolicy;
+        let s = Settings::default();
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("league") && !json.contains("price_source"));
+        assert_eq!(s.price_policy(), PriceSourcePolicy::Auto);
+        assert_eq!(s.saved_league(), None);
+    }
+
+    #[test]
+    fn price_source_values_map_to_a_policy_without_warning() {
+        use crate::compile::PriceSourcePolicy;
+        for (v, want) in [
+            ("fallback", PriceSourcePolicy::ForceFallback),
+            ("FALLBACK", PriceSourcePolicy::ForceFallback),
+            ("live", PriceSourcePolicy::Auto),
+            ("bogus", PriceSourcePolicy::Auto),
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            fs::write(path(t.path()), format!(r#"{{"price_source":"{v}"}}"#)).unwrap();
+            let (s, w) = load(t.path());
+            assert_eq!(w, None, "{v}");
+            assert_eq!(s.price_policy(), want, "{v}");
+        }
+    }
+
+    #[test]
+    fn league_round_trips_and_blank_reads_unset() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"league":"Runes of Aldur"}"#).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.saved_league(), Some("Runes of Aldur"));
+        save(t.path(), &s).unwrap();
+        let (s2, _) = load(t.path());
+        assert_eq!(s2, s);
+        fs::write(path(t.path()), r#"{"league":"   "}"#).unwrap();
+        assert_eq!(load(t.path()).0.saved_league(), None);
+    }
+
+    #[test]
+    fn wrongly_typed_league_and_price_source_are_salvaged() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","league":5,"price_source":true,"future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.expect("must warn");
+        assert!(w.contains("league") && w.contains("price_source"), "{w}");
+        assert_eq!((s.league.clone(), s.price_source.clone()), (None, None));
+        assert_eq!(s.filter_name(), "ssf.filter");
+        assert!(s.extra.contains_key("future"));
+        assert!(!s.extra.contains_key("league") && !s.extra.contains_key("price_source"));
+    }
+
+    #[test]
+    fn saving_both_keys_keeps_unknown_keys() {
+        let t = tempfile::tempdir().unwrap();
+        let mut s = Settings {
+            league: Some("Standard".into()),
+            price_source: Some("fallback".into()),
+            ..Settings::default()
+        };
+        s.extra.insert("future".into(), serde_json::json!(1));
+        save(t.path(), &s).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path(t.path())).unwrap()).unwrap();
+        assert_eq!(v["league"], "Standard");
+        assert_eq!(v["price_source"], "fallback");
+        assert_eq!(v["future"], 1);
+    }
+
+    #[test]
     fn collapsed_defaults_and_per_filter_state() {
         let s = Settings::default();
         assert!(!s.section_collapsed("dynamic.filter", "Leveling", false));
@@ -688,6 +1118,43 @@ mod tests {
     }
 
     #[test]
+    fn filter_fell_back_only_when_the_filter_name_did() {
+        let cases: &[(Option<&str>, bool)] = &[
+            (None, false),
+            (Some(r#"{"filter":"a.filter"}"#), false),
+            (Some(r#"{"game_folder":"relative"}"#), false),
+            (Some(r#"{"reload_after_apply":"yes"}"#), false),
+            (Some(r#"{"collapsed_sections":[]}"#), false),
+            (
+                Some(r#"{"filter":"a.filter","reload_after_apply":"yes"}"#),
+                false,
+            ),
+            (Some(r#"{"filter":"../evil.filter"}"#), true),
+            (
+                Some(r#"{"filter":"../evil.filter","game_folder":"relative"}"#),
+                true,
+            ),
+            (Some(r#"{"filter":5}"#), true),
+            (Some(r#"{"filter":5,"reload_after_apply":"yes"}"#), true),
+            (Some("{ not json"), true),
+            (Some("[]"), true),
+        ];
+        for (text, fell_back) in cases {
+            let t = tempfile::tempdir().unwrap();
+            if let Some(text) = text {
+                fs::write(path(t.path()), text).unwrap();
+            }
+            let loaded = load_detailed(t.path());
+            assert_eq!(loaded.filter_fell_back, *fell_back, "{text:?}");
+            assert_eq!(
+                (loaded.settings, loaded.warning),
+                load(t.path()),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_fold_save_writes_only_its_own_key() {
         let t = tempfile::tempdir().unwrap();
         // One wrongly typed key: the file is still a JSON object, so a fold click is saved and the
@@ -708,6 +1175,46 @@ mod tests {
         assert_eq!(v["collapsed_sections"]["ssf.filter"]["Gear"], true);
         let (again, _) = load(t.path());
         assert!(again.section_collapsed("ssf.filter", "Gear", false));
+    }
+
+    #[test]
+    fn league_and_price_source_saves_write_only_their_own_key() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"filter":"ssf.filter","price_source":7,"future":1}"#,
+        )
+        .unwrap();
+        let (s, _) = load(t.path());
+        let next = Settings {
+            league: Some("Standard".into()),
+            ..s
+        };
+        assert!(save_league(t.path(), &next).unwrap());
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path(t.path())).unwrap()).unwrap();
+        assert_eq!(v["league"], "Standard");
+        assert_eq!(v["price_source"], 7);
+        assert_eq!(v["filter"], "ssf.filter");
+        assert_eq!(v["future"], 1);
+
+        let next = Settings {
+            price_source: Some("fallback".into()),
+            ..next
+        };
+        assert!(save_price_source(t.path(), &next).unwrap());
+        let (again, _) = load(t.path());
+        assert_eq!(again.saved_league(), Some("Standard"));
+        assert_eq!(
+            again.price_policy(),
+            crate::compile::PriceSourcePolicy::ForceFallback
+        );
+
+        let bad = "[1, 2]";
+        fs::write(path(t.path()), bad).unwrap();
+        assert!(!save_league(t.path(), &next).unwrap());
+        assert!(!save_price_source(t.path(), &next).unwrap());
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), bad);
     }
 
     #[test]

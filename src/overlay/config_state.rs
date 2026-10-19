@@ -3,8 +3,8 @@
 //!
 //! Layer rule (same as `overlay/apply.rs`): no GUI-framework types live here, so every CONF-02/03/04
 //! rule is provable with temp dirs -- `OverlayApp::new` needs a real tray and cannot be unit-tested.
-//! File paths come only from `InputPaths::relative_to(root)`. Reads go through
-//! `InputPaths::styles_source` / `tiers_source` (the live file, else the committed `-default.json`);
+//! File paths come only from `InputPaths::in_home(root)`. Reads go through
+//! `InputPaths::styles_source` / `tiers_source` (the live file, else the built-in default);
 //! this module only ever hands out the live `styles.json` / `tiers.json` as write targets, so the
 //! `-default.json` files and the early-league fallback pair are never touched.
 
@@ -12,13 +12,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compile::InputPaths;
+use crate::compile::{InputPaths, Source};
 use crate::loader::LoadError;
 use crate::models::config::{
     Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
     StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
+use crate::overlay::strictness::{Strictness, TIER_LETTERS, strictness_of};
 
 /// Display order of the tier rows. Presentation only: rows map to entries by tier name.
 const DISPLAY_ORDER: [&str; 7] = ["S", "A", "B", "C", "D", "E", "F"];
@@ -102,44 +103,37 @@ pub struct ConfigState {
     /// styles.json even with no CONFIG edit. Never counts as an edit. Always false while the
     /// source is the `-default.json` (never written; its ids derive from the names anyway).
     ids_unpersisted: bool,
+    /// False while the overlay prices from the Fallback pair: the cutoffs are unused, so their
+    /// errors must not block Apply. Row errors stay recorded for `tier_rows()` so the inline text
+    /// returns when the editor is enabled again. Not part of dirty counting, revert or reset.
+    tiers_in_use: bool,
 }
 
-fn file_label(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-/// Read `path`, `None` when it does not exist. Errors read `<file name>: <reason>`.
+/// Read `path`, `None` when it does not exist. Errors read `<full path>: <reason>`.
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match fs::read(path) {
         Ok(b) => Ok(Some(b)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", file_label(path))),
+        Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
 
-/// Map a read-source resolution error so it starts with the live file name.
-fn source(live: &Path, resolved: Result<PathBuf, LoadError>) -> Result<PathBuf, String> {
-    resolved.map_err(|e| format!("{}: {e}", file_label(live)))
-}
-
-/// One read of the effective source of a live file: `(source path, content bytes, live bytes)`.
+/// One read of the effective source of a live file: `(source, content bytes, live bytes)`.
 ///
 /// The live file is read once and, when present, supplies both the content and the guard
 /// baseline, so the two can never disagree (WR-01). Only when it is absent is the source resolved
-/// (normally the `-default.json`) and read; should the live file appear in between, the resolver
-/// picks it and that single read again feeds both baselines.
+/// (normally the built-in default, which has no live bytes) and read; should the live file appear
+/// in between, the resolver picks it and that single read again feeds both baselines.
 fn read_effective(
     live: &Path,
-    resolve: impl FnOnce() -> Result<PathBuf, LoadError>,
-) -> Result<(PathBuf, Vec<u8>, Option<Vec<u8>>), String> {
+    resolve: impl FnOnce() -> Result<Source, LoadError>,
+) -> Result<(Source, Vec<u8>, Option<Vec<u8>>), String> {
     if let Some(bytes) = read_optional(live)? {
-        return Ok((live.to_path_buf(), bytes.clone(), Some(bytes)));
+        return Ok((Source::File(live.to_path_buf()), bytes.clone(), Some(bytes)));
     }
-    let src = source(live, resolve())?;
-    let bytes = fs::read(&src).map_err(|e| format!("{}: {e}", file_label(&src)))?;
-    let live_bytes = (src == live).then(|| bytes.clone());
+    let src = resolve().map_err(|e| format!("{}: {e}", live.display()))?;
+    let bytes = src.bytes().map_err(|e| format!("{}: {e}", src.label()))?;
+    let live_bytes = (src.as_file() == Some(live)).then(|| bytes.clone());
     Ok((src, bytes, live_bytes))
 }
 
@@ -154,25 +148,25 @@ impl ConfigState {
     /// Read `styles.json` and `tiers.json` under `root`, each falling back to its
     /// `-default.json` when absent (DEF-03). Errors read `<file name>: <reason>`. Never writes.
     pub fn load(root: &Path) -> Result<ConfigState, String> {
-        let paths = InputPaths::relative_to(root);
+        let paths = InputPaths::in_home(root);
 
         let (styles_src, styles_bytes, styles_live) =
             read_effective(&paths.styles, || paths.styles_source())?;
         let mut styles: StyleSet = serde_json::from_slice(&styles_bytes)
-            .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
+            .map_err(|e| format!("{}: {e}", styles_src.label()))?;
         // Ids assigned to a default source are derived from the names, and the default is never
         // written: persisting them would create a live styles.json nobody edited (WR-02).
         let ids_unpersisted = styles.assign_missing_ids() && styles_live.is_some();
         styles
             .validate()
-            .map_err(|e| format!("{}: {e}", file_label(&styles_src)))?;
+            .map_err(|e| format!("{}: {e}", styles_src.label()))?;
 
         let (tiers_src, tiers_bytes, tiers_live) =
             read_effective(&paths.tiers, || paths.tiers_source())?;
         let tiers: Vec<TierEntry> = serde_json::from_slice(&tiers_bytes)
-            .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
+            .map_err(|e| format!("{}: {e}", tiers_src.label()))?;
         ValidatedTiers::try_from(tiers.clone())
-            .map_err(|e| format!("{}: {e}", file_label(&tiers_src)))?;
+            .map_err(|e| format!("{}: {e}", tiers_src.label()))?;
 
         let mut state = ConfigState {
             root: root.to_path_buf(),
@@ -187,6 +181,7 @@ impl ConfigState {
             styles_live,
             tiers_live,
             ids_unpersisted,
+            tiers_in_use: true,
         };
         state.resync_buffers();
         Ok(state)
@@ -261,6 +256,116 @@ impl ConfigState {
         true
     }
 
+    /// The strictness level the pending set currently reads as.
+    pub fn strictness(&self) -> Strictness {
+        strictness_of(&self.styles)
+    }
+
+    /// Show or hide the seven tier styles (found by built-in id) as `level` says. `Custom` is
+    /// not a preset: no change. Returns whether anything changed.
+    pub fn set_strictness(&mut self, level: Strictness) -> bool {
+        if level == Strictness::Custom {
+            return false;
+        }
+        let mut changed = false;
+        for letter in TIER_LETTERS {
+            let Some(name) = self
+                .styles
+                .name_of_id(&StyleSet::builtin_id(letter))
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let action = if level.hidden().contains(&letter) {
+                StyleAction::Hide
+            } else {
+                StyleAction::Show
+            };
+            if self.styles.get(&name).is_some_and(|s| s.action != action) {
+                changed |= self.edit_style(&name, StyleEdit::Action(action));
+            }
+        }
+        changed
+    }
+
+    /// Put the default built-ins back (default values and order, first) and keep every custom
+    /// style after them in its current order, ids kept. A pending edit; `Revert` undoes it.
+    pub fn reset_styles(&mut self) {
+        let defaults = StyleSet::shipped_defaults();
+        let builtins = defaults
+            .iter()
+            .filter(|(n, _)| StyleSet::is_builtin(n))
+            .map(|(n, s)| (n.to_string(), s.clone()));
+        let customs = self
+            .styles
+            .iter()
+            .filter(|(n, _)| !StyleSet::is_builtin(n))
+            .map(|(n, s)| (n.to_string(), s.clone()));
+        self.styles = StyleSet::from_pairs(builtins.chain(customs).collect::<Vec<_>>());
+    }
+
+    /// The pending built-ins already equal the defaults in values and order (customs ignored).
+    pub fn styles_at_defaults(&self) -> bool {
+        let defaults: Vec<(&str, &Style)> = StyleSet::shipped_defaults()
+            .iter()
+            .filter(|(n, _)| StyleSet::is_builtin(n))
+            .collect();
+        let now: Vec<(&str, &Style)> = self.styles.iter().take(defaults.len()).collect();
+        now == defaults
+    }
+
+    /// Default cutoffs: the embedded `tiers-default.json`, parsed and validated once.
+    fn default_tiers() -> &'static [TierEntry] {
+        static TIERS: std::sync::OnceLock<Vec<TierEntry>> = std::sync::OnceLock::new();
+        TIERS.get_or_init(|| {
+            let b = &crate::defaults::TIERS_DEFAULT;
+            let tiers: Vec<TierEntry> = serde_json::from_str(b.text)
+                .unwrap_or_else(|e| panic!("{} failed to parse: {e}", b.label()));
+            ValidatedTiers::try_from(tiers.clone())
+                .unwrap_or_else(|e| panic!("{} failed validation: {e}", b.label()));
+            tiers
+        })
+    }
+
+    /// Write the default cutoff and unit into each existing entry by tier name, then
+    /// re-validate. The file order is kept when the defaults are ascending in it; otherwise the
+    /// entries take the default order (cutoffs are checked in file order, so the defaults are
+    /// only known to validate in theirs). A pending edit; `Revert` undoes it.
+    pub fn reset_tiers(&mut self) {
+        let defaults = Self::default_tiers();
+        for entry in &mut self.tiers {
+            if let Some(d) = defaults.iter().find(|d| d.tier == entry.tier) {
+                entry.min = d.min;
+                entry.unit = d.unit.clone();
+            }
+        }
+        if ValidatedTiers::try_from(self.tiers.clone()).is_err() {
+            let order = |t: &str| defaults.iter().position(|d| d.tier == t);
+            self.tiers
+                .sort_by_key(|e| order(&e.tier).unwrap_or(usize::MAX));
+        }
+        self.resync_buffers();
+        self.recompute_tier_errors();
+    }
+
+    /// Every default tier is present with the default cutoff and unit, no pending bad text and
+    /// no ordering or missing-tier error.
+    pub fn tiers_at_defaults(&self) -> bool {
+        self.errors.row.is_empty()
+            && self.errors.edges.is_empty()
+            && self.errors.general.is_none()
+            && Self::default_tiers().iter().all(|d| {
+                self.tiers
+                    .iter()
+                    .find(|e| e.tier == d.tier)
+                    .is_some_and(|e| e.min == d.min && e.unit == d.unit)
+                    && self
+                        .buffers
+                        .get(&d.tier)
+                        .is_some_and(|b| *b == format!("{}", d.min))
+            })
+    }
+
     /// The `StyleSet::validate` message when the working styles are invalid.
     pub fn styles_error(&self) -> Option<String> {
         self.styles.validate().err().map(|e| e.to_string())
@@ -327,20 +432,48 @@ impl ConfigState {
         self.errors = errors;
     }
 
-    pub fn has_tier_errors(&self) -> bool {
-        !self.errors.row.is_empty()
+    /// Whether the tier cutoffs are used for pricing (false under the Fallback price source).
+    pub fn tiers_in_use(&self) -> bool {
+        self.tiers_in_use
     }
 
-    /// A problem not tied to one row (a required tier is missing).
+    /// Marks the cutoffs as used / unused. While unused their errors do not gate Apply.
+    pub fn set_tiers_in_use(&mut self, on: bool) {
+        self.tiers_in_use = on;
+    }
+
+    pub fn has_tier_errors(&self) -> bool {
+        self.tiers_in_use && !self.errors.row.is_empty()
+    }
+
+    /// A problem not tied to one row (a required tier is missing). None while the cutoffs are
+    /// not in use.
     pub fn tiers_error(&self) -> Option<String> {
-        self.errors.general.clone()
+        if self.tiers_in_use {
+            self.errors.general.clone()
+        } else {
+            None
+        }
     }
 
     // -- dirty / revert -------------------------------------------------------------------------
 
-    /// Styles added + deleted + edited (by name, value compare) + tier rows that differ.
+    /// Styles added + deleted + edited (by name, value compare) + tier rows that differ. Tier
+    /// rows count only while the cutoffs are in use: unused ones (Fallback) are kept, but no
+    /// Apply writes them, so they are not unapplied work ([`Self::has_unwritable_tier_edits`]).
     pub fn dirty_count(&self) -> usize {
-        self.styles_dirty_count() + self.tiers_dirty_count()
+        let tiers = if self.tiers_in_use {
+            self.tiers_dirty_count()
+        } else {
+            0
+        };
+        self.styles_dirty_count() + tiers
+    }
+
+    /// Pending cutoff edits that Apply does not write because the cutoffs are unused (Fallback
+    /// price source). They stay in memory and the first Apply under Live writes them.
+    pub fn has_unwritable_tier_edits(&self) -> bool {
+        !self.tiers_in_use && self.tiers_dirty()
     }
 
     /// Styles added + deleted + changed (matched by id, name for an id-less style, so a rename is
@@ -392,7 +525,7 @@ impl ConfigState {
                     .buffers
                     .get(&e.tier)
                     .is_some_and(|b| *b != format!("{}", base.min));
-                buffer_differs || e.min != base.min
+                buffer_differs || e.min != base.min || e.unit != base.unit
             })
             .count()
     }
@@ -404,17 +537,17 @@ impl ConfigState {
     /// baselines (changed-on-disk refusal, OVERWRITE). On error (a clean file that no longer
     /// loads) nothing changes. Never writes. Returns whether any content was re-read.
     pub fn follow_disk(&mut self) -> Result<bool, String> {
-        let paths = InputPaths::relative_to(&self.root);
+        let paths = InputPaths::in_home(&self.root);
         let mut styles = None;
         let mut styles_live = None;
         if !self.styles_changed() {
             let (src, now, live) = read_effective(&paths.styles, || paths.styles_source())?;
             if now != self.styles_bytes {
-                let mut set: StyleSet = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                let mut set: StyleSet =
+                    serde_json::from_slice(&now).map_err(|e| format!("{}: {e}", src.label()))?;
                 let assigned = set.assign_missing_ids();
                 set.validate()
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                    .map_err(|e| format!("{}: {e}", src.label()))?;
                 styles = Some((set, now, assigned));
             }
             if live != self.styles_live {
@@ -426,10 +559,10 @@ impl ConfigState {
         if self.tiers_dirty_count() == 0 {
             let (src, now, live) = read_effective(&paths.tiers, || paths.tiers_source())?;
             if now != self.tiers_bytes {
-                let entries: Vec<TierEntry> = serde_json::from_slice(&now)
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                let entries: Vec<TierEntry> =
+                    serde_json::from_slice(&now).map_err(|e| format!("{}: {e}", src.label()))?;
                 ValidatedTiers::try_from(entries.clone())
-                    .map_err(|e| format!("{}: {e}", file_label(&src)))?;
+                    .map_err(|e| format!("{}: {e}", src.label()))?;
                 tiers = Some((entries, now));
             }
             if live != self.tiers_live {
@@ -481,7 +614,7 @@ impl ConfigState {
         self.styles.id_of(name)
     }
 
-    /// Any unapplied CONFIG edit (styles, tiers or style order).
+    /// Any unapplied CONFIG edit Apply would write (styles, style order, tiers while in use).
     pub fn is_dirty(&self) -> bool {
         self.dirty_count() > 0
     }
@@ -509,12 +642,12 @@ impl ConfigState {
 
     /// The live `styles.json`: the write target. Reads may come from `styles-default.json`.
     pub fn styles_path(&self) -> PathBuf {
-        InputPaths::relative_to(&self.root).styles
+        InputPaths::in_home(&self.root).styles
     }
 
     /// The live `tiers.json`: the write target. Reads may come from `tiers-default.json`.
     pub fn tiers_path(&self) -> PathBuf {
-        InputPaths::relative_to(&self.root).tiers
+        InputPaths::in_home(&self.root).tiers
     }
 
     /// The content bytes read at load (or written by the last apply), from whichever source was
@@ -545,12 +678,15 @@ impl ConfigState {
                 .unwrap_or_else(|| "Fix the tier errors first".to_string());
             return Err(ConfigApplyError::Invalid(reason));
         }
-        // Defensive re-check: never render something the loaders would reject.
+        // Defensive re-check: never render something the loaders would reject. Unused cutoffs
+        // (Fallback price source) are neither checked nor written, so they cannot refuse Apply.
         self.styles
             .validate()
             .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
-        ValidatedTiers::try_from(self.tiers.clone())
-            .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        if self.tiers_in_use {
+            ValidatedTiers::try_from(self.tiers.clone())
+                .map_err(|e| ConfigApplyError::Invalid(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -564,7 +700,9 @@ impl ConfigState {
     fn prepare_write_inner(&self, force: bool) -> Result<ConfigWrite, ConfigApplyError> {
         self.validate()?;
         let styles_changed = force || self.styles_changed() || self.ids_unpersisted;
-        let tiers_changed = force || !tiers_equal(&self.tiers, &self.tiers_applied);
+        // Unused cutoffs stay pending in memory and `tiers.json` keeps its bytes.
+        let tiers_changed =
+            self.tiers_in_use && (force || !tiers_equal(&self.tiers, &self.tiers_applied));
         let styles_new = if styles_changed {
             crate::loader::render_styles(&self.styles).into_bytes()
         } else {
@@ -594,10 +732,14 @@ impl ConfigState {
             self.tiers_live = Some(w.tiers_new.clone());
         }
         self.styles_applied = self.styles.clone();
-        self.tiers_applied = self.tiers.clone();
         self.styles_bytes = w.styles_new;
-        self.tiers_bytes = w.tiers_new;
-        self.resync_buffers();
+        // Unused cutoffs (Fallback) were not written: their pending text and inline errors stay
+        // for when the editor is enabled again.
+        if self.tiers_in_use || w.tiers_changed {
+            self.tiers_applied = self.tiers.clone();
+            self.tiers_bytes = w.tiers_new;
+            self.resync_buffers();
+        }
     }
 
     /// Discard in-memory edits back to the last-applied snapshot.
@@ -735,7 +877,7 @@ mod tests {
     fn temp_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (src, dst) in [
-            ("styles-default.json", "styles.json"),
+            ("tests/fixtures/seed-styles.json", "styles.json"),
             ("tiers-default.json", "tiers.json"),
         ] {
             fs::copy(
@@ -768,6 +910,103 @@ mod tests {
     }
 
     #[test]
+    fn unused_tiers_do_not_gate_apply_and_return_when_used_again() {
+        let (_d, mut s) = loaded();
+        assert!(s.tiers_in_use());
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        s.set_tier_text("A", "abc");
+        assert!(s.has_tier_errors());
+        assert!(s.validate().is_err());
+        assert!(!s.can_apply());
+
+        s.set_tiers_in_use(false);
+        assert!(!s.has_tier_errors());
+        assert!(s.tiers_error().is_none());
+        assert!(s.validate().is_ok());
+        assert!(s.can_apply());
+        // The row keeps its inline error and the pending edit stays counted.
+        let row = s.tier_rows().into_iter().find(|r| r.tier == "A").unwrap();
+        assert!(row.error.is_some());
+        assert!(s.tiers_dirty());
+        // The bad buffer never reaches tiers.json: the last valid values are written.
+        let w = s.prepare_write().unwrap();
+        assert!(!w.tiers_changed);
+        assert_eq!(w.tiers_new, s.tiers_bytes);
+
+        s.set_tiers_in_use(true);
+        assert!(s.has_tier_errors());
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn unused_out_of_order_tiers_do_not_refuse_apply_and_are_not_written() {
+        let (_d, mut s) = loaded();
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        // Parses, so it reaches the model, but sits below B.
+        s.set_tier_text("A", "0.0001");
+        assert!(s.has_tier_errors());
+        assert!(s.prepare_write().is_err());
+
+        s.set_tiers_in_use(false);
+        assert!(s.validate().is_ok());
+        let w = s.prepare_write().unwrap();
+        assert!(w.styles_changed);
+        assert!(!w.tiers_changed);
+        assert_eq!(w.tiers_new, s.tiers_bytes);
+
+        s.set_tiers_in_use(true);
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn an_apply_with_unused_tiers_keeps_their_pending_text_and_errors() {
+        let (_d, mut s) = loaded();
+        s.set_tier_text("S", "31");
+        s.set_tier_text("A", "abc");
+        assert!(s.edit_style("S", StyleEdit::Font(Some(44))));
+        let tiers_bytes = s.tiers_bytes.clone();
+
+        s.set_tiers_in_use(false);
+        let w = s.prepare_write().unwrap();
+        s.adopt(w);
+        assert!(!s.styles_dirty());
+        assert!(s.tiers_dirty());
+        assert!(s.has_unwritable_tier_edits());
+        assert!(!s.is_dirty(), "nothing is left that an Apply would write");
+        assert_eq!(s.tiers_bytes, tiers_bytes);
+        let row =
+            |s: &ConfigState, t: &str| s.tier_rows().into_iter().find(|r| r.tier == t).unwrap();
+        assert_eq!(row(&s, "S").buffer, "31");
+        assert_eq!(row(&s, "A").buffer, "abc");
+        assert!(row(&s, "A").error.is_some());
+
+        s.set_tiers_in_use(true);
+        assert!(!s.has_unwritable_tier_edits());
+        assert!(s.is_dirty());
+        assert!(s.has_tier_errors());
+        assert_eq!(
+            s.pending_tiers()
+                .iter()
+                .find(|e| e.tier == "S")
+                .unwrap()
+                .min,
+            31.0
+        );
+    }
+
+    #[test]
+    fn unused_tiers_ignore_a_missing_required_tier_too() {
+        let (_d, mut s) = loaded();
+        s.errors.general = Some("tier S is missing".to_string());
+        assert!(s.validate().is_err());
+        s.set_tiers_in_use(false);
+        assert!(s.tiers_error().is_none());
+        assert!(s.validate().is_ok());
+        s.set_tiers_in_use(true);
+        assert!(s.tiers_error().is_some());
+    }
+
+    #[test]
     fn scoped_dirty_and_revert_keep_the_other_scope() {
         let (_d, mut s) = loaded();
         s.set_tier_text("S", "31");
@@ -794,21 +1033,37 @@ mod tests {
     }
 
     #[test]
-    fn load_errors_name_the_file() {
+    fn load_errors_name_the_full_path() {
         let d = temp_root();
         fs::write(d.path().join("styles.json"), "{ not json").unwrap();
         let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("styles.json:"), "{e}");
+        let live = d.path().join("styles.json");
+        assert!(e.starts_with(&format!("{}:", live.display())), "{e}");
 
         let d = temp_root();
-        fs::remove_file(d.path().join("tiers.json")).unwrap();
+        fs::write(d.path().join("tiers.json"), "[ not json").unwrap();
         let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("tiers.json:"), "{e}");
+        let live = d.path().join("tiers.json");
+        assert!(e.starts_with(&format!("{}:", live.display())), "{e}");
+    }
 
-        let d = temp_root();
-        fs::remove_file(d.path().join("styles.json")).unwrap();
-        let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("styles.json:"), "{e}");
+    #[test]
+    fn empty_folder_loads_the_built_in_defaults_and_writes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let s = ConfigState::load(d.path()).unwrap();
+        let names = s.style_names();
+        for n in ["S", "A", "B", "C", "D", "E", "F", "unchanged", "hidden"] {
+            assert!(names.iter().any(|x| x == n), "missing {n}");
+        }
+        assert_eq!(s.pending_tiers().len(), 7);
+        assert_eq!(s.dirty_count(), 0);
+        assert!(!s.is_dirty());
+        assert_eq!(s.live_baselines(), (None, None));
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed() && !w.tiers_changed());
+        assert_eq!(fs::read_dir(d.path()).unwrap().count(), 0);
+        assert_eq!(s.styles_path(), d.path().join("styles.json"));
+        assert_eq!(s.tiers_path(), d.path().join("tiers.json"));
     }
 
     /// A temp root holding only the committed defaults under their own names (no live file).
@@ -833,7 +1088,7 @@ mod tests {
     fn load_falls_back_to_defaults_and_creates_nothing() {
         let d = defaults_root();
         let s = ConfigState::load(d.path()).unwrap();
-        assert_eq!(s.style_names().len(), 12);
+        assert_eq!(s.style_names().len(), 9);
         assert_eq!(
             s.baselines().0,
             &fs::read(d.path().join("styles-default.json")).unwrap()[..]
@@ -867,18 +1122,13 @@ mod tests {
     }
 
     #[test]
-    fn load_without_any_styles_file_names_both() {
+    fn default_files_in_the_folder_are_ignored() {
         let d = defaults_root();
         fs::remove_file(d.path().join("styles-default.json")).unwrap();
-        let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("styles.json:"), "{e}");
-        assert!(e.contains("styles-default.json"), "{e}");
-
-        let d = defaults_root();
         fs::remove_file(d.path().join("tiers-default.json")).unwrap();
-        let e = ConfigState::load(d.path()).err().unwrap();
-        assert!(e.starts_with("tiers.json:"), "{e}");
-        assert!(e.contains("tiers-default.json"), "{e}");
+        let s = ConfigState::load(d.path()).unwrap();
+        assert_eq!(s.style_names().len(), 9);
+        assert_no_live(d.path());
     }
 
     #[test]
@@ -941,11 +1191,15 @@ mod tests {
         let d = defaults_root();
         let live = d.path().join("styles.json");
         let default = d.path().join("styles-default.json");
-        let paths = InputPaths::relative_to(d.path());
+        let paths = InputPaths::in_home(d.path());
 
         let (src, bytes, live_bytes) = read_effective(&live, || paths.styles_source()).unwrap();
-        assert_eq!(src, default);
-        assert_eq!(bytes, fs::read(&default).unwrap());
+        assert!(matches!(src, Source::Embedded(_)));
+        assert_eq!(
+            bytes,
+            fs::read(&default).unwrap(),
+            "built-in copy equals the committed default"
+        );
         assert_eq!(live_bytes, None);
         assert_no_live(d.path());
 
@@ -956,14 +1210,14 @@ mod tests {
             paths.styles_source()
         })
         .unwrap();
-        assert_eq!(src, live);
+        assert_eq!(src, Source::File(live.clone()));
         assert_eq!(bytes, created);
         assert_eq!(live_bytes.as_deref(), Some(&created[..]));
 
         // Present from the start: both baselines are the live bytes.
         let (src, bytes, live_bytes) =
             read_effective(&live, || panic!("no resolution needed")).unwrap();
-        assert_eq!(src, live);
+        assert_eq!(src, Source::File(live.clone()));
         assert_eq!(live_bytes.as_deref(), Some(&bytes[..]));
     }
 
@@ -1382,7 +1636,7 @@ mod tests {
 
         // A clean file that no longer loads is an error and changes nothing.
         fs::write(dir.path().join("tiers.json"), b"not json").unwrap();
-        assert!(s.follow_disk().unwrap_err().starts_with("tiers.json"));
+        assert!(s.follow_disk().unwrap_err().contains("tiers.json"));
         assert_eq!(s.baselines().1, &tiers_disk[..]);
     }
 
@@ -1460,7 +1714,10 @@ mod tests {
     #[test]
     fn committed_styles_default_carries_every_id() {
         let mut set: StyleSet = serde_json::from_slice(
-            &fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("styles-default.json")).unwrap(),
+            &fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/seed-styles.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert!(!set.assign_missing_ids());
@@ -1521,5 +1778,259 @@ mod tests {
         assert_eq!(s.rename_style("kite", "a\tb"), Err(StyleNameError::Invalid));
         assert_eq!(s.rename_style("nope", "x"), Err(StyleNameError::Unknown));
         assert_eq!(s.dirty_count(), 0);
+    }
+
+    // -- strictness and resets ------------------------------------------------------------------
+
+    fn home_with(styles: &str, tiers: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (src, dst) in [(styles, "styles.json"), (tiers, "tiers.json")] {
+            fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(src),
+                dir.path().join(dst),
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut v: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    fs::read(e.path()).unwrap(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn every_strictness_level_applies_and_reads_back() {
+        let (_d, mut s) = loaded();
+        for level in Strictness::ALL {
+            if level == Strictness::Custom {
+                continue;
+            }
+            s.set_strictness(level);
+            assert_eq!(s.strictness(), level);
+            assert!(!s.set_strictness(level), "{level:?} again is no change");
+        }
+    }
+
+    #[test]
+    fn strictness_touches_only_tier_styles_and_reverts() {
+        let (_d, mut s) = loaded();
+        let kept: Vec<(String, Style)> = ["unchanged", "hidden", "Recycle", "kite", "exceptional"]
+            .iter()
+            .map(|n| (n.to_string(), s.style(n).unwrap().clone()))
+            .collect();
+        let before = s.pending_styles().clone();
+        assert!(s.set_strictness(Strictness::Comfy));
+        for (n, st) in &kept {
+            assert_eq!(s.style(n).unwrap(), st, "{n}");
+        }
+        for l in ["D", "E", "F"] {
+            assert_eq!(s.style(l).unwrap().action, StyleAction::Hide);
+        }
+        for l in ["S", "A", "B", "C"] {
+            assert_eq!(s.style(l).unwrap().action, StyleAction::Show);
+        }
+        assert!(s.styles_dirty());
+        s.revert_scope(RevertScope::Styles);
+        assert_eq!(s.pending_styles(), &before);
+        assert!(!s.styles_dirty());
+    }
+
+    #[test]
+    fn strictness_shows_s_and_a_even_when_hidden() {
+        let (_d, mut s) = loaded();
+        s.edit_style("S", StyleEdit::Action(StyleAction::Hide));
+        assert_eq!(s.strictness(), Strictness::Custom);
+        assert!(s.set_strictness(Strictness::FlatBroke));
+        assert_eq!(s.style("S").unwrap().action, StyleAction::Show);
+    }
+
+    #[test]
+    fn custom_level_changes_nothing() {
+        let (_d, mut s) = loaded();
+        s.set_strictness(Strictness::Loaded);
+        let before = s.pending_styles().clone();
+        assert!(!s.set_strictness(Strictness::Custom));
+        assert_eq!(s.pending_styles(), &before);
+    }
+
+    #[test]
+    fn old_twelve_style_file_loads_and_keeps_its_bytes() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-default.json");
+        let s = ConfigState::load(d.path()).unwrap();
+        let names = s.style_names();
+        assert_eq!(names.len(), 12);
+        for n in ["Recycle", "kite", "exceptional"] {
+            assert!(names.iter().any(|x| x == n), "{n}");
+        }
+        assert_eq!(s.dirty_count(), 0);
+        let before = snapshot(d.path());
+        let w = s.prepare_write().unwrap();
+        assert!(
+            !w.styles_changed(),
+            "an untouched 12-style file must not be rewritten"
+        );
+        assert_eq!(
+            w.styles_new,
+            fs::read(d.path().join("styles.json")).unwrap()
+        );
+        assert_eq!(snapshot(d.path()), before);
+        for (n, st) in StyleSet::shipped_defaults().iter() {
+            assert_eq!(st.id.as_deref(), Some(format!("builtin:{n}").as_str()));
+        }
+        assert_eq!(StyleSet::shipped_defaults().len(), 9);
+    }
+
+    #[test]
+    fn reset_styles_restores_builtins_and_keeps_customs() {
+        let (d, mut s) = loaded();
+        let customs_before: Vec<(String, Style)> = s
+            .pending_styles()
+            .iter()
+            .filter(|(n, _)| !StyleSet::is_builtin(n))
+            .map(|(n, st)| (n.to_string(), st.clone()))
+            .collect();
+        s.edit_style("S", StyleEdit::Font(Some(12)));
+        s.edit_style("kite", StyleEdit::Font(Some(30)));
+        s.set_strictness(Strictness::DivFarmer);
+        s.move_style("kite", false);
+        assert!(!s.styles_at_defaults());
+        let current_customs: Vec<String> = s
+            .pending_styles()
+            .names()
+            .filter(|n| !StyleSet::is_builtin(n))
+            .map(str::to_string)
+            .collect();
+        let files = snapshot(d.path());
+
+        s.reset_styles();
+        let defaults = StyleSet::shipped_defaults();
+        let names = s.style_names();
+        let default_names: Vec<&str> = defaults.names().collect();
+        assert_eq!(&names[..9], &default_names[..]);
+        for (n, st) in defaults.iter() {
+            assert_eq!(s.style(n).unwrap(), st);
+        }
+        assert_eq!(names[9..], current_customs[..]);
+        for (n, st) in &customs_before {
+            assert_eq!(s.style(n).unwrap().id, st.id);
+        }
+        assert_eq!(s.style("kite").unwrap().font, Some(30));
+        assert_eq!(s.strictness(), Strictness::FlatBroke);
+        assert!(s.styles_at_defaults());
+        assert_eq!(snapshot(d.path()), files);
+        s.revert_scope(RevertScope::Styles);
+        assert!(!s.styles_dirty());
+    }
+
+    #[test]
+    fn styles_at_defaults_tracks_builtins_only() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert!(s.styles_at_defaults());
+        assert!(s.edit_style("hidden", StyleEdit::Action(StyleAction::Show)));
+        assert!(!s.styles_at_defaults());
+        s.revert_scope(RevertScope::Styles);
+        assert!(s.styles_at_defaults());
+        s.add_style("Mine").unwrap();
+        assert!(s.styles_at_defaults(), "customs never count");
+        // A custom between the built-ins breaks the order.
+        let (_d2, mut f) = loaded();
+        f.reset_styles();
+        assert!(f.styles_at_defaults());
+        let mut pairs: Vec<(String, Style)> = f
+            .pending_styles()
+            .iter()
+            .map(|(n, st)| (n.to_string(), st.clone()))
+            .collect();
+        let custom = pairs.remove(9);
+        pairs.insert(7, custom);
+        f.styles = StyleSet::from_pairs(pairs);
+        assert!(!f.styles_at_defaults());
+    }
+
+    #[test]
+    fn reset_tiers_keeps_order_and_clears_errors() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-fallback.json");
+        let mut s = ConfigState::load(d.path()).unwrap();
+        let order: Vec<String> = s.pending_tiers().iter().map(|e| e.tier.clone()).collect();
+        assert!(!s.tiers_at_defaults());
+        s.set_tier_text("S", "99");
+        s.set_tier_text("A", "abc");
+        assert!(s.has_tier_errors());
+        let files = snapshot(d.path());
+
+        s.reset_tiers();
+        let now: Vec<String> = s.pending_tiers().iter().map(|e| e.tier.clone()).collect();
+        assert_eq!(now, order);
+        assert!(s.tiers_at_defaults());
+        assert!(!s.has_tier_errors());
+        for r in s.tier_rows() {
+            assert_eq!(r.unit, "chaos");
+        }
+        let bufs: Vec<_> = s.tier_rows().into_iter().map(|r| r.buffer).collect();
+        assert_eq!(bufs, ["30", "20", "12", "8", "2", "0.5", "0.1"]);
+        assert!(s.tiers_dirty() && s.dirty_count() > 0);
+        assert_eq!(snapshot(d.path()), files);
+        s.revert_scope(RevertScope::Tiers);
+        assert!(!s.tiers_dirty());
+    }
+
+    #[test]
+    fn reset_tiers_takes_default_order_when_file_order_would_not_validate() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-default.json");
+        // Ascending per unit in this order, so it loads; all-chaos defaults are not.
+        fs::write(
+            d.path().join("tiers.json"),
+            r#"[
+  { "tier": "F", "min": 0.1, "unit": "chaos" },
+  { "tier": "E", "min": 0.5, "unit": "chaos" },
+  { "tier": "D", "min": 2.0, "unit": "chaos" },
+  { "tier": "C", "min": 8.0, "unit": "chaos" },
+  { "tier": "S", "min": 1.0, "unit": "exalt" },
+  { "tier": "A", "min": 1.0, "unit": "div" },
+  { "tier": "B", "min": 5.0, "unit": "exalt" }
+]"#,
+        )
+        .unwrap();
+        let mut s = ConfigState::load(d.path()).unwrap();
+        assert!(!s.tiers_at_defaults());
+
+        s.reset_tiers();
+        let now: Vec<String> = s.pending_tiers().iter().map(|e| e.tier.clone()).collect();
+        assert_eq!(now, ["F", "E", "D", "C", "B", "A", "S"]);
+        assert!(!s.has_tier_errors());
+        assert!(s.tiers_error().is_none());
+        assert!(s.tier_rows().iter().all(|r| !r.edge));
+        assert!(s.tiers_at_defaults());
+        assert!(ValidatedTiers::try_from(s.pending_tiers().to_vec()).is_ok());
+    }
+
+    #[test]
+    fn unit_only_difference_counts_as_dirty() {
+        let d = home_with("tests/fixtures/seed-styles.json", "tiers-default.json");
+        let mut t = ConfigState::load(d.path()).unwrap();
+        for e in &mut t.tiers {
+            e.unit = crate::models::tiers::Unit::Div;
+        }
+        assert!(t.tiers_dirty());
+    }
+
+    #[test]
+    fn tiers_at_defaults_follows_edits() {
+        let (_d, mut s) = loaded();
+        assert!(s.tiers_at_defaults());
+        s.set_tier_text("S", "31");
+        assert!(!s.tiers_at_defaults());
     }
 }

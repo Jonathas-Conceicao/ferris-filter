@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.6
-milestone_name: New PoE2-based Tool UI
-status: Awaiting next milestone
-stopped_at: Milestone v0.6 complete and archived
-last_updated: "2026-10-17T22:20:55.012Z"
-last_activity: 2026-10-17 — Milestone v0.6 completed and archived
+milestone: v0.7
+milestone_name: Initial Public Release and Strictness Selector
+status: complete
+stopped_at: v0.7 milestone complete (shipped 2026-10-18)
+last_updated: "2026-10-18T23:30:00.000Z"
+last_activity: 2026-10-18 -- v0.7 milestone archived, squash-merged to main and tagged v0.7.0
 progress:
   total_phases: 7
   completed_phases: 7
-  total_plans: 30
-  completed_plans: 30
+  total_plans: 45
+  completed_plans: 45
   percent: 100
 ---
 
@@ -18,23 +18,23 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-17)
+See: .planning/PROJECT.md (updated 2026-10-18)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Planning the next milestone (/gsd-new-milestone)
+**Current focus:** Planning the next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: Milestone v0.6 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-10-17 — Milestone v0.6 completed and archived
+Milestone: v0.7 Initial Public Release and Strictness Selector — ✅ shipped 2026-10-18
+(Phases 36-42, 45 plans; archived to `milestones/v0.7-*`; squash-merged to `main`, tag `v0.7.0`).
+Status: Between milestones
+Last activity: 2026-10-18 -- v0.7 milestone complete
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 150 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
+- Total plans completed: 227 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30 · v0.7: 45)
 
 **By Milestone:**
 
@@ -46,6 +46,7 @@ Last activity: 2026-10-17 — Milestone v0.6 completed and archived
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
 | v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | 3 days |
+| v0.7 Initial Public Release and Strictness Selector | 7 | 45 | 261 | 2 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -86,10 +87,16 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 | Phase 33 P01 | 40min | 2 tasks | 5 files |
 | Phase 33 P02 | 50min | 2 tasks | 1 files |
 | Phase 33 P04 | 75min | 3 tasks | 2 files |
+| Phase 36 P07 | 40min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.7 roadmap created (2026-10-18): Phases 36-42 - per-user locations + embedded defaults, game
+  folder picker + refresh button, built-in styles + Strictness Selector + Reset to defaults (one fixture re-baseline), league + price
+  source, release pipeline + installer + PUB items (v0.7.0-rc dry run), Check for updates, Release
+  Review (last). Research flags: 37, 39, 40, 41. UI phases 36-39 and 41 carry UI hint: yes.
 
 - v0.6 roadmap created (2026-10-16): Phases 29-35 — workspace + ff-art from the root, skinned
   shell, RULES on the skin + add-at-top, dividers + economy banner, style table/editor + colour
@@ -195,6 +202,13 @@ work (carried forward past the v0.3 close):
 - [Phase 33]: 33-01: colour picker edits gamma HSV behind the linear Hsva interface; Hex field 72pt without caption to fit one line
 - [Phase 33]: 33-02: Preview column yields below the 110pt Name minimum so all columns end by width-10
 - [Phase 33]: 33-04: style editor lines are one id scope each; tile sizes adapt (14-24pt) so shape rows never wrap; reset_for_new_styles bumps the epoch to orphan pickers and None-memory
+- [Phase 36]: Isolation guard scans for locations::from_env (free function), not AppDirs::from_env
+- [Phase ?]: 38-04: SetStrictness clears stale messages only on a real change
+- [Phase 38-05] Reset buttons arm a popup; Reset is a pending edit (Revert undoes), expanded style row explicitly collapsed
+- [Phase 39]: 39-05: price-source marker is the effective-source comparison (OD-1); applied_policy moves on Apply and filter switch (A2)
+- 41-03: update_job carries #![allow(dead_code)] until wired in 41-04/41-05; begin_install failure messages use UTC offset 0
+- 41-04: update_job.rs keeps allow(dead_code) until 41-05 wires the install side
+- 41-05: pending_install slot set in OverlayApp::new (not a build parameter); installer spawned only after run_native returns
 
 ### Pending Todos
 
@@ -325,6 +339,18 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
 
 ## Deferred Items
 
+Items acknowledged and deferred at the **v0.7** close on 2026-10-18 (open-artifact audit; no milestone
+audit run, closed on the author's UAT: installer, the `v0.7.0-rc.1` release dry run and the numbered
+v0.7 check list, all passed; offline league refresh assumed pass):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Phase 41: 41-HUMAN-UAT.md / 41-MANUAL-VERIFICATION.md | partial; "Up to date" passed, the live download / install run needs a release newer than 0.7.0 |
+| uat | Phases 36-39: *-HUMAN-UAT.md | status passed (author results in phases/AUTONOMOUS-V07-DEFERRED.md); per-scenario lines not filled in |
+| verification | Phases 36-39, 41: *-VERIFICATION.md | human_needed; covered by the author's UAT, files not updated |
+| uat / verification | Phases 14, 16, 30-35 | carried from v0.5 / v0.6 (see below) |
+| backlog | 999.18 NVIDIA overlay treats `ff` as a game | open, in ROADMAP backlog |
+
 Items acknowledged and deferred at the **v0.6** close on 2026-10-17 (open-artifact audit; no milestone
 audit run, closed on the author's in-game UAT through the feedback rounds):
 
@@ -365,11 +391,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-16T18:17:21.821Z
-Stopped at: Milestone v0.6 complete and archived
-Resume file: none
-
-**Next step:** `/gsd-new-milestone`.
+Last session: 2026-10-18
+Stopped at: v0.7 milestone complete
+Resume file: None
 
 ## Operator Next Steps
 

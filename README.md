@@ -65,8 +65,7 @@ changes.
 
 Your settings live in `%APPDATA%\FerrisFilter` (created on the first
 save): `styles.json`, `tiers.json`, `prices.json` and
-`ff-settings.json`. Delete `styles.json` or `tiers.json` to go back to
-the defaults.
+`ff-settings.json`.
 
 ## Building
 
@@ -77,7 +76,8 @@ cargo build --release
 This produces `target/release/ff.exe`. `rust-toolchain.toml` selects
 the nightly channel.
 
-You can also get the pre-compiled binaries from the release tab.
+You can also get the pre-compiled binaries from the [release
+tab](https://github.com/Jonathas-Conceicao/ferris-filter/releases).
 
 ## References
 

@@ -12,6 +12,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-19
+
+### Changed
+
+- `ff.exe` links the C runtime statically, so it no longer needs the
+  Visual C++ Redistributable (`VCRUNTIME140.dll`) installed.
+
 ## [0.7.0] - 2026-10-18
 
 **Initial Public Release and Strictness Selector** — FerrisFilter
@@ -66,5 +73,6 @@ strictness selector and a league picker, and can check for updates.
 - Hovering a minimap icon in the style editor (Config tab and Custom
   rules) showed its tooltip twice.
 
-[Unreleased]: https://github.com/Jonathas-Conceicao/ferris-filter/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Jonathas-Conceicao/ferris-filter/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/Jonathas-Conceicao/ferris-filter/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Jonathas-Conceicao/ferris-filter/releases/tag/v0.7.0

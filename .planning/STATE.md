@@ -2,39 +2,39 @@
 gsd_state_version: 1.0
 milestone: v0.7
 milestone_name: Initial Public Release and Strictness Selector
-status: executing
-stopped_at: Phase 42 REV-01..REV-04 done (42-01..42-04); 42-05 (REV-05, author review of README and CHANGELOG) awaiting the author; 40-07 and 40-08 still deferred
-last_updated: "2026-10-18T22:00:00.000Z"
-last_activity: 2026-10-18 -- Phase 42 plans 42-01..42-04 executed; 42-05 awaits the author
+status: complete
+stopped_at: v0.7 milestone complete (shipped 2026-10-18)
+last_updated: "2026-10-18T23:30:00.000Z"
+last_activity: 2026-10-18 -- v0.7 milestone archived, squash-merged to main and tagged v0.7.0
 progress:
-  total_phases: 24
-  completed_phases: 5
+  total_phases: 7
+  completed_phases: 7
   total_plans: 45
-  completed_plans: 42
-  percent: 21
+  completed_plans: 45
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-17)
+See: .planning/PROJECT.md (updated 2026-10-18)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 42 — release-review
+**Current focus:** Planning the next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: 42 (release-review) — 4/5 plans executed; not complete
-Plan: 42-01 (code cleanup), 42-02 (README screenshots + facts), 42-03 (version 0.7.0 + CHANGELOG 0.7.0 draft) and 42-04 (CLAUDE.md pass + ROADMAP Phase 40 wording) are done (REV-01..REV-04); code review clean after 2 iterations (42-REVIEW-FIX.md). 42-05 (REV-05: the author reviews and rewrites README.md and the 0.7.0 CHANGELOG section, then confirms) is a human checkpoint awaiting the author; Phase 42 is not marked complete until then. Phase 40 plans 40-07 (installer UAT) and 40-08 (the v0.7.0-rc.1 tag push, on commit c560333) stay deferred, as do Phase 41's live update checks (41-MANUAL-VERIFICATION.md, 41-HUMAN-UAT.md).
-Status: Awaiting the author (REV-05, 40-07, 40-08)
-Last activity: 2026-10-18 -- Phase 42 REV-01..REV-04 executed; REV-05 awaiting the author
+Milestone: v0.7 Initial Public Release and Strictness Selector — ✅ shipped 2026-10-18
+(Phases 36-42, 45 plans; archived to `milestones/v0.7-*`; squash-merged to `main`, tag `v0.7.0`).
+Status: Between milestones
+Last activity: 2026-10-18 -- v0.7 milestone complete
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 182 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30)
+- Total plans completed: 227 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30 · v0.7: 45)
 
 **By Milestone:**
 
@@ -46,6 +46,7 @@ Last activity: 2026-10-18 -- Phase 42 REV-01..REV-04 executed; REV-05 awaiting t
 | v0.4 Overlay Filter Editor Rework | 5 | 16 | 146 | 14 days |
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
 | v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | 3 days |
+| v0.7 Initial Public Release and Strictness Selector | 7 | 45 | 261 | 2 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -338,6 +339,18 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
 
 ## Deferred Items
 
+Items acknowledged and deferred at the **v0.7** close on 2026-10-18 (open-artifact audit; no milestone
+audit run, closed on the author's UAT: installer, the `v0.7.0-rc.1` release dry run and the numbered
+v0.7 check list, all passed; offline league refresh assumed pass):
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat | Phase 41: 41-HUMAN-UAT.md / 41-MANUAL-VERIFICATION.md | partial; "Up to date" passed, the live download / install run needs a release newer than 0.7.0 |
+| uat | Phases 36-39: *-HUMAN-UAT.md | status passed (author results in phases/AUTONOMOUS-V07-DEFERRED.md); per-scenario lines not filled in |
+| verification | Phases 36-39, 41: *-VERIFICATION.md | human_needed; covered by the author's UAT, files not updated |
+| uat / verification | Phases 14, 16, 30-35 | carried from v0.5 / v0.6 (see below) |
+| backlog | 999.18 NVIDIA overlay treats `ff` as a game | open, in ROADMAP backlog |
+
 Items acknowledged and deferred at the **v0.6** close on 2026-10-17 (open-artifact audit; no milestone
 audit run, closed on the author's in-game UAT through the feedback rounds):
 
@@ -378,12 +391,10 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18T14:15:26.008Z
-Stopped at: Completed 41-05-PLAN.md
+Last session: 2026-10-18
+Stopped at: v0.7 milestone complete
 Resume file: None
-
-**Next step:** Phase 41. At the end of the milestone run 40-07 (Inno Setup + installer UAT), then 40-08 (v0.7.0-rc.1 tag).
 
 ## Operator Next Steps
 
-- Plan Phase 36 with /gsd-plan-phase 36
+- Start the next milestone with /gsd-new-milestone

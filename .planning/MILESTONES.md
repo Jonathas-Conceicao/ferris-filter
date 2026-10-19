@@ -1,5 +1,39 @@
 # Milestones
 
+## v0.7 — Initial Public Release and Strictness Selector
+
+**Shipped:** 2026-10-18
+**Phases:** 36-42 (7) · **Plans:** 45 · **Commits:** 261
+**Timeline:** 2026-10-17 → 2026-10-18 · **Code:** ~82,800 lines Rust (+12,860/-957 in src/tests/tools)
+
+**Delivered:** the first public release: FerrisFilter installs per user from a Windows installer
+(or a portable zip) published by a tag-triggered GitHub workflow, keeps its files in one per-user
+folder, and gains an Economy Visibility preset, a league picker, fallback prices and an update check.
+
+**Key accomplishments:**
+
+1. **Per-user folder, built-in defaults** — styles, tiers, settings and prices in
+   `%APPDATA%\FerrisFilter` (`FERRISFILTER_HOME` overrides); every default compiled into the exe;
+   tests and screenshot mode can never touch the real folders.
+2. **Game folder picker** — default from the OS Documents folder (OneDrive / localized), Browse on
+   the Config tab, the game's reload button re-listing filters and sounds.
+3. **Economy Visibility and Reset to defaults** — seven exclusive levels over the S-F styles'
+   visibility (Custom for hand edits); Reset for styles and tiers; only the nine required built-ins
+   ship.
+4. **League picker and Live / Fallback prices** — poe.ninja's league list with an ended-league
+   warning; Fallback greys Sync and the Tiers editor and prices the economy section from the
+   built-in pair.
+5. **Release pipeline and installer** — `release.yml` on `vX.Y.Z` tags checks the version and
+   CHANGELOG, tests, builds and publishes the per-user Inno Setup installer, zip and checksums;
+   dry-run as `v0.7.0-rc.1` (since deleted).
+6. **Check for updates** — the About tab finds a newer GitHub release, downloads and hash-checks its
+   installer and hands off through the normal Quit path; version 0.7.0, CHANGELOG restarted at 0.7.0.
+
+**Audit:** none run; closed on the author's UAT.
+
+**Known deferred items at close:** 6 (see STATE.md Deferred Items) — mainly the live update-check
+run, which needs a release newer than 0.7.0.
+
 ## v0.6 — New PoE2-based Tool UI
 
 **Shipped:** 2026-10-17

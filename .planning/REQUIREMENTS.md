@@ -85,28 +85,28 @@
 
 ### Release pipeline (REL)
 
-- [ ] **REL-01**: Pushing a version tag runs the tests and the release build and produces the
+- [x] **REL-01**: Pushing a version tag runs the tests and the release build and produces the
   installer, a portable zip and `SHA256SUMS.txt`.
 
-- [ ] **REL-02**: The workflow fails when the tag differs from the `Cargo.toml` version or the
+- [x] **REL-02**: The workflow fails when the tag differs from the `Cargo.toml` version or the
   version's CHANGELOG section is missing or empty.
 
-- [ ] **REL-03**: A GitHub Release is created with that CHANGELOG section as its notes, kept a
+- [x] **REL-03**: A GitHub Release is created with that CHANGELOG section as its notes, kept a
   draft until every asset is uploaded, then published by the workflow.
 
-- [ ] **REL-04**: Workflows run on version tags and pull requests only, on the project's floating nightly toolchain (the author accepts the risk); a release is published automatically once every asset is uploaded.
-- [ ] **REL-05**: Tags are `vX.Y.Z` from `v0.7.0` on; the milestone close-out check is updated.
+- [x] **REL-04**: Workflows run on version tags and pull requests only, on the project's floating nightly toolchain (the author accepts the risk); a release is published automatically once every asset is uploaded.
+- [x] **REL-05**: Tags are `vX.Y.Z` from `v0.7.0` on; the milestone close-out check is updated.
 - [x] **REL-06**: The release profile is optimised (`lto = "fat"`, `codegen-units = 1`,
   `strip = true`). Done at milestone start.
 
 ### Installer (INST)
 
-- [ ] **INST-02**: A per-user installer (no admin prompt) that installs only the `ff` overlay (the
+- [x] **INST-02**: A per-user installer (no admin prompt) that installs only the `ff` overlay (the
   CLIs are dev tools and are not shipped in it), creates the config folder, adds a Start menu entry
   for FerrisFilter and an uninstaller.
 
-- [ ] **INST-03**: Uninstalling keeps the user's config folder.
-- [ ] **INST-04**: Installing over a running `ff` closes it first and keeps the settings.
+- [x] **INST-03**: Uninstalling keeps the user's config folder.
+- [x] **INST-04**: Installing over a running `ff` closes it first and keeps the settings.
 
 ### Check for updates (UPD)
 
@@ -121,10 +121,10 @@
 
 ### Public release (PUB)
 
-- [ ] **PUB-01**: `assets/README.md` records the decision to ship the GGG art and Fontin fonts,
+- [x] **PUB-01**: `assets/README.md` records the decision to ship the GGG art and Fontin fonts,
   credited and compiled into the binary (no asset files in the install or config folders).
 
-- [ ] **PUB-02**: One public repo name, `Jonathas-Conceicao/ferris-filter`, is used everywhere
+- [x] **PUB-02**: One public repo name, `Jonathas-Conceicao/ferris-filter`, is used everywhere
   (`Cargo.toml`, HTTP user agent, updater).
 
 ### Reset to defaults (RESET)
@@ -147,7 +147,7 @@
 - [x] **REV-02**: README screenshots refreshed where screens changed.
 - [x] **REV-03**: `Cargo.toml` version set to `0.7.0`.
 - [x] **REV-04**: A `CHANGELOG.md` draft for `0.7.0` from the net changes since v0.6.
-- [ ] **REV-05**: The author's review and rewrite of `README.md` and `CHANGELOG.md` closes the
+- [x] **REV-05**: The author's review and rewrite of `README.md` and `CHANGELOG.md` closes the
   milestone.
 
 ## Future Requirements
@@ -203,17 +203,17 @@
 | LEAGUE-03 | Phase 39 | Complete |
 | LEAGUE-04 | Phase 39 | Complete |
 | LEAGUE-05 | Phase 39 | Complete |
-| REL-01 | Phase 40 | Pending |
-| REL-02 | Phase 40 | Pending |
-| REL-03 | Phase 40 | Pending |
-| REL-04 | Phase 40 | Pending |
-| REL-05 | Phase 40 | Pending |
+| REL-01 | Phase 40 | Complete |
+| REL-02 | Phase 40 | Complete |
+| REL-03 | Phase 40 | Complete |
+| REL-04 | Phase 40 | Complete |
+| REL-05 | Phase 40 | Complete |
 | REL-06 | Phase 40 | Complete |
-| INST-02 | Phase 40 | Pending |
-| INST-03 | Phase 40 | Pending |
-| INST-04 | Phase 40 | Pending |
-| PUB-01 | Phase 40 | Pending |
-| PUB-02 | Phase 40 | Pending |
+| INST-02 | Phase 40 | Complete |
+| INST-03 | Phase 40 | Complete |
+| INST-04 | Phase 40 | Complete |
+| PUB-01 | Phase 40 | Complete |
+| PUB-02 | Phase 40 | Complete |
 | UPD-01 | Phase 41 | Complete |
 | UPD-02 | Phase 41 | Complete |
 | UPD-03 | Phase 41 | Complete |
@@ -221,7 +221,7 @@
 | REV-02 | Phase 42 | Complete |
 | REV-03 | Phase 42 | Complete |
 | REV-04 | Phase 42 | Complete |
-| REV-05 | Phase 42 | Pending |
+| REV-05 | Phase 42 | Complete |
 
 **Coverage:** 45/45 v0.7 requirements mapped, no orphans, no duplicates.
 

@@ -2,45 +2,37 @@
 
 ## What This Is
 
-FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a human-editable configuration into a working `.filter` and fetches live item prices from poe.ninja so highlight tiers are driven by real economy values. Its overlay, `ff`, is drawn in Path of Exile 2's own UI style beside the running game and edits any working PoE2 filter in place — its own output or a FilterBlade / NeverSink / hand-written one — losslessly, with named styles, tier cutoffs and a regenerable economy section configurable from the overlay.
+FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a human-editable configuration into a working `.filter` and fetches live item prices from poe.ninja so highlight tiers are driven by real economy values. Its overlay, `ff`, is drawn in Path of Exile 2's own UI style beside the running game and edits any working PoE2 filter in place — its own output or a FilterBlade / NeverSink / hand-written one — losslessly, with named styles, tier cutoffs and a regenerable economy section configurable from the overlay. Since v0.7 it is a public release: a per-user Windows installer and a portable zip published by a tag-triggered GitHub workflow, with an economy visibility (strictness) preset, a league picker and fallback prices for players other than the author.
 
 ## Core Value
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Current Milestone: v0.7 Initial Public Release and Strictness Selector
+## Next Milestone
+
+Not started; run `/gsd-new-milestone`. Candidates: the Deferred list below and the ROADMAP
+backlog (999.3 online filter publishing, 999.4 economy change summary, 999.18 NVIDIA overlay).
+
+<details>
+<summary>✅ v0.7 Initial Public Release and Strictness Selector — SHIPPED 2026-10-18</summary>
 
 **Goal:** Ship FerrisFilter as a public tool anyone can download, install and use, and add the
 first features aimed at players other than the author: a strictness preset, a league picker and
 fallback prices.
 
-**Target features:**
-- **Release pipeline:** a GitHub Actions workflow on `v*` tags builds, runs the tests, produces the
-  installer and a zip, and publishes a GitHub Release whose notes are that version's
-  `CHANGELOG.md` section.
-- **Windows installer:** a basic installer with a Start menu entry for the `ff` overlay.
-- **Per-user config location:** styles, tiers, settings and synced prices in one per-user folder
-  (`%APPDATA%\FerrisFilter`, `~/.config/ferrisfilter`); the defaults are built into the exe;
-  `FERRISFILTER_HOME` still overrides. Path handling stays cross-platform; Windows is the shipped
-  target. The installer ships only the `ff` overlay; the CLIs are dev tools.
-- **Game folder picker:** the Config tab picks the game folder holding the filters. The default is
-  the Windows Documents folder + `My Games\Path of Exile 2` (resolved through the OS, so OneDrive
-  and localized Documents folders work).
-- **Built-in style rework:** a revised `styles-default.json` (details from the author before
-  planning); built-in styles no longer use custom sound files.
-- **Strictness Selector (Config tab):** one row of exclusive buttons, `Custom | Flat Broke |
-  Scrounging | Getting By | Comfy | Loaded | Div Farmer`, hiding nothing, then F, E-F, D-F, C-F,
-  B-F of the built-in tier styles. The selection is derived from the S-F styles' visibility;
-  a hand edit of that visibility shows Custom.
-- **League and price source (Economy tab):** pick the league from poe.ninja's current list
-  (replacing the pinned `sync::OVERLAY_LEAGUE`) or price with the committed fallback pair
-  (recommended for league start / non-trade players), which disables Sync economy. Backlog 999.17.
-- **Check for updates (About tab):** asks GitHub Releases for a newer version and either downloads
-  the installer and offers to run it, or says the tool is up to date.
-- **Release Review** closing phase (PROJECT.md → Milestone Close-out).
+Delivered: one per-user folder (`%APPDATA%\FerrisFilter`) with every default built into the exe;
+the game folder from the OS Documents folder with a Browse picker and the game's reload button;
+the built-in styles cut to the nine required ones, an Economy Visibility row of seven levels and
+Reset to defaults for styles and tiers; a poe.ninja league picker and a Live / Fallback price
+source; a tag-triggered release workflow publishing a per-user Inno Setup installer, a portable
+zip and checksums (dry-run as `v0.7.0-rc.1`); Check for updates on the About tab; version 0.7.0
+and a CHANGELOG restarted at 0.7.0.
 
-**Out of scope:** code signing (an unsigned installer shows a SmartScreen warning), Linux/macOS
-builds of the overlay.
+**Audit:** none run; closed on the author's UAT. Archives:
+[v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md) ·
+[v0.7-REQUIREMENTS.md](milestones/v0.7-REQUIREMENTS.md)
+
+</details>
 
 <details>
 <summary>✅ v0.6 New PoE2-based Tool UI — SHIPPED 2026-10-17</summary>
@@ -103,7 +95,16 @@ See Current State below and [v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md).
 
 ## Current State
 
-**Shipped:** v0.6 New PoE2-based Tool UI (2026-10-17) — `ff` is now drawn with Path of Exile 2's
+**Shipped:** v0.7 Initial Public Release and Strictness Selector (2026-10-18), the first public
+release. `ff` installs per user from `FerrisFilter-0.7.0-setup.exe` (or runs from the portable
+zip), keeps styles, tiers, settings and prices in `%APPDATA%\FerrisFilter` (`FERRISFILTER_HOME`
+overrides) and needs no files beside the exe. Config adds the game folder picker and the Economy
+Visibility row (Flat Broke … Div Farmer, Custom for hand edits) plus Reset to defaults; Economy adds
+the league picker and Live / Fallback prices; About checks GitHub for a newer release and hands off
+to its verified installer. Only the nine required built-in styles ship. Releases come from
+`release.yml` on `vX.Y.Z` tags. ~82,800 LOC Rust; package version 0.7.0.
+
+**Prior:** v0.6 New PoE2-based Tool UI (2026-10-17) — `ff` is now drawn with Path of Exile 2's
 own UI art (extracted locally by the `ff-art` dev tool; GGG's art, credited, replaced if they
 object): a 660pt window docked to the game's monitor, RULES / CONFIG / ECONOMY / ABOUT tabs, one
 status line beside Revert / Reload / Apply. Filters can be split into collapsible `# ff:section`
@@ -143,11 +144,12 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** not started; candidates under Next Milestone Goals above.
+**Next milestone:** not started; candidates under Next Milestone above.
 
-**Open at close (v0.6):** no blockers. Deferred: the HUMAN-UAT / VERIFICATION files of phases
-30-35 (walked by hand, not updated; STATE.md Deferred Items). Full suite green at tag `v0.6`;
-`cargo fmt` clean; clippy at its 121-warning baseline.
+**Open at close (v0.7):** no blockers. Deferred: the live Check for updates run (needs a release
+newer than 0.7.0), the VERIFICATION files left `human_needed` and older HUMAN-UAT files (STATE.md
+Deferred Items); backlog 999.18 (the NVIDIA overlay treats `ff` as a game). Clippy warnings in
+untouched code remain (`result_large_err` and others).
 
 ## Requirements
 
@@ -183,22 +185,26 @@ band logic with a declarative `rules` schema, making the full in-game filter rep
 - [x] **Style table and line-by-line style editor**, shared with Custom rule styling. *(Validated in Phase 33 and quick qi7 / 0wl — STY, v0.6)*
 - [x] **ECONOMY and ABOUT tabs; prototype retired; one workspace with `ff-art` from the root.** *(Validated in Phases 29, 34-35 — WS, ECO, ABOUT, CLEAN, v0.6)*
 
+- [x] **Per-user folder and built-in defaults** — one `%APPDATA%\FerrisFilter` folder, every shipped data file compiled into the exe, tests and screenshot mode isolated from the real folders. *(Validated in Phase 36 — LOC, v0.7)*
+- [x] **Game folder picker** — Documents-based default, Browse on the Config tab, the game's reload button re-listing filters and sounds. *(Validated in Phase 37 — GAME, v0.7)*
+- [x] **Economy Visibility (strictness) and Reset to defaults**; only the nine required built-in styles ship. *(Validated in Phase 38 — BSTY, STRICT, RESET, FIX, v0.7)*
+- [x] **League picker and Live / Fallback price source.** *(Validated in Phase 39 — LEAGUE, v0.7)*
+- [x] **Public release** — tag-triggered release workflow, per-user installer, portable zip, checksums, one public repo name. *(Validated in Phase 40 — REL, INST, PUB, v0.7)*
+- [x] **Check for updates** on the About tab. *(Validated in Phase 41 — UPD, v0.7)*
+
 ### Active
 
-v0.7 requirements: see `.planning/REQUIREMENTS.md`.
+None until the next milestone defines them.
 
 ### Deferred (next-milestone candidates)
 
-- [ ] **v0.5 tech debt** (audit W1-W4): CLI `sync`/`generate`/`install` resolve against the
-  working directory while `apply`/`ff` use the app root; CLI `apply` does not rewrite styled rules;
-  CONFIG tier edits have no effect while fallback prices are in use; class picker disabled when
-  `config.json`/`styles.json` is invalid.
-- [ ] **Overlay robustness** (carried from the v0.4 close; launch-by-double-click and the
-  `dynamic.json` items were resolved in v0.5):
-  - Surface `price_source` in the stripe, so a fallback-priced Apply is not silent
-  - A destination override in the GUI, matching the CLI's `--dest`
-  - A league picker, replacing the pinned `sync::OVERLAY_LEAGUE`
-  - A SIGTERM/Ctrl+C console-control handler so `ff` can be stopped from a terminal
+- [ ] **v0.5 tech debt** (audit W1-W2): CLI `generate`/`install` resolve against the working
+  directory while `apply`/`sync`/`ff` use the FerrisFilter folder; CLI `apply` does not rewrite
+  styled rules; class picker disabled when `config.json`/`styles.json` is invalid.
+- [ ] **`generate` without a live `styles.json`** fails on the author's custom styles that
+  `config.json` still names (`Recycle`, `kite`, `exceptional`).
+- [ ] A SIGTERM/Ctrl+C console-control handler so `ff` can be stopped from a terminal.
+- [ ] Code signing for the installer (SmartScreen warning today).
 
 - [ ] **BaseType-matched, economy-tiered priced category** (e.g. Tablets): support a priced category that emits `BaseType ==` with **no `Class` line** (tablets have no usable PoE2 filter class). Needs a `Tablets` type in `mapping.json` (spike: confirm poe.ninja serves tablet prices), pricer/emitter support for class-less category blocks, and corrected base names (`Ritual Tablet`/`Abyss Tablet`/…, no "Precursor"). Tablets currently fall through to game default after the v0.2 removal of the invalid `Class "Tablet"` rows.
 - [ ] Generate QoL: `--dry-run`, `--diff`, `-v/--verbose` rule logging, stale-`prices.json` warning (GENX-01..04)
@@ -214,6 +220,9 @@ v0.7 requirements: see `.planning/REQUIREMENTS.md`.
   reasoning held right up until the CLI's real limitation showed itself — a filter cannot be edited
   while the game is running without leaving the game. A web interface remains out of scope
 - ~~Auto-installing into the game folder~~ — **shipped in v0.1** as the `install` subcommand (copy-only; `install.bat` removed)
+- Linux / macOS overlay builds — Windows is the shipped target; path code stays cross-platform
+- Update checks at start-up or on a timer, and in-place exe swaps — on demand only, through the installer
+- The CLIs in the installer — `ff-cli` / `ferrisfilter` are dev tools
 
 ## Context
 
@@ -270,8 +279,14 @@ v0.7 requirements: see `.planning/REQUIREMENTS.md`.
 | One style editor for CONFIG styles and Custom rule styling | Same controls, same file semantics; no second editor to keep in step | ✓ Good (v0.6) |
 | Economy blocks carry `# ff:name` / `# ff:style` only in the game-folder section | Economy rules read like any other rule in `ff`; `generate` output and fixtures stay byte-identical | ✓ Good (v0.6) |
 | Package version tracks milestone tags (0.6.0 at v0.6) | Version shown on ABOUT matches the tag | ✓ Good (v0.6) |
-| Overlay league pinned in `sync::OVERLAY_LEAGUE` | poe.ninja's `indexed` flag flips between leagues | ⚠️ Revisit (league picker) |
-| Milestones are atomic; each ends with a Release Review phase | README and CHANGELOG are read by people and mostly written by the author; bugs made and fixed inside a milestone never ship | — Pending (first applied in v0.7) |
+| Overlay league pinned in `sync::OVERLAY_LEAGUE` | poe.ninja's `indexed` flag flips between leagues | ✓ Replaced in v0.7 by the league picker (default: first softcore non-Standard league, `indexed` ignored) |
+| Milestones are atomic; each ends with a Release Review phase | README and CHANGELOG are read by people and mostly written by the author; bugs made and fixed inside a milestone never ship | ✓ Good (v0.7) |
+| One per-user folder, defaults compiled into the exe, no walk-up from the exe | An installed exe needs no files beside it; tests and screenshot mode can't hit real folders | ✓ Good (v0.7) |
+| Strictness as a derived view of the S-F visibility (Custom when it matches no level) | No new stored state; hand edits stay the truth | ✓ Good (v0.7) |
+| Price-source switch saved at once, unapplied until Apply, not undone by Revert | Same as the league pick; the author kept it at UAT | ✓ Good (v0.7) |
+| Release workflow drafts, then auto-publishes once every asset is uploaded; tag must equal `v` + Cargo version | No half-published releases; no manual step | ✓ Good (v0.7, rc dry run) |
+| Inno Setup per-user installer, `ff.exe` + `LICENSE.txt` only, fixed AppId | No admin prompt; the CLIs are dev tools | ✓ Good (v0.7) |
+| CHANGELOG starts at 0.7.0, the first public release; README/CHANGELOG wrap at 70 chars | Earlier sections described a pre-public tool; they stay in git history | ✓ Good (v0.7) |
 
 ## Git Workflow
 
@@ -342,4 +357,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-17 at the start of the v0.7 milestone*
+*Last updated: 2026-10-18 after the v0.7 milestone*

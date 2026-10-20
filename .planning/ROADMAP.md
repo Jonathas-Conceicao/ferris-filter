@@ -504,3 +504,74 @@ Raised by the author on 2026-10-20.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.23: Section headers in the game's Social-panel style (BACKLOG)
+
+**Goal:** Redraw the RULES tab section headers (`draw_section_header` in
+`src/overlay/rule_list.rs`, today a flat 36pt `pal::PANEL` row with 1px `INPUT_BORDER` lines and a
+chevron) to match the collapsible groups of the game's **Social → Friends** panel (`Self`,
+`Online`, `Invitations Received`, `Offline`). Raised by the author on 2026-10-20 from an in-game
+screenshot (crops in `.planning/research/ui-refs/social-*.png`; the full shot was
+`Downloads/poe2_print014.png`, 1920x1080).
+
+**The game's design (measured at 1920x1080):**
+- Each group is a ~36px bar with ~3px dark gap between bars (39px pitch); FerrisFilter's 36pt
+  header already matches the height.
+- **Toggle button** at the far left, separate from the bar: a ~30px square plate, dark with a warm
+  gold gradient towards the bottom and a thin rounded bronze frame. The glyph is a pale cream
+  chevron plus a dot: **chevron up above the dot = expanded**, **dot above a chevron down =
+  collapsed**. (This is the reverse of the usual "down = open" chevron; follow the game.)
+- **Bar:** a dark stone texture with faint ornate swirls on the left end, a thin bronze outline,
+  and a darker inset. Title centred as `- 19 Offline -`: the count in pale white, the name in muted
+  grey-beige (SmallCaps), dashes either side.
+- The scrollbar to the right is the game scrollbar FerrisFilter already uses.
+
+**What to take:** the button plate and its two glyph states, and the bar texture / frame. **What
+to keep:** the title stays left-aligned (FerrisFilter shows `{n} rules` and controls on the
+right, unlike the game's centred title), and the existing rename pencil, up / down arrows, remove
+x and the economy padlock stay on the right of the bar. The whole bar stays clickable to toggle.
+
+**Art:** look for the Social panel textures with `ff-art list` (likely under
+`Art/Textures/Interface/2D/2DArt/UIImages/InGame/` near the social / friends art), add
+`[[image]]` entries to `assets/poe2/manifest.toml`, and paint the bar as a three-slice like the
+tabs. Fall back to painting the plate and glyph if the art cannot be found.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.24: Clear (X) button inside search fields (BACKLOG)
+
+**Goal:** Search fields get the game's round clear button, as in the Social panel's
+`Filter Friends:` field (crop `.planning/research/ui-refs/social-search-fields.png`): a cream disc
+with a dark X, inside the right end of the field, shown while the field has text; a click empties
+it (same effect as Escape today in the RULES toolbar) and keeps focus. Applies to the RULES search
+box (`Search N rules, classes, base types…`) and the **+ condition** picker's search. The field
+style itself is the game's too: black fill, thin bronze border, italic grey placeholder. Raised by
+the author on 2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.25: Magnifying-glass icon on search fields (BACKLOG)
+
+**Goal:** Mark search fields with the game's magnifying-glass glyph (cream outline lens and
+handle), as beside the Social panel's `Friend Invite:` field (crop
+`.planning/research/ui-refs/social-search-fields.png`). In the game it sits outside the field as a
+button; for FerrisFilter it is a decoration, so the likely placement is a small leading glyph
+inside the field, as the game does with the chat-bubble icon in the status message field
+(`social-status-field.png`), leaving the right end for 999.24's clear button. Same fields as
+999.24. Extract the glyph with `ff-art` if it exists as its own texture. Raised by the author on
+2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

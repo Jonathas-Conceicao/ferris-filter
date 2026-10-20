@@ -575,3 +575,45 @@ inside the field, as the game does with the chat-bubble icon in the status messa
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.26: Drag-and-drop reordering replaces the up/down arrows (BACKLOG)
+
+**Goal:** Reorder rules (RULES tab) and custom styles (CONFIG tab Custom table) by dragging
+instead of the up / down arrows, which go away. Raised by the author on 2026-10-20. This is the
+drag-and-drop route of 999.16; 999.16 keeps its other ideas (move to top / bottom, into a named
+section, where + Add rule inserts).
+
+**Interaction:**
+- A **drag handle** button sits where the Order arrows are today (rule rows, style rows). The art
+  is drawn by the author when this is implemented (a new Aseprite file in `assets/custom/`, like
+  `titlebar.ase`); until then use a placeholder.
+- Pressing the handle starts a drag: the row stays in place but is greyed out, and a translucent
+  "shadow" copy of the row follows the cursor.
+- While dragging, a drop marker (a line between rows) shows where the row would land.
+- Releasing over a valid position moves the row there as **one edit**, held until Apply and undone
+  by Revert, like the arrows today. Releasing outside the list, or pressing Escape, cancels.
+- **Scrolling while dragging:** the mouse wheel scrolls the list, and holding the shadow near the
+  top or bottom edge auto-scrolls (faster closer to the edge), so a row can travel across a ~500
+  rule list.
+
+**Rules to keep from the arrows:**
+- A grouped rule (`# ff:group` run) moves as one unit.
+- Dropping across a Continue rule flags `moved across Continue`.
+- Dropping past a section banner puts the rule in that section (the arrows hop one divider at a
+  time today).
+- Nothing can be dropped into or below the locked economy section, and economy rows have no
+  handle.
+- Dragging is disabled while searching, as the arrows are. Custom styles never land above the
+  built-ins; built-in styles have no handle.
+- Works with the virtualized list (rows outside the viewport are not drawn) and with an expanded
+  row (likely: collapse it, or drag it by its header).
+
+**Open points:** whether section headers get a handle too (moving a whole section with its rules,
+versus today's arrows that move only the divider), keyboard reordering for accessibility once the
+arrows are gone, and the handle's hit size.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

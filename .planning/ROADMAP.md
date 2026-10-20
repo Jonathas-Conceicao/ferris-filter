@@ -442,3 +442,65 @@ explicit tool. Raised by the author on 2026-10-20.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.21: Crash log for the overlay (BACKLOG)
+
+**Goal:** When `ff` dies, leave a file that says why. Raised by the author on 2026-10-20 after a
+release `ff` vanished between two hotkey presses (relaunching worked and it ran fine afterwards);
+nothing was left to investigate. Always on, no flag needed.
+
+**Findings (2026-10-20):** Windows recorded no Application Error / WER event (IDs 1000-1002) for
+`ff.exe` in the previous 14 days. That fits a Rust panic: a panic unwinds and exits quietly (no
+WER report), and the release build is a GUI-subsystem exe, so the panic message on stderr goes
+nowhere. A native fault (access violation, stack overflow, abort) would normally show in WER.
+
+**Scope:**
+- **Where:** `%LOCALAPPDATA%\FerrisFilter\logs\` (local, not the roaming `%APPDATA%` folder; not
+  `%TEMP%`, which Disk Cleanup and Storage Sense empty). Keep the last few crash files.
+- **Panics (main and worker threads):** a `std::panic::set_hook` writing timestamp, version (the
+  About tab's `build_info` string), OS version, thread name, panic message and source location,
+  and a backtrace. A worker-thread panic today only ends that thread; log it too.
+- **Native crashes:** an unhandled-exception filter writing a minidump (`MiniDumpWriteDump`, or a
+  crate such as `minidumper` / `crash-handler`). WER `LocalDumps` is not an option: its key is
+  under HKLM and the per-user installer has no admin rights.
+- **Symbols:** release builds use `strip = true`, so backtraces have no names. Either keep line
+  tables and publish the `.pdb` as a release asset (not in the installer), or at least record
+  module base and offsets so a dump can be symbolized later.
+- **Silent exits:** a "running" marker file written at start and removed on a clean Quit; if it is
+  still there at the next launch, the previous session ended unexpectedly (killed, crash the hooks
+  missed). Then say so once on the status line, with the logs folder.
+- **Context:** the crash file includes the last ~200 lines of the in-memory log buffer from 999.22,
+  even when file logging is off.
+- **Entry point:** an "Open logs folder" link (About tab) so a user can send the file.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.22: Optional general log, enabled by a flag on `ff` (BACKLOG)
+
+**Goal:** An opt-in run log to trace problems like 999.21's disappearing window. Off by default;
+turned on with a flag on the `ff` binary (e.g. `ff --log [error|warn|info|debug]`, which a user
+can add to the Start menu shortcut), possibly also an environment variable such as `FF_LOG`.
+Raised by the author on 2026-10-20.
+
+**Scope:**
+- A logging facade (`log` or `tracing`) replacing the ~39 non-test `eprintln!` calls, which a
+  release build drops today (no console).
+- Writes to the same `%LOCALAPPDATA%\FerrisFilter\logs\` folder as 999.21, one file per session,
+  with rotation (keep the last few sessions and cap the size).
+- Worth logging: start-up (version, folders, settings warnings), single-instance hand-offs, hotkey
+  registration and each summon / hide, tray events, Apply / Revert / Reload outcomes, in-game reload
+  steps, sync and league fetches, update checks, and every error shown on the status line.
+- An in-memory ring buffer of recent lines is kept even with the flag off, so 999.21's crash file
+  has context. Never log credentials or full clipboard contents.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

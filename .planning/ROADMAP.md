@@ -407,3 +407,19 @@ database.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.19: Customizable show/hide hotkey (BACKLOG)
+
+**Goal:** Let the user change the system-wide shortcut that summons and hides the overlay, today
+hardcoded to `Ctrl+Shift+Z` (`TOGGLE_MODIFIERS` / `TOGGLE_CODE` in `src/overlay/hotkey.rs`). A
+natural home is the Config tab (a "press the new shortcut" capture control), saved in
+`ff-settings.json` and re-registered at once without a restart. Keep the current behaviour: the
+hotkey only acts while Path of Exile 2 or the overlay is the foreground window, a conflict with
+another app is reported (as the tray tooltip does now), and an invalid or unusable saved value
+falls back to `Ctrl+Shift+Z` with a warning. Raised by the author on 2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

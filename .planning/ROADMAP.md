@@ -423,3 +423,22 @@ falls back to `Ctrl+Shift+Z` with a warning. Raised by the author on 2026-10-20.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.20: Throttle server requests to once per hour (BACKLOG)
+
+**Goal:** Each kind of server request the overlay makes is sent at most once per hour, however
+often the user clicks. A click inside the hour does not reach the server: it "fake-refreshes",
+running the normal flow and outcome from the last result, so it looks the same as a real refresh.
+Applies to the overlay's three network actions: **Sync economy** (poe.ninja exchange + unique
+overviews; the hour is per league, so picking another league still syncs), the **League** list
+refresh (poe.ninja `index-state`) and **Check for updates** (GitHub `releases/latest`). A failed
+request does not start the hour, so a retry after an error goes out. Open points: whether the
+last-request times survive a restart (e.g. in `ff-settings.json`, or the `prices.json` timestamp
+for Sync), and whether the CLI (`ff-cli sync`, `sync metadata`) is throttled too or left as an
+explicit tool. Raised by the author on 2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

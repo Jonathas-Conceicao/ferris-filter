@@ -617,3 +617,66 @@ arrows are gone, and the handle's hit size.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.27: Price range in economy rule names (BACKLOG)
+
+**Goal:** Economy rule names say what the tier is worth, so the economy section teaches the
+tiers at a glance, e.g. `E tier Essences < 2 chaos` instead of `E tier Essences`. Raised by the
+author on 2026-10-21. The name is the `# ff:name` line written by `src/emitter.rs` (today
+`"{tier} tier {category}"`), which the RULES tab shows (in full on hover when the row cuts it).
+
+**Details:**
+- `tiers.json` holds only each tier's floor (`min`), so a tier covers `[its min, next tier's
+  min)`. Show the **upper bound** (`E tier Essences < 2 chaos`); the top tier, which has none,
+  shows its **lower bound** (`S tier Currency ≥ 30 chaos`, or `>=` if the glyph is a problem in
+  the filter file or the font).
+- Use the tiers' own unit (`chaos` for live tiers, `exalt` for the fallback pair) and a short
+  number format (`0.5`, `2`, `12`, no trailing zeros).
+- Covers the price-tiered unique blocks too (`A tier Uniques < 30 chaos`).
+- Names follow the pending tiers: a cutoff edit on the Economy tab renames the staged economy
+  rows like it re-prices them. Only the economy section changes; `generate` output has no
+  `# ff:name` lines.
+- Check what reads these names back (search, the RULES row, any code matching `tier <Group>`) and
+  update the economy-section tests / snapshots.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.28: Developer review of the tracked economy item list (BACKLOG)
+
+**Goal:** A repeatable **developer** review (not a user feature) of which items the economy
+section prices, so items that go missing, or appear, are noticed and decided on instead of
+silently dropping out of the filter. Raised by the author on 2026-10-21.
+
+**Problem:** an item is priced only if poe.ninja returns a line for it (`src/sync/prices.rs`
+skips nothing else that would explain these). Low-value currency drops out when nobody trades it.
+Examples on 2026-10-21: `Regal Shard` and `Lesser Essence of Ruin` are in the committed seed
+`tests/fixtures/seed-prices.json` but absent from the live `prices.json` (Forbidden Rites, synced
+2026-10-17); `Regal Shard` is still in `prices-fallback.json`. A missing item gets no economy rule
+and falls through to the user's rules or the game default, with no warning anywhere.
+
+**Shape (to decide when promoted):**
+- A **committed, reviewed item list** (one file in the repo) of every base the economy section is
+  meant to cover per category, each with a status and short note: priced from poe.ninja, not
+  traded (with a fixed tier or fallback price to use instead), or deliberately ignored.
+- A **dev command** (e.g. `ff-cli sync review`, or a dev-tool subcommand) that fetches poe.ninja
+  (and optionally the RePoE `base_items.json` that `sync metadata` already reads, for the full
+  `Stackable Currency` list) and prints a diff against the reviewed list: missing from poe.ninja,
+  new on poe.ninja and not yet reviewed, and changed category. Run at league start and after
+  patches; the developer updates the list and commits it.
+- **Use the decisions:** at sync / apply time, items in the reviewed list that poe.ninja did not
+  return use the reviewed fallback (e.g. their `prices-fallback.json` value or a fixed tier) instead
+  of disappearing. Decide whether the overlay says how many were filled this way.
+- A test that keeps the reviewed list, `prices-fallback.json` and `mapping.json` consistent (every
+  reviewed base has a category that `mapping.json` knows, etc.), with no network in CI.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

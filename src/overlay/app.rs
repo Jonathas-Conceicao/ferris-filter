@@ -6898,7 +6898,12 @@ Hide
             PriceSourcePolicy::Auto,
             false,
         );
-        let _ = r2;
+        // A refused second Apply would also leave the bytes alone: check it was applied.
+        assert!(
+            matches!(r2.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r2.outcome
+        );
         assert_eq!(
             std::fs::read(&path).unwrap(),
             again,

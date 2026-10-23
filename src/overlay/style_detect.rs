@@ -256,7 +256,7 @@ mod tests {
     fn names_take_the_smallest_free_number_in_order_of_appearance() {
         let mut set = StyleSet::shipped_defaults().clone();
         set.insert_new("custom style 1", Style::blank_show())
-            .unwrap_or(());
+            .unwrap();
         let mut c3 = Style::blank_show();
         c3.font = Some(44);
         set.insert_new("Custom Style 3", c3).unwrap();
@@ -270,12 +270,8 @@ mod tests {
             .into_iter()
             .map(|(n, _)| n)
             .collect();
-        // `custom style 1` may be refused as a duplicate of nothing; either way 3 is taken.
-        let taken: Vec<String> = set.names().map(str::to_string).collect();
-        let first = next_name(&taken);
-        assert_eq!(names[0], first);
-        assert_ne!(names[1], "Custom Style 3");
-        assert_ne!(names[0], names[1]);
+        // 1 is taken case-insensitively and 3 exactly: the new styles get 2, then 4.
+        assert_eq!(names, vec!["Custom Style 2", "Custom Style 4"]);
     }
 
     #[test]

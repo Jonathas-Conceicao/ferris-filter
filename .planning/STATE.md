@@ -2,11 +2,12 @@
 gsd_state_version: 1.0
 milestone: v0.7.2
 milestone_name: Small UI Improvements
-status: ready_to_plan
-last_updated: "2026-10-23T19:52:24.045Z"
-last_activity: 2026-10-23
+status: planning
+stopped_at: Phase 43 UI-SPEC approved
+last_updated: "2026-10-23T21:16:02.039Z"
+last_activity: 2026-10-23 — v0.7.2 roadmap created
 progress:
-  total_phases: 8
+  total_phases: 36
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -397,9 +398,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18
-Stopped at: v0.7 milestone complete
-Resume file: None
+Last session: --stopped-at
+Stopped at: Phase 43 UI-SPEC approved
+Resume file: --resume-file
 
 ## Operator Next Steps
 

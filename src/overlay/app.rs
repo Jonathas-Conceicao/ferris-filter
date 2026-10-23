@@ -7076,13 +7076,9 @@ Hide
         assert_eq!(std::fs::read_to_string(&path).unwrap(), RULES);
         // The staged section is browsable before Apply: named rows, header count to match.
         assert!(!w.economy_rows().is_empty());
-        assert!(
-            w.economy_rows()[0]
-                .name
-                .as_deref()
-                .unwrap()
-                .contains(" tier ")
-        );
+        let first = w.economy_rows()[0].name.as_deref().unwrap();
+        assert!(first.contains(" tier "), "{first}");
+        assert!(first.contains(" < ") || first.contains(" >= "), "{first}");
         let sec = w.sections().iter().find(|s| s.economy).unwrap();
         assert_eq!(sec.rules, w.economy_rows().len());
     }
@@ -7109,6 +7105,15 @@ Hide
         app.refresh_staged_economy();
         let after = app.working.as_ref().unwrap().economy_rows().len();
         assert_ne!(before, after);
+        // The pending cutoff renames the rows: A now reads `< <new S floor> chaos`.
+        assert!(
+            app.working
+                .as_ref()
+                .unwrap()
+                .economy_rows()
+                .iter()
+                .any(|r| r.name.as_deref().is_some_and(|n| n.ends_with("< 100000000 chaos")))
+        );
         // An expanded preview row is collapsed by a re-price (its id would point elsewhere).
         let id = app.working.as_ref().unwrap().economy_rows()[0].id;
         app.list.expanded = Some(id);
@@ -7145,7 +7150,11 @@ Hide
                 .unwrap()
                 .economy_rows()
                 .iter()
-                .find(|r| r.name.as_deref() == Some("S tier Currency"))
+                .find(|r| {
+                    r.name
+                        .as_deref()
+                        .is_some_and(|n| n.starts_with("S tier Currency >= "))
+                })
                 .map(|r| (r.keyword, r.label.clone()))
                 .unwrap()
         };

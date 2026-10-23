@@ -168,7 +168,11 @@ Plans:
   1. Each economy rule name states its tier's price range, such as `E tier Essences < 2 chaos`, and the top tier its floor, such as `S tier Currency >= 30 chaos`
   2. The range uses the tiers' own unit (chaos for live tiers, exalt for the fallback pair) in a short number format, and price-tiered unique blocks are named the same way
   3. Editing tier cutoffs on the Economy tab renames the economy rows previewed on the RULES tab as it re-prices them, and `generate` output is unchanged
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 45-01-PLAN.md — Tier range labels in pricer (`fmt_amount`, `PricedData.tier_ranges`), range suffix at the tagged `# ff:name` sites, test pins
+- [ ] 45-02-PLAN.md — CLAUDE.md / tests/ui docs and fixture to the new name form, deferred Phase 45 checks
 
 ### Phase 46: Request Throttling & CLI User Agent
 **Goal**: The app stops hammering poe.ninja and GitHub, and the CLI identifies itself

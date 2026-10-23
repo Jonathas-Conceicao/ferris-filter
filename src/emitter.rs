@@ -1256,6 +1256,37 @@ mod tests {
         o
     }
 
+    /// ALPHA-02: each colour line carries the style's own alpha.
+    #[test]
+    fn style_action_lines_write_the_alpha() {
+        use crate::models::config::{StyleAction, StyleColour};
+        let mut st = bare_style(StyleAction::Show);
+        st.text = Some(StyleColour::new(10, 20, 30, 128));
+        st.background = Some(StyleColour::new(1, 2, 3, 40));
+        st.border = Some(StyleColour::new(4, 5, 6, 0));
+        let lines = style_action_lines(&st);
+        assert_eq!(
+            lines,
+            [
+                "SetTextColor 10 20 30 128",
+                "SetBackgroundColor 1 2 3 40",
+                "SetBorderColor 4 5 6 0"
+            ]
+        );
+        st.text = Some(StyleColour::opaque(10, 20, 30));
+        assert_eq!(style_action_lines(&st)[0], "SetTextColor 10 20 30 255");
+    }
+
+    #[test]
+    fn economy_blocks_write_the_style_alpha() {
+        use crate::models::config::StyleColour;
+        let (config, priced) = load_inputs();
+        let mut styles = config.styles.clone();
+        styles.get_mut("S").unwrap().text = Some(StyleColour::new(255, 121, 198, 128));
+        let econ = generate_economy(&styles, &priced).unwrap();
+        assert!(econ.contains("SetTextColor 255 121 198 128"), "{econ}");
+    }
+
     #[test]
     fn economy_blocks_carry_ff_name_and_style_lines() {
         let (config, mut priced) = load_inputs();

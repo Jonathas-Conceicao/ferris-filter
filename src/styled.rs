@@ -376,6 +376,21 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn rewrite_block_writes_a_translucent_background() {
+        let mut st = styles().get("S").unwrap().clone();
+        st.background = Some(crate::models::config::StyleColour::new(40, 42, 54, 100));
+        let mut doc = parse("# ff:style S\nShow\n  SetFontSize 20\n".as_bytes()).unwrap();
+        let id = doc.blocks().next().unwrap().id();
+        assert!(rewrite_block(&mut doc, id, &st).unwrap());
+        assert!(
+            doc.serialize().contains("SetBackgroundColor 40 42 54 100"),
+            "{}",
+            doc.serialize()
+        );
+        assert!(!rewrite_block(&mut doc, id, &st).unwrap());
+    }
+
     /// IN-05: a refused rewrite after the keyword switch restores the original bytes, so a
     /// lowercase `hide` header is not canonicalised to `Hide` and the pass still reports the rule
     /// instead of failing the whole Apply.

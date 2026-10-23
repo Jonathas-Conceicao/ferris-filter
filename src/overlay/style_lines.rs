@@ -17,7 +17,7 @@
 use egui::{RichText, vec2};
 
 use crate::models::config::{
-    Beam, Cancelable, DropSound, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction,
+    Beam, Cancelable, DropSound, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction, StyleColour,
 };
 use crate::skin::editor as ed;
 use crate::skin::fonts::regular;
@@ -69,11 +69,11 @@ pub struct StyleView {
 }
 
 impl StyleView {
-    /// A `styles.json` style: opaque colours, every volume written.
+    /// A `styles.json` style: colours carry alpha, every volume written.
     pub fn from_style(style: &Style) -> StyleView {
-        let rgba = |c: [u8; 3]| Rgba {
-            rgba: [c[0], c[1], c[2], 255],
-            had_alpha: false,
+        let rgba = |c: StyleColour| Rgba {
+            rgba: c.rgba(),
+            had_alpha: true,
         };
         StyleView {
             visibility: match style.action {
@@ -90,7 +90,7 @@ impl StyleView {
             sound: style.sound.clone(),
             sound_volume_written: true,
             drop_sound: style.drop_sound(),
-            alpha: false,
+            alpha: true,
         }
     }
 
@@ -1037,7 +1037,7 @@ mod tests {
 
     fn every_group_style() -> Style {
         let mut s = Style::blank_show();
-        s.text = Some([1, 2, 3]);
+        s.text = Some(crate::models::config::StyleColour::opaque(1, 2, 3));
         s.font = Some(30);
         s.minimap = Some(Cancelable::Set(Minimap {
             size: 1,

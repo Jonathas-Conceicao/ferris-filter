@@ -16,7 +16,7 @@ use crate::compile::{InputPaths, Source};
 use crate::loader::LoadError;
 use crate::models::config::{
     Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
-    StyleSet,
+    StyleColour, StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 use crate::overlay::strictness::{Strictness, TIER_LETTERS, strictness_of};
@@ -38,7 +38,7 @@ pub enum ColourSlot {
     Background,
 }
 
-/// One edit to a style. Colours are opaque RGB triples (the emitter keeps alpha 255). `Font` is
+/// One edit to a style. Colours carry alpha. `Font` is
 /// `i64` so the view's number field can pass out-of-range values; values outside 0..=255 are
 /// refused, 0..=255 are stored and left for `StyleSet::validate` to flag.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +46,7 @@ pub enum StyleEdit {
     Action(StyleAction),
     Colour {
         slot: ColourSlot,
-        value: Option<[u8; 3]>,
+        value: Option<StyleColour>,
     },
     Font(Option<i64>),
     /// `None` = off (no line), `Cancel` = the filter's cancel value.
@@ -1280,10 +1280,10 @@ mod tests {
             "S",
             StyleEdit::Colour {
                 slot: ColourSlot::Text,
-                value: Some([1, 2, 3])
+                value: Some(crate::models::config::StyleColour::opaque(1, 2, 3))
             }
         ));
-        assert_eq!(s.style("S").unwrap().text, Some([1, 2, 3]));
+        assert_eq!(s.style("S").unwrap().text, Some(crate::models::config::StyleColour::opaque(1, 2, 3)));
         assert!(s.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
         assert!(s.badges("S").hide);
         assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Silent))));

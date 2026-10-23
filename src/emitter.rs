@@ -238,20 +238,17 @@ pub fn style_action_lines(style: &Style) -> Vec<String> {
         Some(Cancelable::Cancel) => lines.push("MinimapIcon -1".to_string()),
         None => {}
     }
-    if let Some(rgb) = style.text {
-        lines.push(format!("SetTextColor {} {} {} 255", rgb[0], rgb[1], rgb[2]));
+    if let Some(c) = style.text {
+        let [r, g, b, a] = c.rgba();
+        lines.push(format!("SetTextColor {} {} {} {}", r, g, b, a));
     }
-    if let Some(rgb) = style.background {
-        lines.push(format!(
-            "SetBackgroundColor {} {} {} 255",
-            rgb[0], rgb[1], rgb[2]
-        ));
+    if let Some(c) = style.background {
+        let [r, g, b, a] = c.rgba();
+        lines.push(format!("SetBackgroundColor {} {} {} {}", r, g, b, a));
     }
-    if let Some(rgb) = style.border {
-        lines.push(format!(
-            "SetBorderColor {} {} {} 255",
-            rgb[0], rgb[1], rgb[2]
-        ));
+    if let Some(c) = style.border {
+        let [r, g, b, a] = c.rgba();
+        lines.push(format!("SetBorderColor {} {} {} {}", r, g, b, a));
     }
     if let Some(font) = style.font {
         lines.push(format!("SetFontSize {}", font));
@@ -1023,7 +1020,7 @@ mod tests {
         use crate::models::config::StyleAction;
         let (mut config, priced) = load_inputs();
         let mut st = bare_style(StyleAction::Show);
-        st.text = Some([1, 2, 3]);
+        st.text = Some(crate::models::config::StyleColour::opaque(1, 2, 3));
         st.font = Some(30);
         config.styles.insert("craftable", st);
         config
@@ -1090,9 +1087,9 @@ mod tests {
         use crate::models::config::{Beam, Minimap, Sound, StyleAction};
         let (mut config, priced) = load_inputs();
         let mut st = bare_style(StyleAction::Hide);
-        st.text = Some([10, 20, 30]);
-        st.border = Some([40, 50, 60]);
-        st.background = Some([70, 80, 90]);
+        st.text = Some(crate::models::config::StyleColour::opaque(10, 20, 30));
+        st.border = Some(crate::models::config::StyleColour::opaque(40, 50, 60));
+        st.background = Some(crate::models::config::StyleColour::opaque(70, 80, 90));
         st.font = Some(33);
         st.sound = Some(Cancelable::Set(Sound {
             id: Some(3),

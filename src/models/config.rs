@@ -235,8 +235,69 @@ pub struct Sound {
     pub positional: bool,
 }
 
+/// A style colour: R, G, B and alpha. Equality is over all four channels. Read from 3 values
+/// (alpha 255, older files) or 4; always written with 4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StyleColour([u8; 4]);
+
+impl StyleColour {
+    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self([r, g, b, a])
+    }
+
+    pub const fn opaque(r: u8, g: u8, b: u8) -> Self {
+        Self([r, g, b, 255])
+    }
+
+    pub fn from_array(c: [u8; 4]) -> Self {
+        Self(c)
+    }
+
+    pub fn rgba(self) -> [u8; 4] {
+        self.0
+    }
+
+    pub fn alpha(self) -> u8 {
+        self.0[3]
+    }
+}
+
+impl Serialize for StyleColour {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for StyleColour {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = StyleColour;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an array of 3 or 4 values (0-255)")
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut s: A) -> Result<StyleColour, A::Error> {
+                let mut v = [255u8; 4];
+                for (i, slot) in v.iter_mut().enumerate().take(3) {
+                    *slot = s
+                        .next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                if let Some(a) = s.next_element::<u8>()? {
+                    v[3] = a;
+                }
+                if s.next_element::<u8>()?.is_some() {
+                    return Err(de::Error::invalid_length(5, &self));
+                }
+                Ok(StyleColour(v))
+            }
+        }
+        deserializer.deserialize_seq(V)
+    }
+}
+
 /// One tier entry in the `styles` map.
-/// `text`/`border`/`background` are RGB triples; alpha is added at generate-time (Phase 2).
+/// `text`/`border`/`background` carry alpha: read as 3 or 4 values, written as 4.
 /// All visual fields are `Option` because `unchanged` and `hidden` tiers are sparse.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -244,9 +305,9 @@ pub struct Style {
     /// Stable identity (UAT3-02). First key on disk; absent in older files and assigned at load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub text: Option<[u8; 3]>,
-    pub border: Option<[u8; 3]>,
-    pub background: Option<[u8; 3]>,
+    pub text: Option<StyleColour>,
+    pub border: Option<StyleColour>,
+    pub background: Option<StyleColour>,
     pub font: Option<u8>,
     /// `null` = off (no line), `"None"` = `MinimapIcon -1`, an object = the icon.
     pub minimap: Option<Cancelable<Minimap>>,
@@ -1305,6 +1366,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn style_colour_reads_three_or_four_values() {
+        let c: StyleColour = serde_json::from_str("[1,2,3]").unwrap();
+        assert_eq!(c, StyleColour::new(1, 2, 3, 255));
+        let c: StyleColour = serde_json::from_str("[1,2,3,128]").unwrap();
+        assert_eq!(c, StyleColour::new(1, 2, 3, 128));
+        assert_ne!(StyleColour::new(1, 2, 3, 255), StyleColour::new(1, 2, 3, 254));
+    }
+
+    #[test]
+    fn style_colour_rejects_bad_length_and_range() {
+        for bad in ["[1,2]", "[1,2,3,4,5]"] {
+            let e = serde_json::from_str::<StyleColour>(bad).unwrap_err().to_string();
+            assert!(e.contains("3 or 4 values"), "{bad}: {e}");
+        }
+        assert!(serde_json::from_str::<StyleColour>("[1,2,256]").is_err());
+    }
+
+    #[test]
+    fn style_colour_writes_four_values() {
+        let s = serde_json::to_string(&StyleColour::opaque(1, 2, 3)).unwrap();
+        assert_eq!(s, "[1,2,3,255]");
+    }
+
+    #[test]
+    fn style_colour_three_value_style_equals_four_value_style() {
+        let tpl = |t: &str| {
+            format!(
+                r#"{{"text":{t},"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}}"#
+            )
+        };
+        let a: Style = serde_json::from_str(&tpl("[255,121,198]")).unwrap();
+        let b: Style = serde_json::from_str(&tpl("[255,121,198,255]")).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn insert_new_appends_in_order() {
         let mut set = StyleSet::committed_for_tests();
         let n = set.len();
@@ -1990,12 +2087,12 @@ mod tests {
         // Verify the pink color (255 121 198)
         assert_eq!(
             exceptional.text,
-            Some([255, 121, 198]),
+            Some(StyleColour::opaque(255, 121, 198)),
             "exceptional text color must be pink [255, 121, 198]"
         );
         assert_eq!(
             exceptional.border,
-            Some([255, 121, 198]),
+            Some(StyleColour::opaque(255, 121, 198)),
             "exceptional border color must be pink [255, 121, 198]"
         );
         // No sound, no font

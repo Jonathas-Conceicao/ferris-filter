@@ -6568,7 +6568,7 @@ Hide
             vec![
                 edit(StyleEdit::Colour {
                     slot: ColourSlot::Text,
-                    value: Some([1, 2, 3]),
+                    value: Some(crate::models::config::StyleColour::opaque(1, 2, 3)),
                 }),
                 edit(StyleEdit::Font(Some(20))),
                 edit(StyleEdit::Minimap(Some(Cancelable::Set(Minimap {
@@ -6591,7 +6591,7 @@ Hide
         let state = app.config.as_ref().unwrap();
         assert!(state.is_dirty(), "edits make CONFIG unapplied");
         let edited = state.style("S").unwrap();
-        assert_eq!(edited.text, Some([1, 2, 3]));
+        assert_eq!(edited.text, Some(crate::models::config::StyleColour::opaque(1, 2, 3)));
         assert_eq!(edited.font, Some(20));
         assert_eq!(
             std::fs::read(&styles_path).unwrap(),

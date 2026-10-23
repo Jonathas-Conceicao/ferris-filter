@@ -11,7 +11,7 @@ use std::path::Path;
 
 use egui::{Align, Layout, RichText, vec2};
 
-use crate::models::config::{Cancelable, Style, StyleAction, StyleNameError, StyleSet};
+use crate::models::config::{Cancelable, Style, StyleAction, StyleColour, StyleNameError, StyleSet};
 use crate::settings;
 
 use super::body;
@@ -1181,14 +1181,14 @@ fn edit(actions: &mut Vec<ConfigAction>, name: &str, edit: StyleEdit) {
     });
 }
 
-/// The `StyleEdit` a shared style line's intent stands for (styles are opaque: alpha dropped).
+/// The `StyleEdit` a shared style line's intent stands for (alpha kept).
 fn style_edit_for(intent: StyleIntent) -> StyleEdit {
     match intent {
         StyleIntent::Visibility(Vis::Hide) => StyleEdit::Action(StyleAction::Hide),
         StyleIntent::Visibility(_) => StyleEdit::Action(StyleAction::Show),
         StyleIntent::Colour { slot, value, .. } => StyleEdit::Colour {
             slot,
-            value: value.map(|c| [c[0], c[1], c[2]]),
+            value: value.map(StyleColour::from_array),
         },
         StyleIntent::Font(f) => StyleEdit::Font(f),
         StyleIntent::Minimap(m) => StyleEdit::Minimap(m),

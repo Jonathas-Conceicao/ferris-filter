@@ -375,6 +375,13 @@ mod tests {
     fn text(file: &str) -> String {
         std::fs::read_to_string(repo(file)).unwrap()
     }
+    #[test]
+    fn style_colour_bad_length_names_style_path() {
+        let src = r#"{"S":{"text":[1,2],"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}}"#;
+        let e = load_styles_str(src, "x").unwrap_err().to_string();
+        assert!(e.contains("S.text") && e.contains("3 or 4 values"), "{e}");
+    }
+
 
     #[test]
     fn styles_str_equals_file_loader() {

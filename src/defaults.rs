@@ -137,31 +137,31 @@ mod tests {
         let want = [
             (
                 "S",
-                json!({"id":"builtin:S","text":[255,121,198],"border":[255,121,198],"background":[248,248,242],"font":37,"minimap":star(0,"Pink"),"beam":beam("Pink"),"sound":{"id":6,"vol":300},"action":"Show","disableDropSound":false,"enableDropSound":true}),
+                json!({"id":"builtin:S","text":[255,121,198,255],"border":[255,121,198,255],"background":[248,248,242,255],"font":37,"minimap":star(0,"Pink"),"beam":beam("Pink"),"sound":{"id":6,"vol":300},"action":"Show","disableDropSound":false,"enableDropSound":true}),
             ),
             (
                 "A",
-                json!({"id":"builtin:A","text":[189,147,249],"border":[189,147,249],"background":[248,248,242],"font":37,"minimap":star(1,"Purple"),"beam":beam("Purple"),"sound":{"id":6,"vol":300},"action":"Show","disableDropSound":false,"enableDropSound":true}),
+                json!({"id":"builtin:A","text":[189,147,249,255],"border":[189,147,249,255],"background":[248,248,242,255],"font":37,"minimap":star(1,"Purple"),"beam":beam("Purple"),"sound":{"id":6,"vol":300},"action":"Show","disableDropSound":false,"enableDropSound":true}),
             ),
             (
                 "B",
-                json!({"id":"builtin:B","text":[255,85,85],"border":[255,85,85],"background":[40,42,54],"font":37,"minimap":star(2,"Red"),"beam":beam("Red"),"sound":{"id":2,"vol":200},"action":"Show","disableDropSound":false,"enableDropSound":true}),
+                json!({"id":"builtin:B","text":[255,85,85,255],"border":[255,85,85,255],"background":[40,42,54,255],"font":37,"minimap":star(2,"Red"),"beam":beam("Red"),"sound":{"id":2,"vol":200},"action":"Show","disableDropSound":false,"enableDropSound":true}),
             ),
             (
                 "C",
-                json!({"id":"builtin:C","text":[139,233,253],"border":[139,233,253],"background":[40,42,54],"font":null,"minimap":star(2,"Cyan"),"beam":beam("Yellow"),"sound":{"id":2,"vol":200},"action":"Show","disableDropSound":false}),
+                json!({"id":"builtin:C","text":[139,233,253,255],"border":[139,233,253,255],"background":[40,42,54,255],"font":null,"minimap":star(2,"Cyan"),"beam":beam("Yellow"),"sound":{"id":2,"vol":200},"action":"Show","disableDropSound":false}),
             ),
             (
                 "D",
-                json!({"id":"builtin:D","text":[80,250,123],"border":[80,250,123],"background":[40,42,54],"font":null,"minimap":star(2,"Green"),"beam":beam("White"),"sound":null,"action":"Show","disableDropSound":false}),
+                json!({"id":"builtin:D","text":[80,250,123,255],"border":[80,250,123,255],"background":[40,42,54,255],"font":null,"minimap":star(2,"Green"),"beam":beam("White"),"sound":null,"action":"Show","disableDropSound":false}),
             ),
             (
                 "E",
-                json!({"id":"builtin:E","text":[241,250,140],"border":[241,250,140],"background":[40,42,54],"font":23,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}),
+                json!({"id":"builtin:E","text":[241,250,140,255],"border":[241,250,140,255],"background":[40,42,54,255],"font":23,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}),
             ),
             (
                 "F",
-                json!({"id":"builtin:F","text":[248,248,242],"border":[248,248,242],"background":[40,42,54],"font":20,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}),
+                json!({"id":"builtin:F","text":[248,248,242,255],"border":[248,248,242,255],"background":[40,42,54,255],"font":20,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}),
             ),
             (
                 "unchanged",

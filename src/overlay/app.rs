@@ -31,8 +31,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use global_hotkey::GlobalHotKeyManager;
-
 use crate::compile::{InputPaths, PriceSourcePolicy, Source};
 use crate::dynamic::{self, LoadedFilter};
 use crate::filter::{BlockId, LinePatch};
@@ -43,11 +41,12 @@ use crate::settings::{self, Settings};
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::apply_all::{self, ApplyAllError, DiskFile, FilterInput};
 use super::chat;
+use super::chord::Chord;
 use super::classes::ClassCatalog;
 use super::config_state::{self, ConfigState, RevertScope};
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
-use super::hotkey::{self, HotkeyStatus};
+use super::hotkey::HotkeyRuntime;
 use super::instance;
 use super::leagues::ListState;
 use super::rule_list::{self, ListUi};
@@ -88,14 +87,11 @@ pub struct OverlayApp {
     /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
     tray: TrayHandles,
 
-    /// The global hotkey manager, held so the hotkey stays registered. Tray Quit takes it and
-    /// unregisters the hotkey (`hotkey::release_toggle`) before it releases the instance name,
-    /// so a relaunch can register `Ctrl+Shift+Z` itself.
-    hotkey_manager: Option<GlobalHotKeyManager>,
-
-    /// Registration outcome for `Ctrl+Shift+Z`. Read every frame to filter incoming
-    /// `GlobalHotKeyEvent`s to the one combo this app registered.
-    hotkey_status: HotkeyStatus,
+    /// The live show / hide hotkey (default Ctrl+Shift+Z): the registrar, the registered chord
+    /// (whose id filters incoming `GlobalHotKeyEvent`s every frame) and the chord the UI shows.
+    /// Registered only at start-up and swapped only by Apply; tray Quit releases it before the
+    /// instance name, so a relaunch can register it itself.
+    hotkey: HotkeyRuntime,
 
     /// The single-instance guard (INST-01); dropping it releases the instance name so the next
     /// `ff` launch becomes the running one. Polled once per frame for a show request from a
@@ -104,7 +100,7 @@ pub struct OverlayApp {
     /// signalling a process that is going away (review iteration 2, WR-01).
     instance: Option<instance::Guard>,
 
-    /// Set by the tray's left click, a `Ctrl+Shift+Z` press, or a tray "Show"
+    /// Set by the tray's left click, a show / hide hotkey press, or a tray "Show"
     /// while currently hidden. Consumed once per frame by [`visibility::advance`].
     toggle_requested: bool,
 
@@ -366,14 +362,14 @@ fn startup_game_dir(root: &Result<PathBuf, String>) -> Option<PathBuf> {
 /// The FerrisFilter folder: `FERRISFILTER_HOME`, else the per-user folder. Unit tests never
 /// resolve it (they build apps on a per-test temp home instead).
 #[cfg(not(test))]
-fn resolve_root() -> Result<PathBuf, String> {
+pub(crate) fn resolve_root() -> Result<PathBuf, String> {
     crate::locations::from_env()
         .map(|d| d.root)
         .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
-fn resolve_root() -> Result<PathBuf, String> {
+pub(crate) fn resolve_root() -> Result<PathBuf, String> {
     Err("unit tests never resolve the FerrisFilter folder".to_string())
 }
 
@@ -1270,8 +1266,8 @@ impl OverlayApp {
     /// the main thread (thread affinity -- see `overlay::launch`).
     pub fn new(
         tray: TrayHandles,
-        hotkey_manager: Option<GlobalHotKeyManager>,
-        hotkey_status: HotkeyStatus,
+        hotkey: HotkeyRuntime,
+        hotkey_warning: Option<String>,
         instance: instance::Guard,
         skin: Skin,
         pending_install: std::sync::Arc<std::sync::Mutex<Option<crate::update::ReadyUpdate>>>,
@@ -1280,8 +1276,8 @@ impl OverlayApp {
         let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             tray,
-            hotkey_manager,
-            hotkey_status,
+            hotkey,
+            hotkey_warning,
             Some(instance),
             skin,
             root,
@@ -1299,8 +1295,8 @@ impl OverlayApp {
         let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(super::chord::DEFAULT, "screenshot mode"),
             None,
-            HotkeyStatus::Failed("screenshot mode".to_string()),
             None,
             skin,
             root,
@@ -1490,8 +1486,8 @@ impl OverlayApp {
 
     fn build(
         tray: TrayHandles,
-        hotkey_manager: Option<GlobalHotKeyManager>,
-        hotkey_status: HotkeyStatus,
+        hotkey: HotkeyRuntime,
+        hotkey_warning: Option<String>,
         instance: Option<instance::Guard>,
         skin: Skin,
         root: Result<PathBuf, String>,
@@ -1527,8 +1523,7 @@ impl OverlayApp {
             skin,
             economy_info: EconomyInfo::default(),
             tray,
-            hotkey_manager,
-            hotkey_status,
+            hotkey,
             instance,
             #[cfg(debug_assertions)]
             shot: None,
@@ -1543,7 +1538,7 @@ impl OverlayApp {
             // (`with_active(false)` only suppresses activation, not
             // visibility) and has never been focused -- `ShownUnfocused` is
             // the state that matches that physical reality. Starting here
-            // (rather than `Hidden`) is what makes the very first `Ctrl+Shift+Z`
+            // (rather than `Hidden`) is what makes the very first show / hide hotkey
             // press after launch hide the window, matching the checkpoint
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
@@ -1604,8 +1599,14 @@ impl OverlayApp {
         app.refresh_inputs();
         app.refresh_filters();
         app.refresh_economy_info();
-        if settings_warning.is_some() {
-            app.list_status = settings_warning;
+        // The hotkey's own start-up warning (saved chord in use, default used instead) joins the
+        // settings warning, which already carries an invalid saved `hotkey` value.
+        let warning = match (settings_warning, hotkey_warning) {
+            (Some(a), Some(b)) => Some(format!("{a} {b}")),
+            (a, b) => a.or(b),
+        };
+        if warning.is_some() {
+            app.list_status = warning;
         }
         app
     }
@@ -2701,15 +2702,30 @@ impl OverlayApp {
         apply::combined_dirty(rules_dirty, style_pending, config_dirty)
     }
 
+    /// The chord a hotkey pick on the CONFIG tab is compared with (`ConfigState::set_hotkey`'s
+    /// base): normally the live chord. After a start-up fallback (the saved `hotkey` was invalid,
+    /// or valid but in use by another app) it is `None`, so picking or resetting to the live
+    /// default is still a pending edit and Apply writes it explicitly: the warning then stops on
+    /// the next launch instead of staying stuck.
+    // The Config tab's hotkey row (capture and Reset) is its caller; until it lands only tests use it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn hotkey_base(&self) -> Option<Chord> {
+        let live = self.hotkey.live();
+        let stale = self.settings.hotkey_invalid
+            || self
+                .settings
+                .saved_hotkey()
+                .is_some_and(|saved| Some(saved) != live);
+        if stale { None } else { live }
+    }
+
     /// The Phase 22 release order: give up what a new instance must own (the hotkey, then the
     /// tray icon) before the name it races for. If the name went first, a relaunch could win it
-    /// while `Ctrl+Shift+Z` was still registered here, fail to register it, and run with no
-    /// hotkey (review iteration 3, WR-01). The caller then sets `quit_requested` for the single
+    /// while the show / hide hotkey was still registered here, fail to register it, and run with
+    /// no hotkey (review iteration 3, WR-01). The caller then sets `quit_requested` for the single
     /// deferred viewport Close.
     fn begin_shutdown(&mut self) {
-        if let Some(manager) = self.hotkey_manager.take() {
-            hotkey::release_toggle(manager);
-        }
+        self.hotkey.release();
         self.tray.release();
         // Release the instance name now, before this frame's show-request poll: from here on a
         // relaunch becomes the new first instance rather than waiting on (or being acked by) a
@@ -3499,8 +3515,8 @@ impl eframe::App for OverlayApp {
         // and only the Pressed state — without the state filter, a single
         // keypress toggles twice (once on press, once on release).
         if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
-            if let HotkeyStatus::Registered { id } = &self.hotkey_status {
-                if event.id == *id && event.state == global_hotkey::HotKeyState::Pressed {
+            if let Some(id) = self.hotkey.live_id() {
+                if event.id == id && event.state == global_hotkey::HotKeyState::Pressed {
                     // Only while the user is actually in the game — or in the window itself, so
                     // the same key can dismiss it once it has focus. The binding is registered
                     // system-wide, which is what lets it reach a fullscreen game, but a key that
@@ -3808,7 +3824,7 @@ impl eframe::App for OverlayApp {
         // (that is tray -> Quit alone).
         let header = Rect::from_min_size(win_rect.min, vec2(win_rect.width(), header_h));
         let close = w::ff_header(ui, &skin, header, shell::header_art(&skin), "FerrisFilter")
-            .on_hover_text("Hide (Ctrl+Shift+Z)");
+            .on_hover_text(format!("Hide ({})", self.hotkey.shown().text()));
         if let Ok(loaded) = &self.filter {
             // The loaded filter's full path, where the old status block used to print it.
             ui.interact(
@@ -5912,7 +5928,7 @@ Hide
     /// An app on temp-free in-memory state: built only to drive `dispatch_popup`, which touches
     /// nothing on disk for the choices tested here.
     fn popup_app(filter_text: &str) -> (super::OverlayApp, egui::Context) {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -5920,8 +5936,8 @@ Hide
         let home = tempfile::tempdir().unwrap();
         let mut app = super::OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),
@@ -7469,7 +7485,7 @@ Hide
         tempfile::TempDir,
         tempfile::TempDir,
     ) {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -7484,8 +7500,8 @@ Hide
         }
         let app = super::OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),
@@ -7538,7 +7554,7 @@ Hide
 
     #[test]
     fn missing_game_folder_is_known_right_after_build() {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -7546,8 +7562,8 @@ Hide
         let home = tempfile::tempdir().unwrap();
         let app = super::OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),
@@ -8244,5 +8260,69 @@ Hide
             indicator: ("i", w::StatusKind::Info),
         });
         assert_eq!(s.open_tab, Some(ShellTab::Config));
+    }
+
+    // ---- the show / hide hotkey (Phase 47-03) ----
+
+    #[test]
+    fn startup_hotkey_warning_joins_the_settings_warning() {
+        use crate::overlay::hotkey::HotkeyRuntime;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("ff-settings.json"),
+            r#"{"hotkey":"Shift+Nope","game_folder":"relative\\dir"}"#,
+        )
+        .unwrap();
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
+            Some("HOTKEY-WARNING".to_string()),
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("game")),
+        );
+        let status = app.list_status.clone().unwrap();
+        assert!(status.contains("game_folder"), "{status}");
+        assert!(status.contains("`hotkey`"), "{status}");
+        assert!(status.ends_with(" HOTKEY-WARNING"), "{status}");
+        assert!(app.settings.hotkey_invalid);
+        // Fell back: even the default is a pending edit, so Apply can write it.
+        assert_eq!(app.hotkey_base(), None);
+    }
+
+    #[test]
+    fn a_relative_game_folder_never_discards_a_valid_saved_chord() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("ff-settings.json"),
+            r#"{"hotkey":"Ctrl+Alt+K","game_folder":"relative\\dir"}"#,
+        )
+        .unwrap();
+        let (s, warning) = crate::settings::load(home.path());
+        assert!(warning.unwrap().contains("game_folder"));
+        assert_eq!(
+            s.saved_hotkey().map(|c| c.text()).as_deref(),
+            Some("Ctrl+Alt+K")
+        );
+    }
+
+    #[test]
+    fn the_header_close_tooltip_and_base_follow_the_live_chord() {
+        let (mut app, _ctx, _home, _game) = folder_app(None, &[]);
+        assert_eq!(app.hotkey.shown(), crate::overlay::chord::DEFAULT);
+        // An inert runtime has no live chord: nothing to compare with.
+        assert_eq!(app.hotkey_base(), None);
+        let log = std::rc::Rc::default();
+        let reg = crate::overlay::hotkey::FakeRegistrar {
+            taken: Default::default(),
+            log,
+        };
+        app.hotkey = crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), None).0;
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
     }
 }

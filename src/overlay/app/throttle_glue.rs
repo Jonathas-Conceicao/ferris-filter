@@ -106,8 +106,13 @@ impl super::OverlayApp {
             .request_log
             .cached_update(env!("CARGO_PKG_VERSION"), now)
         {
-            self.pending_real.update = false;
-            return self.update.start(move |_| result);
+            let started = self.update.start(move |_| result);
+            // Only a started fake replaces the job; a refused start leaves a running real
+            // check's flag alone so its answer is still recorded.
+            if started {
+                self.pending_real.update = false;
+            }
+            return started;
         }
         let started = self.update.start(real);
         if started {
@@ -498,6 +503,26 @@ mod tests {
             assert_eq!(app.request_log.update_at, None);
             assert!(!home.path().join("ff-state.json").exists());
         }
+    }
+
+    #[test]
+    fn refused_fake_update_keeps_the_running_real_check_recorded() {
+        let (mut app, _home, _ctx) = app_with(None);
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        assert!(app.start_update_gated_with(300, move |_| {
+            let _ = rx.recv();
+            up_to_date()
+        }));
+        assert!(app.pending_real.update);
+        // A fresh entry appears while the real check runs (e.g. the clock stepped back): the
+        // fake start is refused and must not clear the real check's flag.
+        app.request_log
+            .record_update(&up_to_date(), env!("CARGO_PKG_VERSION"), 200);
+        assert!(!app.start_update_gated_with(250, |_| panic!("a second job started")));
+        assert!(app.pending_real.update);
+        tx.send(()).unwrap();
+        pump(&mut app, 320);
+        assert_eq!(app.request_log.update_at, Some(320));
     }
 
     #[test]

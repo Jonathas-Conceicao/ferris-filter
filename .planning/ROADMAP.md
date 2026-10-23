@@ -197,8 +197,14 @@ Plans:
   2. RULES search and the + condition picker show the game's round clear X inside the right end while they hold text, and clicking it empties the field and keeps focus
   3. The same search fields show the game's magnifying-glass glyph inside the left end
   4. Button art sits where it is meant to, its transparent margins compensated, and the Config → Filter refresh button is no longer offset
-**Plans**: TBD
+**Plans**: 4 plans
 **UI hint**: yes
+
+Plans:
+- [ ] 48-01-PLAN.md — Extract the art (14 manifest entries), embed it in Skin, box_uv / paint_visible, reload button and check painted by visible plate (ART-04)
+- [ ] 48-02-PLAN.md — Section headers: toggle plate + stone bar (ART-01)
+- [ ] 48-03-PLAN.md — ff_search_field (magnifier + clear X) in RULES search and the + condition picker (ART-02, ART-03)
+- [ ] 48-04-PLAN.md — CLAUDE.md update, debug screenshots, Phase 48 deferred entries
 
 ### Phase 49: Drag-and-Drop Reorder
 **Goal**: Rules and custom styles are reordered by dragging

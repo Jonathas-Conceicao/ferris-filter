@@ -24,25 +24,25 @@
 
 ### Auto Detect styles (DETECT)
 
-- [ ] **DETECT-01**: A CONFIG tab **Auto Detect** button reads every rule outside the economy
+- [x] **DETECT-01**: A CONFIG tab **Auto Detect** button reads every rule outside the economy
   section and turns its action lines plus Show / Hide into a full style.
-- [ ] **DETECT-02**: A rule whose style equals an existing style on every parameter (built-ins with
+- [x] **DETECT-02**: A rule whose style equals an existing style on every parameter (built-ins with
   their current, possibly user-edited, values first, then custom styles) is tagged with that style;
   a bare `Show` is `unchanged`.
-- [ ] **DETECT-03**: Each remaining distinct style becomes a new custom style named
+- [x] **DETECT-03**: Each remaining distinct style becomes a new custom style named
   `Custom Style N` (smallest free N), and every rule sharing it is tagged with it; any difference,
   such as a font size off by 3, makes a separate style.
-- [ ] **DETECT-04**: Rules whose actions no style can express (repeated lines of one family,
+- [x] **DETECT-04**: Rules whose actions no style can express (repeated lines of one family,
   `CustomAlertSoundOptional`, the `...IfAlertSound` keywords, out-of-range values) stay Custom.
   Trailing comments on action lines do not block a match; they are dropped when Apply rewrites the
   rule from its style (a code comment marks this as intentional).
-- [ ] **DETECT-05**: Disabled rules are included, a `# ff:group` counts as one rule, and rules
+- [x] **DETECT-05**: Disabled rules are included, a `# ff:group` counts as one rule, and rules
   already tagged with a style are skipped.
-- [ ] **DETECT-06**: Auto Detect only makes pending in-memory edits (new styles on CONFIG, tags on
+- [x] **DETECT-06**: Auto Detect only makes pending in-memory edits (new styles on CONFIG, tags on
   RULES), shown as unapplied like any other edit; Apply writes them, and Revert / Reload discard them
   per tab as usual (a rule left tagged to a reverted style shows `unknown style` and Apply drops the
   tag).
-- [ ] **DETECT-07**: The status line says what Auto Detect did (styles created, rules tagged); a
+- [x] **DETECT-07**: The status line says what Auto Detect did (styles created, rules tagged); a
   second click with nothing new changes nothing.
 
 ### Economy names (ENAME)
@@ -156,13 +156,13 @@
 | ALPHA-02 | Phase 43 | Complete |
 | ALPHA-03 | Phase 43 | Complete |
 | ALPHA-04 | Phase 43 | Complete |
-| DETECT-01 | Phase 44 | Pending |
-| DETECT-02 | Phase 44 | Pending |
-| DETECT-03 | Phase 44 | Pending |
-| DETECT-04 | Phase 44 | Pending |
-| DETECT-05 | Phase 44 | Pending |
-| DETECT-06 | Phase 44 | Pending |
-| DETECT-07 | Phase 44 | Pending |
+| DETECT-01 | Phase 44 | Complete |
+| DETECT-02 | Phase 44 | Complete |
+| DETECT-03 | Phase 44 | Complete |
+| DETECT-04 | Phase 44 | Complete |
+| DETECT-05 | Phase 44 | Complete |
+| DETECT-06 | Phase 44 | Complete |
+| DETECT-07 | Phase 44 | Complete |
 | ENAME-01 | Phase 45 | Pending |
 | ENAME-02 | Phase 45 | Pending |
 | ENAME-03 | Phase 45 | Pending |

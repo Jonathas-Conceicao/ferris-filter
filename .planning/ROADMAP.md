@@ -155,9 +155,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 44-01-PLAN.md — StyleView::to_style and the pure style_detect planner (equality, naming, status text)
-- [ ] 44-02-PLAN.md — Batch model ops: add_detected_styles, detect_inputs, group-aware tag_styles; comment-drop note in styled.rs
-- [ ] 44-03-PLAN.md — Auto Detect button and handler, revert-matrix tests, CLAUDE.md note, screenshot, deferred checks
+- [x] 44-01-PLAN.md — StyleView::to_style and the pure style_detect planner (equality, naming, status text)
+- [x] 44-02-PLAN.md — Batch model ops: add_detected_styles, detect_inputs, group-aware tag_styles; comment-drop note in styled.rs
+- [x] 44-03-PLAN.md — Auto Detect button and handler, revert-matrix tests, CLAUDE.md note, screenshot, deferred checks
 **UI hint**: yes
 
 ### Phase 45: Economy Tier-Range Names
@@ -234,7 +234,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 43. Style Alpha | 3/3 | Complete    | 2026-10-23 |
-| 44. Auto Detect Styles | 0/TBD | Not started | - |
+| 44. Auto Detect Styles | 3/3 | Complete    | 2026-10-23 |
 | 45. Economy Tier-Range Names | 0/TBD | Not started | - |
 | 46. Request Throttling & CLI User Agent | 0/TBD | Not started | - |
 | 47. Customizable Hotkey | 0/TBD | Not started | - |

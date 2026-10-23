@@ -46,6 +46,9 @@ impl super::OverlayApp {
         if self.economy.is_running() {
             return;
         }
+        // The gate must see prices.json as it is now (the CLI may have rewritten or removed it
+        // since the cached info was read). One small file read per click, never per frame.
+        self.refresh_economy_info();
         if let Some(name) = self.request_log.sync_fake(
             &league,
             self.economy_info.league.as_deref(),
@@ -171,7 +174,7 @@ impl super::OverlayApp {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{EconomyInfo, OverlayApp};
+    use super::super::OverlayApp;
     use super::*;
     use crate::overlay::economy::{SyncState, success_message};
     use crate::throttle::{self, RequestLog};
@@ -211,12 +214,14 @@ mod tests {
         (app, home, ctx)
     }
 
-    fn live(league: &str) -> EconomyInfo {
-        EconomyInfo {
-            live: true,
-            league: Some(league.to_string()),
-            ..EconomyInfo::default()
-        }
+    /// Writes a usable `prices.json` (the seed prices) synced for `league` into `home`.
+    fn write_prices(home: &std::path::Path, league: &str) {
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/seed-prices.json");
+        let mut text: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(seed).unwrap()).unwrap();
+        text["league"] = serde_json::json!(league);
+        std::fs::write(home.join("prices.json"), text.to_string()).unwrap();
     }
 
     fn fresh_sync_log(requested: &str, returned: &str) -> RequestLog {
@@ -262,9 +267,8 @@ mod tests {
     fn fake_sync_replays_the_message_and_leaves_prices_alone() {
         let (mut app, home, _ctx) = app_with(Some(&fresh_sync_log(LEAGUE, LEAGUE)));
         let prices = home.path().join("prices.json");
-        std::fs::write(&prices, "{}").unwrap();
+        write_prices(home.path(), LEAGUE);
         let before = std::fs::metadata(&prices).unwrap().modified().unwrap();
-        app.economy_info = live(LEAGUE);
         app.start_sync_gated_with(LEAGUE.into(), 1010, no_network);
         assert!(app.pending_real.sync.is_none());
         pump(&mut app, 1010);
@@ -279,7 +283,6 @@ mod tests {
     #[test]
     fn real_sync_records_the_returned_spelling_then_fakes_it() {
         let (mut app, home, _ctx) = app_with(None);
-        app.economy_info = live(LEAGUE);
         app.start_sync_gated_with(
             "rise of the abyssal".into(),
             2000,
@@ -295,6 +298,8 @@ mod tests {
                 .contains_key("rise of the abyssal")
         );
 
+        // The real sync would have written prices.json for the league it returned.
+        write_prices(home.path(), LEAGUE);
         app.economy.clear_message();
         app.start_sync_gated_with("rise of the abyssal".into(), 2100, no_network);
         pump(&mut app, 2100);
@@ -307,8 +312,8 @@ mod tests {
         let mut log = fresh_sync_log("League B", "League B");
         log.sync.clear();
         log.record_sync("League B", "League B", 1000);
-        let (mut app, _home, _ctx) = app_with(Some(&log));
-        app.economy_info = live("League B");
+        let (mut app, home, _ctx) = app_with(Some(&log));
+        write_prices(home.path(), "League B");
         // A real sync for A finishes, but its outcome is cleared before a poll recorded it.
         app.pending_real.sync = Some(PendingSync {
             requested: "League A".into(),
@@ -331,17 +336,38 @@ mod tests {
     #[test]
     fn real_path_when_other_league_not_live_or_expired() {
         let log = fresh_sync_log(LEAGUE, LEAGUE);
-        for (league_arg, info, now) in [
-            ("Other", live("Other"), 1010),
-            (LEAGUE, EconomyInfo::default(), 1010),
-            (LEAGUE, live("Standard"), 1010),
-            (LEAGUE, live(LEAGUE), 1000 + 3600),
+        for (league_arg, held, now) in [
+            ("Other", Some("Other"), 1010),
+            (LEAGUE, None, 1010),
+            (LEAGUE, Some("Standard"), 1010),
+            (LEAGUE, Some(LEAGUE), 1000 + 3600),
         ] {
-            let (mut app, _home, _ctx) = app_with(Some(&log));
-            app.economy_info = info;
+            let (mut app, home, _ctx) = app_with(Some(&log));
+            if let Some(held) = held {
+                write_prices(home.path(), held);
+            }
             app.start_sync_gated_with(league_arg.into(), now, || Err("offline".into()));
             assert!(app.pending_real.sync.is_some(), "{league_arg} {now}");
             pump(&mut app, now);
+        }
+    }
+
+    #[test]
+    fn gate_rereads_prices_json_at_click_time() {
+        // The cached info says LEAGUE, but prices.json changed on disk since (CLI sync for
+        // another league, or deleted): the click must go out for real.
+        for replace in [Some("League B"), None] {
+            let (mut app, home, _ctx) = app_with(Some(&fresh_sync_log(LEAGUE, LEAGUE)));
+            write_prices(home.path(), LEAGUE);
+            app.refresh_economy_info();
+            assert_eq!(app.economy_info.league.as_deref(), Some(LEAGUE));
+            match replace {
+                Some(other) => write_prices(home.path(), other),
+                None => std::fs::remove_file(home.path().join("prices.json")).unwrap(),
+            }
+            app.start_sync_gated_with(LEAGUE.into(), 1010, || Err("offline".into()));
+            assert!(app.pending_real.sync.is_some(), "{replace:?}");
+            pump(&mut app, 1010);
         }
     }
 

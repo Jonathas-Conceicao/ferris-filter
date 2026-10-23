@@ -101,6 +101,12 @@ pub struct Skin {
     /// Reload glyph (`uiimages/common/buttonreloadhover`): a round arrow, drawn mirrored and turned
     /// on `icon_button` (tinted at rest, as is when hovered).
     pub reload: TextureHandle,
+    /// The Options menu keybind button frame (`options menu/optionsbuttonborder`, trimmed 60x60):
+    /// gold line and ornate corner clusters, its white mask interior keyed out to transparent.
+    pub keybind_border: TextureHandle,
+    /// The Options menu keybind button plate (`options menu/optionsbutton`, trimmed 60x60):
+    /// greyscale, dark top, bright band and radial glow along the bottom; tinted at draw time.
+    pub keybind_plate: TextureHandle,
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -164,6 +170,8 @@ impl Skin {
                 tex!(ctx, "poe2/common/icon_button_pressed.png"),
             ],
             reload: tex!(ctx, "poe2/common/reload.png"),
+            keybind_border: tex!(ctx, "poe2/options/keybind_border.png"),
+            keybind_plate: tex!(ctx, "poe2/options/keybind_plate.png"),
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),
                 tex!(ctx, "poe2/common/combo_arrow_hover.png"),

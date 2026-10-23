@@ -1205,6 +1205,88 @@ pub fn ff_button_ex(
     resp
 }
 
+/// Height of [`ff_keybind_button`] in points.
+pub const KEYBIND_HEIGHT: f32 = 30.0;
+/// Nine-slice margin of the keybind textures, in texels on every side: the ornate corner clusters
+/// of `keybind_border` reach about 14 texels in and 22 down from each corner (of 60), so 20 keeps
+/// them out of the stretched edge pieces (vertically nothing stretches: 60 texels -> 30pt).
+const KEYBIND_CORNER_TEXELS: f32 = 20.0;
+/// The plate tint when hovered, focused, pressed or lit (capturing).
+const KEYBIND_LIT: Color32 = Color32::from_rgb(0xE6, 0xC8, 0x82);
+
+/// The game's Options -> Input keybind button: [`Skin::keybind_plate`] tinted gold under the
+/// [`Skin::keybind_border`] frame, both nine-sliced over `width` x [`KEYBIND_HEIGHT`], with
+/// `caption` centred in Fontin SmallCaps 17 (cut with "…" past `width - 24`). `lit` draws the lit
+/// plate regardless of the pointer (a running capture); `label` is the accessible name. Disabled:
+/// dimmed art, never clicked, no hover state. Both textures are trimmed, so no margin offset.
+#[allow(clippy::too_many_arguments)]
+pub fn ff_keybind_button(
+    ui: &mut Ui,
+    skin: &Skin,
+    label: &str,
+    caption: &str,
+    caption_color: Color32,
+    width: f32,
+    lit: bool,
+    enabled: bool,
+) -> Response {
+    let enabled = enabled && ui.is_enabled();
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, KEYBIND_HEIGHT), sense);
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    let pressed = enabled && resp.is_pointer_button_down_on();
+    let plate_tint = if !enabled {
+        pal::GOLD.gamma_multiply(90.0 / 255.0)
+    } else if lit || pressed || resp.hovered() || resp.has_focus() {
+        KEYBIND_LIT
+    } else {
+        pal::GOLD
+    };
+    let border_tint = if enabled {
+        Color32::WHITE
+    } else {
+        Color32::from_white_alpha(90)
+    };
+    let m = Margins::new(
+        KEYBIND_CORNER_TEXELS,
+        KEYBIND_CORNER_TEXELS,
+        KEYBIND_CORNER_TEXELS,
+        KEYBIND_CORNER_TEXELS,
+    );
+    let painter = ui.painter();
+    let plate = &skin.keybind_plate;
+    let plate_scale = KEYBIND_HEIGHT / plate.size()[1].max(1) as f32;
+    slice::paint_nine(painter, plate, rect, m, plate_scale, plate_tint, true);
+    let border = &skin.keybind_border;
+    let border_scale = KEYBIND_HEIGHT / border.size()[1].max(1) as f32;
+    slice::paint_nine(painter, border, rect, m, border_scale, border_tint, false);
+
+    let color = if enabled {
+        caption_color
+    } else {
+        caption_color.gamma_multiply(90.0 / 255.0)
+    };
+    let mut job = egui::text::LayoutJob::single_section(
+        caption.to_owned(),
+        egui::TextFormat::simple(small_caps(17.0), color),
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: (width - 24.0).max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    let galley = painter.layout_job(job);
+    let offset = if pressed { 1.0 } else { 0.0 };
+    let pos = rect.center() - galley.size() / 2.0 + vec2(0.0, offset);
+    painter.galley(pos, galley, color);
+    resp
+}
+
 /// The opaque part of the icon-button plate texture: its top-left 84 of 92 pixels (the rest is
 /// transparent margin).
 const PLATE_VISIBLE: f32 = 84.0 / 92.0;

@@ -1,444 +1,254 @@
-# Pitfalls Research
+# Domain Pitfalls
 
-**Domain:** First public release of an existing Rust/egui Windows overlay (FerrisFilter v0.7): release CI, unsigned installer, config relocation, self-updater, strictness presets, league picker
-**Researched:** 2026-10-17
-**Confidence:** MEDIUM. Repo-specific findings (HIGH) come from reading `CLAUDE.md`, `PROJECT.md`, `rust-toolchain.toml`, `build.rs`, `src/paths.rs`, `.gitattributes`, `assets/README.md`, `src/overlay/screenshot.rs`. Ecosystem claims (SmartScreen, GitHub API limits, runner behaviour, Inno Setup behaviour) are from training knowledge and were not re-verified online in this pass; they are marked MEDIUM/LOW and should be confirmed in the phase that uses them.
+**Domain:** Adding v0.7.2 features (style alpha, Auto Detect styles, drag-and-drop reorder, Social-panel headers, search icons, custom hotkey, economy tier price range, request throttling) to FerrisFilter (Rust, egui/eframe 0.36 overlay, lossless filter editing)
+**Researched:** 2026-10-23
+**Overall confidence:** MEDIUM. The invariants come from CLAUDE.md (HIGH). A few code facts were checked in `src/` (hotkey.rs, emitter.rs, app.rs). egui drag-and-drop and Windows hotkey behaviour are from training knowledge plus code reading and were not re-verified against current docs (MEDIUM/LOW, flagged per item).
+
+**New dependencies:** none of the prevention steps below need one. Items that look like they might are flagged `DEP?` for the author's review.
+
+Phase labels used below (the roadmap should map them): **P-ALPHA** (style alpha), **P-AUTO** (Auto Detect), **P-DND** (drag and drop), **P-UI** (section headers, search icons), **P-HOTKEY**, **P-ECON** (tier price range), **P-THROTTLE**.
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Tag name `vX.Y` vs Cargo version `X.Y.0` vs CHANGELOG heading
+### Pitfall 1: Alpha support changes bytes of existing `styles.json`, fixtures or generated filters
+**What goes wrong:** Colours are `[r,g,b]`-style today, and the filter always emits alpha 255 (CLAUDE.md: "styles store RGB and the filter always emits alpha 255"). Adding alpha tends to (a) change the serde shape of the colour field so old files re-serialise differently (`"#ff79c6"` becomes `"#ff79c6ff"`, or a 3-array becomes a 4-array), (b) make the emitter write `SetTextColor R G B 255` where `generate` today writes the 3-value form (or the reverse), and (c) change the economy tier blocks, which then diverge from `tests/fixtures/seed-universal.filter` and break `artifact_guard`.
+**Why it happens:** One shared colour type is used by `styles.json`, `generate`, the economy emitter and the styled-rule rewrite ("all emit through the one action emitter"). Any change to that type's `Serialize` or `Display` hits all four.
+**Consequences:** `artifact_guard` fails, `styles.json` gets rewritten on the first Apply for every user (a spurious edit, a changed-on-disk warning), and every styled rule is rewritten on Apply, which makes it look like unapplied changes.
+**Prevention:**
+- Make alpha `Option<u8>` (or "255 means absent") with `skip_serializing_if`, so it is written only when not 255 (mirror the existing "new fields are written only when set" rule for `positional` / `enableDropSound`).
+- Decide once: alpha 255 and absent are the same value and normalise on load, not on write. Keep the filter emitter at exactly today's output when alpha is 255, including the background `240` default, so `SetBackgroundColor 40 42 54 255` (Dracula) and the bronze `175 96 37 240` stay byte-identical.
+- Write the byte-identical round-trip test first: load `styles-default.json` and `tests/fixtures/seed-styles.json`, re-serialise, assert equality. Run `artifact_guard` before touching any UI.
+- Note the bronze unique background is `240`, not 255. If alpha is exposed for tier styles only, the unique block must not inherit a style alpha by accident.
+- A Hide style's colours are emitted too. Check that alpha is emitted there with the same rule.
+**Detection:** `artifact_guard` diff; `styles.json` showing as edited right after opening the overlay; "Updated N styled rules" with no edits.
+**Phase:** P-ALPHA (first, since P-AUTO's equality depends on the final colour type).
 
+### Pitfall 2: Rules with a 3-value colour vs. a style with alpha 255 are "equal" for Auto Detect but not byte-equal on rewrite
+**What goes wrong:** A rule line `SetTextColor 255 121 198` (3-value, alpha 255 implied) and `... 255` (4-value) are the same colour. Auto Detect matches both to style `S`, tags the rule `# ff:style builtin:S S`. The next Apply then rewrites the rule's action lines from the style. That is the intended contract of a styled rule, but the bytes change (line order, 3- to 4-value, dropped trailing comments, volume form, an extra `EnableDropSound`).
+**Why it happens:** CLAUDE.md says a styled rule's actions are "a hand edit ... overwritten on the next Apply", and "A 3-value colour stays 3-value while alpha is 255" only applies to the Custom editor. Detection and rewrite are two separate steps with different notions of equality.
+**Consequences:** The user presses Auto Detect expecting a relabel, and Apply silently reorders lines, drops `# comment`s and changes unrelated lines. If the detected style round-trips differently in game (see Pitfall 3), the rule looks different in game.
+**Prevention:**
+- Define the detection's equality as "the styled rewrite of this style produces the same effective actions", and implement it by actually running the emitter for the candidate style, parsing the effective actions (last line of each family), and comparing. Do not hand-write a second comparator.
+- Decide and document whether a rule whose bytes would change on rewrite counts as a match. Recommended: match on effective actions (that is the point of the feature), but surface "N rules will be rewritten" in the status line, and keep the `.ffbak` guarantee as the safety net.
+- Preserve trailing comments? The styled rewrite does not today. Detect rules with a trailing comment on an action line and either skip them or say so. Never silently drop user text.
+- Add a test: detect, apply, reload, detect again must produce zero changes (idempotent), and the filter's effective actions per rule are unchanged.
+**Detection:** diff of filter text before/after Auto Detect + Apply on a NeverSink-sized sample.
+**Phase:** P-AUTO.
+
+### Pitfall 3: Equality traps in the Rule-actions to Style mapping
+**What goes wrong:** Each of these makes two rules look the same when the game treats them differently, or looks different when the game treats them the same.
+| Trap | Concrete risk | Prevention |
+|------|---------------|------------|
+| Font size absent vs default | Style `C` has no font override; a rule with `SetFontSize 32` (the game default, per player experience) is not "no override". | Treat absent and an explicit value as different. Never infer a default. |
+| Alpha 255 vs absent | 3-value and 4-value-255 colour are equal (Pitfall 2). Background default alpha is 240 in game, so `SetBackgroundColor r g b` (no alpha) is 240, not 255. | Compare effective alpha: background absent-alpha = 240, text/border = 255. Verify the background default against the game and CLAUDE.md before coding (`default alpha 240`). |
+| `PlayAlertSound` vs `PlayAlertSoundPositional` | Different keyword, different game behaviour. Style `positional: true` exists only for built-in alerts and is refused with `custom`. | Keyword is part of the equality. |
+| Volume omitted vs explicit | `PlayAlertSound 6` (volume 50 default) vs `PlayAlertSound 6 300`. | Normalise to the game default for comparison only (50 for alert, 100 for custom), but treat as a different style when values differ. |
+| Cancel values | `MinimapIcon -1`, `PlayEffect None`, `PlayAlertSound None` are `"None"` in styles, versus "line absent". A rule with the cancel value is not equal to a style with null, and the reverse. | Map them explicitly to the `"None"` variant, not to null. `MinimapIcon -1 <colour> <shape>` and `PlayAlertSound None <volume>` are shown by the editor as "nearest honest state" and are inexpressible exactly: leave those rules Custom. |
+| Sound file case / extension | `CustomAlertSound "Uwu.mp3"` vs `"uwu.mp3"` (Windows file names are case-insensitive, the filter's matching may not be). | Compare byte-exact; do not case-fold. A near-miss becomes a new custom style, which is safe. |
+| `CustomAlertSoundOptional` | The overlay never writes it. | Inexpressible, leave Custom. |
+| `DisableDropSound` / `EnableDropSound` / `...IfAlertSound` | Style has both fields, and `IfAlertSound` keywords are not expressible. | Presence of an unexpressible line, or a family with a non-last duplicate line, makes the rule inexpressible. Check the "earlier lines of a family" rows. |
+| Duplicate lines in a family | The last line wins in game. | Compare effective (last) values, but if an earlier line is a different kind of value (e.g. earlier `PlayEffect Red`), the rewrite would delete it. Visible change, flag it. |
+| Show/Hide plus `Continue` | `Continue` is a rule property, not a style property, and is last in the body. | Exclude from the comparison and keep it on rewrite. Verify the styled rewrite preserves it. |
+| Hide with visuals | `hidden` has `Hide` plus font 21. A `Hide` rule with no actions is not `hidden` unless font 21 and DisableDropSound match. | Compare the whole Style struct including `action`. |
+| `Minimal` header | Offered nowhere. | Inexpressible, leave Custom. |
+**Consequence of wrong equality:** a rule is tagged with a style that looks different in game (silent regression), or ten hundred near-duplicate "Custom Style N" entries are created.
+**Phase:** P-AUTO. Put these in a table-driven unit test, one row per trap.
+
+### Pitfall 4: "Custom Style N" naming and id collisions
+**What goes wrong:** `styles.json` rejects duplicate names, names differing by case from a required one, and duplicate ids; custom ids are random 6-8 chars and must not start with `builtin:`. A naive `format!("Custom Style {}", n)` using a count collides with an existing style (user renamed one to "Custom Style 3", or deleted style 2 and the count is now stale), or collides within one Auto Detect run (two new styles minted before either is inserted).
+**Prevention:**
+- Pick N as the smallest positive integer such that the name is free (case-insensitive) against all current styles, including pending edits and the styles minted earlier in the same run.
+- Mint ids with the existing generator (the one used by + ADD STYLE) against the pending set, never a second generator.
+- Two rules with identical expressible actions should share one new style (dedupe on the Style struct within the run). Otherwise an NeverSink sample produces a style per rule.
+- `generate` / `config.json` reference styles by name. A new name cannot break them, but a name must not shadow `Recycle`, `kite`, `exceptional`.
+- Auto Detect must run against the pending (unapplied) style set, per the brief ("pending values"). A built-in the user is mid-editing matches by its pending values. The tag it writes uses the id, which is stable.
+- Cap and warn: a huge filter may produce hundreds of styles. Decide a limit, or show the count before creating.
+**Detection:** `styles.json` load error after Apply ("duplicate name"); a second Auto Detect creating "Custom Style 1" again.
+**Phase:** P-AUTO.
+
+### Pitfall 5: Auto Detect's state model vs Revert / Reload / Quit indicator / strictness row
 **What goes wrong:**
-The project's tags are `v0.6`, `v0.5`, ... (two components; `git tag` confirms), while `Cargo.toml` is `0.6.0` and CHANGELOG headings are `## [X.Y.0]`. A workflow that triggers on `v*` will fire, but anything that strips the `v` and compares, parses with a semver parser, or greps CHANGELOG for the tag text gets `0.7` and fails or mismatches. The release can publish with empty notes, a wrong installer version, or an updater that thinks `0.7` is not newer than `0.7.0`.
+- It changes two things at once: new styles (Config state) and tags in rules (Rules state). If the new styles live in Config edits and the tags in Rules edits, **Revert on Rules** (discards rules edits) leaves orphan custom styles, and **Revert on Config** removes styles that tagged rules still reference (rules then become `unknown style`).
+- The Rules tab "style picker and tag checks follow the unapplied CONFIG style set." Revert on the Config tab drops styles; the reference check must then flag the rules, not crash.
+- Reload re-reads the filter and discards rule edits but not config edits (and the reverse for a changed `styles.json`). Same orphan problem.
+- Both tabs show ` *`. The Quit popup and "Unapplied changes" indicator must count Auto Detect as pending even if no style text changed (only tags changed).
+- Tag-only migration deliberately does **not** mark the filter unapplied (old `# ff:style <name>` to id form). Auto Detect tagging must not reuse that silent path.
+- The strictness row derives the level from the S-F visibility. A new custom style does not touch built-ins, so it must not change the derived level. But if Auto Detect "matches" a built-in with pending edits, it is the pending values that count, and Reset to defaults can then make those tagged rules look different. That is expected, but it needs a test.
+- **Reset to defaults** keeps custom styles after the built-ins (one pending edit). Detected customs survive it. Fine, but the rules tagged to a built-in will be rewritten with reset values on Apply. Intended, document in a tooltip only (the UI is "not texty").
+**Prevention:** Make Auto Detect one atomic "pending edit" whose undo is a single step across both models, or, simpler and recommended, make Revert on either tab (always behind the confirm popup) revert both when an Auto Detect result is pending. Alternative: show Auto Detect only when the filter is applied and Config has no edits, and disable it otherwise. Pick one and test the matrix {Revert Rules, Revert Config, Reload, Reload after file changed, Quit} x {before, after Auto Detect}.
+**Also:** Apply must validate all-or-none. If writing `styles.json` succeeds and the filter write fails, the filter references ids that exist, which is fine. The reverse order would leave unknown styles. The current order (styles, tiers, then filter) is correct; do not change it.
+**Detection:** unknown-style flags after Revert; a ` *` that does not go away; Quit popup not appearing.
+**Phase:** P-AUTO; the status-line / indicator wiring should be part of the same phase.
 
-**Why it happens:**
-Three naming schemes grew independently. `build.rs` already derives `FF_VERSION` from `git describe --match v*`, so the ABOUT tab version and Cargo version can also disagree.
+### Pitfall 6: Disabled rules, groups and tagged rules in Auto Detect
+**What goes wrong:** The brief includes disabled rules but groups "once" and skips tagged ones. Pitfalls: (a) a `# ff:group` run is detected per block, and the blocks drift apart (the group's blocks differ only in their defence lines, so the group is one rule; apply the tag to all copies via the existing group edit path, not per block); (b) a disabled commented-out block that is not valid grammar (`can't enable`) has no parsed actions: skip it; (c) economy-section blocks are read-only and the model refuses actions on them, so Auto Detect must iterate user rules only; (d) tagging a disabled rule changes its bytes while disabled (`# ` prefixes): use the existing block edit functions, never string surgery; (e) a rule with `unknown style` tag counts as tagged (skipped).
+**Prevention:** Drive everything through the existing rule edit API that keeps bytes untouched except the edited lines, plus the same "styled rule" action writer used by the preset picker. Test on a NeverSink-size sample for time (detection must be O(rules x styles)) and for disabled and grouped rules.
+**Phase:** P-AUTO.
 
-**How to avoid:**
-- Decide once: either keep `vX.Y` tags and normalise to `X.Y.0` in exactly one helper (shared by workflow script and the in-app updater), or switch to `vX.Y.0` tags starting v0.7. Recommended: switch to `vX.Y.0` (matches Cargo and GitHub Releases convention, semver crates parse it) and document the one-time break.
-- First workflow step: fail if tag (minus `v`) != root `Cargo.toml` version, and fail if CHANGELOG has no `## [<version>]` section. Extract notes with that same version.
-- `/gsd-complete-milestone` already checks Cargo version vs tag; update it to the new tag format.
-- Updater parses both `FF_VERSION` and the release tag with the same function; treat `0.7` as `0.7.0`; ignore `-dev` / `-N-gSHA` suffixes of local builds (a dev build must compare as a pre-release of its base, not as newer than the release).
+### Pitfall 7: Drag-and-drop in a virtualized egui list: dragged row leaves the visible range
+**What goes wrong:** The list is virtualized (rows are only built when in the viewport, around ~500 blocks). The row being dragged is no longer built once it scrolls out of view (wheel or edge auto-scroll), so its drag interaction ends, `drag_stopped` never fires, or the payload is dropped, leaving the app in a stuck "dragging" state, or the drop lands on the wrong row.
+**Why it happens:** egui interaction state is keyed by `Id` and by the widget's presence in the previous frame. A widget that is not rendered cannot report `dragged()`/`drag_stopped()`.
+**Prevention:**
+- Own the drag state in the list state, not in widgets: `drag: Option<{source_index/rule id, grab_offset, start_pos}>`. Start it from the handle's `drag_started()`, but end it from the **pointer** (`ctx.input(|i| i.pointer.any_released())` / `!i.pointer.primary_down()`), not from the row's response.
+- Identify the source by stable key (rule index plus a generation, or the block id), not by a `Ui` response, and recompute the drop slot from the pointer's y in list coordinates each frame (using the same row-height / cumulative-height table the virtualization uses), not by hit-testing widgets (widgets for far rows do not exist).
+- Rows have two heights (collapsed two-line vs expanded editor, and section header rows at 36pt). The slot computation needs the real cumulative heights. Collapse the expanded row (or refuse to drag an expanded row) at drag start so heights are stable.
+- Escape cancels the drag and releases it (also when the window loses focus or is hidden via hotkey/tray mid-drag, or a popup opens, e.g. the File-changed-on-disk popup). Reset on `Event::WindowFocused(false)`.
+- Draw the shadow and drop marker on a `Foreground`/`Order::Tooltip` layer via `ui.painter().with_layer_id` so it is not clipped by the scroll area's clip rect, and the shadow is not part of the layout.
+- Pixel snapping: the skin paints with pixel-snapped nine-slice at fractional DPI (100-200%). Snap the shadow position or it will shimmer.
+**Detection:** drag, then wheel far; release outside the window; release over the economy rows; row "sticks" to the cursor after release.
+**Phase:** P-DND. Needs a spike: build the drag state machine as pure logic (slot from y, auto-scroll velocity) with unit tests first, then wire egui. Confidence on egui specifics: LOW-MEDIUM, verify with an egui 0.36 `Context::drag_and_drop` / `DragAndDrop` check (may already be adequate; **do not add `egui_dnd`, that is a new dependency (`DEP?`)**).
 
-**Warning signs:**
-Release page shows empty or whole-file notes; installer filename says `0.7`; "Check for updates" says up to date on an older build, or offers the release you already run.
+### Pitfall 8: Drag-and-drop: invalid drop targets and structure invariants
+**What goes wrong:** Reordering is not a flat list. The model has rules, `# ff:group` runs (one rule, moves as one unit), section banners (headers move past rules one at a time, the divider below the economy section cannot move down), the locked economy section (always last, read-only, rows muted), rules above the first banner, collapsed sections (hidden rows), and "moved across Continue" flags (existing behaviour that drag must keep). Typical bugs: dropping a rule into or below the economy section (corrupts the file shape, economy "begin-only, always last"); dropping a rule between the blocks of a group (breaks the group; the checks make it show as `group broken`); dropping into a collapsed section (the rule vanishes); dragging a section header drags its rules (arrows moved only the divider); off-by-one when the source index is above the target (remove-then-insert shifts the index); search active (arrows were disabled while searching, the visible list is filtered, so slots do not map to file positions).
+**Prevention:**
+- Express a drop as a single call into the same model function the arrows use (`move rule from i to slot s`), so every existing invariant, test and the "moved across Continue" flag are reused. Do not write a second mover.
+- Compute slots over "rule-level" items, treat a group as one item, and forbid slots inside the economy section and between group members.
+- Disable drag while searching (same as the arrows were), and say so in the handle's tooltip.
+- Define what dropping on a collapsed section header does (recommended: insert as the section's first rule and leave it collapsed, or refuse, but pick one).
+- Custom styles reorder: the same reorder must keep built-ins above customs ("a custom style never moves above the built-ins"), and the order is the `styles.json` order saved by Apply and undone by Revert.
+- Reordering rule rows must be one undo step (Revert only, there is no other undo) and must mark the tab ` *` and the unapplied indicator.
+**Phase:** P-DND.
 
-**Phase to address:** Release pipeline phase (workflow + tag policy), re-checked in the updater phase and the Release Review phase.
+### Pitfall 9: Removing the arrows removes the only keyboard path
+**What goes wrong:** The reorder arrows were the only way to reorder without a mouse (and a precise way when the list is long). Drag-only makes long-distance moves painful (500 rules, auto-scroll speed too high or too low) and removes accessibility. Auto-scroll tuned on a 60 Hz test machine overshoots on 144 Hz because it is per-frame, not per-second.
+**Prevention:**
+- Make auto-scroll velocity time-based (`dt`), proportional to the distance into the edge zone, and clamp. Test at high and low frame rates (egui only repaints on input unless `request_repaint` is called while dragging, so auto-scroll stalls when the pointer is held still at the edge: request repaint every frame while a drag is active).
+- Keep a keyboard route: either keep the arrows in a hidden form (focus-only, or Alt+Up / Alt+Down on a focused row), or accept the loss deliberately. If the author wants the arrows gone (backlog 999.26), record the decision. Flag for author review rather than deciding silently.
+- Hit area of the handle: the custom-art handle must be at least the previous arrows' target size, and it needs a hover and pressed art state (the untracked `assets/custom/icon_reoder_*.png` files suggest three states: normal, hover, pressed). Cursor icon `Grab`/`Grabbing`.
+- Clicking the handle must not expand/collapse the row, and a drag must not toggle the round check or select the row (click vs drag threshold; egui's `Sense::click_and_drag` decides click on release only if no drag).
+**Phase:** P-DND.
+
+### Pitfall 10: Custom hotkey registration: capture, conflicts and re-registration
+**What goes wrong (verified in `src/overlay/hotkey.rs`):** the current code registers once at start-up with constants `TOGGLE_MODIFIERS`/`TOGGLE_CODE`, keeps the manager for process lifetime, and `release_toggle` unregisters the same constants. Making it runtime-configurable breaks assumptions in several places (`app.rs`, `instance.rs`, `mod.rs` also reference the constants or the `Ctrl+Shift+Z` text).
+- **Unregister the wrong key:** `release_toggle` and any unregister must use the currently registered `HotKey`, not the constant, or the old key stays registered (and a relaunch after Quit cannot take it, the exact WR-01 bug).
+- **Register-new-before-unregister-old:** if the new key fails (taken by another app), the user must keep the old one. Register new first, then unregister old only on success, and save to `ff-settings.json` only on success. Order matters; an unregister-first design leaves the user with no hotkey.
+- **Same key re-registered:** re-registering the already-registered chord fails with an "already registered" error on the same manager. Treat "new == current" as a no-op.
+- **Thread affinity:** the module doc says `register_toggle` must run on the thread with the Win32 message loop (the hotkey window). The capture UI runs inside `update`, which is on the main thread, so it is OK, but any move of registration to a worker or the settings save path would break it (hotkey events silently never arrive).
+- **Hotkey firing while capturing:** while the user is recording a chord, pressing the *current* hotkey (e.g. the default Ctrl+Shift+Z) toggles/hides the window mid-capture. Unregister the current hotkey for the duration of capture (and re-register on cancel / failure), or ignore toggle events while capturing.
+- **Capturing from egui key events:** egui's `Key` set differs from `global_hotkey::hotkey::Code` (physical codes). Capture physical keys (`KeyboardEvent` with `physical_key`) or map explicitly; otherwise AZERTY/QWERTZ users register a different key than they pressed. Numpad keys, Fn row beyond F12, media keys have no egui `Key`. (LOW confidence on what egui 0.36 exposes: check `egui::Event::Key { physical_key }`.)
+- **Modifier-only chords and bare keys:** reject a modifier-only chord (register fails or blocks that modifier everywhere). A bare key with no modifier (e.g. `Z`) was already shown to hurt (the Phase 13 note: plain `Shift+Z` swallowed typing everywhere, including the game chat). Require at least one modifier (Ctrl/Alt/Shift/Win) plus a non-modifier key, and warn or refuse Shift-only or bare letter/digit/space chords. `Win+...` chords are mostly reserved by Windows (registration fails).
+- **Conflicts with the game or its tooling:** PoE2 uses many keys; the overlay's hotkey only acts when the game or overlay is foreground, but registration is system-wide, so the key is lost everywhere. The text should say so in the tooltip (not a wall of text).
+- **Foreground-only gating (existing):** the handler checks the foreground window, so it still has to work after re-registration: the event `id` changes with the chord (`hotkey.id()` is derived from the chord). The event loop compares against a stored `Registered { id }`, which must be updated on re-registration, otherwise the new key fires but is ignored.
+- **Debug vs release instance:** both can run side by side and conflict on the same chord (existing tray-tooltip note). A saved custom hotkey is shared through `ff-settings.json` if both use the same `FERRISFILTER_HOME`, so debug and release will fight. Not a bug, but the status must say which failed. Tests and `--screenshot` mode must not register a hotkey at all, and must not read or write the real `ff-settings.json` (isolation_guard).
+- **Settings robustness:** invalid saved value (bad token, modifier-only) must fall back to the default with a warning (follow the existing "unusable key → warning, default" pattern), never to "no hotkey".
+- **Strings that mention the chord:** the tray tooltip, About text, README, `CLAUDE.md` ("hardcoded `Ctrl+Shift+Z`"), failure messages (`HotkeyStatus::Failed`), and `instance.rs` text all hardcode it. Derive from the configured value.
+- **Persistence format:** store a stable, human-readable string (`"Ctrl+Shift+Z"`), parsed with `HotKey::from_str` if 0.8 provides it (verify; if not, a small parser is needed, which is not a new dependency but is new code with tests, `DEP?` no). Unknown keys in `ff-settings.json` are preserved on save (existing rule).
+- **Tray Quit ordering:** the release order is hotkey, tray icon, instance name. Re-registration must not leave a registered hotkey after Quit begins (disable capture and re-registration once quitting).
+**Phase:** P-HOTKEY.
+
+### Pitfall 11: Throttling clock problems
+**What goes wrong:** "Once per hour per kind, persisted across restarts" uses wall-clock timestamps in `ff-settings.json` (or a sibling file). The existing code already uses `SystemTime` for display (`app.rs:3881`) and sync's `fetched_at` (`sync/prices.rs`).
+- **Clock goes backwards / timestamp in the future:** `now - last` underflows (`duration_since` returns `Err`), which many implementations treat as 0 elapsed forever → throttled until the clock passes the future time (days, or "forever" with a bad year). Treat a future timestamp as "unknown", allow the request, and overwrite it.
+- **Clock jumps forward** (DST is not an issue for UTC epoch seconds, but a manual change or a VM resume is): a burst of allowed requests. Acceptable for an hourly limit, but never panic on arithmetic.
+- **Use persisted epoch seconds for cross-restart, `Instant` only inside a session.** `Instant` does not survive restarts and may not advance during sleep on Windows, so do not use it for the persisted window.
+- **Per-kind and per-league keys:** the limiter key must include what the request is about. Leagues list (`economyLeagues`), prices per league (and per category, since sync makes many calls), update check (GitHub `releases/latest`). If the key is only `prices`, switching league within the hour is blocked or, worse, serves the previous league's data as fresh. If it is per league, an arbitrary league string becomes a key in the settings file: sanitise and cap the number of keys, and drop stale entries.
+- **Failed requests:** do not start the window on failure (network down, 5xx, HTTP 429 should be a *longer* backoff, not a retry). Only a successful response *and* a successful write of `prices.json` starts the window. A success whose parse fails should not count either. Record on success only, and write the timestamp after the data is persisted, never before (a crash between leaves "throttled with no data").
+- **Race of two clicks / two instances:** a double click starts two requests (the existing `is_running()` guard handles one instance). Check-and-start must be atomic with the running flag. Two overlay instances can't coexist (single-instance), but the CLI can run beside the overlay, and the CLI is unthrottled by design, so the CLI must **not** update the overlay's timestamps, or it must on purpose; decide. Recommended: CLI neither reads nor writes the throttle state ("The CLI keeps automatic resolution and reads neither overlay key", extend that sentence).
+- **Fake refresh lying about freshness:** the "fake refresh" (UI behaves as if refreshed when throttled) must not update "Last sync" or `fetched_at`/mtime, must not claim "synced just now", and must not hide that data is up to 1 hour old. Show the real last-fetch time, and the status line should say it used cached data (one short message). If fake refresh re-runs the Apply pricing from the on-disk `prices.json`, say so honestly. Also: user trust is damaged if "Sync economy" appears to succeed without changing prices; the tooltip should state the cooldown remaining.
+- **Per-kind scope in tests:** tests must inject a clock (a `Clock` trait or a `now` parameter, like `sweep_stale(tmp_root, now)` already does) and a temp home. Never call `SystemTime::now()` inside the limiter. No sleeping tests.
+- **First-run and ended-league paths:** league list fetch happens "the first time Economy is opened in a session". Throttling it means a fresh start within the hour uses the persisted list: persist the list itself (or the per-league state needs the league list to decide "ended"), or the dropdown is empty after a restart. Decide whether the league list is cached to disk. Without it, the throttle returns nothing. (Confidence MEDIUM: depends on how it is implemented; check `overlay/economy.rs`.)
+- **Check for updates:** the About button is the only trigger and a user-explicit action; throttling it feels broken ("button does nothing"). Throttle only automated or repeated calls, or show the cached result with a clear message.
+- **User-Agent:** two distinct strings (overlay vs CLI) must still name the public repo; `sync::client::USER_AGENT` has a test (`user_agent_names_the_public_repo`) and `update.rs` reuses the constant. Changing the constant for one path must not change the update check's UA unintentionally. Add a test for each.
+- **Settings file failure:** an unreadable or invalid `ff-settings.json` means reload off and `dynamic.filter`. The throttle state must not be stored in a way that a settings parse failure silently disables the throttle (fail closed would block all requests forever; fail open could hammer). Recommended: fail open, but with the in-session `Instant` guard still active. Prefer a **separate** small state file so a settings error cannot affect it and unknown-key preservation is not stressed (needs author decision; the folder-listing says the FerrisFilter folder contents are documented, so a new file needs CLAUDE.md update).
+**Phase:** P-THROTTLE.
+
+### Pitfall 12: Economy name change breaks matchers, search, snapshots and the "ff:name" contract
+**What goes wrong:** Economy block names are `# ff:name <T> tier <Group>` (`emitter.rs:554`, `:632`), and CLAUDE.md pins examples (`S tier Currency`, `A tier Uniques`). The tier price range (e.g. `S tier Currency (20-150 div)`) is a new, **price-dependent** name. Consequences:
+- **Tests and fixtures:** `emitter.rs:1275/1278` assert exact names, `overlay/rules.rs:2125/2140` parse `A tier Uniques`, `app.rs:6809` checks `.contains(" tier ")`. `tests/fixtures/seed-universal.filter` is the byte-for-byte oracle for `generate`, and it carries `# ff:name` only in the "economy form" (CLAUDE.md: `generate` output has neither `ff:name` nor `ff:style`, but verify). If the range is added in the shared emitter, the `generate` output can change and break `artifact_guard`. Add the range only in the economy (apply) path, or confirm `generate` names are unaffected. Check `Show # <rule name>` in generate output separately.
+- **Name changes on every sync:** the economy section is regenerated on every Apply from `prices.json`; prices change per sync, so the names change on every Apply and the economy section always "differs", which has two risks: (1) the "Apply whose result equals the file on disk is not rewritten" optimisation never applies; (2) the "changed on disk" guard and `.ffbak` are unaffected, but an Apply produces a diff for every sync, which is expected. (3) "Updated N styled rules" counters. Check that nothing treats a changed economy name as a user edit (the economy rows are read-only, so low risk).
+- **Search** matches `# ff:name` and class/base values, "Search finds economy rules (by name too)". A name containing digits and ranges changes what the search matches (searching "20" now hits dozens of economy rules). Acceptable, but verify search does not break on the parentheses or `-` characters (no regex), and the unnamed/`tier` detection used for the display name.
+- **Parsing:** anything that splits names on `" tier "` (to extract tier or group) will now see a suffix. Grep for `tier` string handling before changing; at minimum `app.rs:6809`, `rules.rs`. The group name is `category.name` and can contain parentheses itself (check categories with parentheses or digits, e.g. "Soul Cores", names with `-`), so the range suffix must be unambiguous, e.g. appended after a fixed delimiter, and the group portion not parsed back.
+- **Units:** the tier cutoffs are chaos-denominated in live data and exalt-denominated in the fallback pair (`unit: "exalt"`); `derive_rates` expresses everything relative to Chaos. The range shown must state the unit and convert correctly, or the same tier shows `2.5` under fallback and `1.7` under live with no unit. Divine is "pinned to the A floor" under the old unit. Ranges for the top tier (no upper bound) and the lowest tier (F, lower bound 0 / hidden) need explicit text ("20+").
+- **Floating-point formatting:** `0.30000000000000004`-style output, locale decimal commas, and trailing zero changes create name churn. Use a fixed rounding and integer formatting where possible; make the formatter a pure function with tests.
+- **Price-tiered unique blocks share names across tiers** and "deduped per base to the highest tier". The range per group must be computed from the **cutoffs** (tiers), not from the items' actual prices in the block, or the name changes per item set. Decide which: cutoffs are stable (changes only on tier edit), item prices are volatile. Recommend cutoffs.
+- **The tier editor changes cutoffs live (pending edit)**; the read-only economy rows are "re-priced when they change", so names must re-render from pending tiers, not stale ones.
+- **`# ff:name` is one line:** the name must not contain a newline (strip), and is user-visible in game-folder files, so keep it short.
+- **Existing user files:** the economy section is regenerated, so old names are replaced on the first Apply. A v0.4 conversion keeps `Show # <name>` names as `# ff:name`. No migration needed, but the first Apply will show a large economy diff, which is not a bug.
+**Phase:** P-ECON (after alpha; independent otherwise). Release notes are written by the author, not agents.
 
 ---
 
-### Pitfall 2: Floating `nightly` toolchain in CI breaks (or silently changes) the release
+## Moderate Pitfalls
 
-**What goes wrong:**
-`rust-toolchain.toml` says `channel = "nightly"`. CI installs whatever nightly is current on tag day. A nightly regression, a `poe_data_tools`-style nightly break, a new clippy/rustc lint, or a rustfmt change can fail the tag build, and re-tagging is awkward with milestone-squash flow. Two releases built from the same commit weeks apart can differ.
+### Pitfall 13: Section headers restyled but virtualized heights and hit areas change
+**What goes wrong:** Section headers are 36pt rows today. A Social-panel look (different height, nine-slice art, new chevron/pencil/arrow/x hit areas) changes row height; the virtualization height table, scroll-to-rule ("jumping to a rule opens its section"), and drag slot math (Pitfall 8) all rely on it. Art taken from the game goes in `assets/poe2/` via `ff-art` (manifest entries), not hand-edited (CLAUDE.md); hand-made art goes in `assets/custom/`. Texture memory and LINEAR + mipmaps: nine-slice art stretched at 200% DPI can bleed edges (the skin uses pixel-snapped slicing, reuse it).
+**Prevention:** Keep the row height a single constant used by both painting and the virtualization table. Use `ff-art` manifest for new game art, committed with the manifest, including GGG credit (README Credits). Screenshot mode (`--screenshot`) is the visual regression check; use it at 100% and 200%. Keep the economy locked header distinct (padlock, muted).
+**Phase:** P-UI.
 
-**Why it happens:**
-The floating channel was a conscious dev convenience (the file's own comment says to pin a dated nightly if a nightly breaks `poe_data_tools`). A release pipeline needs reproducibility.
+### Pitfall 14: Search field clear-X and magnifier
+**What goes wrong:** The clear X takes focus away from the text edit (the field loses focus, the next typed key is lost) or does not clear when the field is focused and the Escape handler also clears the search; the magnifier overlaps the hint text (the hint carries the rule count, `Search N rules, classes, base types…`) and the text cursor start; clearing while a search is active must restore the arrows/drag (disabled while searching) and re-expand section behaviour ("Search shows matching rules inside collapsed sections"). The `+ Add rule` also clears the search. The X must be hidden when empty, must not be hit by a click that was meant for the field, and the text-field width must account for the icons (the existing `ff_text_field_id` / `_ex` helpers).
+**Prevention:** Reuse `ff_text_field_ex`, draw icons inside its margins, `request_focus` after clear, unit-test "clear resets filter state and leaves focus". Same widget on the Economy/Config/class-picker/condition picker searches if they share it (backlog 999.23-999.25 mention more fields): keep one helper.
+**Phase:** P-UI.
 
-**How to avoid:**
-- Pin a dated nightly (`nightly-YYYY-MM-DD`) in `rust-toolchain.toml` for the release; bump deliberately. Verify whether the root package really needs nightly (only `ff-art`'s dependency is documented as nightly-only); if not, ship the release from stable or a pinned nightly and keep `ff-art` out of CI.
-- Use `cargo build --release --locked` and `cargo test --locked`; commit `Cargo.lock` (already committed). Build only the root package (`ff`, `ff-cli`, `ferrisfilter`); `ff-art` is a non-default workspace member and needs a game install.
-- Do not use `-D warnings` in CI: clippy is at a 121-warning baseline. Run fmt check only, or clippy without deny.
-- Cache with `Swatinem/rust-cache`, but never publish from a cache-poisoned job without a clean `--locked` build.
-- Run a dry-run workflow (manual `workflow_dispatch` or a `v0.7.0-rc.N` tag) before the real tag.
+### Pitfall 15: Style editor alpha UI
+**What goes wrong:** The colour picker "has no alpha for styles" and style colour cards have a None tile. Adding an Alpha slider to the style picker (shared by RULES colour actions, which already have alpha) risks regressions in the rule-action picker semantics: "a 3-token colour line stays 3-token while alpha is 255", "a colour added to an empty slot is written with 4 values", and "opening without a change edits nothing". The preview swatch must show alpha over a checkerboard or the tinted bands; the label preview uses background alpha. `Escape` restores the opening colour, including alpha. Hex field with 8 digits vs 6: decide, and make 6-digit input keep the current alpha rather than reset to 255. The nine Dracula quick picks are opaque; picking one should keep or reset alpha, define it.
+**Prevention:** One picker, a `with_alpha: bool` flag already implied by the two call sites; add the style call site with the flag on, and keep a golden test for the Rules call site. Opening and closing with no change must leave `styles.json` untouched (byte-identical, Pitfall 1).
+**Phase:** P-ALPHA.
 
-**Warning signs:**
-CI green last week, red today with no commit; `rustup` downloading components mid-job; release binary size differs between identical commits.
+### Pitfall 16: Auto Detect and alpha interplay on the styled rewrite
+**What goes wrong:** If a style has alpha < 255 and a rule is tagged, the Apply rewrite writes a 4-value colour; a rule previously 3-value gets a 4-value line (acceptable, but is a byte change). If Auto Detect runs before alpha lands, the mapping logic has no alpha model and must be reworked.
+**Prevention:** Land P-ALPHA first and make the detection read the final colour type. Detection must compare alpha for text, border and background individually.
+**Phase:** ordering note for the roadmap.
 
-**Phase to address:** Release pipeline phase (first task: pin toolchain + dry-run).
+### Pitfall 17: Test isolation regressions
+**What goes wrong:** New features read the clock, the settings file, the hotkey manager and the network. Tests that touch the throttle, hotkey setting, or settings write to the real `%APPDATA%\FerrisFilter` unless `FERRISFILTER_HOME` is pinned (`tests/isolation_guard.rs` enforces on spawns; lib tests "never resolve the real folder"). The fake-refresh and throttle code must go through the injected seams (`UpdateHttp` style) so tests never hit the network.
+**Prevention:** Extend the guard's pattern to any new state file; take `home: &Path`, `now: SystemTime` parameters. No test registers a real global hotkey (CI runner has no desktop session; `GlobalHotKeyManager::new` may fail), assert via a pure parse/validate function.
+**Phase:** every phase; verify at P-THROTTLE and P-HOTKEY.
 
----
-
-### Pitfall 3: Build-time version/`git describe` and dirty-tree in CI
-
-**What goes wrong:**
-`build.rs` bakes `FF_VERSION` from `git describe --tags --match v* --dirty`. In CI: (a) a shallow checkout (`fetch-depth: 1`) may lack the tag history, silently falling back to `CARGO_PKG_VERSION`; (b) if any step before the build modifies tracked files (tests that regenerate fixtures, `cargo` refreshing `Cargo.lock`, CRLF normalisation), `--dirty` appends `-dev` and the shipped ABOUT tab and updater compare see `0.7.0-dev`; (c) `git remote get-url origin` yields the Actions token-bearing URL form, which `web_url` must not leak into the ABOUT link text.
-
-**How to avoid:**
-Checkout with `fetch-depth: 0` and `fetch-tags`; build the release artifacts first (clean tree, `--locked`), then run tests; assert in CI that `ff --version`-equivalent (or a tiny smoke) prints exactly the tag version with no suffix; check the ABOUT repo link in a built exe contains no credentials. Prefer injecting the version from the workflow env over `describe` for release builds.
-
-**Warning signs:**
-Release exe reports `-dev`; ABOUT link text contains `x-access-token`; update check offers the same version as installed.
-
-**Phase to address:** Release pipeline phase; verified again in updater phase.
+### Pitfall 18: Release hygiene
+**What goes wrong:** Milestone rules: a bug introduced and fixed within the milestone is never mentioned outside `.planning/`; agents do not write changelog entries during a milestone; the Release Review phase does cleanup, screenshots and version. `CLAUDE.md` rows ("hardcoded `Ctrl+Shift+Z`", "always emits alpha 255", "no alpha", "arrows", "moved across Continue") become inaccurate; each phase should list the CLAUDE.md sentences it invalidates, since "Everything from Repository layout down is that reference — keep it accurate".
+**Phase:** each phase's last plan, plus Release Review.
 
 ---
 
-### Pitfall 4: Tests that depend on the real Windows profile, and a new path layer that ignores the env vars the tests set
+## Minor Pitfalls
 
-**What goes wrong:**
-Existing code and tests key off `USERPROFILE` (`src/install.rs`, `src/run.rs`, `src/cli.rs`, `tests/cli_errors.rs`, `tests/dynamic_filter.rs`, screenshot guard) and `FERRISFILTER_HOME`. If the new config dir / game folder resolution calls the Windows known-folder API (`SHGetKnownFolderPath`, or the `dirs`/`directories` crates, which do this on Windows), it ignores `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` overrides. Result: tests silently read/write the developer's (or CI runner's) real `%APPDATA%\FerrisFilter` and real Documents folder; and the debug `--screenshot` mode, whose safety guard only checks that `FERRISFILTER_HOME`, `USERPROFILE` and the derived game folder are under temp, would now write the author's real live `styles.json` / settings. This is the worst data-loss path in the milestone.
+### Pitfall 19: Custom hotkey docs and tooltips repeating the chord
+Strings in the tray tooltip, README, and `instance.rs` that name `Ctrl+Shift+Z`; make a single `display()` function. (see Pitfall 10).
 
-**Why it happens:**
-OS-correct resolution (OneDrive/localized Documents) and env-var-based test isolation are opposites. The v0.5/v0.6 isolation story is built entirely on env vars.
+### Pitfall 20: Drag handle art states and DPI
+Three art states exist (normal/hover/pressed) as untracked files; they must be committed with their `.ase` and loaded through the skin's `include_bytes!`, LINEAR + mipmaps; handle art at fractional DPI must be pixel snapped.
 
-**How to avoid:**
-- One path module with an injectable provider: `Dirs { config, cache, documents }` resolved once; production uses known-folder APIs, tests and screenshot mode inject temp dirs. `FERRISFILTER_HOME` keeps overriding everything (config and cache both under it, so existing tests and the dev workflow keep working).
-- Extend the screenshot guard (`paths_under_temp`) to the new directories (config dir, cache dir, resolved documents/game folder) and make it refuse if any resolves outside temp. Add a test that fails if screenshot mode can resolve a real known folder.
-- Add a lint-style test: no production code path reads config/cache/documents except through the provider (grep test for `APPDATA`, `dirs::`).
-- On the CI runner assume no PoE2 install and an arbitrary profile path; no test may assume `Documents\My Games\Path of Exile 2` exists.
+### Pitfall 21: Throttle state growing without bound
+Per-league keys accumulate over seasons: prune keys older than the window plus a margin on write.
 
-**Warning signs:**
-`%APPDATA%\FerrisFilter` appears after `cargo test`; tests pass locally but differ in CI; screenshot run changes the author's live files.
-
-**Phase to address:** Config relocation phase (provider + guard first, before any feature uses the new dirs). Game-folder picker phase reuses it.
+### Pitfall 22: Auto Detect run time and UI freeze
+Detection over several hundred blocks, with emitter calls per candidate style per rule, can be slow in a debug build; precompute the per-style expected action set once, not per rule.
 
 ---
 
-### Pitfall 5: Migrating the author's (and v0.6 users') live app-root files
-
-**What goes wrong:**
-Today `styles.json`, `tiers.json`, `prices.json`, `ff-settings.json` live beside the exe/repo root, and the app root is located by walking up to `styles-default.json`. After the change: (a) the author's edited `styles.json`/`tiers.json` are "lost" because the new location is empty and defaults are embedded, silently resetting their palette; (b) an auto-migration that moves or deletes the old files destroys the only copy; (c) running the dev build from the repo (`cargo run`) now reads the real `%APPDATA%` instead of the repo copies, mixing dev and installed state; (d) the old walk-up marker (`styles-default.json` beside the exe) no longer exists in an installed layout, so `resolve_from` returns `NotFound` or latches onto an unrelated ancestor; (e) `ff-settings.json` holds a game-folder filter name relative to the old game folder assumption, now must coexist with a new game-folder field.
-
-**How to avoid:**
-- One-time, copy-only migration: if the new config dir has no `styles.json`/`tiers.json`/`ff-settings.json` and a legacy app-root copy exists (legacy resolution = old `FERRISFILTER_HOME` / walk-up / cwd), copy it, leave the original untouched, record a `migrated_from` note, and say so once in the status line. Never overwrite existing new-location files. Never delete legacy files.
-- Keep ids intact: files with ids must round-trip byte-identically (existing guarantee); migration copies bytes, it does not reparse and rewrite.
-- Prices cache is regenerable: do not migrate `prices.json`; just resync (but see Pitfall 9 on stale league).
-- Define the dev story explicitly: repo runs set `FERRISFILTER_HOME=<repo>` (a `.cargo/config.toml` `[env]` entry or documented), keeping the existing "Development warning" true.
-- Remove the `styles-default.json` app-root marker semantics from `paths.rs`; defaults come from `include_str!`. Keep a compatibility read path only for the migration.
-- Unknown-key preservation in `ff-settings.json` must survive the move (existing guarantee); add a test with an old-format file.
-- Test on the author's real files (copy to a temp home) before release.
-
-**Warning signs:**
-First launch after upgrade shows default colours; `FerrisFilter` folder created empty; migration test uses synthetic files only.
-
-**Phase to address:** Config relocation phase (migration is its own task with a real-file fixture).
-
----
-
-### Pitfall 6: Embedded defaults drift from the committed fixtures and `artifact_guard`
-
-**What goes wrong:**
-`styles-default.json` / `tiers-default.json` are read from disk by tests and `artifact_guard` (in `tests/cli_generate.rs`) and are the app-root marker. Embedding them with `include_str!` while tests keep reading the file path creates two sources that can diverge (e.g. someone adds a second copy under `assets/`). The style rework (no custom sounds, revised built-ins) changes the generated filter, so `tests/fixtures/seed-universal.filter` and snapshots must be re-baselined; doing it piecemeal across phases triggers repeated churn, and a half-done rework can leave `generate` output and the economy section disagreeing about `uwu.mp3`/`CustomAlertSound`. `CLAUDE.md` also documents `CustomAlertSound "uwu.mp3"` in the S/A tiers and the `assets/uwu.mp3` requirement in many places.
-
-**How to avoid:**
-- Single source: keep the repo-root `styles-default.json` and embed that exact file with `include_str!`; tests and runtime then read the same bytes. Add a test asserting the embedded string equals the file (cheap guard).
-- Land the style rework in one phase and re-baseline fixtures once, deliberately, as the last emitter-affecting task (precedent: v0.3 "one consolidated fixture re-baseline").
-- Treat `generate` (reads beside the inputs, uses `-default` fallback) and the overlay differently only in resolution, not content.
-- Sweep docs/tests for `uwu.mp3` and `CustomAlertSound`; keep the custom-sound capability in the editor (users still may pick folder sounds) but not in built-ins. Check the sound validation tests that reference built-in custom sounds.
-- Resist the temptation to edit `styles-default.json` for strictness reasons; strictness only changes the live `styles.json` visibility, never defaults.
-
-**Warning signs:**
-`artifact_guard` diff after an unrelated change; two `styles-default.json` files in the tree; `grep uwu` still hits `styles-default.json` or tests.
-
-**Phase to address:** Style rework phase (must precede or be coordinated with Strictness Selector); config relocation phase owns embedding.
-
----
-
-### Pitfall 7: Strictness Selector derived-state edge cases
-
-**What goes wrong:**
-The selection is derived from S-F built-in visibility (`Show`/`Hide` `action`), with seven modes (Custom + hide nothing, F, E-F, D-F, C-F, B-F). Failure modes: (a) the matcher treats "F hidden only" the same as the `hidden` required style or confuses the `F` style (Show action, font 25) with the `hidden` style; (b) a user who hid only `S` or a non-suffix set sees Custom, but clicking a preset overwrites their hand-chosen visibility without a warning; (c) the preset also flips nothing about custom styles or rules that carry their own Hide; (d) clicking a preset marks the CONFIG tab as edited (` *`) but "Custom" has no defined click effect (should it revert to the last custom state? do nothing?); (e) Revert/Apply/Discard interplay: preset click is an in-memory style edit that must go through the same all-or-none Apply and undo as a switch toggle; (f) economy tier blocks for hidden tiers become `Hide` blocks, and the generated economy for a hidden tier S must not be possible via presets, but is via hand edit; (g) it silently changes `generate` output only through `styles.json`, so the byte-for-byte fixture baseline must use defaults (hide nothing).
-
-**How to avoid:**
-- Implement as a pure function `strictness_from_styles(&Styles) -> Mode` and `apply_mode(&mut Styles, Mode)` with unit tests for all 7 modes plus each non-suffix pattern, and property-style test: apply_mode then derive is identity for the six presets.
-- Define Custom click: no-op (it is a state, not an action), tooltip says so; or have it restore the pre-preset snapshot. Pick one in the plan.
-- Only touch the `action` of the nine required built-ins S, A, B, C, D, E, F by id (`builtin:S` ...), not by name, and never `unchanged`, `hidden`, `Recycle`, `kite`, `exceptional`.
-- Show a tooltip on each button naming exactly which tiers it hides. Do not add a text wall (overlay UI is intentionally not texty).
-- Tests: preset change is one revertible edit; Apply writes `styles.json` with the existing byte-stable formatting; rules styled with S-F update on Apply (existing mechanism).
-
-**Warning signs:**
-Selector shows Custom right after clicking a preset; hand edit of one switch flips to a wrong preset; fixture diff after adding the selector.
-
-**Phase to address:** Strictness Selector phase.
-
----
-
-### Pitfall 8: Self-updater replacing a running, tray-resident exe
-
-**What goes wrong:**
-`ff` hides to the tray and keeps running; the user rarely quits it. An updater that downloads and launches the installer while `ff.exe` is running hits a locked exe (installer fails or schedules a reboot replace), or the installer succeeds but the old process keeps running (single-instance guard then makes the new launch just summon the old window). Overwriting the exe in place from within itself fails on Windows. Worse, quitting `ff` to let the installer proceed must follow the existing Quit rules (unapplied changes popup, waiting for an in-game reload).
-
-**How to avoid:**
-- Do not self-overwrite. Download the installer to a temp dir, verify, spawn it detached, then run the existing Quit path (respecting the Unapplied-changes popup; only quit after Apply or explicit discard). The installer must handle "already running" itself.
-- Installer: use Inno Setup `AppMutex` (the overlay already has a named single-instance object; expose or create a dedicated mutex) with `CloseApplications=yes`/`RestartApplications` so the old `ff.exe` is closed; add a prompt-free `/SILENT`-like flow only if tested.
-- Keep a stable installer `AppId` and install location so upgrades are in-place, shortcuts persist and Add/Remove Programs has one entry.
-- Verify the downloaded file: HTTPS only, expected asset name pattern, size > 0, and compare the SHA-256 published in the release (generate `SHA256SUMS` in CI and download it). Without signing, the checksum is the only integrity signal; note it does not defend against a compromised release account.
-- Never auto-run the installer; the requirement already says "offers to run it". Make the confirm button explicit and state the version.
-- Test the upgrade path (install v0.7.0 -> run -> update to a test v0.7.1) on a clean VM before release, with `ff` running in the tray.
-
-**Warning signs:**
-"File in use" dialog from installer; after update the About tab still shows the old version; two Start menu entries; update flow leaves the tray icon of the old process.
-
-**Phase to address:** Updater phase (after installer phase exists so both can be tested together).
-
----
-
-### Pitfall 9: poe.ninja league list instability (the `indexed` flag problem) leaks into the picker
-
-**What goes wrong:**
-The pinned `OVERLAY_LEAGUE` exists because `indexed` flips between leagues. Replacing the pin with a picker populated from poe.ninja can: (a) default-select the outgoing league during a transition; (b) list leagues with no PoE2 economy data (empty price sets that look like a successful sync); (c) persist a league name that disappears at league end, so every later sync fails with "no such league", or worse a cached `prices.json` for last league is silently used; (d) offer SSF/hardcore/Standard variants with confusing names; (e) the list fetch failing leaves the picker empty and Sync disabled with no recovery; (f) league + price source choices interact: "fallback prices" is exclusive with Sync, and tier cutoffs edited in CONFIG already have no effect with fallback (documented debt).
-
-**How to avoid:**
-- Default = persisted choice if still in the fetched list; else pick by an explicit rule (newest non-Standard softcore trade league, not by `indexed` alone); never silently change a persisted league: show "league X is no longer available" and require a pick.
-- Record the league in `prices.json` (already done) and show a mismatch between picker and last-synced league in the status line/economy panel.
-- Treat a sync that returns an empty/very small item set as failure (the lenient parser makes success likely). Keep failing loudly, as the pin did.
-- Cache the league list (short TTL) so an offline start still offers the persisted league; handle timeouts without blocking the UI thread (existing worker-thread pattern).
-- Price source toggle is stored; Sync disabled with a clear tooltip when fallback is selected; Apply with fallback must say so in the status line (the deferred "surface `price_source`" debt becomes user-facing now; do it here).
-- Network layer: keep `reqwest` + rustls ring (existing); set a real `User-Agent`; sensible timeouts.
-
-**Warning signs:**
-Sync "succeeds" with few items; picker lists a league you cannot sync; post-league-end Sync errors on first launch.
-
-**Phase to address:** League/price source phase. Needs a short live-API spike at phase start (`needs research`).
-
----
-
-### Pitfall 10: GitHub Releases API: rate limits, prereleases, drafts, assets
-
-**What goes wrong:**
-Unauthenticated GitHub API calls are limited per IP (60/hour, MEDIUM confidence, verify); shared IPs (campus, VPN, CGNAT) hit 403/429 fast. Requests without a `User-Agent` are rejected. `/releases/latest` excludes prereleases and drafts, so an `-rc` release is never offered (fine) but a beta tester on a prerelease is never told about newer prereleases. A newer release whose installer asset is not yet uploaded (workflow still running) is offered but has no asset. Asset name matching by substring picks the zip instead of the installer. Parsing errors on an unexpected JSON shape produce a crash on the UI thread.
-
-**How to avoid:**
-- Only check on explicit click (as specified, About tab), never at startup; cache the last result for the session; treat 403/429 as "could not check, try later" with the reset time, not as an error dialog.
-- Use `https://api.github.com/repos/<owner>/<repo>/releases/latest` with `User-Agent: FerrisFilter/<version>` and `Accept: application/vnd.github+json`; ignore `draft`/`prerelease` explicitly; require the expected installer asset (`FerrisFilter-<version>-setup.exe`) and the checksums asset; if absent say "release is still being published".
-- Workflow: create the release as a draft, upload all assets, publish last, so `latest` never points at an incomplete release.
-- Repository link comes from build info; make sure it points at the public repo and the repo is public before the tag; a private repo makes every unauthenticated check 404.
-- Keep the HTTP code in a function with the transport injectable so tests use canned JSON (rate-limited, no assets, prerelease first, malformed).
-
-**Warning signs:**
-"Up to date" when a newer release exists (prerelease filtering, wrong tag compare); 404 in testing before the repo is public.
-
-**Phase to address:** Updater phase.
-
----
-
-### Pitfall 11: Unsigned Rust GUI exe and installer: SmartScreen and antivirus false positives
-
-**What goes wrong:**
-A new unsigned installer from an unknown publisher triggers the SmartScreen "Windows protected your PC" screen (stated out of scope but still the first user experience), and unsigned Rust executables that register a global hotkey, send synthetic keystrokes (`SendInput`), touch the clipboard, enumerate windows by process name, and download and run an installer are heuristic bait for antivirus (Defender and third-party engines) and some Rust-built binaries are flagged more often than average (MEDIUM, community reports). A self-updater that downloads an exe and runs it looks like a dropper.
-
-**How to avoid:**
-- Be honest in README and release notes: tell users about the SmartScreen "More info -> Run anyway" step, give the SHA-256, and state that the project is open source with CI-built artifacts. Keep the Out of Scope decision, but document it.
-- Build artifacts only in public GitHub Actions from the tag (no locally built uploads) so provenance is verifiable; consider GitHub artifact attestations (check availability; LOW confidence).
-- Reduce heuristic triggers: `strip`/`lto` are fine but avoid UPX packing (strongly raises detection); embed a Windows resource with product name, version, company and icon (via `winres`/`embed-resource`); add an application manifest (DPI awareness already set at runtime; a manifest also avoids compat shims).
-- Submit the release exes to Microsoft's false-positive portal and VirusTotal after each release and note results; budget time for it.
-- Updater: HTTPS-only fixed repo URL, no arbitrary URL from the response (derive from the asset `browser_download_url` host check `github.com`/`githubusercontent`), checksum check, user confirmation.
-
-**Warning signs:**
-Defender quarantines the zip on first download; VirusTotal shows more than a couple of generic ML detections; users report the installer vanishing.
-
-**Phase to address:** Installer phase (resources/manifest), Release pipeline phase (provenance, checksums), Release Review (docs wording).
-
----
-
-### Pitfall 12: Installer scope, uninstall behaviour and per-user config
-
-**What goes wrong:**
-(a) Installing to Program Files needs elevation, and then the `ff` process (user level) and the game must "run at the same privilege level" or the in-game reload silently fails; an installer that launches `ff` elevated at the end of setup (the default "Run after install" checkbox from an elevated installer) starts an elevated overlay that can no longer be seen at same level... or the reverse. (b) Uninstall deletes `%APPDATA%\FerrisFilter` (users lose their styles) or leaves it forever with no mention; deleting the game-folder filter or `.ffbak` would be catastrophic. (c) Start menu shortcut and "Run at startup" confusion; a tray app that is never quit blocks uninstall. (d) No upgrade-in-place identity, producing duplicates. (e) The zip portable distribution has no config location story (it must use the same `%APPDATA%` unless `FERRISFILTER_HOME` is set or a `portable` marker is present).
-
-**How to avoid:**
-- Prefer a per-user install (Inno Setup `PrivilegesRequired=lowest`, install under `{localappdata}\Programs\FerrisFilter`) so no elevation, matches the user-level game and avoids the elevated-child problem; launch `ff` after install with `runasoriginaluser`.
-- Uninstall removes only the installed program directory and shortcuts. Never touch `%APPDATA%\FerrisFilter`, `%LOCALAPPDATA%` cache (optional prompt "also remove settings?" default No is acceptable), and never anything in the game folder. State this in the uninstall page.
-- Use `AppId`, `AppMutex` and `CloseApplications` (Pitfall 8). Pick Inno Setup (scriptable, easy CI via `iscc`, available on windows runners via choco; MEDIUM) unless the author prefers WiX; avoid MSI complexity for a "basic installer".
-- Zip build: document that it writes to `%APPDATA%` too, or add a documented `FERRISFILTER_HOME`/portable marker.
-- Include LICENSE and third-party notices in the installer (Pitfall 14).
-
-**Warning signs:**
-UAC prompt at install; overlay running elevated after setup; uninstall leaves `Programs\FerrisFilter` because ff is running; user config gone after reinstall.
-
-**Phase to address:** Installer phase.
-
----
-
-### Pitfall 13: Exclusive-fullscreen and first-run experience for strangers
-
-**What goes wrong:**
-New users who run PoE2 in exclusive fullscreen see nothing when pressing `Ctrl+Shift+Z`; the app cannot detect it. The hotkey only works while the game or overlay is foreground, so pressing it on the desktop does nothing. First launch with no game folder found (non-default Documents location, Steam/Standalone differences, non-English "My Games") shows a failing state. Autostart expectations: they double-click, a tray icon appears, no window (window may start hidden?). Elevated game blocks the hotkey and reload silently.
-
-**How to avoid:**
-- First-run state (once, not a text wall): the game-folder row in CONFIG shows the resolved path with a found/not-found indicator; the status line names the exact next step ("Set windowed mode in PoE2: Options -> Graphics", via tooltip). README gets a short "Requirements" box: windowed or windowed-fullscreen, same privilege level, press `Ctrl+Shift+Z`.
-- Show the window on first launch (not tray-only) and on every launch (existing summon behaviour on second launch).
-- Game-folder picker: resolve default via `SHGetKnownFolderPath(FOLDERID_Documents)` (handles OneDrive/localized), validate that the folder exists and contains or can create filters; accept a user pick via a native folder dialog (new dependency, e.g. `rfd`; check it works with egui/eframe event loop and does not freeze the overlay) or a text field with Browse; save in settings; do not create the `My Games` tree on a guess. `ferrisfilter install`/`apply` default `--filter` still hardcode `OneDrive\Documentos`: replace with the same resolver or users with English paths break (existing code in `install.rs`, `cli.rs`, `run.rs`).
-- Keep the existing test discipline: resolver is pure with injected known-folder result.
-
-**Warning signs:**
-"I press the hotkey and nothing happens" issues; CLI help text still says `OneDrive\Documentos`; path with spaces/accents breaks `Path`-to-string conversions.
-
-**Phase to address:** Game-folder picker phase; README wording in Release Review.
-
----
-
-### Pitfall 14: Redistributing GGG art and Fontin fonts in a public binary
-
-**What goes wrong:**
-The repo is private-ish today; making it public and shipping binaries embeds GGG-owned UI art (`assets/poe2/`, minimap atlas, edited title bar) and the Fontin fonts (exljbris, shipped with the game). `assets/README.md` records "will be replaced if GGG objects" but the license of Fontin is not stated as redistributable (Fontin is distributed by exljbris under its own terms; the free fonts have a EULA that, MEDIUM/LOW, generally allows free use but restricts redistribution of the font files themselves, so copying from the game and shipping may be a violation independent of GGG). GPL-3.0 on the source plus embedded non-GPL assets also needs a clear statement that assets are excluded. A takedown after release means rebuilding every release.
-
-**How to avoid:**
-- Decision before the first public tag, not after: check GGG's published fan-content/asset policy and Fontin's license text (read, don't assume). If Fontin redistribution is not clearly allowed, plan a replacement face (an OFL font that looks similar, or keep Fontin out and load it from the user's local game install at runtime with a fallback font) and make the skin tolerate a missing file.
-- Keep art isolated behind `skin::` so a replacement set can ship in a point release; mark the exact swap path in docs. Keep the disclaimer ("not affiliated with or endorsed by GGG") in README, installer license page and ABOUT (already there).
-- Ship `LICENSE`, `assets/README.md` provenance and third-party notices in installer and zip.
-- Mention in the release notes that art belongs to GGG.
-- The `ff-art` tool and manifest are fine (extraction is local), but ensure the release workflow does not need the game files.
-
-**Warning signs:**
-No explicit permission found in a quick search; font license mentions "embedding" restrictions; the public repo contains the whole game-art set.
-
-**Phase to address:** A short legal/provenance task in the Release pipeline phase (blocking before the tag); font fallback implementation in a skin task if needed. Likely needs research.
-
----
-
-### Pitfall 15: In-game reload (key sending) surprises for new users
-
-**What goes wrong:**
-Existing behaviour (focus game, Enter, paste `/reloaditemfilter`, Enter) is on by default. For strangers: (a) if chat is open with text, the first Enter sends that text as a chat message; (b) it clobbers non-text clipboard content; (c) other tools' global hotkeys or keyloggers-lookalike behaviour: synthetic input is an AV heuristic (Pitfall 11) and might be construed as botting by players worrying about GGG's third-party tool policy (it sends no gameplay input, but strangers will ask); (d) a different filter than the one selected in game is reloaded; (e) elevated game drops the keys but status says `Reloaded in game`.
-
-**How to avoid:**
-- Default decision: consider shipping the toggle default **off** for first run (or ask once) since the opt-out default is author-tuned; at minimum put the clipboard/chat/privilege caveats in README and the toggle's tooltip, and name the exact keys sent.
-- Document it in the README as "sends Enter, Ctrl+V, Enter to the game window; nothing else", and link GGG's third-party policy statement after checking it.
-- Detect elevation mismatch if feasible (compare process integrity level of the game vs `ff` with `OpenProcessToken`) and change the status from "Reloaded in game" to a warning; if not feasible, keep wording hedged (already: "every key was sent").
-- Never retry; keep as is.
-
-**Warning signs:**
-Bug reports about stray chat messages; users claiming "reload does nothing" (elevation); AV reports citing keyboard hooks.
-
-**Phase to address:** Game-folder picker / first-run phase (default), Release Review (README).
-
----
-
-### Pitfall 16: CRLF/line-ending and OS differences on the Windows runner break byte-exact tests
-
-**What goes wrong:**
-Fixtures are compared byte-for-byte (`seed-universal.filter`, parser fixtures with exact CRLF/LF). `.gitattributes` has `* text=auto`, so a CI checkout converts LF to CRLF on Windows runners when `core.autocrlf` is true; `*.filter text` makes the committed fixtures subject to conversion, so `artifact_guard` and snapshot (`insta`) tests can fail only in CI, or pass only because both sides are converted. Windows runners also have no display, no clipboard owner, and a shared session, so tests that register the global hotkey, create the named single-instance mutex, or touch the clipboard may fail or leak across tests, and parallel tests sharing a named object collide.
-
-**How to avoid:**
-- Make the test platform explicit: the release workflow runs the suite on `windows-latest` (the shipped target) and compare byte output with `text eol=lf` for fixtures that `generate` compares (set `*.filter text eol=lf` for non-parser fixtures; parser fixtures already `-text`). Run the suite once on the author's machine and once in CI from a clean clone before the first tag.
-- Tests touching OS singletons (mutex name, hotkey, clipboard) are `#[ignore]`d or use unique per-test names (debug builds already use a separate instance name); confirm none run in CI by default or that they pass headless.
-- Locally, `cargo test` while `ff.exe` runs: the linker cannot overwrite `target\debug\ff.exe` (existing note: use `CARGO_TARGET_DIR`); in CI this does not happen, but the release job must not start the built exe as a smoke test and then try to overwrite it. Smoke-test the installer by installing to a temp dir with `/VERYSILENT /DIR=...` and then uninstalling.
-- Use `--test-threads` defaults but isolate any test that sets process env (env vars are process-global; `USERPROFILE`/`APPDATA` changes race with other tests). Prefer the injected provider (Pitfall 4).
-
-**Warning signs:**
-Snapshot diffs that show only `\r`; tests flaky only in CI; "Access is denied" when copying `ff.exe`.
-
-**Phase to address:** Release pipeline phase (first green CI run on a throwaway branch/tag before relying on it).
-
----
-
-## Technical Debt Patterns
-
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Keep `rust-toolchain.toml` floating nightly in release CI | Zero config | Release breaks or changes on tag day | Never for releases; pin a dated nightly |
-| `dirs` crate called directly in many modules | Fast to write | Untestable, breaks env-var isolation and screenshot guard | Never; one provider module |
-| Updater overwrites `ff.exe` in place | No installer needed | Locked file, partial writes, AV flags | Never |
-| Skip checksum file in release | Simpler workflow | No integrity signal for unsigned downloads | Never; trivial to add |
-| Auto-delete legacy app-root files after migration | Tidy | Loses author's only copy if migration has a bug | Never in v0.7; revisit later |
-| Hardcode `releases/latest` + one asset name | Quick | Breaks when asset naming changes (zip vs setup) | OK if tested by canned-JSON unit tests |
-| Embed defaults by copying JSON into a Rust const | Avoids `include_str!` path | Drift from `styles-default.json` and fixtures | Never |
-| Ship Fontin/GGG art without checking terms | Avoids delay | Takedown forces re-release | Only if the author accepts the risk knowingly, documented |
-| Leave `--filter`/`--dest` defaults at `OneDrive\Documentos` | No CLI change | Wrong for every other user | Never; reuse the known-folder resolver |
-
-## Integration Gotchas
-
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| GitHub Actions | Default `GITHUB_TOKEN` lacks write; release step 403s | `permissions: contents: write` on the release job only; upload with `gh release` or `softprops/action-gh-release` |
-| GitHub Actions | Tag trigger `v*` also fires for `v0.7-rc1` or odd tags | Validate tag shape and version match first; mark rc tags prerelease |
-| GitHub Releases API | No `User-Agent`; treats 403 as hard error; ignores prerelease/draft flags | Send UA, handle rate-limit as soft failure, filter draft/prerelease |
-| poe.ninja leagues | Trusting `indexed` or list order; assuming list is stable | Persisted choice, explicit default rule, empty-result = failure |
-| Windows known folders | `std::env::var("USERPROFILE").join("Documents")` | `SHGetKnownFolderPath` (or crate using it) behind an injectable provider |
-| Installer (Inno) | Install to Program Files, elevate, leave `ff` running | Per-user install, `AppMutex` + `CloseApplications`, stable `AppId` |
-| Windows Defender / SmartScreen | Assuming "out of scope" means no user comms | README note, checksums, FP submissions, public CI provenance |
-| Existing `ff-settings.json` | Rewriting known keys only and dropping unknown | Keep the "unknown keys preserved" guarantee through the move; test with old file |
-| Existing single-instance + tray Quit | Updater kills the process | Use the app's Quit path including Unapplied-changes popup |
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Network call (league list, update check) on the UI thread | Overlay freezes over the game | Worker thread + channel as Sync already does; timeouts of a few seconds | Any slow/offline network |
-| League list fetched every frame/open of the Economy tab | Rate limiting, jank | Fetch on explicit refresh and first open, cache for the session | Immediately with repaint loops |
-| Installer download without progress/cancel | UI appears hung on slow links | Stream to temp file with progress and cancel | Downloads of several MB on slow connections |
-| Release exe growth from embedded art + defaults | Large download, slower AV scan | Already ~0.5 MB atlas; check `cargo bloat` once, `opt-level`/`lto`/`strip` | Not a scale issue; matters for AV heuristics |
-
-## Security Mistakes
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Updater runs a downloaded exe without verification | Supply-chain/MITM or account-compromise executes arbitrary code | HTTPS, fixed repo, host allowlist on download URL, SHA-256 check, explicit user confirm, temp dir with unique name |
-| Download URL taken verbatim from API JSON | Redirect to attacker host if response tampered | Validate host and expected asset name; do not follow redirects off GitHub CDN hosts |
-| Predictable temp installer path | Another local process swaps the file | Per-run random temp dir, verify hash after write and before run |
-| Release notes/changelog text rendered unfiltered | Odd content in UI | Show plain text only, truncated |
-| `ff-settings.json` game folder path joined unvalidated | Path traversal when picker adds free paths | Keep the bare-filename validation for filter names; canonicalize and require directory for the game folder |
-| Tokens or credentials in the baked `origin` URL | Leaks into the shipped binary | Strip userinfo in `web_url`; assert in CI |
-| Committing a signing/installer secret later | Leakage | None needed now (unsigned); keep it out of scope |
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Strictness row text-heavy (descriptions of each preset) | Clutter, contradicts the "not texty" UI preference | Seven buttons, tooltips only; names carry the meaning |
-| Picker changes silently overwrite hand-tuned style visibility | User loses custom Hide setup | Custom state clearly shown; presets are in-memory edits that Revert undoes |
-| Update check shows raw errors (HTTP 403) | Looks broken | One status-line message: "Could not check (rate limited), try again later" |
-| Fallback prices selected but Economy tab still looks live | Wrong expectations at league start | Visible price source in status line; Sync greyed with tooltip |
-| Game folder not found shows an empty Rules tab | Dead end on first run | Config tab opens with the game-folder row focused and a clear status line |
-| Install finishes with no visible window | "Did it work?" | Launch window on first run, tray tooltip names hotkey |
-| Uninstall removes config without asking | Lost customizations | Keep config; offer opt-in removal |
-
-## "Looks Done But Isn't" Checklist
-
-- [ ] **Release workflow:** often missing tag-vs-Cargo-version check, `--locked`, draft-then-publish, checksum asset — verify with a throwaway `v0.7.0-rc.1` tag.
-- [ ] **Release notes:** often an empty or whole-file CHANGELOG body — verify the extracted section equals the `## [0.7.0]` text only.
-- [ ] **Installer:** often leaves a running `ff` unhandled — verify install over a running tray instance, upgrade over the previous version, and uninstall; confirm config under `%APPDATA%\FerrisFilter` survives.
-- [ ] **Config relocation:** often tested only with synthetic files — verify with a copy of the author's real `styles.json`/`tiers.json`/`ff-settings.json`, byte-identical after migration, originals untouched.
-- [ ] **Isolation:** `cargo test` and `--screenshot` leave `%APPDATA%`, `%LOCALAPPDATA%` and Documents untouched — verify by listing them before and after.
-- [ ] **Embedded defaults:** exe works from an empty folder with no `styles-default.json` beside it — verify by running the release exe from a temp dir with `FERRISFILTER_HOME` unset.
-- [ ] **CLI defaults:** `install`/`apply` no longer say `OneDrive\Documentos` — grep help text and defaults.
-- [ ] **Game folder picker:** works with OneDrive-redirected, localized and non-ASCII paths — test with at least one.
-- [ ] **Strictness:** all seven states round-trip; hand edit shows Custom; Revert and Apply behave like other CONFIG edits.
-- [ ] **Style rework:** no `CustomAlertSound`/`uwu.mp3` in `styles-default.json`, fixtures re-baselined once, `CLAUDE.md` tables updated.
-- [ ] **League picker:** persisted league that vanished is handled; empty sync result is an error.
-- [ ] **Updater:** tested against canned JSON for rate limit, prerelease, missing asset, newer/older/equal/dev-suffix versions.
-- [ ] **Public repo:** license files, asset provenance, and no personal paths/emails or `reference-old-filters` content in the tree or release artifacts.
-- [ ] **Version surfaces:** Cargo, tag, installer, ABOUT and CHANGELOG all show the same version.
-
-## Recovery Strategies
-
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Wrong tag/version mismatch published | LOW | Delete the release and tag, fix, retag (before anyone downloads); otherwise cut a patch version |
-| Nightly broke the tag build | LOW | Pin a dated nightly, rerun with `workflow_dispatch` on the tag |
-| Migration lost the author's styles | LOW if originals kept | Copy back from the legacy location (migration never deletes) |
-| Tests wrote to real `%APPDATA%` | MEDIUM | Restore from legacy copies; add guard test; delete stray files |
-| Updater bricked an install | MEDIUM | Document manual reinstall from the Releases page; keep older installers available |
-| AV/SmartScreen flags a release | MEDIUM | Submit FP report, mention in release notes, re-release only if packaging changed |
-| GGG/Fontin takedown request | HIGH | Swap art set/font behind `skin::`, ship patch release, rewrite git history only if asked |
-| Wrong league defaulted/stale prices | LOW | Re-sync with the right league; add the mismatch warning |
-
-## Pitfall-to-Phase Mapping
-
-Suggested phase ordering implied by dependencies: path provider and embedded defaults first (everything else reads config), then style rework, strictness, game-folder picker, league/price source, release pipeline and installer, updater last (needs installer and published asset names), Release Review.
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| 1 Tag/version/CHANGELOG mismatch | Release pipeline (+ updater, Release Review) | Workflow fails on mismatch in dry run; updater unit tests for `0.7` vs `0.7.0` |
-| 2 Floating nightly | Release pipeline | Dated nightly in `rust-toolchain.toml`; rerun of the same tag yields same result |
-| 3 `git describe` / dirty in CI | Release pipeline | Built exe version equals tag; ABOUT link has no credentials |
-| 4 Env-var tests vs known folders | Config relocation (first) | No real-profile writes after tests/screenshot; guard test |
-| 5 Migration of live files | Config relocation | Real-file migration test, originals untouched |
-| 6 Embedded defaults vs fixtures | Config relocation + Style rework | `include_str!` equality test; single fixture re-baseline |
-| 7 Strictness derivation | Strictness Selector | Pure-function tests for all modes and non-suffix sets |
-| 8 Updater and running exe | Installer + Updater | Upgrade over running tray instance on a clean VM |
-| 9 League list instability | League/price source (spike first) | Vanished-league and empty-sync tests; manual check across a league transition if available |
-| 10 GitHub API limits/prereleases | Updater | Canned-JSON tests; draft-then-publish workflow |
-| 11 SmartScreen/AV | Installer + Release pipeline + Release Review | VirusTotal/Defender scan results recorded; README note |
-| 12 Installer scope/uninstall | Installer | Per-user install, config survives uninstall |
-| 13 Fullscreen/first-run | Game-folder picker + Release Review | Fresh-profile VM run-through |
-| 14 GGG art/Fontin redistribution | Release pipeline (blocking pre-tag task) | Written decision recorded in `assets/README.md` |
-| 15 Reload key sending | Game-folder picker/first-run + Release Review | Default and README wording reviewed by author |
-| 16 CRLF and runner differences | Release pipeline | First green `windows-latest` run on a throwaway branch |
-
-Phases likely needing deeper research: League/price source (live poe.ninja behaviour), Installer (Inno Setup vs WiX, mutex/close behaviour), legal/provenance of Fontin and GGG art, Updater (API behaviour, attestation options).
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| P-ALPHA (do first) | Shared colour type changes `styles.json`/fixture bytes (1); picker regression (15) | Optional alpha, skip when 255; byte-identical round-trip + `artifact_guard` tests first |
+| P-AUTO | Rewrite changes bytes (2); equality traps (3); name/id collisions (4); Revert/Reload/Quit orphaning (5); groups/disabled/economy (6) | Detect via the emitter on effective actions; table-driven trap tests; smallest free N + shared id generator; one atomic pending edit across Rules + Config; use existing edit APIs |
+| P-DND | Source row virtualized away (7); invalid drop targets (8); no keyboard path, auto-scroll timing (9) | Pointer-owned drag state, slot from y and a height table; reuse the arrow mover; time-based auto-scroll with repaint; author decision on keyboard fallback |
+| P-UI | Header height vs virtualization (13); search icons focus (14) | One height constant; shared text field helper; screenshot checks at 100% and 200% |
+| P-HOTKEY | Wrong unregister, register-order, id mismatch, capture firing the old hotkey, modifier-only, physical key mapping (10) | Register new then unregister old; stored id updated; pause hotkey during capture; require modifier + key; physical keys |
+| P-ECON | Name parsing, `artifact_guard`, units, volatile names (12) | Cutoff-based range via pure formatter; economy path only; grep `tier` string uses; unit-aware text |
+| P-THROTTLE | Future timestamps, per-league keys, failure counting, fake refresh honesty, CLI separation, UA (11) | Injected clock; record on success after persisting; tolerant arithmetic; honest status; separate state file (author decision) |
+
+## Suggested ordering implied by dependencies
+
+P-ALPHA before P-AUTO (equality needs the final colour type). P-UI before or with P-DND (row heights, header art). P-DND is independent of the rest. P-ECON and P-THROTTLE are independent; P-THROTTLE touches the Economy tab's sync and league fetch, so land it after P-ECON to avoid rework in the same code. P-HOTKEY is independent and the smallest blast radius; it needs a manual in-game check.
+
+## Items needing author review / flagged
+
+- `DEP?` Drag and drop: do not add a DnD crate; egui's own pointer and `DragAndDrop` support should suffice (verify on 0.36).
+- `DEP?` Hotkey chord string parsing: confirm `global-hotkey` 0.8 `HotKey::from_str` exists; otherwise write a small parser (no new crate).
+- `DEP?` Throttle: epoch seconds via `std::time`; no crate needed (no `chrono`).
+- Decision: keep a keyboard reorder path after removing the arrows (Pitfall 9).
+- Decision: where throttle state lives (`ff-settings.json` key vs a separate file) and whether the league list is cached on disk (Pitfall 11).
+- Decision: whether Auto Detect may rewrite rules whose bytes would change (comments, 3-value colour) (Pitfall 2).
 
 ## Sources
 
-- Repository files read: `CLAUDE.md`, `.planning/PROJECT.md`, `rust-toolchain.toml`, `build.rs`, `Cargo.toml`, `src/paths.rs`, `src/overlay/screenshot.rs`, `.gitattributes`, `assets/README.md`, `README.md` credits, `git tag` (tags are `v0.2`..`v0.6`). (HIGH)
-- GitHub REST API docs (rate limits, `releases/latest` semantics, User-Agent requirement) — from training knowledge, not re-fetched in this pass. (MEDIUM; verify at phase start)
-- Inno Setup documentation (`AppMutex`, `CloseApplications`, `PrivilegesRequired`) — training knowledge. (MEDIUM)
-- Windows known-folder API behaviour (ignores `USERPROFILE` overrides; follows OneDrive Known Folder Move) — training knowledge. (MEDIUM)
-- SmartScreen/AV heuristics for unsigned Rust binaries — community reports, not verified. (LOW)
-- Fontin and GGG asset redistribution terms — not verified; must be read from primary sources. (LOW)
-
----
-*Pitfalls research for: FerrisFilter v0.7 public release and new features*
-*Researched: 2026-10-17*
+- `C:\Users\jonat\Repositories\poe2_myfilter\CLAUDE.md` (HIGH; invariants)
+- `src/overlay/hotkey.rs` (HIGH; constants, register/release, thread-affinity note)
+- `src/emitter.rs` lines 122, 554, 632, 1275-1278 (HIGH; economy `# ff:name` format and pinned tests)
+- `src/overlay/app.rs` lines ~3881, 6809; `src/sync/client.rs`, `src/update.rs` (HIGH; clock use, UA constant, `.contains(" tier ")`)
+- `src/overlay/rules.rs` lines ~2125-2140 (HIGH; name parsing test)
+- egui drag/auto-scroll, `global-hotkey` 0.8 behaviours: training knowledge, not re-verified (LOW-MEDIUM; verify during phase research)

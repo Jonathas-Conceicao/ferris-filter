@@ -34,7 +34,7 @@ Tasks 1 and 2 landed in one commit (30f6d70) because the handler and button shar
 
 ## Deviations / findings
 - Button width 139.5pt instead of 112pt: `ff_button_ex`'s 112 is a minimum and the label needs more; gap is 8pt via item spacing (no extra `add_space`). Test asserts width >= 112 and the 8pt gap.
-- Reload finding: with nothing changed on disk the CONFIG Reload re-reads only the styles; rule edits (tags) stay and show `unknown style` until Apply drops them. Differs from "rules edits discarded" in the plan text; asserted as is.
+- Reload (corrected by the code review, WR-02): the original test sent `ConfigAction::Reload` with nothing changed on disk, a path only the File changed on disk popup can reach. The bottom-bar Reload a user presses re-reads the filter: the tags are dropped with the other rule edits and the new `Custom Style N` styles stay pending as CONFIG edits, as the plan said. Now asserted by `auto_detect_bar_reload_drops_tags_keeps_new_styles`.
 - Fixture produces 3 styles / 6 rules tagged (font-20+colour, font-23, group font-30), not the plan's example.
 - Screenshot `config-custom.png` cuts the Custom heading off below the fold (no scroll flag), so the check is deferred (item 5). `config-status.png` also produced.
 - `cargo fmt` run on the two edited files only.

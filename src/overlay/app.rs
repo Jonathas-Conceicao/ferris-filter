@@ -6843,16 +6843,26 @@ Hide
     }
 
     #[test]
-    fn auto_detect_reload_keeps_rule_edits_and_reloads_config_only() {
+    fn auto_detect_bar_reload_drops_tags_keeps_new_styles() {
         let mut d = detect_app(&detect_filter());
+        // The bottom-bar Reload re-reads the filter from the game folder.
+        let game = d.app.game_dir.clone().unwrap();
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join(d.app.settings.filter_name()), &d.text).unwrap();
         let n = d.names().len();
         d.click();
-        d.app
-            .handle_config_actions(&d.ctx, vec![ConfigAction::Reload]);
-        // Finding: with nothing changed on disk the CONFIG reload re-reads styles only; the
-        // rule tags stay (and are then unknown until Apply drops them).
-        assert!(d.names().len() <= n);
         assert!(d.rules_dirty());
+        assert!(d.app.changed_on_disk.is_empty());
+        assert_eq!(
+            super::bar_reload_target(super::ShellTab::Config, &d.app.changed_on_disk),
+            super::BarReload::Shared
+        );
+        d.app.reload_pressed();
+        // Tags go with the rule edits; the new styles are CONFIG edits and stay pending.
+        assert!(!d.rules_dirty());
+        assert_eq!(d.app.working.as_ref().unwrap().text(), d.text);
+        assert_eq!(d.names().len(), n + 3);
+        assert!(d.app.config.as_ref().unwrap().is_dirty());
     }
 
     #[test]

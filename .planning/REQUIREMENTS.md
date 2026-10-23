@@ -8,7 +8,8 @@
 
 ### Style alpha (ALPHA)
 
-- [ ] **ALPHA-01**: A style's text, border and background colours can carry an alpha value, as the
+- [x] **ALPHA-01
+**: A style's text, border and background colours can carry an alpha value, as the
   game's `R G B A` allows; the CONFIG style colour picker has an Alpha slider.
 - [x] **ALPHA-02
 **: Alpha reaches the filter everywhere a style is written: `generate`, the economy
@@ -18,7 +19,8 @@
   now on colours are saved with alpha present (4 values). A 3-value file loads without showing as an
   edit and is rewritten in the new form by the next Apply that writes `styles.json`. Emitted filter
   lines are unchanged for alpha 255, so the `generate` fixtures (`artifact_guard`) do not change.
-- [ ] **ALPHA-04**: The label preview and the style table show a translucent colour as it will look.
+- [x] **ALPHA-04
+**: The label preview and the style table show a translucent colour as it will look.
 
 ### Auto Detect styles (DETECT)
 

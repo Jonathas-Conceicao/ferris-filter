@@ -10,9 +10,11 @@
 
 - [ ] **ALPHA-01**: A style's text, border and background colours can carry an alpha value, as the
   game's `R G B A` allows; the CONFIG style colour picker has an Alpha slider.
-- [ ] **ALPHA-02**: Alpha reaches the filter everywhere a style is written: `generate`, the economy
+- [x] **ALPHA-02
+**: Alpha reaches the filter everywhere a style is written: `generate`, the economy
   section and the styled-rule rewrite on Apply.
-- [ ] **ALPHA-03**: An older `styles.json` with 3-value colours still loads, read as alpha 255; from
+- [x] **ALPHA-03
+**: An older `styles.json` with 3-value colours still loads, read as alpha 255; from
   now on colours are saved with alpha present (4 values). A 3-value file loads without showing as an
   edit and is rewritten in the new form by the next Apply that writes `styles.json`. Emitted filter
   lines are unchanged for alpha 255, so the `generate` fixtures (`artifact_guard`) do not change.

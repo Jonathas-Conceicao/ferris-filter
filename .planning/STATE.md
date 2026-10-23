@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.7.2
 milestone_name: Small UI Improvements
-status: planning
-stopped_at: Phase 43 UI-SPEC approved
-last_updated: "2026-10-23T21:24:26.669Z"
-last_activity: 2026-10-23 — v0.7.2 roadmap created
+status: executing
+stopped_at: Completed 43-01-PLAN.md
+last_updated: "2026-10-23T21:38:28.272Z"
+last_activity: 2026-10-23 -- Phase --phase execution started
 progress:
   total_phases: 36
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 33
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-23)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Phase 43 - Style Alpha (milestone v0.7.2 Small UI Improvements)
+**Current focus:** Phase --phase — 43
 
 ## Current Position
 
-Phase: 43 of 50 (Style Alpha)
-Plan: —
-Status: Ready to plan
-Last activity: 2026-10-23 — v0.7.2 roadmap created
+Phase: --phase (43) — EXECUTING
+Plan: 1 of --name
+Status: Executing Phase --phase
+Last activity: 2026-10-23 -- Phase --phase execution started
 
-Progress: [..........] 0% (0 of 8 phases)
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -216,6 +216,7 @@ work (carried forward past the v0.3 close):
 - 41-03: update_job carries #![allow(dead_code)] until wired in 41-04/41-05; begin_install failure messages use UTC offset 0
 - 41-04: update_job.rs keeps allow(dead_code) until 41-05 wires the install side
 - 41-05: pending_install slot set in OverlayApp::new (not a build parameter); installer spawned only after run_native returns
+- 43-01: no 3-to-4 migration flag; StyleColour dirtiness is value-based, from_style alpha true
 
 ### Pending Todos
 
@@ -398,9 +399,9 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 43 UI-SPEC approved
-Resume file: --resume-file
+Last session: 2026-10-23T21:38:28.264Z
+Stopped at: Completed 43-01-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 

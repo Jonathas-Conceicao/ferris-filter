@@ -174,3 +174,36 @@ fn no_old_resolver() {
     }
     assert!(bad.is_empty(), "old walk-up resolver referenced: {bad:?}");
 }
+
+fn code_only(text: &str) -> String {
+    text.lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The CLI is never throttled and sends its own user agent: nothing on the CLI path may mention
+/// the throttle module or `ff-state.json`, and `run` in `src/sync/mod.rs` builds both of its
+/// clients with the CLI agent (never the overlay's).
+#[test]
+fn cli_path_has_no_throttle_and_uses_cli_agent() {
+    for f in ["src/run.rs", "src/cli.rs", "src/main.rs", "src/bin/ff-cli.rs"] {
+        let text = code_only(&fs::read_to_string(Path::new(ROOT).join(f)).unwrap());
+        for n in ["throttle", "ff-state"] {
+            assert!(!text.contains(n), "{f} references {n}");
+        }
+    }
+    let sync = code_only(&fs::read_to_string(Path::new(ROOT).join("src/sync/mod.rs")).unwrap());
+    let start = sync.find("pub fn cmd_sync(").expect("cmd_sync");
+    let end = sync
+        .find("pub fn sync_economy_blocking")
+        .expect("sync_economy_blocking");
+    let cmd = &sync[start..end];
+    let run = &sync[sync.find("async fn run(").expect("run")..];
+    for (name, body) in [("cmd_sync", cmd), ("run", run)] {
+        for n in ["throttle", "ff-state", "new(client::USER_AGENT)", "new(USER_AGENT)"] {
+            assert!(!body.contains(n), "{name} contains {n}");
+        }
+    }
+    assert_eq!(run.matches("CLI_USER_AGENT").count(), 2);
+}

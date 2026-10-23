@@ -2150,6 +2150,109 @@ mod tests {
         out.drop_without_applying_deltas();
     }
 
+    const KEYBIND_LABEL: &str = "Show / hide overlay: Ctrl+Shift+Z";
+
+    #[test]
+    fn keybind_button_is_full_size_and_clickable() {
+        let (ctx, skin) = setup();
+        let mut resp = None;
+        ctx.run_ui(RawInput::default(), |ui| {
+            resp = Some(ff_keybind_button(
+                ui,
+                &skin,
+                KEYBIND_LABEL,
+                "Ctrl+Shift+Z",
+                pal::VALUE,
+                208.0,
+                false,
+                true,
+            ));
+        })
+        .drop_without_applying_deltas();
+        let resp = resp.expect("drawn");
+        assert_eq!(resp.rect.size(), vec2(208.0, KEYBIND_HEIGHT));
+        assert!(resp.sense.senses_click());
+    }
+
+    #[test]
+    fn keybind_button_disabled_only_hovers() {
+        let (ctx, skin) = setup();
+        let mut resp = None;
+        ctx.run_ui(RawInput::default(), |ui| {
+            resp = Some(ff_keybind_button(
+                ui,
+                &skin,
+                KEYBIND_LABEL,
+                "Ctrl+Shift+Z",
+                pal::VALUE,
+                208.0,
+                true,
+                false,
+            ));
+        })
+        .drop_without_applying_deltas();
+        assert!(!resp.expect("drawn").sense.senses_click());
+    }
+
+    #[test]
+    fn keybind_button_click_reports_and_is_labelled() {
+        let (ctx, skin) = setup();
+        let mut rect = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            rect = ff_keybind_button(
+                ui,
+                &skin,
+                KEYBIND_LABEL,
+                "Ctrl+Shift+Z",
+                pal::VALUE,
+                208.0,
+                false,
+                true,
+            )
+            .rect;
+        })
+        .drop_without_applying_deltas();
+        let mut clicked = false;
+        ctx.run_ui(click_at(rect.center()), |ui| {
+            clicked = ff_keybind_button(
+                ui,
+                &skin,
+                KEYBIND_LABEL,
+                "Ctrl+Shift+Z",
+                pal::VALUE,
+                208.0,
+                false,
+                true,
+            )
+            .clicked();
+        })
+        .drop_without_applying_deltas();
+        assert!(clicked, "an enabled keybind button reports the click");
+
+        ctx.enable_accesskit();
+        let out = ctx.run_ui(RawInput::default(), |ui| {
+            ff_keybind_button(
+                ui,
+                &skin,
+                KEYBIND_LABEL,
+                "Ctrl+Shift+Z",
+                pal::VALUE,
+                208.0,
+                false,
+                true,
+            );
+        });
+        let update = out
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("update");
+        assert!(update.nodes.iter().any(|(_, n)| {
+            n.label() == Some(KEYBIND_LABEL) || n.value() == Some(KEYBIND_LABEL)
+        }));
+        out.drop_without_applying_deltas();
+    }
+
     #[test]
     fn x_button_is_24_square_and_labelled() {
         let (ctx, _skin) = setup();

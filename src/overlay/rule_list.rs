@@ -765,9 +765,15 @@ fn draw_section_header(
     }
     let used_left = right.min_rect().left();
 
-    // Left: the toggle plate (a second click target for the same toggle).
-    let chev = ui.interact(lay.plate, ui.id().with("chevron"), Sense::click());
-    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "chevron"));
+    // Left: the toggle plate (a second click target for the same toggle). Not focusable: the
+    // whole-bar `resp` is the keyboard stop, so a header costs one Tab stop.
+    let chev = ui.interact(lay.plate, ui.id().with("chevron"), Sense::CLICK);
+    let toggle_name = if collapsed {
+        "Expand section"
+    } else {
+        "Collapse section"
+    };
+    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, toggle_name));
     let plates = if collapsed {
         &skin.toggle_expand
     } else {
@@ -805,7 +811,7 @@ fn draw_section_header(
         pal::MUTED,
     );
 
-    // The name (or its edit box) and the rule line after it.
+    // The name (or its edit box).
     let mut name_rect = egui::Rect::NOTHING;
     let mut name_cut = false;
     let editing = list.editing_section == Some(sec.ordinal) && !sec.economy;

@@ -1,0 +1,144 @@
+# Requirements: FerrisFilter v0.7.2 Small UI Improvements
+
+**Defined:** 2026-10-23
+**Core Value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
+**Research:** `.planning/research/SUMMARY.md`
+
+## v0.7.2 Requirements
+
+### Style alpha (ALPHA)
+
+- [ ] **ALPHA-01**: A style's text, border and background colours can carry an alpha value, as the
+  game's `R G B A` allows; the CONFIG style colour picker has an Alpha slider.
+- [ ] **ALPHA-02**: Alpha reaches the filter everywhere a style is written: `generate`, the economy
+  section and the styled-rule rewrite on Apply.
+- [ ] **ALPHA-03**: A style without alpha (or with alpha 255) loads, saves and emits exactly as
+  before: existing `styles.json` files re-serialise byte-identically and the `generate` fixtures
+  (`artifact_guard`) do not change.
+- [ ] **ALPHA-04**: The label preview and the style table show a translucent colour as it will look.
+
+### Auto Detect styles (DETECT)
+
+- [ ] **DETECT-01**: A CONFIG tab **Auto Detect** button reads every rule outside the economy
+  section and turns its action lines plus Show / Hide into a full style.
+- [ ] **DETECT-02**: A rule whose style equals an existing style on every parameter (built-ins with
+  their current, possibly user-edited, values first, then custom styles) is tagged with that style;
+  a bare `Show` is `unchanged`.
+- [ ] **DETECT-03**: Each remaining distinct style becomes a new custom style named
+  `Custom Style N` (smallest free N), and every rule sharing it is tagged with it; any difference,
+  such as a font size off by 3, makes a separate style.
+- [ ] **DETECT-04**: Rules whose actions no style can express (repeated lines of one family,
+  `CustomAlertSoundOptional`, the `...IfAlertSound` keywords, out-of-range values) stay Custom.
+  Trailing comments on action lines do not block a match; they are dropped when Apply rewrites the
+  rule from its style (a code comment marks this as intentional).
+- [ ] **DETECT-05**: Disabled rules are included, a `# ff:group` counts as one rule, and rules
+  already tagged with a style are skipped.
+- [ ] **DETECT-06**: Auto Detect only makes pending in-memory edits (new styles on CONFIG, tags on
+  RULES), shown as unapplied like any other edit; Apply writes them, and Revert / Reload discard them
+  per tab as usual (a rule left tagged to a reverted style shows `unknown style` and Apply drops the
+  tag).
+- [ ] **DETECT-07**: The status line says what Auto Detect did (styles created, rules tagged); a
+  second click with nothing new changes nothing.
+
+### Economy names (ENAME)
+
+- [ ] **ENAME-01**: Each economy rule name states its tier's price range from the tier cutoffs:
+  `E tier Essences < 2 chaos` (below the next tier's floor), and the top tier its floor:
+  `S tier Currency >= 30 chaos`.
+- [ ] **ENAME-02**: The range uses the tiers' own unit (chaos for live tiers, exalt for the fallback
+  pair) and a short number format; price-tiered unique blocks get the same treatment.
+- [ ] **ENAME-03**: Pending tier edits rename the economy rows the RULES tab previews, as they
+  re-price them; `generate` output is unchanged.
+
+### Request throttling (THR)
+
+- [ ] **THR-01**: The overlay sends each kind of request at most once per hour: Sync economy (per
+  league), the league list, and Check for updates.
+- [ ] **THR-02**: A click inside the hour does not reach the server and shows the same outcome
+  from the last result (a fake refresh); it does not advance Last sync.
+- [ ] **THR-03**: Only a successful request starts the hour; after an error the next click goes out.
+- [ ] **THR-04**: The request times (and the league list) persist across restarts in a small state
+  file in the FerrisFilter folder; deleting that file lifts the wait (supported, not documented).
+- [ ] **THR-05**: An update check that found a newer release is not throttled; only "up to date"
+  is.
+- [ ] **THR-06**: The CLI is not throttled and sends its own user agent
+  (`FerrisFilter-CLI/<ver> (...)`); the overlay keeps `FerrisFilter/<ver> (...)`.
+
+### Show/hide hotkey (KEY)
+
+- [ ] **KEY-01**: The CONFIG tab has a **Show / hide overlay** row in the game's keybind style
+  (action on the left, a wide button holding the chord, as in Options → Input); clicking it captures
+  the next chord.
+- [ ] **KEY-02**: The new chord is registered at once, without a restart, and saved in
+  `ff-settings.json`; it keeps today's rule of acting only while the game or the overlay is in the
+  foreground.
+- [ ] **KEY-03**: A chord needs at least one modifier (bare F1-F24 allowed); a chord another app
+  owns is refused, the old binding stays, and the status line says why.
+- [ ] **KEY-04**: A reset restores `Ctrl+Shift+Z`; an invalid or unusable saved chord falls back
+  to it with a warning; the tray tooltip and other mentions show the live chord.
+
+### Game-art widgets (ART)
+
+- [ ] **ART-01**: Section headers use the game's Social-panel style: a toggle plate at the left
+  (chevron up = expanded, down = collapsed) and the stone bar with its bronze frame; titles stay
+  left-aligned and the existing right-hand controls stay.
+- [ ] **ART-02**: Search fields (RULES search, + condition picker) show the game's round clear X
+  inside the right end while they hold text; a click empties the field and keeps focus.
+- [ ] **ART-03**: The same search fields show the game's magnifying-glass glyph inside the left end.
+
+### Drag-and-drop reorder (DND)
+
+- [ ] **DND-01**: Rules and custom styles are reordered by dragging a handle drawn with the author's
+  `assets/custom/icon_reoder_{normal,hover,pressed}.png` art; the up / down arrows on rule and style
+  rows go away (section headers keep theirs).
+- [ ] **DND-02**: While dragging, the source row is greyed, a translucent copy follows the cursor,
+  and a marker shows where it will land; the mouse wheel scrolls and holding near the top / bottom
+  edge auto-scrolls.
+- [ ] **DND-03**: Releasing on a valid slot moves the row as one pending edit (Apply writes it,
+  Revert undoes it); releasing outside the list or pressing Escape cancels.
+- [ ] **DND-04**: The arrows' rules hold: a grouped rule moves as one unit, a move across a
+  Continue rule is flagged, dropping past a banner (or on a collapsed section header) puts the rule
+  in that section, nothing lands in or below the economy section, dragging is off while searching,
+  and custom styles never land above the built-ins.
+- [ ] **DND-05**: The author's art files (three PNG icons, their three `.ase` sources and three
+  `.ase` palettes) are committed under their own names.
+
+### Release Review (REV)
+
+- [ ] **REV-01**: Code cleanup: duplication and mentions of in-milestone bugs removed, tests green.
+- [ ] **REV-02**: README screenshots refreshed where screens changed.
+- [ ] **REV-03**: `Cargo.toml` version set to `0.7.2`.
+- [ ] **REV-04**: A `CHANGELOG.md` draft for `0.7.2` from the net changes since v0.7.1.
+- [ ] **REV-05**: The author's review and rewrite of `README.md` and `CHANGELOG.md` closes the
+  milestone.
+
+## Future Requirements
+
+- Move rules far at once: move to top / bottom, into a named section, where + Add rule inserts
+  (999.16).
+- Sound preview in the style editor, with the alert sounds committed and embedded (999.15).
+- Crash log and optional run log (999.21, 999.22); developer review of tracked economy items
+  (999.28).
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Keyboard reordering | Never a required feature (author, 2026-10-23) |
+| Drag handles on section headers | Header arrows stay; they move only the divider |
+| Warning when Auto Detect drops action-line comments | Author: let them go; a code comment records the choice |
+| Throttle bypass button | Deleting the state file is the (undocumented) escape hatch |
+| Disabling the hotkey | Not requested; a chord is always bound |
+| New Rust dependencies | None needed; any new crate needs the author's review first |
+
+## Decisions
+
+- Revert and Reload keep their per-tab behaviour; Auto Detect adds ordinary pending edits.
+- Alpha 255 is stored as no alpha, so old files and fixtures stay byte-identical.
+- The economy range glyph is ASCII `>=`.
+- Asset file names in `assets/custom/` are the author's and are kept exactly.
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|

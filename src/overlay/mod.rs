@@ -12,6 +12,7 @@ pub mod apply;
 pub mod apply_all;
 pub mod body;
 pub mod chat;
+pub mod chord;
 pub mod classes;
 pub mod conditions;
 pub mod config_state;

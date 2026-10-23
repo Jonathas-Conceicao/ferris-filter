@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v0.7.2
 milestone_name: Small UI Improvements
-status: planning
+status: ready_to_plan
 last_updated: "2026-10-23T19:52:24.045Z"
 last_activity: 2026-10-23
 progress:
-  total_phases: 0
+  total_phases: 8
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-23)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
-**Current focus:** Milestone v0.7.2 Small UI Improvements — defining requirements
+**Current focus:** Phase 43 - Style Alpha (milestone v0.7.2 Small UI Improvements)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 43 of 50 (Style Alpha)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-10-23 — Milestone v0.7.2 started
+Status: Ready to plan
+Last activity: 2026-10-23 — v0.7.2 roadmap created
+
+Progress: [..........] 0% (0 of 8 phases)
 
 ## Performance Metrics
 
@@ -91,6 +93,11 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.7.2 roadmap created (2026-10-23): Phases 43-50 - style alpha, Auto Detect styles, economy
+  tier-range names, request throttling + CLI user agent, customizable hotkey, game-art widgets,
+  drag-and-drop reorder (after widgets), Release Review (last). UI phases 43, 44, 47, 48, 49 carry
+  UI hint: yes.
 
 - v0.7 roadmap created (2026-10-18): Phases 36-42 - per-user locations + embedded defaults, game
   folder picker + refresh button, built-in styles + Strictness Selector + Reset to defaults (one fixture re-baseline), league + price

@@ -142,3 +142,42 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| ALPHA-01 | Phase 43 | Pending |
+| ALPHA-02 | Phase 43 | Pending |
+| ALPHA-03 | Phase 43 | Pending |
+| ALPHA-04 | Phase 43 | Pending |
+| DETECT-01 | Phase 44 | Pending |
+| DETECT-02 | Phase 44 | Pending |
+| DETECT-03 | Phase 44 | Pending |
+| DETECT-04 | Phase 44 | Pending |
+| DETECT-05 | Phase 44 | Pending |
+| DETECT-06 | Phase 44 | Pending |
+| DETECT-07 | Phase 44 | Pending |
+| ENAME-01 | Phase 45 | Pending |
+| ENAME-02 | Phase 45 | Pending |
+| ENAME-03 | Phase 45 | Pending |
+| THR-01 | Phase 46 | Pending |
+| THR-02 | Phase 46 | Pending |
+| THR-03 | Phase 46 | Pending |
+| THR-04 | Phase 46 | Pending |
+| THR-05 | Phase 46 | Pending |
+| THR-06 | Phase 46 | Pending |
+| KEY-01 | Phase 47 | Pending |
+| KEY-02 | Phase 47 | Pending |
+| KEY-03 | Phase 47 | Pending |
+| KEY-04 | Phase 47 | Pending |
+| ART-01 | Phase 48 | Pending |
+| ART-02 | Phase 48 | Pending |
+| ART-03 | Phase 48 | Pending |
+| DND-01 | Phase 49 | Pending |
+| DND-02 | Phase 49 | Pending |
+| DND-03 | Phase 49 | Pending |
+| DND-04 | Phase 49 | Pending |
+| DND-05 | Phase 49 | Pending |
+| REV-01 | Phase 50 | Pending |
+| REV-02 | Phase 50 | Pending |
+| REV-03 | Phase 50 | Pending |
+| REV-04 | Phase 50 | Pending |
+| REV-05 | Phase 50 | Pending |
+
+**Coverage:** 37 v0.7.2 requirements, 37 mapped to exactly one phase, 0 unmapped.

@@ -9,6 +9,7 @@
 - ✅ **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-28 (shipped 2026-10-15) — [archive](milestones/v0.5-ROADMAP.md)
 - ✅ **v0.6 New PoE2-based Tool UI** — Phases 29-35 (shipped 2026-10-17) — [archive](milestones/v0.6-ROADMAP.md)
 - ✅ **v0.7 Initial Public Release and Strictness Selector** — Phases 36-42 (shipped 2026-10-18) — [archive](milestones/v0.7-ROADMAP.md)
+- 🚧 **v0.7.2 Small UI Improvements** — Phases 43-50 (in progress)
 
 ## Phases
 
@@ -107,6 +108,128 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 - [x] Phase 42: Release Review (5/5 plans) — completed 2026-10-18
 
 Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
+
+</details>
+
+<details open>
+<summary>🚧 v0.7.2 Small UI Improvements (Phases 43-50) — IN PROGRESS</summary>
+
+- [ ] **Phase 43: Style Alpha** - Style colours can be translucent and the app shows it faithfully
+- [ ] **Phase 44: Auto Detect Styles** - One click turns the styling already in a filter into named styles
+- [ ] **Phase 45: Economy Tier-Range Names** - Economy rule names say what price range their tier covers
+- [ ] **Phase 46: Request Throttling & CLI User Agent** - The app stops hammering poe.ninja and GitHub, and the CLI identifies itself
+- [ ] **Phase 47: Customizable Hotkey** - The player chooses the show / hide chord
+- [ ] **Phase 48: Game-Art Widgets** - Section headers and search fields look like the game's own
+- [ ] **Phase 49: Drag-and-Drop Reorder** - Rules and custom styles are reordered by dragging
+- [ ] **Phase 50: Release Review** - v0.7.2 is cleaned up, documented and ready for the author's sign-off
+
+### Phase Details
+
+### Phase 43: Style Alpha
+**Goal**: Style colours can be translucent and the app shows it faithfully
+**Depends on**: Nothing (first phase of this milestone)
+**Requirements**: ALPHA-01, ALPHA-02, ALPHA-03, ALPHA-04
+**Success Criteria** (what must be TRUE):
+  1. The CONFIG style colour picker has an Alpha slider, and a style's text, border and background colours can each be given an alpha
+  2. After Apply, a styled rule and the economy section carry that alpha in their `R G B A` lines, and `generate` emits it too
+  3. A `styles.json` without alpha (or with alpha 255) loads, saves and emits exactly as before: files re-serialise byte-identically and the `generate` fixtures do not change
+  4. The label preview and the style table show a translucent colour as it will look
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 44: Auto Detect Styles
+**Goal**: One click turns the styling already in a filter into named styles
+**Depends on**: Phase 43 (detected styles can carry alpha)
+**Requirements**: DETECT-01, DETECT-02, DETECT-03, DETECT-04, DETECT-05, DETECT-06, DETECT-07
+**Success Criteria** (what must be TRUE):
+  1. Clicking Auto Detect on the CONFIG tab tags every untagged rule outside the economy section (disabled rules included, a `# ff:group` counted once) with an existing style when it matches one on every parameter, with a bare `Show` becoming `unchanged`
+  2. Each remaining distinct style becomes a custom style named `Custom Style N` (smallest free N) and all rules sharing it are tagged with it; any difference, such as a font size off by 3, makes a separate style
+  3. Rules with actions no style can express stay Custom, and a trailing comment on an action line does not block a match
+  4. The result is pending edits only (new styles on CONFIG, tags on RULES) shown as unapplied; Apply writes them, Revert / Reload discard them per tab
+  5. The status line says how many styles were created and rules tagged, and a second click with nothing new changes nothing
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 45: Economy Tier-Range Names
+**Goal**: Economy rule names say what price range their tier covers
+**Depends on**: Nothing (independent)
+**Requirements**: ENAME-01, ENAME-02, ENAME-03
+**Success Criteria** (what must be TRUE):
+  1. Each economy rule name states its tier's price range, such as `E tier Essences < 2 chaos`, and the top tier its floor, such as `S tier Currency >= 30 chaos`
+  2. The range uses the tiers' own unit (chaos for live tiers, exalt for the fallback pair) in a short number format, and price-tiered unique blocks are named the same way
+  3. Editing tier cutoffs on the Economy tab renames the economy rows previewed on the RULES tab as it re-prices them, and `generate` output is unchanged
+**Plans**: TBD
+
+### Phase 46: Request Throttling & CLI User Agent
+**Goal**: The app stops hammering poe.ninja and GitHub, and the CLI identifies itself
+**Depends on**: Nothing (independent)
+**Requirements**: THR-01, THR-02, THR-03, THR-04, THR-05, THR-06
+**Success Criteria** (what must be TRUE):
+  1. Within an hour of a successful Sync economy (per league), league-list refresh or up-to-date update check, clicking again sends no request and shows the same outcome as the last result, without advancing Last sync
+  2. After an error the next click goes out at once, and an update check that found a newer release is never throttled
+  3. The request times and the league list survive a restart through a small state file in the FerrisFilter folder; deleting it lifts the wait
+  4. The CLI is never throttled and sends a `FerrisFilter-CLI/<ver> (...)` user agent while the overlay keeps `FerrisFilter/<ver> (...)`
+**Plans**: TBD
+
+### Phase 47: Customizable Hotkey
+**Goal**: The player chooses the show / hide chord
+**Depends on**: Nothing (independent)
+**Requirements**: KEY-01, KEY-02, KEY-03, KEY-04
+**Success Criteria** (what must be TRUE):
+  1. The CONFIG tab has a Show / hide overlay row in the game's keybind style, and clicking its chord button captures the next chord pressed
+  2. The new chord works at once without a restart, is saved in `ff-settings.json`, and still acts only while the game or the overlay is in the foreground
+  3. A chord with no modifier is refused (bare F1-F24 allowed), and a chord another app owns is refused with the old binding kept and the status line saying why
+  4. A reset button restores `Ctrl+Shift+Z`, an invalid saved chord falls back to it with a warning, and the tray tooltip shows the live chord
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 48: Game-Art Widgets
+**Goal**: Section headers and search fields look like the game's own
+**Depends on**: Nothing (precedes Phase 49, which builds on the redrawn rows and headers)
+**Requirements**: ART-01, ART-02, ART-03
+**Success Criteria** (what must be TRUE):
+  1. Section headers show the game's Social-panel look: a toggle plate at the left (chevron up when expanded, down when collapsed) and the bronze-framed stone bar, titles left-aligned and the right-hand controls kept
+  2. RULES search and the + condition picker show the game's round clear X inside the right end while they hold text, and clicking it empties the field and keeps focus
+  3. The same search fields show the game's magnifying-glass glyph inside the left end
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 49: Drag-and-Drop Reorder
+**Goal**: Rules and custom styles are reordered by dragging
+**Depends on**: Phase 48
+**Requirements**: DND-01, DND-02, DND-03, DND-04, DND-05
+**Success Criteria** (what must be TRUE):
+  1. Rules and custom styles show a drag handle drawn with the author's `icon_reoder_{normal,hover,pressed}` art, and their up / down arrows are gone (section headers keep theirs)
+  2. While dragging, the source row is greyed, a translucent copy follows the cursor and a marker shows the landing spot; the wheel scrolls and holding near the top or bottom edge auto-scrolls
+  3. Releasing on a valid slot moves the row as one pending edit (Apply writes it, Revert undoes it); releasing outside the list or pressing Escape cancels
+  4. The arrow rules still hold: grouped rules move as one unit, a move across a Continue rule is flagged, dropping past a banner or on a collapsed section header puts the rule in that section, nothing lands in or below the economy section, dragging is off while searching, and custom styles never land above the built-ins
+  5. The author's three PNG icons, their `.ase` sources and the three `.ase` palettes are committed under their own names
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 50: Release Review
+**Goal**: v0.7.2 is cleaned up, documented and ready for the author's sign-off
+**Depends on**: Phases 43-49
+**Requirements**: REV-01, REV-02, REV-03, REV-04, REV-05
+**Success Criteria** (what must be TRUE):
+  1. The code is cleaned up (duplication and mentions of in-milestone bugs removed) with the tests green
+  2. README screenshots show the changed screens as they now look
+  3. `Cargo.toml` reads version `0.7.2` and a `CHANGELOG.md` draft for `0.7.2` covers the net changes since v0.7.1
+  4. The author has reviewed and rewritten `README.md` and `CHANGELOG.md`, closing the milestone
+**Plans**: TBD
+
+### Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 43. Style Alpha | 0/TBD | Not started | - |
+| 44. Auto Detect Styles | 0/TBD | Not started | - |
+| 45. Economy Tier-Range Names | 0/TBD | Not started | - |
+| 46. Request Throttling & CLI User Agent | 0/TBD | Not started | - |
+| 47. Customizable Hotkey | 0/TBD | Not started | - |
+| 48. Game-Art Widgets | 0/TBD | Not started | - |
+| 49. Drag-and-Drop Reorder | 0/TBD | Not started | - |
+| 50. Release Review | 0/TBD | Not started | - |
 
 </details>
 

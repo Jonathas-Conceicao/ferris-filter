@@ -222,6 +222,18 @@ impl ConfigState {
         Ok(trimmed.to_string())
     }
 
+    /// Auto Detect: append several styles as pending edits (fresh custom ids, after the
+    /// existing customs). A name `insert_new` refuses is skipped. Returns the names added.
+    pub fn add_detected_styles(&mut self, styles: Vec<(String, Style)>) -> Vec<String> {
+        let mut added = Vec::new();
+        for (name, style) in styles {
+            if self.styles.insert_new(&name, style).is_ok() {
+                added.push(name);
+            }
+        }
+        added
+    }
+
     /// False (and no change) for built-ins and unknown names.
     pub fn delete_style(&mut self, name: &str) -> bool {
         self.styles.remove_custom(name).is_some()
@@ -2129,5 +2141,27 @@ mod tests {
         assert!(s.tiers_at_defaults());
         s.set_tier_text("S", "31");
         assert!(!s.tiers_at_defaults());
+    }
+
+    #[test]
+    fn add_detected_styles_appends_with_fresh_ids_and_skips_refused() {
+        let (_d, mut s) = loaded();
+        let before = s.style_names();
+        let added = s.add_detected_styles(vec![
+            ("Custom Style 1".into(), Style::blank_show()),
+            ("S".into(), Style::blank_show()),
+            ("Custom Style 2".into(), Style::blank_show()),
+        ]);
+        assert_eq!(added, vec!["Custom Style 1", "Custom Style 2"]);
+        let names = s.style_names();
+        assert_eq!(&names[..before.len()], &before[..]);
+        assert_eq!(
+            &names[names.len() - 2..],
+            &["Custom Style 1", "Custom Style 2"]
+        );
+        let a = s.style("Custom Style 1").unwrap().id.clone();
+        let b = s.style("Custom Style 2").unwrap().id.clone();
+        assert!(a.is_some() && a != b && !a.unwrap().starts_with("builtin:"));
+        assert!(s.styles_dirty());
     }
 }

@@ -1425,6 +1425,59 @@ impl WorkingFilter {
         }
     }
 
+    /// Auto Detect candidates: untagged rules outside the economy section (disabled ones
+    /// included, a `# ff:group` once), skipping `can't enable` and grammar-error rules.
+    pub fn detect_inputs(&self) -> Vec<(BlockId, Vec<BodyEntry>, BlockKeyword)> {
+        self.rows()
+            .iter()
+            .filter(|r| self.detect_eligible(r))
+            .map(|r| (r.id, self.body_view(r.id), r.keyword))
+            .collect()
+    }
+
+    fn detect_eligible(&self, r: &RuleRow) -> bool {
+        r.style == StyleState::None
+            && !r.cannot_enable
+            && r.errors.is_empty()
+            && self.body_editable(r.id)
+    }
+
+    /// Auto Detect: tag a batch of rules with `# ff:style <id> <name>` in memory. Every member
+    /// of a group gets the tag so the run stays one rule. Nothing is rewritten here (Apply
+    /// rewrites enabled tagged rules from their style), one rebuild at the end. Entries with an
+    /// unknown style or an id that is no longer an eligible untagged rule are skipped. Returns
+    /// the number of rules (not blocks) tagged.
+    pub fn tag_styles(&mut self, tags: &[(BlockId, String)]) -> usize {
+        if tags.is_empty() {
+            return 0;
+        }
+        let mut done = 0;
+        for (id, name) in tags {
+            let Some(tag) = self.styles.as_ref().and_then(|s| s.tag_for(name)) else {
+                continue;
+            };
+            let eligible = self.row(*id).is_some_and(|r| self.detect_eligible(r));
+            if !eligible {
+                continue;
+            }
+            let snapshot = self.doc.clone();
+            let ok = self
+                .groups
+                .members(*id)
+                .into_iter()
+                .all(|m| self.doc.set_meta(m, "style", &tag).is_ok());
+            if ok {
+                done += 1;
+            } else {
+                self.doc = snapshot;
+            }
+        }
+        if done > 0 {
+            self.rebuild();
+        }
+        done
+    }
+
     /// Whether the block's body lines accept line edits: false for an unknown id and for an
     /// invalid disabled block (its lines are commented prose the parser cannot structure).
     pub fn body_editable(&self, id: BlockId) -> bool {
@@ -3932,5 +3985,93 @@ Show
         let mut wf = WorkingFilter::from_text(&with_economy());
         let after = wf.rows()[1].id;
         assert!(!wf.apply_action(RowAction::Move(after, Dir::Up)).changed);
+    }
+
+    // -- Auto Detect batch model (Phase 44) --------------------------------------------------
+
+    const DET_GROUP: &str = "# ff:group abc 1/3\nShow\n  Rarity Rare\n  BaseArmour > 0\n  BaseEvasion 0\n  BaseEnergyShield 0\n  SetFontSize 30\n\n# ff:group abc 2/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion > 0\n  BaseEnergyShield 0\n  SetFontSize 30\n\n# ff:group abc 3/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion 0\n  BaseEnergyShield > 0\n  SetFontSize 30\n";
+
+    fn detect_fixture() -> String {
+        use crate::filter::section::{BEGIN_LINE, RULE_LINE};
+        format!(
+            "Show\n  Class \"Rings\"\n  SetFontSize 20\n\n#Hide\n#  Class \"Belts\"\n#  SetFontSize 20\n\n# ff:style builtin:E E\nShow\n  Class \"Amulets\"\n\n#Show\n#  this is prose\n\n{DET_GROUP}\n{RULE_LINE}\n{BEGIN_LINE}\n{RULE_LINE}\nShow\n  Class \"Gems\"\n"
+        )
+    }
+
+    #[test]
+    fn detect_inputs_lists_untagged_rules_group_once() {
+        let wf = styled_wf(&detect_fixture());
+        let ids: Vec<BlockId> = wf.detect_inputs().iter().map(|t| t.0).collect();
+        let rows = wf.rows();
+        let want: Vec<BlockId> = rows
+            .iter()
+            .filter(|r| r.style == StyleState::None && !r.cannot_enable && r.errors.is_empty())
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, want);
+        // rings, disabled belts, the group leader; not the tagged, can't-enable or economy ones
+        assert_eq!(ids.len(), 3, "{rows:?}");
+        assert!(rows.iter().any(|r| r.cannot_enable));
+    }
+
+    #[test]
+    fn detect_inputs_skips_grammar_errors() {
+        let wf = styled_wf("Show\n  Rarity Bogus\n\nShow\n  Class \"Rings\"\n");
+        let n = wf.rows().iter().filter(|r| !r.errors.is_empty()).count();
+        assert_eq!(n, 1);
+        assert_eq!(wf.detect_inputs().len(), 1);
+    }
+
+    #[test]
+    fn tag_styles_tags_every_group_member_and_keeps_one_rule() {
+        let mut wf = styled_wf(&detect_fixture());
+        let id = wf
+            .rows()
+            .iter()
+            .find(|r| r.group_size == 3)
+            .map(|r| r.id)
+            .unwrap();
+        assert_eq!(wf.tag_styles(&[(id, "S".into())]), 1);
+        let t = wf.text();
+        assert_eq!(t.matches("# ff:style builtin:S S").count(), 3, "{t}");
+        let r = wf.rows().iter().find(|r| r.group_size == 3).unwrap();
+        assert!(!r.group_broken);
+        assert_eq!(r.style, StyleState::Known("S".into()));
+        assert!(wf.rules_edited());
+        wf.revert_rules();
+        assert!(!wf.text().contains("builtin:S"));
+    }
+
+    #[test]
+    fn tag_styles_disabled_rule_keeps_action_bytes() {
+        let mut wf =
+            styled_wf("#Hide\n#  Class \"Rings\"\n#  SetFontSize 20\n\nShow\n  SetFontSize 20\n");
+        let id = wf.rows()[0].id;
+        let en = wf.rows()[1].id;
+        assert_eq!(wf.tag_styles(&[(id, "S".into()), (en, "S".into())]), 2);
+        let t = wf.text();
+        assert!(
+            t.contains("#  SetFontSize 20") && t.contains("\n  SetFontSize 20\n"),
+            "{t}"
+        );
+        assert!(!t.contains("SetFontSize 37"), "{t}");
+        assert!(!wf.rows()[0].enabled);
+    }
+
+    #[test]
+    fn tag_styles_skips_unknown_and_already_tagged() {
+        let mut wf = styled_wf(
+            "# ff:style builtin:E E\nShow\n\nShow\n  Class \"Rings\"\n\nShow\n  Class \"Belts\"\n",
+        );
+        let (tagged, a, b) = (wf.rows()[0].id, wf.rows()[1].id, wf.rows()[2].id);
+        let n = wf.tag_styles(&[(tagged, "S".into()), (a, "Nope".into()), (b, "S".into())]);
+        assert_eq!(n, 1);
+        let t = wf.text();
+        assert_eq!(t.matches("ff:style").count(), 2, "{t}");
+        assert!(
+            t.contains("builtin:E E") && !t.contains("builtin:S S\nShow\n\n"),
+            "{t}"
+        );
+        assert_eq!(wf.tag_styles(&[]), 0);
     }
 }

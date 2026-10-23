@@ -3,6 +3,7 @@
 /// All block emission uses a single canonical action order (D-03) via `emit_style_actions`.
 /// No HashMap iteration; all collection traversal is over Vecs or named struct fields (GEN-01).
 /// Output is LF-only (`writeln!` produces `\n` on all platforms — never `\r\n`).
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use miette::Diagnostic;
@@ -105,8 +106,9 @@ pub fn generate_as(
     let mut out = String::with_capacity(32_000);
     emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
-    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks, false)?;
-    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks, false)?;
+    let ranges = &priced.tier_ranges;
+    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks, false, ranges)?;
+    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks, false, ranges)?;
     debug_assert!(
         out.ends_with('\n'),
         "generate() output must end with exactly one newline"
@@ -119,14 +121,16 @@ pub fn generate_as(
 ///
 /// This is the text Apply splices under the `# ff:economy-begin` banner. It equals the tail of
 /// [`generate`] from the first [`SECTION_BANNER`] line, except that here (and only here) each
-/// block also carries `# ff:name <T> tier <Group>` and tier blocks `# ff:style <id> <T>`. With
+/// block also carries `# ff:name <T> tier <Group> <range>` (e.g. `S tier Currency >= 30 chaos`,
+/// `E tier Essences < 2 chaos`) and tier blocks `# ff:style <id> <T>`. With
 /// empty priced data it yields the banner block only; callers must refuse `PriceSource::Absent`
 /// before writing it.
 pub fn generate_economy(styles: &StyleSet, priced: &PricedData) -> Result<String, GenerateError> {
     styles.validate()?;
     let mut out = String::with_capacity(32_000);
-    emit_currency_sections(&mut out, styles, &priced.category_blocks, true)?;
-    emit_unique_sections(&mut out, styles, &priced.unique_blocks, true)?;
+    let ranges = &priced.tier_ranges;
+    emit_currency_sections(&mut out, styles, &priced.category_blocks, true, ranges)?;
+    emit_unique_sections(&mut out, styles, &priced.unique_blocks, true, ranges)?;
     debug_assert!(
         out.ends_with('\n'),
         "generate_economy() output must end with a newline"
@@ -502,11 +506,21 @@ fn emit_rules(out: &mut String, config: &Config) -> Result<(), GenerateError> {
 // Section 3: Currency / category tier blocks (from PricedData.category_blocks)
 // ---------------------------------------------------------------------------
 
+/// `<T> tier <Group> <range>` for the tagged economy `# ff:name` lines; the plain
+/// `<T> tier <Group>` when the tier has no range.
+fn economy_name(tier: &str, group: &str, ranges: &HashMap<String, String>) -> String {
+    match ranges.get(tier) {
+        Some(r) => format!("{tier} tier {group} {r}"),
+        None => format!("{tier} tier {group}"),
+    }
+}
+
 fn emit_currency_sections(
     out: &mut String,
     styles: &StyleSet,
     blocks: &[CategoryBlock],
     tags: bool,
+    ranges: &HashMap<String, String>,
 ) -> Result<(), GenerateError> {
     writeln!(out, "{SECTION_BANNER}").unwrap();
     writeln!(
@@ -548,7 +562,12 @@ fn emit_currency_sections(
                 .join(" ");
 
             if tags {
-                writeln!(out, "# ff:name {} tier {}", tier_group.tier, category.name).unwrap();
+                writeln!(
+                    out,
+                    "# ff:name {}",
+                    economy_name(&tier_group.tier, &category.name, ranges)
+                )
+                .unwrap();
                 match styles.id_of(&tier_group.tier) {
                     Some(id) => writeln!(out, "# ff:style {} {}", id, tier_group.tier).unwrap(),
                     None => writeln!(out, "# ff:style {}", tier_group.tier).unwrap(),
@@ -603,6 +622,7 @@ fn emit_unique_sections(
     styles: &StyleSet,
     blocks: &[UniqueBlock],
     tags: bool,
+    ranges: &HashMap<String, String>,
 ) -> Result<(), GenerateError> {
     // Per Open Questions resolution: omit the header entirely when unique_blocks is empty.
     if blocks.is_empty() {
@@ -626,7 +646,12 @@ fn emit_unique_sections(
             .join(" ");
 
         if tags {
-            writeln!(out, "# ff:name {} tier Uniques", block.tier).unwrap();
+            writeln!(
+                out,
+                "# ff:name {}",
+                economy_name(&block.tier, "Uniques", ranges)
+            )
+            .unwrap();
         }
         writeln!(out, "{} # Unique {}", header_word(style), block.tier).unwrap();
         writeln!(out, "  Rarity == Unique").unwrap();
@@ -1160,6 +1185,7 @@ mod tests {
                 tier: "A".to_string(),
                 base_types: vec!["Silk Robe".to_string()],
             }],
+            tier_ranges: HashMap::new(),
         };
 
         let output = generate(&config, &priced).expect("generate failed");
@@ -1300,10 +1326,10 @@ mod tests {
             .iter()
             .position(|l| l.starts_with("Show # Currency S"))
             .expect("currency S block");
-        assert_eq!(lines[i - 2], "# ff:name S tier Currency");
+        assert_eq!(lines[i - 2], "# ff:name S tier Currency >= 30 chaos");
         assert_eq!(lines[i - 1], "# ff:style builtin:S S");
         let u = lines.iter().position(|l| *l == "Show # Unique A").unwrap();
-        assert_eq!(lines[u - 1], "# ff:name A tier Uniques");
+        assert_eq!(lines[u - 1], "# ff:name A tier Uniques < 30 chaos");
         assert!(!lines[u - 2].starts_with("# ff:style"));
         // generate() has no ff lines at all.
         let full = generate(&config, &priced).unwrap();
@@ -1316,6 +1342,34 @@ mod tests {
         }
         let e = generate_economy(&idless, &priced).unwrap();
         assert!(e.lines().any(|l| l == "# ff:style S"));
+    }
+
+    #[test]
+    fn gem_background_override_categories_carry_the_range() {
+        let (config, priced) = load_inputs();
+        let gem = priced
+            .category_blocks
+            .iter()
+            .find(|c| c.background_override.is_some())
+            .expect("seed prices populate a background-override category");
+        let econ = generate_economy(&config.styles, &priced).unwrap();
+        let prefix = format!("# ff:name ");
+        let suffix = format!(" tier {} ", gem.name);
+        let hit = econ.lines().find(|l| {
+            l.starts_with(&prefix)
+                && l.contains(&suffix)
+                && l.ends_with(" chaos")
+                && (l.contains(" < ") || l.contains(" >= "))
+        });
+        assert!(hit.is_some(), "no ranged name for {}", gem.name);
+    }
+
+    #[test]
+    fn empty_range_map_writes_plain_names() {
+        let (config, mut priced) = load_inputs();
+        priced.tier_ranges.clear();
+        let econ = generate_economy(&config.styles, &priced).unwrap();
+        assert!(econ.lines().any(|l| l == "# ff:name S tier Currency"));
     }
 
     #[test]

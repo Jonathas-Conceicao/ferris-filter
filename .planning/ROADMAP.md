@@ -119,7 +119,7 @@ Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
 - [ ] **Phase 45: Economy Tier-Range Names** - Economy rule names say what price range their tier covers
 - [ ] **Phase 46: Request Throttling & CLI User Agent** - The app stops hammering poe.ninja and GitHub, and the CLI identifies itself
 - [ ] **Phase 47: Customizable Hotkey** - The player chooses the show / hide chord
-- [ ] **Phase 48: Game-Art Widgets** - Section headers and search fields look like the game's own
+- [x] **Phase 48: Game-Art Widgets** - Section headers and search fields look like the game's own
 - [ ] **Phase 49: Drag-and-Drop Reorder** - Rules and custom styles are reordered by dragging
 - [ ] **Phase 50: Release Review** - v0.7.2 is cleaned up, documented and ready for the author's sign-off
 
@@ -210,8 +210,14 @@ Plans:
   2. RULES search and the + condition picker show the game's round clear X inside the right end while they hold text, and clicking it empties the field and keeps focus
   3. The same search fields show the game's magnifying-glass glyph inside the left end
   4. Button art sits where it is meant to, its transparent margins compensated, and the Config → Filter refresh button is no longer offset
-**Plans**: TBD
+**Plans**: 4 plans
 **UI hint**: yes
+
+Plans:
+- [x] 48-01-PLAN.md — Extract the art (14 manifest entries), embed it in Skin, box_uv / paint_visible, reload button and check painted by visible plate (ART-04)
+- [x] 48-02-PLAN.md — Section headers: toggle plate + stone bar (ART-01)
+- [x] 48-03-PLAN.md — ff_search_field (magnifier + clear X) in RULES search and the + condition picker (ART-02, ART-03)
+- [x] 48-04-PLAN.md — CLAUDE.md update, debug screenshots, Phase 48 deferred entries
 
 ### Phase 49: Drag-and-Drop Reorder
 **Goal**: Rules and custom styles are reordered by dragging
@@ -246,7 +252,7 @@ Plans:
 | 45. Economy Tier-Range Names | 0/TBD | Not started | - |
 | 46. Request Throttling & CLI User Agent | 0/TBD | Not started | - |
 | 47. Customizable Hotkey | 0/TBD | Not started | - |
-| 48. Game-Art Widgets | 0/TBD | Not started | - |
+| 48. Game-Art Widgets | 4/4 | Complete (human checks pending) | 2026-10-23 |
 | 49. Drag-and-Drop Reorder | 0/TBD | Not started | - |
 | 50. Release Review | 0/TBD | Not started | - |
 

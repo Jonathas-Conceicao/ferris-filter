@@ -614,16 +614,18 @@ pub fn ff_check(ui: &mut Ui, skin: &Skin, checked: &mut bool, label: &str) -> Re
     } else {
         &skin.check_off
     };
-    let [w, h] = tex.size();
-    let draw = Rect::from_min_size(rect.min, vec2(size, size * h as f32 / w.max(1) as f32));
     let tint = if resp.hovered() || resp.has_focus() {
         Color32::WHITE
     } else {
         Color32::from_gray(222)
     };
-    slice::paint_image(ui.painter(), tex, draw, tint);
+    slice::paint_visible(ui.painter(), tex, CHECK_OPAQUE, rect, tint);
     resp
 }
+
+/// `check_on` / `check_off` are 54x56 with a 2px transparent bottom gutter; this is the visible
+/// 54x54 plate, `[x0, y0, x1, y1)` texels.
+const CHECK_OPAQUE: [u32; 4] = [0, 0, 54, 54];
 
 /// Maps a pointer x inside `track` (with `inset` points of dead zone at each end) to a value in
 /// `range`, rounded to `step`.
@@ -1205,10 +1207,11 @@ pub fn ff_button_ex(
     resp
 }
 
-/// The opaque part of the icon-button plate texture: its top-left 84 of 92 pixels (the rest is
-/// transparent margin).
-const PLATE_VISIBLE: f32 = 84.0 / 92.0;
-/// The ring's height as a fraction of the visible plate, measured on the in-game button.
+/// The opaque plate of the 92x92 `fouriconbutton*` art (7px transparent right/bottom gutter plus
+/// one more pixel), as `[x0, y0, x1, y1)` texels.
+const ICON_BUTTON_OPAQUE: [u32; 4] = [0, 0, 84, 84];
+/// The ring's height as a fraction of the plate (the full button rect), measured on the in-game
+/// button.
 const RING_OF_PLATE: f32 = 0.78;
 /// The ring's share of the glyph texture: 40 of its 56 pixels.
 const RING_OF_GLYPH: f32 = 40.0 / 56.0;
@@ -1219,6 +1222,14 @@ const RING_CENTRE: Vec2 = Vec2::new((56.0 - 24.5) / 56.0, 23.5 / 56.0);
 const RING_TURN_DEG: f32 = -28.0;
 /// The glyph's resting colour: the hover art multiplied down to the cooler cream it has in game.
 const GLYPH_REST_TINT: Color32 = Color32::from_rgb(191, 214, 253);
+
+/// Where the (unrotated) glyph texture is drawn for a button `rect`: the ring's centre sits 1pt
+/// below the plate centre (one more while pressed), as in game.
+fn reload_glyph_rect(rect: Rect, pressed: bool) -> Rect {
+    let side = rect.height() * RING_OF_PLATE / RING_OF_GLYPH;
+    let ring_centre = rect.center() + vec2(0.0, 1.0 + if pressed { 1.0 } else { 0.0 });
+    Rect::from_min_size(ring_centre - RING_CENTRE * side, Vec2::splat(side))
+}
 
 /// The game's reload button: the square icon button plate ([`Skin::icon_button`], normal, hover or
 /// focus, pressed) with the round-arrow glyph ([`Skin::reload`]) on it, mirrored left to right and
@@ -1248,19 +1259,20 @@ pub fn ff_reload_button(ui: &mut Ui, skin: &Skin, label: &str, enabled: bool) ->
     } else {
         Color32::from_white_alpha(90)
     };
-    slice::paint_image(ui.painter(), &skin.icon_button[state], rect, tint);
+    slice::paint_visible(
+        ui.painter(),
+        &skin.icon_button[state],
+        ICON_BUTTON_OPAQUE,
+        rect,
+        tint,
+    );
 
     let glyph_tint = match (enabled, state) {
         (false, _) => GLYPH_REST_TINT.gamma_multiply(90.0 / 255.0),
         (true, 0) => GLYPH_REST_TINT,
         (true, _) => Color32::WHITE,
     };
-    let plate = ROW_HEIGHT * PLATE_VISIBLE;
-    let side = plate * RING_OF_PLATE / RING_OF_GLYPH;
-    let pressed = if state == 2 { 1.0 } else { 0.0 };
-    // The game sits the ring 1pt below the plate's centre.
-    let ring_centre = rect.min + Vec2::splat(plate / 2.0) + vec2(0.0, 1.0 + pressed);
-    let dest = Rect::from_min_size(ring_centre - RING_CENTRE * side, Vec2::splat(side));
+    let dest = reload_glyph_rect(rect, state == 2);
     let uv = slice::full_uv(skin.reload.size());
     // Swapping the u edges mirrors the glyph left to right.
     let mirrored = Rect::from_min_max(pos2(uv.max.x, uv.min.y), pos2(uv.min.x, uv.max.y));
@@ -1365,6 +1377,127 @@ pub fn ff_text_field_ex(
     width: f32,
     font: egui::FontId,
 ) -> Response {
+    text_field_inner(ui, id, text, hint, width, font, 10.0, 10.0).0
+}
+
+/// Gap between the field's left edge and the search magnifier.
+const SEARCH_GLYPH_INSET: f32 = 10.0;
+/// Side of the (square) search magnifier.
+const SEARCH_GLYPH_SIZE: f32 = 16.0;
+/// Left and right inset of the search text (room for the glyph / the clear X, always reserved).
+const SEARCH_TEXT_INSET: f32 = 32.0;
+/// Diameter of the clear X disc.
+const CLEAR_DISC: f32 = 18.0;
+/// Side of the clear X's click zone.
+const CLEAR_HIT: f32 = 24.0;
+
+/// Where the parts of a search field sit inside its frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SearchLayout {
+    /// The magnifier.
+    pub glyph: Rect,
+    /// The text edit.
+    pub edit: Rect,
+    /// The clear X disc.
+    pub clear_disc: Rect,
+    /// The clear X click zone.
+    pub clear_hit: Rect,
+}
+
+/// Pure geometry of a search field of frame `field`.
+pub fn search_layout(field: Rect) -> SearchLayout {
+    let cy = field.center().y;
+    let glyph = Rect::from_center_size(
+        pos2(
+            field.min.x + SEARCH_GLYPH_INSET + SEARCH_GLYPH_SIZE / 2.0,
+            cy,
+        ),
+        Vec2::splat(SEARCH_GLYPH_SIZE),
+    );
+    let edit = Rect::from_min_max(
+        pos2(field.min.x + SEARCH_TEXT_INSET, field.min.y + 3.0),
+        pos2(field.max.x - SEARCH_TEXT_INSET, field.max.y - 3.0),
+    );
+    let c = pos2(field.max.x - 17.0, cy);
+    SearchLayout {
+        glyph,
+        edit,
+        clear_disc: Rect::from_center_size(c, Vec2::splat(CLEAR_DISC)),
+        clear_hit: Rect::from_center_size(c, Vec2::splat(CLEAR_HIT)),
+    }
+}
+
+/// The game's search box: a magnifier at the left and, while it holds text, a round clear X at
+/// the right. Clicking the X empties the field and keeps it focused. Returns the edit response.
+pub fn ff_search_field(
+    ui: &mut Ui,
+    skin: &Skin,
+    id: egui::Id,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+) -> Response {
+    let (resp, field) = text_field_inner(
+        ui,
+        Some(id),
+        text,
+        hint,
+        width,
+        regular(15.0),
+        SEARCH_TEXT_INSET,
+        SEARCH_TEXT_INSET,
+    );
+    let lay = search_layout(field);
+    let hot = ui.rect_contains_pointer(field) || resp.has_focus();
+    slice::paint_image(
+        ui.painter(),
+        &skin.search[usize::from(hot)],
+        lay.glyph,
+        Color32::WHITE,
+    );
+    // Decorative: the edit is the keyboard target. `Sense::CLICK` (unlike `Sense::click()`) is not
+    // focusable, so the magnifier is not a Tab stop; a click on it focuses the edit.
+    let g = ui.interact(lay.glyph, id.with("glyph"), Sense::CLICK);
+    if g.clicked() {
+        ui.ctx().memory_mut(|m| m.request_focus(id));
+    }
+    if !text.is_empty() {
+        let x = ui.interact(lay.clear_hit, id.with("clear"), Sense::CLICK);
+        let state = if x.is_pointer_button_down_on() {
+            2
+        } else if x.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            1
+        } else {
+            0
+        };
+        slice::paint_image(
+            ui.painter(),
+            &skin.clear[state],
+            lay.clear_disc,
+            Color32::WHITE,
+        );
+        x.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Clear search"));
+        if x.clicked() {
+            text.clear();
+            ui.ctx().memory_mut(|m| m.request_focus(id));
+        }
+        x.on_hover_text("Clear search");
+    }
+    resp
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_field_inner(
+    ui: &mut Ui,
+    id: Option<egui::Id>,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    font: egui::FontId,
+    left: f32,
+    right: f32,
+) -> (Response, Rect) {
     let width = if width > 0.0 {
         width
     } else {
@@ -1381,7 +1514,11 @@ pub fn ff_text_field_ex(
     if let Some(id) = id {
         edit = edit.id(id);
     }
-    let resp = ui.put(rect.shrink2(vec2(10.0, 3.0)), edit);
+    let edit_rect = Rect::from_min_max(
+        pos2(rect.min.x + left, rect.min.y + 3.0),
+        pos2(rect.max.x - right, rect.max.y - 3.0),
+    );
+    let resp = ui.put(edit_rect, edit);
     // `put` leaves the cursor at the inner edit's right edge, 10pt inside the frame, which made
     // the next widget on a row touch (or overlap) it. Put the cursor back past the whole frame and
     // keep FIELD_GAP before whatever follows, in a horizontal layout and when room is left.
@@ -1410,7 +1547,7 @@ pub fn ff_text_field_ex(
         ),
     ];
     ui.painter().set(bg, Shape::Vec(shapes));
-    resp
+    (resp, rect)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1786,6 +1923,85 @@ mod tests {
     }
 
     #[test]
+    fn search_layout_matches_the_spec() {
+        let f = Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 30.0));
+        let l = search_layout(f);
+        assert_eq!(
+            l.glyph,
+            Rect::from_min_max(pos2(10.0, 7.0), pos2(26.0, 23.0))
+        );
+        assert_eq!(
+            l.edit,
+            Rect::from_min_max(pos2(32.0, 3.0), pos2(268.0, 27.0))
+        );
+        assert_eq!(l.clear_disc.center(), pos2(283.0, 15.0));
+        assert_eq!(l.clear_disc.size(), vec2(18.0, 18.0));
+        assert_eq!(l.clear_hit.center(), pos2(283.0, 15.0));
+        assert_eq!(l.clear_hit.size(), vec2(24.0, 24.0));
+        assert!(l.glyph.max.x <= l.edit.min.x);
+    }
+
+    #[test]
+    fn search_field_clear_x_is_hidden_when_empty() {
+        let (ctx, skin) = setup();
+        let id = egui::Id::new("s");
+        let mut text = String::new();
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.read_response(id.with("clear")).is_none());
+    }
+
+    #[test]
+    fn search_glyph_is_not_a_tab_stop() {
+        let (ctx, skin) = setup();
+        let id = egui::Id::new("s");
+        let mut text = String::from("ring");
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        let g = ctx.read_response(id.with("glyph")).expect("glyph response");
+        assert!(!g.sense.is_focusable(), "sense {:?}", g.sense);
+    }
+
+    #[test]
+    fn search_field_clear_x_empties_and_keeps_focus() {
+        let (ctx, skin) = setup();
+        let id = egui::Id::new("s");
+        let mut text = String::from("ring");
+        let mut field = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            field = ff_search_field(ui, &skin, id, &mut text, "hint", 300.0).rect;
+        })
+        .drop_without_applying_deltas();
+        // Focus the edit first, so the final assertion proves the click kept that focus.
+        ctx.memory_mut(|m| m.request_focus(id));
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.memory(|m| m.has_focus(id)), "edit not focused before click");
+        let x = search_layout(Rect::from_min_size(
+            field.min - vec2(SEARCH_TEXT_INSET, 3.0),
+            vec2(300.0, 30.0),
+        ))
+        .clear_hit
+        .center();
+        ctx.run_ui(click_at(x), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(text.is_empty(), "text {text:?}");
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.memory(|m| m.has_focus(id)));
+    }
+
+    #[test]
     fn check_flips_on_click() {
         let (ctx, skin) = setup();
         let mut on = false;
@@ -2102,21 +2318,29 @@ mod tests {
     }
 
     #[test]
+    fn reload_glyph_ring_sits_one_point_below_the_plate_centre() {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), Vec2::splat(34.0));
+        let g = reload_glyph_rect(rect, false);
+        assert!((g.width() - 34.0 * RING_OF_PLATE / RING_OF_GLYPH).abs() < 1e-4);
+        let ring = g.min + RING_CENTRE * g.width();
+        let want = rect.center() + vec2(0.0, 1.0);
+        assert!((ring - want).length() < 1e-4);
+        let p = reload_glyph_rect(rect, true);
+        let ring = p.min + RING_CENTRE * p.width();
+        assert!((ring - (want + vec2(0.0, 1.0))).length() < 1e-4);
+    }
+
+    #[test]
     fn reload_button_is_row_height_square() {
         let (ctx, skin) = setup();
-        let size = rect_of(&ctx, |ui| {
-            ff_reload_button(ui, &skin, "Refresh", true).rect
-        })
-        .size();
+        let size = rect_of(&ctx, |ui| ff_reload_button(ui, &skin, "Refresh", true).rect).size();
         assert_eq!(size, Vec2::splat(ROW_HEIGHT));
     }
 
     #[test]
     fn reload_button_clicks_only_when_enabled() {
         let (ctx, skin) = setup();
-        let rect = rect_of(&ctx, |ui| {
-            ff_reload_button(ui, &skin, "Refresh", true).rect
-        });
+        let rect = rect_of(&ctx, |ui| ff_reload_button(ui, &skin, "Refresh", true).rect);
         let mut on = false;
         ctx.run_ui(click_at(rect.center()), |ui| {
             on = ff_reload_button(ui, &skin, "Refresh", true).clicked();

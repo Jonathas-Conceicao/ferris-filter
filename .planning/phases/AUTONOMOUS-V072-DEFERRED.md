@@ -26,7 +26,17 @@ human review and input to be stacked here and presented at the end, before Phase
 5. Phase 46 (optional): run `ff-cli sync` through a proxy. Expect it to work and the request to carry `FerrisFilter-CLI/<ver>` as user agent.
 6. Phase 46: sync league A in the overlay, then within the hour delete prices.json (or run `ff-cli sync --league B`) with the Economy tab open and press Sync for A. Expect a real sync (Last sync advances), not a replay.
 
+5. Phase 48: open `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\rules-headers.png`. Expect plates at the left (chevron up over a dot on the expanded sections, dot over chevron down on the collapsed economy header, which is below the visible part in this shot, so scroll to it in the app), the stone bar with its bronze frame, titles at the left, pencil/arrows/x (padlock on economy) at the right.
+6. Phase 48: open `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\rules-search.png`. Expect the magnifier at the left and the round clear X at the right of the search field.
+7. Phase 48: in the app, type in the RULES search and click the X. Expect the field empty and the caret still in it.
+8. Phase 48: in the app, open the `+ condition` picker on an expanded rule, type, click the X (no screenshot flag opens this popup). Expect the text cleared, the popup still open and the caret in the field.
+9. Phase 48: open `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\config-refresh.png` and `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\economy-refresh.png`. Expect each refresh button centred on its dropdown (it is a little taller than the dropdown, about 3 px each side at 1x; judge whether that is acceptable).
+10. Phase 48: in the app, hover and press a section header plate. Expect brighter art on hover, dimmer while pressed.
+11. Phase 48: at 150% and 200% Windows scaling, look at the section header bars. Expect no seams.
+
 ## Art substitutes for review (Phase 48 / 47)
+
+Phase 48: none — all four pieces (toggle plates with hover/pressed, stone bar, clear X, magnifier) were found in the game files and extracted with ff-art; screenshots for a look: `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\rules-headers.png`, `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\rules-search.png`, `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\config-refresh.png`, `C:\Users\jonat\AppData\Local\Temp\claude\ffshot48\economy-refresh.png`.
 
 ## Open gaps and judgement calls
 
@@ -51,3 +61,13 @@ human review and input to be stacked here and presented at the end, before Phase
 - Phase 46: a fake refresh flashes the Syncing/Checking state for one frame (accepted).
 - Phase 46: a failed Sync forgets that league's earlier success (review WR-01), so after an error the next click goes out even inside the hour. Code-review Info items IN-01..IN-07 in `46-REVIEW.md` were left as is (e.g. no retry on a locked ff-state.json; a debug and a release ff share ff-state.json; a replayed update check skips the 24 h update-folder sweep).
 - Phase 46: `cargo clippy --locked --all-targets -- -D warnings` already reports 100+ errors in untouched files on the current floating nightly (pre-existing, e.g. single_element_loop); none come from Phase 46 files. Not fixed (out of scope).
+- Phase 48: the section plate is 27x32pt at the art's aspect, with a 4pt gap before the bar.
+- Phase 48: the bar caps are painted at natural scale, the title sits at +60pt and the right-hand controls sit over the right cap's swirls; there is no 3pt gap between bars.
+- Phase 48: the reload button grows to fill the row (about 9% larger than before).
+- Phase 48: no italic placeholder in the search field; the clear X is not a tab stop and shows for whitespace-only text; its space is always reserved, so a long placeholder truncates about 22pt earlier.
+- Phase 48: the magnifier pressed art was not extracted; only two search fields exist (RULES toolbar and the condition picker).
+- Phase 48: legacy PNGs were not re-extracted (a UV-crop helper, `paint_visible` / `box_uv`, is used instead); the round check is now painted by its visible plate (0.8pt less art height); the clear X is cropped 36x36, not 37x37.
+- Phase 48: the decorative rule line between the section title and the count was removed.
+- Phase 48: plan 02 and 03 deviations: tests and code were committed together (no separate RED commit); `ff_search_field` takes `&Skin`; no harness test for the picker staying open on an X click (manual check 8).
+- Phase 48: screenshot observation: the refresh plates are centred on their dropdowns but stand about 3px taller at 1x. In the screenshots, the section header arrows and x overlap the right cap swirls (as planned).
+- Phase 48: UI audit (48-UI-REVIEW.md, 18/24, no blockers) suggests three follow-ups for the author to decide: (a) the dimmed section up/down arrows are hard to see over the bar's ornate right cap (move the cluster onto the flat middle or brighten them); (b) the RULES search placeholder now truncates (`Search 20 rules, classes, ...`) because the clear X space is always reserved (reserve it only with text, or shorten the hint); (c) the refresh plate is ~3px taller than its dropdown on each side (match heights either way). Code review (48-REVIEW.md) is clean after fixes; four Info items remain (dead `FlagIcon::ChevronRight/Down`, `ff_text_field` with no production caller, geometry magic numbers, title under controls only if the width ever varies).

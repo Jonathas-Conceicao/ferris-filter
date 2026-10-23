@@ -24,8 +24,9 @@ use crate::skin::Skin;
 use crate::skin::fonts::{regular, small_caps};
 use crate::skin::icons::{FLAG_ICON_SIZE, FlagIcon, flag_icon, paint_flag_icon};
 use crate::skin::palette as pal;
+use crate::skin::slice;
 use crate::skin::widgets::{
-    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_text_field,
+    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_search_field,
     ff_text_field_id, ff_x_button, row_background,
 };
 
@@ -624,7 +625,47 @@ fn start_rename(list: &mut ListUi, sec: &SectionRow) {
     list.section_focus = true;
 }
 
-/// One section header (36pt): chevron, name, rule line, count and the right-hand controls.
+/// Left inset of the toggle plate and its gap to the bar.
+const HEADER_PLATE_INSET: f32 = 4.0;
+/// Toggle plate size (the art's 54:64 aspect).
+const HEADER_PLATE_SIZE: egui::Vec2 = vec2(27.0, 32.0);
+/// Plate offset from the top of the row.
+const HEADER_PLATE_TOP: f32 = 2.0;
+/// Title offset from the bar's left edge (clears the left cap's swirls).
+const HEADER_TITLE_INSET: f32 = 60.0;
+/// Real art sizes of the bar's end caps (texels).
+const BAR_LEFT_PX: [usize; 2] = [132, 75];
+const BAR_RIGHT_PX: [usize; 2] = [151, 75];
+
+/// Geometry of a section header row.
+#[derive(Debug, Clone, Copy)]
+struct HeaderLayout {
+    plate: egui::Rect,
+    bar: egui::Rect,
+    title_x: f32,
+}
+
+fn header_layout(rect: egui::Rect, ppp: f32) -> HeaderLayout {
+    let plate = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.min.x + HEADER_PLATE_INSET,
+            rect.min.y + HEADER_PLATE_TOP,
+        ),
+        HEADER_PLATE_SIZE,
+    );
+    let bar = egui::Rect::from_min_max(
+        egui::pos2(plate.max.x + HEADER_PLATE_INSET, rect.min.y),
+        rect.max,
+    );
+    HeaderLayout {
+        plate: slice::snap_rect(plate, ppp),
+        bar: slice::snap_rect(bar, ppp),
+        title_x: bar.min.x + HEADER_TITLE_INSET,
+    }
+}
+
+/// One section header (36pt): the game's toggle plate, then the stone bar with the name, count
+/// and the right-hand controls.
 #[allow(clippy::too_many_arguments)]
 fn draw_section_header(
     ui: &mut egui::Ui,
@@ -643,33 +684,31 @@ fn draw_section_header(
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &accessible));
     let was_editing = list.editing_section == Some(sec.ordinal) && !sec.economy;
 
-    let ground = if ui.rect_contains_pointer(rect) {
-        pal::ROW_HOVER
-    } else {
-        pal::PANEL
-    };
+    let ppp = ui.ctx().pixels_per_point();
+    let lay = header_layout(rect, ppp);
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, ground);
-    let line = egui::Stroke::new(1.0, pal::INPUT_BORDER);
-    painter.rect_filled(
-        egui::Rect::from_min_size(rect.min, vec2(rect.width(), 1.0)),
-        0.0,
-        line.color,
+    let rects = slice::three_h_rects(lay.bar, BAR_LEFT_PX, BAR_RIGHT_PX, ppp);
+    slice::paint_three(
+        &painter,
+        [&skin.bar.left, &skin.bar.middle, &skin.bar.right],
+        rects,
+        Color32::WHITE,
     );
-    painter.rect_filled(
-        egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - 1.0), rect.max),
-        0.0,
-        line.color,
-    );
+    if ui.rect_contains_pointer(rect) {
+        painter.rect_filled(lay.bar, 0.0, pal::ROW_HOVER);
+    }
     if resp.has_focus() {
         painter.rect_stroke(
-            rect,
+            lay.bar,
             0.0,
             egui::Stroke::new(1.0, pal::INPUT_BORDER_HOT),
             egui::StrokeKind::Inside,
         );
     }
-    let inner = rect.shrink2(vec2(ROW_PAD, 0.0));
+    let inner = egui::Rect::from_min_max(
+        egui::pos2(lay.bar.min.x, rect.min.y),
+        egui::pos2(lay.bar.max.x - 12.0, rect.max.y),
+    );
     let mid_y = rect.center().y;
 
     // Right cluster first, so the count and the name take what remains.
@@ -726,32 +765,38 @@ fn draw_section_header(
     }
     let used_left = right.min_rect().left();
 
-    // Left: the chevron (a second click target for the same toggle).
-    let chev_rect = egui::Rect::from_min_size(
-        egui::pos2(inner.min.x, mid_y - FLAG_ICON_SIZE / 2.0),
-        vec2(FLAG_ICON_SIZE, FLAG_ICON_SIZE),
-    );
-    let chev = ui.interact(chev_rect, ui.id().with("chevron"), Sense::click());
-    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "chevron"));
-    let chev_colour = if chev.hovered() {
-        pal::HEADING
+    // Left: the toggle plate (a second click target for the same toggle). Not focusable: the
+    // whole-bar `resp` is the keyboard stop, so a header costs one Tab stop.
+    let chev = ui.interact(lay.plate, ui.id().with("chevron"), Sense::CLICK);
+    let toggle_name = if collapsed {
+        "Expand section"
     } else {
-        pal::LABEL
+        "Collapse section"
     };
-    paint_flag_icon(
-        ui.painter(),
-        chev_rect.shrink(1.0),
-        if collapsed {
-            FlagIcon::ChevronRight
-        } else {
-            FlagIcon::ChevronDown
-        },
-        chev_colour,
-    );
+    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, toggle_name));
+    let plates = if collapsed {
+        &skin.toggle_expand
+    } else {
+        &skin.toggle_collapse
+    };
+    let state = if (resp.is_pointer_button_down_on() || chev.is_pointer_button_down_on())
+        && ui.rect_contains_pointer(rect)
+    {
+        2
+    } else if chev.hovered()
+        || resp.hovered() && ui.rect_contains_pointer(lay.plate)
+        || resp.has_focus()
+        || chev.has_focus()
+    {
+        1
+    } else {
+        0
+    };
+    slice::paint_image(ui.painter(), &plates[state], lay.plate, Color32::WHITE);
     let chev_clicked = chev.clicked();
     chev.on_hover_text(if collapsed { "Expand" } else { "Collapse" });
 
-    let name_x = chev_rect.max.x + 8.0;
+    let name_x = lay.title_x;
     let count = section_count_text(sec.rules, matches);
     let count_w = text_width(ui, &count, regular(15.0));
     let count_right = used_left - 8.0;
@@ -766,9 +811,8 @@ fn draw_section_header(
         pal::MUTED,
     );
 
-    // The name (or its edit box) and the rule line after it.
+    // The name (or its edit box).
     let mut name_rect = egui::Rect::NOTHING;
-    let name_end;
     let mut name_cut = false;
     let editing = list.editing_section == Some(sec.ordinal) && !sec.economy;
     if editing {
@@ -803,22 +847,12 @@ fn draw_section_header(
             });
             list.editing_section = None;
         }
-        name_end = field_rect.max.x;
     } else {
         let g = cut_galley(ui, &sec.name, small_caps(17.0), pal::HEADING, slot_w);
         name_cut = g.elided;
-        name_end = name_x + g.size().x;
         name_rect =
             egui::Rect::from_min_size(egui::pos2(name_x, mid_y - g.size().y / 2.0), g.size());
         painter.galley(name_rect.min, g, Color32::PLACEHOLDER);
-    }
-    let line_from = name_end + 8.0;
-    let line_to = count_left - 8.0;
-    if !name_cut && line_to - line_from >= 16.0 {
-        painter.line_segment(
-            [egui::pos2(line_from, mid_y), egui::pos2(line_to, mid_y)],
-            line,
-        );
     }
 
     // Header interaction: a click toggles (not while its name is being typed, nor during a
@@ -1462,7 +1496,8 @@ fn search_row_rects(
                 (ui.available_width() - add_w - sec_w - 8.0 - crate::skin::widgets::FIELD_GAP)
                     .max(40.0);
             let start_x = ui.next_widget_position().x;
-            let resp = ff_text_field(ui, query, &hint, width);
+            let search_id = ui.id().with("rules-search");
+            let resp = ff_search_field(ui, skin, search_id, query, &hint, width);
             // The field is 30pt high and `width` wide, centred on the edit.
             let field = egui::Rect::from_min_max(
                 egui::pos2(start_x, resp.rect.center().y - 15.0),
@@ -1473,28 +1508,6 @@ fn search_row_rects(
                 && ui.input(|i| i.key_pressed(egui::Key::Escape))
             {
                 query.clear();
-            }
-            if !query.is_empty() {
-                // Clear sits inside the field's right edge, so the row never grows.
-                let clear = egui::Rect::from_min_max(
-                    egui::pos2(field.max.x - 52.0, field.min.y),
-                    egui::pos2(field.max.x - 2.0, field.max.y),
-                );
-                let r = ui.interact(clear, ui.id().with("ff-search-clear"), Sense::click());
-                ui.painter().text(
-                    egui::pos2(clear.max.x - 6.0, clear.center().y),
-                    egui::Align2::RIGHT_CENTER,
-                    "Clear",
-                    regular(15.0),
-                    if r.hovered() {
-                        pal::HEADING
-                    } else {
-                        pal::MUTED
-                    },
-                );
-                if r.clicked() {
-                    query.clear();
-                }
             }
             // The buttons are placed from the row's right edge, so their position does not depend
             // on where the field leaves the cursor; the field is sized to leave `FIELD_GAP`.
@@ -2877,6 +2890,55 @@ Show
             "Section Leveling, 1 rule, expanded"
         );
         assert_eq!(SECTION_HEADER_HEIGHT, 36.0);
+    }
+
+    #[test]
+    fn header_layout_matches_the_spec() {
+        let rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(600.0, 36.0));
+        let l = header_layout(rect, 1.0);
+        assert_eq!(
+            l.plate,
+            Rect::from_min_size(Pos2::new(4.0, 2.0), egui::vec2(27.0, 32.0))
+        );
+        assert_eq!(
+            l.bar,
+            Rect::from_min_max(Pos2::new(35.0, 0.0), Pos2::new(600.0, 36.0))
+        );
+        assert_eq!(l.title_x, 95.0);
+    }
+
+    #[test]
+    fn header_layout_fills_the_row_and_snaps() {
+        for ppp in [1.0_f32, 1.25, 1.5, 2.0] {
+            for w in [120.0_f32, 500.0, 643.0] {
+                let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), egui::vec2(w, 36.0));
+                let l = header_layout(rect, ppp);
+                assert_eq!(l.bar.height(), SECTION_HEADER_HEIGHT);
+                assert!((l.bar.max.x - rect.max.x).abs() < 1.0);
+                for v in [
+                    l.plate.min.x,
+                    l.plate.min.y,
+                    l.plate.max.x,
+                    l.plate.max.y,
+                    l.bar.min.x,
+                    l.bar.max.x,
+                ] {
+                    let p = v * ppp;
+                    assert!((p - p.round()).abs() < 1e-3, "{v} at {ppp}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn header_bar_caps_keep_the_art_aspect() {
+        let wide = Rect::from_min_max(Pos2::new(35.0, 0.0), Pos2::new(600.0, 36.0));
+        let r = slice::three_h_rects(wide, BAR_LEFT_PX, BAR_RIGHT_PX, 1.0);
+        assert!((r[0].width() - 63.36).abs() < 1.0);
+        assert!((r[2].width() - 72.5).abs() < 1.0);
+        let narrow = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(100.0, 36.0));
+        let r = slice::three_h_rects(narrow, BAR_LEFT_PX, BAR_RIGHT_PX, 1.0);
+        assert!(r[0].max.x <= r[2].min.x);
     }
 
     #[test]

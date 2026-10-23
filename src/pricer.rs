@@ -247,7 +247,7 @@ fn chaos_floor(e: &TierEntry, rates: &CrossRates) -> f64 {
 }
 
 /// Format an amount with at most 2 decimals, trailing zeros trimmed (`0.5`, `2`, `0.15`).
-pub fn fmt_amount(v: f64) -> String {
+fn fmt_amount(v: f64) -> String {
     let s = format!("{v:.2}");
     if s.contains('.') {
         s.trim_end_matches('0').trim_end_matches('.').to_string()

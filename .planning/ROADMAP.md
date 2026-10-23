@@ -134,7 +134,12 @@ Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
   2. After Apply, a styled rule and the economy section carry that alpha in their `R G B A` lines, and `generate` emits it too
   3. An older `styles.json` with 3-value colours loads as alpha 255 without showing as an edit, the next Apply that writes it saves 4-value colours, and the `generate` fixtures do not change
   4. The label preview and the style table show a translucent colour as it will look
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 43-01-PLAN.md — StyleColour type (read 3 or 4, write 4), alpha in the emitter, 4-value defaults, equality and migration tests
+- [ ] 43-02-PLAN.md — Alpha slider on CONFIG style colours (opaque path removed), translucent cards and previews
+- [ ] 43-03-PLAN.md — CLAUDE.md update, debug screenshots, deferred Phase 43 checks
 **UI hint**: yes
 
 ### Phase 44: Auto Detect Styles

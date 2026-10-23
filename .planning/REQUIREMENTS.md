@@ -60,7 +60,7 @@
 - [x] **THR-01
 **: The overlay sends each kind of request at most once per hour: Sync economy (per
   league), the league list, and Check for updates.
-- [ ] **THR-02**: A click inside the hour does not reach the server and shows the same outcome
+- [x] **THR-02**: A click inside the hour does not reach the server and shows the same outcome
   from the last result (a fake refresh); it does not advance Last sync.
 - [x] **THR-03
 **: Only a successful request starts the hour; after an error the next click goes out.
@@ -171,12 +171,12 @@
 | ENAME-01 | Phase 45 | Pending |
 | ENAME-02 | Phase 45 | Pending |
 | ENAME-03 | Phase 45 | Pending |
-| THR-01 | Phase 46 | Pending |
-| THR-02 | Phase 46 | Pending |
-| THR-03 | Phase 46 | Pending |
-| THR-04 | Phase 46 | Pending |
-| THR-05 | Phase 46 | Pending |
-| THR-06 | Phase 46 | Pending |
+| THR-01 | Phase 46 | Complete |
+| THR-02 | Phase 46 | Complete |
+| THR-03 | Phase 46 | Complete |
+| THR-04 | Phase 46 | Complete |
+| THR-05 | Phase 46 | Complete |
+| THR-06 | Phase 46 | Complete |
 | KEY-01 | Phase 47 | Pending |
 | KEY-02 | Phase 47 | Pending |
 | KEY-03 | Phase 47 | Pending |

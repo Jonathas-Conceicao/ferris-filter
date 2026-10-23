@@ -11,6 +11,7 @@ human review and input to be stacked here and presented at the end, before Phase
 3. Phase 46: on an up-to-date build press Check for updates twice within an hour, then restart ff and press it again. Expect the same `Up to date (...)` text with the same release date each time.
 4. Phase 46: with the network off press Sync economy (expect the failure message), reconnect and press it again. Expect the second click to go out and succeed.
 5. Phase 46 (optional): run `ff-cli sync` through a proxy. Expect it to work and the request to carry `FerrisFilter-CLI/<ver>` as user agent.
+6. Phase 46: sync league A in the overlay, then within the hour delete prices.json (or run `ff-cli sync --league B`) with the Economy tab open and press Sync for A. Expect a real sync (Last sync advances), not a replay.
 
 ## Art substitutes for review (Phase 48 / 47)
 
@@ -18,4 +19,5 @@ human review and input to be stacked here and presented at the end, before Phase
 
 - Phase 46: ff-state.json also persists the last 'up to date' version/release date and the app version (research A1, Claude's discretion) so the message replays byte-identically after a restart.
 - Phase 46: a fake refresh flashes the Syncing/Checking state for one frame (accepted).
+- Phase 46: a failed Sync forgets that league's earlier success (review WR-01), so after an error the next click goes out even inside the hour. Code-review Info items IN-01..IN-07 in `46-REVIEW.md` were left as is (e.g. no retry on a locked ff-state.json; a debug and a release ff share ff-state.json; a replayed update check skips the 24 h update-folder sweep).
 - Phase 46: `cargo clippy --locked --all-targets -- -D warnings` already reports 100+ errors in untouched files on the current floating nightly (pre-existing, e.g. single_element_loop); none come from Phase 46 files. Not fixed (out of scope).

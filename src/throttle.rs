@@ -94,6 +94,12 @@ impl RequestLog {
         );
     }
 
+    /// Drops the entry for `league` (after a failed real sync, so the next click goes out).
+    /// Returns whether there was one.
+    pub fn forget_sync(&mut self, league: &str) -> bool {
+        self.sync.remove(&league.to_lowercase()).is_some()
+    }
+
     pub fn cached_leagues(&self, now: u64) -> Option<Vec<EconomyLeague>> {
         if is_fresh(self.leagues_at, now) && !self.leagues.is_empty() {
             Some(self.leagues.clone())
@@ -227,6 +233,15 @@ mod tests {
         assert_eq!(log.sync.len(), 2);
         log.record_sync("X", "", 100);
         assert_eq!(log.sync["x"].name, "X");
+    }
+
+    #[test]
+    fn forget_sync_uses_the_same_key() {
+        let mut log = RequestLog::default();
+        log.record_sync("Rise of the Abyssal", "Rise of the Abyssal", 100);
+        assert!(log.forget_sync("RISE OF THE ABYSSAL"));
+        assert!(log.sync.is_empty());
+        assert!(!log.forget_sync("Rise of the Abyssal"));
     }
 
     #[test]

@@ -126,17 +126,21 @@ impl super::OverlayApp {
                 economy::SyncState::Running => {}
                 economy::SyncState::Finished(outcome) => {
                     let failed = outcome.is_failure();
-                    if let Some(p) = self.pending_real.sync.take()
-                        && !failed
-                    {
-                        let returned = p
-                            .returned
-                            .lock()
-                            .ok()
-                            .and_then(|s| s.clone())
-                            .unwrap_or_else(|| p.requested.clone());
-                        self.request_log.record_sync(&p.requested, &returned, now);
-                        changed = true;
+                    if let Some(p) = self.pending_real.sync.take() {
+                        if failed {
+                            // After an error the next click goes out, even if an older success
+                            // for this league is still inside the hour.
+                            changed |= self.request_log.forget_sync(&p.requested);
+                        } else {
+                            let returned = p
+                                .returned
+                                .lock()
+                                .ok()
+                                .and_then(|s| s.clone())
+                                .unwrap_or_else(|| p.requested.clone());
+                            self.request_log.record_sync(&p.requested, &returned, now);
+                            changed = true;
+                        }
                     }
                 }
                 economy::SyncState::Idle => self.pending_real.sync = None,
@@ -383,6 +387,24 @@ mod tests {
         assert!(app.request_log.sync.is_empty());
         assert!(app.pending_real.sync.is_none());
         assert!(!home.path().join("ff-state.json").exists());
+    }
+
+    #[test]
+    fn failed_real_sync_forgets_an_older_success() {
+        let (mut app, home, _ctx) = app_with(Some(&fresh_sync_log(LEAGUE, LEAGUE)));
+        // prices.json holds another league, so the click goes out inside the hour, and fails.
+        write_prices(home.path(), "Standard");
+        app.start_sync_gated_with(LEAGUE.into(), 1010, || Err("offline".into()));
+        assert!(app.pending_real.sync.is_some());
+        pump(&mut app, 1010);
+        assert!(app.request_log.sync.is_empty());
+        assert!(throttle::load(home.path()).sync.is_empty());
+        // Once prices.json holds the league again, the next click still goes out.
+        write_prices(home.path(), LEAGUE);
+        app.economy.clear_message();
+        app.start_sync_gated_with(LEAGUE.into(), 1020, || Err("offline".into()));
+        assert!(app.pending_real.sync.is_some());
+        pump(&mut app, 1020);
     }
 
     #[test]

@@ -89,7 +89,44 @@ pub enum ConfigAction {
     ResetTiers,
     Reload,
     Overwrite,
+    /// The Show / hide overlay keybind button was clicked: capture the next key combination.
+    StartHotkeyCapture,
+    /// The keybind button was clicked again while capturing: stop without an edit.
+    CancelHotkeyCapture,
+    /// The reset button beside the keybind button: Ctrl+Shift+Z as the pending chord.
+    ResetHotkey,
 }
+
+/// How the keybind button's caption reads (its colour).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyCaption {
+    /// The chord (pending, else live).
+    Rest,
+    /// `Press a key…` or the held modifiers.
+    Capturing,
+    /// The last press was refused (`Add Ctrl, Shift or Alt` and the like).
+    Rejected,
+}
+
+/// What the Overlay section's one row shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HotkeyRowView {
+    /// The button's caption.
+    pub caption: String,
+    pub caption_kind: HotkeyCaption,
+    /// The chord the row stands for (pending, else live), for the accessible name.
+    pub chord_text: String,
+    pub capturing: bool,
+    pub reset_enabled: bool,
+}
+
+const HOTKEY_TIP: &str =
+    "Click, then press the new key combination. Works while the game or this window is in front.";
+const HOTKEY_CAPTURE_TIP: &str =
+    "Hold Ctrl, Shift or Alt and press a key. F1-F24 work alone. Esc cancels.";
+const HOTKEY_RESET_TIP: &str = "Reset to Ctrl+Shift+Z";
+/// Width of the keybind button (the control column less the gap and the reset button).
+const KEYBIND_WIDTH: f32 = 208.0;
 
 /// View state that is not part of the model. No egui types, so it is unit-testable.
 #[derive(Debug, Clone, Default)]
@@ -119,6 +156,8 @@ pub struct ConfigUi {
     pub focus_draft: bool,
     /// In-progress rename text per custom style id, kept only while it differs from the name.
     pub rename_drafts: HashMap<String, String>,
+    /// The keybind button's rect as last drawn (a press outside it cancels a capture).
+    pub hotkey_button_rect: Option<egui::Rect>,
 }
 
 impl ConfigUi {
@@ -202,6 +241,8 @@ pub struct ConfigViewCtx<'a> {
     pub reload_after_apply: bool,
     /// The shell skin for section headings (`None` in headless tests).
     pub skin: Option<&'a crate::skin::Skin>,
+    /// The Overlay section's Show / hide overlay row; `None` hides the section.
+    pub hotkey: Option<HotkeyRowView>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -317,9 +358,86 @@ pub fn show_sections(
     let mut actions = Vec::new();
     section_title(ui, ctx, "Filter");
     show_filter(ui, cfg, ctx, &mut actions);
+    if ctx.hotkey.is_some() {
+        ui.add_space(16.0);
+        section_title(ui, ctx, "Overlay");
+        show_overlay(ui, cfg, ctx, &mut actions);
+    }
     ui.add_space(16.0);
     show_styles(ui, state, cfg, ctx, &mut actions);
     actions
+}
+
+/// The Overlay section: one Show / hide overlay row with the game's keybind button and the reset
+/// button beside it. Every explanation is a tooltip.
+fn show_overlay(
+    ui: &mut egui::Ui,
+    cfg: &mut ConfigUi,
+    ctx: &ConfigViewCtx,
+    actions: &mut Vec<ConfigAction>,
+) {
+    let Some(view) = ctx.hotkey.as_ref() else {
+        return;
+    };
+    egui::Frame::new()
+        .fill(pal::ROW_EVEN)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            crate::skin::widgets::ff_row(ui, 0, "Show / hide overlay", |ui| {
+                ui.spacing_mut().item_spacing.x = crate::skin::widgets::FIELD_GAP;
+                let colour = match view.caption_kind {
+                    HotkeyCaption::Rest => pal::VALUE,
+                    HotkeyCaption::Capturing => pal::HEADING,
+                    HotkeyCaption::Rejected => pal::WARN,
+                };
+                let label = format!("Show / hide overlay: {}", view.chord_text);
+                let button = match ctx.skin {
+                    Some(skin) => crate::skin::widgets::ff_keybind_button(
+                        ui,
+                        skin,
+                        &label,
+                        &view.caption,
+                        colour,
+                        KEYBIND_WIDTH,
+                        view.capturing,
+                        true,
+                    ),
+                    None => ui.add_sized(
+                        vec2(KEYBIND_WIDTH, crate::skin::widgets::KEYBIND_HEIGHT),
+                        small_button(&view.caption),
+                    ),
+                };
+                cfg.hotkey_button_rect = Some(button.rect);
+                let tip = if view.capturing {
+                    HOTKEY_CAPTURE_TIP
+                } else {
+                    HOTKEY_TIP
+                };
+                if button.on_hover_text(tip).clicked() {
+                    actions.push(if view.capturing {
+                        ConfigAction::CancelHotkeyCapture
+                    } else {
+                        ConfigAction::StartHotkeyCapture
+                    });
+                }
+                let reset = match ctx.skin {
+                    Some(skin) => crate::skin::widgets::ff_reload_button(
+                        ui,
+                        skin,
+                        "Reset hotkey",
+                        view.reset_enabled,
+                    ),
+                    None => ui.add_enabled(view.reset_enabled, small_button("Reset")),
+                };
+                let reset = reset
+                    .on_hover_text(HOTKEY_RESET_TIP)
+                    .on_disabled_hover_text(HOTKEY_RESET_TIP);
+                if view.reset_enabled && reset.clicked() {
+                    actions.push(ConfigAction::ResetHotkey);
+                }
+            });
+        });
 }
 
 fn show_filter(
@@ -1340,7 +1458,127 @@ mod tests {
             indicator: "",
             reload_after_apply: true,
             skin: None,
+            hotkey: None,
         }
+    }
+
+    fn rest_row(chord: &str, reset_enabled: bool) -> HotkeyRowView {
+        HotkeyRowView {
+            caption: chord.to_string(),
+            caption_kind: HotkeyCaption::Rest,
+            chord_text: chord.to_string(),
+            capturing: false,
+            reset_enabled,
+        }
+    }
+
+    /// Draws the CONFIG sections with the skin and `row`, then clicks at the point `at` picks
+    /// from the drawn keybind button rect. Returns the actions and the button rect.
+    fn click_hotkey_row(
+        row: Option<HotkeyRowView>,
+        at: impl Fn(egui::Rect) -> egui::Pos2,
+    ) -> (Vec<ConfigAction>, Option<egui::Rect>) {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let filters = vec!["dynamic.filter".to_string()];
+        let (ctx, input) = headless();
+        let skin = crate::skin::textures::load_light(&ctx);
+        let mut vctx = view_ctx(Some(filters.as_slice()), &users, &refs);
+        vctx.skin = Some(&skin);
+        vctx.hotkey = row;
+        let mut cfg = ConfigUi::default();
+        let mut found = Vec::new();
+        ctx.run_ui(input, |ui| {
+            found.extend(show_sections(ui, &state, &mut cfg, &vctx));
+        })
+        .drop_without_applying_deltas();
+        let Some(rect) = cfg.hotkey_button_rect else {
+            return (found, None);
+        };
+        let pos = at(rect);
+        let frame = |events: Vec<egui::Event>| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                vec2(460.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(pos)],
+            vec![button(true), button(false)],
+        ] {
+            ctx.run_ui(frame(events), |ui| {
+                found.extend(show_sections(ui, &state, &mut cfg, &vctx));
+            })
+            .drop_without_applying_deltas();
+        }
+        (found, cfg.hotkey_button_rect)
+    }
+
+    /// The reset button's centre: right of the keybind button, past the field gap.
+    fn reset_point(r: egui::Rect) -> egui::Pos2 {
+        egui::pos2(
+            r.max.x + crate::skin::widgets::FIELD_GAP + crate::skin::widgets::ROW_HEIGHT / 2.0,
+            r.center().y,
+        )
+    }
+
+    #[test]
+    fn keybind_button_click_starts_the_capture() {
+        let (found, rect) = click_hotkey_row(Some(rest_row("Ctrl+Alt+K", true)), |r| r.center());
+        let rect = rect.expect("the button rect is remembered");
+        assert!((rect.width() - KEYBIND_WIDTH).abs() < 0.5, "{rect:?}");
+        assert!(
+            (rect.height() - crate::skin::widgets::KEYBIND_HEIGHT).abs() < 0.5,
+            "{rect:?}"
+        );
+        assert_eq!(found, vec![ConfigAction::StartHotkeyCapture]);
+    }
+
+    #[test]
+    fn keybind_button_click_while_capturing_cancels() {
+        let row = HotkeyRowView {
+            caption: "Press a key…".to_string(),
+            caption_kind: HotkeyCaption::Capturing,
+            capturing: true,
+            ..rest_row("Ctrl+Alt+K", true)
+        };
+        let (found, _) = click_hotkey_row(Some(row), |r| r.center());
+        assert_eq!(found, vec![ConfigAction::CancelHotkeyCapture]);
+    }
+
+    #[test]
+    fn reset_button_resets_only_when_enabled() {
+        let (found, _) = click_hotkey_row(Some(rest_row("Ctrl+Alt+K", true)), reset_point);
+        assert_eq!(found, vec![ConfigAction::ResetHotkey]);
+        let (found, _) = click_hotkey_row(Some(rest_row("Ctrl+Shift+Z", false)), reset_point);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn no_hotkey_row_means_no_overlay_section() {
+        let (found, rect) = click_hotkey_row(None, |r| r.center());
+        assert!(rect.is_none());
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn config_sections_put_overlay_between_filter_and_styles() {
+        let src = include_str!("config_view.rs").replace("\r\n", "\n");
+        let body = &src[src.find("pub fn show_sections(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let filter = body.find("show_filter(").unwrap();
+        let overlay = body.find("section_title(ui, ctx, \"Overlay\")").unwrap();
+        let styles = body.find("show_styles(").unwrap();
+        assert!(filter < overlay && overlay < styles);
     }
 
     /// Every action produced by clicking, one point at a time, over the Filter section's two

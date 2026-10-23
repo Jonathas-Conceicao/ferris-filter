@@ -3234,6 +3234,9 @@ impl OverlayApp {
                 ConfigAction::Overwrite => {
                     self.run_apply(ctx, true);
                 }
+                ConfigAction::StartHotkeyCapture
+                | ConfigAction::CancelHotkeyCapture
+                | ConfigAction::ResetHotkey => {}
                 ConfigAction::Reload => {
                     match config_reload_plan(self.config.is_err(), &self.changed_on_disk) {
                         ConfigReload::ConfigOnly => {
@@ -3351,6 +3354,7 @@ impl OverlayApp {
             indicator: apply::indicator(self.apply_state),
             reload_after_apply: self.settings.reload_after_apply(),
             skin: Some(skin),
+            hotkey: None,
         };
         w::ff_scroll_area(ui, skin, "config", |ui| match &self.config {
             Ok(state) => {

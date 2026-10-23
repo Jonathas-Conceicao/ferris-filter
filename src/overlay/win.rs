@@ -115,7 +115,8 @@ mod imp {
     use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-        MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_MENU, VK_SHIFT,
+        MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_INSERT, VK_LWIN, VK_MENU,
+        VK_RWIN, VK_SHIFT,
     };
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -458,6 +459,25 @@ mod imp {
         })
     }
 
+    /// Whether the key `vk` is down right now (the high bit of `GetAsyncKeyState`).
+    fn key_down(vk: u16) -> bool {
+        // SAFETY: `GetAsyncKeyState` takes a virtual-key code by value and reads global state.
+        let state = unsafe { GetAsyncKeyState(vk as i32) };
+        (state as u16) & 0x8000 != 0
+    }
+
+    /// Whether either Windows key is held right now. The hotkey capture refuses a chord with it
+    /// (egui does not always report the Windows key as a modifier).
+    pub fn windows_key_held() -> bool {
+        key_down(VK_LWIN) || key_down(VK_RWIN)
+    }
+
+    /// Whether Insert is held right now: tells Ctrl+Insert apart from Ctrl+C, which egui both
+    /// turns into a Copy event.
+    pub fn insert_held() -> bool {
+        key_down(VK_INSERT)
+    }
+
     fn key_input(vk: u16, up: bool) -> INPUT {
         // SAFETY: `MapVirtualKeyW` takes two plain values and returns a scan code (0 if none).
         let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
@@ -773,6 +793,16 @@ mod imp {
         false
     }
 
+    /// No key query off Windows.
+    pub fn windows_key_held() -> bool {
+        false
+    }
+
+    /// No key query off Windows.
+    pub fn insert_held() -> bool {
+        false
+    }
+
     /// Key injection is not supported off Windows.
     pub fn send_tap(_vk: u16) -> Result<(), String> {
         Err("not supported on this platform".into())
@@ -817,9 +847,10 @@ mod imp {
 pub use imp::{
     ClipboardOwner, GameWindow, Monitor, OverlayWindow, clear_clipboard, clipboard_owner,
     clipboard_sequence, conceal, dock_left, find_game_window, focus_game,
-    foreground_is_game_or_overlay, from_frame, game_is_foreground, modifiers_held, monitor_scale,
-    monitor_work_area_px, read_clipboard_text, reveal, send_chord, send_tap, shell_execute_open,
-    target_monitor, utc_offset_minutes, work_area, write_clipboard_text,
+    foreground_is_game_or_overlay, from_frame, game_is_foreground, insert_held, modifiers_held,
+    monitor_scale, monitor_work_area_px, read_clipboard_text, reveal, send_chord, send_tap,
+    shell_execute_open, target_monitor, utc_offset_minutes, windows_key_held, work_area,
+    write_clipboard_text,
 };
 
 #[cfg(test)]

@@ -12,9 +12,10 @@
   game's `R G B A` allows; the CONFIG style colour picker has an Alpha slider.
 - [ ] **ALPHA-02**: Alpha reaches the filter everywhere a style is written: `generate`, the economy
   section and the styled-rule rewrite on Apply.
-- [ ] **ALPHA-03**: A style without alpha (or with alpha 255) loads, saves and emits exactly as
-  before: existing `styles.json` files re-serialise byte-identically and the `generate` fixtures
-  (`artifact_guard`) do not change.
+- [ ] **ALPHA-03**: An older `styles.json` with 3-value colours still loads, read as alpha 255; from
+  now on colours are saved with alpha present (4 values). A 3-value file loads without showing as an
+  edit and is rewritten in the new form by the next Apply that writes `styles.json`. Emitted filter
+  lines are unchanged for alpha 255, so the `generate` fixtures (`artifact_guard`) do not change.
 - [ ] **ALPHA-04**: The label preview and the style table show a translucent colour as it will look.
 
 ### Auto Detect styles (DETECT)
@@ -69,13 +70,15 @@
 - [ ] **KEY-01**: The CONFIG tab has a **Show / hide overlay** row in the game's keybind style
   (action on the left, a wide button holding the chord, as in Options → Input); clicking it captures
   the next chord.
-- [ ] **KEY-02**: The new chord is registered at once, without a restart, and saved in
-  `ff-settings.json`; it keeps today's rule of acting only while the game or the overlay is in the
-  foreground.
+- [ ] **KEY-02**: A captured chord is a pending CONFIG edit (tab ` *`, unapplied indicator, Revert
+  discards it, the Quit popup counts it); Apply saves it in `ff-settings.json` and re-registers it at
+  once, without a restart. It keeps today's rule of acting only while the game or the overlay is in
+  the foreground.
 - [ ] **KEY-03**: A chord needs at least one modifier (bare F1-F24 allowed); a chord another app
   owns is refused, the old binding stays, and the status line says why.
 - [ ] **KEY-04**: A reset restores `Ctrl+Shift+Z`; an invalid or unusable saved chord falls back
-  to it with a warning; the tray tooltip and other mentions show the live chord.
+  to it with a warning; the tray icon tooltip and other mentions show the live (applied) chord, or
+  stop naming it.
 
 ### Game-art widgets (ART)
 
@@ -85,6 +88,9 @@
 - [ ] **ART-02**: Search fields (RULES search, + condition picker) show the game's round clear X
   inside the right end while they hold text; a click empties the field and keeps focus.
 - [ ] **ART-03**: The same search fields show the game's magnifying-glass glyph inside the left end.
+- [ ] **ART-04**: Button art is positioned with its transparent margins (left / bottom gutters)
+  compensated, so it sits centred where it is meant to; this also fixes the existing offset of the
+  Config → Filter refresh button.
 
 ### Drag-and-drop reorder (DND)
 
@@ -134,7 +140,7 @@
 ## Decisions
 
 - Revert and Reload keep their per-tab behaviour; Auto Detect adds ordinary pending edits.
-- Alpha 255 is stored as no alpha, so old files and fixtures stay byte-identical.
+- Colours are read as 3 or 4 values (3 = alpha 255) and always saved with alpha; emitted filter lines are unchanged, so fixtures stay byte-identical.
 - The economy range glyph is ASCII `>=`.
 - Asset file names in `assets/custom/` are the author's and are kept exactly.
 
@@ -169,6 +175,7 @@
 | ART-01 | Phase 48 | Pending |
 | ART-02 | Phase 48 | Pending |
 | ART-03 | Phase 48 | Pending |
+| ART-04 | Phase 48 | Pending |
 | DND-01 | Phase 49 | Pending |
 | DND-02 | Phase 49 | Pending |
 | DND-03 | Phase 49 | Pending |
@@ -180,4 +187,4 @@
 | REV-04 | Phase 50 | Pending |
 | REV-05 | Phase 50 | Pending |
 
-**Coverage:** 37 v0.7.2 requirements, 37 mapped to exactly one phase, 0 unmapped.
+**Coverage:** 38 v0.7.2 requirements, 38 mapped to exactly one phase, 0 unmapped.

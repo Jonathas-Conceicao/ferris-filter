@@ -132,7 +132,7 @@ Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
 **Success Criteria** (what must be TRUE):
   1. The CONFIG style colour picker has an Alpha slider, and a style's text, border and background colours can each be given an alpha
   2. After Apply, a styled rule and the economy section carry that alpha in their `R G B A` lines, and `generate` emits it too
-  3. A `styles.json` without alpha (or with alpha 255) loads, saves and emits exactly as before: files re-serialise byte-identically and the `generate` fixtures do not change
+  3. An older `styles.json` with 3-value colours loads as alpha 255 without showing as an edit, the next Apply that writes it saves 4-value colours, and the `generate` fixtures do not change
   4. The label preview and the style table show a translucent colour as it will look
 **Plans**: TBD
 **UI hint**: yes
@@ -177,7 +177,7 @@ Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
 **Requirements**: KEY-01, KEY-02, KEY-03, KEY-04
 **Success Criteria** (what must be TRUE):
   1. The CONFIG tab has a Show / hide overlay row in the game's keybind style, and clicking its chord button captures the next chord pressed
-  2. The new chord works at once without a restart, is saved in `ff-settings.json`, and still acts only while the game or the overlay is in the foreground
+  2. A captured chord is a pending Config edit (Revert discards it); Apply saves it in `ff-settings.json` and it works at once without a restart, still only while the game or the overlay is in the foreground
   3. A chord with no modifier is refused (bare F1-F24 allowed), and a chord another app owns is refused with the old binding kept and the status line saying why
   4. A reset button restores `Ctrl+Shift+Z`, an invalid saved chord falls back to it with a warning, and the tray tooltip shows the live chord
 **Plans**: TBD
@@ -186,11 +186,12 @@ Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
 ### Phase 48: Game-Art Widgets
 **Goal**: Section headers and search fields look like the game's own
 **Depends on**: Nothing (precedes Phase 49, which builds on the redrawn rows and headers)
-**Requirements**: ART-01, ART-02, ART-03
+**Requirements**: ART-01, ART-02, ART-03, ART-04
 **Success Criteria** (what must be TRUE):
   1. Section headers show the game's Social-panel look: a toggle plate at the left (chevron up when expanded, down when collapsed) and the bronze-framed stone bar, titles left-aligned and the right-hand controls kept
   2. RULES search and the + condition picker show the game's round clear X inside the right end while they hold text, and clicking it empties the field and keeps focus
   3. The same search fields show the game's magnifying-glass glyph inside the left end
+  4. Button art sits where it is meant to, its transparent margins compensated, and the Config → Filter refresh button is no longer offset
 **Plans**: TBD
 **UI hint**: yes
 

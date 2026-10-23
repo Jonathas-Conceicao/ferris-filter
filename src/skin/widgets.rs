@@ -614,16 +614,18 @@ pub fn ff_check(ui: &mut Ui, skin: &Skin, checked: &mut bool, label: &str) -> Re
     } else {
         &skin.check_off
     };
-    let [w, h] = tex.size();
-    let draw = Rect::from_min_size(rect.min, vec2(size, size * h as f32 / w.max(1) as f32));
     let tint = if resp.hovered() || resp.has_focus() {
         Color32::WHITE
     } else {
         Color32::from_gray(222)
     };
-    slice::paint_image(ui.painter(), tex, draw, tint);
+    slice::paint_visible(ui.painter(), tex, CHECK_OPAQUE, rect, tint);
     resp
 }
+
+/// `check_on` / `check_off` are 54x56 with a 2px transparent bottom gutter; this is the visible
+/// 54x54 plate, `[x0, y0, x1, y1)` texels.
+const CHECK_OPAQUE: [u32; 4] = [0, 0, 54, 54];
 
 /// Maps a pointer x inside `track` (with `inset` points of dead zone at each end) to a value in
 /// `range`, rounded to `step`.
@@ -1205,10 +1207,11 @@ pub fn ff_button_ex(
     resp
 }
 
-/// The opaque part of the icon-button plate texture: its top-left 84 of 92 pixels (the rest is
-/// transparent margin).
-const PLATE_VISIBLE: f32 = 84.0 / 92.0;
-/// The ring's height as a fraction of the visible plate, measured on the in-game button.
+/// The opaque plate of the 92x92 `fouriconbutton*` art (7px transparent right/bottom gutter plus
+/// one more pixel), as `[x0, y0, x1, y1)` texels.
+const ICON_BUTTON_OPAQUE: [u32; 4] = [0, 0, 84, 84];
+/// The ring's height as a fraction of the plate (the full button rect), measured on the in-game
+/// button.
 const RING_OF_PLATE: f32 = 0.78;
 /// The ring's share of the glyph texture: 40 of its 56 pixels.
 const RING_OF_GLYPH: f32 = 40.0 / 56.0;
@@ -1219,6 +1222,14 @@ const RING_CENTRE: Vec2 = Vec2::new((56.0 - 24.5) / 56.0, 23.5 / 56.0);
 const RING_TURN_DEG: f32 = -28.0;
 /// The glyph's resting colour: the hover art multiplied down to the cooler cream it has in game.
 const GLYPH_REST_TINT: Color32 = Color32::from_rgb(191, 214, 253);
+
+/// Where the (unrotated) glyph texture is drawn for a button `rect`: the ring's centre sits 1pt
+/// below the plate centre (one more while pressed), as in game.
+fn reload_glyph_rect(rect: Rect, pressed: bool) -> Rect {
+    let side = rect.height() * RING_OF_PLATE / RING_OF_GLYPH;
+    let ring_centre = rect.center() + vec2(0.0, 1.0 + if pressed { 1.0 } else { 0.0 });
+    Rect::from_min_size(ring_centre - RING_CENTRE * side, Vec2::splat(side))
+}
 
 /// The game's reload button: the square icon button plate ([`Skin::icon_button`], normal, hover or
 /// focus, pressed) with the round-arrow glyph ([`Skin::reload`]) on it, mirrored left to right and
@@ -1248,19 +1259,20 @@ pub fn ff_reload_button(ui: &mut Ui, skin: &Skin, label: &str, enabled: bool) ->
     } else {
         Color32::from_white_alpha(90)
     };
-    slice::paint_image(ui.painter(), &skin.icon_button[state], rect, tint);
+    slice::paint_visible(
+        ui.painter(),
+        &skin.icon_button[state],
+        ICON_BUTTON_OPAQUE,
+        rect,
+        tint,
+    );
 
     let glyph_tint = match (enabled, state) {
         (false, _) => GLYPH_REST_TINT.gamma_multiply(90.0 / 255.0),
         (true, 0) => GLYPH_REST_TINT,
         (true, _) => Color32::WHITE,
     };
-    let plate = ROW_HEIGHT * PLATE_VISIBLE;
-    let side = plate * RING_OF_PLATE / RING_OF_GLYPH;
-    let pressed = if state == 2 { 1.0 } else { 0.0 };
-    // The game sits the ring 1pt below the plate's centre.
-    let ring_centre = rect.min + Vec2::splat(plate / 2.0) + vec2(0.0, 1.0 + pressed);
-    let dest = Rect::from_min_size(ring_centre - RING_CENTRE * side, Vec2::splat(side));
+    let dest = reload_glyph_rect(rect, state == 2);
     let uv = slice::full_uv(skin.reload.size());
     // Swapping the u edges mirrors the glyph left to right.
     let mirrored = Rect::from_min_max(pos2(uv.max.x, uv.min.y), pos2(uv.min.x, uv.max.y));
@@ -2099,6 +2111,19 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!(sel);
+    }
+
+    #[test]
+    fn reload_glyph_ring_sits_one_point_below_the_plate_centre() {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), Vec2::splat(34.0));
+        let g = reload_glyph_rect(rect, false);
+        assert!((g.width() - 34.0 * RING_OF_PLATE / RING_OF_GLYPH).abs() < 1e-4);
+        let ring = g.min + RING_CENTRE * g.width();
+        let want = rect.center() + vec2(0.0, 1.0);
+        assert!((ring - want).length() < 1e-4);
+        let p = reload_glyph_rect(rect, true);
+        let ring = p.min + RING_CENTRE * p.width();
+        assert!((ring - (want + vec2(0.0, 1.0))).length() < 1e-4);
     }
 
     #[test]

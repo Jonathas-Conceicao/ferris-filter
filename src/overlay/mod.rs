@@ -30,6 +30,7 @@ pub(crate) mod screenshot;
 pub(crate) mod shell;
 pub mod sound_files;
 pub mod strictness;
+pub mod style_detect;
 pub mod style_lines;
 pub mod text_entry;
 pub mod tray;

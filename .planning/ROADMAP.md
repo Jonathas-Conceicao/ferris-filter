@@ -137,9 +137,9 @@ Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
 **Plans**: 3 plans
 
 Plans:
-- [ ] 43-01-PLAN.md — StyleColour type (read 3 or 4, write 4), alpha in the emitter, 4-value defaults, equality and migration tests
-- [ ] 43-02-PLAN.md — Alpha slider on CONFIG style colours (opaque path removed), translucent cards and previews
-- [ ] 43-03-PLAN.md — CLAUDE.md update, debug screenshots, deferred Phase 43 checks
+- [x] 43-01-PLAN.md — StyleColour type (read 3 or 4, write 4), alpha in the emitter, 4-value defaults, equality and migration tests
+- [x] 43-02-PLAN.md — Alpha slider on CONFIG style colours (opaque path removed), translucent cards and previews
+- [x] 43-03-PLAN.md — CLAUDE.md update, debug screenshots, deferred Phase 43 checks
 **UI hint**: yes
 
 ### Phase 44: Auto Detect Styles
@@ -228,7 +228,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 43. Style Alpha | 0/TBD | Not started | - |
+| 43. Style Alpha | 3/3 | Complete    | 2026-10-23 |
 | 44. Auto Detect Styles | 0/TBD | Not started | - |
 | 45. Economy Tier-Range Names | 0/TBD | Not started | - |
 | 46. Request Throttling & CLI User Agent | 0/TBD | Not started | - |

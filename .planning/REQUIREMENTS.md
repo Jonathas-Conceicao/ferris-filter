@@ -152,10 +152,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ALPHA-01 | Phase 43 | Pending |
-| ALPHA-02 | Phase 43 | Pending |
-| ALPHA-03 | Phase 43 | Pending |
-| ALPHA-04 | Phase 43 | Pending |
+| ALPHA-01 | Phase 43 | Complete |
+| ALPHA-02 | Phase 43 | Complete |
+| ALPHA-03 | Phase 43 | Complete |
+| ALPHA-04 | Phase 43 | Complete |
 | DETECT-01 | Phase 44 | Pending |
 | DETECT-02 | Phase 44 | Pending |
 | DETECT-03 | Phase 44 | Pending |

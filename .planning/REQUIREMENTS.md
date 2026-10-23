@@ -24,19 +24,15 @@
 
 ### Auto Detect styles (DETECT)
 
-- [x] **DETECT-01
-**: A CONFIG tab **Auto Detect** button reads every rule outside the economy
+- [ ] **DETECT-01**: A CONFIG tab **Auto Detect** button reads every rule outside the economy
   section and turns its action lines plus Show / Hide into a full style.
-- [x] **DETECT-02
-**: A rule whose style equals an existing style on every parameter (built-ins with
+- [ ] **DETECT-02**: A rule whose style equals an existing style on every parameter (built-ins with
   their current, possibly user-edited, values first, then custom styles) is tagged with that style;
   a bare `Show` is `unchanged`.
-- [x] **DETECT-03
-**: Each remaining distinct style becomes a new custom style named
+- [ ] **DETECT-03**: Each remaining distinct style becomes a new custom style named
   `Custom Style N` (smallest free N), and every rule sharing it is tagged with it; any difference,
   such as a font size off by 3, makes a separate style.
-- [x] **DETECT-04
-**: Rules whose actions no style can express (repeated lines of one family,
+- [ ] **DETECT-04**: Rules whose actions no style can express (repeated lines of one family,
   `CustomAlertSoundOptional`, the `...IfAlertSound` keywords, out-of-range values) stay Custom.
   Trailing comments on action lines do not block a match; they are dropped when Apply rewrites the
   rule from its style (a code comment marks this as intentional).
@@ -46,8 +42,7 @@
   RULES), shown as unapplied like any other edit; Apply writes them, and Revert / Reload discard them
   per tab as usual (a rule left tagged to a reverted style shows `unknown style` and Apply drops the
   tag).
-- [x] **DETECT-07
-**: The status line says what Auto Detect did (styles created, rules tagged); a
+- [ ] **DETECT-07**: The status line says what Auto Detect did (styles created, rules tagged); a
   second click with nothing new changes nothing.
 
 ### Economy names (ENAME)

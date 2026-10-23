@@ -63,6 +63,8 @@ use crate::skin::palette as pal;
 use crate::skin::widgets as w;
 use egui::{Align, Layout, Rect, UiBuilder, pos2, vec2};
 
+mod throttle_glue;
+
 /// The eframe application state for the overlay window.
 pub struct OverlayApp {
     /// Latches `true` once the first-frame docking has run, so it never runs
@@ -83,6 +85,11 @@ pub struct OverlayApp {
     /// What the ECONOMY tab shows about prices.json; re-read on switching to ECONOMY, at start
     /// and after a sync.
     economy_info: EconomyInfo,
+
+    /// Last-success times and cached results of the three network requests (ff-state.json).
+    request_log: crate::throttle::RequestLog,
+    /// Which running requests are real (only those are recorded).
+    pending_real: throttle_glue::PendingReal,
 
     /// The tray icon, menu, and id->command mapping. Kept alive here until tray Quit, which
     /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
@@ -1526,6 +1533,11 @@ impl OverlayApp {
             dock_ppp: None,
             skin,
             economy_info: EconomyInfo::default(),
+            request_log: root
+                .as_deref()
+                .map(crate::throttle::load)
+                .unwrap_or_default(),
+            pending_real: throttle_glue::PendingReal::default(),
             tray,
             hotkey_manager,
             hotkey_status,
@@ -2227,7 +2239,7 @@ impl OverlayApp {
     fn start_update_check(&mut self) {
         self.clear_events_on_edit();
         self.economy.clear_message();
-        if self.update.start(|progress| {
+        if self.start_update_gated_with(crate::throttle::now_secs(), |progress| {
             crate::update::check_for_update_blocking(progress.work_dir(), &mut |v| {
                 progress.downloading(v)
             })
@@ -3547,6 +3559,7 @@ impl eframe::App for OverlayApp {
             self.receive_update_message(text, kind);
             ui.ctx().request_repaint();
         }
+        self.record_after_polls(crate::throttle::now_secs());
         if matches!(
             self.update.state(),
             UpdateState::Checking | UpdateState::Downloading { .. }
@@ -3874,7 +3887,7 @@ impl eframe::App for OverlayApp {
                 // The list is fetched the first time the tab is shown in a session (never in
                 // screenshot mode; unit tests get an error from the `fetch_leagues` twin).
                 if !self.is_shot() && matches!(self.leagues.state(), ListState::NotStarted) {
-                    self.leagues.start(fetch_leagues);
+                    self.start_leagues_gated(crate::throttle::now_secs());
                 }
                 let view = self.league_view();
                 let fallback = self.settings.price_policy() == PriceSourcePolicy::ForceFallback;
@@ -4057,17 +4070,15 @@ impl eframe::App for OverlayApp {
         if economy_clicks.sync
             && self.settings.price_policy() != PriceSourcePolicy::ForceFallback
             && let Some(league) = self.league_view().sync_league
-            && let Ok(root) = &self.root
+            && let Ok(root) = self.root.clone()
         {
             self.update_message = None;
             // The app root, not the process working directory: the overlay can be launched from
             // anywhere, and prices.json must land where Apply will read it from. A sync is not
             // part of Apply (dozens of network round trips that can fail); it only refreshes
             // prices, and the game sees them on the next Apply (author, 2026-09-10).
-            let base_dir = root.clone();
-            self.economy.start(move || {
-                crate::sync::sync_economy_blocking(&base_dir, &league).map_err(|e| e.to_string())
-            });
+            // Inside the hour of a successful sync for this league it replays the outcome.
+            self.start_sync_gated(root, league, crate::throttle::now_secs());
         }
 
         // Tab switch and CONFIG actions come first. Switching never applies or discards anything.
@@ -4142,7 +4153,7 @@ impl eframe::App for OverlayApp {
             && !self.leagues.is_fetching()
             && !fallback_now
         {
-            self.leagues.start(fetch_leagues);
+            self.start_leagues_gated(crate::throttle::now_secs());
         }
 
         // One skinned popup at a time (Quit, then Changed-on-disk, then the rest). The flags

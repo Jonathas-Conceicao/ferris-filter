@@ -104,6 +104,7 @@ pub struct UpdateJob {
     rx: Option<Receiver<UpdateMsg>>,
     work_dir: Arc<Mutex<WorkSlot>>,
     install_on_quit: bool,
+    last_done: Option<CheckResult>,
 }
 
 impl Default for UpdateJob {
@@ -119,6 +120,7 @@ impl UpdateJob {
             rx: None,
             work_dir: Arc::new(Mutex::new(WorkSlot::default())),
             install_on_quit: false,
+            last_done: None,
         }
     }
 
@@ -178,6 +180,7 @@ impl UpdateJob {
                     self.state = UpdateState::Downloading { version };
                 }
                 Ok(UpdateMsg::Done(result)) => {
+                    self.last_done = Some(result.clone());
                     text = Some(message_for(&result, utc_offset_minutes));
                     match result {
                         CheckResult::Ready(r) => self.state = UpdateState::Ready(r),
@@ -204,6 +207,11 @@ impl UpdateJob {
                 }
             }
         }
+    }
+
+    /// The structured result of the last finished check, once (the throttle records from it).
+    pub fn take_done(&mut self) -> Option<CheckResult> {
+        self.last_done.take()
     }
 
     /// Set the state without a worker (screenshot mode and tests).
@@ -465,6 +473,20 @@ mod tests {
         let m = settle(&mut job).unwrap();
         assert_eq!(job.state(), &UpdateState::Idle);
         assert_eq!(m.1, UpdateKind::Warning);
+    }
+
+    #[test]
+    fn take_done_exposes_the_last_result_once() {
+        let mut job = UpdateJob::new();
+        let r = CheckResult::UpToDate {
+            version: "0.7.0".into(),
+            released: Some(5),
+        };
+        let r2 = r.clone();
+        job.start(move |_| r2);
+        settle(&mut job);
+        assert_eq!(job.take_done(), Some(r));
+        assert_eq!(job.take_done(), None);
     }
 
     #[test]

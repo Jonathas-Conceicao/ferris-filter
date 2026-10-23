@@ -508,6 +508,8 @@ struct AllResult {
     tiers_written: bool,
     /// On a changed-on-disk refusal, every file found changed (recovered by RELOAD or OVERWRITE).
     changed: Vec<DiskFile>,
+    /// The show / hide hotkey this Apply saved and made live, if it carried a chord edit.
+    hotkey_saved: Option<Chord>,
 }
 
 impl AllResult {
@@ -518,6 +520,7 @@ impl AllResult {
             styles_written: false,
             tiers_written: false,
             changed: Vec::new(),
+            hotkey_saved: None,
         }
     }
 }
@@ -618,12 +621,18 @@ fn bar_reload_target(tab: ShellTab, changed: &[DiskFile]) -> BarReload {
 /// Apply always counts, so the in-game reload still runs. With `overwrite`, files that changed on
 /// disk since they were loaded are written over (OVERWRITE after a changed-on-disk refusal); the
 /// baselines move only on success, so a failed overwrite leaves the refusal in place.
+///
+/// A pending show / hide hotkey is registered after every validation and before any write, while
+/// the old chord stays registered: a chord another app owns refuses the whole Apply (nothing
+/// written, the old binding kept). The old chord is given up only once every write succeeded; a
+/// failed write gives the new one back.
 fn apply_everything(
     root: &Path,
     mut config: Option<&mut ConfigState>,
     mut filter: Option<(&mut LoadedFilter, &mut WorkingFilter)>,
     policy: PriceSourcePolicy,
     overwrite: bool,
+    hotkey: &mut HotkeyRuntime,
 ) -> AllResult {
     let filter_path = filter.as_ref().map(|(l, _)| l.path().to_path_buf());
 
@@ -668,14 +677,37 @@ fn apply_everything(
         Err(err) => return refusal(err, filter_path.as_deref()),
     };
     let used_fallback = prepared.used_fallback();
+    // Validate -> register -> write: the new chord is registered beside the old one first.
+    let new_hotkey = prepared.hotkey();
+    if let Some(new) = new_hotkey
+        && let Err(message) = hotkey.begin_swap(new)
+    {
+        return AllResult::failed(message);
+    }
     let committed = match apply_all::commit(
         prepared,
         config.as_deref_mut(),
         filter.as_mut().map(|(l, _)| &mut **l),
     ) {
         Ok(c) => c,
-        Err(err) => return refusal(err, filter_path.as_deref()),
+        Err(err) => {
+            if let Some(new) = new_hotkey {
+                hotkey.abort_swap(new);
+            }
+            return refusal(err, filter_path.as_deref());
+        }
     };
+    // Every write succeeded: the old chord goes, the new one is live. Defensive: a registration
+    // is never left behind without its chord saved.
+    let mut hotkey_saved = None;
+    if let Some(new) = new_hotkey {
+        if committed.hotkey_saved == Some(new) {
+            hotkey.finish_swap(new);
+            hotkey_saved = Some(new);
+        } else {
+            hotkey.abort_swap(new);
+        }
+    }
 
     // The working document picks up what was written: the new text, then the applied styles.
     if let Some((loaded, working)) = filter.as_mut() {
@@ -717,6 +749,9 @@ fn apply_everything(
             extras.push_str(&format!(" Kept the original as {}.", backup.display()));
         }
     }
+    if let Some(new) = hotkey_saved {
+        extras.push_str(&format!(" Show / hide is now {}.", new.text()));
+    }
     AllResult {
         outcome: AllOutcome::Applied {
             filter: committed.filter.map(|f| f.path),
@@ -725,6 +760,7 @@ fn apply_everything(
         styles_written: committed.styles_written,
         tiers_written: committed.tiers_written,
         changed: Vec::new(),
+        hotkey_saved,
     }
 }
 
@@ -2074,6 +2110,7 @@ impl OverlayApp {
             filter_part,
             self.settings.price_policy(),
             overwrite,
+            &mut self.hotkey,
         );
         let AllResult {
             outcome,
@@ -2081,6 +2118,7 @@ impl OverlayApp {
             styles_written,
             tiers_written,
             changed,
+            hotkey_saved,
         } = result;
         let applied_path = match outcome {
             AllOutcome::Failed(message) => {
@@ -2094,6 +2132,16 @@ impl OverlayApp {
             }
             AllOutcome::Applied { filter } => filter,
         };
+        if let Some(new) = hotkey_saved {
+            // In memory only (the file was written by the Apply), so a later whole-file settings
+            // save keeps the saved chord.
+            self.settings.hotkey = Some(new.text());
+            self.settings.hotkey_invalid = false;
+            self.tray.set_hotkey_state(
+                &self.hotkey.tooltip(),
+                self.hotkey.failure_line().as_deref(),
+            );
+        }
         let prefix = apply::config_saved_prefix(styles_written, tiers_written);
         match applied_path {
             // Every successful filter Apply decides, identical bytes included; the setting is
@@ -3755,7 +3803,12 @@ impl eframe::App for OverlayApp {
             .is_some_and(|w| w.style_rewrite_pending())
             || source_pending;
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        let styles_dirty = self.config.as_ref().is_ok_and(|c| c.styles_dirty());
+        // The Config tab's own edits: styles and the show / hide hotkey (the tab marker and the
+        // Config Revert). Economy re-pricing keeps looking at `ConfigState::styles_dirty` alone.
+        let styles_dirty = self
+            .config
+            .as_ref()
+            .is_ok_and(|c| c.styles_dirty() || c.hotkey_dirty());
         let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         let economy_staged = self.working.as_ref().is_some_and(|w| w.economy_staged());
@@ -4657,6 +4710,10 @@ mod tests {
             Some((loaded, working)),
             PriceSourcePolicy::Auto,
             overwrite,
+            &mut crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         );
         let outcome = match r.outcome {
             AllOutcome::Applied { filter: Some(path) } => ApplyOutcome::Written(path),
@@ -4711,6 +4768,7 @@ mod tests {
         loaded: LoadedFilter,
         working: WorkingFilter,
         config: ConfigState,
+        hotkey: crate::overlay::hotkey::HotkeyRuntime,
     }
 
     fn rig(filter_text: &str) -> Rig {
@@ -4730,6 +4788,10 @@ mod tests {
             loaded,
             working,
             config,
+            hotkey: crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         }
     }
 
@@ -4741,6 +4803,7 @@ mod tests {
                 Some((&mut self.loaded, &mut self.working)),
                 PriceSourcePolicy::Auto,
                 overwrite,
+                &mut self.hotkey,
             )
         }
 
@@ -5201,6 +5264,7 @@ mod tests {
                 loaded,
                 mut working,
                 mut config,
+                ..
             } = rig(RULES);
             working.apply_action(RowAction::AddRule);
             assert!(config.edit_style("S", StyleEdit::Font(Some(41))));
@@ -5286,6 +5350,10 @@ mod tests {
             None,
             PriceSourcePolicy::Auto,
             false,
+            &mut crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         );
         assert_eq!(r.outcome, AllOutcome::Applied { filter: None });
         assert!(r.styles_written && !r.tiers_written);
@@ -6064,6 +6132,7 @@ Hide
             loaded,
             working,
             config,
+            ..
         } = rig(S_RULE);
         app.root = Ok(root.path().to_path_buf());
         app.config = Ok(config);
@@ -6105,6 +6174,7 @@ Hide
             loaded,
             working,
             config,
+            ..
         } = rig(S_RULE);
         app.root = Ok(root.path().to_path_buf());
         app.config = Ok(config);
@@ -8324,5 +8394,250 @@ Hide
         };
         app.hotkey = crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), None).0;
         assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+    }
+
+    // ---- the hotkey swap inside the one Apply (Phase 47-03) ----
+
+    type HotkeyLog = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+
+    const CTRL_ALT_K: crate::overlay::chord::Chord = crate::overlay::chord::Chord {
+        ctrl: true,
+        shift: false,
+        alt: true,
+        key: crate::overlay::chord::ChordKey::Letter(b'K'),
+    };
+
+    /// A runtime over a fake registrar (never the OS), started from `saved`, with its start-up
+    /// calls cleared from the log.
+    fn fake_runtime(
+        taken: &[crate::overlay::chord::Chord],
+        saved: Option<crate::overlay::chord::Chord>,
+    ) -> (
+        crate::overlay::hotkey::HotkeyRuntime,
+        Option<String>,
+        HotkeyLog,
+    ) {
+        let log: HotkeyLog = std::rc::Rc::default();
+        let reg = crate::overlay::hotkey::FakeRegistrar {
+            taken: taken.iter().copied().collect(),
+            log: log.clone(),
+        };
+        let (rt, warning) =
+            crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), saved);
+        log.borrow_mut().clear();
+        (rt, warning, log)
+    }
+
+    fn saved_hotkey_in(root: &std::path::Path) -> Option<String> {
+        let text = std::fs::read_to_string(root.join("ff-settings.json")).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["hotkey"].as_str().map(str::to_string)
+    }
+
+    #[test]
+    fn apply_registers_the_new_chord_then_gives_up_the_old_one() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let r = rig.apply(false);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        assert_eq!(
+            *log.borrow(),
+            ["register Ctrl+Alt+K", "unregister Ctrl+Shift+Z"]
+        );
+        assert_eq!(rig.hotkey.live(), Some(CTRL_ALT_K));
+        assert_eq!(
+            saved_hotkey_in(rig.root.path()).as_deref(),
+            Some("Ctrl+Alt+K")
+        );
+        assert!(
+            r.extras.ends_with(" Show / hide is now Ctrl+Alt+K."),
+            "{}",
+            r.extras
+        );
+        assert_eq!(r.hotkey_saved, Some(CTRL_ALT_K));
+        assert_eq!(rig.config.hotkey_pending(), None);
+    }
+
+    #[test]
+    fn a_chord_in_use_refuses_the_whole_apply() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[CTRL_ALT_K], None);
+        rig.hotkey = rt;
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        rig.working.apply_action(RowAction::AddRule);
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let styles = rig.read("styles.json");
+        let filter = std::fs::read(&rig.path).unwrap();
+        let r = rig.apply(false);
+        assert_eq!(
+            r.outcome,
+            AllOutcome::Failed(
+                "Ctrl+Alt+K is in use by another app. Ctrl+Shift+Z still works; nothing was applied."
+                    .to_string()
+            )
+        );
+        assert_eq!(*log.borrow(), ["register Ctrl+Alt+K"]);
+        assert_eq!(rig.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        assert!(!rig.root.path().join("ff-settings.json").exists());
+        assert_eq!(rig.read("styles.json"), styles);
+        assert_eq!(std::fs::read(&rig.path).unwrap(), filter);
+        assert_eq!(rig.config.hotkey_pending(), Some(CTRL_ALT_K));
+        assert!(rig.config.styles_dirty());
+    }
+
+    #[test]
+    fn a_failed_write_gives_the_new_chord_back() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let styles_path = rig.root.path().join("styles.json");
+        let mut perms = std::fs::metadata(&styles_path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&styles_path, perms.clone()).unwrap();
+        let r = rig.apply(false);
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(&styles_path, perms).unwrap();
+        assert!(
+            matches!(r.outcome, AllOutcome::Failed(_)),
+            "{:?}",
+            r.outcome
+        );
+        assert_eq!(
+            *log.borrow(),
+            ["register Ctrl+Alt+K", "unregister Ctrl+Alt+K"]
+        );
+        assert_eq!(rig.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        assert!(!rig.root.path().join("ff-settings.json").exists());
+        assert_eq!(rig.config.hotkey_pending(), Some(CTRL_ALT_K));
+    }
+
+    #[test]
+    fn an_apply_without_a_chord_edit_never_touches_the_registrar() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        let r = rig.apply(false);
+        assert!(matches!(r.outcome, AllOutcome::Applied { .. }));
+        assert!(log.borrow().is_empty());
+        assert!(!r.extras.contains("Show / hide"), "{}", r.extras);
+        assert_eq!(r.hotkey_saved, None);
+        assert!(!rig.root.path().join("ff-settings.json").exists());
+    }
+
+    /// An app on a temp home holding `settings`, with `runtime` as its hotkey and no filter
+    /// (the game folder does not exist), so its Apply is config-only and never reloads in game.
+    fn hotkey_app(
+        settings: &str,
+        runtime: crate::overlay::hotkey::HotkeyRuntime,
+        warning: Option<String>,
+    ) -> (super::OverlayApp, egui::Context, tempfile::TempDir) {
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("ff-settings.json"), settings).unwrap();
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            runtime,
+            warning,
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("absent-game")),
+        );
+        (app, ctx, home)
+    }
+
+    #[test]
+    fn a_stale_saved_chord_can_be_reset_to_the_default_and_saved() {
+        // Saved chord in use at start-up: the default runs, and saving it is a real edit.
+        let (rt, warning, log) = fake_runtime(&[CTRL_ALT_K], Some(CTRL_ALT_K));
+        assert!(warning.is_some());
+        let (mut app, ctx, home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, warning);
+        assert_eq!(app.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        assert_eq!(app.hotkey_base(), None);
+        let base = app.hotkey_base();
+        let config = app.config.as_mut().unwrap();
+        config.set_hotkey(crate::overlay::chord::DEFAULT, base);
+        assert!(config.hotkey_dirty());
+        assert!(app.run_apply(&ctx, false));
+        assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+        assert_eq!(app.settings.hotkey.as_deref(), Some("Ctrl+Shift+Z"));
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+        let (text, _) = app.apply_message.clone().unwrap();
+        assert!(
+            text.ends_with(" Show / hide is now Ctrl+Shift+Z."),
+            "{text}"
+        );
+
+        // An invalid saved value: the same way out.
+        let (rt, warning, log) = fake_runtime(&[], None);
+        let (mut app, ctx, home) = hotkey_app(r#"{"hotkey":"Nope"}"#, rt, warning);
+        assert!(app.settings.hotkey_invalid);
+        assert_eq!(app.hotkey_base(), None);
+        let base = app.hotkey_base();
+        app.config
+            .as_mut()
+            .unwrap()
+            .set_hotkey(crate::overlay::chord::DEFAULT, base);
+        assert!(app.run_apply(&ctx, false));
+        assert!(log.borrow().is_empty());
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+        assert!(!app.settings.hotkey_invalid);
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+    }
+
+    #[test]
+    fn a_successful_app_apply_keeps_the_saved_chord_in_memory() {
+        let (rt, _, log) = fake_runtime(&[], None);
+        let (mut app, ctx, home) = hotkey_app("{}", rt, None);
+        let base = app.hotkey_base();
+        app.config.as_mut().unwrap().set_hotkey(CTRL_ALT_K, base);
+        assert!(app.run_apply(&ctx, false));
+        assert_eq!(
+            *log.borrow(),
+            ["register Ctrl+Alt+K", "unregister Ctrl+Shift+Z"]
+        );
+        assert_eq!(app.settings.hotkey.as_deref(), Some("Ctrl+Alt+K"));
+        assert_eq!(saved_hotkey_in(home.path()).as_deref(), Some("Ctrl+Alt+K"));
+        assert_eq!(app.hotkey.shown(), CTRL_ALT_K);
+    }
+
+    #[test]
+    fn a_hotkey_edit_counts_as_config_work_for_quit_and_revert() {
+        let (rt, _, _log) = fake_runtime(&[], None);
+        let (mut app, _ctx, _home) = hotkey_app("{}", rt, None);
+        let base = app.hotkey_base();
+        app.config.as_mut().unwrap().set_hotkey(CTRL_ALT_K, base);
+        assert!(app.applicable_dirty());
+        assert!(app.quit_dirty());
+        let c = app.config.as_ref().unwrap();
+        assert_eq!(c.scope_dirty_count(RevertScope::Styles), 1);
+        assert!(!c.styles_dirty());
+        // Under Fallback with unused tier edits, a hotkey edit is still work Apply writes.
+        app.settings.price_source = Some("fallback".to_string());
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.sync_tiers_in_use();
+        app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        assert!(!app.quit_tier_edits_only);
     }
 }

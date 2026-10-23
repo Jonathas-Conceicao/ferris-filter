@@ -178,7 +178,7 @@ Plans:
 
 Plans:
 - [x] 46-01-PLAN.md — Pure throttle module (RequestLog, ff-state.json load/save), CLI user agent split, CLI-no-throttle guard
-- [ ] 46-02-PLAN.md — Overlay gates and records for Sync, league list and update check; CLAUDE.md; deferred checks
+- [x] 46-02-PLAN.md — Overlay gates and records for Sync, league list and update check; CLAUDE.md; deferred checks
 
 ### Phase 47: Customizable Hotkey
 **Goal**: The player chooses the show / hide chord

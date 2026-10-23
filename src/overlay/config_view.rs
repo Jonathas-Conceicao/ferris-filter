@@ -202,7 +202,8 @@ pub struct ConfigViewCtx<'a> {
     pub indicator: &'a str,
     /// Current value of the reload-after-Apply setting.
     pub reload_after_apply: bool,
-    /// A filter with a usable style set is loaded (Auto Detect is live).
+    /// A filter with a usable style set and intact economy markers is loaded (Auto Detect is
+    /// live).
     pub can_auto_detect: bool,
     /// The shell skin for section headings (`None` in headless tests).
     pub skin: Option<&'a crate::skin::Skin>,
@@ -863,6 +864,8 @@ fn show_styles(
             );
             let tip = if enabled {
                 "Name the styling already in this filter: tag rules that match a style and add the rest as custom styles."
+            } else if ctx.filter_damaged {
+                "Economy markers damaged."
             } else {
                 "No filter loaded."
             };

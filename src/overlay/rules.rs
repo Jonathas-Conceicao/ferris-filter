@@ -1426,7 +1426,8 @@ impl WorkingFilter {
     }
 
     /// Auto Detect candidates: untagged rules outside the economy section (disabled ones
-    /// included, a `# ff:group` once), skipping `can't enable` and grammar-error rules.
+    /// included, a `# ff:group` once), skipping `can't enable` and grammar-error rules. None
+    /// while the economy markers are damaged: the economy blocks are then ordinary rows.
     pub fn detect_inputs(&self) -> Vec<(BlockId, Vec<BodyEntry>, BlockKeyword)> {
         self.rows()
             .iter()
@@ -1436,7 +1437,8 @@ impl WorkingFilter {
     }
 
     fn detect_eligible(&self, r: &RuleRow) -> bool {
-        r.style == StyleState::None
+        !matches!(self.base_economy, EconomyView::Damaged(_))
+            && r.style == StyleState::None
             && !r.cannot_enable
             && r.errors.is_empty()
             && self.body_editable(r.id)
@@ -4012,6 +4014,21 @@ Show
         // rings, disabled belts, the group leader; not the tagged, can't-enable or economy ones
         assert_eq!(ids.len(), 3, "{rows:?}");
         assert!(rows.iter().any(|r| r.cannot_enable));
+    }
+
+    #[test]
+    fn detect_inputs_empty_when_economy_markers_are_damaged() {
+        use crate::filter::section::BEGIN_LINE;
+        let t = format!(
+            "Show\n  Class \"Rings\"\n  SetFontSize 20\n\n{BEGIN_LINE}\n# ff:name A tier Uniques\nShow\n  Rarity Unique\n  BaseType == \"Infernal Sword\"\n  SetBackgroundColor 175 96 37 240\n"
+        );
+        let mut wf = styled_wf(&t);
+        assert!(matches!(wf.economy(), EconomyView::Damaged(_)));
+        assert_eq!(wf.rows().len(), 2);
+        assert!(wf.detect_inputs().is_empty());
+        let id = wf.rows()[1].id;
+        assert_eq!(wf.tag_styles(&[(id, "S".into())]), 0);
+        assert_eq!(wf.text(), t);
     }
 
     #[test]

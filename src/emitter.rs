@@ -1353,10 +1353,10 @@ mod tests {
             .find(|c| c.background_override.is_some())
             .expect("seed prices populate a background-override category");
         let econ = generate_economy(&config.styles, &priced).unwrap();
-        let prefix = format!("# ff:name ");
+        let prefix = "# ff:name ";
         let suffix = format!(" tier {} ", gem.name);
         let hit = econ.lines().find(|l| {
-            l.starts_with(&prefix)
+            l.starts_with(prefix)
                 && l.contains(&suffix)
                 && l.ends_with(" chaos")
                 && (l.contains(" < ") || l.contains(" >= "))

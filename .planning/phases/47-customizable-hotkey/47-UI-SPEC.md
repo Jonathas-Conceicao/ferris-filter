@@ -272,4 +272,4 @@ Decided without asking, per the autonomous run.
 - [x] Dimension 5 Spacing: FLAG (10pt/34pt are existing skin constants kept for alignment; 30pt from the art)
 - [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-10-23

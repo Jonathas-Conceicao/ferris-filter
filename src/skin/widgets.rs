@@ -1455,6 +1455,8 @@ pub fn ff_search_field(
         lay.glyph,
         Color32::WHITE,
     );
+    // Decorative: the edit is the keyboard target. `Sense::CLICK` (unlike `Sense::click()`) is not
+    // focusable, so the magnifier is not a Tab stop; a click on it focuses the edit.
     let g = ui.interact(lay.glyph, id.with("glyph"), Sense::CLICK);
     if g.clicked() {
         ui.ctx().memory_mut(|m| m.request_focus(id));
@@ -1952,6 +1954,19 @@ mod tests {
     }
 
     #[test]
+    fn search_glyph_is_not_a_tab_stop() {
+        let (ctx, skin) = setup();
+        let id = egui::Id::new("s");
+        let mut text = String::from("ring");
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        let g = ctx.read_response(id.with("glyph")).expect("glyph response");
+        assert!(!g.sense.is_focusable(), "sense {:?}", g.sense);
+    }
+
+    #[test]
     fn search_field_clear_x_empties_and_keeps_focus() {
         let (ctx, skin) = setup();
         let id = egui::Id::new("s");
@@ -1961,6 +1976,13 @@ mod tests {
             field = ff_search_field(ui, &skin, id, &mut text, "hint", 300.0).rect;
         })
         .drop_without_applying_deltas();
+        // Focus the edit first, so the final assertion proves the click kept that focus.
+        ctx.memory_mut(|m| m.request_focus(id));
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.memory(|m| m.has_focus(id)), "edit not focused before click");
         let x = search_layout(Rect::from_min_size(
             field.min - vec2(SEARCH_TEXT_INSET, 3.0),
             vec2(300.0, 30.0),

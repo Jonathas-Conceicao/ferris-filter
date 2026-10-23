@@ -152,7 +152,12 @@ Plans:
   3. Rules with actions no style can express stay Custom, and a trailing comment on an action line does not block a match
   4. The result is pending edits only (new styles on CONFIG, tags on RULES) shown as unapplied; Apply writes them, Revert / Reload discard them per tab
   5. The status line says how many styles were created and rules tagged, and a second click with nothing new changes nothing
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 44-01-PLAN.md — StyleView::to_style and the pure style_detect planner (equality, naming, status text)
+- [ ] 44-02-PLAN.md — Batch model ops: add_detected_styles, detect_inputs, group-aware tag_styles; comment-drop note in styled.rs
+- [ ] 44-03-PLAN.md — Auto Detect button and handler, revert-matrix tests, CLAUDE.md note, screenshot, deferred checks
 **UI hint**: yes
 
 ### Phase 45: Economy Tier-Range Names

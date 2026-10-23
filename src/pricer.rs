@@ -2,7 +2,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 use crate::models::prices::{PriceItem, PricesFile};
-use crate::models::tiers::{Unit, ValidatedTiers};
+use crate::models::tiers::{TierEntry, Unit, ValidatedTiers};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -92,6 +92,9 @@ pub struct UniqueBlock {
 pub struct PricedData {
     pub category_blocks: Vec<CategoryBlock>,
     pub unique_blocks: Vec<UniqueBlock>,
+    /// Tier letter -> range suffix for economy `# ff:name` lines, e.g. `>= 30 chaos`,
+    /// `< 2 chaos`; empty means plain names.
+    pub tier_ranges: std::collections::HashMap<String, String>,
 }
 
 impl PricedData {
@@ -100,6 +103,7 @@ impl PricedData {
         PricedData {
             category_blocks: vec![],
             unique_blocks: vec![],
+            tier_ranges: std::collections::HashMap::new(),
         }
     }
 }
@@ -226,18 +230,52 @@ fn normalize_cutoffs(tiers: &ValidatedTiers, rates: &CrossRates) -> Vec<(String,
     let mut normalized: Vec<(String, f64)> = tiers
         .0
         .iter()
-        .map(|e| {
-            let min_chaos = match e.unit {
-                Unit::Chaos => e.min,
-                Unit::Div => e.min * rates.div_in_chaos,
-                Unit::Exalt => e.min * rates.exalt_in_chaos,
-            };
-            (e.tier.clone(), min_chaos)
-        })
+        .map(|e| (e.tier.clone(), chaos_floor(e, rates)))
         .collect();
     // Sort descending so we check the highest tier first in assign_tier.
     normalized.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     normalized
+}
+
+/// A cutoff's floor expressed in chaos.
+fn chaos_floor(e: &TierEntry, rates: &CrossRates) -> f64 {
+    match e.unit {
+        Unit::Chaos => e.min,
+        Unit::Div => e.min * rates.div_in_chaos,
+        Unit::Exalt => e.min * rates.exalt_in_chaos,
+    }
+}
+
+/// Format an amount with at most 2 decimals, trailing zeros trimmed (`0.5`, `2`, `0.15`).
+pub fn fmt_amount(v: f64) -> String {
+    let s = format!("{v:.2}");
+    if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        s
+    }
+}
+
+/// Per-tier range labels from the cutoffs (never from item prices): the top tier reads
+/// `>= <its floor> <unit>`, every other `< <upper neighbour's floor> <unit>`.
+fn tier_ranges(
+    tiers: &ValidatedTiers,
+    rates: &CrossRates,
+) -> std::collections::HashMap<String, String> {
+    let mut sorted: Vec<(&TierEntry, f64)> =
+        tiers.0.iter().map(|e| (e, chaos_floor(e, rates))).collect();
+    sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut out = std::collections::HashMap::new();
+    for (i, (e, _)) in sorted.iter().enumerate() {
+        let label = if i == 0 {
+            format!(">= {} {}", fmt_amount(e.min), e.unit.as_str())
+        } else {
+            let up = sorted[i - 1].0;
+            format!("< {} {}", fmt_amount(up.min), up.unit.as_str())
+        };
+        out.insert(e.tier.clone(), label);
+    }
+    out
 }
 
 /// Assign the highest tier whose chaos floor the item meets (inclusive ≥).
@@ -446,6 +484,7 @@ pub fn price_tiers(
     Ok(PricedData {
         category_blocks,
         unique_blocks,
+        tier_ranges: tier_ranges(tiers, rates),
     })
 }
 
@@ -482,6 +521,65 @@ mod tests {
         let rates = seeded_rates();
         let cutoffs = normalize_cutoffs(&tiers, &rates);
         (tiers, cutoffs)
+    }
+
+    #[test]
+    fn fmt_amount_table() {
+        for (v, want) in [
+            (0.5, "0.5"),
+            (2.0, "2"),
+            (12.0, "12"),
+            (0.15, "0.15"),
+            (10.0, "10"),
+            (100.0, "100"),
+            (20.0, "20"),
+            (1.999, "2"),
+            (0.05, "0.05"),
+            (2.5, "2.5"),
+            (1000000.0, "1000000"),
+        ] {
+            assert_eq!(fmt_amount(v), want, "{v}");
+        }
+    }
+
+    #[test]
+    fn tier_ranges_default_chaos() {
+        let r = tier_ranges(&load_real_tiers(), &seeded_rates());
+        for (t, want) in [
+            ("S", ">= 30 chaos"),
+            ("A", "< 30 chaos"),
+            ("B", "< 20 chaos"),
+            ("C", "< 12 chaos"),
+            ("D", "< 8 chaos"),
+            ("E", "< 2 chaos"),
+            ("F", "< 0.5 chaos"),
+        ] {
+            assert_eq!(r.get(t).map(String::as_str), Some(want), "{t}");
+        }
+    }
+
+    #[test]
+    fn tier_ranges_fallback_exalt() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tiers-fallback.json"));
+        let entries: Vec<TierEntry> = serde_json::from_str(src).unwrap();
+        let tiers = ValidatedTiers::try_from(entries).unwrap();
+        let r = tier_ranges(&tiers, &seeded_rates());
+        for (t, want) in [
+            ("S", ">= 20 exalt"),
+            ("A", "< 20 exalt"),
+            ("B", "< 2.5 exalt"),
+            ("C", "< 1 exalt"),
+            ("D", "< 0.2 exalt"),
+            ("E", "< 0.1 exalt"),
+            ("F", "< 0.05 exalt"),
+        ] {
+            assert_eq!(r.get(t).map(String::as_str), Some(want), "{t}");
+        }
+    }
+
+    #[test]
+    fn empty_priced_data_has_no_ranges() {
+        assert!(PricedData::empty().tier_ranges.is_empty());
     }
 
     // ── TIER-04: derive_rates abort on null / zero ───────────────────────────

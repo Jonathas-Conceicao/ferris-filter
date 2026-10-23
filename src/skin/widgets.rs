@@ -1377,6 +1377,125 @@ pub fn ff_text_field_ex(
     width: f32,
     font: egui::FontId,
 ) -> Response {
+    text_field_inner(ui, id, text, hint, width, font, 10.0, 10.0).0
+}
+
+/// Gap between the field's left edge and the search magnifier.
+const SEARCH_GLYPH_INSET: f32 = 10.0;
+/// Side of the (square) search magnifier.
+const SEARCH_GLYPH_SIZE: f32 = 16.0;
+/// Left and right inset of the search text (room for the glyph / the clear X, always reserved).
+const SEARCH_TEXT_INSET: f32 = 32.0;
+/// Diameter of the clear X disc.
+const CLEAR_DISC: f32 = 18.0;
+/// Side of the clear X's click zone.
+const CLEAR_HIT: f32 = 24.0;
+
+/// Where the parts of a search field sit inside its frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SearchLayout {
+    /// The magnifier.
+    pub glyph: Rect,
+    /// The text edit.
+    pub edit: Rect,
+    /// The clear X disc.
+    pub clear_disc: Rect,
+    /// The clear X click zone.
+    pub clear_hit: Rect,
+}
+
+/// Pure geometry of a search field of frame `field`.
+pub fn search_layout(field: Rect) -> SearchLayout {
+    let cy = field.center().y;
+    let glyph = Rect::from_center_size(
+        pos2(
+            field.min.x + SEARCH_GLYPH_INSET + SEARCH_GLYPH_SIZE / 2.0,
+            cy,
+        ),
+        Vec2::splat(SEARCH_GLYPH_SIZE),
+    );
+    let edit = Rect::from_min_max(
+        pos2(field.min.x + SEARCH_TEXT_INSET, field.min.y + 3.0),
+        pos2(field.max.x - SEARCH_TEXT_INSET, field.max.y - 3.0),
+    );
+    let c = pos2(field.max.x - 17.0, cy);
+    SearchLayout {
+        glyph,
+        edit,
+        clear_disc: Rect::from_center_size(c, Vec2::splat(CLEAR_DISC)),
+        clear_hit: Rect::from_center_size(c, Vec2::splat(CLEAR_HIT)),
+    }
+}
+
+/// The game's search box: a magnifier at the left and, while it holds text, a round clear X at
+/// the right. Clicking the X empties the field and keeps it focused. Returns the edit response.
+pub fn ff_search_field(
+    ui: &mut Ui,
+    skin: &Skin,
+    id: egui::Id,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+) -> Response {
+    let (resp, field) = text_field_inner(
+        ui,
+        Some(id),
+        text,
+        hint,
+        width,
+        regular(15.0),
+        SEARCH_TEXT_INSET,
+        SEARCH_TEXT_INSET,
+    );
+    let lay = search_layout(field);
+    let hot = ui.rect_contains_pointer(field) || resp.has_focus();
+    slice::paint_image(
+        ui.painter(),
+        &skin.search[usize::from(hot)],
+        lay.glyph,
+        Color32::WHITE,
+    );
+    let g = ui.interact(lay.glyph, id.with("glyph"), Sense::CLICK);
+    if g.clicked() {
+        ui.ctx().memory_mut(|m| m.request_focus(id));
+    }
+    if !text.is_empty() {
+        let x = ui.interact(lay.clear_hit, id.with("clear"), Sense::CLICK);
+        let state = if x.is_pointer_button_down_on() {
+            2
+        } else if x.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            1
+        } else {
+            0
+        };
+        slice::paint_image(
+            ui.painter(),
+            &skin.clear[state],
+            lay.clear_disc,
+            Color32::WHITE,
+        );
+        x.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Clear search"));
+        if x.clicked() {
+            text.clear();
+            ui.ctx().memory_mut(|m| m.request_focus(id));
+        }
+        x.on_hover_text("Clear search");
+    }
+    resp
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_field_inner(
+    ui: &mut Ui,
+    id: Option<egui::Id>,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    font: egui::FontId,
+    left: f32,
+    right: f32,
+) -> (Response, Rect) {
     let width = if width > 0.0 {
         width
     } else {
@@ -1393,7 +1512,11 @@ pub fn ff_text_field_ex(
     if let Some(id) = id {
         edit = edit.id(id);
     }
-    let resp = ui.put(rect.shrink2(vec2(10.0, 3.0)), edit);
+    let edit_rect = Rect::from_min_max(
+        pos2(rect.min.x + left, rect.min.y + 3.0),
+        pos2(rect.max.x - right, rect.max.y - 3.0),
+    );
+    let resp = ui.put(edit_rect, edit);
     // `put` leaves the cursor at the inner edit's right edge, 10pt inside the frame, which made
     // the next widget on a row touch (or overlap) it. Put the cursor back past the whole frame and
     // keep FIELD_GAP before whatever follows, in a horizontal layout and when room is left.
@@ -1422,7 +1545,7 @@ pub fn ff_text_field_ex(
         ),
     ];
     ui.painter().set(bg, Shape::Vec(shapes));
-    resp
+    (resp, rect)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1795,6 +1918,62 @@ mod tests {
             button.min.x - field.max.x >= FIELD_GAP - 0.5,
             "field {field:?} button {button:?}"
         );
+    }
+
+    #[test]
+    fn search_layout_matches_the_spec() {
+        let f = Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 30.0));
+        let l = search_layout(f);
+        assert_eq!(
+            l.glyph,
+            Rect::from_min_max(pos2(10.0, 7.0), pos2(26.0, 23.0))
+        );
+        assert_eq!(
+            l.edit,
+            Rect::from_min_max(pos2(32.0, 3.0), pos2(268.0, 27.0))
+        );
+        assert_eq!(l.clear_disc.center(), pos2(283.0, 15.0));
+        assert_eq!(l.clear_disc.size(), vec2(18.0, 18.0));
+        assert_eq!(l.clear_hit.center(), pos2(283.0, 15.0));
+        assert_eq!(l.clear_hit.size(), vec2(24.0, 24.0));
+        assert!(l.glyph.max.x <= l.edit.min.x);
+    }
+
+    #[test]
+    fn search_field_clear_x_is_hidden_when_empty() {
+        let (ctx, skin) = setup();
+        let id = egui::Id::new("s");
+        let mut text = String::new();
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.read_response(id.with("clear")).is_none());
+    }
+
+    #[test]
+    fn search_field_clear_x_empties_and_keeps_focus() {
+        let (ctx, skin) = setup();
+        let id = egui::Id::new("s");
+        let mut text = String::from("ring");
+        let mut field = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            field = ff_search_field(ui, &skin, id, &mut text, "hint", 300.0).rect;
+        })
+        .drop_without_applying_deltas();
+        let x = search_layout(Rect::from_min_size(field.min - vec2(SEARCH_TEXT_INSET, 3.0), vec2(300.0, 30.0)))
+            .clear_hit
+            .center();
+        ctx.run_ui(click_at(x), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(text.is_empty(), "text {text:?}");
+        ctx.run_ui(RawInput::default(), |ui| {
+            ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
+        })
+        .drop_without_applying_deltas();
+        assert!(ctx.memory(|m| m.has_focus(id)));
     }
 
     #[test]

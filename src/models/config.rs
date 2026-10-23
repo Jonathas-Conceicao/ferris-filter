@@ -1371,13 +1371,18 @@ mod tests {
         assert_eq!(c, StyleColour::new(1, 2, 3, 255));
         let c: StyleColour = serde_json::from_str("[1,2,3,128]").unwrap();
         assert_eq!(c, StyleColour::new(1, 2, 3, 128));
-        assert_ne!(StyleColour::new(1, 2, 3, 255), StyleColour::new(1, 2, 3, 254));
+        assert_ne!(
+            StyleColour::new(1, 2, 3, 255),
+            StyleColour::new(1, 2, 3, 254)
+        );
     }
 
     #[test]
     fn style_colour_rejects_bad_length_and_range() {
         for bad in ["[1,2]", "[1,2,3,4,5]"] {
-            let e = serde_json::from_str::<StyleColour>(bad).unwrap_err().to_string();
+            let e = serde_json::from_str::<StyleColour>(bad)
+                .unwrap_err()
+                .to_string();
             assert!(e.contains("3 or 4 values"), "{bad}: {e}");
         }
         assert!(serde_json::from_str::<StyleColour>("[1,2,256]").is_err());

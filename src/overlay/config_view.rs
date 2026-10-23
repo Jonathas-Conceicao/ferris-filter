@@ -11,7 +11,9 @@ use std::path::Path;
 
 use egui::{Align, Layout, RichText, vec2};
 
-use crate::models::config::{Cancelable, Style, StyleAction, StyleColour, StyleNameError, StyleSet};
+use crate::models::config::{
+    Cancelable, Style, StyleAction, StyleColour, StyleNameError, StyleSet,
+};
 use crate::settings;
 
 use super::body;

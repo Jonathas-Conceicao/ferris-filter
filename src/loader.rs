@@ -382,7 +382,6 @@ mod tests {
         assert!(e.contains("S.text") && e.contains("3 or 4 values"), "{e}");
     }
 
-
     #[test]
     fn styles_str_equals_file_loader() {
         let from_text = load_styles_str(&text("tests/fixtures/seed-styles.json"), "x").unwrap();

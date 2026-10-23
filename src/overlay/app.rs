@@ -6591,7 +6591,10 @@ Hide
         let state = app.config.as_ref().unwrap();
         assert!(state.is_dirty(), "edits make CONFIG unapplied");
         let edited = state.style("S").unwrap();
-        assert_eq!(edited.text, Some(crate::models::config::StyleColour::opaque(1, 2, 3)));
+        assert_eq!(
+            edited.text,
+            Some(crate::models::config::StyleColour::opaque(1, 2, 3))
+        );
         assert_eq!(edited.font, Some(20));
         assert_eq!(
             std::fs::read(&styles_path).unwrap(),

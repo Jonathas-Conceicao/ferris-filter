@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use crate::compile::{InputPaths, Source};
 use crate::loader::LoadError;
 use crate::models::config::{
-    Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
-    StyleColour, StyleSet,
+    Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleColour,
+    StyleNameError, StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
 use crate::overlay::strictness::{Strictness, TIER_LETTERS, strictness_of};
@@ -1283,7 +1283,10 @@ mod tests {
                 value: Some(crate::models::config::StyleColour::opaque(1, 2, 3))
             }
         ));
-        assert_eq!(s.style("S").unwrap().text, Some(crate::models::config::StyleColour::opaque(1, 2, 3)));
+        assert_eq!(
+            s.style("S").unwrap().text,
+            Some(crate::models::config::StyleColour::opaque(1, 2, 3))
+        );
         assert!(s.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
         assert!(s.badges("S").hide);
         assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Silent))));
@@ -1291,6 +1294,100 @@ mod tests {
         assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Normal))));
         assert_eq!(s.style("S").unwrap().drop_sound(), Some(DropSound::Normal));
         assert!(!s.edit_style("nope", StyleEdit::DropSound(Some(DropSound::Silent))));
+    }
+
+    fn colours_of(s: &ConfigState) -> Vec<[Option<StyleColour>; 3]> {
+        s.style_names()
+            .iter()
+            .map(|n| {
+                let st = s.style(n).unwrap();
+                [st.text, st.border, st.background]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn three_value_live_file_loads_alpha_255_and_is_not_an_edit() {
+        let dir = temp_root();
+        // A 3-value file that already has ids: nothing but the colour width differs from 4-value.
+        let four =
+            crate::loader::render_styles(crate::models::config::StyleSet::shipped_defaults());
+        let three = four.replace(",255]", "]");
+        assert_ne!(three, four);
+        fs::write(dir.path().join("styles.json"), &three).unwrap();
+        let s = ConfigState::load(dir.path()).unwrap();
+        assert_eq!(s.style("S").unwrap().text.unwrap().alpha(), 255);
+        assert_eq!(s.dirty_count(), 0);
+        assert!(!s.styles_dirty());
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed());
+        assert_eq!(w.styles_new, three.as_bytes());
+    }
+
+    #[test]
+    fn an_alpha_edit_is_dirty_written_four_value_and_reverts() {
+        let dir = temp_root();
+        let four =
+            crate::loader::render_styles(crate::models::config::StyleSet::shipped_defaults());
+        fs::write(dir.path().join("styles.json"), four.replace(",255]", "]")).unwrap();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        assert!(s.edit_style(
+            "S",
+            StyleEdit::Colour {
+                slot: ColourSlot::Text,
+                value: Some(StyleColour::new(255, 121, 198, 128)),
+            }
+        ));
+        assert_eq!(s.dirty_count(), 1);
+        let w = s.prepare_write().unwrap();
+        assert!(w.styles_changed());
+        let text = String::from_utf8(w.styles_new).unwrap();
+        assert!(text.contains("[255,121,198,128]"), "{text}");
+        // Every colour array is 4-value.
+        assert!(!text.contains("[255,121,198]"));
+        s.revert();
+        assert_eq!(s.dirty_count(), 0);
+        assert_eq!(s.style("S").unwrap().text.unwrap().alpha(), 255);
+    }
+
+    #[test]
+    fn reset_restores_alpha_and_defaults_check_sees_alpha() {
+        let dir = temp_root();
+        let defaults =
+            crate::loader::render_styles(crate::models::config::StyleSet::shipped_defaults());
+        fs::write(dir.path().join("styles.json"), &defaults).unwrap();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        assert!(s.styles_at_defaults());
+        assert!(s.edit_style(
+            "S",
+            StyleEdit::Colour {
+                slot: ColourSlot::Background,
+                value: Some(StyleColour::new(248, 248, 242, 100)),
+            }
+        ));
+        assert!(!s.styles_at_defaults());
+        s.reset_styles();
+        assert!(s.styles_at_defaults());
+        assert_eq!(s.style("S").unwrap().background.unwrap().alpha(), 255);
+    }
+
+    #[test]
+    fn strictness_leaves_colours_untouched() {
+        let (_d, mut s) = loaded();
+        assert!(s.edit_style(
+            "S",
+            StyleEdit::Colour {
+                slot: ColourSlot::Text,
+                value: Some(StyleColour::new(255, 121, 198, 90)),
+            }
+        ));
+        let before = colours_of(&s);
+        for level in crate::overlay::strictness::Strictness::ALL {
+            if level != crate::overlay::strictness::Strictness::Custom {
+                s.set_strictness(level);
+                assert_eq!(colours_of(&s), before, "{level:?}");
+            }
+        }
     }
 
     #[test]

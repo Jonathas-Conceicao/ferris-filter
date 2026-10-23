@@ -17,7 +17,8 @@
 use egui::{RichText, vec2};
 
 use crate::models::config::{
-    Beam, Cancelable, DropSound, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction, StyleColour,
+    Beam, Cancelable, DropSound, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction,
+    StyleColour,
 };
 use crate::skin::editor as ed;
 use crate::skin::fonts::regular;

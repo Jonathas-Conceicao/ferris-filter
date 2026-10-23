@@ -80,7 +80,11 @@ impl RequestLog {
     }
 
     pub fn record_sync(&mut self, requested: &str, returned: &str, now: u64) {
-        let name = if returned.is_empty() { requested } else { returned };
+        let name = if returned.is_empty() {
+            requested
+        } else {
+            returned
+        };
         self.sync.insert(
             requested.to_lowercase(),
             SyncEntry {
@@ -107,8 +111,7 @@ impl RequestLog {
     }
 
     pub fn cached_update(&self, app_version: &str, now: u64) -> Option<CheckResult> {
-        if !is_fresh(self.update_at, now)
-            || self.update_app_version.as_deref() != Some(app_version)
+        if !is_fresh(self.update_at, now) || self.update_app_version.as_deref() != Some(app_version)
         {
             return None;
         }
@@ -192,7 +195,10 @@ mod tests {
         let mut log = RequestLog::default();
         let l = "Rise of the Abyssal";
         log.record_sync(l, l, 100);
-        assert_eq!(log.sync_fake(l, Some("rise of the abyssal"), true, 110), Some(l.into()));
+        assert_eq!(
+            log.sync_fake(l, Some("rise of the abyssal"), true, 110),
+            Some(l.into())
+        );
         assert_eq!(log.sync_fake("Other", Some("Other"), true, 110), None);
         assert_eq!(log.sync_fake(l, Some(l), false, 110), None);
         assert_eq!(log.sync_fake(l, None, true, 110), None);
@@ -205,11 +211,19 @@ mod tests {
         let mut log = RequestLog::default();
         log.record_sync("rise of the abyssal", "Rise of the Abyssal", 100);
         assert_eq!(
-            log.sync_fake("rise of the abyssal", Some("Rise of the Abyssal"), true, 101),
+            log.sync_fake(
+                "rise of the abyssal",
+                Some("Rise of the Abyssal"),
+                true,
+                101
+            ),
             Some("Rise of the Abyssal".into())
         );
         log.record_sync("Standard", "Standard", 100);
-        assert!(log.sync_fake("standard", Some("Standard"), true, 101).is_some());
+        assert!(
+            log.sync_fake("standard", Some("Standard"), true, 101)
+                .is_some()
+        );
         assert_eq!(log.sync.len(), 2);
         log.record_sync("X", "", 100);
         assert_eq!(log.sync["x"].name, "X");

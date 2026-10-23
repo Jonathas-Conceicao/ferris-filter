@@ -36,7 +36,9 @@ mod user_agent_tests {
 
     #[test]
     fn cli_user_agent_is_its_own() {
-        assert!(CLI_USER_AGENT.starts_with(concat!("FerrisFilter-CLI/", env!("CARGO_PKG_VERSION"))));
+        assert!(
+            CLI_USER_AGENT.starts_with(concat!("FerrisFilter-CLI/", env!("CARGO_PKG_VERSION")))
+        );
         assert!(CLI_USER_AGENT.contains("github.com/Jonathas-Conceicao/ferris-filter"));
         assert!(!CLI_USER_AGENT.to_lowercase().contains("myfilter"));
         assert!(!USER_AGENT.starts_with("FerrisFilter-CLI"));

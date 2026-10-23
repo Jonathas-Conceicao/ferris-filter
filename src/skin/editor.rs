@@ -320,6 +320,13 @@ pub fn on_color(bg: Color32) -> Color32 {
     }
 }
 
+/// `c` (premultiplied) laid over the opaque `ground`.
+pub fn composite_over(c: Color32, ground: Color32) -> Color32 {
+    let k = 255 - c.a() as u32;
+    let ch = |top: u8, under: u8| (top as u32 + (under as u32 * k + 127) / 255).min(255) as u8;
+    Color32::from_rgb(ch(c.r(), ground.r()), ch(c.g(), ground.g()), ch(c.b(), ground.b()))
+}
+
 /// One of the Text / Border / Background cards: a box filled with the colour, its name on it
 /// ("Text", or "Text (none)" on the dark "none" ground). `width` of 0 fills the width.
 pub fn ff_colour_card(ui: &mut Ui, label: &str, color: Option<Color32>, width: f32) -> Response {
@@ -335,6 +342,19 @@ pub fn ff_colour_card_ex(
     width: f32,
     open: bool,
 ) -> Response {
+    ff_colour_card_tip(ui, label, color, width, open, None)
+}
+
+/// [`ff_colour_card_ex`] with an optional tooltip (the `R G B A` of a translucent colour). A
+/// translucent colour is painted over the card ground, not the panel behind it.
+pub fn ff_colour_card_tip(
+    ui: &mut Ui,
+    label: &str,
+    color: Option<Color32>,
+    width: f32,
+    open: bool,
+    tip: Option<&str>,
+) -> Response {
     let width = if width > 0.0 {
         width
     } else {
@@ -345,13 +365,14 @@ pub fn ff_colour_card_ex(
     let painter = ui.painter();
     let (text, text_color, none) = match color {
         Some(c) => {
+            painter.rect_filled(rect, CornerRadius::same(1), pal::INPUT_FILL);
             painter.rect_filled(rect, CornerRadius::same(1), c);
             painter.rect_filled(
                 Rect::from_min_max(rect.min, pos2(rect.max.x, rect.center().y)),
                 CornerRadius::same(1),
                 Color32::from_white_alpha(14),
             );
-            (label.to_owned(), on_color(c), false)
+            (label.to_owned(), on_color(composite_over(c, pal::INPUT_FILL)), false)
         }
         None => {
             painter.rect_filled(rect, CornerRadius::same(1), pal::INPUT_FILL);
@@ -388,12 +409,17 @@ pub fn ff_colour_card_ex(
         galley,
         text_color,
     );
-    // A shortened caption shows its full text on hover.
-    if cut {
+    // A shortened caption shows its full text on hover; a tip replaces it (joined when both).
+    let hover = match (tip, cut) {
+        (Some(t), true) => Some(format!("{text}: {t}")),
+        (Some(t), false) => Some(t.to_owned()),
+        (None, true) => Some(text),
+        (None, false) => None,
+    };
+    match hover {
         // Also in a disabled Ui (a read-only economy rule).
-        resp.on_hover_text(&text).on_disabled_hover_text(text)
-    } else {
-        resp
+        Some(h) => resp.on_hover_text(&h).on_disabled_hover_text(h),
+        None => resp,
     }
 }
 
@@ -637,6 +663,22 @@ pub fn ff_chip(ui: &mut Ui, label: &str, selected: &mut bool) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn translucent_card_caption_follows_the_composited_colour() {
+        let faint = Color32::from_rgba_unmultiplied(255, 255, 255, 20);
+        assert_eq!(
+            on_color(composite_over(faint, pal::INPUT_FILL)),
+            pal::VALUE
+        );
+        assert_ne!(
+            on_color(composite_over(Color32::WHITE, pal::INPUT_FILL)),
+            pal::VALUE
+        );
+        // An opaque colour composites to itself.
+        let c = Color32::from_rgb(10, 200, 30);
+        assert_eq!(composite_over(c, pal::INPUT_FILL), c);
+    }
 
     #[test]
     fn readable_text_on_light_and_dark_swatches() {

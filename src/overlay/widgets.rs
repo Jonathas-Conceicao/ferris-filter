@@ -4,7 +4,7 @@
 
 use super::text_entry::parse_base_type_entry;
 use crate::skin::colour_picker::{PickerEdit, PickerMode, colour_popup};
-use crate::skin::editor::{ff_colour_card_ex, ff_swatch};
+use crate::skin::editor::{ff_colour_card_tip, ff_swatch};
 use crate::skin::fonts::regular;
 use crate::skin::palette as pal;
 
@@ -368,12 +368,14 @@ pub fn colour_slot_rgba(
 ) -> SlotRgba {
     let open_id = ui.id().with(("ff-colour-slot-open", tag));
     let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-    let card = ff_colour_card_ex(
+    let tip = current.filter(|c| c[3] != 255).map(rgba_caption);
+    let card = ff_colour_card_tip(
         ui,
         label,
         current.map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])),
         width,
         open,
+        tip.as_deref(),
     );
     let name = format!("{label} colour");
     card.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));

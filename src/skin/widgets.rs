@@ -1961,9 +1961,12 @@ mod tests {
             field = ff_search_field(ui, &skin, id, &mut text, "hint", 300.0).rect;
         })
         .drop_without_applying_deltas();
-        let x = search_layout(Rect::from_min_size(field.min - vec2(SEARCH_TEXT_INSET, 3.0), vec2(300.0, 30.0)))
-            .clear_hit
-            .center();
+        let x = search_layout(Rect::from_min_size(
+            field.min - vec2(SEARCH_TEXT_INSET, 3.0),
+            vec2(300.0, 30.0),
+        ))
+        .clear_hit
+        .center();
         ctx.run_ui(click_at(x), |ui| {
             ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
         })
@@ -2308,19 +2311,14 @@ mod tests {
     #[test]
     fn reload_button_is_row_height_square() {
         let (ctx, skin) = setup();
-        let size = rect_of(&ctx, |ui| {
-            ff_reload_button(ui, &skin, "Refresh", true).rect
-        })
-        .size();
+        let size = rect_of(&ctx, |ui| ff_reload_button(ui, &skin, "Refresh", true).rect).size();
         assert_eq!(size, Vec2::splat(ROW_HEIGHT));
     }
 
     #[test]
     fn reload_button_clicks_only_when_enabled() {
         let (ctx, skin) = setup();
-        let rect = rect_of(&ctx, |ui| {
-            ff_reload_button(ui, &skin, "Refresh", true).rect
-        });
+        let rect = rect_of(&ctx, |ui| ff_reload_button(ui, &skin, "Refresh", true).rect);
         let mut on = false;
         ctx.run_ui(click_at(rect.center()), |ui| {
             on = ff_reload_button(ui, &skin, "Refresh", true).clicked();

@@ -26,7 +26,7 @@ use crate::skin::icons::{FLAG_ICON_SIZE, FlagIcon, flag_icon, paint_flag_icon};
 use crate::skin::palette as pal;
 use crate::skin::slice;
 use crate::skin::widgets::{
-    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_text_field,
+    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_search_field,
     ff_text_field_id, ff_x_button, row_background,
 };
 
@@ -1490,7 +1490,8 @@ fn search_row_rects(
                 (ui.available_width() - add_w - sec_w - 8.0 - crate::skin::widgets::FIELD_GAP)
                     .max(40.0);
             let start_x = ui.next_widget_position().x;
-            let resp = ff_text_field(ui, query, &hint, width);
+            let search_id = ui.id().with("rules-search");
+            let resp = ff_search_field(ui, skin, search_id, query, &hint, width);
             // The field is 30pt high and `width` wide, centred on the edit.
             let field = egui::Rect::from_min_max(
                 egui::pos2(start_x, resp.rect.center().y - 15.0),
@@ -1501,28 +1502,6 @@ fn search_row_rects(
                 && ui.input(|i| i.key_pressed(egui::Key::Escape))
             {
                 query.clear();
-            }
-            if !query.is_empty() {
-                // Clear sits inside the field's right edge, so the row never grows.
-                let clear = egui::Rect::from_min_max(
-                    egui::pos2(field.max.x - 52.0, field.min.y),
-                    egui::pos2(field.max.x - 2.0, field.max.y),
-                );
-                let r = ui.interact(clear, ui.id().with("ff-search-clear"), Sense::click());
-                ui.painter().text(
-                    egui::pos2(clear.max.x - 6.0, clear.center().y),
-                    egui::Align2::RIGHT_CENTER,
-                    "Clear",
-                    regular(15.0),
-                    if r.hovered() {
-                        pal::HEADING
-                    } else {
-                        pal::MUTED
-                    },
-                );
-                if r.clicked() {
-                    query.clear();
-                }
             }
             // The buttons are placed from the row's right edge, so their position does not depend
             // on where the field leaves the cursor; the field is sized to leave `FIELD_GAP`.

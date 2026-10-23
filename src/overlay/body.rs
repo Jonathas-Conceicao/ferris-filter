@@ -1312,7 +1312,14 @@ pub(crate) fn picker_popup(
                 .unwrap_or_default();
             if searchable {
                 let w = ui.available_width();
-                let r = widgets_skin::ff_text_field(ui, &mut query, hint_text, w);
+                let r = widgets_skin::ff_search_field(
+                    ui,
+                    &skin,
+                    popup_id.with("query-edit"),
+                    &mut query,
+                    hint_text,
+                    w,
+                );
                 if !ui.data(|d| d.get_temp::<bool>(focus_id)).unwrap_or(false) {
                     r.request_focus();
                     ui.data_mut(|d| d.insert_temp(focus_id, true));
@@ -6236,7 +6243,7 @@ mod tests {
         let start = production.find("pub(crate) fn picker_popup").unwrap();
         let end = production[start..].find("\n}\n").unwrap() + start;
         let body = &production[start..end];
-        assert!(body.contains("ff_text_field("));
+        assert!(body.contains("ff_search_field("));
         assert!(body.contains("section_head("));
         assert!(body.contains("paint_box_behind("));
         assert!(!production.contains("CollapsingHeader"));

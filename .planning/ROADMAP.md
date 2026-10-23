@@ -174,7 +174,11 @@ Plans:
   2. After an error the next click goes out at once, and an update check that found a newer release is never throttled
   3. The request times and the league list survive a restart through a small state file in the FerrisFilter folder; deleting it lifts the wait
   4. The CLI is never throttled and sends a `FerrisFilter-CLI/<ver> (...)` user agent while the overlay keeps `FerrisFilter/<ver> (...)`
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 46-01-PLAN.md — Pure throttle module (RequestLog, ff-state.json load/save), CLI user agent split, CLI-no-throttle guard
+- [ ] 46-02-PLAN.md — Overlay gates and records for Sync, league list and update check; CLAUDE.md; deferred checks
 
 ### Phase 47: Customizable Hotkey
 **Goal**: The player chooses the show / hide chord

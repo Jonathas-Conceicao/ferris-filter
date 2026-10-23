@@ -13,6 +13,8 @@ human review and input to be stacked here and presented at the end, before Phase
 
 ## Art substitutes for review (Phase 48 / 47)
 
+- Phase 47: the keybind button uses the game's own Options art (`options menu/optionsbuttonborder.dds` + `optionsbutton.dds` -> `assets/poe2/options/keybind_border.png` / `keybind_plate.png`, trimmed 60x60); the generic-button fallback was not needed. The border's white mask interior is keyed out by a new ff-art manifest option `key_white = [30, 30, 32]` (flood fill + colour-to-alpha against white), so the grey fringe becomes a soft dark vignette just inside the gold line instead of a pale halo. Check the Overlay row against `.planning/research/ui-refs/options-keybind-rows.png`: plate tint `GOLD` at rest, `#E6C882` lit, 20-texel nine-slice corners.
+
 ## Open gaps and judgement calls
 
 - Phase 43: the style colour type is `StyleColour([u8; 4])` (no Default or From<[u8;3]>; Eq/Hash derived for Phase 44). Phase 44 must treat a bare 3-token `SetBackgroundColor` as alpha 240, which is not equal to an alpha-255 style.
@@ -26,3 +28,4 @@ human review and input to be stacked here and presented at the end, before Phase
 - Phase 43: the UI review (43-UI-REVIEW.md, advisory, 17/24) also suggests a unit test that the `R G B A` swatch tooltip shows only below alpha 255, and the review info items IN-01..IN-05 (dead `ff_colour_card`, always-true `PickerMode::alpha`, "length 5" error text) are left for a later cleanup.
 - Phase 47: a saved chord that fails to register for a reason other than "in use" falls back to Ctrl+Shift+Z with the warning `` `hotkey` <chord> could not be registered (<reason>), so Ctrl+Shift+Z is used `` (UI-SPEC only words the in-use case). The tray failure reason for an in-use chord reads `in use by another app`.
 - Phase 47: an invalid saved `hotkey` alone gives the status warning `ff-settings.json could not be fully used; `hotkey` is not a usable key combination, so Ctrl+Shift+Z is used.` (the UI-SPEC sentence wrapped in the same form as the other key warnings).
+- Phase 47: the keybind border's interior is cleared at extract time (new ff-art `key_white` option) rather than at draw time: egui only alpha-blends, and the irregular white interior reaches into the nine-slice edge pieces, so no draw-time trick removes it without covering the gold corners. Threshold 32 chosen over 96: it also keys the 32-96 grey fringe, which would otherwise stay opaque grey.

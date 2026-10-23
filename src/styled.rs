@@ -98,6 +98,8 @@ fn normalize(text: &str) -> Option<String> {
 }
 
 /// Rewrite one block to `style`. `Ok(false)` when it already matches semantically.
+/// Replacing the action lines drops any trailing `# comment` on them; that is intentional
+/// (Auto Detect, DETECT-04, relies on it).
 pub fn rewrite_block(doc: &mut Document, id: BlockId, style: &Style) -> Result<bool, EditError> {
     let targets = style_action_lines(style);
     let want_kw = match style.action {
@@ -137,6 +139,9 @@ pub fn rewrite_block(doc: &mut Document, id: BlockId, style: &Style) -> Result<b
     if snapshot.is_some() {
         doc.set_block_keyword(id, want_kw)?;
     }
+    // Replacing the action lines drops any trailing `# comment` on them. This is intentional:
+    // Auto Detect (DETECT-04) relies on trailing comments not blocking a style match, so
+    // revisit both if it changes.
     if let Err(e) = doc.splice_body(id, &action_lines, after, &targets) {
         if let Some(snap) = snapshot {
             *doc = snap;
@@ -602,5 +607,32 @@ mod tests {
         );
         assert_eq!(rep.retagged, 1);
         assert!(rep.unknown.is_empty());
+    }
+
+    #[test]
+    fn rewrite_block_trailing_comment_is_dropped_on_rewrite() {
+        let mut doc = parse(b"Show\n  SetFontSize 20 # note\n").unwrap();
+        let id = doc.blocks().next().unwrap().id();
+        let set = styles();
+        assert!(rewrite_block(&mut doc, id, set.get("E").unwrap()).unwrap());
+        let out = doc.serialize();
+        assert!(
+            !out.contains("# note") && !out.contains("SetFontSize 20"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn rewrite_block_trailing_comment_kept_when_already_matching() {
+        let set = styles();
+        let e = set.get("E").unwrap();
+        let mut text = String::from("Show\n");
+        for l in style_action_lines(e) {
+            text.push_str(&format!("  {l} # note\n"));
+        }
+        let mut doc = parse(text.as_bytes()).unwrap();
+        let id = doc.blocks().next().unwrap().id();
+        assert!(!rewrite_block(&mut doc, id, e).unwrap());
+        assert_eq!(doc.serialize(), text);
     }
 }

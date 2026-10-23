@@ -101,6 +101,18 @@ pub struct Skin {
     /// Reload glyph (`uiimages/common/buttonreloadhover`): a round arrow, drawn mirrored and turned
     /// on `icon_button` (tinted at rest, as is when hovered).
     pub reload: TextureHandle,
+    /// Social-panel group plate shown while a group is expanded (`buttoncollapse*`: chevron up
+    /// over a dot). Normal, hover, pressed.
+    pub toggle_collapse: [TextureHandle; 3],
+    /// Social-panel group plate shown while a group is collapsed (`buttonexpand*`: dot over
+    /// chevron down). Normal, hover, pressed.
+    pub toggle_expand: [TextureHandle; 3],
+    /// Stone bar with bronze frame (`ingame/npcmenubar*`): left cap, stretched middle, right cap.
+    pub bar: ThreeSlice,
+    /// Round clear X of the search fields (`common/buttoncleartext*`). Normal, hover, pressed.
+    pub clear: [TextureHandle; 3],
+    /// Magnifier glyph (`common/buttonsearch*`), no plate. Normal (muted rest), hover.
+    pub search: [TextureHandle; 2],
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -164,6 +176,30 @@ impl Skin {
                 tex!(ctx, "poe2/common/icon_button_pressed.png"),
             ],
             reload: tex!(ctx, "poe2/common/reload.png"),
+            toggle_collapse: [
+                tex!(ctx, "poe2/common/toggle_collapse_normal.png"),
+                tex!(ctx, "poe2/common/toggle_collapse_hover.png"),
+                tex!(ctx, "poe2/common/toggle_collapse_pressed.png"),
+            ],
+            toggle_expand: [
+                tex!(ctx, "poe2/common/toggle_expand_normal.png"),
+                tex!(ctx, "poe2/common/toggle_expand_hover.png"),
+                tex!(ctx, "poe2/common/toggle_expand_pressed.png"),
+            ],
+            bar: three(
+                tex!(ctx, "poe2/common/bar_left.png"),
+                tex!(ctx, "poe2/common/bar_middle.png"),
+                tex!(ctx, "poe2/common/bar_right.png"),
+            ),
+            clear: [
+                tex!(ctx, "poe2/common/clear_normal.png"),
+                tex!(ctx, "poe2/common/clear_hover.png"),
+                tex!(ctx, "poe2/common/clear_pressed.png"),
+            ],
+            search: [
+                tex!(ctx, "poe2/common/search_normal.png"),
+                tex!(ctx, "poe2/common/search_hover.png"),
+            ],
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),
                 tex!(ctx, "poe2/common/combo_arrow_hover.png"),
@@ -210,6 +246,18 @@ mod tests {
         assert_eq!(skin.minimap_icons.size(), [12 * 64, 11 * 64]);
         assert_eq!(skin.ferris_about.size()[0], 336);
         assert!(skin.ferris_about.size()[1] > 0);
+        for t in skin.toggle_collapse.iter().chain(&skin.toggle_expand) {
+            assert_eq!(t.size(), [54, 64]);
+        }
+        assert_eq!(skin.bar.left.size(), [132, 75]);
+        assert_eq!(skin.bar.middle.size(), [111, 75]);
+        assert_eq!(skin.bar.right.size(), [151, 75]);
+        for t in &skin.clear {
+            assert_eq!(t.size(), [36, 36]);
+        }
+        for t in &skin.search {
+            assert_eq!(t.size(), [48, 49]);
+        }
     }
 
     #[test]

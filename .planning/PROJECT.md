@@ -8,10 +8,35 @@ FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a
 
 `generate` turns the config into a correct, deterministic PoE2 loot filter — the same translation currently done by hand, done by the tool instead. If nothing else works, this must.
 
-## Next Milestone
+## Current Milestone: v0.7.2 Small UI Improvements
 
-Not started; run `/gsd-new-milestone`. Candidates: the Deferred list below and the ROADMAP
-backlog (999.3 online filter publishing, 999.4 economy change summary, 999.18 NVIDIA overlay).
+**Goal:** Polish the overlay with game-art controls and drag reordering, make styles complete
+(alpha) and able to adopt a filter's existing styling, and make economy names and network use
+friendlier.
+
+**Target features:**
+- **Style alpha** — style colours (text / border / background) carry alpha, as the game allows:
+  `styles.json`, the style editor's colour picker and every emitter. Styles without alpha load and
+  write exactly as before (`generate` output and fixtures unchanged).
+- **Auto Detect styles** (Config tab) — each non-economy rule's actions + Show/Hide are read into
+  the full style struct and compared on every parameter. A full match with a built-in (current
+  values, user edits included) or an existing custom style tags the rule with it (a bare `Show` is
+  `unchanged`); each remaining distinct style becomes a new `Custom Style N` and its rules are
+  tagged. Rules whose actions no style can express (repeated lines, unsupported keywords) stay
+  Custom; disabled rules count, a `# ff:group` counts once, tagged rules are skipped. Purely an
+  in-memory edit until Apply; Revert / Reload work as usual; no disk write.
+- **Drag-and-drop reordering (999.26)** of rules and custom styles with the author's
+  `assets/custom/icon_reoder_*` button art (normal / hover / pressed), replacing the arrows.
+- **Section headers in the game's Social-panel style (999.23)** — toggle plate (up = expanded,
+  down = collapsed) and bar style; titles stay left-aligned.
+- **Search field icons (999.24, 999.25)** — clear X and magnifying glass.
+- **Customizable show/hide hotkey (999.19)** on the Config tab.
+- **Price range in economy rule names (999.27)**, e.g. `E tier Essences < 2 chaos`.
+- **Request throttling (999.20)** — the overlay's poe.ninja and GitHub requests at most once per
+  hour each, persisted across restarts; the CLI is not throttled but sends its own user agent.
+- **Release Review** (last phase) — version 0.7.2.
+
+**Kept in the backlog:** 999.16 (move rules far at once), 999.15 (sound preview).
 
 <details>
 <summary>✅ v0.7 Initial Public Release and Strictness Selector — SHIPPED 2026-10-18</summary>
@@ -144,7 +169,10 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** not started; candidates under Next Milestone above.
+**Since v0.7.0:** v0.7.1 (2026-10-19) links the C runtime statically, so `ff.exe` no longer
+needs the Visual C++ Redistributable.
+
+**Current milestone:** v0.7.2 Small UI Improvements (see Current Milestone above).
 
 **Open at close (v0.7):** no blockers. Deferred: the live Check for updates run (needs a release
 newer than 0.7.0), the VERIFICATION files left `human_needed` and older HUMAN-UAT files (STATE.md
@@ -194,7 +222,8 @@ untouched code remain (`result_large_err` and others).
 
 ### Active
 
-None until the next milestone defines them.
+v0.7.2 requirements are defined in `.planning/REQUIREMENTS.md` (style alpha, Auto Detect styles,
+drag reordering, section headers, search icons, hotkey, economy names, throttling).
 
 ### Deferred (next-milestone candidates)
 
@@ -357,4 +386,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-18 after the v0.7 milestone*
+*Last updated: 2026-10-23 at the start of milestone v0.7.2*

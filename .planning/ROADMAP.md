@@ -334,6 +334,10 @@ Plans:
 the game's alert sounds 1-16 (extracted by `ff-art` from the install) and a custom sound file such
 as `uwu.mp3` from the game folder, at the chosen volume. Needs an audio playback dependency in `ff`
 (e.g. rodio). Dropped from v0.6 by the author on 2026-10-16.
+**Asset decision (author, 2026-10-23):** the extracted alert sounds are small; they will be
+committed to the repo, documented in `assets/README.md`, and built into the binary like the other
+assets (`include_bytes!`), not read from the game install at run time. Kept in the backlog when
+v0.7.2 was scoped.
 **Requirements:** TBD
 **Plans:** TBD
 

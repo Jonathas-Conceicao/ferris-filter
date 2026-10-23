@@ -2663,7 +2663,6 @@ pub(crate) fn rule_style_view(
         sound: None,
         sound_volume_written: false,
         drop_sound: None,
-        alpha: true,
     };
     let mut b = StyleBinding {
         keyword,
@@ -6667,7 +6666,7 @@ mod tests {
         let (_, _, e) = entries_of(src);
         let (view, b) = rule_style_view(&e, BlockKeyword::Hide);
         assert_eq!(view.visibility, Vis::Hide);
-        assert!(view.alpha);
+        assert_eq!(view.background.map(|c| c.rgba), Some([9, 9, 9, 128]));
         assert_eq!(
             view.text,
             Some(Rgba {

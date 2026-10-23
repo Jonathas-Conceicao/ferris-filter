@@ -344,57 +344,6 @@ pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4], had_alpha: bool) -> Optio
     colour_chip(ui, rgba, had_alpha, &rgba_caption(rgba), mode)
 }
 
-/// What a style colour slot did this frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SlotResult {
-    Unchanged,
-    Set([u8; 3]),
-    Cleared,
-}
-
-/// One of the style editor's Text / Border / Background cards over the opaque picker (no Alpha,
-/// with a None tile). `current` is the slot (`None` = unset, shown as `<label> (none)`); `seed` is
-/// what an unset slot opens on. Opening or closing without a change returns `Unchanged`.
-pub fn colour_slot(
-    ui: &mut egui::Ui,
-    tag: &str,
-    label: &str,
-    current: Option<[u8; 3]>,
-    seed: [u8; 3],
-    width: f32,
-) -> SlotResult {
-    let open_id = ui.id().with(("ff-colour-slot-open", tag));
-    let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-    let card = ff_colour_card_ex(
-        ui,
-        label,
-        current.map(|c| egui::Color32::from_rgb(c[0], c[1], c[2])),
-        width,
-        open,
-    );
-    let name = format!("{label} colour");
-    card.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
-    let mode = PickerMode {
-        alpha: false,
-        allow_none: true,
-    };
-    let out = colour_popup(
-        ui,
-        &card,
-        tag,
-        current.map(|c| [c[0], c[1], c[2], 255]),
-        [seed[0], seed[1], seed[2], 255],
-        mode,
-    );
-    let now_open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&card));
-    ui.data_mut(|d| d.insert_temp(open_id, now_open));
-    match out {
-        Some(PickerEdit::Set(c)) => SlotResult::Set([c[0], c[1], c[2]]),
-        Some(PickerEdit::Clear) => SlotResult::Cleared,
-        None => SlotResult::Unchanged,
-    }
-}
-
 /// What a translucent (rule) colour slot did this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotRgba {
@@ -404,7 +353,7 @@ pub enum SlotRgba {
     Cleared,
 }
 
-/// [`colour_slot`] over the picker with an Alpha slider (a rule's colour lines can be
+/// One of the Text / Border / Background cards over the picker with an Alpha slider (colour lines can be
 /// translucent). `had_alpha` is the line's current form (4 tokens); the form it had when the
 /// picker opened is kept while the picker stays open, so Escape restores a 3-token line byte for
 /// byte. Returns `Set` only when the colour differs from `current`.
@@ -450,30 +399,6 @@ pub fn colour_slot_rgba(
         Some(PickerEdit::Clear) if current.is_some() => SlotRgba::Cleared,
         _ => SlotRgba::Unchanged,
     }
-}
-
-/// `R {r} G {g} B {b}` -- the opaque swatch caption and tooltip.
-pub fn rgb_caption(rgb: [u8; 3]) -> String {
-    format!("R {} G {} B {}", rgb[0], rgb[1], rgb[2])
-}
-
-/// An opaque RGB chip that opens the picker without an alpha channel. `Style` stores RGB and the
-/// emitter always writes alpha 255, so a picker with alpha would show a translucency the filter
-/// never emits. Returns `Some(new)` only when the picked RGB differs from `rgb`.
-pub fn colour_swatch_rgb(ui: &mut egui::Ui, rgb: [u8; 3]) -> Option<[u8; 3]> {
-    let mode = PickerMode {
-        alpha: false,
-        allow_none: false,
-    };
-    colour_chip(
-        ui,
-        [rgb[0], rgb[1], rgb[2], 255],
-        false,
-        &rgb_caption(rgb),
-        mode,
-    )
-    .map(|(c, _)| [c[0], c[1], c[2]])
-    .filter(|c| *c != rgb)
 }
 
 /// What one frame of [`chip_list`] asks the caller to do.
@@ -1519,11 +1444,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn rgb_caption_formats_three_channels() {
-        assert_eq!(rgb_caption([255, 121, 198]), "R 255 G 121 B 198");
-    }
-
     // ---- skinned colour picker wiring ----
 
     fn click_events(pos: Pos2) -> Vec<Event> {
@@ -1632,37 +1552,19 @@ mod tests {
         assert_eq!(out, Some((start, false)));
     }
 
-    #[test]
-    fn colour_swatch_rgb_has_no_alpha_slider() {
-        let ctx = headless_ctx();
-        let frame = |ctx: &egui::Context, events: Vec<Event>| {
-            crate::skin::colour_picker::probes_clear();
-            let mut out = None;
-            ctx.run_ui(picker_input(events), |ui| {
-                out = colour_swatch_rgb(ui, [1, 2, 3]);
-            })
-            .drop_without_applying_deltas();
-            out
-        };
-        frame(&ctx, vec![]);
-        crate::skin::colour_picker::request_open(&ctx, "rule");
-        for _ in 0..3 {
-            assert_eq!(frame(&ctx, vec![]), None);
-        }
-        assert!(crate::skin::colour_picker::probe_rect("square").is_some());
-        assert!(crate::skin::colour_picker::probe_rect("alpha").is_none());
-        let pink = crate::skin::colour_picker::probe_rect("quick:Pink").unwrap();
-        assert_eq!(
-            frame(&ctx, click_events(pink.center())),
-            Some([255, 121, 198])
-        );
-    }
-
-    fn slot_frame(ctx: &egui::Context, events: Vec<Event>, current: Option<[u8; 3]>) -> SlotResult {
+    fn slot_frame(ctx: &egui::Context, events: Vec<Event>, current: Option<[u8; 4]>) -> SlotRgba {
         crate::skin::colour_picker::probes_clear();
-        let mut out = SlotResult::Unchanged;
+        let mut out = SlotRgba::Unchanged;
         ctx.run_ui(picker_input(events), |ui| {
-            out = colour_slot(ui, "text", "Text", current, [248, 248, 242], 110.0);
+            out = colour_slot_rgba(
+                ui,
+                "text",
+                "Text",
+                current,
+                true,
+                [248, 248, 242, 255],
+                110.0,
+            );
         })
         .drop_without_applying_deltas();
         out
@@ -1670,35 +1572,36 @@ mod tests {
 
     #[test]
     fn colour_slot_idle_and_open_emit_nothing_set_or_unset() {
-        for current in [Some([1, 2, 3]), None] {
+        for current in [Some([255, 121, 198, 255]), None] {
             let ctx = headless_ctx();
-            assert_eq!(slot_frame(&ctx, vec![], current), SlotResult::Unchanged);
+            assert_eq!(slot_frame(&ctx, vec![], current), SlotRgba::Unchanged);
             crate::skin::colour_picker::request_open(&ctx, "text");
             for _ in 0..3 {
-                assert_eq!(slot_frame(&ctx, vec![], current), SlotResult::Unchanged);
+                assert_eq!(slot_frame(&ctx, vec![], current), SlotRgba::Unchanged);
             }
             assert!(crate::skin::colour_picker::probe_rect("square").is_some());
-            assert!(crate::skin::colour_picker::probe_rect("alpha").is_none());
+            assert!(crate::skin::colour_picker::probe_rect("alpha").is_some());
             assert!(crate::skin::colour_picker::probe_rect("none").is_some());
         }
     }
 
     #[test]
-    fn colour_slot_quick_pick_sets_and_none_tile_clears() {
+    fn colour_slot_quick_pick_keeps_alpha_and_none_tile_clears() {
         let ctx = headless_ctx();
-        slot_frame(&ctx, vec![], None);
+        let cur = Some([1, 2, 3, 128]);
+        slot_frame(&ctx, vec![], cur);
         crate::skin::colour_picker::request_open(&ctx, "text");
         for _ in 0..3 {
-            slot_frame(&ctx, vec![], None);
+            slot_frame(&ctx, vec![], cur);
         }
         let pink = crate::skin::colour_picker::probe_rect("quick:Pink").unwrap();
         assert_eq!(
-            slot_frame(&ctx, click_events(pink.center()), None),
-            SlotResult::Set([255, 121, 198])
+            slot_frame(&ctx, click_events(pink.center()), cur),
+            SlotRgba::Set([255, 121, 198, 128], true)
         );
 
         let ctx = headless_ctx();
-        let cur = Some([1, 2, 3]);
+        let cur = Some([1, 2, 3, 255]);
         slot_frame(&ctx, vec![], cur);
         crate::skin::colour_picker::request_open(&ctx, "text");
         for _ in 0..3 {
@@ -1707,7 +1610,7 @@ mod tests {
         let none = crate::skin::colour_picker::probe_rect("none").unwrap();
         assert_eq!(
             slot_frame(&ctx, click_events(none.center()), cur),
-            SlotResult::Cleared
+            SlotRgba::Cleared
         );
     }
 }

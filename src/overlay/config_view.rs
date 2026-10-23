@@ -1731,6 +1731,39 @@ mod tests {
     }
 
     #[test]
+    fn style_edit_for_keeps_the_alpha() {
+        use crate::overlay::config_state::ColourSlot;
+        let intent = StyleIntent::Colour {
+            slot: ColourSlot::Text,
+            value: Some([1, 2, 3, 77]),
+            opened_had_alpha: false,
+        };
+        assert_eq!(
+            style_edit_for(intent),
+            StyleEdit::Colour {
+                slot: ColourSlot::Text,
+                value: Some(StyleColour::new(1, 2, 3, 77)),
+            }
+        );
+    }
+
+    #[test]
+    fn label_look_paints_translucent_colours_unmultiplied() {
+        let mut s = Style::blank_show();
+        s.background = Some(StyleColour::new(40, 42, 54, 128));
+        s.text = Some(StyleColour::new(255, 121, 198, 90));
+        let look = label_look(&s, false);
+        assert_eq!(
+            look.background,
+            Some(egui::Color32::from_rgba_unmultiplied(40, 42, 54, 128))
+        );
+        assert_eq!(
+            look.text,
+            Some(egui::Color32::from_rgba_unmultiplied(255, 121, 198, 90))
+        );
+    }
+
+    #[test]
     fn label_look_reads_the_style() {
         let (_d, state) = loaded();
         let s = label_look(state.style("S").unwrap(), false);

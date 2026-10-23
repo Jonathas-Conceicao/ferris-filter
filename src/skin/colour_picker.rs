@@ -28,7 +28,7 @@ const TILE_GAP: f32 = 4.0;
 /// What a picker slot supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PickerMode {
-    /// Show the alpha slider (rule colour actions; styles are opaque).
+    /// Show the alpha slider (rule and style colour slots).
     pub alpha: bool,
     /// Show the None tile (a style slot can be empty; a rule colour line is removed instead).
     pub allow_none: bool,

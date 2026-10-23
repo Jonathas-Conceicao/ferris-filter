@@ -65,8 +65,6 @@ pub struct StyleView {
     pub sound_volume_written: bool,
     /// `None` = off (no line), else `DisableDropSound` / `EnableDropSound`.
     pub drop_sound: Option<DropSound>,
-    /// Colour cards with an Alpha slider (rules) or opaque ones (styles store RGB).
-    pub alpha: bool,
 }
 
 impl StyleView {
@@ -91,7 +89,6 @@ impl StyleView {
             sound: style.sound.clone(),
             sound_volume_written: true,
             drop_sound: style.drop_sound(),
-            alpha: true,
         }
     }
 
@@ -288,7 +285,7 @@ pub fn show(
             ),
         ] {
             let current = view.colour(slot);
-            let intent = if view.alpha {
+            let intent = {
                 let cur = current.map(|c| c.rgba);
                 let had = current.is_some_and(|c| c.had_alpha);
                 let seed = [seed[0], seed[1], seed[2], 255];
@@ -303,21 +300,6 @@ pub fn show(
                         slot,
                         value: None,
                         opened_had_alpha: had,
-                    },
-                }
-            } else {
-                let cur = current.map(|c| [c.rgba[0], c.rgba[1], c.rgba[2]]);
-                match widgets::colour_slot(ui, tag, label, cur, seed, width) {
-                    widgets::SlotResult::Unchanged => continue,
-                    widgets::SlotResult::Set(c) => StyleIntent::Colour {
-                        slot,
-                        value: Some([c[0], c[1], c[2], 255]),
-                        opened_had_alpha: false,
-                    },
-                    widgets::SlotResult::Cleared => StyleIntent::Colour {
-                        slot,
-                        value: None,
-                        opened_had_alpha: false,
                     },
                 }
             };
@@ -1035,6 +1017,14 @@ mod tests {
     use super::*;
     use crate::filter::BlockKeyword;
     use crate::overlay::rules::WorkingFilter;
+
+    #[test]
+    fn from_style_carries_the_style_alpha() {
+        let mut s = Style::blank_show();
+        s.text = Some(crate::models::config::StyleColour::new(10, 20, 30, 90));
+        let v = StyleView::from_style(&s);
+        assert_eq!(v.text.map(|c| c.rgba), Some([10, 20, 30, 90]));
+    }
 
     fn every_group_style() -> Style {
         let mut s = Style::blank_show();

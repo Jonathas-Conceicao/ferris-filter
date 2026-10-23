@@ -57,16 +57,21 @@
 
 ### Request throttling (THR)
 
-- [ ] **THR-01**: The overlay sends each kind of request at most once per hour: Sync economy (per
+- [x] **THR-01
+**: The overlay sends each kind of request at most once per hour: Sync economy (per
   league), the league list, and Check for updates.
-- [ ] **THR-02**: A click inside the hour does not reach the server and shows the same outcome
+- [x] **THR-02**: A click inside the hour does not reach the server and shows the same outcome
   from the last result (a fake refresh); it does not advance Last sync.
-- [ ] **THR-03**: Only a successful request starts the hour; after an error the next click goes out.
-- [ ] **THR-04**: The request times (and the league list) persist across restarts in a small state
+- [x] **THR-03
+**: Only a successful request starts the hour; after an error the next click goes out.
+- [x] **THR-04
+**: The request times (and the league list) persist across restarts in a small state
   file in the FerrisFilter folder; deleting that file lifts the wait (supported, not documented).
-- [ ] **THR-05**: An update check that found a newer release is not throttled; only "up to date"
+- [x] **THR-05
+**: An update check that found a newer release is not throttled; only "up to date"
   is.
-- [ ] **THR-06**: The CLI is not throttled and sends its own user agent
+- [x] **THR-06
+**: The CLI is not throttled and sends its own user agent
   (`FerrisFilter-CLI/<ver> (...)`); the overlay keeps `FerrisFilter/<ver> (...)`.
 
 ### Show/hide hotkey (KEY)
@@ -166,12 +171,12 @@
 | ENAME-01 | Phase 45 | Pending |
 | ENAME-02 | Phase 45 | Pending |
 | ENAME-03 | Phase 45 | Pending |
-| THR-01 | Phase 46 | Pending |
-| THR-02 | Phase 46 | Pending |
-| THR-03 | Phase 46 | Pending |
-| THR-04 | Phase 46 | Pending |
-| THR-05 | Phase 46 | Pending |
-| THR-06 | Phase 46 | Pending |
+| THR-01 | Phase 46 | Complete |
+| THR-02 | Phase 46 | Complete |
+| THR-03 | Phase 46 | Complete |
+| THR-04 | Phase 46 | Complete |
+| THR-05 | Phase 46 | Complete |
+| THR-06 | Phase 46 | Complete |
 | KEY-01 | Phase 47 | Pending |
 | KEY-02 | Phase 47 | Pending |
 | KEY-03 | Phase 47 | Pending |

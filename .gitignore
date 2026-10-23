@@ -30,6 +30,7 @@ desktop.ini
 
 # Per-user overlay settings (selected game-folder filter). Never committed.
 /ff-settings.json
+/ff-state.json
 
 # Per-user live config. The overlay's Apply writes these; when absent, styles-default.json /
 # tiers-default.json (committed) are read instead. Delete one to reset it to the defaults.

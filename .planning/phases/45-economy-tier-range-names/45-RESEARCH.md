@@ -250,13 +250,14 @@ Shipped cutoffs [VERIFIED: repo files]: `tiers-default.json` F 0.1, E 0.5, D 2, 
 | A1 | For a mixed-unit tiers file, the label uses the upper neighbour's own unit (e.g. `B tier X < 1 div`) | Pattern 1 | Cosmetic only; shipped files are single-unit |
 | A2 | `div` is an acceptable unit word if a user's tiers use `"unit": "div"` (CONTEXT names only chaos / exalt) | Pattern 1 | Cosmetic; no shipped file uses div |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Cutoffs below 0.005 render as `0`.**
    - What we know: locked format says at most 2 decimals; no shipped non-bottom cutoff is that small.
    - What's unclear: whether a user-edited tiny cutoff should show more precision.
    - Recommendation: keep the locked rule; mention in the plan's verification list rather than special-casing.
-2. **Ties in normalized floors** (two tiers with the same chaos-equivalent floor, only possible across units): the stable sort keeps file order, same as `assign_tier`. The lower of the tied pair would read `< X` where X equals its own floor. Accept; not reachable with shipped files.
+   - RESOLVED: keep the locked rule; recorded as a judgement call in the deferred list.
+2. **Ties in normalized floors** (two tiers with the same chaos-equivalent floor, only possible across units): the stable sort keeps file order, same as `assign_tier`. The lower of the tied pair would read `< X` where X equals its own floor. Accept; not reachable with shipped files. RESOLVED: accepted; recorded in the deferred list.
 
 ## Environment Availability
 

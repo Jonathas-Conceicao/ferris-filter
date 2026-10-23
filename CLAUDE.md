@@ -306,7 +306,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > I/O. Sync economy (per league) and the league list each go out at most once an hour after a
 > success: a click inside the hour shows the last outcome without contacting poe.ninja and does not
 > change Last sync, and the league list comes from the cache. Sync still goes out when `prices.json`
-> is missing, unusable or holds another league, and a failure never starts the hour. The overlay
+> is missing, unusable or holds another league, and after a failed Sync the next click for that league goes out. The overlay
 > identifies itself as `FerrisFilter/<ver> (...)`; `ff-cli` and `ferrisfilter` send
 > `FerrisFilter-CLI/<ver> (...)` and are never throttled. It writes prices and nothing else — `dynamic.filter` still changes only on **Apply**, so the
 > button is safe to press mid-map and the new economy lands on the next Apply you choose to make.

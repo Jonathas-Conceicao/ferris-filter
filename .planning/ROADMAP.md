@@ -185,7 +185,13 @@ Plans:
   2. A captured chord is a pending Config edit (Revert discards it); Apply saves it in `ff-settings.json` and it works at once without a restart, still only while the game or the overlay is in the foreground
   3. A chord with no modifier is refused (bare F1-F24 allowed), and a chord another app owns is refused with the old binding kept and the status line saying why
   4. A reset button restores `Ctrl+Shift+Z`, an invalid saved chord falls back to it with a warning, and the tray tooltip shows the live chord
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 47-01-PLAN.md — Pure core: chord type and capture state machine, registrar seam and live runtime, `hotkey` settings key
+- [ ] 47-02-PLAN.md — Keybind art from the game (ff-art key_white option) and the ff_keybind_button skin widget
+- [ ] 47-03-PLAN.md — Pending Config edit, ff-settings.json as an all-or-none Apply target, register-before-write swap, start-up fallback, live tray/header texts
+- [ ] 47-04-PLAN.md — Overlay section on CONFIG, capture wiring, screenshot flags, CLAUDE.md, deferred checks
 **UI hint**: yes
 
 ### Phase 48: Game-Art Widgets

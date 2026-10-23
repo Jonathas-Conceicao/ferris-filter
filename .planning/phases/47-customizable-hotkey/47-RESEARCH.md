@@ -486,13 +486,15 @@ Tooltip texts: `FerrisFilter — <chord> to toggle` / `FerrisFilter — <chord> 
 | A3 | `GetAsyncKeyState(VK_INSERT)` reliably distinguishes Ctrl+Insert from Ctrl+C at the time the Copy event is processed (key still down) | Pattern 4 | Ctrl+Insert captured as Ctrl+C; rare chord |
 | A4 | F12 registers on typical machines without a debugger | Pitfall 9 | refusal message instead; harmless |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact `key_white` threshold and seed for the border art**
    - Known: interior shape and fringe from the dump. Unclear: best threshold for a clean edge.
    - Recommendation: implement, run `cargo ff-art`, compare a debug screenshot (`--tab config`) with `options-keybind-rows.png`, record the chosen values and final tints in the summary.
+   - RESOLVED: Plan 02 Task 1 (47-02-PLAN.md) adds the `key_white = [seed_x, seed_y, threshold]` ff-art option, starts at `[30, 30, 96]`, tunes the threshold over 96 / 128 / 160, falls back to clear rects plus `draw_center = false` if the edge still shows a pale ring, and records the final values; Plan 04 Task 3 compares the screenshots and records the final tints.
 2. **README / portable-readme wording**
    - Human-written files; recommend a minimal accurate edit (chord "by default, changeable on the Config tab") or leave a note for the Release Review. Planner decides; do not add a CHANGELOG entry.
+   - RESOLVED: Plan 04 Task 3 (47-04-PLAN.md) leaves README.md, installer/portable-readme.txt and CHANGELOG.md untouched and adds a `Phase 47:` item to AUTONOMOUS-V072-DEFERRED.md so the wording is settled at the Release Review.
 
 ## Environment Availability
 

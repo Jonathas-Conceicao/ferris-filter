@@ -60,6 +60,8 @@ pub enum ConfigAction {
     /// A strictness level was clicked: a pending edit of the tier styles' visibility.
     SetStrictness(crate::overlay::strictness::Strictness),
     AddStyle(String),
+    /// Auto Detect: tag untagged rules with matching styles, add the rest as custom styles.
+    AutoDetect,
     EditStyle {
         name: String,
         edit: StyleEdit,
@@ -200,6 +202,8 @@ pub struct ConfigViewCtx<'a> {
     pub indicator: &'a str,
     /// Current value of the reload-after-Apply setting.
     pub reload_after_apply: bool,
+    /// A filter with a usable style set is loaded (Auto Detect is live).
+    pub can_auto_detect: bool,
     /// The shell skin for section headings (`None` in headless tests).
     pub skin: Option<&'a crate::skin::Skin>,
 }
@@ -847,6 +851,26 @@ fn show_styles(
                 cfg.style_draft = Some(String::new());
                 cfg.focus_draft = true;
             }
+            // The 8pt gap is the Ui's own item spacing.
+            let enabled = ctx.can_auto_detect;
+            let mut detect = crate::skin::widgets::ff_button_ex(
+                ui,
+                &skin,
+                "Auto Detect",
+                112.0,
+                enabled,
+                false,
+            );
+            let tip = if enabled {
+                "Name the styling already in this filter: tag rules that match a style and add the rest as custom styles."
+            } else {
+                "No filter loaded."
+            };
+            detect = detect.on_hover_text(tip).on_disabled_hover_text(tip);
+            probe("auto-detect", detect.rect);
+            if detect.clicked() && enabled {
+                actions.push(ConfigAction::AutoDetect);
+            }
         });
     });
     // With no custom styles there is nothing for a header to label.
@@ -1339,6 +1363,7 @@ mod tests {
             filter_damaged: false,
             indicator: "",
             reload_after_apply: true,
+            can_auto_detect: true,
             skin: None,
         }
     }
@@ -2065,6 +2090,57 @@ mod tests {
             a.left() > h.right(),
             "button sits to the right of the heading"
         );
+    }
+
+    #[test]
+    fn auto_detect_button_sits_left_of_add_style() {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let vctx = view_ctx(None, &users, &refs);
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        let rect = |tag: &str| {
+            let v: Vec<_> = probes.iter().filter(|(t, _)| *t == tag).collect();
+            assert_eq!(v.len(), 1, "{tag}");
+            v[0].1
+        };
+        let (d, a, h) = (
+            rect("auto-detect"),
+            rect("add-style"),
+            rect("custom-heading"),
+        );
+        // 112 is the minimum; the label (small caps 17pt + 44pt padding) makes it 139.5.
+        assert!(d.width() >= 112.0);
+        assert!((a.left() - d.right() - 8.0).abs() < 0.5, "{d:?} {a:?}");
+        assert!(d.top() < h.bottom() && h.top() < d.bottom());
+    }
+
+    #[test]
+    fn auto_detect_disabled_still_has_a_probe_and_no_action() {
+        let (_d, state) = loaded();
+        let users = HashMap::new();
+        let refs = BTreeSet::new();
+        let (ctx, _) = headless();
+        let mut cfg = ConfigUi::default();
+        let mut vctx = view_ctx(None, &users, &refs);
+        vctx.can_auto_detect = false;
+        let mut actions = Vec::new();
+        drain_probes();
+        ctx.run_ui(tall_input(), |ui| {
+            show_styles(ui, &state, &mut cfg, &vctx, &mut actions);
+        })
+        .drop_without_applying_deltas();
+        let probes = drain_probes();
+        assert!(probes.iter().any(|(t, _)| *t == "auto-detect"));
+        assert!(!actions.contains(&ConfigAction::AutoDetect));
     }
 
     #[test]

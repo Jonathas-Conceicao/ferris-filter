@@ -2823,15 +2823,28 @@ impl OverlayApp {
     /// default is still a pending edit and Apply writes it explicitly: the warning then stops on
     /// the next launch instead of staying stuck.
     ///
-    /// With no chord registered at all (the default owned elsewhere, or no hotkey service) and no
-    /// stale saved value, the base is the chord the button shows, so capturing it again drops the
-    /// edit without a Config Revert that would also discard the style edits (review WR-07).
+    /// With no chord registered at all (the default owned elsewhere, or no hotkey service) the
+    /// base is `None` too; [`Self::pick_hotkey`] then treats a pick of the shown chord on its own
+    /// (see [`Self::no_live_chord`]).
     pub(crate) fn hotkey_base(&self) -> Option<Chord> {
         if self.saved_hotkey_stale() {
             None
         } else {
-            Some(self.hotkey.live().unwrap_or(self.hotkey.shown()))
+            self.hotkey.live()
         }
+    }
+
+    /// No chord is registered and the saved value is not stale: the shown chord is the default
+    /// (or the saved one) that failed at start-up, or there is no hotkey service.
+    fn no_live_chord(&self) -> bool {
+        self.hotkey.live().is_none() && !self.saved_hotkey_stale()
+    }
+
+    /// With no live chord, nothing pending, and a registrar: picking the shown chord makes it
+    /// pending so Apply retries the registration (review iteration 3, WR-01). Reset stays live
+    /// for the same reason.
+    fn hotkey_retry_possible(&self) -> bool {
+        self.no_live_chord() && self.hotkey.can_register()
     }
 
     /// The saved `hotkey` is not the chord that runs: invalid, or valid but not registered (a
@@ -2847,13 +2860,30 @@ impl OverlayApp {
 
     /// Makes `chord` the pending show / hide hotkey, or clears the edit when it is the base (the
     /// applied chord). A real change is a CONFIG edit, so the last Apply message goes.
+    ///
+    /// With no live chord (and no stale saved value), picking the chord the button shows drops a
+    /// pending edit when there is one (review WR-07: no Config Revert needed, which would also
+    /// discard the style edits). With nothing pending it makes that chord pending so Apply
+    /// retries the registration, when a registrar exists; with no hotkey service it stays clear
+    /// (review iteration 3, WR-01).
     fn pick_hotkey(&mut self, chord: Chord) {
         let base = self.hotkey_base();
+        let no_live = self.no_live_chord();
+        let retry = self.hotkey_retry_possible();
+        let shown = self.hotkey.shown();
         let Ok(config) = &mut self.config else {
             return;
         };
         let before = config.hotkey_pending();
-        config.set_hotkey(chord, base);
+        if no_live && chord == shown {
+            if before.is_none() && retry {
+                config.set_hotkey(chord, None);
+            } else {
+                config.clear_hotkey();
+            }
+        } else {
+            config.set_hotkey(chord, base);
+        }
         if config.hotkey_pending() != before {
             self.clear_events_on_edit();
         }
@@ -2980,8 +3010,11 @@ impl OverlayApp {
         let chord = pending.unwrap_or(self.hotkey.shown());
         let default = super::chord::DEFAULT;
         // A stale saved chord keeps Reset live until the default is pending, so it can be saved.
-        let reset_enabled =
-            chord != default || (self.saved_hotkey_stale() && pending != Some(default));
+        // With no chord registered (the default failed at start-up) Reset stays live while
+        // nothing is pending, so Apply can retry the registration (review iteration 3, WR-01).
+        let reset_enabled = chord != default
+            || (self.saved_hotkey_stale() && pending != Some(default))
+            || (self.hotkey_retry_possible() && pending.is_none());
         let (caption, caption_kind) = match &self.capture {
             None => (chord.text(), HotkeyCaption::Rest),
             Some(state) => match state.rejected {
@@ -8635,15 +8668,20 @@ Hide
     fn the_header_close_tooltip_and_base_follow_the_live_chord() {
         let (mut app, _ctx, _home, _game) = folder_app(None, &[]);
         assert_eq!(app.hotkey.shown(), crate::overlay::chord::DEFAULT);
-        // An inert runtime has no live chord: the shown chord is the base, so capturing it again
-        // drops the edit (WR-07).
-        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
-        let base = app.hotkey_base();
-        let config = app.config.as_mut().unwrap();
-        config.set_hotkey(CTRL_ALT_K, base);
-        assert!(config.hotkey_dirty());
-        config.set_hotkey(crate::overlay::chord::DEFAULT, base);
-        assert!(!config.hotkey_dirty());
+        // An inert runtime has no live chord: capturing the shown chord again drops the edit
+        // (WR-07), and with no hotkey service it never becomes pending on its own.
+        assert_eq!(app.hotkey_base(), None);
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(crate::overlay::chord::DEFAULT);
+        assert_eq!(pending_hotkey(&app), None);
+        app.pick_hotkey(crate::overlay::chord::DEFAULT);
+        assert_eq!(pending_hotkey(&app), None);
+        assert!(
+            !app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
         let log = std::rc::Rc::default();
         let reg = crate::overlay::hotkey::FakeRegistrar {
             taken: Default::default(),
@@ -9265,6 +9303,92 @@ Hide
                 .unwrap()
                 .reset_enabled
         );
+    }
+
+    /// A fake registrar (never the OS) whose taken set the test keeps a handle to, so "the other
+    /// app let go" can be played out on the runtime the app already holds.
+    struct SharedTakenRegistrar {
+        taken: std::rc::Rc<
+            std::cell::RefCell<std::collections::HashSet<crate::overlay::chord::Chord>>,
+        >,
+        inner: crate::overlay::hotkey::FakeRegistrar,
+    }
+
+    impl crate::overlay::hotkey::HotkeyRegistrar for SharedTakenRegistrar {
+        fn register(
+            &mut self,
+            chord: crate::overlay::chord::Chord,
+        ) -> Result<(), crate::overlay::hotkey::RegisterError> {
+            self.inner.taken = self.taken.borrow().clone();
+            self.inner.register(chord)
+        }
+
+        fn unregister(&mut self, chord: crate::overlay::chord::Chord) {
+            self.inner.unregister(chord);
+        }
+    }
+
+    #[test]
+    fn a_default_that_failed_at_start_up_can_be_retried_by_capture_or_reset() {
+        let default = crate::overlay::chord::DEFAULT;
+        // No saved key; Ctrl+Shift+Z is held by another app at start-up.
+        let taken = std::rc::Rc::new(std::cell::RefCell::new(
+            [default]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+        ));
+        let log: HotkeyLog = std::rc::Rc::default();
+        let reg = SharedTakenRegistrar {
+            taken: taken.clone(),
+            inner: crate::overlay::hotkey::FakeRegistrar {
+                taken: Default::default(),
+                log: log.clone(),
+            },
+        };
+        let (rt, warning) =
+            crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), None);
+        assert_eq!(*log.borrow(), ["register Ctrl+Shift+Z"]);
+        log.borrow_mut().clear();
+        let (mut app, ctx, home) = hotkey_app("{}", rt, warning);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), default);
+        assert_eq!(app.hotkey_base(), None);
+        // Nothing pending: Reset is live so the registration can be retried.
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        assert!(
+            !app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        // Capturing the shown chord again drops that edit (WR-07) ...
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // ... and a pending other chord is dropped the same way.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // With nothing pending, capturing the shown chord makes it pending again.
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), Some(default));
+
+        assert!(log.borrow().is_empty(), "picking never registers");
+
+        // The other app let go: Apply registers the default.
+        taken.borrow_mut().clear();
+        assert!(app.run_apply(&ctx, false));
+        assert_eq!(*log.borrow(), ["register Ctrl+Shift+Z"]);
+        assert_eq!(app.hotkey.live(), Some(default));
+        assert_eq!(app.hotkey.failure_line(), None);
+        assert_eq!(pending_hotkey(&app), None);
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+        assert_eq!(app.hotkey_base(), Some(default));
     }
 
     #[test]

@@ -146,6 +146,12 @@ impl HotkeyRuntime {
         self.live
     }
 
+    /// Whether a later Apply can register a chord at all (a registrar exists): false for an
+    /// inert runtime and after [`HotkeyRuntime::release`].
+    pub fn can_register(&self) -> bool {
+        self.registrar.is_some()
+    }
+
     /// The `GlobalHotKeyEvent::id` of a press of the registered chord.
     pub fn live_id(&self) -> Option<u32> {
         self.live.map(|c| c.id())

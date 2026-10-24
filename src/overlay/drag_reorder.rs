@@ -115,16 +115,9 @@ pub fn style_gap_for_y(bounds: &[f32], y: f32) -> usize {
     nearest_slot(bounds, y, |_| true).unwrap_or(0)
 }
 
-/// Dropping custom style `src` on gap `gap` changes nothing (the gap above or below it).
-pub fn style_noop(src: usize, gap: usize) -> bool {
-    gap == src || gap == src + 1
-}
-
-/// Final position (among the custom styles) of style `src` dropped on `gap`: the gaps below the
-/// source shift up by one once it is taken out.
-pub fn style_gap_to_index(src: usize, gap: usize) -> usize {
-    if gap > src { gap - 1 } else { gap }
-}
+// The custom-style gap maths lives beside `StyleSet::move_custom_to` in the model layer, which
+// must not depend on the overlay; the style table uses it through this re-export.
+pub use crate::models::config::{style_gap_to_index, style_noop};
 
 #[cfg(test)]
 mod tests {

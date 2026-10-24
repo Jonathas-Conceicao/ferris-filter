@@ -1019,10 +1019,10 @@ impl StyleSet {
             return false;
         };
         let gap = gap.min(slots.len());
-        if crate::overlay::drag_reorder::style_noop(src, gap) {
+        if style_noop(src, gap) {
             return false;
         }
-        let dest = crate::overlay::drag_reorder::style_gap_to_index(src, gap);
+        let dest = style_gap_to_index(src, gap);
         // Rotate the run between src and dest with adjacent swaps of the custom slots.
         if dest < src {
             for k in (dest..src).rev() {
@@ -1394,6 +1394,17 @@ fn deserialize_present_value<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<serde_json::Value>, D::Error> {
     serde_json::Value::deserialize(deserializer).map(Some)
+}
+
+/// Dropping custom style `src` on gap `gap` changes nothing (the gap above or below it).
+pub fn style_noop(src: usize, gap: usize) -> bool {
+    gap == src || gap == src + 1
+}
+
+/// Final position (among the custom styles) of style `src` dropped on `gap`: the gaps below the
+/// source shift up by one once it is taken out.
+pub fn style_gap_to_index(src: usize, gap: usize) -> usize {
+    if gap > src { gap - 1 } else { gap }
 }
 
 // ---------------------------------------------------------------------------

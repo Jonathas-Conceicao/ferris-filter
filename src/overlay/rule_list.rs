@@ -26,8 +26,8 @@ use crate::skin::icons::{FLAG_ICON_SIZE, FlagIcon, flag_icon, paint_flag_icon};
 use crate::skin::palette as pal;
 use crate::skin::slice;
 use crate::skin::widgets::{
-    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_search_field,
-    ff_text_field_id, ff_x_button, row_background,
+    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_drag_handle, ff_scroll_area_viewport,
+    ff_search_field, ff_text_field_id, ff_x_button, row_background,
 };
 
 const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so this rule cannot be turned on. You can still move or delete it.";
@@ -88,6 +88,24 @@ pub struct ListUi {
     pub section_focus: bool,
     /// One-shot: scroll the list to the top (set when a section is added at the top).
     pub scroll_top: bool,
+    /// The rule drag in progress, if any.
+    pub drag: Option<DragState>,
+}
+
+/// A list-level drag of a rule row. `handle` is the egui id captured at `drag_started`: the row's
+/// id scope includes [`ListUi::epoch`], which changes when the expanded row collapses, so the
+/// handle's own id is not stable but the captured one is what egui keeps dragging (research
+/// Pitfall 2). `injected` is a pointer position set only by the debug screenshot mode (None
+/// otherwise); when set the egui drag checks are skipped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DragState {
+    pub src: BlockId,
+    pub handle: egui::Id,
+    /// The window had focus when the drag started (losing it afterwards cancels the drag).
+    pub had_focus: bool,
+    pub injected: Option<egui::Pos2>,
+    /// The boundary a release would drop on right now (valid and not a no-op), if any.
+    pub last_slot: Option<usize>,
 }
 
 /// A card without a line of its own to point at.
@@ -133,6 +151,7 @@ impl Default for ListUi {
             section_draft: String::new(),
             section_focus: false,
             scroll_top: false,
+            drag: None,
         }
     }
 }
@@ -158,8 +177,17 @@ impl ListUi {
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
+        self.drag = None;
         self.row_epoch = self.row_epoch.wrapping_add(1);
         self.forget_card_state();
+    }
+
+    /// Drop a drag in progress (window concealed, focus lost, Reload): nothing is changed. Also
+    /// tells egui to stop dragging the handle.
+    pub fn cancel_drag(&mut self, ctx: &egui::Context) {
+        if self.drag.take().is_some() {
+            ctx.stop_dragging();
+        }
     }
 
     /// Orphan every card's egui temp state (see [`ListUi::epoch`]).
@@ -1129,25 +1157,25 @@ fn draw_row(
             .layout(Layout::right_to_left(Align::Center)),
     );
     right.spacing_mut().item_spacing.x = 4.0;
-    let can_down = reorder_enabled && row.can_move_down;
-    let can_up = reorder_enabled && row.can_move_up;
-    let down = ff_arrow(&mut right, skin, false, can_down);
-    let up = ff_arrow(&mut right, skin, true, can_up);
-    if !reorder_enabled {
-        down.on_hover_text("Clear the search to reorder");
-        up.on_hover_text("Clear the search to reorder");
-    } else {
-        if down.clicked() {
-            actions.push(RowAction::Move(row.id, Dir::Down));
-            list.pending_scroll = Some(row.id);
-        }
-        if up.clicked() {
-            actions.push(RowAction::Move(row.id, Dir::Up));
-            list.pending_scroll = Some(row.id);
-        }
+    let dragging_this = list.drag.as_ref().is_some_and(|d| d.src == row.id);
+    let handle = ff_drag_handle(&mut right, skin, reorder_enabled, dragging_this);
+    if handle.drag_started() && reorder_enabled && list.drag.is_none() {
+        // Every expanded row collapses at drag start (not only the dragged one): the row heights
+        // are then all ROW_H and no inner scroll area can take the scroll delta (Pitfall 8).
+        list.drag = Some(DragState {
+            src: row.id,
+            handle: handle.id,
+            had_focus: right.ctx().input(|i| i.focused),
+            injected: None,
+            last_slot: None,
+        });
+        list.expanded = None;
+        list.confirm_delete = None;
+        right.ctx().request_repaint();
     }
-    let mut arrows_w = right.min_rect().width();
+    // A tap on the handle is consumed by it and does nothing (it is not a row click).
     right.add_space(4.0);
+    let mut arrows_w = right.min_rect().width();
     // WR-02: a rule that matches every item but is followed by more rules. It sits next to the
     // arrows, outside the flag fold, and takes its width out of the flag budget.
     if working.shadowing().contains(&row.id) {
@@ -2094,15 +2122,16 @@ Show
 
     #[test]
     fn flag_budget_keeps_label_minimum() {
-        assert!(flag_budget(517.0, 36.0) >= 120.0);
-        assert_eq!(flag_budget(2000.0, 36.0), FLAG_BUDGET);
-        assert!(flag_budget(300.0, 36.0) < 120.0);
-        assert_eq!(flag_budget(100.0, 36.0), 0.0);
+        let hw = crate::skin::widgets::DRAG_HANDLE_SIZE + 4.0;
+        assert!(flag_budget(517.0, hw) >= 120.0);
+        assert_eq!(flag_budget(2000.0, hw), FLAG_BUDGET);
+        assert!(flag_budget(300.0, hw) < 120.0);
+        assert_eq!(flag_budget(100.0, hw), 0.0);
         // At any width the label keeps its minimum: width - fixed parts - budget >= LABEL_MIN_W
         // whenever the budget was cut.
         let w = 400.0;
-        let fixed = 2.0 * ROW_PAD + CHECK_W + INDEX_W + SHOW_W + 24.0 + 36.0 + 8.0;
-        assert!(w - fixed - flag_budget(w, 36.0) >= LABEL_MIN_W - 0.01);
+        let fixed = 2.0 * ROW_PAD + CHECK_W + INDEX_W + SHOW_W + 24.0 + hw + 8.0;
+        assert!(w - fixed - flag_budget(w, hw) >= LABEL_MIN_W - 0.01);
     }
 
     #[test]
@@ -2469,8 +2498,8 @@ Show
             }
         };
         let y = row_h + 38.0;
-        // Control: the blank area far past the text has always expanded the row.
-        click(&mut list, Pos2::new(500.0, y));
+        // Control: the blank area past the text (left of the handle) has always expanded the row.
+        click(&mut list, Pos2::new(420.0, y));
         assert_eq!(list.expanded, Some(wf.rows()[1].id), "blank-area click");
         list.expanded = None;
         run_frame(&ctx, input(vec![]), &wf, &mut list, true);
@@ -2499,37 +2528,143 @@ Show
         assert!(ctx.memory(|m| m.focused()).is_some());
     }
 
+    /// Press at `pos`, then move `dy` further down over the next frames.
+    fn press_events(pos: Pos2) -> Vec<Event> {
+        vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::default(),
+            },
+        ]
+    }
+
+    /// Row 0's handle sweep: does a press and a 10pt drag at `x` start a drag?
+    fn drag_starts_at(wf: &WorkingFilter, reorder: bool, x: f32) -> (bool, Vec<RowAction>) {
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        let y = row_height() / 2.0;
+        run_frame(&ctx, input(vec![]), wf, &mut list, reorder);
+        run_frame(
+            &ctx,
+            input(press_events(Pos2::new(x, y))),
+            wf,
+            &mut list,
+            reorder,
+        );
+        let mut actions = vec![];
+        for step in 1..=3 {
+            let (f, _) = run_frame(
+                &ctx,
+                input(vec![Event::PointerMoved(Pos2::new(
+                    x,
+                    y + 5.0 * step as f32,
+                ))]),
+                wf,
+                &mut list,
+                reorder,
+            );
+            actions.extend(f.actions);
+        }
+        (list.drag.is_some(), actions)
+    }
+
     #[test]
-    fn arrows_do_nothing_when_reorder_is_disabled_and_work_when_enabled() {
+    fn handle_disabled_while_searching_and_starts_a_drag_when_enabled() {
         let wf = filter_of(5);
         let sweep = |reorder: bool| -> bool {
-            let ctx = headless_ctx();
-            let mut list = ListUi::default();
-            let (_, row_h) = run_frame(&ctx, input(vec![]), &wf, &mut list, reorder);
-            let y = row_h / 2.0;
-            let mut any_move = false;
+            let mut any = false;
             let mut x = 380.0;
             while x < 533.0 {
-                let (frame, _) = run_frame(
-                    &ctx,
-                    input(click_events(Pos2::new(x, y))),
-                    &wf,
-                    &mut list,
-                    reorder,
-                );
-                any_move |= frame
-                    .actions
-                    .iter()
-                    .any(|a| matches!(a, RowAction::Move(..)));
+                let (started, actions) = drag_starts_at(&wf, reorder, x);
+                assert!(actions.is_empty(), "a drag start emits no action");
+                any |= started;
                 x += 3.0;
             }
-            any_move
+            any
         };
-        assert!(!sweep(false), "disabled reorder must not emit Move");
+        assert!(!sweep(false), "disabled reorder must not start a drag");
         assert!(
             sweep(true),
-            "enabled reorder must emit Move somewhere on the row"
+            "enabled reorder must start a drag on the handle"
         );
+    }
+
+    #[test]
+    fn drag_start_collapses_every_expanded_row() {
+        let wf = filter_of(5);
+        let mut found = false;
+        let mut x = 380.0;
+        while x < 533.0 && !found {
+            let ctx = headless_ctx();
+            let mut list = ListUi {
+                expanded: Some(wf.rows()[3].id),
+                ..Default::default()
+            };
+            let y = row_height() / 2.0;
+            run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+            run_frame(
+                &ctx,
+                input(press_events(Pos2::new(x, y))),
+                &wf,
+                &mut list,
+                true,
+            );
+            for step in 1..=3 {
+                run_frame(
+                    &ctx,
+                    input(vec![Event::PointerMoved(Pos2::new(
+                        x,
+                        y + 5.0 * step as f32,
+                    ))]),
+                    &wf,
+                    &mut list,
+                    true,
+                );
+            }
+            if let Some(d) = list.drag {
+                found = true;
+                assert_eq!(d.src, wf.rows()[0].id);
+                assert!(list.expanded.is_none());
+            }
+            x += 3.0;
+        }
+        assert!(found);
+    }
+
+    #[test]
+    fn a_tap_on_the_handle_does_nothing() {
+        let wf = filter_of(5);
+        let mut hx = None;
+        let mut x = 380.0;
+        while x < 533.0 {
+            if drag_starts_at(&wf, true, x).0 {
+                hx = Some(x);
+                break;
+            }
+            x += 3.0;
+        }
+        let x = hx.expect("a handle x");
+        let ctx = headless_ctx();
+        let open = wf.rows()[2].id;
+        let mut list = ListUi {
+            expanded: Some(open),
+            ..Default::default()
+        };
+        let y = row_height() / 2.0;
+        run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        let (f, _) = run_frame(
+            &ctx,
+            input(click_events(Pos2::new(x, y))),
+            &wf,
+            &mut list,
+            true,
+        );
+        assert!(f.actions.is_empty());
+        assert!(list.drag.is_none());
+        assert_eq!(list.expanded, Some(open), "the tap is not a row click");
     }
 
     /// WR-07: collapsing or switching the expanded row orphans the old row's card state, so a
@@ -2583,6 +2718,13 @@ Show
         list.pending_defences.insert(id);
         list.pending_simple_defences.insert(id);
         list.advanced_defences.insert(id);
+        list.drag = Some(DragState {
+            src: id,
+            handle: egui::Id::new("h"),
+            had_focus: true,
+            injected: None,
+            last_slot: None,
+        });
         let epoch = list.epoch;
         list.clear_ids();
         assert_ne!(
@@ -2601,6 +2743,7 @@ Show
         assert!(list.pending_defences.is_empty());
         assert!(list.pending_simple_defences.is_empty());
         assert!(list.advanced_defences.is_empty());
+        assert!(list.drag.is_none());
     }
 
     #[test]

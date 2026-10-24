@@ -881,7 +881,7 @@ fn apply_row_actions_folding(
             RowAction::RemoveSection(_) | RowAction::MoveSection(..)
         );
         let is_duplicate = matches!(action, RowAction::Duplicate(_));
-        let is_move = matches!(action, RowAction::Move(..));
+        let is_move = matches!(action, RowAction::Move(..) | RowAction::MoveTo { .. });
         let deleted = match &action {
             RowAction::Delete(id) => Some(*id),
             _ => None,
@@ -3702,7 +3702,11 @@ impl eframe::App for OverlayApp {
                         let _ = win::dock_left(window, shell::WIDTH);
                         win::reveal(window)
                     }
-                    visibility::Effect::Conceal => win::conceal(window),
+                    visibility::Effect::Conceal => {
+                        // A drag never outlives the window being shown.
+                        self.list.cancel_drag(ui.ctx());
+                        win::conceal(window)
+                    }
                 }
             }
         }

@@ -2847,27 +2847,34 @@ impl OverlayApp {
         self.no_live_chord() && self.hotkey.can_register()
     }
 
-    /// The saved `hotkey` is not the chord that runs: invalid, or valid but not registered (a
-    /// start-up fallback). Reset stays live then, so the default can be saved explicitly.
+    /// The saved `hotkey` is not the chord the overlay uses: invalid, or valid but different
+    /// from the registered chord (a start-up fallback). With nothing registered it is compared
+    /// with the shown chord instead, so a saved chord that merely failed to register (taken by
+    /// another app, or no hotkey service) is not stale (review iteration 4, WR-01). Reset stays
+    /// live while stale, so the default can be saved explicitly.
     fn saved_hotkey_stale(&self) -> bool {
-        let live = self.hotkey.live();
+        let target = self.hotkey.live().unwrap_or(self.hotkey.shown());
         self.settings.hotkey_invalid
             || self
                 .settings
                 .saved_hotkey()
-                .is_some_and(|saved| Some(saved) != live)
+                .is_some_and(|saved| saved != target)
     }
 
     /// Makes `chord` the pending show / hide hotkey, or clears the edit when it is the base (the
     /// applied chord). A real change is a CONFIG edit, so the last Apply message goes.
     ///
+    /// With no live chord, picking the chord that is already pending drops the edit, whatever
+    /// the saved value (review iteration 4, WR-01): Apply refuses it while the chord cannot be
+    /// registered, and the Config Revert would also discard the style edits.
+    ///
     /// With no live chord (and no stale saved value), picking the chord the button shows drops a
-    /// pending edit when there is one (review WR-07: no Config Revert needed, which would also
-    /// discard the style edits). With nothing pending it makes that chord pending so Apply
-    /// retries the registration, when a registrar exists; with no hotkey service it stays clear
-    /// (review iteration 3, WR-01).
+    /// pending edit when there is one (review WR-07). With nothing pending it makes that chord
+    /// pending so Apply retries the registration, when a registrar exists; with no hotkey
+    /// service it stays clear (review iteration 3, WR-01).
     fn pick_hotkey(&mut self, chord: Chord) {
         let base = self.hotkey_base();
+        let nothing_live = self.hotkey.live().is_none();
         let no_live = self.no_live_chord();
         let retry = self.hotkey_retry_possible();
         let shown = self.hotkey.shown();
@@ -2875,7 +2882,9 @@ impl OverlayApp {
             return;
         };
         let before = config.hotkey_pending();
-        if no_live && chord == shown {
+        if nothing_live && before == Some(chord) {
+            config.clear_hotkey();
+        } else if no_live && chord == shown {
             if before.is_none() && retry {
                 config.set_hotkey(chord, None);
             } else {
@@ -9389,6 +9398,123 @@ Hide
             Some("Ctrl+Shift+Z")
         );
         assert_eq!(app.hotkey_base(), Some(default));
+    }
+
+    #[test]
+    fn a_saved_default_that_fails_again_can_be_dropped_or_retried() {
+        let default = crate::overlay::chord::DEFAULT;
+        // Saved "Ctrl+Shift+Z" (written by an earlier retry), held by another app at start-up.
+        let taken = std::rc::Rc::new(std::cell::RefCell::new(
+            [default]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+        ));
+        let log: HotkeyLog = std::rc::Rc::default();
+        let reg = SharedTakenRegistrar {
+            taken: taken.clone(),
+            inner: crate::overlay::hotkey::FakeRegistrar {
+                taken: Default::default(),
+                log: log.clone(),
+            },
+        };
+        let (rt, warning) =
+            crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), Some(default));
+        log.borrow_mut().clear();
+        let (mut app, ctx, home) = hotkey_app(r#"{"hotkey":"Ctrl+Shift+Z"}"#, rt, warning);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), default);
+        assert!(
+            !app.saved_hotkey_stale(),
+            "it failed to register, it is not stale"
+        );
+        // Capture the default: pending; capture it again: dropped.
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // A pending other chord is dropped by capturing it again, too.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+        // Reset is live with nothing pending and stages the retry.
+        assert!(
+            app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        assert!(log.borrow().is_empty(), "picking never registers");
+
+        // The other app let go: Apply registers the default.
+        taken.borrow_mut().clear();
+        assert!(app.run_apply(&ctx, false));
+        assert_eq!(*log.borrow(), ["register Ctrl+Shift+Z"]);
+        assert_eq!(app.hotkey.live(), Some(default));
+        assert_eq!(pending_hotkey(&app), None);
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+    }
+
+    #[test]
+    fn a_saved_chord_and_the_default_both_taken_never_trap_the_edit() {
+        let default = crate::overlay::chord::DEFAULT;
+        let (rt, warning, log) = fake_runtime(&[CTRL_ALT_K, default], Some(CTRL_ALT_K));
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, warning);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), default);
+        assert!(
+            app.saved_hotkey_stale(),
+            "the saved chord is not the shown one"
+        );
+        // Reset stages the default; capturing it again drops the edit.
+        assert!(
+            app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // Any other chord: capturing it again drops it.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+        assert!(log.borrow().is_empty());
+    }
+
+    #[test]
+    fn no_hotkey_service_with_a_saved_chord_never_traps_the_edit() {
+        let default = crate::overlay::chord::DEFAULT;
+        let rt = crate::overlay::hotkey::HotkeyRuntime::inert(CTRL_ALT_K, "no service");
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, None);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), CTRL_ALT_K);
+        assert!(!app.saved_hotkey_stale());
+        // Reset gives a pending default ...
+        assert!(
+            app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        // ... which capturing the default again drops ...
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // ... as does capturing the shown Ctrl+Alt+K.
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+        // With no registrar, capturing the shown chord never makes it pending.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
     }
 
     #[test]

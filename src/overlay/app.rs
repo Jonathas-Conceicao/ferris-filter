@@ -2822,11 +2822,15 @@ impl OverlayApp {
     /// or valid but in use by another app) it is `None`, so picking or resetting to the live
     /// default is still a pending edit and Apply writes it explicitly: the warning then stops on
     /// the next launch instead of staying stuck.
+    ///
+    /// With no chord registered at all (the default owned elsewhere, or no hotkey service) and no
+    /// stale saved value, the base is the chord the button shows, so capturing it again drops the
+    /// edit without a Config Revert that would also discard the style edits (review WR-07).
     pub(crate) fn hotkey_base(&self) -> Option<Chord> {
         if self.saved_hotkey_stale() {
             None
         } else {
-            self.hotkey.live()
+            Some(self.hotkey.live().unwrap_or(self.hotkey.shown()))
         }
     }
 
@@ -8631,8 +8635,15 @@ Hide
     fn the_header_close_tooltip_and_base_follow_the_live_chord() {
         let (mut app, _ctx, _home, _game) = folder_app(None, &[]);
         assert_eq!(app.hotkey.shown(), crate::overlay::chord::DEFAULT);
-        // An inert runtime has no live chord: nothing to compare with.
-        assert_eq!(app.hotkey_base(), None);
+        // An inert runtime has no live chord: the shown chord is the base, so capturing it again
+        // drops the edit (WR-07).
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+        let base = app.hotkey_base();
+        let config = app.config.as_mut().unwrap();
+        config.set_hotkey(CTRL_ALT_K, base);
+        assert!(config.hotkey_dirty());
+        config.set_hotkey(crate::overlay::chord::DEFAULT, base);
+        assert!(!config.hotkey_dirty());
         let log = std::rc::Rc::default();
         let reg = crate::overlay::hotkey::FakeRegistrar {
             taken: Default::default(),

@@ -3044,6 +3044,7 @@ impl OverlayApp {
                     | ConfigAction::DeleteStyle(_)
                     | ConfigAction::RenameStyle { .. }
                     | ConfigAction::MoveStyle { .. }
+                    | ConfigAction::MoveStyleTo { .. }
                     | ConfigAction::TierText { .. }
                     | ConfigAction::Revert
                     | ConfigAction::RevertScoped(_)
@@ -3147,6 +3148,16 @@ impl OverlayApp {
                 ConfigAction::MoveStyle { name, up } => {
                     if let Ok(state) = &mut self.config
                         && state.move_style(&name, up)
+                    {
+                        self.config_message = None;
+                        if self.apply_state == ApplyState::Applied {
+                            self.apply_state = ApplyState::Unapplied;
+                        }
+                    }
+                }
+                ConfigAction::MoveStyleTo { name, to } => {
+                    if let Ok(state) = &mut self.config
+                        && state.move_style_to(&name, to)
                     {
                         self.config_message = None;
                         if self.apply_state == ApplyState::Applied {

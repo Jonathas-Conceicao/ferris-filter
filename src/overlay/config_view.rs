@@ -77,6 +77,11 @@ pub enum ConfigAction {
         name: String,
         up: bool,
     },
+    /// One drop from the Order-column handle; `to` is the gap 0..=n among the custom styles.
+    MoveStyleTo {
+        name: String,
+        to: usize,
+    },
     TierText {
         tier: String,
         text: String,

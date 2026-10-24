@@ -997,6 +997,45 @@ impl StyleSet {
         }
     }
 
+    /// Move a custom style to a gap among the custom styles only: `gap` 0 is above the first
+    /// custom, `n` below the last (clamped). Only the custom index slots are rewritten, so
+    /// built-ins never move and a custom never lands above them. False (no change) for a
+    /// built-in, an unknown name, or a no-op gap (the style's own top or bottom).
+    pub fn move_custom_to(&mut self, name: &str, gap: usize) -> bool {
+        if Self::is_builtin(name) {
+            return false;
+        }
+        let slots: Vec<usize> = (0..self.0.len())
+            .filter(|&i| {
+                self.0
+                    .get_index(i)
+                    .is_some_and(|(n, _)| !Self::is_builtin(n))
+            })
+            .collect();
+        let Some(src) = slots
+            .iter()
+            .position(|&i| self.0.get_index(i).is_some_and(|(n, _)| n == name))
+        else {
+            return false;
+        };
+        let gap = gap.min(slots.len());
+        if crate::overlay::drag_reorder::style_noop(src, gap) {
+            return false;
+        }
+        let dest = crate::overlay::drag_reorder::style_gap_to_index(src, gap);
+        // Rotate the run between src and dest with adjacent swaps of the custom slots.
+        if dest < src {
+            for k in (dest..src).rev() {
+                self.0.swap_indices(slots[k], slots[k + 1]);
+            }
+        } else {
+            for k in src..dest {
+                self.0.swap_indices(slots[k], slots[k + 1]);
+            }
+        }
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn insert(&mut self, name: &str, style: Style) {
         self.0.insert(name.to_string(), style);
@@ -1494,6 +1533,58 @@ mod tests {
         }
         assert!(!set.move_custom("nope", true));
         assert_eq!(order(&set), before);
+    }
+
+    #[test]
+    fn move_custom_to_matches_swaps_and_keeps_builtins() {
+        let mk = || {
+            let mut set = StyleSet::committed_for_tests();
+            let old: Vec<String> = set
+                .names()
+                .filter(|n| !StyleSet::is_builtin(n))
+                .map(String::from)
+                .collect();
+            for n in old {
+                set.remove_custom(&n);
+            }
+            for n in ["x", "y", "z"] {
+                set.insert_new(n, Style::blank_show()).unwrap();
+            }
+            set
+        };
+        let customs = |s: &StyleSet| {
+            s.names()
+                .filter(|n| !StyleSet::is_builtin(n))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        let builtins = |s: &StyleSet| {
+            s.names()
+                .enumerate()
+                .filter(|(_, n)| StyleSet::is_builtin(n))
+                .map(|(i, n)| (i, n.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let slots = builtins(&mk());
+        let mut s = mk();
+        assert!(s.move_custom_to("x", 3));
+        assert_eq!(customs(&s), ["y", "z", "x"]);
+        assert_eq!(builtins(&s), slots);
+        let mut s = mk();
+        assert!(s.move_custom_to("z", 0));
+        assert_eq!(customs(&s), ["z", "x", "y"]);
+        // Equivalent to repeated swaps.
+        let mut t = mk();
+        assert!(t.move_custom("z", true) && t.move_custom("z", true));
+        assert_eq!(s.names().collect::<Vec<_>>(), t.names().collect::<Vec<_>>());
+        // Clamped gap, refusals.
+        let mut s = mk();
+        assert!(s.move_custom_to("x", 99));
+        assert_eq!(customs(&s), ["y", "z", "x"]);
+        let mut s = mk();
+        assert!(!s.move_custom_to("y", 1) && !s.move_custom_to("y", 2));
+        assert!(!s.move_custom_to("S", 0) && !s.move_custom_to("nope", 0));
+        assert_eq!(customs(&s), ["x", "y", "z"]);
     }
 
     #[test]

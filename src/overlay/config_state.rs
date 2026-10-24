@@ -637,6 +637,12 @@ impl ConfigState {
         self.styles.move_custom(name, up)
     }
 
+    /// Move a custom style to a gap (0..=n) among the customs. False (no change) for built-ins,
+    /// unknown names and no-op gaps.
+    pub fn move_style_to(&mut self, name: &str, to: usize) -> bool {
+        self.styles.move_custom_to(name, to)
+    }
+
     /// The working styles, including edits not yet applied.
     pub fn pending_styles(&self) -> &StyleSet {
         &self.styles
@@ -1650,6 +1656,22 @@ mod tests {
         assert_eq!(s.style_names(), before);
         assert_eq!(s.dirty_count(), 0);
         assert!(!s.move_style("S", true));
+    }
+
+    #[test]
+    fn reorder_to_is_dirty_and_reverts() {
+        let (_dir, mut s, customs) = reorder_root();
+        let before = s.style_names();
+        assert!(customs.len() >= 2);
+        assert!(!s.move_style_to(&customs[0], 0));
+        assert!(!s.is_dirty());
+        assert!(s.move_style_to(&customs[0], customs.len()));
+        assert!(s.is_dirty());
+        assert_ne!(s.style_names(), before);
+        assert!(!s.move_style_to("S", 0));
+        s.revert();
+        assert_eq!(s.style_names(), before);
+        assert_eq!(s.dirty_count(), 0);
     }
 
     #[test]

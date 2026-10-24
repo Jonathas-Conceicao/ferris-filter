@@ -232,12 +232,12 @@ Plans:
 **Plans**: 6 plans
 
 Plans:
-- [ ] 49-01-PLAN.md — Spike (wheel + edge auto-scroll during a drag, drag survival, tap/Escape, shadow) and the pure drag_reorder module
-- [ ] 49-02-PLAN.md — Commit the author's art, embed the handle textures, ff_drag_handle widget
-- [ ] 49-03-PLAN.md — Document::move_run_to (banner-aware) and RowAction::MoveTo with the arrows' rules
-- [ ] 49-04-PLAN.md — RULES list: handle replaces arrows, drag lifecycle, scroll, marker, shadow, drop/cancel
-- [ ] 49-05-PLAN.md — CONFIG style table: move_custom_to, MoveStyleTo, handle in the Order column, style drag
-- [ ] 49-06-PLAN.md — Debug --drag screenshot flags, CLAUDE.md / assets README, screenshots, deferred checks
+- [x] 49-01-PLAN.md — Spike (wheel + edge auto-scroll during a drag, drag survival, tap/Escape, shadow) and the pure drag_reorder module
+- [x] 49-02-PLAN.md — Commit the author's art, embed the handle textures, ff_drag_handle widget
+- [x] 49-03-PLAN.md — Document::move_run_to (banner-aware) and RowAction::MoveTo with the arrows' rules
+- [x] 49-04-PLAN.md — RULES list: handle replaces arrows, drag lifecycle, scroll, marker, shadow, drop/cancel
+- [x] 49-05-PLAN.md — CONFIG style table: move_custom_to, MoveStyleTo, handle in the Order column, style drag
+- [x] 49-06-PLAN.md — Debug --drag screenshot flags, CLAUDE.md / assets README, screenshots, deferred checks
 **UI hint**: yes
 
 ### Phase 50: Release Review

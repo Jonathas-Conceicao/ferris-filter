@@ -103,19 +103,19 @@
 
 ### Drag-and-drop reorder (DND)
 
-- [ ] **DND-01**: Rules and custom styles are reordered by dragging a handle drawn with the author's
+- [x] **DND-01**: Rules and custom styles are reordered by dragging a handle drawn with the author's
   `assets/custom/icon_reoder_{normal,hover,pressed}.png` art; the up / down arrows on rule and style
   rows go away (section headers keep theirs).
-- [ ] **DND-02**: While dragging, the source row is greyed, a translucent copy follows the cursor,
+- [x] **DND-02**: While dragging, the source row is greyed, a translucent copy follows the cursor,
   and a marker shows where it will land; the mouse wheel scrolls and holding near the top / bottom
   edge auto-scrolls.
-- [ ] **DND-03**: Releasing on a valid slot moves the row as one pending edit (Apply writes it,
+- [x] **DND-03**: Releasing on a valid slot moves the row as one pending edit (Apply writes it,
   Revert undoes it); releasing outside the list or pressing Escape cancels.
-- [ ] **DND-04**: The arrows' rules hold: a grouped rule moves as one unit, a move across a
+- [x] **DND-04**: The arrows' rules hold: a grouped rule moves as one unit, a move across a
   Continue rule is flagged, dropping past a banner (or on a collapsed section header) puts the rule
   in that section, nothing lands in or below the economy section, dragging is off while searching,
   and custom styles never land above the built-ins.
-- [ ] **DND-05**: The author's art files (three PNG icons, their three `.ase` sources and three
+- [x] **DND-05**: The author's art files (three PNG icons, their three `.ase` sources and three
   `.ase` palettes) are committed under their own names.
 
 ### Release Review (REV)
@@ -185,11 +185,11 @@
 | ART-02 | Phase 48 | Pending |
 | ART-03 | Phase 48 | Pending |
 | ART-04 | Phase 48 | Pending |
-| DND-01 | Phase 49 | Pending |
-| DND-02 | Phase 49 | Pending |
-| DND-03 | Phase 49 | Pending |
-| DND-04 | Phase 49 | Pending |
-| DND-05 | Phase 49 | Pending |
+| DND-01 | Phase 49 | Complete |
+| DND-02 | Phase 49 | Complete |
+| DND-03 | Phase 49 | Complete |
+| DND-04 | Phase 49 | Complete |
+| DND-05 | Phase 49 | Complete |
 | REV-01 | Phase 50 | Pending |
 | REV-02 | Phase 50 | Pending |
 | REV-03 | Phase 50 | Pending |

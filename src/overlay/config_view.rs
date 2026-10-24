@@ -127,8 +127,8 @@ const HOTKEY_TIP: &str =
 const HOTKEY_CAPTURE_TIP: &str =
     "Hold Ctrl, Shift or Alt and press a key. F1-F24 work alone. Esc cancels.";
 const HOTKEY_RESET_TIP: &str = "Reset to Ctrl+Shift+Z";
-/// Width of the keybind button (the control column less the gap and the reset button).
-const KEYBIND_WIDTH: f32 = 208.0;
+/// Hover text of a greyed Reset to defaults button on a section heading.
+const AT_DEFAULTS_TIP: &str = "Already at the defaults.";
 
 /// View state that is not part of the model. No egui types, so it is unit-testable.
 #[derive(Debug, Clone, Default)]
@@ -164,6 +164,8 @@ pub struct ConfigUi {
     pub row_rects: Vec<(String, egui::Rect)>,
     /// The keybind button's rect as last drawn (a press outside it cancels a capture).
     pub hotkey_button_rect: Option<egui::Rect>,
+    /// The Overlay heading's Reset to defaults button as last drawn.
+    pub hotkey_reset_rect: Option<egui::Rect>,
 }
 
 /// A drag of a custom style row. `handle` is the egui id captured at `drag_started` (the row's
@@ -397,25 +399,64 @@ pub fn show_sections(
     show_filter(ui, cfg, ctx, &mut actions);
     if ctx.hotkey.is_some() {
         ui.add_space(16.0);
-        section_title(ui, ctx, "Overlay");
-        show_overlay(ui, cfg, ctx, &mut actions);
+        let heading = section_title(ui, ctx, "Overlay");
+        show_overlay(ui, cfg, ctx, heading.rect, &mut actions);
     }
     ui.add_space(16.0);
     show_styles(ui, state, cfg, ctx, &mut actions);
     actions
 }
 
-/// The Overlay section: one Show / hide overlay row with the game's keybind button and the reset
-/// button beside it. Every explanation is a tooltip.
+/// The **Reset to defaults** button at the right end of a section heading (Styles, Overlay; the
+/// ECONOMY tab's Tiers heading draws the same button). Greyed when `enabled` is false; the
+/// caller acts on a click only while enabled.
+fn heading_reset_button(
+    ui: &mut egui::Ui,
+    heading: egui::Rect,
+    enabled: bool,
+    tip: &str,
+) -> egui::Response {
+    let skin = crate::skin::of(ui.ctx());
+    let mut right = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                heading.min,
+                egui::pos2(ui.max_rect().right() - 8.0, heading.max.y),
+            ))
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    let r = crate::skin::widgets::ff_button_ex(
+        &mut right,
+        &skin,
+        "Reset to defaults",
+        150.0,
+        enabled,
+        false,
+    );
+    // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response still
+    // counts as enabled: attach the tip both ways.
+    let tip = if enabled { tip } else { AT_DEFAULTS_TIP };
+    r.on_hover_text(tip).on_disabled_hover_text(tip)
+}
+
+/// The Overlay section: one Show / hide overlay row with the game's keybind button, and the
+/// Reset to defaults button on the heading. Every explanation is a tooltip.
 fn show_overlay(
     ui: &mut egui::Ui,
     cfg: &mut ConfigUi,
     ctx: &ConfigViewCtx,
+    heading: egui::Rect,
     actions: &mut Vec<ConfigAction>,
 ) {
     let Some(view) = ctx.hotkey.as_ref() else {
         return;
     };
+    // A single chord, one pending edit that Revert undoes: no confirmation popup.
+    let reset = heading_reset_button(ui, heading, view.reset_enabled, HOTKEY_RESET_TIP);
+    cfg.hotkey_reset_rect = Some(reset.rect);
+    if view.reset_enabled && reset.clicked() {
+        actions.push(ConfigAction::ResetHotkey);
+    }
     egui::Frame::new()
         .fill(pal::ROW_EVEN)
         .inner_margin(egui::Margin::same(8))
@@ -429,6 +470,8 @@ fn show_overlay(
                     HotkeyCaption::Rejected => pal::WARN,
                 };
                 let label = format!("Show / hide overlay: {}", view.chord_text);
+                // The button takes the whole control column, its right edge on the rows above.
+                let width = ui.available_width();
                 let button = match ctx.skin {
                     Some(skin) => crate::skin::widgets::ff_keybind_button(
                         ui,
@@ -436,12 +479,12 @@ fn show_overlay(
                         &label,
                         &view.caption,
                         colour,
-                        KEYBIND_WIDTH,
+                        width,
                         view.capturing,
                         true,
                     ),
                     None => ui.add_sized(
-                        vec2(KEYBIND_WIDTH, crate::skin::widgets::KEYBIND_HEIGHT),
+                        vec2(width, crate::skin::widgets::KEYBIND_HEIGHT),
                         small_button(&view.caption),
                     ),
                 };
@@ -457,21 +500,6 @@ fn show_overlay(
                     } else {
                         ConfigAction::StartHotkeyCapture
                     });
-                }
-                let reset = match ctx.skin {
-                    Some(skin) => crate::skin::widgets::ff_reload_button(
-                        ui,
-                        skin,
-                        "Reset hotkey",
-                        view.reset_enabled,
-                    ),
-                    None => ui.add_enabled(view.reset_enabled, small_button("Reset")),
-                };
-                let reset = reset
-                    .on_hover_text(HOTKEY_RESET_TIP)
-                    .on_disabled_hover_text(HOTKEY_RESET_TIP);
-                if view.reset_enabled && reset.clicked() {
-                    actions.push(ConfigAction::ResetHotkey);
                 }
             });
         });
@@ -1009,30 +1037,12 @@ fn show_styles(
     }
     {
         let enabled = !state.styles_at_defaults();
-        let mut right = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(egui::Rect::from_min_max(
-                    heading.rect.min,
-                    egui::pos2(ui.max_rect().right() - 8.0, heading.rect.max.y),
-                ))
-                .layout(Layout::right_to_left(Align::Center)),
-        );
-        let mut r = crate::skin::widgets::ff_button_ex(
-            &mut right,
-            &skin,
-            "Reset to defaults",
-            150.0,
+        let r = heading_reset_button(
+            ui,
+            heading.rect,
             enabled,
-            false,
+            "Restore the built-in styles. Your custom styles are kept.",
         );
-        // `ff_button_ex` greys a disabled button inside an enabled Ui, so the response still
-        // counts as enabled: attach the tip both ways.
-        let tip = if enabled {
-            "Restore the built-in styles. Your custom styles are kept."
-        } else {
-            "Already at the defaults."
-        };
-        r = r.on_hover_text(tip).on_disabled_hover_text(tip);
         probe("reset-styles", r.rect);
         if r.clicked() && enabled {
             cfg.reset_armed = Some(RevertScope::Styles);
@@ -1703,11 +1713,12 @@ mod tests {
     }
 
     /// Draws the CONFIG sections with the skin and `row`, then clicks at the point `at` picks
-    /// from the drawn keybind button rect. Returns the actions and the button rect.
+    /// from the drawn keybind button and heading reset button. Returns the actions and the
+    /// drawn view state.
     fn click_hotkey_row(
         row: Option<HotkeyRowView>,
-        at: impl Fn(egui::Rect) -> egui::Pos2,
-    ) -> (Vec<ConfigAction>, Option<egui::Rect>) {
+        at: impl Fn(egui::Rect, egui::Rect) -> egui::Pos2,
+    ) -> (Vec<ConfigAction>, ConfigUi) {
         let (_d, state) = loaded();
         let users = HashMap::new();
         let refs = BTreeSet::new();
@@ -1723,10 +1734,10 @@ mod tests {
             found.extend(show_sections(ui, &state, &mut cfg, &vctx));
         })
         .drop_without_applying_deltas();
-        let Some(rect) = cfg.hotkey_button_rect else {
-            return (found, None);
+        let (Some(rect), Some(reset)) = (cfg.hotkey_button_rect, cfg.hotkey_reset_rect) else {
+            return (found, cfg);
         };
-        let pos = at(rect);
+        let pos = at(rect, reset);
         let frame = |events: Vec<egui::Event>| egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1750,22 +1761,23 @@ mod tests {
             })
             .drop_without_applying_deltas();
         }
-        (found, cfg.hotkey_button_rect)
-    }
-
-    /// The reset button's centre: right of the keybind button, past the field gap.
-    fn reset_point(r: egui::Rect) -> egui::Pos2 {
-        egui::pos2(
-            r.max.x + crate::skin::widgets::FIELD_GAP + crate::skin::widgets::ROW_HEIGHT / 2.0,
-            r.center().y,
-        )
+        (found, cfg)
     }
 
     #[test]
     fn keybind_button_click_starts_the_capture() {
-        let (found, rect) = click_hotkey_row(Some(rest_row("Ctrl+Alt+K", true)), |r| r.center());
-        let rect = rect.expect("the button rect is remembered");
-        assert!((rect.width() - KEYBIND_WIDTH).abs() < 0.5, "{rect:?}");
+        let (found, cfg) = click_hotkey_row(Some(rest_row("Ctrl+Alt+K", true)), |r, _| r.center());
+        let rect = cfg
+            .hotkey_button_rect
+            .expect("the button rect is remembered");
+        let reset = cfg.hotkey_reset_rect.expect("the reset rect is remembered");
+        // The keybind button takes the whole control column: its right edge is where the old
+        // 208pt button plus the gap and the row-height reset button ended, under the Filter
+        // rows' right edge, just inside the heading's Reset to defaults button.
+        let gap = crate::skin::widgets::FIELD_GAP;
+        let old_right = rect.min.x + 208.0 + gap + crate::skin::widgets::ROW_HEIGHT;
+        assert!((rect.max.x - old_right).abs() < 0.5, "{rect:?}");
+        assert!(rect.max.x <= reset.max.x, "{rect:?} {reset:?}");
         assert!(
             (rect.height() - crate::skin::widgets::KEYBIND_HEIGHT).abs() < 0.5,
             "{rect:?}"
@@ -1781,22 +1793,30 @@ mod tests {
             capturing: true,
             ..rest_row("Ctrl+Alt+K", true)
         };
-        let (found, _) = click_hotkey_row(Some(row), |r| r.center());
+        let (found, _) = click_hotkey_row(Some(row), |r, _| r.center());
         assert_eq!(found, vec![ConfigAction::CancelHotkeyCapture]);
     }
 
     #[test]
-    fn reset_button_resets_only_when_enabled() {
-        let (found, _) = click_hotkey_row(Some(rest_row("Ctrl+Alt+K", true)), reset_point);
+    fn heading_reset_button_resets_only_when_enabled() {
+        let (found, cfg) = click_hotkey_row(Some(rest_row("Ctrl+Alt+K", true)), |_, r| r.center());
         assert_eq!(found, vec![ConfigAction::ResetHotkey]);
-        let (found, _) = click_hotkey_row(Some(rest_row("Ctrl+Shift+Z", false)), reset_point);
+        let reset = cfg.hotkey_reset_rect.unwrap();
+        let button = cfg.hotkey_button_rect.unwrap();
+        assert!(
+            reset.max.y <= button.min.y,
+            "the reset button sits on the heading"
+        );
+        assert!(reset.width() >= 150.0, "{reset:?}");
+        let (found, _) = click_hotkey_row(Some(rest_row("Ctrl+Shift+Z", false)), |_, r| r.center());
         assert!(found.is_empty(), "{found:?}");
     }
 
     #[test]
     fn no_hotkey_row_means_no_overlay_section() {
-        let (found, rect) = click_hotkey_row(None, |r| r.center());
-        assert!(rect.is_none());
+        let (found, cfg) = click_hotkey_row(None, |r, _| r.center());
+        assert!(cfg.hotkey_button_rect.is_none());
+        assert!(cfg.hotkey_reset_rect.is_none());
         assert!(found.is_empty());
     }
 

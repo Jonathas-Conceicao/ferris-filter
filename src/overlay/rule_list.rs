@@ -583,11 +583,10 @@ pub fn show_list(
             // Consumed so nothing else (a rename box, the search box) reacts to the same press.
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             list.cancel_drag(&ctx);
-        } else if !reorder_enabled && d.injected.is_none() {
-            // Reordering was switched off mid-drag (a search typed into a still-focused box):
-            // the filtered view's neighbours are not the file's, so never commit from it.
-            list.cancel_drag(&ctx);
-        } else if src_index.is_none() {
+        } else if src_index.is_none() || (!reorder_enabled && d.injected.is_none()) {
+            // The source is gone, or reordering was switched off mid-drag (a search typed into a
+            // still-focused box): the filtered view's neighbours are not the file's, so never
+            // commit from it.
             list.cancel_drag(&ctx);
         } else if d.injected.is_none()
             && d.had_focus

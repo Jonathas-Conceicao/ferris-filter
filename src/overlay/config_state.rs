@@ -109,9 +109,10 @@ pub struct ConfigState {
     /// returns when the editor is enabled again. Not part of dirty counting, revert or reset.
     tiers_in_use: bool,
     /// The show / hide hotkey picked on the CONFIG tab and not yet applied; `None` = no edit.
-    /// Not a baseline compare: the live chord belongs to the hotkey runtime, so a reload of this
-    /// state simply drops the edit like any other CONFIG edit. Apply writes it into
-    /// `ff-settings.json` (never styles/tiers), so it is not part of `styles_dirty`.
+    /// Not a baseline compare: the live chord belongs to the hotkey runtime. A reload of this
+    /// state (a changed `styles.json` / `tiers.json`) carries the edit over through
+    /// [`ConfigState::reloaded`], since the chord lives in neither file (review WR-04). Apply
+    /// writes it into `ff-settings.json` (never styles/tiers), so it is not part of `styles_dirty`.
     hotkey_pending: Option<Chord>,
 }
 
@@ -496,6 +497,16 @@ impl ConfigState {
     /// Drops the pending hotkey edit (Apply saved it).
     pub fn clear_hotkey(&mut self) {
         self.hotkey_pending = None;
+    }
+
+    /// A fresh load of the config files from `root` that keeps the pending hotkey edit of
+    /// `previous` (review WR-04): the chord is saved in `ff-settings.json`, not in `styles.json`
+    /// or `tiers.json`, so re-reading those must not drop it.
+    pub fn reloaded(root: &Path, previous: &Result<ConfigState, String>) -> Result<Self, String> {
+        let pending = previous.as_ref().ok().and_then(ConfigState::hotkey_pending);
+        let mut fresh = ConfigState::load(root)?;
+        fresh.hotkey_pending = pending;
+        Ok(fresh)
     }
 
     /// Pending cutoff edits that Apply does not write because the cutoffs are unused (Fallback
@@ -1094,6 +1105,22 @@ mod tests {
         // With no base (nothing live, or a stale saved chord) even the default is an edit.
         s.set_hotkey(DEFAULT, None);
         assert_eq!(s.hotkey_pending(), Some(DEFAULT));
+    }
+
+    #[test]
+    fn a_reload_of_the_config_files_keeps_the_hotkey_edit() {
+        use crate::overlay::chord::DEFAULT;
+        let (d, mut s) = loaded();
+        assert!(s.edit_style("S", StyleEdit::Font(Some(41))));
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let previous = Ok(s);
+        let fresh = ConfigState::reloaded(d.path(), &previous).unwrap();
+        // The style edit is gone with the re-read files, the chord edit stays.
+        assert!(!fresh.styles_dirty());
+        assert_eq!(fresh.hotkey_pending(), Some(CTRL_ALT_K));
+        // Nothing to keep from a failed load.
+        let fresh = ConfigState::reloaded(d.path(), &Err("broken".into())).unwrap();
+        assert_eq!(fresh.hotkey_pending(), None);
     }
 
     #[test]

@@ -585,7 +585,8 @@ fn reload_changed_files(
         .iter()
         .any(|f| matches!(f, DiskFile::Styles | DiskFile::Tiers))
     {
-        *config = ConfigState::load(root);
+        // The pending hotkey edit is not in either file, so it survives (review WR-04).
+        *config = ConfigState::reloaded(root, config);
     }
     if let Some(w) = working {
         w.set_styles(load_styles_at(root));
@@ -3259,7 +3260,7 @@ impl OverlayApp {
         // Config edits survive a RULES reload unless the root moved or the load had failed.
         if self.root != old_root || self.config.is_err() {
             self.config = match &self.root {
-                Ok(root) => ConfigState::load(root),
+                Ok(root) => ConfigState::reloaded(root, &self.config),
                 Err(message) => Err(message.clone()),
             };
         }
@@ -3473,7 +3474,7 @@ impl OverlayApp {
                     match config_reload_plan(self.config.is_err(), &self.changed_on_disk) {
                         ConfigReload::ConfigOnly => {
                             self.config = match &self.root {
-                                Ok(root) => ConfigState::load(root),
+                                Ok(root) => ConfigState::reloaded(root, &self.config),
                                 Err(message) => Err(message.clone()),
                             };
                             // A pending filter refusal stays for the RULES tab to resolve.

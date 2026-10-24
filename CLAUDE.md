@@ -238,7 +238,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > tiers) all or none, then reloads in game under the existing rules. With no filter loaded it writes
 > the config files only. A refusal writes nothing. When a file changed on disk the refusal names it
 > and the **File changed on disk** popup offers **Reload** (re-reads the changed files; a changed filter discards rule edits, a
-> changed `styles.json`/`tiers.json` discards config edits), **Overwrite** (writes everything over
+> changed `styles.json`/`tiers.json` discards config edits, except a pending hotkey edit, which neither file holds), **Overwrite** (writes everything over
 > them) and **Keep editing**; nothing is overwritten silently. **Revert** stays per tab and always asks first (Rules discards rule edits after **Discard rule changes?**, Config
 > discards style edits after **Discard config changes?**, Economy discards tier edits and a staged economy add/remove after the same popup titled **Discard economy changes?**, even when only the staged op is pending), and every tab shows the same unapplied state and the same status message.
 > The explanatory captions of the Filter section (saved-on-this-computer, the reload-toggle paragraph, empty-draft hints) are tooltips on their control.

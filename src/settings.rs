@@ -181,6 +181,23 @@ impl Settings {
 /// The warning for a `hotkey` value that cannot be used.
 const BAD_HOTKEY: &str = "`hotkey` is not a usable key combination, so Ctrl+Shift+Z is used";
 
+/// A load warning re-worded for a RELOAD, which never re-registers the hotkey (review WR-06):
+/// the `hotkey` sentence names the chord that really stays live (`live`, `None` when none is
+/// registered) instead of claiming Ctrl+Shift+Z is used. Other warnings pass through unchanged.
+pub fn reload_hotkey_warning(warning: String, live: Option<Chord>) -> String {
+    if !warning.contains(BAD_HOTKEY) {
+        return warning;
+    }
+    let replacement = match live {
+        Some(chord) => format!(
+            "`hotkey` is not a usable key combination; {} stays in use until the next launch",
+            chord.text()
+        ),
+        None => "`hotkey` is not a usable key combination".to_string(),
+    };
+    warning.replace(BAD_HOTKEY, &replacement)
+}
+
 /// The chord a stored `hotkey` text names, when it parses and may be registered.
 fn usable_hotkey(text: &str) -> Option<Chord> {
     Chord::parse(text).ok().filter(Chord::is_bindable)
@@ -1387,6 +1404,31 @@ mod tests {
             // Load never writes.
             assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
         }
+    }
+
+    #[test]
+    fn a_reload_warning_names_the_chord_still_live() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"hotkey":"Z"}"#).unwrap();
+        let (_, w) = load(t.path());
+        let w = w.unwrap();
+        let reworded = reload_hotkey_warning(w.clone(), Some(ctrl_alt_k()));
+        assert!(
+            reworded.contains(
+                "`hotkey` is not a usable key combination; Ctrl+Alt+K stays in use until the next launch"
+            ),
+            "{reworded}"
+        );
+        assert!(!reworded.contains("Ctrl+Shift+Z is used"), "{reworded}");
+        let none = reload_hotkey_warning(w, None);
+        assert!(
+            none.contains("`hotkey` is not a usable key combination."),
+            "{none}"
+        );
+        assert!(!none.contains("Ctrl+Shift+Z"), "{none}");
+        // Another warning passes through untouched.
+        let other = "ff-settings.json could not be fully used; x.".to_string();
+        assert_eq!(reload_hotkey_warning(other.clone(), None), other);
     }
 
     #[test]

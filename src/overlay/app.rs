@@ -3253,8 +3253,9 @@ impl OverlayApp {
         }
         self.reset_filter_state();
         self.refresh_inputs();
-        if settings_warning.is_some() {
-            self.list_status = settings_warning;
+        if let Some(warning) = settings_warning {
+            // Reload never re-registers the hotkey, so the warning names the chord still live.
+            self.list_status = Some(settings::reload_hotkey_warning(warning, self.hotkey.live()));
         }
         self.refresh_filters();
         // Config edits survive a RULES reload unless the root moved or the load had failed.

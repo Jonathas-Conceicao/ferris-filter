@@ -60,7 +60,8 @@ changes.
 - Run Path of Exile 2 in windowed or windowed-fullscreen mode; the
   overlay cannot draw over exclusive fullscreen.
 - `Ctrl+Shift+Z` shows or hides the window, only while the game or the
-  overlay is the foreground window. The close button only hides it;
+  overlay is the foreground window; you can pick another key in the
+  Config tab's Overlay section. The close button only hides it;
   **Quit** in the system tray icon exits.
 
 Your settings live in `%APPDATA%\FerrisFilter` (created on the first

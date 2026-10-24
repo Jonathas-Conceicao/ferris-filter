@@ -518,6 +518,8 @@ struct AllResult {
     changed: Vec<DiskFile>,
     /// The show / hide hotkey this Apply saved and made live, if it carried a chord edit.
     hotkey_saved: Option<Chord>,
+    /// The filter's bytes changed and were written (identical bytes are not rewritten).
+    filter_written: bool,
 }
 
 impl AllResult {
@@ -529,7 +531,18 @@ impl AllResult {
             tiers_written: false,
             changed: Vec::new(),
             hotkey_saved: None,
+            filter_written: false,
         }
+    }
+
+    /// The Apply saved a hotkey edit and nothing the filter depends on changed: no filter bytes,
+    /// no `styles.json`, no `tiers.json`. Such an Apply skips the in-game reload (review WR-03),
+    /// since the game would reload the very same filter.
+    fn hotkey_only(&self) -> bool {
+        self.hotkey_saved.is_some()
+            && !self.filter_written
+            && !self.styles_written
+            && !self.tiers_written
     }
 }
 
@@ -626,7 +639,8 @@ fn bar_reload_target(tab: ShellTab, changed: &[DiskFile]) -> BarReload {
 /// `filter` is `None` when no filter is loaded, in which case only the config part is applied.
 ///
 /// Bytes identical to the file on disk are not rewritten, but still count as applied: pressing
-/// Apply always counts, so the in-game reload still runs. With `overwrite`, files that changed on
+/// Apply always counts, so the in-game reload still runs (except after a hotkey-only Apply, see
+/// [`AllResult::hotkey_only`]). With `overwrite`, files that changed on
 /// disk since they were loaded are written over (OVERWRITE after a changed-on-disk refusal); the
 /// baselines move only on success, so a failed overwrite leaves the refusal in place.
 ///
@@ -760,6 +774,7 @@ fn apply_everything(
     if let Some(new) = hotkey_saved {
         extras.push_str(&format!(" Show / hide is now {}.", new.text()));
     }
+    let filter_written = committed.filter.as_ref().is_some_and(|f| f.written);
     AllResult {
         outcome: AllOutcome::Applied {
             filter: committed.filter.map(|f| f.path),
@@ -769,6 +784,7 @@ fn apply_everything(
         tiers_written: committed.tiers_written,
         changed: Vec::new(),
         hotkey_saved,
+        filter_written,
     }
 }
 
@@ -2155,6 +2171,7 @@ impl OverlayApp {
             overwrite,
             &mut self.hotkey,
         );
+        let hotkey_only = result.hotkey_only();
         let AllResult {
             outcome,
             extras,
@@ -2162,6 +2179,7 @@ impl OverlayApp {
             tiers_written,
             changed,
             hotkey_saved,
+            filter_written: _,
         } = result;
         let applied_path = match outcome {
             AllOutcome::Failed(message) => {
@@ -2187,8 +2205,13 @@ impl OverlayApp {
         }
         let prefix = apply::config_saved_prefix(styles_written, tiers_written);
         match applied_path {
-            // Every successful filter Apply decides, identical bytes included; the setting is
-            // checked before any window search.
+            // A hotkey edit alone changed nothing in the filter: no in-game reload (review
+            // WR-03), so nothing steals focus or types into chat.
+            Some(_) if hotkey_only => {
+                self.apply_message = applied_message(extras.trim_start().to_string());
+            }
+            // Every other successful filter Apply decides, identical bytes included; the setting
+            // is checked before any window search.
             Some(path) => {
                 let decision = chat::decide(
                     &ApplyOutcome::Written(path.clone()),
@@ -8683,6 +8706,34 @@ Hide
         );
         assert_eq!(r.hotkey_saved, Some(CTRL_ALT_K));
         assert_eq!(rig.config.hotkey_pending(), None);
+        // Nothing the filter depends on changed: run_apply skips the in-game reload (WR-03).
+        assert!(!r.filter_written);
+        assert!(r.hotkey_only());
+    }
+
+    #[test]
+    fn a_hotkey_apply_with_a_style_edit_still_reloads_in_game() {
+        {
+            let mut rig = rig(RULES);
+            let (rt, _, _log) = fake_runtime(&[], None);
+            rig.hotkey = rt;
+            assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+            rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+            let r = rig.apply(false);
+            assert!(matches!(r.outcome, AllOutcome::Applied { .. }));
+            assert_eq!(r.hotkey_saved, Some(CTRL_ALT_K));
+            assert!(r.styles_written);
+            assert!(!r.hotkey_only());
+        }
+        // A rule edit beside the chord changes the filter bytes: not hotkey-only either.
+        let mut rig = rig(RULES);
+        let (rt, _, _log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        rig.working.apply_action(RowAction::AddRule);
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let r = rig.apply(false);
+        assert!(r.filter_written);
+        assert!(!r.hotkey_only());
     }
 
     #[test]

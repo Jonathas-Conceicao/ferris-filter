@@ -1211,7 +1211,12 @@ pub const KEYBIND_HEIGHT: f32 = 30.0;
 /// of `keybind_border` reach about 14 texels in and 22 down from each corner (of 60), so 20 keeps
 /// them out of the stretched edge pieces (vertically nothing stretches: 60 texels -> 30pt).
 const KEYBIND_CORNER_TEXELS: f32 = 20.0;
-/// The plate tint when hovered, focused, pressed or lit (capturing).
+/// The plate tint at rest: `pal::GOLD` at 60%, which brings the plate close to the game's dark
+/// keybind plate (`options-keybind-rows.png`) while its bottom glow still reads gold.
+const KEYBIND_REST: Color32 = Color32::from_rgb(0x78, 0x61, 0x36);
+/// The plate tint when hovered or focused: one step up from rest.
+const KEYBIND_HOVER: Color32 = pal::GOLD;
+/// The plate tint when pressed or lit (capturing): clearly brighter than hover.
 const KEYBIND_LIT: Color32 = Color32::from_rgb(0xE6, 0xC8, 0x82);
 
 /// The game's Options -> Input keybind button: [`Skin::keybind_plate`] tinted gold under the
@@ -1240,11 +1245,13 @@ pub fn ff_keybind_button(
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
     let pressed = enabled && resp.is_pointer_button_down_on();
     let plate_tint = if !enabled {
-        pal::GOLD.gamma_multiply(90.0 / 255.0)
-    } else if lit || pressed || resp.hovered() || resp.has_focus() {
+        KEYBIND_REST.gamma_multiply(90.0 / 255.0)
+    } else if lit || pressed {
         KEYBIND_LIT
+    } else if resp.hovered() || resp.has_focus() {
+        KEYBIND_HOVER
     } else {
-        pal::GOLD
+        KEYBIND_REST
     };
     let border_tint = if enabled {
         Color32::WHITE

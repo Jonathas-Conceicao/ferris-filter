@@ -616,7 +616,7 @@ impl RejectReason {
             RejectReason::NoModifier => "Add Ctrl, Shift or Alt",
             RejectReason::WindowsKey => "Windows key not allowed",
             RejectReason::Unsupported => "Key not supported",
-            RejectReason::Reserved => "Used by Windows or FerrisFilter",
+            RejectReason::Reserved => "Reserved chord",
         }
     }
 }
@@ -1225,7 +1225,7 @@ mod tests {
         assert_eq!(RejectReason::Unsupported.caption(), "Key not supported");
         assert_eq!(
             RejectReason::Reserved.caption(),
-            "Used by Windows or FerrisFilter"
+            "Reserved chord"
         );
     }
 }

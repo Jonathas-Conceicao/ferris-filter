@@ -282,6 +282,80 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
   executor, reviewer and verifier agents; close-out and UAT fixes in the main session.
 - Notable: 7 phases, 45 plans and 261 commits in two calendar days (2026-10-17 → 2026-10-18).
 
+## Milestone: v0.7.2 — Small UI Improvements
+
+**Shipped:** 2026-10-24
+**Phases:** 8 (43-50) | **Plans:** 24 (+ the Release Review inline) | **Commits:** 200
+
+### What Was Built
+
+- Alpha on style colours, through the picker, the previews and every emitter, with 3-value
+  `styles.json` files still loading and the fixtures byte-identical.
+- Auto Detect on CONFIG: a filter's existing styling becomes style tags and `Custom Style N`
+  styles, as pending edits.
+- Economy rule names with their price range; overlay requests throttled to once an hour per kind
+  (`ff-state.json`) and a separate CLI user agent.
+- A configurable show / hide hotkey in a game-style keybind row, swapped live on Apply.
+- Social-panel section headers, magnifier and clear X in search fields, art painted by its
+  visible box; drag-and-drop reordering of rules and custom styles in place of the arrows.
+
+### What Worked
+
+- **Parallel worktree phases with the checkout kept for the author.** Phases 45-48 were
+  independent and ran in their own `gsd/phase-*` worktrees, merged into the milestone branch,
+  while the main checkout stayed on `milestone/v0.7.2-small-ui-improvements` so the author could
+  build and try it at any time. Seven feature phases finished in one day.
+- **Reviews stacked at the end again.** One deferred file
+  (`phases/AUTONOMOUS-V072-DEFERRED.md`) carried every manual check and judgement call; the author
+  answered it plus two short feedback rounds, and the audit could cite it directly.
+- **A spike before the drag code.** Phase 49 started with headless egui experiments (wheel and
+  edge scroll during a drag, drag survival under virtualization, tap vs drag); they became
+  behaviour tests guarding what the drag code relies on.
+- **Game art found in the game files.** Every Phase 47 / 48 piece (toggle plates, stone bar, clear
+  X, magnifier, keybind button) was extracted with `ff-art`; no substitutes were drawn.
+
+### What Was Inefficient
+
+- **Merge conflicts in long lines.** CLAUDE.md's one-line table rows and long overlay notes, and
+  the shared deferred file every phase appended to, conflicted on almost every worktree merge and
+  had to be resolved by hand.
+- **Semantic test breakage after merges.** Branches that merged cleanly still broke tests that
+  assumed the other phase's code was absent, found only by
+  running the full suite on the milestone branch.
+- **gsd-sdk mangled CRLF planning files.** A tool call inserted line breaks after requirement ids
+  in REQUIREMENTS.md (restored once in Phase 44, left in the file until the archive repaired it),
+  and `milestone complete` could not parse the roadmap, so the close-out was done by hand.
+- **Screenshot framing was not repeatable.** The real cursor showed as a row hover or triggered
+  auto-scroll, and the `--expand-style` scroll was still animating at the capture frame, so the
+  same render landed a few points apart between takes.
+- **Stale roadmap bookkeeping.** Worktree phases did not update the ROADMAP checkboxes or Progress
+  table on the milestone branch; the audit flagged it and the archive fixed it.
+
+### Patterns Established
+
+- Independent phases may run in parallel worktrees; the main checkout follows the milestone branch.
+- One shared deferred file per autonomous run, answered as a numbered list, plus numbered feedback
+  rounds recorded in the same file.
+- Art is painted by its opaque box (`paint_visible` / `box_uv`); `ff-art` manifest options (such as
+  `key_white`) clean art at extract time when egui cannot at draw time.
+- A UI behaviour the code depends on (egui drag, scroll) gets a headless behaviour test.
+
+### Key Lessons
+
+- Run the full test suite right after every worktree merge, before the next phase starts.
+- Keep files that every phase appends to (deferred lists, CLAUDE.md notes) in short lines or
+  per-phase sections, so merges do not conflict.
+- After any gsd tool call that writes a planning file, diff it; prefer hand edits for CRLF files.
+- For screenshots, park the cursor off the render window and wait for scroll animations to settle.
+
+### Cost Observations
+
+- Model mix: `balanced` profile, `yolo` gate mode; phases run autonomously with planner,
+  executor, reviewer, UI auditor and verifier agents, four of them in parallel worktrees;
+  feedback rounds and close-out in the main session.
+- Notable: 8 phases, 24 plans and 200 commits from roadmap to close in two calendar days
+  (2026-10-23 → 2026-10-24); Phase 47's code review took three fix passes.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Commits | LOC (cumulative) | Span |
@@ -293,6 +367,7 @@ exceptional-gear rules (uncorrupted, sockets >= 3 / >= 2, or quality >= 24) in a
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | ~50,244 | 4 days |
 | v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | ~70,900 | 3 days |
 | v0.7 Initial Public Release and Strictness Selector | 7 | 45 | 261 | ~82,800 | 2 days |
+| v0.7.2 Small UI Improvements | 8 | 24 | 200 | ~92,100 | 2 days |
 
 **Trend — phases are getting smaller and cheaper.** Plans per phase fell from 3.5 (v0.1) to 2.3
 (v0.2) to 1.7 (v0.3) as the declarative rule model absorbed work that used to require code. v0.3's

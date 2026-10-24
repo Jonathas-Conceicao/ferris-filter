@@ -16,17 +16,20 @@ use crate::filter::{BlockId, BlockKeyword, FilterDiagnostic};
 use super::body::{self, BodyCtx};
 use super::classes::ClassCatalog;
 
+use super::drag_reorder::{self, SlotEntry, SlotTarget};
 use super::rules::{
     Dir, LineKind, ListEntry, RowAction, RuleRow, SectionRow, StyleState, WorkingFilter,
 };
 use super::virtual_list::{build_offsets_mixed, scroll_offset_for, visible_range};
+use crate::filter::MoveDest;
 use crate::skin::Skin;
 use crate::skin::fonts::{regular, small_caps};
 use crate::skin::icons::{FLAG_ICON_SIZE, FlagIcon, flag_icon, paint_flag_icon};
 use crate::skin::palette as pal;
+use crate::skin::slice;
 use crate::skin::widgets::{
-    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_scroll_area_viewport, ff_text_field,
-    ff_text_field_id, ff_x_button, row_background,
+    ROW_PAD, ff_arrow, ff_button_ex, ff_check, ff_drag_handle, ff_scroll_area_viewport,
+    ff_search_field, ff_text_field_id, ff_x_button, row_background,
 };
 
 const CANNOT_ENABLE_LONG: &str = "These lines are not valid filter grammar, so this rule cannot be turned on. You can still move or delete it.";
@@ -87,6 +90,24 @@ pub struct ListUi {
     pub section_focus: bool,
     /// One-shot: scroll the list to the top (set when a section is added at the top).
     pub scroll_top: bool,
+    /// The rule drag in progress, if any.
+    pub drag: Option<DragState>,
+}
+
+/// A list-level drag of a rule row. `handle` is the egui id captured at `drag_started`: the row's
+/// id scope includes [`ListUi::epoch`], which changes when the expanded row collapses, so the
+/// handle's own id is not stable but the captured one is what egui keeps dragging.
+/// `injected` is a pointer position set only by the debug screenshot mode (None
+/// otherwise); when set the egui drag checks are skipped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DragState {
+    pub src: BlockId,
+    pub handle: egui::Id,
+    /// The window had focus when the drag started (losing it afterwards cancels the drag).
+    pub had_focus: bool,
+    pub injected: Option<egui::Pos2>,
+    /// The boundary a release would drop on right now (valid and not a no-op), if any.
+    pub last_slot: Option<usize>,
 }
 
 /// A card without a line of its own to point at.
@@ -132,6 +153,7 @@ impl Default for ListUi {
             section_draft: String::new(),
             section_focus: false,
             scroll_top: false,
+            drag: None,
         }
     }
 }
@@ -157,8 +179,17 @@ impl ListUi {
         self.focus_line = None;
         self.last_expanded = None;
         self.line_error = None;
+        self.drag = None;
         self.row_epoch = self.row_epoch.wrapping_add(1);
         self.forget_card_state();
+    }
+
+    /// Drop a drag in progress (window concealed, focus lost, Reload): nothing is changed. Also
+    /// tells egui to stop dragging the handle.
+    pub fn cancel_drag(&mut self, ctx: &egui::Context) {
+        if self.drag.take().is_some() {
+            ctx.stop_dragging();
+        }
     }
 
     /// Orphan every card's egui temp state (see [`ListUi::epoch`]).
@@ -218,6 +249,8 @@ pub struct ListFrame {
     /// Section headers clicked this frame: (section name, economy, now collapsed). The caller
     /// saves the flag; it never touches the filter.
     pub toggled: Vec<(String, bool, bool)>,
+    /// The list's scroll offset this frame (content space), for the drag tests.
+    pub scroll_y: f32,
 }
 
 /// Fixed height of a collapsed row (and of an expanded row's header): two lines.
@@ -360,15 +393,6 @@ fn flags_for(row: &RuleRow) -> Vec<Flag> {
             kind: FlagKind::Icon(FlagIcon::GroupBroken),
             color: pal::WARN,
             tip: "Group broken: these blocks were one rule (# ff:group) but no longer match, so each is shown on its own. Left as written until you edit it.".to_string(),
-        });
-    }
-    if row.moved_across_continue {
-        out.push(Flag {
-            text: "moved across Continue".to_string(),
-            kind: FlagKind::Icon(FlagIcon::MovedAcrossContinue),
-            color: pal::WARN,
-            tip: "This move changes which rules still apply after a Continue. Check the order."
-                .to_string(),
         });
     }
     if row.has_continue {
@@ -522,14 +546,111 @@ pub fn show_list(
     }
 
     let mut frame = ListFrame::default();
+    let ctx = ui.ctx().clone();
+    let list_rect = ui.available_rect_before_wrap();
+    let slot_entries = slot_entries_of(working, entries);
+    // Debug screenshot mode injects `Pos2 { x: NaN, y: boundary }`: the pointer then sits on that
+    // boundary of the list at its current scroll offset.
+    if let Some(d) = list.drag.as_mut()
+        && let Some(p) = d.injected
+        && p.x.is_nan()
+    {
+        let y = offsets.get(p.y as usize).copied().unwrap_or(0.0);
+        d.injected = Some(egui::pos2(
+            list_rect.center().x,
+            list_rect.top() + y - offset.unwrap_or(0.0),
+        ));
+    }
+    let src_index = list.drag.and_then(|d| {
+        entries.iter().position(|e| match e {
+            ListEntry::Rule(i) => rows.get(*i).is_some_and(|r| r.id == d.src),
+            _ => false,
+        })
+    });
+    // Finish or cancel a drag begun on an earlier frame, before any row is drawn.
+    if let Some(d) = list.drag {
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if escape {
+            // Consumed so nothing else (a rename box, the search box) reacts to the same press.
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            list.cancel_drag(&ctx);
+        } else if src_index.is_none() || (!reorder_enabled && d.injected.is_none()) {
+            // The source is gone, or reordering was switched off mid-drag (a search typed into a
+            // still-focused box): the filtered view's neighbours are not the file's, so never
+            // commit from it.
+            list.cancel_drag(&ctx);
+        } else if d.injected.is_none()
+            && d.had_focus
+            && !ctx.input(|i| i.viewport().focused.unwrap_or(false))
+        {
+            list.cancel_drag(&ctx);
+        } else if d.injected.is_none() && ctx.dragged_id() != Some(d.handle) {
+            // The drag ended (or egui dropped it): commit only on a real release over the list.
+            let released = ctx.input(|i| i.pointer.primary_released())
+                && ctx.drag_stopped_id() == Some(d.handle);
+            let inside = ctx
+                .input(|i| i.pointer.latest_pos())
+                .is_some_and(|p| list_rect.contains(p));
+            let dest = (released && inside)
+                .then_some(d.last_slot)
+                .flatten()
+                .zip(src_index)
+                .filter(|&(b, src)| !drag_reorder::is_noop(&slot_entries, src, b))
+                .and_then(|(b, _)| drag_reorder::slot_target(&slot_entries, b))
+                .and_then(|t| move_dest(t, rows));
+            list.drag = None;
+            if let Some(dest) = dest {
+                frame.actions.push(RowAction::MoveTo { id: d.src, dest });
+            }
+        }
+    }
+    let dragging = list.drag;
+    let mut content_w = list_rect.width();
+    // The gold drop line (screen rect, clip rect), painted above the shadow after it is shown.
+    let mut marker_line: Option<(egui::Rect, egui::Rect)> = None;
     ff_scroll_area_viewport(ui, &skin, "ff-rule-list", offset, |ui, viewport| {
         ui.set_height(total);
+        frame.scroll_y = viewport.min.y;
         let range = visible_range(&offsets, viewport.min.y, viewport.max.y);
         if range.is_empty() {
             return;
         }
         let origin = ui.min_rect().min;
         let width = ui.available_width();
+        content_w = width;
+        let mut marker_y = None;
+        if let (Some(d), Some(src)) = (dragging, src_index) {
+            let pointer = d.injected.or_else(|| ctx.input(|i| i.pointer.latest_pos()));
+            let py = pointer.map_or(list_rect.center().y, |p| p.y);
+            let (wheel, dt) = ctx.input(|i| (i.smooth_scroll_delta.y, i.stable_dt.min(0.1)));
+            let auto = drag_reorder::autoscroll_speed(
+                py,
+                list_rect.top(),
+                list_rect.bottom(),
+                drag_reorder::EDGE_ZONE,
+                drag_reorder::AUTOSCROLL_MAX,
+            );
+            // egui's scroll area ignores the wheel during a drag, so forward it, and scroll at
+            // the edges.
+            ui.scroll_with_delta_animation(
+                vec2(0.0, wheel - auto * dt),
+                egui::style::ScrollAnimation::none(),
+            );
+            ctx.request_repaint();
+            let top = drag_reorder::shadow_top(py, ROW_H, list_rect.top(), list_rect.bottom());
+            let centre = top + ROW_H / 2.0 - origin.y;
+            // The nearest boundary that is a place at all; when that is the source's own
+            // neighbourhood the drop is a no-op and there is no slot (and no marker).
+            let slot = drag_reorder::nearest_slot(&offsets, centre, |b| {
+                drag_reorder::slot_target(&slot_entries, b).is_some()
+            })
+            .filter(|&b| !drag_reorder::is_noop(&slot_entries, src, b));
+            let inside = pointer.is_some_and(|p| list_rect.contains(p));
+            marker_y = slot.filter(|_| inside).map(|b| (b, origin.y + offsets[b]));
+        }
+        if let Some(d) = list.drag.as_mut() {
+            d.last_slot = marker_y.map(|(b, _)| b);
+        }
         let rect = egui::Rect::from_min_size(
             egui::pos2(origin.x, origin.y + offsets[range.start]),
             vec2(width, offsets[range.end] - offsets[range.start]),
@@ -600,8 +721,92 @@ pub fn show_list(
                 frame.drawn += 1;
             }
         });
+        if let Some((_, y)) = marker_y {
+            let t = drag_reorder::MARKER_THICKNESS;
+            let top = (y - t / 2.0).max(origin.y);
+            let line = egui::Rect::from_min_size(egui::pos2(origin.x, top), vec2(width, t));
+            marker_line = Some((
+                slice::snap_rect(line, ui.ctx().pixels_per_point()),
+                ui.clip_rect(),
+            ));
+        }
     });
+    // The shadow: a translucent copy of the dragged row under the pointer, aligned to the list's
+    // left edge, on an opaque ground so the rows under it do not show through its text. It
+    // never takes input.
+    let shadow_id = egui::Id::new(("ff-drag-shadow", "rules"));
+    if let (Some(d), Some(src)) = (list.drag, src_index)
+        && let ListEntry::Rule(i) = entries[src]
+        && let Some(row) = rows.get(i)
+    {
+        let pointer = d.injected.or_else(|| ctx.input(|i| i.pointer.latest_pos()));
+        let py = pointer.map_or(list_rect.center().y, |p| p.y);
+        let top = drag_reorder::shadow_top(py, ROW_H, list_rect.top(), list_rect.bottom());
+        egui::Area::new(shadow_id)
+            .order(egui::Order::Tooltip)
+            .fixed_pos(egui::pos2(list_rect.left(), top))
+            .interactable(false)
+            .constrain(false)
+            .show(&ctx, |ui| {
+                ui.set_width(content_w);
+                let ground = egui::Rect::from_min_size(ui.min_rect().min, vec2(content_w, ROW_H));
+                ui.painter().rect_filled(ground, 0.0, pal::PANEL);
+                ui.disable();
+                ui.set_opacity(0.6);
+                let mut throwaway = ListUi::default();
+                let mut discarded = Vec::new();
+                draw_row(
+                    ui,
+                    &skin,
+                    working,
+                    classes,
+                    row,
+                    rule_no[src],
+                    &mut throwaway,
+                    false,
+                    &mut discarded,
+                );
+            });
+    }
+    // The drop line goes on the shadow's own layer, after the shadow, at full opacity: the
+    // shadow is centred on the pointer and the slot is the boundary nearest its centre, so the
+    // line always falls inside the shadow and would otherwise be painted under it.
+    if let Some((line, clip)) = marker_line {
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, shadow_id))
+            .with_clip_rect(clip)
+            .rect_filled(line, 0.0, pal::GOLD);
+    }
     frame
+}
+
+/// The list-agnostic view of `entries` for [`drag_reorder`].
+fn slot_entries_of(working: &WorkingFilter, entries: &[ListEntry]) -> Vec<SlotEntry> {
+    entries
+        .iter()
+        .map(|e| match e {
+            ListEntry::Rule(i) => SlotEntry::Rule(*i),
+            ListEntry::EconomyRule(_) => SlotEntry::EconomyRule,
+            ListEntry::Header {
+                section, collapsed, ..
+            } => match working.sections().get(*section) {
+                Some(sec) if !sec.economy => SlotEntry::UserHeader {
+                    ordinal: sec.ordinal,
+                    collapsed: *collapsed,
+                },
+                _ => SlotEntry::EconomyHeader,
+            },
+        })
+        .collect()
+}
+
+/// A drop target in document terms. `None` when a rule target no longer exists.
+fn move_dest(target: SlotTarget, rows: &[RuleRow]) -> Option<MoveDest> {
+    Some(match target {
+        SlotTarget::BeforeRule(i) => MoveDest::Before(rows.get(i)?.id),
+        SlotTarget::AfterBanner(k) => MoveDest::AfterBanner(k),
+        SlotTarget::BeforeBanner(k) => MoveDest::BeforeBanner(k),
+        SlotTarget::End => MoveDest::End,
+    })
 }
 
 /// A clickable 18x18 painted icon (hover tinted) with an accessible name and a tooltip.
@@ -624,7 +829,66 @@ fn start_rename(list: &mut ListUi, sec: &SectionRow) {
     list.section_focus = true;
 }
 
-/// One section header (36pt): chevron, name, rule line, count and the right-hand controls.
+/// Tooltips of the padlock that stands in for a section header arrow that cannot move.
+const LOCKED_UP_TIP: &str = "No rule above to move past";
+const LOCKED_DOWN_TIP: &str = "No rule below to move past";
+const LOCKED_SEARCH_TIP: &str = "Clear the search to reorder";
+
+/// The padlock in a section header arrow's 16pt slot, hover-only, with the economy header's
+/// art and tint, so the cluster keeps its layout whether an arrow is live or locked.
+fn header_arrow_lock(ui: &mut egui::Ui, up: bool, tip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+    let label = if up {
+        "Move up (locked)"
+    } else {
+        "Move down (locked)"
+    };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    paint_flag_icon(ui.painter(), rect, FlagIcon::Padlock, pal::MUTED);
+    resp.on_hover_text(tip)
+}
+
+/// Left inset of the toggle plate and its gap to the bar.
+const HEADER_PLATE_INSET: f32 = 4.0;
+/// Toggle plate size (the art's 54:64 aspect).
+const HEADER_PLATE_SIZE: egui::Vec2 = vec2(27.0, 32.0);
+/// Plate offset from the top of the row.
+const HEADER_PLATE_TOP: f32 = 2.0;
+/// Title offset from the bar's left edge (clears the left cap's swirls).
+const HEADER_TITLE_INSET: f32 = 60.0;
+/// Real art sizes of the bar's end caps (texels).
+const BAR_LEFT_PX: [usize; 2] = [132, 75];
+const BAR_RIGHT_PX: [usize; 2] = [151, 75];
+
+/// Geometry of a section header row.
+#[derive(Debug, Clone, Copy)]
+struct HeaderLayout {
+    plate: egui::Rect,
+    bar: egui::Rect,
+    title_x: f32,
+}
+
+fn header_layout(rect: egui::Rect, ppp: f32) -> HeaderLayout {
+    let plate = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.min.x + HEADER_PLATE_INSET,
+            rect.min.y + HEADER_PLATE_TOP,
+        ),
+        HEADER_PLATE_SIZE,
+    );
+    let bar = egui::Rect::from_min_max(
+        egui::pos2(plate.max.x + HEADER_PLATE_INSET, rect.min.y),
+        rect.max,
+    );
+    HeaderLayout {
+        plate: slice::snap_rect(plate, ppp),
+        bar: slice::snap_rect(bar, ppp),
+        title_x: bar.min.x + HEADER_TITLE_INSET,
+    }
+}
+
+/// One section header (36pt): the game's toggle plate, then the stone bar with the name, count
+/// and the right-hand controls.
 #[allow(clippy::too_many_arguments)]
 fn draw_section_header(
     ui: &mut egui::Ui,
@@ -643,33 +907,31 @@ fn draw_section_header(
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &accessible));
     let was_editing = list.editing_section == Some(sec.ordinal) && !sec.economy;
 
-    let ground = if ui.rect_contains_pointer(rect) {
-        pal::ROW_HOVER
-    } else {
-        pal::PANEL
-    };
+    let ppp = ui.ctx().pixels_per_point();
+    let lay = header_layout(rect, ppp);
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, ground);
-    let line = egui::Stroke::new(1.0, pal::INPUT_BORDER);
-    painter.rect_filled(
-        egui::Rect::from_min_size(rect.min, vec2(rect.width(), 1.0)),
-        0.0,
-        line.color,
+    let rects = slice::three_h_rects(lay.bar, BAR_LEFT_PX, BAR_RIGHT_PX, ppp);
+    slice::paint_three(
+        &painter,
+        [&skin.bar.left, &skin.bar.middle, &skin.bar.right],
+        rects,
+        Color32::WHITE,
     );
-    painter.rect_filled(
-        egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - 1.0), rect.max),
-        0.0,
-        line.color,
-    );
+    if ui.rect_contains_pointer(rect) {
+        painter.rect_filled(lay.bar, 0.0, pal::ROW_HOVER);
+    }
     if resp.has_focus() {
         painter.rect_stroke(
-            rect,
+            lay.bar,
             0.0,
             egui::Stroke::new(1.0, pal::INPUT_BORDER_HOT),
             egui::StrokeKind::Inside,
         );
     }
-    let inner = rect.shrink2(vec2(ROW_PAD, 0.0));
+    let inner = egui::Rect::from_min_max(
+        egui::pos2(lay.bar.min.x, rect.min.y),
+        egui::pos2(lay.bar.max.x - 12.0, rect.max.y),
+    );
     let mid_y = rect.center().y;
 
     // Right cluster first, so the count and the name take what remains.
@@ -693,31 +955,29 @@ fn draw_section_header(
             frame.actions.push(RowAction::RemoveSection(sec.ordinal));
             list.editing_section = None;
         }
-        let can_down = reorder_enabled && sec.can_move_down;
-        let can_up = reorder_enabled && sec.can_move_up;
-        let down = ff_arrow(&mut right, skin, false, can_down);
-        let up = ff_arrow(&mut right, skin, true, can_up);
-        if !reorder_enabled {
-            down.on_hover_text("Clear the search to reorder");
-            up.on_hover_text("Clear the search to reorder");
-        } else {
-            if can_down {
-                if down.clicked() {
-                    frame
-                        .actions
-                        .push(RowAction::MoveSection(sec.ordinal, Dir::Down));
+        // A live arrow moves the divider; one that cannot is a padlock in the arrow's slot,
+        // since a dimmed arrow is lost over the bar's ornate right cap.
+        for (dir, can, live_tip, locked_tip) in [
+            (
+                Dir::Down,
+                sec.can_move_down,
+                "Move section down",
+                LOCKED_DOWN_TIP,
+            ),
+            (Dir::Up, sec.can_move_up, "Move section up", LOCKED_UP_TIP),
+        ] {
+            let up = dir == Dir::Up;
+            if !reorder_enabled {
+                header_arrow_lock(&mut right, up, LOCKED_SEARCH_TIP);
+            } else if !can {
+                header_arrow_lock(&mut right, up, locked_tip);
+            } else {
+                let arrow = ff_arrow(&mut right, skin, up, true);
+                if arrow.clicked() {
+                    frame.actions.push(RowAction::MoveSection(sec.ordinal, dir));
                     list.editing_section = None;
                 }
-                down.on_hover_text("Move section down");
-            }
-            if can_up {
-                if up.clicked() {
-                    frame
-                        .actions
-                        .push(RowAction::MoveSection(sec.ordinal, Dir::Up));
-                    list.editing_section = None;
-                }
-                up.on_hover_text("Move section up");
+                arrow.on_hover_text(live_tip);
             }
         }
         if icon_button(&mut right, FlagIcon::Rename, "rename", "Rename section").clicked() {
@@ -726,32 +986,38 @@ fn draw_section_header(
     }
     let used_left = right.min_rect().left();
 
-    // Left: the chevron (a second click target for the same toggle).
-    let chev_rect = egui::Rect::from_min_size(
-        egui::pos2(inner.min.x, mid_y - FLAG_ICON_SIZE / 2.0),
-        vec2(FLAG_ICON_SIZE, FLAG_ICON_SIZE),
-    );
-    let chev = ui.interact(chev_rect, ui.id().with("chevron"), Sense::click());
-    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "chevron"));
-    let chev_colour = if chev.hovered() {
-        pal::HEADING
+    // Left: the toggle plate (a second click target for the same toggle). Not focusable: the
+    // whole-bar `resp` is the keyboard stop, so a header costs one Tab stop.
+    let chev = ui.interact(lay.plate, ui.id().with("chevron"), Sense::CLICK);
+    let toggle_name = if collapsed {
+        "Expand section"
     } else {
-        pal::LABEL
+        "Collapse section"
     };
-    paint_flag_icon(
-        ui.painter(),
-        chev_rect.shrink(1.0),
-        if collapsed {
-            FlagIcon::ChevronRight
-        } else {
-            FlagIcon::ChevronDown
-        },
-        chev_colour,
-    );
+    chev.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, toggle_name));
+    let plates = if collapsed {
+        &skin.toggle_expand
+    } else {
+        &skin.toggle_collapse
+    };
+    let state = if (resp.is_pointer_button_down_on() || chev.is_pointer_button_down_on())
+        && ui.rect_contains_pointer(rect)
+    {
+        2
+    } else if chev.hovered()
+        || resp.hovered() && ui.rect_contains_pointer(lay.plate)
+        || resp.has_focus()
+        || chev.has_focus()
+    {
+        1
+    } else {
+        0
+    };
+    slice::paint_image(ui.painter(), &plates[state], lay.plate, Color32::WHITE);
     let chev_clicked = chev.clicked();
     chev.on_hover_text(if collapsed { "Expand" } else { "Collapse" });
 
-    let name_x = chev_rect.max.x + 8.0;
+    let name_x = lay.title_x;
     let count = section_count_text(sec.rules, matches);
     let count_w = text_width(ui, &count, regular(15.0));
     let count_right = used_left - 8.0;
@@ -766,9 +1032,8 @@ fn draw_section_header(
         pal::MUTED,
     );
 
-    // The name (or its edit box) and the rule line after it.
+    // The name (or its edit box).
     let mut name_rect = egui::Rect::NOTHING;
-    let name_end;
     let mut name_cut = false;
     let editing = list.editing_section == Some(sec.ordinal) && !sec.economy;
     if editing {
@@ -803,22 +1068,12 @@ fn draw_section_header(
             });
             list.editing_section = None;
         }
-        name_end = field_rect.max.x;
     } else {
         let g = cut_galley(ui, &sec.name, small_caps(17.0), pal::HEADING, slot_w);
         name_cut = g.elided;
-        name_end = name_x + g.size().x;
         name_rect =
             egui::Rect::from_min_size(egui::pos2(name_x, mid_y - g.size().y / 2.0), g.size());
         painter.galley(name_rect.min, g, Color32::PLACEHOLDER);
-    }
-    let line_from = name_end + 8.0;
-    let line_to = count_left - 8.0;
-    if !name_cut && line_to - line_from >= 16.0 {
-        painter.line_segment(
-            [egui::pos2(line_from, mid_y), egui::pos2(line_to, mid_y)],
-            line,
-        );
     }
 
     // Header interaction: a click toggles (not while its name is being typed, nor during a
@@ -1095,25 +1350,25 @@ fn draw_row(
             .layout(Layout::right_to_left(Align::Center)),
     );
     right.spacing_mut().item_spacing.x = 4.0;
-    let can_down = reorder_enabled && row.can_move_down;
-    let can_up = reorder_enabled && row.can_move_up;
-    let down = ff_arrow(&mut right, skin, false, can_down);
-    let up = ff_arrow(&mut right, skin, true, can_up);
-    if !reorder_enabled {
-        down.on_hover_text("Clear the search to reorder");
-        up.on_hover_text("Clear the search to reorder");
-    } else {
-        if down.clicked() {
-            actions.push(RowAction::Move(row.id, Dir::Down));
-            list.pending_scroll = Some(row.id);
-        }
-        if up.clicked() {
-            actions.push(RowAction::Move(row.id, Dir::Up));
-            list.pending_scroll = Some(row.id);
-        }
+    let dragging_this = list.drag.as_ref().is_some_and(|d| d.src == row.id);
+    let handle = ff_drag_handle(&mut right, skin, reorder_enabled, dragging_this);
+    if handle.drag_started() && reorder_enabled && list.drag.is_none() {
+        // Every expanded row collapses at drag start (not only the dragged one): the row heights
+        // are then all ROW_H and no inner scroll area can take the scroll delta.
+        list.drag = Some(DragState {
+            src: row.id,
+            handle: handle.id,
+            had_focus: right.ctx().input(|i| i.viewport().focused.unwrap_or(false)),
+            injected: None,
+            last_slot: None,
+        });
+        list.expanded = None;
+        list.confirm_delete = None;
+        right.ctx().request_repaint();
     }
-    let mut arrows_w = right.min_rect().width();
+    // A tap on the handle is consumed by it and does nothing (it is not a row click).
     right.add_space(4.0);
+    let mut arrows_w = right.min_rect().width();
     // WR-02: a rule that matches every item but is followed by more rules. It sits next to the
     // arrows, outside the flag fold, and takes its width out of the flag budget.
     if working.shadowing().contains(&row.id) {
@@ -1238,7 +1493,7 @@ fn draw_row(
     let index_right = inner.min.x + CHECK_W + 8.0 + INDEX_W;
     let kw_x = index_right + 8.0;
     let name_x = kw_x + SHOW_W + 8.0;
-    let dim = !row.enabled;
+    let dim = !row.enabled || dragging_this;
     let line1_y = rect.min.y + 18.0;
     let line2_y = rect.min.y + 38.0;
     painter.text(
@@ -1282,6 +1537,10 @@ fn draw_row(
         cut |= g.elided;
         let pos = egui::pos2(index_right + 8.0, line2_y - g.size().y / 2.0);
         painter.galley(pos, g, Color32::PLACEHOLDER);
+    }
+    if dragging_this {
+        // The source row stays in place, greyed, while its shadow follows the pointer.
+        ui.painter().rect_filled(rect, 0.0, pal::DRAG_SOURCE);
     }
     if row_resp.clicked() {
         list.expanded = if is_expanded { None } else { Some(row.id) };
@@ -1462,7 +1721,8 @@ fn search_row_rects(
                 (ui.available_width() - add_w - sec_w - 8.0 - crate::skin::widgets::FIELD_GAP)
                     .max(40.0);
             let start_x = ui.next_widget_position().x;
-            let resp = ff_text_field(ui, query, &hint, width);
+            let search_id = ui.id().with("rules-search");
+            let resp = ff_search_field(ui, skin, search_id, query, &hint, width);
             // The field is 30pt high and `width` wide, centred on the edit.
             let field = egui::Rect::from_min_max(
                 egui::pos2(start_x, resp.rect.center().y - 15.0),
@@ -1473,28 +1733,6 @@ fn search_row_rects(
                 && ui.input(|i| i.key_pressed(egui::Key::Escape))
             {
                 query.clear();
-            }
-            if !query.is_empty() {
-                // Clear sits inside the field's right edge, so the row never grows.
-                let clear = egui::Rect::from_min_max(
-                    egui::pos2(field.max.x - 52.0, field.min.y),
-                    egui::pos2(field.max.x - 2.0, field.max.y),
-                );
-                let r = ui.interact(clear, ui.id().with("ff-search-clear"), Sense::click());
-                ui.painter().text(
-                    egui::pos2(clear.max.x - 6.0, clear.center().y),
-                    egui::Align2::RIGHT_CENTER,
-                    "Clear",
-                    regular(15.0),
-                    if r.hovered() {
-                        pal::HEADING
-                    } else {
-                        pal::MUTED
-                    },
-                );
-                if r.clicked() {
-                    query.clear();
-                }
             }
             // The buttons are placed from the row's right edge, so their position does not depend
             // on where the field leaves the cursor; the field is sized to leave `FIELD_GAP`.
@@ -2081,15 +2319,16 @@ Show
 
     #[test]
     fn flag_budget_keeps_label_minimum() {
-        assert!(flag_budget(517.0, 36.0) >= 120.0);
-        assert_eq!(flag_budget(2000.0, 36.0), FLAG_BUDGET);
-        assert!(flag_budget(300.0, 36.0) < 120.0);
-        assert_eq!(flag_budget(100.0, 36.0), 0.0);
+        let hw = crate::skin::widgets::DRAG_HANDLE_SIZE + 4.0;
+        assert!(flag_budget(517.0, hw) >= 120.0);
+        assert_eq!(flag_budget(2000.0, hw), FLAG_BUDGET);
+        assert!(flag_budget(300.0, hw) < 120.0);
+        assert_eq!(flag_budget(100.0, hw), 0.0);
         // At any width the label keeps its minimum: width - fixed parts - budget >= LABEL_MIN_W
         // whenever the budget was cut.
         let w = 400.0;
-        let fixed = 2.0 * ROW_PAD + CHECK_W + INDEX_W + SHOW_W + 24.0 + 36.0 + 8.0;
-        assert!(w - fixed - flag_budget(w, 36.0) >= LABEL_MIN_W - 0.01);
+        let fixed = 2.0 * ROW_PAD + CHECK_W + INDEX_W + SHOW_W + 24.0 + hw + 8.0;
+        assert!(w - fixed - flag_budget(w, hw) >= LABEL_MIN_W - 0.01);
     }
 
     #[test]
@@ -2098,7 +2337,6 @@ Show
         let mut row = wf.rows()[0].clone();
         row.has_continue = true;
         row.group_broken = true;
-        row.moved_across_continue = true;
         let diag = |severity| FilterDiagnostic {
             line: 1,
             severity,
@@ -2114,7 +2352,6 @@ Show
                 "grammar error",
                 "grammar warning",
                 "group broken",
-                "moved across Continue",
                 "Continue",
                 "styled: S"
             ]
@@ -2125,10 +2362,10 @@ Show
             f[2].tip
                 .starts_with("Group broken: these blocks were one rule (# ff:group)")
         );
-        assert_eq!(f[4].kind, FlagKind::ContinueWord);
+        assert_eq!(f[3].kind, FlagKind::ContinueWord);
         // S: Pink Circle (shape 0, colour 9).
         assert_eq!(
-            f[5].kind,
+            f[4].kind,
             FlagKind::Styled {
                 name: Some("S".into()),
                 icon: Some((0, 9)),
@@ -2456,8 +2693,8 @@ Show
             }
         };
         let y = row_h + 38.0;
-        // Control: the blank area far past the text has always expanded the row.
-        click(&mut list, Pos2::new(500.0, y));
+        // Control: the blank area past the text (left of the handle) has always expanded the row.
+        click(&mut list, Pos2::new(420.0, y));
         assert_eq!(list.expanded, Some(wf.rows()[1].id), "blank-area click");
         list.expanded = None;
         run_frame(&ctx, input(vec![]), &wf, &mut list, true);
@@ -2486,37 +2723,143 @@ Show
         assert!(ctx.memory(|m| m.focused()).is_some());
     }
 
+    /// Press at `pos`, then move `dy` further down over the next frames.
+    fn press_events(pos: Pos2) -> Vec<Event> {
+        vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::default(),
+            },
+        ]
+    }
+
+    /// Row 0's handle sweep: does a press and a 10pt drag at `x` start a drag?
+    fn drag_starts_at(wf: &WorkingFilter, reorder: bool, x: f32) -> (bool, Vec<RowAction>) {
+        let ctx = headless_ctx();
+        let mut list = ListUi::default();
+        let y = row_height() / 2.0;
+        run_frame(&ctx, input(vec![]), wf, &mut list, reorder);
+        run_frame(
+            &ctx,
+            input(press_events(Pos2::new(x, y))),
+            wf,
+            &mut list,
+            reorder,
+        );
+        let mut actions = vec![];
+        for step in 1..=3 {
+            let (f, _) = run_frame(
+                &ctx,
+                input(vec![Event::PointerMoved(Pos2::new(
+                    x,
+                    y + 5.0 * step as f32,
+                ))]),
+                wf,
+                &mut list,
+                reorder,
+            );
+            actions.extend(f.actions);
+        }
+        (list.drag.is_some(), actions)
+    }
+
     #[test]
-    fn arrows_do_nothing_when_reorder_is_disabled_and_work_when_enabled() {
+    fn handle_disabled_while_searching_and_starts_a_drag_when_enabled() {
         let wf = filter_of(5);
         let sweep = |reorder: bool| -> bool {
-            let ctx = headless_ctx();
-            let mut list = ListUi::default();
-            let (_, row_h) = run_frame(&ctx, input(vec![]), &wf, &mut list, reorder);
-            let y = row_h / 2.0;
-            let mut any_move = false;
+            let mut any = false;
             let mut x = 380.0;
             while x < 533.0 {
-                let (frame, _) = run_frame(
-                    &ctx,
-                    input(click_events(Pos2::new(x, y))),
-                    &wf,
-                    &mut list,
-                    reorder,
-                );
-                any_move |= frame
-                    .actions
-                    .iter()
-                    .any(|a| matches!(a, RowAction::Move(..)));
+                let (started, actions) = drag_starts_at(&wf, reorder, x);
+                assert!(actions.is_empty(), "a drag start emits no action");
+                any |= started;
                 x += 3.0;
             }
-            any_move
+            any
         };
-        assert!(!sweep(false), "disabled reorder must not emit Move");
+        assert!(!sweep(false), "disabled reorder must not start a drag");
         assert!(
             sweep(true),
-            "enabled reorder must emit Move somewhere on the row"
+            "enabled reorder must start a drag on the handle"
         );
+    }
+
+    #[test]
+    fn drag_start_collapses_every_expanded_row() {
+        let wf = filter_of(5);
+        let mut found = false;
+        let mut x = 380.0;
+        while x < 533.0 && !found {
+            let ctx = headless_ctx();
+            let mut list = ListUi {
+                expanded: Some(wf.rows()[3].id),
+                ..Default::default()
+            };
+            let y = row_height() / 2.0;
+            run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+            run_frame(
+                &ctx,
+                input(press_events(Pos2::new(x, y))),
+                &wf,
+                &mut list,
+                true,
+            );
+            for step in 1..=3 {
+                run_frame(
+                    &ctx,
+                    input(vec![Event::PointerMoved(Pos2::new(
+                        x,
+                        y + 5.0 * step as f32,
+                    ))]),
+                    &wf,
+                    &mut list,
+                    true,
+                );
+            }
+            if let Some(d) = list.drag {
+                found = true;
+                assert_eq!(d.src, wf.rows()[0].id);
+                assert!(list.expanded.is_none());
+            }
+            x += 3.0;
+        }
+        assert!(found);
+    }
+
+    #[test]
+    fn a_tap_on_the_handle_does_nothing() {
+        let wf = filter_of(5);
+        let mut hx = None;
+        let mut x = 380.0;
+        while x < 533.0 {
+            if drag_starts_at(&wf, true, x).0 {
+                hx = Some(x);
+                break;
+            }
+            x += 3.0;
+        }
+        let x = hx.expect("a handle x");
+        let ctx = headless_ctx();
+        let open = wf.rows()[2].id;
+        let mut list = ListUi {
+            expanded: Some(open),
+            ..Default::default()
+        };
+        let y = row_height() / 2.0;
+        run_frame(&ctx, input(vec![]), &wf, &mut list, true);
+        let (f, _) = run_frame(
+            &ctx,
+            input(click_events(Pos2::new(x, y))),
+            &wf,
+            &mut list,
+            true,
+        );
+        assert!(f.actions.is_empty());
+        assert!(list.drag.is_none());
+        assert_eq!(list.expanded, Some(open), "the tap is not a row click");
     }
 
     /// WR-07: collapsing or switching the expanded row orphans the old row's card state, so a
@@ -2570,6 +2913,13 @@ Show
         list.pending_defences.insert(id);
         list.pending_simple_defences.insert(id);
         list.advanced_defences.insert(id);
+        list.drag = Some(DragState {
+            src: id,
+            handle: egui::Id::new("h"),
+            had_focus: true,
+            injected: None,
+            last_slot: None,
+        });
         let epoch = list.epoch;
         list.clear_ids();
         assert_ne!(
@@ -2588,6 +2938,7 @@ Show
         assert!(list.pending_defences.is_empty());
         assert!(list.pending_simple_defences.is_empty());
         assert!(list.advanced_defences.is_empty());
+        assert!(list.drag.is_none());
     }
 
     #[test]
@@ -2880,6 +3231,55 @@ Show
     }
 
     #[test]
+    fn header_layout_matches_the_spec() {
+        let rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(600.0, 36.0));
+        let l = header_layout(rect, 1.0);
+        assert_eq!(
+            l.plate,
+            Rect::from_min_size(Pos2::new(4.0, 2.0), egui::vec2(27.0, 32.0))
+        );
+        assert_eq!(
+            l.bar,
+            Rect::from_min_max(Pos2::new(35.0, 0.0), Pos2::new(600.0, 36.0))
+        );
+        assert_eq!(l.title_x, 95.0);
+    }
+
+    #[test]
+    fn header_layout_fills_the_row_and_snaps() {
+        for ppp in [1.0_f32, 1.25, 1.5, 2.0] {
+            for w in [120.0_f32, 500.0, 643.0] {
+                let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), egui::vec2(w, 36.0));
+                let l = header_layout(rect, ppp);
+                assert_eq!(l.bar.height(), SECTION_HEADER_HEIGHT);
+                assert!((l.bar.max.x - rect.max.x).abs() < 1.0);
+                for v in [
+                    l.plate.min.x,
+                    l.plate.min.y,
+                    l.plate.max.x,
+                    l.plate.max.y,
+                    l.bar.min.x,
+                    l.bar.max.x,
+                ] {
+                    let p = v * ppp;
+                    assert!((p - p.round()).abs() < 1e-3, "{v} at {ppp}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn header_bar_caps_keep_the_art_aspect() {
+        let wide = Rect::from_min_max(Pos2::new(35.0, 0.0), Pos2::new(600.0, 36.0));
+        let r = slice::three_h_rects(wide, BAR_LEFT_PX, BAR_RIGHT_PX, 1.0);
+        assert!((r[0].width() - 63.36).abs() < 1.0);
+        assert!((r[2].width() - 72.5).abs() < 1.0);
+        let narrow = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(100.0, 36.0));
+        let r = slice::three_h_rects(narrow, BAR_LEFT_PX, BAR_RIGHT_PX, 1.0);
+        assert!(r[0].max.x <= r[2].min.x);
+    }
+
+    #[test]
     fn rules_above_the_first_divider_have_no_header() {
         let mut wf = WorkingFilter::from_text(&sectioned_text());
         let entries = wf.entries("", |_| false);
@@ -2943,6 +3343,34 @@ Show
                 .any(|a| matches!(a, RowAction::MoveSection(..)))
         );
         assert!(actions.contains(&RowAction::RemoveSection(sec.ordinal)));
+    }
+
+    /// A divider with no rule left below it shows a padlock in place of its down arrow: a click
+    /// there moves nothing, while its live up arrow still moves it.
+    #[test]
+    fn a_locked_header_arrow_is_a_padlock_that_does_nothing() {
+        let text = format!("{}{}", sectioned_text(), banner("Empty"));
+        let wf = WorkingFilter::from_text(&text);
+        let sec = wf.sections().last().unwrap().clone();
+        assert_eq!(sec.name, "Empty");
+        assert!(sec.can_move_up && !sec.can_move_down);
+        // Rows: r1 0..52, Leveling 52..88, r2 ..140, Gear ..176, r3 ..228, Empty 228..264.
+        let (actions, _, _) = sweep_header(&text, 246.0, true, &|_| false);
+        assert!(actions.contains(&RowAction::MoveSection(sec.ordinal, Dir::Up)));
+        assert!(!actions.contains(&RowAction::MoveSection(sec.ordinal, Dir::Down)));
+        // The padlock takes the arrow's slot, so the cluster keeps its layout.
+        let ctx = headless_ctx();
+        let mut sizes = Vec::new();
+        ctx.run_ui(RawInput::default(), |ui| {
+            sizes.push(
+                ff_arrow(ui, &crate::skin::of(ui.ctx()), true, false)
+                    .rect
+                    .size(),
+            );
+            sizes.push(header_arrow_lock(ui, true, LOCKED_UP_TIP).rect.size());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(sizes[0], sizes[1]);
     }
 
     fn rename_frames(keys: Vec<Vec<Event>>) -> (Vec<RowAction>, ListUi) {
@@ -3251,5 +3679,392 @@ Show
             }
         ));
         assert!(matches!(entries[1], ListEntry::Rule(1)));
+    }
+
+    // ---- drag and drop ----
+
+    const LIST_H: f32 = 600.0;
+
+    /// A multi-frame rig for drags: a 535 x 700 screen, the list in its top 600pt, real time.
+    struct DragRig {
+        ctx: egui::Context,
+        time: f64,
+        wf: WorkingFilter,
+        list: ListUi,
+        entries: Vec<ListEntry>,
+        actions: Vec<RowAction>,
+        scroll_y: f32,
+        escape_seen_after: bool,
+        focused: bool,
+        reorder: bool,
+        /// The last frame's paint list, in paint order.
+        shapes: Vec<egui::epaint::ClippedShape>,
+    }
+
+    /// Centre x of a rule row's handle.
+    fn handle_x() -> f32 {
+        535.0 - crate::skin::widgets::SCROLLBAR_WIDTH - 4.0 - ROW_PAD - 14.0
+    }
+
+    impl DragRig {
+        fn new(wf: WorkingFilter) -> Self {
+            let entries = rule_entries(&wf);
+            Self::with_entries(wf, entries)
+        }
+
+        fn with_entries(wf: WorkingFilter, entries: Vec<ListEntry>) -> Self {
+            let mut rig = DragRig {
+                ctx: headless_ctx(),
+                time: 0.0,
+                wf,
+                list: ListUi::default(),
+                entries,
+                actions: vec![],
+                scroll_y: 0.0,
+                escape_seen_after: false,
+                focused: true,
+                reorder: true,
+                shapes: vec![],
+            };
+            rig.frame(vec![]);
+            rig
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 1.0 / 60.0;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(535.0, 700.0))),
+                time: Some(self.time),
+                predicted_dt: 1.0 / 60.0,
+                events,
+                viewports: [(
+                    egui::ViewportId::ROOT,
+                    egui::ViewportInfo {
+                        focused: Some(self.focused),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            };
+            let mut out = ListFrame::default();
+            let mut esc = false;
+            let (wf, entries, list, reorder) =
+                (&self.wf, &self.entries, &mut self.list, self.reorder);
+            let mut full = self.ctx.run_ui(raw, |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, LIST_H));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                out = show_list(&mut child, wf, entries, list, reorder, None);
+                esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            });
+            self.shapes = std::mem::take(&mut full.shapes);
+            full.drop_without_applying_deltas();
+            self.escape_seen_after = esc;
+            self.scroll_y = out.scroll_y;
+            self.actions.extend(out.actions);
+        }
+
+        fn hover(&mut self, pos: Pos2) {
+            self.frame(vec![Event::PointerMoved(pos)]);
+        }
+
+        fn release(&mut self, pos: Pos2) {
+            self.frame(vec![Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::default(),
+            }]);
+        }
+
+        /// Press on rule `n`'s handle and move 10pt: the drag has started.
+        fn start_drag(&mut self, n: usize) {
+            let p = Pos2::new(handle_x(), n as f32 * ROW_H + ROW_H / 2.0);
+            self.frame(press_events(p));
+            for step in 1..=3 {
+                self.hover(p + vec2(0.0, 5.0 * step as f32));
+            }
+            assert!(self.list.drag.is_some(), "drag did not start");
+        }
+
+        /// Move to `y` and let two frames pass so the slot settles.
+        fn move_to(&mut self, y: f32) -> Pos2 {
+            let p = Pos2::new(300.0, y);
+            self.hover(p);
+            self.hover(p);
+            p
+        }
+    }
+
+    #[test]
+    fn wheel_scrolls_the_list_during_a_drag() {
+        let mut rig = DragRig::new(filter_of(60));
+        rig.start_drag(3);
+        let p = rig.move_to(300.0);
+        let before = rig.scroll_y;
+        for _ in 0..10 {
+            rig.frame(vec![
+                Event::PointerMoved(p),
+                Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, -60.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: Modifiers::default(),
+                },
+            ]);
+        }
+        for _ in 0..5 {
+            rig.hover(p);
+        }
+        assert!(
+            rig.scroll_y > before + 50.0,
+            "wheel did not scroll: {before} -> {}",
+            rig.scroll_y
+        );
+        assert!(rig.list.drag.is_some());
+    }
+
+    #[test]
+    fn edge_autoscroll_survives_the_source_leaving_the_range_and_drop_emits_one_move() {
+        let mut rig = DragRig::new(filter_of(60));
+        rig.start_drag(3);
+        let p = Pos2::new(300.0, LIST_H - 5.0);
+        for _ in 0..40 {
+            rig.hover(p);
+        }
+        assert!(rig.scroll_y > 220.0, "scrolled {}", rig.scroll_y);
+        assert!(rig.list.drag.is_some(), "drag survives virtualization");
+        // Back to mid list: the marker slot settles, then release over it.
+        let p = rig.move_to(300.0);
+        let slot = rig.list.drag.unwrap().last_slot.expect("a valid slot");
+        let se = slot_entries_of(&rig.wf, &rig.entries);
+        let dest = move_dest(drag_reorder::slot_target(&se, slot).unwrap(), rig.wf.rows()).unwrap();
+        rig.release(p);
+        assert!(rig.list.drag.is_none());
+        assert_eq!(
+            rig.actions,
+            vec![RowAction::MoveTo {
+                id: rig.wf.rows()[3].id,
+                dest
+            }]
+        );
+    }
+
+    #[test]
+    fn release_outside_the_list_or_with_the_pointer_gone_cancels() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        let p = Pos2::new(300.0, 650.0);
+        rig.hover(p);
+        rig.hover(p);
+        rig.release(p);
+        assert!(rig.list.drag.is_none());
+        assert!(rig.actions.is_empty(), "{:?}", rig.actions);
+
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(300.0);
+        rig.frame(vec![Event::PointerGone]);
+        rig.release(Pos2::new(300.0, 300.0));
+        assert!(rig.actions.is_empty(), "{:?}", rig.actions);
+        assert!(rig.list.drag.is_none());
+    }
+
+    #[test]
+    fn escape_cancels_a_drag_and_is_consumed() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(300.0);
+        rig.frame(vec![Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        }]);
+        assert!(rig.list.drag.is_none());
+        assert!(!rig.escape_seen_after, "Escape was consumed");
+        rig.release(Pos2::new(300.0, 300.0));
+        assert!(rig.actions.is_empty());
+    }
+
+    #[test]
+    fn losing_focus_cancels_a_drag_that_started_focused() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        assert!(rig.list.drag.unwrap().had_focus);
+        rig.move_to(300.0);
+        rig.focused = false;
+        rig.frame(vec![]);
+        assert!(rig.list.drag.is_none());
+        rig.release(Pos2::new(300.0, 300.0));
+        assert!(rig.actions.is_empty());
+    }
+
+    #[test]
+    fn drop_marker_is_painted_above_the_shadow() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(6.0 * ROW_H + 10.0);
+        let slot = rig.list.drag.unwrap().last_slot.expect("a slot");
+        // No headers and no scroll: boundary `slot` is at y = slot * ROW_H. The shadow is
+        // centred on the pointer, so it covers the line; the line must still be on top.
+        let p = Pos2::new(200.0, slot as f32 * ROW_H);
+        assert_eq!(
+            drag_reorder::top_fill_at(&rig.shapes, p),
+            Some(pal::GOLD),
+            "gold line on top at boundary {slot}"
+        );
+    }
+
+    #[test]
+    fn reorder_switched_off_mid_drag_cancels_it() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(300.0);
+        assert!(rig.list.drag.unwrap().last_slot.is_some());
+        // A search typed into a still-focused box turns reordering off while the handle is held.
+        rig.reorder = false;
+        rig.frame(vec![]);
+        assert!(rig.list.drag.is_none());
+        rig.release(Pos2::new(300.0, 300.0));
+        assert!(rig.actions.is_empty(), "{:?}", rig.actions);
+    }
+
+    #[test]
+    fn dropping_next_to_the_source_is_a_no_op() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(3);
+        // Boundaries 3 and 4 (y 156 and 208) are the source's own: no slot, so no marker.
+        let p = rig.move_to(3.0 * ROW_H + 26.0);
+        assert_eq!(rig.list.drag.unwrap().last_slot, None);
+        rig.release(p);
+        assert!(rig.actions.is_empty(), "{:?}", rig.actions);
+        assert!(rig.list.drag.is_none());
+    }
+
+    #[test]
+    fn economy_boundaries_are_never_slots_and_end_sits_above_the_economy_header() {
+        let mut wf = WorkingFilter::from_text(&with_economy_text());
+        let entries = wf.entries("", |s| s.economy);
+        let mut rig = DragRig::with_entries(wf, entries);
+        rig.start_drag(0);
+        // Far below everything: the nearest valid boundary is the one above the economy header.
+        let p = rig.move_to(500.0);
+        let slot = rig.list.drag.unwrap().last_slot;
+        let se = slot_entries_of(&rig.wf, &rig.entries);
+        let end = se
+            .iter()
+            .position(|e| *e == SlotEntry::EconomyHeader)
+            .unwrap();
+        assert_eq!(slot, Some(end), "boundary above the economy header");
+        rig.release(p);
+        assert_eq!(
+            rig.actions,
+            vec![RowAction::MoveTo {
+                id: rig.wf.rows()[0].id,
+                dest: MoveDest::End
+            }]
+        );
+    }
+
+    #[test]
+    fn dropping_after_a_collapsed_header_makes_the_rule_first_and_keeps_it_collapsed() {
+        let mut wf = WorkingFilter::from_text(&sectioned_text());
+        let lev = wf
+            .sections()
+            .iter()
+            .position(|s| s.name == "Leveling")
+            .unwrap();
+        let ordinal = wf.sections()[lev].ordinal;
+        let folded = |s: &SectionRow| s.name == "Leveling";
+        let entries = wf.entries("", folded);
+        // r1, [Leveling] (r2 hidden), Gear, r3.
+        assert!(matches!(
+            entries[1],
+            ListEntry::Header {
+                collapsed: true,
+                ..
+            }
+        ));
+        let mut rig = DragRig::with_entries(wf, entries);
+        rig.start_drag(0);
+        // Boundary 2 sits right under the collapsed Leveling header: y = 52 + 36.
+        let p = rig.move_to(ROW_H + SECTION_HEADER_HEIGHT + 2.0);
+        rig.release(p);
+        assert_eq!(
+            rig.actions,
+            vec![RowAction::MoveTo {
+                id: rig.wf.rows()[0].id,
+                dest: MoveDest::AfterBanner(ordinal)
+            }]
+        );
+        let action = rig.actions[0].clone();
+        assert!(rig.wf.apply_action(action).changed);
+        let lev = rig
+            .wf
+            .sections()
+            .iter()
+            .position(|s| s.name == "Leveling")
+            .unwrap();
+        assert_eq!(rig.wf.sections()[lev].rules, 2);
+        let after = rig.wf.entries("", folded);
+        assert!(matches!(
+            after[0],
+            ListEntry::Header {
+                collapsed: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dropping_a_grouped_rule_moves_it_by_its_leader_id() {
+        let text = "# ff:group abc 1/2
+Show
+  Class \"Body Armours\"
+  BaseArmour > 0
+
+# ff:group abc 2/2
+Show
+  Class \"Body Armours\"
+  BaseEvasion > 0
+
+Show # a
+  Class \"Rings\"
+
+Show # b
+  Class \"Belts\"
+
+";
+        let wf = WorkingFilter::from_text(text);
+        assert_eq!(wf.rows().len(), 3);
+        assert_eq!(wf.rows()[0].group_size, 2);
+        let mut rig = DragRig::new(wf);
+        rig.start_drag(0);
+        let p = rig.move_to(3.0 * ROW_H);
+        rig.release(p);
+        let lead = rig.wf.rows()[0].id;
+        assert_eq!(rig.actions.len(), 1, "{:?}", rig.actions);
+        assert!(matches!(
+            rig.actions[0],
+            RowAction::MoveTo { id, .. } if id == lead
+        ));
+    }
+
+    #[test]
+    fn the_shadow_aligns_to_the_list_edge_and_is_one_row_tall() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(300.0);
+        let r = rig
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new(("ff-drag-shadow", "rules"))))
+            .expect("shadow area");
+        assert!(r.left().abs() < 0.5, "{r:?}");
+        assert!((r.height() - ROW_H).abs() < 0.5, "{r:?}");
+        // The source row stays in the list (greyed): still one entry per rule.
+        assert_eq!(rig.list.drag.unwrap().src, rig.wf.rows()[2].id);
     }
 }

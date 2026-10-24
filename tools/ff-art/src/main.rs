@@ -106,6 +106,10 @@ struct ImageEntry {
     /// middle of the Options page frame, which the overlay replaces with its own background.
     #[serde(default)]
     clear: Vec<[u32; 4]>,
+    /// `[seed_x, seed_y, threshold]` (after `clear`): flood-fill from the seed through connected
+    /// near-white pixels (`min(r, g, b) >= threshold`) and turn their white into transparency
+    /// -- the irregular, soft-edged white interior of the Options keybind button border.
+    key_white: Option<[u32; 3]>,
 }
 
 /// A trimmed atlas: picks cells out of a grid sheet (the minimap icon sheet) and packs them
@@ -280,6 +284,54 @@ fn read_dds(fs: &FS, path: &str) -> Result<image::DynamicImage> {
     image::load_from_memory(&bytes).with_context(|| format!("decoding {path}"))
 }
 
+/// Colour-to-alpha against white on the near-white region 4-connected to `seed`: every reached
+/// pixel with `min(r, g, b) >= threshold` (and alpha > 0) loses its white share `w = min/255`
+/// (alpha `a * (1 - w)`, colour un-premultiplied toward black), so a white mask area becomes
+/// transparent and its grey fringe a soft dark edge. Explicit stack, bounded by the image size.
+fn key_white(img: &mut RgbaImage, seed: (u32, u32), threshold: u8) {
+    let (w, h) = img.dimensions();
+    if seed.0 >= w || seed.1 >= h {
+        eprintln!("warning: key_white seed {seed:?} is outside the image ({w}x{h}); skipped");
+        return;
+    }
+    let inside = |p: &image::Rgba<u8>| p[3] > 0 && p[0].min(p[1]).min(p[2]) >= threshold;
+    let mut seen = vec![false; (w * h) as usize];
+    let mut stack = vec![seed];
+    while let Some((x, y)) = stack.pop() {
+        let i = (y * w + x) as usize;
+        if seen[i] || !inside(img.get_pixel(x, y)) {
+            continue;
+        }
+        seen[i] = true;
+        let p = *img.get_pixel(x, y);
+        let white = p[0].min(p[1]).min(p[2]) as f32 / 255.0;
+        let keep = 1.0 - white;
+        let alpha = (p[3] as f32 * keep).round() as u8;
+        let un = |c: u8| {
+            if alpha == 0 || keep <= 0.0 {
+                0
+            } else {
+                ((c as f32 - 255.0 * white) / keep)
+                    .round()
+                    .clamp(0.0, 255.0) as u8
+            }
+        };
+        img.put_pixel(x, y, image::Rgba([un(p[0]), un(p[1]), un(p[2]), alpha]));
+        if x > 0 {
+            stack.push((x - 1, y));
+        }
+        if y > 0 {
+            stack.push((x, y - 1));
+        }
+        if x + 1 < w {
+            stack.push((x + 1, y));
+        }
+        if y + 1 < h {
+            stack.push((x, y + 1));
+        }
+    }
+}
+
 /// `a/b/Name.dds` -> `a/b/4K/Name.dds`.
 fn four_k_sibling(path: &str) -> String {
     match path.rfind('/') {
@@ -336,6 +388,9 @@ fn extract(fs: &FS, manifest: &Manifest, root: &Path) -> Result<()> {
                     img.put_pixel(xx, yy, image::Rgba([0, 0, 0, 0]));
                 }
             }
+        }
+        if let Some([x, y, t]) = entry.key_white {
+            key_white(&mut img, (x, y), t.min(255) as u8);
         }
         let out = out_dir.join(&entry.out);
         std::fs::create_dir_all(out.parent().unwrap())?;

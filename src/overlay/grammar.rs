@@ -431,9 +431,12 @@ pub enum Value {
         colours: String,
     },
     BoolOrName(BoolOrName),
+    /// A colour. `bare_alpha` is what a 3-token line means in game ([`bare_alpha`]): a
+    /// 3-token line decodes to it and stays 3 tokens while the alpha equals it.
     Rgba {
         rgba: [u8; 4],
         had_alpha: bool,
+        bare_alpha: u8,
     },
     FontSize(i64),
     Sound {
@@ -520,9 +523,13 @@ pub fn encode_tokens(v: &Value) -> Vec<String> {
         }
         Value::BoolOrName(BoolOrName::Bool(b)) => vec![bool_word(*b).to_string()],
         Value::BoolOrName(BoolOrName::Name(n)) => vec![quote(n)],
-        Value::Rgba { rgba, had_alpha } => {
+        Value::Rgba {
+            rgba,
+            had_alpha,
+            bare_alpha,
+        } => {
             let mut t: Vec<String> = rgba[..3].iter().map(u8::to_string).collect();
-            if *had_alpha || rgba[3] != 255 {
+            if *had_alpha || rgba[3] != *bare_alpha {
                 t.push(rgba[3].to_string());
             }
             t
@@ -598,6 +605,16 @@ pub fn encode(v: &Value) -> Result<String, EncodeError> {
         return Err(EncodeError::BadText);
     }
     Ok(encode_tokens(v).join(" "))
+}
+
+/// The alpha a colour line written with 3 tokens has in game: 240 for `SetBackgroundColor`,
+/// 255 for the text and border colours.
+pub fn bare_alpha(keyword: &str) -> u8 {
+    if keyword == "SetBackgroundColor" {
+        240
+    } else {
+        255
+    }
 }
 
 fn candidate(kw: &Keyword, t: &[&str]) -> Option<Value> {
@@ -677,13 +694,15 @@ fn candidate(kw: &Keyword, t: &[&str]) -> Option<Value> {
             if n != 3 && n != 4 {
                 return None;
             }
-            let mut rgba = [255u8; 4];
+            let bare = bare_alpha(kw.name);
+            let mut rgba = [0, 0, 0, bare];
             for (slot, x) in rgba.iter_mut().zip(t) {
                 *slot = x.parse::<u8>().ok()?;
             }
             Some(Value::Rgba {
                 rgba,
                 had_alpha: n == 4,
+                bare_alpha: bare,
             })
         }
         ValueShape::FontSize => match t {
@@ -1118,14 +1137,32 @@ mod tests {
             d("SetTextColor", &["255", "121", "198"]),
             Value::Rgba {
                 rgba: [255, 121, 198, 255],
-                had_alpha: false
+                had_alpha: false,
+                bare_alpha: 255
             }
         );
         assert_eq!(
             d("SetTextColor", &["255", "121", "198", "200"]),
             Value::Rgba {
                 rgba: [255, 121, 198, 200],
-                had_alpha: true
+                had_alpha: true,
+                bare_alpha: 255
+            }
+        );
+        assert_eq!(
+            d("SetBackgroundColor", &["40", "42", "54"]),
+            Value::Rgba {
+                rgba: [40, 42, 54, 240],
+                had_alpha: false,
+                bare_alpha: 240
+            }
+        );
+        assert_eq!(
+            d("SetBackgroundColor", &["40", "42", "54", "255"]),
+            Value::Rgba {
+                rgba: [40, 42, 54, 255],
+                had_alpha: true,
+                bare_alpha: 240
             }
         );
         assert_eq!(d("SetFontSize", &["37"]), Value::FontSize(37));

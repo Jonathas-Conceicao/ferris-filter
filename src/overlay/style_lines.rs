@@ -18,6 +18,7 @@ use egui::{RichText, vec2};
 
 use crate::models::config::{
     Beam, Cancelable, DropSound, FilterColor, Minimap, MinimapShape, Sound, Style, StyleAction,
+    StyleColour,
 };
 use crate::skin::editor as ed;
 use crate::skin::fonts::regular;
@@ -64,16 +65,14 @@ pub struct StyleView {
     pub sound_volume_written: bool,
     /// `None` = off (no line), else `DisableDropSound` / `EnableDropSound`.
     pub drop_sound: Option<DropSound>,
-    /// Colour cards with an Alpha slider (rules) or opaque ones (styles store RGB).
-    pub alpha: bool,
 }
 
 impl StyleView {
-    /// A `styles.json` style: opaque colours, every volume written.
+    /// A `styles.json` style: colours carry alpha, every volume written.
     pub fn from_style(style: &Style) -> StyleView {
-        let rgba = |c: [u8; 3]| Rgba {
-            rgba: [c[0], c[1], c[2], 255],
-            had_alpha: false,
+        let rgba = |c: StyleColour| Rgba {
+            rgba: c.rgba(),
+            had_alpha: true,
         };
         StyleView {
             visibility: match style.action {
@@ -90,8 +89,39 @@ impl StyleView {
             sound: style.sound.clone(),
             sound_volume_written: true,
             drop_sound: style.drop_sound(),
-            alpha: false,
         }
+    }
+
+    /// The inverse of [`StyleView::from_style`], on in-game values: the view already holds a
+    /// 3-value colour line's in-game alpha (240 for a background, 255 for text and border) and
+    /// the default sound volume. `None` for a `Minimal` header or a custom sound file name that
+    /// `StyleSet::validate` would refuse (a quote or a control character).
+    pub fn to_style(&self) -> Option<Style> {
+        let mut s = Style::blank_show();
+        s.action = match self.visibility {
+            Vis::Show => StyleAction::Show,
+            Vis::Hide => StyleAction::Hide,
+            Vis::Minimal => return None,
+        };
+        s.text = self.text.map(|c| StyleColour::from_array(c.rgba));
+        s.border = self.border.map(|c| StyleColour::from_array(c.rgba));
+        s.background = self.background.map(|c| StyleColour::from_array(c.rgba));
+        s.font = match self.font {
+            Some(f) => Some(u8::try_from(f).ok()?),
+            None => None,
+        };
+        s.minimap = self.minimap.clone();
+        s.beam = self.beam.clone();
+        s.sound = self.sound.clone();
+        if let Some(Cancelable::Set(Sound {
+            custom: Some(name), ..
+        })) = &s.sound
+            && name.chars().any(|c| c == '"' || c.is_control())
+        {
+            return None;
+        }
+        s.set_drop_sound(self.drop_sound);
+        Some(s)
     }
 
     fn colour(&self, slot: ColourSlot) -> Option<Rgba> {
@@ -287,7 +317,7 @@ pub fn show(
             ),
         ] {
             let current = view.colour(slot);
-            let intent = if view.alpha {
+            let intent = {
                 let cur = current.map(|c| c.rgba);
                 let had = current.is_some_and(|c| c.had_alpha);
                 let seed = [seed[0], seed[1], seed[2], 255];
@@ -302,21 +332,6 @@ pub fn show(
                         slot,
                         value: None,
                         opened_had_alpha: had,
-                    },
-                }
-            } else {
-                let cur = current.map(|c| [c.rgba[0], c.rgba[1], c.rgba[2]]);
-                match widgets::colour_slot(ui, tag, label, cur, seed, width) {
-                    widgets::SlotResult::Unchanged => continue,
-                    widgets::SlotResult::Set(c) => StyleIntent::Colour {
-                        slot,
-                        value: Some([c[0], c[1], c[2], 255]),
-                        opened_had_alpha: false,
-                    },
-                    widgets::SlotResult::Cleared => StyleIntent::Colour {
-                        slot,
-                        value: None,
-                        opened_had_alpha: false,
                     },
                 }
             };
@@ -1035,9 +1050,119 @@ mod tests {
     use crate::filter::BlockKeyword;
     use crate::overlay::rules::WorkingFilter;
 
+    #[test]
+    fn to_style_blank_show_and_hide() {
+        let v = |vis| {
+            let mut v = StyleView::from_style(&Style::blank_show());
+            v.visibility = vis;
+            v
+        };
+        assert_eq!(v(Vis::Show).to_style(), Some(Style::blank_show()));
+        let h = v(Vis::Hide).to_style().unwrap();
+        assert_eq!(h.action, StyleAction::Hide);
+        let back = Style {
+            action: StyleAction::Show,
+            ..h
+        };
+        assert_eq!(back, Style::blank_show());
+    }
+
+    #[test]
+    fn to_style_minimal_is_none() {
+        let mut v = StyleView::from_style(&Style::blank_show());
+        v.visibility = Vis::Minimal;
+        assert_eq!(v.to_style(), None);
+    }
+
+    #[test]
+    fn to_style_background_keeps_the_view_alpha() {
+        // A rule's 3-value background reaches the view already at its in-game alpha 240.
+        let mut v = StyleView::from_style(&Style::blank_show());
+        v.background = Some(Rgba {
+            rgba: [40, 42, 54, 240],
+            had_alpha: false,
+        });
+        assert_eq!(
+            v.to_style().unwrap().background.map(|c| c.alpha()),
+            Some(240)
+        );
+        v.background = Some(Rgba {
+            rgba: [40, 42, 54, 255],
+            had_alpha: true,
+        });
+        assert_eq!(
+            v.to_style().unwrap().background.map(|c| c.alpha()),
+            Some(255)
+        );
+    }
+
+    #[test]
+    fn to_style_text_and_border_keep_alpha() {
+        let mut v = StyleView::from_style(&Style::blank_show());
+        v.text = Some(Rgba {
+            rgba: [1, 2, 3, 255],
+            had_alpha: false,
+        });
+        v.border = Some(Rgba {
+            rgba: [1, 2, 3, 90],
+            had_alpha: true,
+        });
+        let s = v.to_style().unwrap();
+        assert_eq!(s.text.map(|c| c.rgba()), Some([1, 2, 3, 255]));
+        assert_eq!(s.border.map(|c| c.rgba()), Some([1, 2, 3, 90]));
+    }
+
+    #[test]
+    fn to_style_carries_font_effects_and_drop_sound() {
+        let mut v = StyleView::from_style(&every_group_style());
+        v.font = Some(20);
+        let s = v.to_style().unwrap();
+        assert_eq!(s.font, Some(20u8));
+        assert_eq!(s.beam, Some(Cancelable::Cancel));
+        assert!(matches!(&s.sound, Some(Cancelable::Set(x)) if x.positional && x.vol == 200));
+        assert_eq!(s.drop_sound(), Some(DropSound::Normal));
+        assert_eq!(s.id, None);
+        v.font = Some(300);
+        assert_eq!(v.to_style(), None);
+    }
+
+    #[test]
+    fn to_style_refuses_a_quoted_custom_sound_name() {
+        let mut v = StyleView::from_style(&Style::blank_show());
+        let mk = |n: &str| {
+            Some(Cancelable::Set(Sound {
+                id: None,
+                custom: Some(n.to_string()),
+                vol: 100,
+                positional: false,
+            }))
+        };
+        v.sound = mk("a\"b.mp3");
+        assert_eq!(v.to_style(), None);
+        v.sound = mk("a.mp3");
+        assert!(v.to_style().is_some());
+    }
+
+    #[test]
+    fn to_style_round_trips_the_built_ins() {
+        for (name, st) in crate::models::config::StyleSet::shipped_defaults().iter() {
+            let mut want = st.clone();
+            want.id = None;
+            assert_eq!(StyleView::from_style(st).to_style(), Some(want), "{name}");
+        }
+    }
+
+    #[test]
+    fn from_style_carries_the_style_alpha() {
+        let mut s = Style::blank_show();
+        s.text = Some(crate::models::config::StyleColour::new(10, 20, 30, 90));
+        let v = StyleView::from_style(&s);
+        assert_eq!(v.text.map(|c| c.rgba), Some([10, 20, 30, 90]));
+    }
+
     fn every_group_style() -> Style {
         let mut s = Style::blank_show();
-        s.text = Some([1, 2, 3]);
+        s.text = Some(crate::models::config::StyleColour::opaque(1, 2, 3));
         s.font = Some(30);
         s.minimap = Some(Cancelable::Set(Minimap {
             size: 1,

@@ -18,8 +18,8 @@ use crate::filter::keywords::{Keyword, Kind};
 use crate::filter::section::{self, SectionSpan};
 use crate::filter::tokenize::Operator;
 use crate::filter::{
-    Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, RuleStep,
-    Severity, parse as parse_filter, parse_with_id_base,
+    Block, BlockId, BlockKeyword, DisabledState, Document, FilterDiagnostic, LinePatch, Severity,
+    parse as parse_filter, parse_with_id_base,
 };
 use crate::models::config::{Cancelable, Style, StyleAction, StyleSet};
 use crate::styled::{self, StyleReport};
@@ -112,7 +112,12 @@ pub enum Dir {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowAction {
     SetEnabled(BlockId, bool),
-    Move(BlockId, Dir),
+    /// One drop from the drag handle: move a rule (its whole `# ff:group`) to any user-side
+    /// destination in one edit: the group moves as a unit and the economy section is refused.
+    MoveTo {
+        id: BlockId,
+        dest: crate::filter::MoveDest,
+    },
     Delete(BlockId),
     Duplicate(BlockId),
     SetKeyword(BlockId, BlockKeyword),
@@ -171,7 +176,7 @@ pub enum RowAction {
 fn action_target(action: &RowAction) -> Option<BlockId> {
     match action {
         RowAction::SetEnabled(id, _)
-        | RowAction::Move(id, _)
+        | RowAction::MoveTo { id, .. }
         | RowAction::Delete(id)
         | RowAction::Duplicate(id)
         | RowAction::SetKeyword(id, _)
@@ -320,9 +325,6 @@ pub struct RuleRow {
     /// Warning diagnostics, enabled blocks only.
     pub warnings: Vec<FilterDiagnostic>,
     pub cannot_enable: bool,
-    pub can_move_up: bool,
-    pub can_move_down: bool,
-    pub moved_across_continue: bool,
     pub conditions: Vec<String>,
     /// Number of blocks the rule is written as (1 unless it is a `# ff:group` group).
     pub group_size: usize,
@@ -399,7 +401,6 @@ pub struct WorkingFilter {
     blocking: Vec<BlockingError>,
     /// Grouped rules (several blocks written as one rule), recomputed on every rebuild.
     groups: GroupIndex,
-    moved: HashSet<BlockId>,
     generation: u64,
     dirty: bool,
     /// The rule text differs from the applied text (a staged economy op does not count).
@@ -709,9 +710,6 @@ impl WorkingFilter {
             errors: Vec::new(),
             warnings: Vec::new(),
             cannot_enable: false,
-            can_move_up: false,
-            can_move_down: false,
-            moved_across_continue: false,
             summary: row_summary(&x.conditions),
             conditions: x.conditions,
             group_size: 1,
@@ -745,7 +743,6 @@ impl WorkingFilter {
             projected: EconomyView::Absent,
             blocking: Vec::new(),
             groups: GroupIndex::default(),
-            moved: HashSet::new(),
             generation: 0,
             dirty: false,
             rules_edited: false,
@@ -769,22 +766,21 @@ impl WorkingFilter {
         };
         let in_economy = |h: usize| span.is_some_and(|s| h > s.begin && h < s.end);
 
-        // (block, is_economy, side) in file order; side 0 = before the section, 1 = after.
-        let mut order: Vec<(&Block, bool, u8)> = Vec::new();
-        for b in self.doc.blocks() {
-            let econ = in_economy(b.header_line());
-            let side = u8::from(span.is_some_and(|s| b.header_line() >= s.end));
-            order.push((b, econ, side));
-        }
-        let econ_blocks = order.iter().filter(|(_, e, _)| *e).count();
+        // (block, is_economy) in file order.
+        let order: Vec<(&Block, bool)> = self
+            .doc
+            .blocks()
+            .map(|b| (b, in_economy(b.header_line())))
+            .collect();
+        let econ_blocks = order.iter().filter(|(_, e)| *e).count();
         let groups = group::analyze(&self.doc);
 
         let mut rows: Vec<RuleRow> = Vec::new();
         let mut economy_rows: Vec<RuleRow> = Vec::new();
-        // Side of the economy section and header line of each row, for the layout pass below.
-        let mut row_meta: Vec<(u8, usize)> = Vec::new();
+        // Header line of each row, for the layout pass below.
+        let mut row_lines: Vec<usize> = Vec::new();
         let mut index = 0usize;
-        for (b, econ, side) in &order {
+        for (b, econ) in &order {
             if *econ {
                 economy_rows.push(self.economy_row(b));
                 continue;
@@ -843,7 +839,7 @@ impl WorkingFilter {
                     }
                 }
             }
-            row_meta.push((*side, b.header_line()));
+            row_lines.push(b.header_line());
             rows.push(RuleRow {
                 id,
                 index,
@@ -857,10 +853,6 @@ impl WorkingFilter {
                 errors,
                 warnings,
                 cannot_enable: !enabled && !b.can_enable(),
-                // Filled in by the layout pass below.
-                can_move_up: false,
-                can_move_down: false,
-                moved_across_continue: self.moved.contains(&id),
                 summary: row_summary(&x.conditions),
                 conditions: x.conditions,
                 group_size: members.len(),
@@ -872,15 +864,13 @@ impl WorkingFilter {
             });
         }
 
-        // One pass over rules and banners in file order. A rule can step to a neighbouring rule
-        // on the same side of the economy section, or hop a user divider; never the economy
-        // banner. Mirrors `Document::rule_step` without calling it per row.
+        // One pass over rules and banners in file order: each rule's section and the list layout.
         let banners = section::banners(&self.doc);
         let mut layout: Vec<Item> = Vec::new();
         let mut bi = 0usize;
         let mut containing: Option<usize> = None;
         for (r, row) in rows.iter_mut().enumerate() {
-            while bi < banners.len() && banners[bi].start < row_meta[r].1 {
+            while bi < banners.len() && banners[bi].start < row_lines[r] {
                 layout.push(match banners[bi].kind {
                     section::BannerKind::Section => Item::Banner(bi),
                     section::BannerKind::Economy => Item::EconomyBanner,
@@ -897,34 +887,6 @@ impl WorkingFilter {
                 section::BannerKind::Economy => Item::EconomyBanner,
             });
         }
-        if damaged.is_none() {
-            let steps: Vec<(usize, bool, bool)> = layout
-                .iter()
-                .enumerate()
-                .filter_map(|(i, it)| {
-                    let Item::Unit(r) = it else { return None };
-                    let ok = |n: Option<&Item>| match n {
-                        Some(Item::Unit(o)) => row_meta[*o].0 == row_meta[*r].0,
-                        Some(Item::Banner(_)) => true,
-                        Some(Item::EconomyBanner) | None => false,
-                    };
-                    // Hopping up over the divider right after the economy section would land
-                    // the rule inside it.
-                    let up = match i.checked_sub(1) {
-                        Some(j) if matches!(layout[j], Item::Banner(_)) => {
-                            j == 0 || layout[j - 1] != Item::EconomyBanner
-                        }
-                        j => ok(j.and_then(|j| layout.get(j))),
-                    };
-                    Some((*r, up, ok(layout.get(i + 1))))
-                })
-                .collect();
-            for (r, up, down) in steps {
-                rows[r].can_move_up = up;
-                rows[r].can_move_down = down;
-            }
-        }
-
         let mut tally = vec![0usize; banners.len()];
         for row in &rows {
             if let Some(o) = row.section {
@@ -1425,6 +1387,61 @@ impl WorkingFilter {
         }
     }
 
+    /// Auto Detect candidates: untagged rules outside the economy section (disabled ones
+    /// included, a `# ff:group` once), skipping `can't enable` and grammar-error rules. None
+    /// while the economy markers are damaged: the economy blocks are then ordinary rows.
+    pub fn detect_inputs(&self) -> Vec<(BlockId, Vec<BodyEntry>, BlockKeyword)> {
+        self.rows()
+            .iter()
+            .filter(|r| self.detect_eligible(r))
+            .map(|r| (r.id, self.body_view(r.id), r.keyword))
+            .collect()
+    }
+
+    fn detect_eligible(&self, r: &RuleRow) -> bool {
+        !matches!(self.base_economy, EconomyView::Damaged(_))
+            && r.style == StyleState::None
+            && !r.cannot_enable
+            && r.errors.is_empty()
+            && self.body_editable(r.id)
+    }
+
+    /// Auto Detect: tag a batch of rules with `# ff:style <id> <name>` in memory. Every member
+    /// of a group gets the tag so the run stays one rule. Nothing is rewritten here (Apply
+    /// rewrites enabled tagged rules from their style), one rebuild at the end. Entries with an
+    /// unknown style or an id that is no longer an eligible untagged rule are skipped. Returns
+    /// the number of rules (not blocks) tagged.
+    pub fn tag_styles(&mut self, tags: &[(BlockId, String)]) -> usize {
+        if tags.is_empty() {
+            return 0;
+        }
+        let mut done = 0;
+        for (id, name) in tags {
+            let Some(tag) = self.styles.as_ref().and_then(|s| s.tag_for(name)) else {
+                continue;
+            };
+            let eligible = self.row(*id).is_some_and(|r| self.detect_eligible(r));
+            if !eligible {
+                continue;
+            }
+            let snapshot = self.doc.clone();
+            let ok = self
+                .groups
+                .members(*id)
+                .into_iter()
+                .all(|m| self.doc.set_meta(m, "style", &tag).is_ok());
+            if ok {
+                done += 1;
+            } else {
+                self.doc = snapshot;
+            }
+        }
+        if done > 0 {
+            self.rebuild();
+        }
+        done
+    }
+
     /// Whether the block's body lines accept line edits: false for an unknown id and for an
     /// invalid disabled block (its lines are commented prose the parser cannot structure).
     pub fn body_editable(&self, id: BlockId) -> bool {
@@ -1565,7 +1582,7 @@ impl WorkingFilter {
             | RowAction::RenameSection { .. }
             | RowAction::RemoveSection(_)
             | RowAction::MoveSection(..) => return self.section_action(action),
-            RowAction::Move(id, dir) => return self.move_rule(id, dir),
+            RowAction::MoveTo { id, dest } => return self.move_rule_to(id, dest),
             RowAction::SetDefenceSelection { id, mask } => return self.set_selection(id, mask),
             _ => {}
         }
@@ -1586,11 +1603,8 @@ impl WorkingFilter {
                     .try_for_each(|m| self.doc.set_enabled(*m, on));
                 done_or(r, None)
             }
-            RowAction::Delete(id) => {
+            RowAction::Delete(_) => {
                 let r = members.iter().try_for_each(|m| self.doc.remove_block(*m));
-                if r.is_ok() {
-                    self.moved.remove(&id);
-                }
                 done_or(r, None)
             }
             RowAction::Duplicate(id) => {
@@ -1694,39 +1708,17 @@ impl WorkingFilter {
         }
     }
 
-    /// Move a rule one step: swap with its neighbour rule (either may be a group, which moves as
-    /// one unit) or hop the divider in that direction. Never crosses the economy section.
-    fn move_rule(&mut self, id: BlockId, dir: Dir) -> ActionOutcome {
-        let up = dir == Dir::Up;
-        let a = self.groups.members(id);
-        let edge = if up { a[0] } else { a[a.len() - 1] };
-        let nb = match self.doc.rule_step(edge, up) {
-            Err(e) => return refused(e.to_string()),
-            Ok(RuleStep::Blocked) => {
-                return refused("There is no rule to swap with in that direction.".into());
-            }
-            // The divider hops the rule; the rule order is unchanged, so no Continue flag.
-            Ok(RuleStep::CrossBanner(k)) => {
-                return done_or(self.doc.move_section(k, !up), Some(id));
-            }
-            Ok(RuleStep::Swap(nb)) => self.groups.rule_of(nb),
-        };
-        let b = self.groups.members(nb);
-        let crossing = self.doc.block(id).is_some_and(Block::has_continue)
-            || self.doc.block(nb).is_some_and(Block::has_continue);
-        let r = match (a.len(), b.len(), up) {
-            (1, 1, _) => self.doc.move_block(id, up),
-            (_, _, true) => self.doc.swap_runs(&b, &a),
-            (_, _, false) => self.doc.swap_runs(&a, &b),
-        };
-        if r.is_ok() {
-            if crossing {
-                self.moved.insert(id);
-            } else {
-                self.moved.remove(&id);
-            }
+    /// Move a rule (its whole group) to `dest` in one edit, as one drop.
+    fn move_rule_to(&mut self, id: BlockId, dest: crate::filter::MoveDest) -> ActionOutcome {
+        if !self.doc.blocks().any(|b| b.id() == id) {
+            return refused(NOT_EDITABLE_STATUS.to_string());
         }
-        done_or(r, Some(id))
+        let run = self.groups.members(id);
+        match self.doc.move_run_to(&run, dest) {
+            Ok(true) => done_or(Ok(()), Some(id)),
+            Ok(false) => ActionOutcome::default(),
+            Err(e) => refused(section_refusal(&e)),
+        }
     }
 
     /// Set the Simple Defences selection of a rule (a bit set over [`group::COMBOS`]): the rule is
@@ -1771,13 +1763,7 @@ impl WorkingFilter {
                 }
                 Err(e) => Err(e.to_string()),
             },
-            RowAction::Delete(id) => {
-                let r = self.doc.remove_block(id).map_err(|e| e.to_string());
-                if r.is_ok() {
-                    self.moved.remove(&id);
-                }
-                r
-            }
+            RowAction::Delete(id) => self.doc.remove_block(id).map_err(|e| e.to_string()),
             RowAction::Duplicate(id) => {
                 let name = self.doc.meta_get(id, "name").map(str::to_string);
                 match self.doc.duplicate_block(id) {
@@ -1798,7 +1784,7 @@ impl WorkingFilter {
                 }
             }
             // Handled before a single block is chosen (see `dispatch`).
-            RowAction::Move(..)
+            RowAction::MoveTo { .. }
             | RowAction::SetDefenceSelection { .. }
             | RowAction::AddSection
             | RowAction::AddSectionAbove(_)
@@ -1856,9 +1842,6 @@ impl WorkingFilter {
                 r
             }
             RowAction::SetContinue(id, on) => {
-                // The "moved across Continue" warning may no longer be true once a Continue
-                // line is added or removed, so drop all of them rather than leave a stale one.
-                self.moved.clear();
                 self.doc.set_continue(id, on).map_err(|e| e.to_string())
             }
             RowAction::SetName(id, s) => {
@@ -2055,7 +2038,6 @@ impl WorkingFilter {
     /// against the re-parsed text.
     pub fn revert_rules(&mut self) {
         self.doc = parse_text(&self.applied_text);
-        self.moved.clear();
         self.rebuild();
     }
 
@@ -2064,7 +2046,6 @@ impl WorkingFilter {
         self.applied_text = applied_text.to_string();
         self.doc = parse_text(applied_text);
         self.clear_pending();
-        self.moved.clear();
         self.rebuild();
     }
 }
@@ -2187,7 +2168,6 @@ Show # Unique A
         let wf = WorkingFilter::from_text(&t);
         assert!(matches!(wf.economy(), EconomyView::Damaged(m) if !m.is_empty()));
         assert_eq!(wf.rows().len(), 2);
-        assert!(wf.rows().iter().all(|r| !r.can_move_up && !r.can_move_down));
     }
 
     #[test]
@@ -2317,19 +2297,6 @@ Show # Unique A
         let id = wf.rows()[1].id;
         assert!(wf.row_matches(id, "sapphire"));
         assert!(!wf.row_matches(id, "emerald"));
-    }
-
-    #[test]
-    fn move_flags_respect_the_economy_section() {
-        let wf = WorkingFilter::from_text(&with_economy());
-        let r = wf.rows();
-        assert!(!r[0].can_move_up && !r[0].can_move_down, "economy follows");
-        assert!(
-            !r[1].can_move_up,
-            "OD-3: rule after economy-end has no rule above"
-        );
-        assert!(r[1].can_move_down);
-        assert!(r[2].can_move_up && !r[2].can_move_down);
     }
 
     fn test_styles() -> StyleSet {
@@ -2775,30 +2742,19 @@ Show
     fn delete_and_move() {
         let mut wf = WorkingFilter::from_text(THREE);
         let ids: Vec<_> = wf.rows().iter().map(|r| r.id).collect();
-        assert!(wf.apply_action(RowAction::Move(ids[1], Dir::Up)).changed);
+        let to_top = RowAction::MoveTo {
+            id: ids[1],
+            dest: crate::filter::MoveDest::Before(ids[0]),
+        };
+        assert!(wf.apply_action(to_top).changed);
         assert_eq!(wf.rows()[0].id, ids[1]);
         assert!(wf.apply_action(RowAction::Delete(ids[0])).changed);
         assert_eq!(wf.rows().len(), 2);
-        let bad = wf.apply_action(RowAction::Move(ids[1], Dir::Up));
+        let bad = wf.apply_action(RowAction::MoveTo {
+            id: ids[0],
+            dest: crate::filter::MoveDest::End,
+        });
         assert!(!bad.changed && bad.status.is_some());
-    }
-
-    #[test]
-    fn moving_across_continue_is_flagged_then_cleared() {
-        let t =
-            "Show\n  Rarity Rare\n  Continue\n\nHide\n  Rarity Normal\n\nShow\n  Class \"Rings\"\n";
-        let mut wf = WorkingFilter::from_text(t);
-        let ids: Vec<_> = wf.rows().iter().map(|r| r.id).collect();
-        wf.apply_action(RowAction::Move(ids[1], Dir::Up));
-        assert!(wf.row(ids[1]).expect("row").moved_across_continue);
-        // Now order is [1, 0, 2]; moving 1 down crosses 0 (Continue) again.
-        wf.apply_action(RowAction::Move(ids[1], Dir::Down));
-        wf.apply_action(RowAction::Move(ids[2], Dir::Up));
-        // ids[2] swapped with ids[1]; neither has Continue -> not flagged.
-        assert!(!wf.row(ids[2]).expect("row").moved_across_continue);
-        // Cross then re-move without crossing clears the flag.
-        wf.apply_action(RowAction::Move(ids[1], Dir::Up));
-        assert!(wf.row(ids[1]).is_some());
     }
 
     #[test]
@@ -3290,7 +3246,6 @@ Show
         assert_eq!(r.summary, "Rarity Rare; Defences: Full AR, Full EV");
         assert_eq!(wf.rows()[2].index, 3);
         assert_eq!(wf.matches("pure"), vec![1]);
-        assert!(wf.rows()[0].can_move_down && wf.rows()[2].can_move_up);
         assert_eq!(wf.text(), src);
         assert_eq!(wf.text_with_styles().unwrap().0, src);
         assert!(!wf.style_rewrite_pending());
@@ -3393,35 +3348,24 @@ Show
 
     #[test]
     fn a_group_moves_as_one_unit() {
+        use crate::filter::MoveDest;
         let src = grouped();
         let mut wf = WorkingFilter::from_text(&src);
         let id = group_row(&wf).id;
-        assert!(wf.apply_action(RowAction::Move(id, Dir::Up)).changed);
+        let (first, last) = (wf.rows()[0].id, wf.rows()[2].id);
+        let to = |id: BlockId, dest: MoveDest| RowAction::MoveTo { id, dest };
+        assert!(wf.apply_action(to(id, MoveDest::Before(first))).changed);
         assert_eq!(group_row(&wf).index, 1);
         assert_groups_intact(&wf);
-        assert!(!wf.rows()[0].can_move_up && wf.rows()[0].can_move_down);
-        assert!(wf.apply_action(RowAction::Move(id, Dir::Down)).changed);
+        assert!(wf.apply_action(to(id, MoveDest::Before(last))).changed);
         assert_eq!(wf.text(), src);
         // A single rule passes the whole group too, in either direction.
-        let last = wf.rows()[2].id;
-        assert!(wf.apply_action(RowAction::Move(last, Dir::Up)).changed);
+        assert!(wf.apply_action(to(last, MoveDest::Before(id))).changed);
         assert_eq!(wf.rows()[1].id, last);
         assert_eq!(wf.rows()[2].group_size, 2);
         assert_groups_intact(&wf);
-        assert!(wf.apply_action(RowAction::Move(last, Dir::Down)).changed);
+        assert!(wf.apply_action(to(last, MoveDest::End)).changed);
         assert_eq!(wf.text(), src);
-    }
-
-    #[test]
-    fn moving_a_group_across_continue_is_flagged() {
-        let src = grouped().replace(
-            "Show\n  Rarity Normal\n",
-            "Show\n  Rarity Normal\n  Continue\n",
-        );
-        let mut wf = WorkingFilter::from_text(&src);
-        let id = group_row(&wf).id;
-        assert!(wf.apply_action(RowAction::Move(id, Dir::Up)).changed);
-        assert!(wf.row(id).unwrap().moved_across_continue);
     }
 
     #[test]
@@ -3532,7 +3476,10 @@ Show
             RowAction::Delete(follower),
             RowAction::SetEnabled(follower, false),
             RowAction::Duplicate(follower),
-            RowAction::Move(follower, Dir::Down),
+            RowAction::MoveTo {
+                id: follower,
+                dest: crate::filter::MoveDest::End,
+            },
             RowAction::SetDefenceSelection {
                 id: follower,
                 mask: 1,
@@ -3598,11 +3545,7 @@ Show
         let idx: Vec<usize> = wf.rows().iter().map(|r| r.index).collect();
         assert_eq!(idx, [1, 2, 3, 4]);
         assert_eq!(wf.economy_rows().len(), 3);
-        assert!(
-            wf.economy_rows()
-                .iter()
-                .all(|r| r.index == 0 && !r.can_move_up)
-        );
+        assert!(wf.economy_rows().iter().all(|r| r.index == 0));
     }
 
     #[test]
@@ -3749,34 +3692,6 @@ Show
         }
     }
 
-    /// Row flags equal what `Document::rule_step` says, for every rule of `text`.
-    fn assert_moves_match_rule_step(text: &str) {
-        let wf = WorkingFilter::from_text(text);
-        for r in wf.rows() {
-            let m = wf.groups.members(r.id);
-            let up = wf.doc.rule_step(m[0], true).unwrap() != crate::filter::RuleStep::Blocked;
-            let down = wf.doc.rule_step(m[m.len() - 1], false).unwrap()
-                != crate::filter::RuleStep::Blocked;
-            assert_eq!((r.can_move_up, r.can_move_down), (up, down), "{}", r.label);
-        }
-    }
-
-    #[test]
-    fn rule_move_flags_equal_rule_step() {
-        assert_moves_match_rule_step(&sectioned());
-        assert_moves_match_rule_step(THREE);
-        assert_moves_match_rule_step(&with_economy());
-        let adjacent = format!(
-            "{}{}Show\n  Rarity Normal\n\n{PART1}\n{PART2}\n{}Show\n  Rarity Magic\n",
-            banner("A"),
-            banner("B"),
-            banner("C")
-        );
-        assert_moves_match_rule_step(&adjacent);
-        let edge = format!("Show\n  Rarity Normal\n\n{}{PART1}\n{PART2}", banner("A"));
-        assert_moves_match_rule_step(&edge);
-    }
-
     #[test]
     fn shadowing_marks_catch_alls_with_enabled_rules_after() {
         let t = "Show\n\nShow\n  Class \"Rings\"\n\nShow\n";
@@ -3889,8 +3804,10 @@ Show
             RowAction::SetEnabled(eid, false),
             RowAction::Delete(eid),
             RowAction::Duplicate(eid),
-            RowAction::Move(eid, Dir::Up),
-            RowAction::Move(eid, Dir::Down),
+            RowAction::MoveTo {
+                id: eid,
+                dest: crate::filter::MoveDest::End,
+            },
             RowAction::SetContinue(eid, true),
             RowAction::EditLine {
                 id: eid,
@@ -3908,29 +3825,229 @@ Show
     }
 
     #[test]
-    fn rules_hop_dividers_without_reordering() {
+    fn rules_cross_dividers_without_reordering() {
+        use crate::filter::MoveDest;
         let mut wf = WorkingFilter::from_text(&sectioned());
         let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
-        // Rule 4 is the only rule of Endgame; down is the economy banner (blocked).
-        let last = ids[3];
-        let out = wf.apply_action(RowAction::Move(last, Dir::Down));
-        assert!(!out.changed);
-        // The group (rule 3) is the last of Leveling; moving down hops the Endgame divider.
+        // The group (rule 3) is the last of Leveling; dropping it right below the Endgame
+        // divider changes its section, not the rule order.
         let grp = ids[2];
         assert_eq!(wf.rows()[2].section, Some(0));
-        let out = wf.apply_action(RowAction::Move(grp, Dir::Down));
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: grp,
+            dest: MoveDest::AfterBanner(1),
+        });
         assert!(out.changed, "{:?}", out.status);
         assert_eq!(wf.rows().iter().map(|r| r.id).collect::<Vec<_>>(), ids);
         assert_eq!(wf.rows()[2].section, Some(1));
         assert_eq!(wf.rows()[2].group_size, 2, "the run moved as one");
-        assert!(!wf.rows()[2].moved_across_continue);
-        // And back up.
-        wf.apply_action(RowAction::Move(grp, Dir::Up));
+        // And back above the divider.
+        wf.apply_action(RowAction::MoveTo {
+            id: grp,
+            dest: MoveDest::BeforeBanner(1),
+        });
         assert_eq!(wf.rows()[2].section, Some(0));
         assert_eq!(wf.text(), sectioned());
-        // The rule right below the economy-following divider cannot hop up into the economy.
-        let mut wf = WorkingFilter::from_text(&with_economy());
-        let after = wf.rows()[1].id;
-        assert!(!wf.apply_action(RowAction::Move(after, Dir::Up)).changed);
+    }
+
+    // -- Auto Detect batch model -------------------------------------------------------------
+
+    const DET_GROUP: &str = "# ff:group abc 1/3\nShow\n  Rarity Rare\n  BaseArmour > 0\n  BaseEvasion 0\n  BaseEnergyShield 0\n  SetFontSize 30\n\n# ff:group abc 2/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion > 0\n  BaseEnergyShield 0\n  SetFontSize 30\n\n# ff:group abc 3/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion 0\n  BaseEnergyShield > 0\n  SetFontSize 30\n";
+
+    fn detect_fixture() -> String {
+        use crate::filter::section::{BEGIN_LINE, RULE_LINE};
+        format!(
+            "Show\n  Class \"Rings\"\n  SetFontSize 20\n\n#Hide\n#  Class \"Belts\"\n#  SetFontSize 20\n\n# ff:style builtin:E E\nShow\n  Class \"Amulets\"\n\n#Show\n#  this is prose\n\n{DET_GROUP}\n{RULE_LINE}\n{BEGIN_LINE}\n{RULE_LINE}\nShow\n  Class \"Gems\"\n"
+        )
+    }
+
+    #[test]
+    fn detect_inputs_lists_untagged_rules_group_once() {
+        let wf = styled_wf(&detect_fixture());
+        let ids: Vec<BlockId> = wf.detect_inputs().iter().map(|t| t.0).collect();
+        let rows = wf.rows();
+        let want: Vec<BlockId> = rows
+            .iter()
+            .filter(|r| r.style == StyleState::None && !r.cannot_enable && r.errors.is_empty())
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, want);
+        // rings, disabled belts, the group leader; not the tagged, can't-enable or economy ones
+        assert_eq!(ids.len(), 3, "{rows:?}");
+        assert!(rows.iter().any(|r| r.cannot_enable));
+    }
+
+    #[test]
+    fn detect_inputs_empty_when_economy_markers_are_damaged() {
+        use crate::filter::section::BEGIN_LINE;
+        let t = format!(
+            "Show\n  Class \"Rings\"\n  SetFontSize 20\n\n{BEGIN_LINE}\n# ff:name A tier Uniques\nShow\n  Rarity Unique\n  BaseType == \"Infernal Sword\"\n  SetBackgroundColor 175 96 37 240\n"
+        );
+        let mut wf = styled_wf(&t);
+        assert!(matches!(wf.economy(), EconomyView::Damaged(_)));
+        assert_eq!(wf.rows().len(), 2);
+        assert!(wf.detect_inputs().is_empty());
+        let id = wf.rows()[1].id;
+        assert_eq!(wf.tag_styles(&[(id, "S".into())]), 0);
+        assert_eq!(wf.text(), t);
+    }
+
+    #[test]
+    fn detect_inputs_skips_grammar_errors() {
+        let wf = styled_wf("Show\n  Rarity Bogus\n\nShow\n  Class \"Rings\"\n");
+        let n = wf.rows().iter().filter(|r| !r.errors.is_empty()).count();
+        assert_eq!(n, 1);
+        assert_eq!(wf.detect_inputs().len(), 1);
+    }
+
+    #[test]
+    fn tag_styles_tags_every_group_member_and_keeps_one_rule() {
+        let mut wf = styled_wf(&detect_fixture());
+        let id = wf
+            .rows()
+            .iter()
+            .find(|r| r.group_size == 3)
+            .map(|r| r.id)
+            .unwrap();
+        assert_eq!(wf.tag_styles(&[(id, "S".into())]), 1);
+        let t = wf.text();
+        assert_eq!(t.matches("# ff:style builtin:S S").count(), 3, "{t}");
+        let r = wf.rows().iter().find(|r| r.group_size == 3).unwrap();
+        assert!(!r.group_broken);
+        assert_eq!(r.style, StyleState::Known("S".into()));
+        assert!(wf.rules_edited());
+        wf.revert_rules();
+        assert!(!wf.text().contains("builtin:S"));
+    }
+
+    #[test]
+    fn tag_styles_disabled_rule_keeps_action_bytes() {
+        let mut wf =
+            styled_wf("#Hide\n#  Class \"Rings\"\n#  SetFontSize 20\n\nShow\n  SetFontSize 20\n");
+        let id = wf.rows()[0].id;
+        let en = wf.rows()[1].id;
+        assert_eq!(wf.tag_styles(&[(id, "S".into()), (en, "S".into())]), 2);
+        let t = wf.text();
+        assert!(
+            t.contains("#  SetFontSize 20") && t.contains("\n  SetFontSize 20\n"),
+            "{t}"
+        );
+        assert!(!t.contains("SetFontSize 37"), "{t}");
+        assert!(!wf.rows()[0].enabled);
+    }
+
+    #[test]
+    fn tag_styles_skips_unknown_and_already_tagged() {
+        let mut wf = styled_wf(
+            "# ff:style builtin:E E\nShow\n\nShow\n  Class \"Rings\"\n\nShow\n  Class \"Belts\"\n",
+        );
+        let (tagged, a, b) = (wf.rows()[0].id, wf.rows()[1].id, wf.rows()[2].id);
+        let n = wf.tag_styles(&[(tagged, "S".into()), (a, "Nope".into()), (b, "S".into())]);
+        assert_eq!(n, 1);
+        let t = wf.text();
+        assert_eq!(t.matches("ff:style").count(), 2, "{t}");
+        assert!(
+            t.contains("builtin:E E") && !t.contains("builtin:S S\nShow\n\n"),
+            "{t}"
+        );
+        assert_eq!(wf.tag_styles(&[]), 0);
+    }
+
+    // -- MoveTo --------------------------------------------------------------------------------
+
+    fn abcd() -> String {
+        "Show\n  Class \"A\"\n\nShow\n  Class \"B\"\n\nShow\n  Class \"C\"\n\nShow\n  Class \"D\"\n"
+            .to_string()
+    }
+
+    #[test]
+    fn move_to_moves_a_group_as_one_unit() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let before_groups = wf.rows()[2].group_size;
+        assert_eq!(before_groups, 2);
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[2],
+            dest: MoveDest::End,
+        });
+        assert!(out.changed, "{:?}", out.status);
+        assert_eq!(out.focus, Some(ids[2]));
+        let order: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        assert_eq!(order, vec![ids[0], ids[1], ids[3], ids[2]]);
+        assert_eq!(wf.rows()[3].group_size, 2, "still one rule");
+        assert_eq!(wf.rows()[3].section, Some(1));
+    }
+
+    #[test]
+    fn move_to_refuses_followers_and_economy_ids() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let before = wf.text();
+        let follower = wf.groups.members(ids[2])[1];
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: follower,
+            dest: MoveDest::End,
+        });
+        assert!(!out.changed && out.status.is_some());
+        let eid = wf.economy_rows()[0].id;
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: eid,
+            dest: MoveDest::Before(ids[0]),
+        });
+        assert!(!out.changed && out.status.is_some());
+        // A destination inside the economy section is refused too.
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[0],
+            dest: MoveDest::Before(eid),
+        });
+        assert!(!out.changed && out.status.is_some());
+        assert_eq!(wf.text(), before);
+    }
+
+    #[test]
+    fn move_to_a_collapsed_section_keeps_it_collapsed() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[3],
+            dest: MoveDest::AfterBanner(0),
+        });
+        assert!(out.changed, "{:?}", out.status);
+        assert_eq!(wf.rows()[1].id, ids[3]);
+        assert_eq!(wf.rows()[1].section, Some(0));
+        let entries = wf.entries("", |s| s.name == "Leveling");
+        assert_eq!(entries[0], ListEntry::Rule(0));
+        assert!(matches!(
+            entries[1],
+            ListEntry::Header {
+                section: 0,
+                collapsed: true,
+                ..
+            }
+        ));
+        assert!(!entries.contains(&ListEntry::Rule(1)), "the rule is hidden");
+    }
+
+    #[test]
+    fn move_to_a_no_op_destination_changes_nothing() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&abcd());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let before = wf.text();
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[1],
+            dest: MoveDest::Before(ids[2]),
+        });
+        assert_eq!(out, ActionOutcome::default());
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[3],
+            dest: MoveDest::End,
+        });
+        assert!(!out.changed && out.status.is_none());
+        assert_eq!(wf.text(), before);
+        assert!(!wf.is_dirty());
     }
 }

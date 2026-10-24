@@ -9,6 +9,7 @@
 - ✅ **v0.5 Generic Filter Editor & Initial App Configuration** — Phases 16-28 (shipped 2026-10-15) — [archive](milestones/v0.5-ROADMAP.md)
 - ✅ **v0.6 New PoE2-based Tool UI** — Phases 29-35 (shipped 2026-10-17) — [archive](milestones/v0.6-ROADMAP.md)
 - ✅ **v0.7 Initial Public Release and Strictness Selector** — Phases 36-42 (shipped 2026-10-18) — [archive](milestones/v0.7-ROADMAP.md)
+- ✅ **v0.7.2 Small UI Improvements** — Phases 43-50 (shipped 2026-10-24) — [archive](milestones/v0.7.2-ROADMAP.md)
 
 ## Phases
 
@@ -107,6 +108,22 @@ Full detail: [milestones/v0.6-ROADMAP.md](milestones/v0.6-ROADMAP.md)
 - [x] Phase 42: Release Review (5/5 plans) — completed 2026-10-18
 
 Full detail: [milestones/v0.7-ROADMAP.md](milestones/v0.7-ROADMAP.md)
+
+</details>
+
+<details>
+<summary>✅ v0.7.2 Small UI Improvements (Phases 43-50) — SHIPPED 2026-10-24</summary>
+
+- [x] Phase 43: Style Alpha (3/3 plans) — completed 2026-10-23
+- [x] Phase 44: Auto Detect Styles (3/3 plans) — completed 2026-10-23
+- [x] Phase 45: Economy Tier-Range Names (2/2 plans) — completed 2026-10-23
+- [x] Phase 46: Request Throttling & CLI User Agent (2/2 plans) — completed 2026-10-23
+- [x] Phase 47: Customizable Hotkey (4/4 plans) — completed 2026-10-23
+- [x] Phase 48: Game-Art Widgets (4/4 plans) — completed 2026-10-23
+- [x] Phase 49: Drag-and-Drop Reorder (6/6 plans) — completed 2026-10-23
+- [x] Phase 50: Release Review (run inline) — completed 2026-10-24
+
+Full detail: [milestones/v0.7.2-ROADMAP.md](milestones/v0.7.2-ROADMAP.md)
 
 </details>
 
@@ -334,6 +351,10 @@ Plans:
 the game's alert sounds 1-16 (extracted by `ff-art` from the install) and a custom sound file such
 as `uwu.mp3` from the game folder, at the chosen volume. Needs an audio playback dependency in `ff`
 (e.g. rodio). Dropped from v0.6 by the author on 2026-10-16.
+**Asset decision (author, 2026-10-23):** the extracted alert sounds are small; they will be
+committed to the repo, documented in `assets/README.md`, and built into the binary like the other
+assets (`include_bytes!`), not read from the game install at run time. Kept in the backlog when
+v0.7.2 was scoped.
 **Requirements:** TBD
 **Plans:** TBD
 
@@ -400,6 +421,279 @@ database.
 - https://www.nvidia.com/en-us/geforce/forums/discover/262665/how-to-fix-share-shadowplay-overlay-showing-up-in-non-game-application/
 - https://forums.developer.nvidia.com/t/gfe-and-g-sync-is-activated-by-a-regular-application/266188
 - https://forum.signalrgb.com/t/signalrgb-app-gets-picked-up-by-nvidia-shadowplay/2024
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.19: Customizable show/hide hotkey (BACKLOG)
+
+**Goal:** Let the user change the system-wide shortcut that summons and hides the overlay, today
+hardcoded to `Ctrl+Shift+Z` (`TOGGLE_MODIFIERS` / `TOGGLE_CODE` in `src/overlay/hotkey.rs`). A
+natural home is the Config tab (a "press the new shortcut" capture control), saved in
+`ff-settings.json` and re-registered at once without a restart. Keep the current behaviour: the
+hotkey only acts while Path of Exile 2 or the overlay is the foreground window, a conflict with
+another app is reported (as the tray tooltip does now), and an invalid or unusable saved value
+falls back to `Ctrl+Shift+Z` with a warning. Raised by the author on 2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.20: Throttle server requests to once per hour (BACKLOG)
+
+**Goal:** Each kind of server request the overlay makes is sent at most once per hour, however
+often the user clicks. A click inside the hour does not reach the server: it "fake-refreshes",
+running the normal flow and outcome from the last result, so it looks the same as a real refresh.
+Applies to the overlay's three network actions: **Sync economy** (poe.ninja exchange + unique
+overviews; the hour is per league, so picking another league still syncs), the **League** list
+refresh (poe.ninja `index-state`) and **Check for updates** (GitHub `releases/latest`). A failed
+request does not start the hour, so a retry after an error goes out. Open points: whether the
+last-request times survive a restart (e.g. in `ff-settings.json`, or the `prices.json` timestamp
+for Sync), and whether the CLI (`ff-cli sync`, `sync metadata`) is throttled too or left as an
+explicit tool. Raised by the author on 2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.21: Crash log for the overlay (BACKLOG)
+
+**Goal:** When `ff` dies, leave a file that says why. Raised by the author on 2026-10-20 after a
+release `ff` vanished between two hotkey presses (relaunching worked and it ran fine afterwards);
+nothing was left to investigate. Always on, no flag needed.
+
+**Findings (2026-10-20):** Windows recorded no Application Error / WER event (IDs 1000-1002) for
+`ff.exe` in the previous 14 days. That fits a Rust panic: a panic unwinds and exits quietly (no
+WER report), and the release build is a GUI-subsystem exe, so the panic message on stderr goes
+nowhere. A native fault (access violation, stack overflow, abort) would normally show in WER.
+
+**Scope:**
+- **Where:** `%LOCALAPPDATA%\FerrisFilter\logs\` (local, not the roaming `%APPDATA%` folder; not
+  `%TEMP%`, which Disk Cleanup and Storage Sense empty). Keep the last few crash files.
+- **Panics (main and worker threads):** a `std::panic::set_hook` writing timestamp, version (the
+  About tab's `build_info` string), OS version, thread name, panic message and source location,
+  and a backtrace. A worker-thread panic today only ends that thread; log it too.
+- **Native crashes:** an unhandled-exception filter writing a minidump (`MiniDumpWriteDump`, or a
+  crate such as `minidumper` / `crash-handler`). WER `LocalDumps` is not an option: its key is
+  under HKLM and the per-user installer has no admin rights.
+- **Symbols:** release builds use `strip = true`, so backtraces have no names. Either keep line
+  tables and publish the `.pdb` as a release asset (not in the installer), or at least record
+  module base and offsets so a dump can be symbolized later.
+- **Silent exits:** a "running" marker file written at start and removed on a clean Quit; if it is
+  still there at the next launch, the previous session ended unexpectedly (killed, crash the hooks
+  missed). Then say so once on the status line, with the logs folder.
+- **Context:** the crash file includes the last ~200 lines of the in-memory log buffer from 999.22,
+  even when file logging is off.
+- **Entry point:** an "Open logs folder" link (About tab) so a user can send the file.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.22: Optional general log, enabled by a flag on `ff` (BACKLOG)
+
+**Goal:** An opt-in run log to trace problems like 999.21's disappearing window. Off by default;
+turned on with a flag on the `ff` binary (e.g. `ff --log [error|warn|info|debug]`, which a user
+can add to the Start menu shortcut), possibly also an environment variable such as `FF_LOG`.
+Raised by the author on 2026-10-20.
+
+**Scope:**
+- A logging facade (`log` or `tracing`) replacing the ~39 non-test `eprintln!` calls, which a
+  release build drops today (no console).
+- Writes to the same `%LOCALAPPDATA%\FerrisFilter\logs\` folder as 999.21, one file per session,
+  with rotation (keep the last few sessions and cap the size).
+- Worth logging: start-up (version, folders, settings warnings), single-instance hand-offs, hotkey
+  registration and each summon / hide, tray events, Apply / Revert / Reload outcomes, in-game reload
+  steps, sync and league fetches, update checks, and every error shown on the status line.
+- An in-memory ring buffer of recent lines is kept even with the flag off, so 999.21's crash file
+  has context. Never log credentials or full clipboard contents.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.23: Section headers in the game's Social-panel style (BACKLOG)
+
+**Goal:** Redraw the RULES tab section headers (`draw_section_header` in
+`src/overlay/rule_list.rs`, today a flat 36pt `pal::PANEL` row with 1px `INPUT_BORDER` lines and a
+chevron) to match the collapsible groups of the game's **Social → Friends** panel (`Self`,
+`Online`, `Invitations Received`, `Offline`). Raised by the author on 2026-10-20 from an in-game
+screenshot (crops in `.planning/research/ui-refs/social-*.png`; the full shot was
+`Downloads/poe2_print014.png`, 1920x1080).
+
+**The game's design (measured at 1920x1080):**
+- Each group is a ~36px bar with ~3px dark gap between bars (39px pitch); FerrisFilter's 36pt
+  header already matches the height.
+- **Toggle button** at the far left, separate from the bar: a ~30px square plate, dark with a warm
+  gold gradient towards the bottom and a thin rounded bronze frame. The glyph is a pale cream
+  chevron plus a dot: **chevron up above the dot = expanded**, **dot above a chevron down =
+  collapsed**. (This is the reverse of the usual "down = open" chevron; follow the game.)
+- **Bar:** a dark stone texture with faint ornate swirls on the left end, a thin bronze outline,
+  and a darker inset. Title centred as `- 19 Offline -`: the count in pale white, the name in muted
+  grey-beige (SmallCaps), dashes either side.
+- The scrollbar to the right is the game scrollbar FerrisFilter already uses.
+
+**What to take:** the button plate and its two glyph states, and the bar texture / frame. **What
+to keep:** the title stays left-aligned (FerrisFilter shows `{n} rules` and controls on the
+right, unlike the game's centred title), and the existing rename pencil, up / down arrows, remove
+x and the economy padlock stay on the right of the bar. The whole bar stays clickable to toggle.
+
+**Art:** look for the Social panel textures with `ff-art list` (likely under
+`Art/Textures/Interface/2D/2DArt/UIImages/InGame/` near the social / friends art), add
+`[[image]]` entries to `assets/poe2/manifest.toml`, and paint the bar as a three-slice like the
+tabs. Fall back to painting the plate and glyph if the art cannot be found.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.24: Clear (X) button inside search fields (BACKLOG)
+
+**Goal:** Search fields get the game's round clear button, as in the Social panel's
+`Filter Friends:` field (crop `.planning/research/ui-refs/social-search-fields.png`): a cream disc
+with a dark X, inside the right end of the field, shown while the field has text; a click empties
+it (same effect as Escape today in the RULES toolbar) and keeps focus. Applies to the RULES search
+box (`Search N rules, classes, base types…`) and the **+ condition** picker's search. The field
+style itself is the game's too: black fill, thin bronze border, italic grey placeholder. Raised by
+the author on 2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.25: Magnifying-glass icon on search fields (BACKLOG)
+
+**Goal:** Mark search fields with the game's magnifying-glass glyph (cream outline lens and
+handle), as beside the Social panel's `Friend Invite:` field (crop
+`.planning/research/ui-refs/social-search-fields.png`). In the game it sits outside the field as a
+button; for FerrisFilter it is a decoration, so the likely placement is a small leading glyph
+inside the field, as the game does with the chat-bubble icon in the status message field
+(`social-status-field.png`), leaving the right end for 999.24's clear button. Same fields as
+999.24. Extract the glyph with `ff-art` if it exists as its own texture. Raised by the author on
+2026-10-20.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.26: Drag-and-drop reordering replaces the up/down arrows (BACKLOG)
+
+**Goal:** Reorder rules (RULES tab) and custom styles (CONFIG tab Custom table) by dragging
+instead of the up / down arrows, which go away. Raised by the author on 2026-10-20. This is the
+drag-and-drop route of 999.16; 999.16 keeps its other ideas (move to top / bottom, into a named
+section, where + Add rule inserts).
+
+**Interaction:**
+- A **drag handle** button sits where the Order arrows are today (rule rows, style rows). The art
+  is drawn by the author when this is implemented (a new Aseprite file in `assets/custom/`, like
+  `titlebar.ase`); until then use a placeholder.
+- Pressing the handle starts a drag: the row stays in place but is greyed out, and a translucent
+  "shadow" copy of the row follows the cursor.
+- While dragging, a drop marker (a line between rows) shows where the row would land.
+- Releasing over a valid position moves the row there as **one edit**, held until Apply and undone
+  by Revert, like the arrows today. Releasing outside the list, or pressing Escape, cancels.
+- **Scrolling while dragging:** the mouse wheel scrolls the list, and holding the shadow near the
+  top or bottom edge auto-scrolls (faster closer to the edge), so a row can travel across a ~500
+  rule list.
+
+**Rules to keep from the arrows:**
+- A grouped rule (`# ff:group` run) moves as one unit.
+- Dropping across a Continue rule flags `moved across Continue`.
+- Dropping past a section banner puts the rule in that section (the arrows hop one divider at a
+  time today).
+- Nothing can be dropped into or below the locked economy section, and economy rows have no
+  handle.
+- Dragging is disabled while searching, as the arrows are. Custom styles never land above the
+  built-ins; built-in styles have no handle.
+- Works with the virtualized list (rows outside the viewport are not drawn) and with an expanded
+  row (likely: collapse it, or drag it by its header).
+
+**Open points:** whether section headers get a handle too (moving a whole section with its rules,
+versus today's arrows that move only the divider), keyboard reordering for accessibility once the
+arrows are gone, and the handle's hit size.
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.27: Price range in economy rule names (BACKLOG)
+
+**Goal:** Economy rule names say what the tier is worth, so the economy section teaches the
+tiers at a glance, e.g. `E tier Essences < 2 chaos` instead of `E tier Essences`. Raised by the
+author on 2026-10-21. The name is the `# ff:name` line written by `src/emitter.rs` (today
+`"{tier} tier {category}"`), which the RULES tab shows (in full on hover when the row cuts it).
+
+**Details:**
+- `tiers.json` holds only each tier's floor (`min`), so a tier covers `[its min, next tier's
+  min)`. Show the **upper bound** (`E tier Essences < 2 chaos`); the top tier, which has none,
+  shows its **lower bound** (`S tier Currency ≥ 30 chaos`, or `>=` if the glyph is a problem in
+  the filter file or the font).
+- Use the tiers' own unit (`chaos` for live tiers, `exalt` for the fallback pair) and a short
+  number format (`0.5`, `2`, `12`, no trailing zeros).
+- Covers the price-tiered unique blocks too (`A tier Uniques < 30 chaos`).
+- Names follow the pending tiers: a cutoff edit on the Economy tab renames the staged economy
+  rows like it re-prices them. Only the economy section changes; `generate` output has no
+  `# ff:name` lines.
+- Check what reads these names back (search, the RULES row, any code matching `tier <Group>`) and
+  update the economy-section tests / snapshots.
+
+**Requirements:** TBD
+**Plans:** TBD
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.28: Developer review of the tracked economy item list (BACKLOG)
+
+**Goal:** A repeatable **developer** review (not a user feature) of which items the economy
+section prices, so items that go missing, or appear, are noticed and decided on instead of
+silently dropping out of the filter. Raised by the author on 2026-10-21.
+
+**Problem:** an item is priced only if poe.ninja returns a line for it (`src/sync/prices.rs`
+skips nothing else that would explain these). Low-value currency drops out when nobody trades it.
+Examples on 2026-10-21: `Regal Shard` and `Lesser Essence of Ruin` are in the committed seed
+`tests/fixtures/seed-prices.json` but absent from the live `prices.json` (Forbidden Rites, synced
+2026-10-17); `Regal Shard` is still in `prices-fallback.json`. A missing item gets no economy rule
+and falls through to the user's rules or the game default, with no warning anywhere.
+
+**Shape (to decide when promoted):**
+- A **committed, reviewed item list** (one file in the repo) of every base the economy section is
+  meant to cover per category, each with a status and short note: priced from poe.ninja, not
+  traded (with a fixed tier or fallback price to use instead), or deliberately ignored.
+- A **dev command** (e.g. `ff-cli sync review`, or a dev-tool subcommand) that fetches poe.ninja
+  (and optionally the RePoE `base_items.json` that `sync metadata` already reads, for the full
+  `Stackable Currency` list) and prints a diff against the reviewed list: missing from poe.ninja,
+  new on poe.ninja and not yet reviewed, and changed category. Run at league start and after
+  patches; the developer updates the list and commits it.
+- **Use the decisions:** at sync / apply time, items in the reviewed list that poe.ninja did not
+  return use the reviewed fallback (e.g. their `prices-fallback.json` value or a fixed tier) instead
+  of disappearing. Decide whether the overlay says how many were filled this way.
+- A test that keeps the reviewed list, `prices-fallback.json` and `mapping.json` consistent (every
+  reviewed base has a category that `mapping.json` knows, etc.), with no network in CI.
 
 **Requirements:** TBD
 **Plans:** TBD

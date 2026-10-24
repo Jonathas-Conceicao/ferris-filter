@@ -1312,7 +1312,14 @@ pub(crate) fn picker_popup(
                 .unwrap_or_default();
             if searchable {
                 let w = ui.available_width();
-                let r = widgets_skin::ff_text_field(ui, &mut query, hint_text, w);
+                let r = widgets_skin::ff_search_field(
+                    ui,
+                    &skin,
+                    popup_id.with("query-edit"),
+                    &mut query,
+                    hint_text,
+                    w,
+                );
                 if !ui.data(|d| d.get_temp::<bool>(focus_id)).unwrap_or(false) {
                     r.request_focus();
                     ui.data_mut(|d| d.insert_temp(focus_id, true));
@@ -2391,8 +2398,9 @@ fn bool_or_name_control(
 // ---------------------------------------------------------------------------------------------
 
 /// Colour edit. `had_alpha` is the line's form when the picker opened (4 tokens), not its
-/// current form: a 3-token line keeps its 3-token form while the alpha stays 255, even after a
-/// live alpha edit wrote 4 tokens, so Escape restores the original bytes (CR-02).
+/// current form: a 3-token line keeps its 3-token form while the alpha stays at the keyword's
+/// bare alpha (240 for `SetBackgroundColor`, else 255), even after a live alpha edit wrote 4
+/// tokens, so Escape restores the original bytes.
 pub(crate) fn rgba_edit(
     id: BlockId,
     entry: &BodyEntry,
@@ -2405,6 +2413,7 @@ pub(crate) fn rgba_edit(
         &Value::Rgba {
             rgba: new,
             had_alpha,
+            bare_alpha: grammar::bare_alpha(entry.keyword.map_or("", |k| k.name)),
         },
     )
     .ok()
@@ -2663,7 +2672,6 @@ pub(crate) fn rule_style_view(
         sound: None,
         sound_volume_written: false,
         drop_sound: None,
-        alpha: true,
     };
     let mut b = StyleBinding {
         keyword,
@@ -2704,7 +2712,12 @@ pub(crate) fn rule_style_view(
     ] {
         if let Some(e) = slot {
             match decoded(e) {
-                Some((_, Value::Rgba { rgba, had_alpha })) => {
+                Some((
+                    _,
+                    Value::Rgba {
+                        rgba, had_alpha, ..
+                    },
+                )) => {
                     *shown = Some(Rgba { rgba, had_alpha });
                 }
                 _ => inexact.push(e.line),
@@ -3422,7 +3435,9 @@ fn action_controls(
     actions: &mut Vec<RowAction>,
 ) -> Option<egui::Response> {
     match value {
-        Value::Rgba { rgba, had_alpha } => {
+        Value::Rgba {
+            rgba, had_alpha, ..
+        } => {
             if let Some((n, opened_had_alpha)) = widgets::colour_swatch(ui, *rgba, *had_alpha)
                 && let Some(a) = rgba_edit(card.id, card.entry, n, opened_had_alpha)
             {
@@ -5540,6 +5555,52 @@ mod tests {
         );
     }
 
+    /// A bare 3-token background is alpha 240 in game: the Custom editor shows 240, keeps the
+    /// line 3 tokens while the alpha stays 240 and writes 4 tokens for any other alpha. Text and
+    /// border keep 255 as their 3-token meaning.
+    #[test]
+    fn three_token_background_reads_and_writes_alpha_240() {
+        let src = "Show
+    SetTextColor 1 2 3
+    SetBackgroundColor 40 42 54
+";
+        let (mut wf, id, e) = entries_of(src);
+        let (view, b) = rule_style_view(&e, BlockKeyword::Show);
+        assert_eq!(
+            view.background,
+            Some(Rgba {
+                rgba: [40, 42, 54, 240],
+                had_alpha: false
+            })
+        );
+        assert_eq!(view.text.map(|c| c.rgba), Some([1, 2, 3, 255]));
+        assert!(style_leftovers(&e, &b).is_empty(), "the line shows exactly");
+        let bg = &e[1];
+        assert_eq!(
+            values_of(rgba_edit(id, bg, [9, 42, 54, 240], false)).as_deref(),
+            Some("9 42 54")
+        );
+        assert_eq!(
+            values_of(rgba_edit(id, bg, [40, 42, 54, 255], false)).as_deref(),
+            Some("40 42 54 255")
+        );
+        assert_eq!(rgba_edit(id, bg, [40, 42, 54, 240], false), None);
+        apply_all(
+            &mut wf,
+            vec![rgba_edit(id, bg, [40, 42, 54, 128], false).unwrap()],
+        );
+        assert!(wf.text().contains(
+            "SetBackgroundColor 40 42 54 128
+"
+        ));
+        let e = wf.body_view(id);
+        apply_all(
+            &mut wf,
+            vec![rgba_edit(id, &e[1], [40, 42, 54, 240], false).unwrap()],
+        );
+        assert_eq!(wf.text(), src);
+    }
+
     /// CR-02: a 3-token line, a live alpha edit (written as 4 tokens), then Escape restoring the
     /// opening colour with the opening form gives back the original bytes.
     #[test]
@@ -6237,7 +6298,7 @@ mod tests {
         let start = production.find("pub(crate) fn picker_popup").unwrap();
         let end = production[start..].find("\n}\n").unwrap() + start;
         let body = &production[start..end];
-        assert!(body.contains("ff_text_field("));
+        assert!(body.contains("ff_search_field("));
         assert!(body.contains("section_head("));
         assert!(body.contains("paint_box_behind("));
         assert!(!production.contains("CollapsingHeader"));
@@ -6667,7 +6728,7 @@ mod tests {
         let (_, _, e) = entries_of(src);
         let (view, b) = rule_style_view(&e, BlockKeyword::Hide);
         assert_eq!(view.visibility, Vis::Hide);
-        assert!(view.alpha);
+        assert_eq!(view.background.map(|c| c.rgba), Some([9, 9, 9, 128]));
         assert_eq!(
             view.text,
             Some(Rgba {

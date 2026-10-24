@@ -22,9 +22,15 @@ use std::path::{Path, PathBuf};
 use crate::compile::{InputPaths, PriceSource, PriceSourcePolicy};
 use crate::dynamic::{self, DynamicError, EconomyOp, LoadedFilter};
 use crate::overlay::apply::invalid_blocks_message;
+use crate::overlay::chord::Chord;
 use crate::overlay::config_state::{ConfigState, ConfigWrite};
 use crate::overlay::rules::EconomyPlan;
 use crate::safe_write::{self, AllOrNoneError, Target, WriteError, WriteOutcome};
+use crate::settings;
+
+/// Refusal when a chord edit is pending but `ff-settings.json` exists and cannot be used: the
+/// file is never replaced, so nothing is applied.
+pub const SETTINGS_UNUSABLE: &str = "ff-settings.json could not be read, so the hotkey cannot be saved; nothing was applied. Fix or delete the file, then Reload.";
 
 /// One of the (up to) three files an Apply writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +105,16 @@ struct ConfigPart {
     tiers_guard: Option<Vec<u8>>,
 }
 
+/// The pending show / hide hotkey written into `ff-settings.json`, every other key kept. Not part
+/// of the changed-on-disk check (the file has no load baseline): its guard is the bytes read in
+/// [`prepare`].
+struct SettingsPart {
+    path: PathBuf,
+    guard: Option<Vec<u8>>,
+    new: Vec<u8>,
+    chord: Chord,
+}
+
 struct FilterPart {
     path: PathBuf,
     text: String,
@@ -110,10 +126,16 @@ struct FilterPart {
 pub struct Prepared {
     config: Option<ConfigPart>,
     filter: Option<FilterPart>,
+    settings: Option<SettingsPart>,
     used_fallback: bool,
 }
 
 impl Prepared {
+    /// The chord this Apply saves into `ff-settings.json`, if a hotkey edit is pending.
+    pub fn hotkey(&self) -> Option<Chord> {
+        self.settings.as_ref().map(|s| s.chord)
+    }
+
     /// The economy section was priced from the early-league fallback pair.
     pub fn used_fallback(&self) -> bool {
         self.used_fallback
@@ -140,6 +162,9 @@ pub struct Committed {
     /// `None` when there was no filter part (none loaded, or nothing to write).
     pub filter: Option<FilterCommitted>,
     pub used_fallback: bool,
+    /// The chord saved into `ff-settings.json` (written, or already holding those exact bytes);
+    /// `None` when no hotkey edit was part of the Apply.
+    pub hotkey_saved: Option<Chord>,
 }
 
 fn read_now(path: &Path) -> Result<Option<Vec<u8>>, ApplyAllError> {
@@ -282,9 +307,32 @@ pub fn prepare(
         return Err(ApplyAllError::ChangedOnDisk(changed));
     }
 
+    // 4. The pending hotkey: rendered into ff-settings.json keeping every other key. A file that
+    // exists but cannot be used refuses the Apply and is never replaced.
+    let settings_part = match config.and_then(ConfigState::hotkey_pending) {
+        Some(chord) => {
+            let path = settings::path(root);
+            let guard = match fs::read(&path) {
+                Ok(b) => Some(b),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+                Err(_) => return Err(ApplyAllError::Invalid(SETTINGS_UNUSABLE.to_string())),
+            };
+            let new = settings::render_hotkey(guard.as_deref(), &chord.text())
+                .map_err(|()| ApplyAllError::Invalid(SETTINGS_UNUSABLE.to_string()))?;
+            Some(SettingsPart {
+                path,
+                guard,
+                new,
+                chord,
+            })
+        }
+        None => None,
+    };
+
     Ok(Prepared {
         config: config_part,
         filter: filter_part,
+        settings: settings_part,
         used_fallback,
     })
 }
@@ -314,6 +362,7 @@ pub(crate) fn commit_with(
     let Prepared {
         config: config_part,
         filter: filter_part,
+        settings: settings_part,
         used_fallback,
     } = p;
 
@@ -334,6 +383,15 @@ pub(crate) fn commit_with(
                 })?;
             }
         }
+    }
+
+    if let Some(dir) = settings_part.as_ref().and_then(|s| s.path.parent()) {
+        fs::create_dir_all(dir).map_err(|e| {
+            ApplyAllError::Write(format!(
+                "Nothing was applied: could not create {}: {e}.",
+                dir.display()
+            ))
+        })?;
     }
 
     // Targets in write order; remember which slot is which.
@@ -363,6 +421,14 @@ pub(crate) fn commit_with(
             path: &f.path,
             loaded: f.guard.as_deref(),
             new: f.text.as_bytes(),
+        });
+    }
+    // ff-settings.json last (styles, tiers, filter, settings), in the same all-or-none write.
+    if let Some(s) = &settings_part {
+        targets.push(Target {
+            path: &s.path,
+            loaded: s.guard.as_deref(),
+            new: &s.new,
         });
     }
 
@@ -414,8 +480,13 @@ pub(crate) fn commit_with(
         (written(styles_at), written(tiers_at), written(filter_at));
 
     // Success: only now do the baselines move.
+    // The settings target was committed (written, or unchanged with identical bytes).
+    let hotkey_saved = settings_part.map(|s| s.chord);
     if let (Some(part), Some(state)) = (config_part, config) {
         state.adopt(part.write);
+        if hotkey_saved.is_some() {
+            state.clear_hotkey();
+        }
     }
     let filter = filter_part.map(|f| {
         if let Some(l) = loaded {
@@ -433,6 +504,7 @@ pub(crate) fn commit_with(
         tiers_written,
         filter,
         used_fallback,
+        hotkey_saved,
     })
 }
 
@@ -1223,5 +1295,164 @@ mod tests {
             !live(&fx, "styles.json").exists(),
             "a refusal writes nothing"
         );
+    }
+
+    // -- the show / hide hotkey as the fourth target ----------------------------------------------
+
+    use crate::overlay::chord::{ChordKey, DEFAULT};
+
+    const CTRL_ALT_K: Chord = Chord {
+        ctrl: true,
+        shift: false,
+        alt: true,
+        key: ChordKey::Letter(b'K'),
+    };
+
+    fn settings_file(root: &Path) -> PathBuf {
+        settings::path(root)
+    }
+
+    #[test]
+    fn hotkey_edit_creates_the_folder_and_writes_ff_settings() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("FerrisFilter");
+        let mut cfg = ConfigState::load(&root).unwrap();
+        cfg.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let p = prepare(&root, Some(&cfg), None, false).unwrap();
+        assert_eq!(p.hotkey(), Some(CTRL_ALT_K));
+        let done = commit(p, Some(&mut cfg), None).unwrap();
+        assert_eq!(done.hotkey_saved, Some(CTRL_ALT_K));
+        assert!(!done.styles_written && !done.tiers_written);
+        assert_eq!(
+            fs::read(settings_file(&root)).unwrap(),
+            b"{\n  \"hotkey\": \"Ctrl+Alt+K\"\n}\n".to_vec()
+        );
+        assert_eq!(cfg.hotkey_pending(), None);
+        assert!(!cfg.is_dirty());
+        assert_eq!(file_names(&root), ["ff-settings.json"]);
+    }
+
+    #[test]
+    fn hotkey_with_identical_bytes_counts_as_saved() {
+        let fx = Fixture::new();
+        let path = settings_file(fx.root.path());
+        let text = b"{\n  \"hotkey\": \"Ctrl+Alt+K\"\n}\n".to_vec();
+        fs::write(&path, &text).unwrap();
+        let mut cfg = fx.config();
+        cfg.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let p = prepare(fx.root.path(), Some(&cfg), None, false).unwrap();
+        let done = commit(p, Some(&mut cfg), None).unwrap();
+        assert_eq!(done.hotkey_saved, Some(CTRL_ALT_K));
+        assert_eq!(fs::read(&path).unwrap(), text);
+        assert_eq!(cfg.hotkey_pending(), None);
+    }
+
+    #[test]
+    fn hotkey_keeps_every_other_settings_key() {
+        let fx = Fixture::new();
+        let path = settings_file(fx.root.path());
+        fs::write(
+            &path,
+            r#"{"filter":"a.filter","collapsed_sections":{"a.filter":{"X":true}},"future":[1,2]}"#,
+        )
+        .unwrap();
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        cfg.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let p = prepare(
+            fx.root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Keep)),
+            false,
+        )
+        .unwrap();
+        let done = commit(p, Some(&mut cfg), Some(&mut lf)).unwrap();
+        assert_eq!(done.hotkey_saved, Some(CTRL_ALT_K));
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(v["hotkey"], "Ctrl+Alt+K");
+        assert_eq!(v["filter"], "a.filter");
+        assert_eq!(v["collapsed_sections"]["a.filter"]["X"], true);
+        assert_eq!(v["future"], serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn an_unusable_settings_file_refuses_a_hotkey_apply() {
+        for bad in [&b"{not json"[..], &b"[1]"[..]] {
+            let fx = Fixture::new();
+            let path = settings_file(fx.root.path());
+            fs::write(&path, bad).unwrap();
+            let mut cfg = fx.config();
+            assert!(cfg.edit_style("S", StyleEdit::Font(Some(12))));
+            cfg.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+            let before = fx.bytes();
+            let r = prepare(fx.root.path(), Some(&cfg), None, false);
+            assert_eq!(
+                r.err(),
+                Some(ApplyAllError::Invalid(
+                    "ff-settings.json could not be read, so the hotkey cannot be saved; nothing was applied. Fix or delete the file, then Reload.".to_string()
+                ))
+            );
+            assert_eq!(fs::read(&path).unwrap(), bad);
+            assert_eq!(fx.bytes(), before);
+            assert!(cfg.hotkey_dirty());
+        }
+    }
+
+    #[test]
+    fn no_hotkey_edit_leaves_ff_settings_alone() {
+        let fx = Fixture::new();
+        let mut cfg = fx.config();
+        cfg.set_tier_text("S", "35");
+        let p = prepare(fx.root.path(), Some(&cfg), None, false).unwrap();
+        assert_eq!(p.hotkey(), None);
+        let done = commit(p, Some(&mut cfg), None).unwrap();
+        assert_eq!(done.hotkey_saved, None);
+        assert!(!settings_file(fx.root.path()).exists());
+    }
+
+    #[test]
+    fn a_failed_write_keeps_ff_settings_and_the_pending_hotkey() {
+        let fx = Fixture::new();
+        let path = settings_file(fx.root.path());
+        fs::write(&path, br#"{"filter":"dynamic.filter"}"#).unwrap();
+        let settings_before = fs::read(&path).unwrap();
+        let mut cfg = fx.config();
+        let mut lf = fx.loaded();
+        assert!(cfg.edit_style("S", StyleEdit::Font(Some(12))));
+        cfg.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let before = fx.bytes();
+        let p = prepare(
+            fx.root.path(),
+            Some(&cfg),
+            Some(input(&lf, EconomyPlan::Refresh)),
+            false,
+        )
+        .unwrap();
+        let mut calls = 0;
+        let r = commit_with(p, Some(&mut cfg), Some(&mut lf), |targets, before| {
+            // styles, filter, settings (tiers unchanged).
+            assert_eq!(targets.len(), 3);
+            assert_eq!(targets[2].path, path.as_path());
+            safe_write::write_all_or_none_with_hook(
+                targets,
+                |file, target| {
+                    calls += 1;
+                    if calls == 3 {
+                        Err(tempfile::PersistError {
+                            error: io::Error::from_raw_os_error(2),
+                            file,
+                        })
+                    } else {
+                        file.persist(target)
+                    }
+                },
+                |_| {},
+                before,
+            )
+        });
+        assert!(matches!(r, Err(ApplyAllError::Write(_))), "{r:?}");
+        assert_eq!(fs::read(&path).unwrap(), settings_before);
+        assert_eq!(fx.bytes(), before);
+        assert_eq!(cfg.hotkey_pending(), Some(CTRL_ALT_K));
     }
 }

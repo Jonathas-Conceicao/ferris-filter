@@ -177,6 +177,30 @@ pub fn paint_image(painter: &Painter, tex: &TextureHandle, dest: Rect, tint: Col
     painter.image(tex.id(), r, full_uv(tex.size()), tint);
 }
 
+/// UVs of the texel box `[x0, y0, x1, y1)` of a texture of `size`, inset half a texel on each
+/// side (so bilinear filtering never samples outside the box). `size` is clamped to at least 1.
+pub fn box_uv(size: [usize; 2], b: [u32; 4]) -> Rect {
+    let (w, h) = (size[0].max(1) as f32, size[1].max(1) as f32);
+    Rect::from_min_max(
+        pos2((b[0] as f32 + 0.5) / w, (b[1] as f32 + 0.5) / h),
+        pos2((b[2] as f32 - 0.5) / w, (b[3] as f32 - 0.5) / h),
+    )
+}
+
+/// Paints only the opaque box `opaque` (`[x0, y0, x1, y1)` in texels) of `tex`, stretched to fill
+/// `dest` (pixel-snapped): the visible plate fills the rect, so art with a transparent gutter is
+/// positioned by what the eye sees, never by the texture rect.
+pub fn paint_visible(
+    painter: &Painter,
+    tex: &TextureHandle,
+    opaque: [u32; 4],
+    dest: Rect,
+    tint: Color32,
+) {
+    let r = snap_rect(dest, painter.pixels_per_point());
+    painter.image(tex.id(), r, box_uv(tex.size(), opaque), tint);
+}
+
 /// A rect of `size` centred on `center`.
 pub fn centered(center: Pos2, size: egui::Vec2) -> Rect {
     Rect::from_center_size(center, size)
@@ -188,6 +212,27 @@ mod tests {
 
     fn r(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
         Rect::from_min_max(pos2(x0, y0), pos2(x1, y1))
+    }
+
+    #[test]
+    fn box_uv_insets_half_a_texel() {
+        let uv = box_uv([92, 92], [0, 0, 84, 84]);
+        assert_eq!(uv.min, pos2(0.5 / 92.0, 0.5 / 92.0));
+        assert_eq!(uv.max, pos2(83.5 / 92.0, 83.5 / 92.0));
+    }
+
+    #[test]
+    fn box_uv_of_the_whole_texture_is_full_uv() {
+        let uv = box_uv([54, 56], [0, 0, 54, 54]);
+        assert_eq!(uv.min, full_uv([54, 56]).min);
+        assert_eq!(uv.max.y, 53.5 / 56.0);
+        assert_eq!(uv.max.x, full_uv([54, 56]).max.x);
+    }
+
+    #[test]
+    fn box_uv_honours_a_non_zero_origin() {
+        let uv = box_uv([76, 88], [4, 5, 58, 69]);
+        assert_eq!(uv.min, pos2(4.5 / 76.0, 5.5 / 88.0));
     }
 
     #[test]

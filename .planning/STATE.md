@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.7
-milestone_name: Initial Public Release and Strictness Selector
+milestone: v0.7.2
+milestone_name: Small UI Improvements
 status: complete
-stopped_at: v0.7 milestone complete (shipped 2026-10-18)
-last_updated: "2026-10-18T23:30:00.000Z"
-last_activity: 2026-10-18 -- v0.7 milestone archived, squash-merged to main and tagged v0.7.0
+stopped_at: v0.7.2 milestone complete (shipped 2026-10-24)
+last_updated: "2026-10-24T12:00:00.000Z"
+last_activity: 2026-10-24 -- v0.7.2 milestone archived on the milestone branch (merge and tag v0.7.2 still to do)
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 45
-  completed_plans: 45
+  total_phases: 8
+  completed_phases: 8
+  total_plans: 24
+  completed_plans: 24
   percent: 100
 ---
 
@@ -18,23 +18,23 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-18)
+See: .planning/PROJECT.md (updated 2026-10-24)
 
 **Core value:** `generate` turns the config into a correct, deterministic PoE2 loot filter.
 **Current focus:** Planning the next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Milestone: v0.7 Initial Public Release and Strictness Selector — ✅ shipped 2026-10-18
-(Phases 36-42, 45 plans; archived to `milestones/v0.7-*`; squash-merged to `main`, tag `v0.7.0`).
-Status: Between milestones
-Last activity: 2026-10-18 -- v0.7 milestone complete
+Milestone: v0.7.2 Small UI Improvements — ✅ shipped 2026-10-24
+(Phases 43-50, 24 plans plus the inline Release Review; archived to `milestones/v0.7.2-*`).
+Status: Between milestones; the squash-merge to `main` and the `v0.7.2` tag are still to do.
+Last activity: 2026-10-24 -- v0.7.2 milestone complete
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 227 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30 · v0.7: 45)
+- Total plans completed: 212 (v0.1: 14 · v0.2: 7 · v0.3: 5 · v0.4: 16 · v0.5: 71 · v0.6: 30 · v0.7: 45 · v0.7.2: 24)
 
 **By Milestone:**
 
@@ -47,6 +47,7 @@ Last activity: 2026-10-18 -- v0.7 milestone complete
 | v0.5 Generic Filter Editor & Initial App Configuration | 13 | 71 | 452 | 4 days |
 | v0.6 New PoE2-based Tool UI | 7 | 30 | 281 | 3 days |
 | v0.7 Initial Public Release and Strictness Selector | 7 | 45 | 261 | 2 days |
+| v0.7.2 Small UI Improvements | 8 | 24 | 200 | 2 days |
 
 Per-plan timings for archived milestones live in the phase SUMMARY.md files under
 `.planning/phases/` (see also `.planning/RETROSPECTIVE.md` for cross-milestone trends).
@@ -92,6 +93,11 @@ Per-plan timings for archived milestones live in the phase SUMMARY.md files unde
 ## Accumulated Context
 
 ### Roadmap Evolution
+
+- v0.7.2 roadmap created (2026-10-23): Phases 43-50 - style alpha, Auto Detect styles, economy
+  tier-range names, request throttling + CLI user agent, customizable hotkey, game-art widgets,
+  drag-and-drop reorder (after widgets), Release Review (last). UI phases 43, 44, 47, 48, 49 carry
+  UI hint: yes.
 
 - v0.7 roadmap created (2026-10-18): Phases 36-42 - per-user locations + embedded defaults, game
   folder picker + refresh button, built-in styles + Strictness Selector + Reset to defaults (one fixture re-baseline), league + price
@@ -209,6 +215,11 @@ work (carried forward past the v0.3 close):
 - 41-03: update_job carries #![allow(dead_code)] until wired in 41-04/41-05; begin_install failure messages use UTC offset 0
 - 41-04: update_job.rs keeps allow(dead_code) until 41-05 wires the install side
 - 41-05: pending_install slot set in OverlayApp::new (not a build parameter); installer spawned only after run_native returns
+- 43-01: no 3-to-4 migration flag; StyleColour dirtiness is value-based, from_style alpha true
+- v0.7.2: a bare 3-token colour line means the game's alpha for its keyword (`grammar::bare_alpha`: 240 background, 255 otherwise) everywhere it is read
+- v0.7.2: hotkey Apply is validate -> register -> write; `ff-settings.json` is the fourth all-or-none Apply target
+- v0.7.2: drag reorder replaced the arrow model on rules and custom styles (arrow API deleted in the Release Review); section headers keep their arrows, padlocked when blocked; no `moved across Continue` flag
+- v0.7.2: request throttling is overlay-only, success-only, persisted in `ff-state.json`; the CLI is never throttled
 
 ### Pending Todos
 
@@ -339,6 +350,31 @@ Found while working, deliberately left alone rather than guessed at (2026-09-10)
 
 ## Deferred Items
 
+Items acknowledged and deferred at the **v0.7.2** close on 2026-10-24 (open-artifact audit: 30
+items; milestone audit `tech_debt`, debt accepted, see milestones/v0.7.2-MILESTONE-AUDIT.md). The
+author verified every manual check of phases 44-49 at close (results in
+phases/AUTONOMOUS-V072-DEFERRED.md, Round 1 and Round 2 included); three were skipped on purpose:
+the network on/off part of the Phase 46 throttle check, the Phase 47 start-up fallback with a chord
+held by another app, and the round 1 check of a 3-value background's alpha.
+
+| Category | Item | Status |
+|----------|------|--------|
+| verification | Phase 44: 44-VERIFICATION.md | human_needed; author-verified at close |
+| verification | Phase 45: 45-VERIFICATION.md | human_needed; author-verified at close |
+| verification | Phase 46: 46-VERIFICATION.md | human_needed; author-verified at close (network on/off check skipped) |
+| verification | Phase 47: 47-VERIFICATION.md | human_needed; author-verified at close (start-up fallback with a held chord skipped) |
+| verification | Phase 48: 48-VERIFICATION.md | human_needed; author-verified at close |
+| verification | Phase 49: 49-VERIFICATION.md | human_needed; author-verified at close |
+| verification | Phases 30-35: 30..35-VERIFICATION.md (6) | human_needed; carried from v0.6 |
+| verification | Phases 36-39, 41: *-VERIFICATION.md (5) | human_needed; carried from v0.7 |
+| uat | Phase 14: 14-UAT.md | diagnosed, 0 pending; carried from v0.4 / v0.5 |
+| uat | Phase 16: 16-HUMAN-UAT.md | partial, 0 pending; carried from v0.5 |
+| uat | Phases 30-34: 30..34-HUMAN-UAT.md (5) | partial (83 / 34 / 9 / 9 / 15 pending); carried from v0.6 |
+| uat | Phase 35: 35-HUMAN-UAT.md | pending, 0 scenarios; carried from v0.6 |
+| uat | Phases 36-39: 36..39-HUMAN-UAT.md (4) | passed, per-scenario lines not filled in (2 / 9 / 4 / 8); carried from v0.7 |
+| uat | Phase 41: 41-HUMAN-UAT.md | partial, 8 pending; live update-and-install run waits for a release newer than 0.7.x; carried from v0.7 |
+| tech_debt | v0.7.2 audit tech_debt list | see milestones/v0.7.2-MILESTONE-AUDIT.md (economy name edge cases, 46 IN items, hotkey capture limits, 48/49 UI follow-ups, clippy) |
+
 Items acknowledged and deferred at the **v0.7** close on 2026-10-18 (open-artifact audit; no milestone
 audit run, closed on the author's UAT: installer, the `v0.7.0-rc.1` release dry run and the numbered
 v0.7 check list, all passed; offline league refresh assumed pass):
@@ -391,10 +427,11 @@ Items carried from the **v0.1** close on 2026-05-28:
 
 ## Session Continuity
 
-Last session: 2026-10-18
-Stopped at: v0.7 milestone complete
+Last session: 2026-10-24
+Stopped at: v0.7.2 milestone complete (archived on the milestone branch; not merged, tagged or pushed)
 Resume file: None
 
 ## Operator Next Steps
 
+- Push `milestone/v0.7.2-small-ui-improvements`, squash-merge it into `main`, tag `v0.7.2` on the merge commit and push the tag (PROJECT.md → Git Workflow)
 - Start the next milestone with /gsd-new-milestone

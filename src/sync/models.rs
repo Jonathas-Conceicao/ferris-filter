@@ -9,7 +9,7 @@ pub struct IndexState {
     pub economy_leagues: Vec<EconomyLeague>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EconomyLeague {
     pub name: String, // e.g. "Fate of the Vaal" — USE THIS as league= query param
     pub url: String,  // slug e.g. "vaal" / "standard" / "hardcore"

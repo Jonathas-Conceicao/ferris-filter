@@ -10,6 +10,7 @@
 #   trim       drop the transparent right/bottom gutter the game's textures carry
 #   crop       [x, y, w, h] in the pixels of the image actually used (after trim)
 #   clear      [[x, y, w, h], ...] regions made transparent after cropping
+#   key_white  [seed_x, seed_y, threshold] flood-fill the near-white area at the seed to transparent
 #
 # Find more paths with `ff-art list <pattern>`, eyeball them with `ff-art dump` + `ff-art sheet`.
 
@@ -222,6 +223,88 @@ out = "common/button_pressed_right.png"
 prefer_4k = true
 trim = true
 
+# --- Social-panel group toggle, stone bar, search field art (Phase 48)
+
+# Group toggle plates. The game names a plate by the click effect: "collapse" is shown while the
+# group is open (chevron up over a dot), "expand" while it is closed (dot over chevron down).
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncollapsenormal.dds"
+out = "common/toggle_collapse_normal.png"
+prefer_4k = true
+crop = [4, 5, 54, 64]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncollapsehover.dds"
+out = "common/toggle_collapse_hover.png"
+prefer_4k = true
+crop = [4, 5, 54, 64]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncollapsepressed.dds"
+out = "common/toggle_collapse_pressed.png"
+prefer_4k = true
+crop = [4, 5, 54, 64]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonexpandnormal.dds"
+out = "common/toggle_expand_normal.png"
+prefer_4k = true
+crop = [4, 5, 54, 64]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonexpandhover.dds"
+out = "common/toggle_expand_hover.png"
+prefer_4k = true
+crop = [4, 5, 54, 64]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonexpandpressed.dds"
+out = "common/toggle_expand_pressed.png"
+prefer_4k = true
+crop = [4, 5, 54, 64]
+
+# Stone bar with bronze frame (the Social panel group bar reuses the NPC menu bar art): left cap +
+# stretched middle + right cap; the 19px left and 24px bottom gutters are cropped.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/npcmenubarleft.dds"
+out = "common/bar_left.png"
+prefer_4k = true
+crop = [19, 0, 132, 75]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/npcmenubarmiddle.dds"
+out = "common/bar_middle.png"
+prefer_4k = true
+crop = [0, 0, 111, 75]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/npcmenubarright.dds"
+out = "common/bar_right.png"
+prefer_4k = true
+crop = [0, 0, 151, 75]
+
+# Round clear X of the game's search fields.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncleartext.dds"
+out = "common/clear_normal.png"
+prefer_4k = true
+crop = [0, 0, 36, 36]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncleartexthover.dds"
+out = "common/clear_hover.png"
+prefer_4k = true
+crop = [0, 0, 36, 36]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttoncleartextpressed.dds"
+out = "common/clear_pressed.png"
+prefer_4k = true
+crop = [0, 0, 36, 36]
+
+# Magnifier glyph only, no plate; hover cropped to the same box so the two align.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonsearchnormal.dds"
+out = "common/search_normal.png"
+prefer_4k = true
+crop = [6, 4, 48, 49]
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/common/buttonsearchhover.dds"
+out = "common/search_hover.png"
+prefer_4k = true
+crop = [6, 4, 48, 49]
+
 # --- Minimap icons: the 12 item-filter shapes in the 11 item-filter colours.
 #
 # The game sheet (art/2dart/minimap/player.dds, 896x4928) is a grid of 64px cells, 14 per row,
@@ -293,3 +376,16 @@ width = 336
 svg = "assets/ferris/rustacean-flat-happy.svg"
 out = "assets/ferris/ferris.ico"
 sizes = [16, 24, 32, 48, 64, 128, 256]
+
+# --- Options menu keybind button (Options -> Input): gold frame with a white mask interior
+# (keyed out to transparent) over a greyscale plate tinted at draw time.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/optionsbuttonborder.dds"
+out = "options/keybind_border.png"
+trim = true
+key_white = [30, 30, 32]
+
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/optionsbutton.dds"
+out = "options/keybind_plate.png"
+trim = true

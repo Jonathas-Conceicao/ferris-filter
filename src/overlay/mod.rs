@@ -12,10 +12,12 @@ pub mod apply;
 pub mod apply_all;
 pub mod body;
 pub mod chat;
+pub mod chord;
 pub mod classes;
 pub mod conditions;
 pub mod config_state;
 pub mod config_view;
+pub mod drag_reorder;
 pub mod economy;
 pub(crate) mod folder_dialog;
 pub mod grammar;
@@ -30,6 +32,7 @@ pub(crate) mod screenshot;
 pub(crate) mod shell;
 pub mod sound_files;
 pub mod strictness;
+pub mod style_detect;
 pub mod style_lines;
 pub mod text_entry;
 pub mod tray;
@@ -38,8 +41,6 @@ pub mod virtual_list;
 pub mod visibility;
 pub mod widgets;
 pub mod win;
-
-use hotkey::HotkeyStatus;
 
 /// Launches the overlay GUI. Called from the `ff` binary's `main`.
 pub fn launch() -> eframe::Result<()> {
@@ -73,7 +74,7 @@ pub fn launch() -> eframe::Result<()> {
     // exits here (fail closed, with a message box naming the error). The guard lives in
     // `OverlayApp` until tray Quit, which drops it at once so an immediate relaunch can start.
     // Quit unregisters the hotkey and removes the tray icon first, so that relaunch can
-    // register `Ctrl+Shift+Z` itself.
+    // register the show / hide hotkey (default Ctrl+Shift+Z) itself.
     let Some(instance_guard) = instance::acquire() else {
         return Ok(());
     };
@@ -84,22 +85,23 @@ pub fn launch() -> eframe::Result<()> {
     // from `ff`'s `main`), and `eframe::run_native` below drives that same
     // thread's message loop, so building here -- before the loop starts --
     // satisfies the constraint. Never build either on a spawned thread.
-    let (hotkey_manager, hotkey_status) = hotkey::register_toggle();
+    //
+    // The saved chord (`hotkey` in ff-settings.json) is registered, falling back to the default
+    // Ctrl+Shift+Z with a warning. Only an unresolvable FerrisFilter folder means no saved chord;
+    // a warning about another key never discards a valid one. Nothing is written. The manager is
+    // kept even when registration fails, so a later Apply can still register a chord.
+    let saved = app::resolve_root()
+        .ok()
+        .and_then(|root| crate::settings::load(&root).0.saved_hotkey());
+    let registrar = global_hotkey::GlobalHotKeyManager::new()
+        .ok()
+        .map(|m| Box::new(m) as Box<dyn hotkey::HotkeyRegistrar>);
+    let (hotkey, hotkey_warning) = hotkey::HotkeyRuntime::startup(registrar, saved);
 
     // Surface a registration failure through the tray (D-10): both the
-    // tooltip and a disabled menu line name the combo and the reason, so the
+    // tooltip and a disabled menu line name the chord and the reason, so the
     // failure is visible with no console open.
-    let (tooltip, status_line) = match &hotkey_status {
-        HotkeyStatus::Registered { .. } => {
-            ("FerrisFilter — Ctrl+Shift+Z to toggle".to_string(), None)
-        }
-        HotkeyStatus::Failed(err) => {
-            let msg = format!("FerrisFilter — Ctrl+Shift+Z unavailable: {err}");
-            (msg.clone(), Some(msg))
-        }
-    };
-
-    let tray = tray::build(&tooltip, status_line.as_deref())
+    let tray = tray::build(&hotkey.tooltip(), hotkey.failure_line().as_deref())
         .expect("failed to build the system tray icon");
     let options = native_options();
 
@@ -116,8 +118,8 @@ pub fn launch() -> eframe::Result<()> {
 
             Ok(Box::new(app::OverlayApp::new(
                 tray,
-                hotkey_manager,
-                hotkey_status,
+                hotkey,
+                hotkey_warning,
                 instance_guard,
                 skin,
                 app_slot,

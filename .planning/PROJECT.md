@@ -10,8 +10,32 @@ FerrisFilter is a Rust tool for Path of Exile 2 loot filters. Its CLI compiles a
 
 ## Next Milestone
 
-Not started; run `/gsd-new-milestone`. Candidates: the Deferred list below and the ROADMAP
-backlog (999.3 online filter publishing, 999.4 economy change summary, 999.18 NVIDIA overlay).
+Not defined yet; run `/gsd-new-milestone`. Candidates: the Deferred list below and the ROADMAP
+backlog (999.15 sound preview, 999.16 move rules far at once, 999.21 / 999.22 crash and run logs,
+999.28 economy item review, 999.18 NVIDIA overlay).
+
+<details>
+<summary>✅ v0.7.2 Small UI Improvements — SHIPPED 2026-10-24</summary>
+
+**Goal:** Polish the overlay with game-art controls and drag reordering, make styles complete
+(alpha) and able to adopt a filter's existing styling, and make economy names and network use
+friendlier.
+
+Delivered: alpha on style colours (picker slider, translucent previews, written by `generate`, the
+economy section and styled rules; 3-value `styles.json` files still load); Auto Detect on CONFIG
+turning a filter's existing styling into tags and `Custom Style N` styles as pending edits; economy
+rule names with their tier's price range; overlay requests to poe.ninja and GitHub at most once an
+hour per kind (`ff-state.json`) and a separate CLI user agent; a configurable show / hide hotkey in
+a game-style keybind row; Social-panel section headers and search fields with the game's magnifier
+and clear X; drag-and-drop reordering of rules and custom styles replacing the arrows; version
+0.7.2.
+
+**Audit:** `tech_debt` — 38/38 requirements, 8/8 phases, 8/8 integration, 4/4 flows; debt
+accepted. Archives: [v0.7.2-ROADMAP.md](milestones/v0.7.2-ROADMAP.md) ·
+[v0.7.2-REQUIREMENTS.md](milestones/v0.7.2-REQUIREMENTS.md) ·
+[v0.7.2-MILESTONE-AUDIT.md](milestones/v0.7.2-MILESTONE-AUDIT.md)
+
+</details>
 
 <details>
 <summary>✅ v0.7 Initial Public Release and Strictness Selector — SHIPPED 2026-10-18</summary>
@@ -95,7 +119,18 @@ See Current State below and [v0.4-ROADMAP.md](milestones/v0.4-ROADMAP.md).
 
 ## Current State
 
-**Shipped:** v0.7 Initial Public Release and Strictness Selector (2026-10-18), the first public
+**Shipped:** v0.7.2 Small UI Improvements (2026-10-24). Style colours carry alpha (3-value
+`styles.json` files still load; saved files are 4-value and unreadable by older releases). CONFIG
+gains Auto Detect, which adopts a filter's existing styling as style tags and `Custom Style N`
+styles, and an Overlay section whose keybind row sets the show / hide hotkey (applied live,
+registered before anything is written). Rules and custom styles are reordered by dragging a handle;
+the up / down arrows remain only on section headers, which now use the game's Social-panel art, as
+the search fields use its magnifier and clear X. Economy rule names state their price range, the
+overlay throttles its poe.ninja and GitHub requests to once an hour per kind (`ff-state.json`), and
+the CLI identifies itself as `FerrisFilter-CLI`. `generate` output and the seed fixture are
+unchanged. ~92,100 LOC Rust; 1921 lib tests plus integration suites green; package version 0.7.2.
+
+**Prior:** v0.7 Initial Public Release and Strictness Selector (2026-10-18), the first public
 release. `ff` installs per user from `FerrisFilter-0.7.0-setup.exe` (or runs from the portable
 zip), keeps styles, tiers, settings and prices in `%APPDATA%\FerrisFilter` (`FERRISFILTER_HOME`
 overrides) and needs no files beside the exe. Config adds the game folder picker and the Economy
@@ -144,12 +179,18 @@ text/border, and the rule vocabulary gained `corrupted` — driving three except
 **Prior:** v0.2 Declarative Rule Model (2026-06-12) replaced the generator's hardcoded gear/flask
 band logic with a declarative `rules` schema, making the full in-game filter reproducible from config.
 
-**Next milestone:** not started; candidates under Next Milestone above.
+**Since v0.7.0:** v0.7.1 (2026-10-19) links the C runtime statically, so `ff.exe` no longer
+needs the Visual C++ Redistributable.
 
-**Open at close (v0.7):** no blockers. Deferred: the live Check for updates run (needs a release
-newer than 0.7.0), the VERIFICATION files left `human_needed` and older HUMAN-UAT files (STATE.md
-Deferred Items); backlog 999.18 (the NVIDIA overlay treats `ff` as a game). Clippy warnings in
-untouched code remain (`result_large_err` and others).
+**Next milestone:** not defined yet; candidates under Next Milestone above.
+
+**Open at close (v0.7.2):** no blockers. Accepted debt from the audit: economy name formatting
+edge cases (`-0`, cutoffs below 0.005, mixed-unit tier files), Phase 46 review Info items, hotkey
+capture limits (numpad digits, AltGr, chords Windows refuses), UI review follow-ups (search hint
+truncation, refresh plate height, drag shadow ground) and 126 clippy warnings on lines older than
+the milestone. 30 open GSD artifacts acknowledged (STATE.md Deferred Items): the phase 44-49
+VERIFICATION files (author-verified) and older UAT / verification leftovers. The live Check for
+updates install run still waits for a release newer than the running one.
 
 ## Requirements
 
@@ -192,11 +233,24 @@ untouched code remain (`result_large_err` and others).
 - [x] **Public release** — tag-triggered release workflow, per-user installer, portable zip, checksums, one public repo name. *(Validated in Phase 40 — REL, INST, PUB, v0.7)*
 - [x] **Check for updates** on the About tab. *(Validated in Phase 41 — UPD, v0.7)*
 
+- [x] **Style alpha** — style colours carry alpha in the picker, previews and every emitter; 3-value files still load, fixtures unchanged. *(Validated in Phase 43 — ALPHA, v0.7.2)*
+- [x] **Auto Detect styles** — a filter's existing styling becomes style tags and `Custom Style N` styles, as pending edits. *(Validated in Phase 44 — DETECT, v0.7.2)*
+- [x] **Economy names with price ranges** (`S tier Currency >= 30 chaos`), previewed with pending tiers. *(Validated in Phase 45 — ENAME, v0.7.2)*
+- [x] **Request throttling and CLI user agent** — overlay requests at most once an hour per kind, persisted in `ff-state.json`; the CLI unthrottled with `FerrisFilter-CLI/<ver>`. *(Validated in Phase 46 — THR, v0.7.2)*
+- [x] **Configurable show / hide hotkey** — keybind row on CONFIG, live swap on Apply, reserved / in-use chords refused, Reset to defaults. *(Validated in Phase 47 — KEY, v0.7.2)*
+- [x] **Game-art widgets** — Social-panel section headers, magnifier and clear X in search fields, art painted by its visible box. *(Validated in Phase 48 — ART, v0.7.2)*
+- [x] **Drag-and-drop reorder** of rules and custom styles, replacing the arrows (section headers keep theirs). *(Validated in Phase 49 — DND, v0.7.2)*
+
 ### Active
 
 None until the next milestone defines them.
 
 ### Deferred (next-milestone candidates)
+
+- [ ] **v0.7.2 audit debt:** economy name formatting edge cases; hotkey capture on non-US
+  punctuation, numpad and AltGr; the drag shadow's solid ground; the RULES search hint truncation.
+- [ ] Move rules far at once (move to top / bottom, into a named section) (999.16); sound preview
+  in the style editor (999.15); crash log and optional run log (999.21, 999.22).
 
 - [ ] **v0.5 tech debt** (audit W1-W2): CLI `generate`/`install` resolve against the working
   directory while `apply`/`sync`/`ff` use the FerrisFilter folder; CLI `apply` does not rewrite
@@ -223,6 +277,11 @@ None until the next milestone defines them.
 - Linux / macOS overlay builds — Windows is the shipped target; path code stays cross-platform
 - Update checks at start-up or on a timer, and in-place exe swaps — on demand only, through the installer
 - The CLIs in the installer — `ff-cli` / `ferrisfilter` are dev tools
+- Keyboard reordering of rules and styles — never a required feature (author, v0.7.2)
+- Drag handles on section headers — header arrows stay; they move only the divider
+- A throttle bypass button — the overlay's once-an-hour limit has no override in the UI
+- Disabling the show / hide hotkey — a chord is always bound
+- The `moved across Continue` flag — removed in v0.7.2; order is up to the user
 
 ## Context
 
@@ -287,6 +346,16 @@ None until the next milestone defines them.
 | Release workflow drafts, then auto-publishes once every asset is uploaded; tag must equal `v` + Cargo version | No half-published releases; no manual step | ✓ Good (v0.7, rc dry run) |
 | Inno Setup per-user installer, `ff.exe` + `LICENSE.txt` only, fixed AppId | No admin prompt; the CLIs are dev tools | ✓ Good (v0.7) |
 | CHANGELOG starts at 0.7.0, the first public release; README/CHANGELOG wrap at 70 chars | Earlier sections described a pre-public tool; they stay in git history | ✓ Good (v0.7) |
+| Colours read as 3 or 4 values, always written with 4; no migration flag | Old `styles.json` files load untouched; emitted lines unchanged at alpha 255, fixtures byte-identical | ✓ Good (v0.7.2; a 0.7.2 file is unreadable by older releases, noted in the CHANGELOG) |
+| A bare 3-token colour line means the game's alpha for its keyword (240 background, 255 otherwise) | Decoder, Custom editor and Auto Detect agree with what the game draws (author, Round 1) | ✓ Good (v0.7.2) |
+| Auto Detect makes only pending edits; action-line comments dropped on rewrite | Same Revert / Reload / Apply model as any edit; comments were not worth a warning (author) | ✓ Good (v0.7.2) |
+| Economy names: tiers' own unit, ASCII `>=`, at most 2 decimals | Short, readable names; rounding misstatements accepted after review WR-01 | ⚠️ Revisit (v0.7.2 — `-0` and sub-0.005 cutoffs print oddly) |
+| Throttling is overlay-only and success-only, persisted in `ff-state.json`; CLI sends its own user agent | Spare poe.ninja and GitHub from repeated clicks; scripts and dev use stay unthrottled and identifiable | ✓ Good (v0.7.2) |
+| Hotkey Apply validates, registers, then writes; an owned chord refuses the whole Apply | Never save a chord that does not work; all or none, like every Apply | ✓ Good (v0.7.2) |
+| Shift-only chords allowed; non-US punctuation limitation accepted | Author calls on review WR-05 / WR-02; "at least one modifier" kept simple | — Pending (v0.7.2, revisit on user reports) |
+| Game art painted by its visible box (`paint_visible` / `box_uv`); keybind interior keyed out at extract time | No re-extraction of legacy PNGs; egui cannot remove a white interior at draw time | ✓ Good (v0.7.2) |
+| Drag reorder replaces the arrows on rules and custom styles; arrow model deleted; no Continue flag | Moving far was painful with arrows (999.16 in part); the flag carried no real value (author, Round 2) | ✓ Good (v0.7.2) |
+| Parallel worktree phases for independent work (45-48), merged into the milestone branch | Independent phases finish in one sitting; the main checkout stays on the milestone branch for the author | ✓ Good (v0.7.2; merges needed hand fixes) |
 
 ## Git Workflow
 
@@ -357,4 +426,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-18 after the v0.7 milestone*
+*Last updated: 2026-10-24 after the v0.7.2 milestone*

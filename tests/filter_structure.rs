@@ -1,7 +1,7 @@
 //! Fixture-level proofs for the structural edits: byte preservation outside the touched units and
 //! self-inverse behaviour on the FilterBlade fixture and the migrated v0.4 dynamic filter.
 
-use ferrisfilter::filter::{BlockId, BlockKeyword, Document, RuleStep, parse, section};
+use ferrisfilter::filter::{BlockId, BlockKeyword, Document, MoveDest, parse, section};
 use std::fs;
 use std::path::Path;
 
@@ -55,19 +55,30 @@ fn pos(d: &Document, id: BlockId) -> usize {
 }
 
 #[test]
-fn move_then_inverse_is_identity() {
+fn move_then_back_keeps_every_line_and_the_order() {
     let bytes = fixture();
     let mut d = parse(&bytes).unwrap();
     let ids = picks(&d);
     assert!(ids.len() >= 15);
     let all: Vec<BlockId> = d.blocks().map(|b| b.id()).collect();
+    let sorted_lines = |d: &Document| {
+        let mut v: Vec<String> = d.lines().iter().map(|l| l.text().to_string()).collect();
+        v.sort();
+        v
+    };
+    let lines = sorted_lines(&d);
     for id in ids {
-        let up = pos(&d, id) > 0;
-        d.move_block(id, up).unwrap();
+        // Move the block above its predecessor, then move the predecessor back above it. A
+        // block travels with its leading comments, so the round trip keeps every line and the
+        // block order, though a comment may end up owned by the other block.
+        let Some(prev) = pos(&d, id).checked_sub(1).map(|p| all[p]) else {
+            continue;
+        };
+        assert!(d.move_run_to(&[id], MoveDest::Before(prev)).unwrap());
         assert_ne!(d.to_bytes(), bytes, "a move changed nothing");
-        d.move_block(id, !up).unwrap();
-        assert_bytes_eq("move/inverse", &d.to_bytes(), &bytes);
+        assert!(d.move_run_to(&[prev], MoveDest::Before(id)).unwrap());
         assert_eq!(d.blocks().map(|b| b.id()).collect::<Vec<_>>(), all);
+        assert_eq!(sorted_lines(&d), lines);
     }
 }
 
@@ -131,10 +142,11 @@ fn continue_toggle_and_back_is_identity() {
 fn a_move_changes_nothing_outside_the_two_units() {
     let bytes = fixture();
     let mut d = parse(&bytes).unwrap();
-    let (id, lo, hi) = {
+    let (id, after, lo, hi) = {
         let blocks: Vec<_> = d.blocks().collect();
         let k = blocks.len() / 2;
         let (a, b) = (blocks[k], blocks[k + 1]);
+        let after = blocks[k + 2].id();
         let lines = d.lines();
         let mut end_line = b.span().end;
         while end_line < lines.len() && lines[end_line].text().trim().is_empty() {
@@ -146,9 +158,9 @@ fn a_move_changes_nothing_outside_the_two_units() {
                 .map(|l| l.text().len() + l.eol().as_str().len())
                 .sum()
         };
-        (a.id(), offset(a.span().start), offset(end_line))
+        (a.id(), after, offset(a.span().start), offset(end_line))
     };
-    d.move_block(id, false).unwrap();
+    assert!(d.move_run_to(&[id], MoveDest::Before(after)).unwrap());
     let got = d.to_bytes();
     assert_eq!(got.len(), bytes.len());
     assert_bytes_eq("prefix", &got[..lo], &bytes[..lo]);
@@ -169,7 +181,16 @@ fn enable_disable_works_on_moved_and_duplicated_blocks() {
             t.set_enabled(id, false).is_ok() && t.set_enabled(id, true).is_ok()
         })
         .unwrap();
-    d.move_block(candidate, true).unwrap();
+    let above = d
+        .blocks()
+        .map(|b| b.id())
+        .take_while(|&id| id != candidate)
+        .last()
+        .unwrap();
+    assert!(
+        d.move_run_to(&[candidate], MoveDest::Before(above))
+            .unwrap()
+    );
     d.set_enabled(candidate, false).unwrap();
     assert!(!d.block(candidate).unwrap().is_enabled());
     d.set_enabled(candidate, true).unwrap();
@@ -218,24 +239,27 @@ fn v04_dynamic_economy_is_never_touched() {
         .filter(|b| b.header_line() < span.begin)
         .map(|b| b.id())
         .collect();
+    // The last rule already sits right above the economy section; economy blocks never move.
     let last = *rules.last().unwrap();
-    assert_eq!(d.move_neighbour(last, false).unwrap(), None);
-    assert!(d.move_block(last, false).is_err());
+    assert!(!d.move_run_to(&[last], MoveDest::End).unwrap());
     let first_economy = d
         .blocks()
         .find(|b| b.header_line() > span.begin)
         .unwrap()
         .id();
-    assert_eq!(d.move_neighbour(first_economy, true).unwrap(), None);
+    assert!(
+        d.move_run_to(&[first_economy], MoveDest::Before(rules[0]))
+            .is_err()
+    );
+    assert_eq!(econ(&d), before);
 
     let new = d.insert_rule_at_top(vec!["Show # Added".into()]).unwrap();
     assert!(section::find(&d).unwrap().is_some());
     assert_eq!(econ(&d), before);
     let s2 = section::find(&d).unwrap().unwrap();
     assert!(d.block(new).unwrap().header_line() < s2.begin);
-    // The new rule is the first one: it cannot move up, and the economy stays untouched.
+    // The new rule is the first one, and the economy stays untouched.
     assert_eq!(d.blocks().next().unwrap().id(), new);
-    assert_eq!(d.move_neighbour(new, true).unwrap(), None);
     assert_eq!(econ(&d), before);
     d.remove_block(new).unwrap();
     assert_eq!(econ(&d), before);
@@ -378,11 +402,6 @@ fn rule_hops_a_divider_into_the_next_section() {
     );
     let mut d = parse(src.as_bytes()).unwrap();
     let ids: Vec<BlockId> = d.blocks().map(|b| b.id()).collect();
-    assert_eq!(
-        d.rule_step(ids[0], false).unwrap(),
-        RuleStep::CrossBanner(0)
-    );
-    assert_eq!(d.rule_step(ids[1], true).unwrap(), RuleStep::CrossBanner(0));
     d.move_section(0, true).unwrap();
     assert_eq!(
         d.blocks().map(|b| b.id()).collect::<Vec<_>>(),
@@ -394,18 +413,6 @@ fn rule_hops_a_divider_into_the_next_section() {
         banner("Next")
     );
     assert_bytes_eq("hop", d.serialize().as_bytes(), want.as_bytes());
-    // Now the first rule is the first of the section; nothing is above it but the divider.
-    assert_eq!(d.rule_step(ids[0], true).unwrap(), RuleStep::CrossBanner(0));
-    assert_eq!(d.rule_step(ids[0], false).unwrap(), RuleStep::Swap(ids[1]));
-}
-
-#[test]
-fn rule_step_blocks_at_the_edges() {
-    let d = parse(b"Show\n\nHide\n").unwrap();
-    let ids: Vec<BlockId> = d.blocks().map(|b| b.id()).collect();
-    assert_eq!(d.rule_step(ids[0], true).unwrap(), RuleStep::Blocked);
-    assert_eq!(d.rule_step(ids[0], false).unwrap(), RuleStep::Swap(ids[1]));
-    assert_eq!(d.rule_step(ids[1], false).unwrap(), RuleStep::Blocked);
 }
 
 #[test]
@@ -440,17 +447,12 @@ fn nothing_crosses_the_economy_banner() {
         d.remove_section(1),
         Err(ferrisfilter::filter::EditError::SectionLocked)
     ));
-    // The last user rule cannot step down over the economy banner; economy blocks are fixed.
-    assert_eq!(d.rule_step(ids[1], false).unwrap(), RuleStep::Blocked);
-    assert_eq!(d.rule_step(ids[2], true).unwrap(), RuleStep::Blocked);
-    assert_eq!(d.rule_step(ids[2], false).unwrap(), RuleStep::Blocked);
+    // The last user rule cannot pass the economy banner; economy blocks are fixed.
+    assert!(!d.move_run_to(&[ids[1]], MoveDest::End).unwrap());
+    assert!(d.move_run_to(&[ids[2]], MoveDest::Before(ids[0])).is_err());
     // The user divider may pass Hide, but then nothing further down is a user rule.
     d.move_section(0, false).unwrap();
     assert!(!d.section_can_move(0, false));
-    assert_eq!(
-        d.rule_step(ids[1], false).unwrap(),
-        RuleStep::CrossBanner(0)
-    );
     d.move_section(0, true).unwrap();
     assert_bytes_eq(
         "economy untouched",

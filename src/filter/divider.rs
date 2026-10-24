@@ -171,19 +171,6 @@ impl Document {
     }
 }
 
-/// What a rule does when it is moved one step: swap with a neighbouring rule, hop a divider, or
-/// stay put.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuleStep {
-    /// Swap with this neighbouring block (the caller resolves its group).
-    Swap(BlockId),
-    /// A divider (by ordinal) lies in that direction: the caller performs the step as
-    /// `move_section(ordinal, !up)`, which hops the rule across the divider.
-    CrossBanner(usize),
-    /// Nothing to step over (file edge, economy section).
-    Blocked,
-}
-
 /// The rule unit a divider would hop: its blocks (a whole `# ff:group` run) and line region.
 struct Hop {
     banner: std::ops::Range<usize>,
@@ -295,56 +282,6 @@ impl Document {
             *l = Line::new(l.text().to_string(), Eol::None);
         }
         self.commit_unchanged(new)
-    }
-
-    /// What moving the unit whose edge block is `edge` one step in direction `up` would do. `edge`
-    /// is the unit's first block when `up`, its last when moving down. Never mutates.
-    pub fn rule_step(&self, edge: BlockId, up: bool) -> Result<RuleStep, EditError> {
-        let infos = self.infos();
-        let pos = infos
-            .iter()
-            .position(|i| i.id == edge)
-            .ok_or(EditError::UnknownBlock)?;
-        if self.in_economy(infos[pos].header)? {
-            return Ok(RuleStep::Blocked);
-        }
-        let neighbour = if up {
-            pos.checked_sub(1).map(|p| &infos[p])
-        } else {
-            infos.get(pos + 1)
-        };
-        let banners = section::banners(self);
-        let me = &infos[pos].span;
-        // The banner nearest to the edge in that direction, and whether it lies before the
-        // neighbouring block (so nothing but blanks and strays separates it from the edge).
-        let banner = if up {
-            banners
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, b)| b.start + 3 <= me.start)
-        } else {
-            banners.iter().enumerate().find(|(_, b)| b.start >= me.end)
-        };
-        let between = banner.filter(|(_, b)| match neighbour {
-            None => true,
-            Some(n) if up => b.start >= n.span.end,
-            Some(n) => b.start + 3 <= n.span.start,
-        });
-        if let Some((k, b)) = between {
-            // Hopping up over the divider that follows the economy section would drop the rule
-            // into that section (it runs to the next banner), where Apply regenerates it away.
-            let below_economy = up && k > 0 && banners[k - 1].kind == BannerKind::Economy;
-            return Ok(match b.kind {
-                BannerKind::Economy => RuleStep::Blocked,
-                BannerKind::Section if below_economy => RuleStep::Blocked,
-                BannerKind::Section => RuleStep::CrossBanner(k),
-            });
-        }
-        match neighbour {
-            Some(n) if !self.in_economy(n.header)? => Ok(RuleStep::Swap(n.id)),
-            _ => Ok(RuleStep::Blocked),
-        }
     }
 }
 

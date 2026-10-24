@@ -30,12 +30,6 @@ pub enum FlagIcon {
     GrammarWarning,
     /// A defence group whose blocks no longer match.
     GroupBroken,
-    /// The rule was moved across a Continue rule.
-    MovedAcrossContinue,
-    /// Section collapsed (click to expand).
-    ChevronRight,
-    /// Section expanded (click to collapse).
-    ChevronDown,
     /// Rename a section.
     Rename,
 }
@@ -121,39 +115,6 @@ pub fn paint_flag_icon(painter: &Painter, rect: Rect, icon: FlagIcon, colour: Co
                 );
             }
         }
-        FlagIcon::MovedAcrossContinue => {
-            let up = pos2(c.x - r * 0.45, c.y);
-            let down = pos2(c.x + r * 0.45, c.y);
-            for (x, dir) in [(up.x, -1.0_f32), (down.x, 1.0)] {
-                let tip = pos2(x, c.y + dir * r * 0.9);
-                let tail = pos2(x, c.y - dir * r * 0.9);
-                painter.line_segment([tail, tip], stroke);
-                painter.line_segment([tip, pos2(x - r * 0.4, tip.y - dir * r * 0.5)], stroke);
-                painter.line_segment([tip, pos2(x + r * 0.4, tip.y - dir * r * 0.5)], stroke);
-            }
-            painter.line_segment(
-                [pos2(c.x - r, c.y), pos2(c.x + r, c.y)],
-                Stroke::new(1.0, colour.gamma_multiply(0.6)),
-            );
-        }
-        FlagIcon::ChevronRight => {
-            let k = r * 0.6;
-            let pts = vec![
-                pos2(c.x - k * 0.5, c.y - k),
-                pos2(c.x + k * 0.5, c.y),
-                pos2(c.x - k * 0.5, c.y + k),
-            ];
-            painter.add(Shape::line(pts, stroke));
-        }
-        FlagIcon::ChevronDown => {
-            let k = r * 0.6;
-            let pts = vec![
-                pos2(c.x - k, c.y - k * 0.5),
-                pos2(c.x, c.y + k * 0.5),
-                pos2(c.x + k, c.y - k * 0.5),
-            ];
-            painter.add(Shape::line(pts, stroke));
-        }
         FlagIcon::Rename => {
             // Pencil: a diagonal body from the lower left to the upper right, tip at the lower left.
             let tip = pos2(c.x - r * 0.8, c.y + r * 0.8);
@@ -181,16 +142,13 @@ pub fn flag_icon(ui: &mut Ui, icon: FlagIcon, colour: Color32, name: &str, tip: 
 mod tests {
     use super::*;
 
-    const ALL: [FlagIcon; 9] = [
-        FlagIcon::ChevronRight,
-        FlagIcon::ChevronDown,
+    const ALL: [FlagIcon; 6] = [
         FlagIcon::Rename,
         FlagIcon::Padlock,
         FlagIcon::UnknownStyle,
         FlagIcon::GrammarError,
         FlagIcon::GrammarWarning,
         FlagIcon::GroupBroken,
-        FlagIcon::MovedAcrossContinue,
     ];
 
     fn shape_count(f: impl FnOnce(&mut Ui)) -> usize {

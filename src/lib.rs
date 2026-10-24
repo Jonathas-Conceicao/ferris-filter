@@ -24,6 +24,7 @@ pub mod safe_write;
 pub mod settings;
 pub mod skin;
 pub mod styled;
+pub mod throttle;
 pub mod update;
 pub use run::run;
 pub mod models;

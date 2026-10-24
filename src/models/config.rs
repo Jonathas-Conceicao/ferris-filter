@@ -235,8 +235,69 @@ pub struct Sound {
     pub positional: bool,
 }
 
+/// A style colour: R, G, B and alpha. Equality is over all four channels. Read from 3 values
+/// (alpha 255, older files) or 4; always written with 4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StyleColour([u8; 4]);
+
+impl StyleColour {
+    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self([r, g, b, a])
+    }
+
+    pub const fn opaque(r: u8, g: u8, b: u8) -> Self {
+        Self([r, g, b, 255])
+    }
+
+    pub fn from_array(c: [u8; 4]) -> Self {
+        Self(c)
+    }
+
+    pub fn rgba(self) -> [u8; 4] {
+        self.0
+    }
+
+    pub fn alpha(self) -> u8 {
+        self.0[3]
+    }
+}
+
+impl Serialize for StyleColour {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for StyleColour {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = StyleColour;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an array of 3 or 4 values (0-255)")
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut s: A) -> Result<StyleColour, A::Error> {
+                let mut v = [255u8; 4];
+                for (i, slot) in v.iter_mut().enumerate().take(3) {
+                    *slot = s
+                        .next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                if let Some(a) = s.next_element::<u8>()? {
+                    v[3] = a;
+                }
+                if s.next_element::<u8>()?.is_some() {
+                    return Err(de::Error::invalid_length(5, &self));
+                }
+                Ok(StyleColour(v))
+            }
+        }
+        deserializer.deserialize_seq(V)
+    }
+}
+
 /// One tier entry in the `styles` map.
-/// `text`/`border`/`background` are RGB triples; alpha is added at generate-time (Phase 2).
+/// `text`/`border`/`background` carry alpha: read as 3 or 4 values, written as 4.
 /// All visual fields are `Option` because `unchanged` and `hidden` tiers are sparse.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -244,9 +305,9 @@ pub struct Style {
     /// Stable identity (UAT3-02). First key on disk; absent in older files and assigned at load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub text: Option<[u8; 3]>,
-    pub border: Option<[u8; 3]>,
-    pub background: Option<[u8; 3]>,
+    pub text: Option<StyleColour>,
+    pub border: Option<StyleColour>,
+    pub background: Option<StyleColour>,
     pub font: Option<u8>,
     /// `null` = off (no line), `"None"` = `MinimapIcon -1`, an object = the icon.
     pub minimap: Option<Cancelable<Minimap>>,
@@ -907,33 +968,43 @@ impl StyleSet {
         self.0.shift_remove(name)
     }
 
-    /// Move a custom style one step up or down among the custom styles only. It swaps places with
-    /// the nearest custom neighbour in that direction, so built-ins never change position.
-    /// False (no change) for a built-in, an unknown name, or a custom already at that end.
-    pub fn move_custom(&mut self, name: &str, up: bool) -> bool {
+    /// Move a custom style to a gap among the custom styles only: `gap` 0 is above the first
+    /// custom, `n` below the last (clamped). Only the custom index slots are rewritten, so
+    /// built-ins never move and a custom never lands above them. False (no change) for a
+    /// built-in, an unknown name, or a no-op gap (the style's own top or bottom).
+    pub fn move_custom_to(&mut self, name: &str, gap: usize) -> bool {
         if Self::is_builtin(name) {
             return false;
         }
-        let Some(from) = self.0.get_index_of(name) else {
+        let slots: Vec<usize> = (0..self.0.len())
+            .filter(|&i| {
+                self.0
+                    .get_index(i)
+                    .is_some_and(|(n, _)| !Self::is_builtin(n))
+            })
+            .collect();
+        let Some(src) = slots
+            .iter()
+            .position(|&i| self.0.get_index(i).is_some_and(|(n, _)| n == name))
+        else {
             return false;
         };
-        let is_custom = |i: usize| {
-            self.0
-                .get_index(i)
-                .is_some_and(|(n, _)| !Self::is_builtin(n))
-        };
-        let to = if up {
-            (0..from).rev().find(|&i| is_custom(i))
-        } else {
-            (from + 1..self.0.len()).find(|&i| is_custom(i))
-        };
-        match to {
-            Some(to) => {
-                self.0.swap_indices(from, to);
-                true
-            }
-            None => false,
+        let gap = gap.min(slots.len());
+        if style_noop(src, gap) {
+            return false;
         }
+        let dest = style_gap_to_index(src, gap);
+        // Rotate the run between src and dest with adjacent swaps of the custom slots.
+        if dest < src {
+            for k in (dest..src).rev() {
+                self.0.swap_indices(slots[k], slots[k + 1]);
+            }
+        } else {
+            for k in src..dest {
+                self.0.swap_indices(slots[k], slots[k + 1]);
+            }
+        }
+        true
     }
 
     #[cfg(test)]
@@ -1296,6 +1367,17 @@ fn deserialize_present_value<'de, D: Deserializer<'de>>(
     serde_json::Value::deserialize(deserializer).map(Some)
 }
 
+/// Dropping custom style `src` on gap `gap` changes nothing (the gap above or below it).
+pub fn style_noop(src: usize, gap: usize) -> bool {
+    gap == src || gap == src + 1
+}
+
+/// Final position (among the custom styles) of style `src` dropped on `gap`: the gaps below the
+/// source shift up by one once it is taken out.
+pub fn style_gap_to_index(src: usize, gap: usize) -> usize {
+    if gap > src { gap - 1 } else { gap }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1303,6 +1385,47 @@ fn deserialize_present_value<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn style_colour_reads_three_or_four_values() {
+        let c: StyleColour = serde_json::from_str("[1,2,3]").unwrap();
+        assert_eq!(c, StyleColour::new(1, 2, 3, 255));
+        let c: StyleColour = serde_json::from_str("[1,2,3,128]").unwrap();
+        assert_eq!(c, StyleColour::new(1, 2, 3, 128));
+        assert_ne!(
+            StyleColour::new(1, 2, 3, 255),
+            StyleColour::new(1, 2, 3, 254)
+        );
+    }
+
+    #[test]
+    fn style_colour_rejects_bad_length_and_range() {
+        for bad in ["[1,2]", "[1,2,3,4,5]"] {
+            let e = serde_json::from_str::<StyleColour>(bad)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("3 or 4 values"), "{bad}: {e}");
+        }
+        assert!(serde_json::from_str::<StyleColour>("[1,2,256]").is_err());
+    }
+
+    #[test]
+    fn style_colour_writes_four_values() {
+        let s = serde_json::to_string(&StyleColour::opaque(1, 2, 3)).unwrap();
+        assert_eq!(s, "[1,2,3,255]");
+    }
+
+    #[test]
+    fn style_colour_three_value_style_equals_four_value_style() {
+        let tpl = |t: &str| {
+            format!(
+                r#"{{"text":{t},"border":null,"background":null,"font":null,"minimap":null,"beam":null,"sound":null,"action":"Show","disableDropSound":false}}"#
+            )
+        };
+        let a: Style = serde_json::from_str(&tpl("[255,121,198]")).unwrap();
+        let b: Style = serde_json::from_str(&tpl("[255,121,198,255]")).unwrap();
+        assert_eq!(a, b);
+    }
 
     #[test]
     fn insert_new_appends_in_order() {
@@ -1351,47 +1474,51 @@ mod tests {
     }
 
     #[test]
-    fn move_custom_skips_builtins_and_stops_at_ends() {
-        let mut set = StyleSet::committed_for_tests();
-        set.insert_new("Gold", Style::blank_show()).unwrap();
-        set.insert_new("Silver", Style::blank_show()).unwrap();
-        let order = |s: &StyleSet| s.names().map(String::from).collect::<Vec<_>>();
-        let builtin_slots = |s: &StyleSet| {
+    fn move_custom_to_moves_among_customs_and_keeps_builtins() {
+        let mk = || {
+            let mut set = StyleSet::committed_for_tests();
+            let old: Vec<String> = set
+                .names()
+                .filter(|n| !StyleSet::is_builtin(n))
+                .map(String::from)
+                .collect();
+            for n in old {
+                set.remove_custom(&n);
+            }
+            for n in ["x", "y", "z"] {
+                set.insert_new(n, Style::blank_show()).unwrap();
+            }
+            set
+        };
+        let customs = |s: &StyleSet| {
+            s.names()
+                .filter(|n| !StyleSet::is_builtin(n))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        let builtins = |s: &StyleSet| {
             s.names()
                 .enumerate()
                 .filter(|(_, n)| StyleSet::is_builtin(n))
                 .map(|(i, n)| (i, n.to_string()))
                 .collect::<Vec<_>>()
         };
-        let slots = builtin_slots(&set);
-        let before = order(&set);
-
-        // Last custom up swaps with the previous custom, whatever sits between them.
-        assert!(set.move_custom("Silver", true));
-        let after = order(&set);
-        let gi = after.iter().position(|n| n == "Gold").unwrap();
-        let si = after.iter().position(|n| n == "Silver").unwrap();
-        assert!(si < gi);
-        assert_eq!(builtin_slots(&set), slots);
-
-        // Moving it back restores the original order.
-        assert!(set.move_custom("Silver", false));
-        assert_eq!(order(&set), before);
-
-        // Ends and refusals.
-        let first_custom = before
-            .iter()
-            .find(|n| !StyleSet::is_builtin(n))
-            .unwrap()
-            .clone();
-        assert!(!set.move_custom(&first_custom, true));
-        assert!(!set.move_custom("Silver", false));
-        for b in StyleSet::REQUIRED {
-            assert!(!set.move_custom(b, true));
-            assert!(!set.move_custom(b, false));
-        }
-        assert!(!set.move_custom("nope", true));
-        assert_eq!(order(&set), before);
+        let slots = builtins(&mk());
+        let mut s = mk();
+        assert!(s.move_custom_to("x", 3));
+        assert_eq!(customs(&s), ["y", "z", "x"]);
+        assert_eq!(builtins(&s), slots);
+        let mut s = mk();
+        assert!(s.move_custom_to("z", 0));
+        assert_eq!(customs(&s), ["z", "x", "y"]);
+        // Clamped gap, refusals.
+        let mut s = mk();
+        assert!(s.move_custom_to("x", 99));
+        assert_eq!(customs(&s), ["y", "z", "x"]);
+        let mut s = mk();
+        assert!(!s.move_custom_to("y", 1) && !s.move_custom_to("y", 2));
+        assert!(!s.move_custom_to("S", 0) && !s.move_custom_to("nope", 0));
+        assert_eq!(customs(&s), ["x", "y", "z"]);
     }
 
     #[test]
@@ -1990,12 +2117,12 @@ mod tests {
         // Verify the pink color (255 121 198)
         assert_eq!(
             exceptional.text,
-            Some([255, 121, 198]),
+            Some(StyleColour::opaque(255, 121, 198)),
             "exceptional text color must be pink [255, 121, 198]"
         );
         assert_eq!(
             exceptional.border,
-            Some([255, 121, 198]),
+            Some(StyleColour::opaque(255, 121, 198)),
             "exceptional border color must be pink [255, 121, 198]"
         );
         // No sound, no font

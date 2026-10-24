@@ -1,187 +1,277 @@
-# Technology Stack: v0.7 additions
+# Technology Stack — v0.7.2 additions
 
-**Project:** FerrisFilter, milestone v0.7 "Initial Public Release and Strictness Selector"
-**Researched:** 2026-10-17
-**Scope:** only the NEW capabilities (release CI, installer, per-user dirs, Documents folder and folder picker, league list, in-app update check). The parser/editor/skin/egui UI/poe.ninja sync are validated and untouched.
+**Project:** FerrisFilter (v0.7.2 Small UI Improvements)
+**Researched:** 2026-10-23
+**Overall confidence:** HIGH (every API below read from the crate sources in `~/.cargo/registry/src`, versions from `Cargo.lock`)
 
-## Verdict in one paragraph
+## Verdict
 
-The milestone needs very little new code from outside. Add **three crates** (`dirs`, `semver`, `rfd`), reuse the **reqwest 0.13 + rustls + serde_json + tempfile** already in `Cargo.toml` for the update check and installer download, reuse the **existing `INDEX_STATE_URL` fetch** for the league list (no new endpoint), use **Inno Setup 6** (preinstalled on `windows-latest`) for the installer, and a **hand-written GitHub Actions workflow** with `softprops/action-gh-release` plus a ~10-line awk changelog extraction. Do not add `self_update`, `cargo-wix`/WiX, `directories`, `confy`, or `native-dialog`.
+**No new Rust dependencies are needed.** All 8 features are buildable with the current
+`Cargo.toml`. The author's belief holds. Nothing goes in the "NEW DEPENDENCY" section (it is
+empty, see the end). Do not add `keyboard-types` (global-hotkey re-exports `Code` and
+`Modifiers`), `serde_with`, `chrono`/`time`, `egui_dnd`, `egui_extras`, `rdev`, or `device_query`.
 
-## Current dependency baseline (from Cargo.toml / Cargo.lock)
+Locked versions that matter: egui/eframe 0.36.1, global-hotkey 0.8.0, keyboard-types 0.7.0
+(transitive), winit 0.30.13 (transitive). Note `~/.cargo/registry` also holds 0.36.2 sources;
+Cargo.lock pins 0.36.1, which is what was read for the API names below. If `cargo update` is
+ever run, re-check nothing in the dnd/scroll APIs changed (a patch bump should not).
 
-| Fact | Evidence | Consequence |
-|------|----------|-------------|
-| `reqwest 0.13.3`, `default-features=false`, features `rustls-no-provider, json, query`; `rustls 0.23` with `ring` | Cargo.toml | Already does HTTPS GET + JSON. GitHub Releases API needs no new HTTP stack. A **streaming binary download needs no extra feature** (`Response::bytes()` / `chunk()` work without `stream`); only set a `User-Agent`. |
-| `windows-sys 0.61` (cfg windows) with a feature list that has **no** `Win32_UI_Shell` / `Win32_System_Com` | Cargo.toml | Do NOT hand-roll `SHGetKnownFolderPath` (would need those two features plus `CoTaskMemFree` handling); `dirs` already does it correctly. |
-| `dirs 6.0.0` in the lock | transitive via `tray-icon` (Linux gtk path) and `poe_data_tools` (ff-art) | Adding `dirs = "6.0"` as a direct dep reuses a locked version (no duplicate). |
-| `semver 1.0.28` in the lock | transitive build-dep only (`rustc_version`) | Adding `semver = "1"` as a direct dep costs nothing new in the lock. |
-| `tempfile 3`, `serde`/`serde_json`, `tokio` (rt-multi-thread) | Cargo.toml | Temp download dir, release JSON parsing, worker-thread pattern all exist (`overlay/economy.rs` is the model for a background network job). |
-| `zip 5.1.1` only via `ff-art` (image-extras) | cargo tree | Not needed in `ff`. The release zip is made in CI (PowerShell `Compress-Archive`), never in the app. |
-| Rust code uses **no `#![feature]`**; only `tools/ff-art` needs nightly (`poe_data_tools`, comment at tools/ff-art/Cargo.toml:14) | grep | `ff`, `ff-cli`, `ferrisfilter` build on stable. See the CI toolchain section. |
-| `build.rs` bakes the version via `git describe` | build.rs | CI checkout MUST use `fetch-depth: 0` (tags), or About shows the Cargo.toml fallback / wrong `-dev` suffix. |
+## Per-feature: how to build it with what exists
 
-## Recommended Stack
+### 1. Style colour alpha — serde + existing picker (no new dep)
+- `src/skin/colour_picker.rs` already has an `alpha: bool` mode (used by rule colour actions;
+  styles pass `false` today) and returns unmultiplied RGBA. Feature = pass `alpha: true` for
+  style slots and carry the 4th byte through `Style` (`src/models/config.rs:243`).
+- Persistence: add an optional alpha next to each colour, written **only when not 255**
+  (`#[serde(default, skip_serializing_if = ...)]`), so existing `styles.json` files load and
+  re-serialise byte-identically (the project already guarantees this for other new fields).
+  Emitter: write `R G B A` with the alpha instead of the hard-coded 255, and keep the existing
+  3-token behaviour for frozen seeds (`tests/fixtures/seed-styles.json` must still produce
+  `seed-universal.filter` byte-for-byte; `artifact_guard`).
+- Decide the JSON shape in the phase (extra `*Alpha` fields vs 4-element array); both are plain
+  serde. Prefer extra optional fields, they cannot break old readers/round-trips.
+- Confidence: HIGH.
 
-### New Rust dependencies
+### 2. Auto Detect styles — pure Rust over the existing parser (no new dep)
+- Reuse the lossless filter parser/`style_lines.rs` "last line of each keyword family wins"
+  binding to build a `Style` per rule; compare with `==` (derive `PartialEq` on `Style`, ensure
+  `Option`/alpha/sound fields are all included), group with `std::collections::HashMap` or the
+  existing `indexmap` for deterministic "Custom Style N" numbering by first appearance.
+- Custom style ids: reuse the existing random-id generator (6-8 lowercase alnum); no `rand`
+  needed (it already exists for custom styles/groups).
+- Confidence: HIGH (no external API involved).
 
-| Library | Version | Purpose | Why | Confidence |
-|---------|---------|---------|-----|------------|
-| `dirs` | `6.0` (7.0.0 is the crates.io max; see note) | `config_dir()` (Windows Roaming `%APPDATA%`, Linux `$XDG_CONFIG_HOME` / `~/.config`), `cache_dir()` (Windows `%LOCALAPPDATA%`, Linux `~/.cache`), `document_dir()` (Windows `FOLDERID_Documents` via `SHGetKnownFolderPath`) | One tiny crate covers requirements 3 and 4. `document_dir()` asks the shell for the Documents **known folder**, so OneDrive Known Folder Move and localized names ("Documentos") resolve exactly as the game does. Pin 6.0 because it is already locked via tray-icon (no duplicate crate); 7.0.0 exists, API for these three fns is the same, take it only if a 6->7 diff shows no issue. | HIGH for behavior (dirs docs), MEDIUM for 6 vs 7 choice |
-| `semver` | `1` (1.0.28) | Parse `tag_name` minus leading `v` and compare with `env!("CARGO_PKG_VERSION")` / the baked build version | Correct ordering including prerelease (`0.7.0-rc.1 < 0.7.0`), already in the lock. Hand-comparing version strings is the classic bug (`0.10` vs `0.9`). | HIGH |
-| `rfd` | `0.17` (0.17.2) | Native folder picker (`FileDialog::pick_folder`) for "choose game folder" | The de-facto cross-platform native dialog crate; on Windows uses the native `IFileDialog` (Vista-style, shows OneDrive/Documents, supports typing a path) through windows-sys, so no GTK. Its Windows deps are windows-sys 0.61 (same major as ours, no duplicate). Does not depend on egui/eframe, so no version coupling to egui 0.36. | HIGH (crate), MEDIUM (integration details below) |
+### 3. Drag-and-drop reordering — egui 0.36.1 primitives, but do NOT use `dnd_drag_source`
+Verified APIs in egui 0.36.1: `Ui::dnd_drag_source(id, payload, add_contents)`
+(`ui.rs:2641`), `Ui::dnd_drop_zone` (`ui.rs:2693`), `Response::dnd_set_drag_payload` /
+`dnd_hover_payload` / `dnd_release_payload` (`response.rs:498/515/531`),
+`DragAndDrop::{payload, take_payload, clear_payload, has_payload_of_type}`
+(`drag_and_drop.rs`), `Context::is_being_dragged`, `Context::set_dragged_id`,
+`Context::pointer_interact_pos`, `Context::transform_layer_shapes`,
+`Context::layer_painter`, `Ui::scroll_with_delta`, `Ui::scroll_to_rect`,
+`ScrollArea::vertical_scroll_offset` / `scroll_source(ScrollSource{..})`.
 
-Cargo.toml delta:
+Recommendation (opinionated):
+- **Drag source:** put a `Sense::drag()` interact on the handle rect only
+  (`ui.interact(handle_rect, id, Sense::drag())`), draw the three handle PNGs
+  (normal/hover/pressed) from `response.hovered()` / `response.is_pointer_button_down_on()` /
+  `dragged()`. Use `response.drag_started()` to record `DragState { from: usize, grab_offset }`
+  in app state (own struct, not egui memory) and `ctx.set_cursor_icon(Grabbing)`.
+- **Why not `dnd_drag_source`:** it paints the body into a Tooltip layer and moves it with
+  `transform_layer_shapes`, which fits non-virtualized lists. Here the list is virtualized
+  (`src/overlay/virtual_list.rs`: `build_offsets`, `visible_range`), so the dragged row can
+  scroll out of the visible range and stop being built. egui tolerates that (the widget being
+  dragged "is now in the air and not registered", `interaction.rs:124-131`), but any logic that
+  lives inside the row's closure stops running. Keep the drag state and the drop logic outside
+  the row closure, keyed by the row's stable id/index, and finish the drag from the
+  `ctx.input(|i| i.pointer.any_released())` check once per frame at the list level.
+- **Shadow copy:** paint the row (or a cheap re-draw: plate + name + handle) with
+  `ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("ff-drag-shadow")))` at
+  `pointer_interact_pos() - grab_offset`, with reduced opacity (`Color32::gamma_multiply` /
+  `Painter::set_opacity`). Tooltip order draws over everything and is not interactive.
+- **Drop marker:** compute the target index from the pointer y against the existing `offsets`
+  vector (the same one `visible_range` uses: `partition_point` over offsets, snap to the nearest
+  row boundary); paint a line/bar at `offsets[target]` with `ui.painter()`. No hit-testing of
+  rows needed, so it works for rows that are not currently built. Skip no-op targets
+  (`target == from || target == from + 1`).
+- **Wheel scroll while dragging:** the `ScrollArea` already consumes wheel events; while a drag
+  is active the wheel still reaches it unless the area is told otherwise. Verify in a spike; if
+  the pointer capture blocks it, read `ctx.input(|i| i.smooth_scroll_delta)` and feed it to
+  `ui.scroll_with_delta(...)` yourself.
+- **Edge auto-scroll:** inside the scroll area's `ui`, when `pointer_pos.y` is within ~32pt of
+  the viewport top/bottom, call `ui.scroll_with_delta(vec2(0.0, ±speed * dt))` with
+  `dt = ctx.input(|i| i.stable_dt)` and `ctx.request_repaint()`. Speed scales with proximity to
+  the edge. Since the project drives offsets itself (`area.vertical_scroll_offset(o)` at
+  `src/skin/widgets.rs:1578`), the alternative is to mutate that stored offset directly; pick
+  whichever the existing helper makes simpler.
+- **Section/economy constraints:** rule drag moves one "unit" (a whole `# ff:group` run), must
+  not cross the economy section, and the reorder itself should call the existing move
+  operations (same model path as the arrows) so Continue-flags, unapplied state and Revert
+  behave identically. No new model code beyond "move rule from i to j".
+- **Custom art:** `assets/custom/icon_reoder_{normal,hover,pressed}.png` through the existing
+  `include_bytes!` + `skin::textures` path (LINEAR + mipmaps, pixel-snapped). Note the
+  filenames contain the typo `reoder`; the files are untracked in git right now, add them.
+- Confidence: HIGH on API names (read from source), MEDIUM on the wheel-during-drag detail
+  (needs an in-app spike).
 
-```toml
-dirs    = "6.0"
-semver  = "1"
-rfd     = "0.17"     # Windows-only app: defaults are fine; xdg-portal/gtk features only matter on Linux
-```
+### 4. Social-panel section headers — ff-art (dev tool, already a workspace member)
+- Art extraction uses the existing `tools/ff-art` manifest (`assets/poe2/manifest.toml`): add
+  entries for the toggle plate / up-down glyph / stone bar; `[[atlas]]` packing exists if the
+  glyphs live in a grid sheet. `ff-art dump`/`sheet`/`zoom` find the source DDS. Needs the game
+  installed and the pinned nightly; output PNGs are committed, so the shipped `ff` build needs
+  nothing new. Paint with the existing nine/three-slice helpers in `src/skin/slice.rs`.
+- No new dependency in either crate (`image-extras` DDS, `resvg` already present in ff-art).
+- Confidence: HIGH for tooling, LOW on which game file holds the Social panel art (discover
+  with `ff-art list`).
 
-### Integration points and gotchas
+### 5. Clear (X) button and magnifier inside search fields — painting only
+- egui `TextEdit` plus painting into the field rect: reserve right/left margin
+  (`TextEdit::margin`), paint the magnifier with the existing `skin::icons` pattern (either a
+  small PNG via `include_bytes!` or two painter primitives: `circle_stroke` + `line_segment`),
+  and an X via the existing `ff_x_button`. Show X only when the text is non-empty; click clears
+  and `request_focus()`. Both are wrappers around the existing `ff_text_field_*`.
+- Confidence: HIGH.
 
-**Per-user dirs (feature 3).** Add one `paths` module in the lib crate that is the single place that knows locations:
-`config_dir()/FerrisFilter` (styles.json, tiers.json, ff-settings.json), `cache_dir()/FerrisFilter` (prices.json). Use `FerrisFilter` on Windows and `ferrisfilter` on Linux (the milestone text lists both spellings). Replace the current app-root walk (`FERRISFILTER_HOME` -> walk up to `styles-default.json` -> cwd) with: `FERRISFILTER_HOME` (keep: tests, screenshot mode, dev warning in CLAUDE.md all depend on it) -> per-user dirs. Keep the walk-up only as a dev convenience if wanted, but it must not outrank the per-user dir in an installed build, else a `styles-default.json` next to the exe would shadow the user's config. "Defaults embedded in exe": use `include_str!` of `styles-default.json` / `tiers-default.json` (and the prices/tiers fallback pair, `config.json`, `mapping.json` if `generate` is shipped). That removes the `styles-default.json` marker role, so the app-root concept needs a replacement marker (or none). The `-default.json` files stay committed because tests and `artifact_guard` read them. Note `FERRISFILTER_HOME` should then be a single override for both config and cache (screenshot mode asserts it lives under temp).
-- Config in Roaming vs cache in Local is the correct split; prices are re-downloadable so Local/cache is right, and OneDrive/roaming profiles will not sync them.
-- Create dirs lazily with `create_dir_all` at first write. Reads must tolerate absence (current code already falls back to `-default`).
-- One-time migration: users on 0.6 have `styles.json`/`tiers.json`/`ff-settings.json` in the repo/app root. A "copy once if the new location is empty and the old exists" step is cheap; decide in the phase (dev-only audience so far, probably skip).
-- Atomic writes already exist for filter files; reuse the same helper for config.
+### 6. User-customizable global hotkey — global-hotkey 0.8.0 + egui key events
+Verified in `global-hotkey-0.8.0`:
+- `HotKey::new(Option<Modifiers>, Code)`; `id = (mods.bits() << 16) | key as u32`. **The id
+  changes with the combo**, so `HotkeyStatus::Registered { id }` and the poll in
+  `src/overlay/app.rs:3501` (matches `event.id == *id`) must be updated on every re-register.
+- `impl FromStr for HotKey`, `Display`/`into_string()` (`"shift+control+alt+super+<Code>"`,
+  e.g. `control+shift+KeyZ`), plus optional `serde` feature (not enabled; do not enable, a
+  plain `String` field is enough and parse errors become a warning like the other keys).
+  Parser accepts `"Ctrl+Shift+Z"`, `"KeyZ"`, `"Z"`, `"F5"`, `"Digit1"`, etc.
+- `GlobalHotKeyManager::register/unregister(hotkey)`; Windows impl calls
+  `RegisterHotKey(..., MOD_NOREPEAT | mods, vk)` / `UnregisterHotKey` on the manager's hidden
+  window, so **runtime re-registration is supported**, on the same thread that created the
+  manager (the existing note in `hotkey.rs`). The overlay's update loop runs on the
+  eframe/winit thread that built it, so call it from there. `ERROR_HOTKEY_ALREADY_REGISTERED`
+  surfaces as an `Err`, which maps to the existing `HotkeyStatus::Failed(text)`.
+- Re-register algorithm (safe order, keeps the old combo on failure): `register(new)`; on
+  `Ok` then `unregister(old)` and swap the id; on `Err` leave the old one and show the error.
+  If new == old, no-op. Never `register` the manager twice (do not call
+  `GlobalHotKeyManager::new()` again at runtime; keep the one in `hotkey_manager`).
+- **Capture in the Config tab:** no new crate. While the "press a key" control is armed,
+  read `ctx.input(|i| i.events.clone())` for `egui::Event::Key { key, physical_key, pressed:
+  true, repeat: false, modifiers, .. }` and take `modifiers` (egui `Modifiers`: `ctrl`, `shift`,
+  `alt`, `mac_cmd`/`command`) from the event. Ignore events whose key is only a modifier (egui
+  has no modifier `Key`, so lone modifiers produce no `Key` event, which is what you want).
+  `Escape` cancels; `Backspace`/`Delete` could reset to default `Ctrl+Shift+Z`.
+  Use `physical_key.unwrap_or(key)`: `RegisterHotKey` takes a virtual key derived from `Code`, and
+  `physical_key` is layout-independent (documented as "not recommended" for text shortcuts but
+  appropriate for a hotkey that is stored as a physical `Code`). Be aware global-hotkey maps
+  `Code` to a VK (so on AZERTY a `KeyA` physical stores the VK of that position); keep the
+  hint text honest ("key position").
+- **egui `Key` -> `global_hotkey::hotkey::Code` mapping:** there is **no built-in conversion**
+  (egui `Key` is its own enum; `Event::Key.physical_key` is also an egui `Key`). Write one
+  small `match` (~80 lines) in `src/overlay/hotkey.rs`: `Key::A..Z -> Code::KeyA..KeyZ`,
+  `Num0..9 -> Digit0..9`, `F1..F20 -> F1..F20`, arrows, `Space`, `Tab`, `Enter`, `Insert`,
+  `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, punctuation (`Minus`, `Equals`,
+  `Comma`, `Period`, `Slash`, `Backslash`, `Semicolon`, `Quote`, `Backtick`, `OpenBracket`,
+  `CloseBracket`). Return `Option<Code>` and say "that key is not supported" otherwise. Cheaper
+  trick, also verified: `Key::name()` strings often match `parse_key` tokens
+  (`"A"`, `"F1"`, `"Insert"`), but names such as `Down`/`Left`/`PageUp`/`Minus` do not match
+  global-hotkey's expectations (`ArrowDown`, `PageUp`, `Minus`...), so the explicit `match` is
+  more reliable and unit-testable. Put a table test over all supported keys that round-trips
+  `HotKey::new(mods, code).to_string().parse::<HotKey>() == Ok(hotkey)`.
+- **Validation rules (suggest):** require at least one of Ctrl/Alt/Shift/Super unless the key
+  is an F-key (a bare letter would be swallowed system-wide, which is exactly why the author
+  moved off plain `Shift+Z`; see the comment in `hotkey.rs`). Reject keys the game or the app
+  needs? Not enforceable; just warn.
+- **While capturing, unregister the live hotkey** (or at least ignore its events), otherwise
+  pressing the current combo toggles the window instead of being captured (RegisterHotKey
+  swallows the chord before egui sees it). Re-register the old one if capture is cancelled.
+- **Persistence:** new `ff-settings.json` key (e.g. `toggle_hotkey: "control+shift+KeyZ"`),
+  `Option<String>` in `Settings` with the same `skip_serializing_if` pattern, saved with a new
+  `save_keys(&["toggle_hotkey"])` wrapper like `save_league`. Absent or unparsable reads the
+  default with a warning (follow the existing "wrong type reads the default with a warning"
+  convention). Unknown keys are preserved by the flatten `extra` map already.
+- **Tray/tooltip text** that mentions `Ctrl+Shift+Z` must read from the same value; `hotkey.rs`
+  constants `TOGGLE_MODIFIERS`/`TOGGLE_CODE` become the default only. `release_toggle` must
+  unregister the *current* combo, not the constant.
+- **Screenshot mode and tests** use no hotkey; unit-test the key mapping, settings round trip
+  and the register-order logic behind a small trait or a pure function (do not call the OS in
+  tests; the isolation guard applies).
+- Confidence: HIGH on global-hotkey APIs, MEDIUM on layout behaviour of `physical_key`
+  (verify on a non-QWERTY layout or accept QWERTY-position semantics).
 
-**Documents known folder (feature 4).** Default game folder = `dirs::document_dir()?.join("My Games").join("Path of Exile 2")`. PoE2 writes to the same known folder, so this is correct under OneDrive redirect and localization. If `document_dir()` is `None`, fall back to `%USERPROFILE%\Documents`, then to "ask the user". Always check `is_dir()` and surface "not found, pick folder" rather than silently creating a wrong path. Persist the user's choice in `ff-settings.json` (override beats default). The hardcoded `%USERPROFILE%\OneDrive\Documentos\...` in `install`/`apply` defaults and in the debug screenshot-mode isolation check must be rewritten to use the same function; screenshot mode derives the game folder from `USERPROFILE`, and `dirs` on Windows ignores `USERPROFILE` (it asks the shell), so **screenshot mode and tests need an explicit override** (e.g. env var `FERRISFILTER_GAME_DIR`, or take the path through the settings file) or they will touch the real folder. This is the main integration trap.
+### 7. Tier price range in economy names — pure pricer logic
+- `pricer.rs` already has the tier cutoffs (`tiers.json`, exalt/chaos/divine units, derived
+  rates). Format the lower/upper bound of a tier with the existing value formatter; no crate.
+  Names are written as `# ff:name <T> tier <Group>` today; the suffix changes the name text, so
+  check the parser/`styled.rs` places that match names by prefix (`S tier Currency`) and the
+  committed snapshot tests (`generate_snapshot`, `artifact_guard` only if `generate` shares the
+  code path; the seed fixture must not change unless intended).
+- Confidence: HIGH.
 
-**Folder picker (feature 4).**
-- The overlay is a borderless **always-on-top** window. A dialog with no owner will open behind it. Pass the eframe window as parent via `FileDialog::set_parent(&frame)` (eframe's `Frame` implements `HasWindowHandle`/`HasDisplayHandle`; rfd accepts raw-window-handle 0.6 types). Needs a live check; fallback is to temporarily drop topmost while the dialog is open.
-- A blocking dialog on the UI thread stops egui repainting. Run it off the UI thread (pattern: `std::thread::spawn` + channel + `ctx.request_repaint()`, as `overlay/economy.rs` does for sync) or use `rfd::AsyncFileDialog`. Construct the dialog (with parent) on the UI thread, then move it into the worker; verify `FileDialog: Send` when implementing.
-- Use only `pick_folder`/`pick_file`; avoid `rfd::MessageDialog` (our skinned popups cover that, and message dialogs on Windows want comctl v6 manifest activation).
-- Dialog opening steals focus from the game; the hotkey is gated on game/overlay being foreground, so re-check the "summon" logic after the dialog closes.
+### 8. Network throttle — std + serde, and a distinct User-Agent
+- Persist timestamps as **unix seconds (`u64`)** from `std::time::SystemTime::now()
+  .duration_since(UNIX_EPOCH)` (same pattern as `src/sync/prices.rs:611`). No `chrono`/`time`.
+  Do not use `Instant` (not persistable across restarts). Treat a stored time in the future
+  (clock moved back) as expired, never as "blocked for years": `now.saturating_sub(last) >= 3600`
+  is wrong for future stamps (it returns 0), so write `last > now || now - last >= 3600`.
+- Where to store: a new key in `ff-settings.json` (e.g. `net_last_request` map of key to
+  seconds, keys `sync:<league slug>`, `leagues`, `update`) with its own `save_keys` wrapper,
+  OR a separate `net-state.json` in the FerrisFilter folder. Prefer `ff-settings.json`: one
+  atomic-write path exists. Caveat: a damaged `ff-settings.json` already means reload-off and a
+  warning; throttle state in a file that cannot be saved should fail **open for display but
+  closed for requests**? Recommend: if the throttle state cannot be read or saved, still allow
+  the request (an offline-safe, honest choice) but keep an in-memory timestamp so a session
+  cannot spam.
+- `prices.json` already holds `fetched_at` (sync time, `sync/prices.rs`); do not derive the
+  throttle from it, because a failed request must also throttle, and the CLI writes it too.
+  The throttle is overlay-only; `ff-cli sync` and `generate` ignore it.
+- UI behaviour: a throttled button should not just go grey silently. Show the remaining
+  minutes on hover and in the status line (existing `StatusKind::Info`), and offer no bypass
+  unless the author wants one (an explicit decision to take in the phase).
+- League list: throttle the network call but still serve the last list from memory; today the
+  list is fetched once per session, so persist the *time*, and consider also persisting the
+  list names to the settings so a restart inside the hour has something to show
+  (small `Vec<String>`; otherwise the dropdown is empty until the hour passes).
+- **Distinct User-Agent:** `src/sync/client.rs:19` defines the single `USER_AGENT`, used at
+  `client.rs:48` (poe.ninja `ReqwestClient`) and `update.rs:841` (GitHub). Make the UA a
+  parameter: e.g. `pub const USER_AGENT_OVERLAY` and `USER_AGENT_CLI` built with `concat!`
+  (`"FerrisFilter/<ver> (overlay; github.com/...; contact: ...)"` vs `"... (cli; ...)"`), and
+  give `ReqwestClient::new(user_agent)` (or a builder) the choice; the overlay's sync worker,
+  league fetch and update check pass the overlay one, `ferrisfilter`/`ff-cli` pass the CLI
+  one. Update the existing `user_agent_tests` (it asserts prefix, repo name, no "myfilter") to
+  cover both. This is reqwest's `ClientBuilder::user_agent`, already used.
+  The GitHub update check from the CLI does not exist, so only `ff` uses the overlay UA there.
+- Confidence: HIGH.
 
-### League list (feature 5): no new dependency
+## Recommended stack (unchanged)
 
-Use the endpoint the repo already calls: `https://poe.ninja/poe2/api/data/index-state` (`sync::league::INDEX_STATE_URL`, `fetch_index_state`). Verified live on 2026-10-17: it returns `economyLeagues[]` with `name`, `url` (slug), `displayName`, `hardcore`, `indexed`, plus `oldEconomyLeagues[]` (ended leagues, e.g. "Fate of the Vaal") and `snapshotVersions`. Current content: Forbidden Rites, Runes of Aldur, their HC variants, Standard, Hardcore. `models::EconomyLeague` currently deserializes name/url/hardcore/indexed; add `displayName` only if the UI wants it (`name` is what the stash/exchange endpoints accept, per the existing "return `name`, not the slug" note). The picker should list `economyLeagues` (not `oldEconomyLeagues`), not trust `indexed` for the default selection (CLAUDE.md documents it flipping between leagues; in the live response right now `Runes of Aldur` is the only indexed one while the pinned overlay league is Forbidden Rites), store the choice in `ff-settings.json`, and replace `OVERLAY_LEAGUE`'s hard pin with "user selection, default = last saved, else a sensible guess, always shown in the status line". Failure mode: offline -> keep the saved league, allow typing/keeping it. Confidence HIGH (live-verified; shape is unofficial/undocumented, so keep the parse tolerant: `#[serde(default)]` on new fields).
-
-### Update check (feature 6): no `self_update`
-
-Hand-roll on reqwest + semver (about 150 lines):
-1. `GET https://api.github.com/repos/Jonathas-Conceicao/ferris-filter/releases/latest` with headers `User-Agent: FerrisFilter/<ver>` (GitHub rejects requests without one) and `Accept: application/vnd.github+json`. `/releases/latest` excludes drafts and prereleases, which is the behavior wanted. Unauthenticated limit is 60 requests/hour/IP; check on demand (button) and at most once per launch/day, never in a loop. Today the API returns 404 for this repo (no release published yet): treat 404 as "no releases yet / up to date", not as an error.
-2. Parse `tag_name` (strip `v`), `semver::Version::parse`, compare to the running version. The running version should come from Cargo's `CARGO_PKG_VERSION`, not the `git describe` string baked for About (`0.6-dev` is not valid semver). **Cargo.toml `version` must be bumped to match each tag** (CI step: fail if tag != `v` + Cargo version).
-3. Find the asset named `FerrisFilter-<ver>-setup.exe` in `assets[]`, download `browser_download_url` into `tempfile::tempdir()` (keep the dir alive: use `into_path`/persist, since the installer runs after ff exits). Verify size and, if present, the asset `digest` field (`sha256:...`) that GitHub now exposes on release assets; that needs a SHA-256 implementation, so add `sha2` only if the verify step is wanted (optional, MEDIUM: confirm the field is populated for assets uploaded by the Actions workflow; it is for API-uploaded assets since 2025).
-4. Launch with `std::process::Command::new(installer).spawn()` (detached, no wait), then trigger the normal tray-Quit path so `ff.exe` is not locked. Let Inno close/restart via `CloseApplications` as a backstop. Respect the existing Quit rules (unapplied-changes popup first).
-5. No code signing: SmartScreen warns for a browser download of an unsigned exe. A file fetched by reqwest carries **no Mark-of-the-Web**, so the in-app update path does not trigger SmartScreen; only the manual first install does. State this in the README (expected warning, "More info -> Run anyway") rather than buying a certificate.
-6. Network on a worker thread, result into the status line, same as sync. Never auto-download or auto-install without a click.
-
-Rejected: `self_update` 1.3.1 (swaps the running exe in place and brings its own reqwest/zip/semver tree; this app is installer-managed in `%LOCALAPPDATA%\Programs`, and exe self-replacement fights Inno's uninstall registry/`CloseApplications`; it also does not run the installer).
-
-### Installer (feature 2): Inno Setup 6, not WiX
-
-| Tool | Version | Why |
-|------|---------|-----|
-| **Inno Setup** | 6.7.1 preinstalled on the GitHub `windows-2025` image (`ISCC.exe`); verify on the `windows-latest` label at implementation (if absent: `choco install innosetup -y`) | One `.iss` text file, per-user install with no admin prompt, Start menu shortcut, uninstaller, silent flags for the updater, `CloseApplications` for upgrades. No MSI authoring knowledge needed. |
-
-Script essentials (`installer/ferrisfilter.iss`):
-- `PrivilegesRequired=lowest` (per-user), `DefaultDirName={autopf}\FerrisFilter` (resolves to `%LOCALAPPDATA%\Programs\FerrisFilter` for non-admin installs), `DefaultGroupName=FerrisFilter`, `[Icons] Name: "{autoprograms}\FerrisFilter"; Filename: "{app}\ff.exe"`.
-- A fixed `AppId` GUID (upgrades replace in place), `AppVersion` passed in via `ISCC /DAppVersion=0.7.0`, `OutputBaseFilename=FerrisFilter-{#AppVersion}-setup`, `SetupIconFile` from the ico already used for the tray if one exists (else add an `.ico`; the app currently builds the tray image from PNG, so an `.ico` for the exe/shortcut may be a small new asset; embedding it in the exe is a `build.rs` job via `winres`/`embed-resource`, which is optional and only cosmetic).
-- `CloseApplications=yes`, `RestartApplications=no`, optional `[Run]` "launch FerrisFilter" checkbox (`postinstall skipifsilent`).
-- Ship `ff.exe`, `ff-cli.exe` (and `ferrisfilter.exe` only if the shorter-name duplicate is still wanted), `LICENSE`, README. `uwu.mp3` goes to the game folder, not the install dir: decide whether the installer offers copying it (needs the game folder, which is user-resolved; probably do it from the app, not the installer).
-- Do NOT write user data under `{app}` and do NOT delete `%APPDATA%\FerrisFilter` on uninstall (it holds the user's styles); the uninstaller must leave config alone.
-- ff-cli on PATH is optional; skip in v0.7 (`ChangesEnvironment` + PATH editing is a common source of installer bugs).
-
-Rejected: **cargo-wix 0.3.9 / WiX 3.14** (the runner's WiX is the legacy 3.x line; MSI per-user installs, `Package/@InstallScope`, and shortcut components are far more ceremony, and MSI per-user install has well-known ICE-validation quirks), **NSIS** (works, but Inno's declarative sections and `[Icons]` handle exactly this scope with less scripting; no preinstalled advantage), **MSIX** (signing required), **portable zip only** (kept as a second asset, not the main path).
-
-### Release CI (feature 1)
-
-`.github/workflows/release.yml` (there is no `.github/` yet):
-
-```yaml
-on:
-  push:
-    tags: ["v*"]
-permissions:
-  contents: write            # needed to create the release
-jobs:
-  release:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7        # v7.0.1 is current; fetch-depth 0 for build.rs git describe
-        with: { fetch-depth: 0 }
-      - uses: Swatinem/rust-cache@v2     # v2.9.2 current
-      - run: cargo test --locked                       # default-members = ["."] so ff-art is not built
-      - run: cargo build --release --locked --bins
-      - name: Check tag matches Cargo.toml version
-      - name: Extract release notes   # awk over CHANGELOG.md for "## [X.Y.Z]" ... next "## [" ; write RELEASE_NOTES.md
-      - name: Build installer         # & "ISCC.exe" /DAppVersion=$ver installer\ferrisfilter.iss
-      - name: Zip portable            # Compress-Archive ff.exe, ff-cli.exe, README, LICENSE, CHANGELOG
-      - uses: softprops/action-gh-release@v3   # v3.0.3 current; body_path: RELEASE_NOTES.md; files: setup.exe + zip (+ SHA256SUMS.txt)
-        with: { prerelease: ${{ contains(github.ref_name, '-') }} }
-```
-
-Decisions:
-- **Release notes**: awk/PowerShell extraction from the `## [X.Y.Z] - date` heading to the next `## [`; fail the job if the section is empty (this enforces the "update CHANGELOG at milestone completion" rule from CLAUDE.md). An alternative, `taiki-e/create-gh-release-action` with `changelog:`, parses Keep a Changelog natively, but it only creates the release (not upload on Windows jobs the way we want) and adds a second action to trust; keep the 10-line script. Confidence MEDIUM for the alternative, HIGH for the script.
-- **Release action**: `softprops/action-gh-release` (v3.0.3 verified latest tag via GitHub API) is the standard; `gh release create` from the preinstalled `gh` CLI is an equally valid zero-dependency alternative (`gh release create $tag --notes-file RELEASE_NOTES.md files...`) and has no third-party-action supply-chain surface. Recommendation: use `gh release create` (it is already on the runner, auth via `GITHUB_TOKEN`), fall back to softprops if you want its prerelease/file-glob niceties. Pin third-party actions to a commit SHA either way.
-- **Tests before build**: `cargo test --locked` on `windows-latest`. The overlay tests render with real fonts and are slow; the repo already sets `opt-level=2` for dependencies in `[profile.dev.package."*"]`. Expect minutes; cache with rust-cache. Some tests may touch real user dirs (game folder, `USERPROFILE`); make sure the CI environment sets `FERRISFILTER_HOME`/`USERPROFILE` to temp for the run, matching the screenshot-mode precautions.
-- **Release profile**: add `[profile.release]` with `lto = "thin"`, `strip = true`, `codegen-units = 1` only if the exe size matters (egui + rustls binary is large); optional, measure first.
-- Assets: `FerrisFilter-<ver>-setup.exe`, `FerrisFilter-<ver>-windows-x64.zip`, `SHA256SUMS.txt`.
-- Upload the installer under a stable, predictable name; the in-app updater keys on it.
-
-### Nightly toolchain in CI (risk)
-
-`rust-toolchain.toml` says `channel = "nightly"` (floating) and the repo notes say "set a dated nightly there if a new one breaks `poe_data_tools`". Facts: the main crates use no `#![feature]`; only `ff-art` (excluded from `default-members`, never built by root `cargo build`/`cargo test`) needs nightly. Consequences and recommendation:
-1. A floating nightly on a tag-triggered release job is a **reproducibility and break-on-release-day risk** (a regression on any nightly night fails the tag build, with the tag already pushed).
-2. Recommendation: pin a dated nightly in `rust-toolchain.toml` (e.g. `channel = "nightly-2026-09-03"`, which matches the local `rustc 1.100.0-nightly (a69a63265 2026-09-03)` known to build today) with `profile = "minimal"`-compatible components. Because rustup reads the file, CI needs no toolchain action at all: the first `cargo` call auto-installs it (or run `rustup show` as an explicit step with `rustup toolchain install` first). Bump deliberately; this also gives developers and CI the same compiler. The preinstalled runner Rust is stable 1.99.0, so the file-driven install downloads a nightly each run (adds roughly a minute; rust-cache keys on rustc version).
-3. Alternative (most robust for a release job): build and test release binaries on **stable** (`RUSTUP_TOOLCHAIN=stable` env on the job, or `cargo +stable`), since nothing needs nightly, and keep nightly only for ff-art and dev rustfmt/clippy. Caveat: edition 2024 needs >= 1.85 (fine on 1.99); `rustfmt.toml`/clippy lints that differ between channels are not part of the release job. Choose this if you want the binary built by a toolchain that never breaks overnight. Recommended compromise: pin the dated nightly in the file (dev/CI parity) AND keep the stable path documented as the fallback if the pinned nightly ever becomes unobtainable.
-4. `dtolnay/rust-toolchain@master` with `toolchain: nightly-2026-09-03` is only needed if you want the workflow to be explicit rather than file-driven; not required. Its branches are `1.xx` versions plus `stable`/`nightly`; a dated nightly goes through `@master`.
-5. Add `--locked` everywhere so `Cargo.lock` is honored (it is committed).
-
-## Alternatives Considered
-
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| Installer | Inno Setup 6 | cargo-wix / WiX 3.14 (MSI) | Heavier authoring, legacy 3.x on runner, no gain for per-user + Start menu |
-| Installer | Inno Setup 6 | NSIS | Same capability, more imperative scripting, not preinstalled |
-| Dirs | `dirs` 6 | `directories` (ProjectDirs) | `directories` would also work and creates `Org/App/config` nesting on Windows (`...\Roaming\Org\App\config`), which fights the plain `%APPDATA%\FerrisFilter` the milestone specifies |
-| Dirs | `dirs` 6 | raw `windows-sys` `SHGetKnownFolderPath` | Needs two new windows-sys features, COM string freeing, and a non-Windows branch; `dirs` does it already |
-| Settings | existing serde_json | `confy` | Writes TOML into its own location, bypasses the existing atomic/`unknown keys preserved` logic |
-| Folder picker | `rfd` | `native-dialog`, hand `IFileDialog` via windows-sys | rfd is the maintained standard and handles parent windows; hand COM is avoidable risk |
-| Update | hand-rolled (reqwest+semver) | `self_update` 1.3.1 | In-place exe swap conflicts with installer-managed installs; heavy transitive tree |
-| League list | existing index-state | PoE trade API / ladder | Prices come from poe.ninja, so the league names must be the ones poe.ninja accepts |
-| Release publish | `gh release create` or softprops v3.0.3 | release-please / cargo-dist | cargo-dist generates its own installers (msi/powershell), conflicting with the Inno + changelog-section flow; release-please wants conventional commits and owns CHANGELOG |
-| Version compare | `semver` | string compare | Wrong for `0.10` vs `0.9` and prereleases |
+| Technology | Version (Cargo.lock) | Role in v0.7.2 |
+|------------|----------------------|----------------|
+| egui / eframe | 0.36.1 | DnD primitives, painter layers, key events, scroll control |
+| global-hotkey | 0.8.0 | `HotKey`, `FromStr`/`Display`, register/unregister at runtime, `Code`/`Modifiers` re-exports |
+| serde / serde_json | 1.0.228 / 1.0.154 | optional alpha fields, new `ff-settings.json` keys |
+| std `SystemTime` | n/a | persisted throttle timestamps |
+| reqwest | 0.13 | `user_agent` per client |
+| indexmap | 2 | ordered "Custom Style N" grouping |
+| ff-art (dev tool) | workspace | Social-panel art extraction |
 
 ## What NOT to add
 
-- `self_update`, `cargo-dist`, `cargo-wix`, `confy`, `directories`, `native-dialog`, `winres`/`embed-resource` (unless an exe icon is explicitly wanted; purely cosmetic and optional).
-- A second HTTP client (`ureq`, `hyper` directly). Reuse reqwest 0.13.
-- `windows` crate (0.62.2 is in the lock via other deps, but do not add it as a direct dep; windows-sys 0.61 is the repo's choice).
-- `zip` in the app (zip is built by CI).
-- Code signing / SignPath in v0.7 (explicitly out of scope; document SmartScreen behavior instead).
-- Auto-update without a user click, or background polling.
+| Do not add | Why |
+|------------|-----|
+| `egui_dnd` / `egui_extras` | Not needed; they assume non-virtualized lists, and the project has its own virtual list and skin. |
+| `keyboard-types` as a direct dep | `global_hotkey::hotkey::{Code, Modifiers}` re-export it (`hotkey.rs:30`). |
+| `rdev`, `device_query`, `inputbot` | Global capture is unnecessary: the chord is captured from egui key events while the overlay has focus. |
+| `chrono` / `time` | Unix seconds via `SystemTime` is enough. |
+| `rand` | Existing id generation is reused. |
+| `serde_with` | Plain `Option` + `skip_serializing_if` is enough. |
+| `global-hotkey` `serde` feature | A `String` field is simpler and keeps warnings consistent. |
 
-## Installation
+## NEW DEPENDENCY — NEEDS AUTHOR REVIEW
 
-```bash
-cargo add dirs@6.0 semver@1 rfd@0.17
-# CI/runner: Inno Setup 6 is preinstalled on windows-latest images; no install step expected
-# (fallback: choco install innosetup -y)
-```
+**None.** Every feature is covered above. Nothing in this research required a new crate.
+If the dnd spike (feature 3) shows that wheel scrolling cannot be made to work during a drag
+with `scroll_with_delta`, the fix is still in egui (read `smooth_scroll_delta` and apply it);
+no crate would be proposed without coming back to the author first.
 
-## Confidence
+## Risks and open questions for the phases
 
-| Area | Level | Notes |
-|------|-------|-------|
-| New crates and versions | HIGH | crates.io API checked 2026-10-17 (rfd 0.17.2, dirs 7.0.0 max / 6.0.0 locked, semver 1.0.28, self_update 1.3.1, cargo-wix 0.3.9); lock inspected via cargo tree |
-| league endpoint | HIGH | Live GET of `/poe2/api/data/index-state` on 2026-10-17; already used by the codebase. Undocumented API, so shape can change |
-| Runner contents (Inno 6.7.1, Rust 1.99.0, WiX 3.14) | MEDIUM | From the runner-images Windows2025 readme on main; `windows-latest` label may map to a different image, re-check at implementation |
-| Action versions (checkout v7.0.1, rust-cache v2.9.2, softprops v3.0.3) | MEDIUM | From GitHub releases API 2026-10-17; pin to SHAs when writing the workflow |
-| `rfd` parent-window + Send behavior with eframe | LOW-MEDIUM | Needs a spike (topmost overlay vs dialog stacking); fallback described above |
-| `digest` field on release assets for hash verification | LOW-MEDIUM | Verify on the first real release; otherwise publish SHA256SUMS.txt and check that |
-| dirs 6 vs 7 | MEDIUM | Same API for used functions to the best of my knowledge, diff not inspected |
+1. **DnD in a virtualized list** is the only feature with real technical uncertainty (wheel
+   during drag, drag continuing when the source row leaves the visible range). Plan a short
+   spike first. Verify with `cargo run --bin ff -- --screenshot` where possible; real pointer
+   input needs a manual check (numbered list per the author's preference).
+2. **Hotkey `Code` vs layout:** decide and document key-position semantics.
+3. **Settings write path:** every new key needs its own `save_keys` wrapper so a fold, league
+   pick or hotkey change never rewrites unrelated keys; add tests to `settings.rs` mirroring
+   `save_league`.
+4. **Alpha and the frozen oracle:** keep `seed-styles.json` untouched; alpha defaults must
+   emit exactly the old text.
 
 ## Sources
 
-- crates.io API (rfd, dirs, semver, self_update, cargo-wix, windows-sys max versions), 2026-10-17
-- Repo: `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `build.rs`, `src/sync/league.rs`, `CLAUDE.md`
-- Live: https://poe.ninja/poe2/api/data/index-state
-- https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md (Inno Setup 6.7.1, WiX 3.14.1, Rust 1.99.0)
-- GitHub releases API for softprops/action-gh-release (v3.0.3), actions/checkout (v7.0.1), Swatinem/rust-cache (v2.9.2)
-- https://docs.rs/crate/rfd/0.17.2 (features: common-controls-v6, file-handle-inner, gtk3, xdg-portal; Windows deps include windows-sys 0.61 Win32_UI_Shell/Com)
-- https://docs.github.com/rest/releases/releases#get-the-latest-release (latest excludes drafts/prereleases; User-Agent required)
+- egui 0.36.1 source: `src/ui.rs` (dnd_drag_source/dnd_drop_zone, scroll_with_delta),
+  `src/drag_and_drop.rs`, `src/response.rs`, `src/interaction.rs`, `src/containers/scroll_area.rs`,
+  `src/data/input/event.rs` (`Event::Key` with `physical_key`), `src/data/key.rs` (`Key::name`)
+  — HIGH (local registry sources).
+- global-hotkey 0.8.0 source: `src/hotkey.rs` (`HotKey::new`, id, `FromStr`, `parse_key`),
+  `src/lib.rs` (`GlobalHotKeyManager`), `src/platform_impl/windows/mod.rs` (`RegisterHotKey`,
+  `UnregisterHotKey`, `MOD_NOREPEAT`) — HIGH.
+- Repo: `Cargo.toml`, `Cargo.lock`, `src/overlay/hotkey.rs`, `src/overlay/app.rs` (hotkey poll),
+  `src/settings.rs`, `src/sync/client.rs`, `src/update.rs`, `src/skin/colour_picker.rs`,
+  `src/overlay/virtual_list.rs`, `tools/ff-art/Cargo.toml` — HIGH.

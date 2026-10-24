@@ -36,7 +36,7 @@ its own filter); close the game or turn **Reload filter in game after Apply** of
 | 8 | Disabled invalid | Padlock: can't be enabled. |
 | 9 | Broken group | Amber broken link; a one-member `# ff:group` run is left as written. |
 | 10 | Continue | Gold `Continue` word. |
-| 11 | Move across Continue | Move it up past rule 10 with the arrows: the up/down-arrows flag appears. |
+| 11 | Plain rule | No flags; drag it by the handle to reorder it. |
 | 12 | Custom style | Chip shows only the blue star; expanded, every style line is filled in. |
 | 13 | Simple Defences group | Two blocks shown as one row; Simple Defences card with Full AR + Full EV. |
 | 14 | Between, booleans, sockets | One Between card (75-82), Yes/No switches, `Sockets >= 5GGG` keeps its letters. |
@@ -47,4 +47,4 @@ its own filter); close the game or turn **Reload filter in game after Apply** of
 | 19 | Hidden preset | `Hide` header with the hidden style. |
 | 20 | (unnamed) | Header reads just the index and `Show`; the summary line gives the context. |
 | - | Sections | Rules 1-9 have no header; `Leveling` and `Endgame` are sections (rename, move, remove, collapse). |
-| - | Economy | Last, locked, collapsed by default, header **FF Economy Section**. Three read-only rules, written like Apply writes them (`# ff:name <T> tier <Group>`; tier blocks also `# ff:style <id> <T>`, the unique block name only): the rows show the name and, for tiers, the style chip; a click expands one with every condition drawn disabled (no picker opens, no Duplicate / Delete / Section above), the tier bodies showing the preset and the unique body the Custom style lines; the first lists ten bases with no scroll cap. Without an economy section, **Add economy section** (ECONOMY tab) stages it and the RULES tab already lists the same rows read-only before Apply. Apply after browsing changes nothing but the regenerated economy. |
+| - | Economy | Last, locked, collapsed by default, header **FF Economy Section**. Three read-only rules, written like Apply writes them (`# ff:name <T> tier <Group> <range>`, e.g. `S tier Currency >= 30 chaos`; tier blocks also `# ff:style <id> <T>`, the unique block name only): the rows show the name and, for tiers, the style chip; a click expands one with every condition drawn disabled (no picker opens, no Duplicate / Delete / Section above), the tier bodies showing the preset and the unique body the Custom style lines; the first lists ten bases with no scroll cap. Without an economy section, **Add economy section** (ECONOMY tab) stages it and the RULES tab already lists the same rows read-only before Apply. Apply after browsing changes nothing but the regenerated economy. |

@@ -605,7 +605,20 @@ mod tests {
 
         // Tier blocks carry their built-in style tag.
         assert!(on_disk.0.contains("# ff:style builtin:S S\n"));
-        assert!(on_disk.0.contains("# ff:name S tier Currency\n"));
+        assert!(
+            on_disk
+                .0
+                .contains("# ff:name S tier Currency >= 30 chaos\n")
+        );
+        // Pending tier edits rename the rows too.
+        assert!(
+            moved
+                .0
+                .lines()
+                .any(|l| l.starts_with("# ff:name A tier ") && l.ends_with(" < 1000000 chaos")),
+            "{}",
+            moved.0
+        );
 
         // Without live prices the fallback pair is used whatever tiers are passed.
         let empty = tempfile::tempdir().unwrap();

@@ -7,7 +7,8 @@ Run ff.exe. There is nothing to install.
   the same folder the installed version uses.
 - Path of Exile 2 must run in windowed or windowed fullscreen mode.
   Exclusive fullscreen hides every other window.
-- Ctrl+Shift+Z shows or hides the window while the game is in front.
+- Ctrl+Shift+Z shows or hides the window while the game is in front
+  (you can pick another key on the Config tab, Overlay section).
 - The window's close button only hides it. Use the tray icon's Quit to exit.
 - Windows SmartScreen may warn about ff.exe because it is not code-signed:
   click "More info", then "Run anyway".

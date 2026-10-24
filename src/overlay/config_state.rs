@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 use crate::compile::{InputPaths, Source};
 use crate::loader::LoadError;
 use crate::models::config::{
-    Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleNameError,
-    StyleSet,
+    Beam, Cancelable, Config, DropSound, Minimap, Sound, Style, StyleAction, StyleColour,
+    StyleNameError, StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
+use crate::overlay::chord::Chord;
 use crate::overlay::strictness::{Strictness, TIER_LETTERS, strictness_of};
 
 /// Display order of the tier rows. Presentation only: rows map to entries by tier name.
@@ -38,7 +39,7 @@ pub enum ColourSlot {
     Background,
 }
 
-/// One edit to a style. Colours are opaque RGB triples (the emitter keeps alpha 255). `Font` is
+/// One edit to a style. Colours carry alpha. `Font` is
 /// `i64` so the view's number field can pass out-of-range values; values outside 0..=255 are
 /// refused, 0..=255 are stored and left for `StyleSet::validate` to flag.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +47,7 @@ pub enum StyleEdit {
     Action(StyleAction),
     Colour {
         slot: ColourSlot,
-        value: Option<[u8; 3]>,
+        value: Option<StyleColour>,
     },
     Font(Option<i64>),
     /// `None` = off (no line), `Cancel` = the filter's cancel value.
@@ -107,6 +108,12 @@ pub struct ConfigState {
     /// errors must not block Apply. Row errors stay recorded for `tier_rows()` so the inline text
     /// returns when the editor is enabled again. Not part of dirty counting, revert or reset.
     tiers_in_use: bool,
+    /// The show / hide hotkey picked on the CONFIG tab and not yet applied; `None` = no edit.
+    /// Not a baseline compare: the live chord belongs to the hotkey runtime. A reload of this
+    /// state (a changed `styles.json` / `tiers.json`) carries the edit over through
+    /// [`ConfigState::reloaded`], since the chord lives in neither file. Apply
+    /// writes it into `ff-settings.json` (never styles/tiers), so it is not part of `styles_dirty`.
+    hotkey_pending: Option<Chord>,
 }
 
 /// Read `path`, `None` when it does not exist. Errors read `<full path>: <reason>`.
@@ -182,6 +189,7 @@ impl ConfigState {
             tiers_live,
             ids_unpersisted,
             tiers_in_use: true,
+            hotkey_pending: None,
         };
         state.resync_buffers();
         Ok(state)
@@ -220,6 +228,18 @@ impl ConfigState {
         let trimmed = input.trim();
         self.styles.insert_new(trimmed, Style::blank_show())?;
         Ok(trimmed.to_string())
+    }
+
+    /// Auto Detect: append several styles as pending edits (fresh custom ids, after the
+    /// existing customs). A name `insert_new` refuses is skipped. Returns the names added.
+    pub fn add_detected_styles(&mut self, styles: Vec<(String, Style)>) -> Vec<String> {
+        let mut added = Vec::new();
+        for (name, style) in styles {
+            if self.styles.insert_new(&name, style).is_ok() {
+                added.push(name);
+            }
+        }
+        added
     }
 
     /// False (and no change) for built-ins and unknown names.
@@ -467,7 +487,38 @@ impl ConfigState {
         } else {
             0
         };
-        self.styles_dirty_count() + tiers
+        self.styles_dirty_count() + tiers + usize::from(self.hotkey_dirty())
+    }
+
+    /// The pending show / hide hotkey, if the CONFIG tab holds an unapplied chord edit.
+    pub fn hotkey_pending(&self) -> Option<Chord> {
+        self.hotkey_pending
+    }
+
+    /// Picks `chord` as the show / hide hotkey. `base` is the chord the pick is compared with
+    /// (normally the live one): picking it clears the edit, anything else is one pending edit.
+    pub fn set_hotkey(&mut self, chord: Chord, base: Option<Chord>) {
+        self.hotkey_pending = (Some(chord) != base).then_some(chord);
+    }
+
+    /// Whether a show / hide hotkey edit is pending.
+    pub fn hotkey_dirty(&self) -> bool {
+        self.hotkey_pending.is_some()
+    }
+
+    /// Drops the pending hotkey edit (Apply saved it).
+    pub fn clear_hotkey(&mut self) {
+        self.hotkey_pending = None;
+    }
+
+    /// A fresh load of the config files from `root` that keeps the pending hotkey edit of
+    /// `previous`: the chord is saved in `ff-settings.json`, not in `styles.json`
+    /// or `tiers.json`, so re-reading those must not drop it.
+    pub fn reloaded(root: &Path, previous: &Result<ConfigState, String>) -> Result<Self, String> {
+        let pending = previous.as_ref().ok().and_then(ConfigState::hotkey_pending);
+        let mut fresh = ConfigState::load(root)?;
+        fresh.hotkey_pending = pending;
+        Ok(fresh)
     }
 
     /// Pending cutoff edits that Apply does not write because the cutoffs are unused (Fallback
@@ -619,10 +670,10 @@ impl ConfigState {
         self.dirty_count() > 0
     }
 
-    /// Move a custom style up or down among the customs. False (no change) for built-ins,
-    /// unknown names and the ends of the custom group.
-    pub fn move_style(&mut self, name: &str, up: bool) -> bool {
-        self.styles.move_custom(name, up)
+    /// Move a custom style to a gap (0..=n) among the customs. False (no change) for built-ins,
+    /// unknown names and no-op gaps.
+    pub fn move_style_to(&mut self, name: &str, to: usize) -> bool {
+        self.styles.move_custom_to(name, to)
     }
 
     /// The working styles, including edits not yet applied.
@@ -746,13 +797,17 @@ impl ConfigState {
     pub fn revert(&mut self) {
         self.styles = self.styles_applied.clone();
         self.tiers = self.tiers_applied.clone();
+        self.hotkey_pending = None;
         self.resync_buffers();
     }
 
-    /// Discard one tab's edits only: styles (CONFIG) or tier cutoffs (ECONOMY).
+    /// Discard one tab's edits only: styles and the hotkey (CONFIG) or tier cutoffs (ECONOMY).
     pub fn revert_scope(&mut self, scope: RevertScope) {
         match scope {
-            RevertScope::Styles => self.styles = self.styles_applied.clone(),
+            RevertScope::Styles => {
+                self.styles = self.styles_applied.clone();
+                self.hotkey_pending = None;
+            }
             RevertScope::Tiers => {
                 self.tiers = self.tiers_applied.clone();
                 self.resync_buffers();
@@ -773,7 +828,7 @@ impl ConfigState {
     /// Edit count of one scope.
     pub fn scope_dirty_count(&self, scope: RevertScope) -> usize {
         match scope {
-            RevertScope::Styles => self.styles_dirty_count(),
+            RevertScope::Styles => self.styles_dirty_count() + usize::from(self.hotkey_dirty()),
             RevertScope::Tiers => self.tiers_dirty_count(),
         }
     }
@@ -1032,6 +1087,72 @@ mod tests {
         assert!(s.styles_dirty());
     }
 
+    const CTRL_ALT_K: Chord = Chord {
+        ctrl: true,
+        shift: false,
+        alt: true,
+        key: crate::overlay::chord::ChordKey::Letter(b'K'),
+    };
+
+    #[test]
+    fn a_pending_hotkey_is_one_config_edit_outside_the_styles() {
+        use crate::overlay::chord::DEFAULT;
+        let (_d, mut s) = loaded();
+        assert_eq!(s.hotkey_pending(), None);
+        let before = s.dirty_count();
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        assert_eq!(s.hotkey_pending(), Some(CTRL_ALT_K));
+        assert!(s.hotkey_dirty() && s.is_dirty() && s.can_apply());
+        assert_eq!(s.dirty_count(), before + 1);
+        assert_eq!(s.scope_dirty_count(RevertScope::Styles), 1);
+        assert_eq!(s.scope_dirty_count(RevertScope::Tiers), 0);
+        assert!(!s.styles_dirty());
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed() && !w.tiers_changed());
+
+        // Capturing the applied chord clears the edit.
+        s.set_hotkey(DEFAULT, Some(DEFAULT));
+        assert_eq!(s.hotkey_pending(), None);
+        assert!(!s.is_dirty());
+        // With no base (nothing live, or a stale saved chord) even the default is an edit.
+        s.set_hotkey(DEFAULT, None);
+        assert_eq!(s.hotkey_pending(), Some(DEFAULT));
+    }
+
+    #[test]
+    fn a_reload_of_the_config_files_keeps_the_hotkey_edit() {
+        use crate::overlay::chord::DEFAULT;
+        let (d, mut s) = loaded();
+        assert!(s.edit_style("S", StyleEdit::Font(Some(41))));
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let previous = Ok(s);
+        let fresh = ConfigState::reloaded(d.path(), &previous).unwrap();
+        // The style edit is gone with the re-read files, the chord edit stays.
+        assert!(!fresh.styles_dirty());
+        assert_eq!(fresh.hotkey_pending(), Some(CTRL_ALT_K));
+        // Nothing to keep from a failed load.
+        let fresh = ConfigState::reloaded(d.path(), &Err("broken".into())).unwrap();
+        assert_eq!(fresh.hotkey_pending(), None);
+    }
+
+    #[test]
+    fn hotkey_edit_reverts_with_the_config_scope_only() {
+        use crate::overlay::chord::DEFAULT;
+        let (_d, mut s) = loaded();
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        s.revert_scope(RevertScope::Tiers);
+        assert!(s.hotkey_dirty());
+        s.revert_scope(RevertScope::Styles);
+        assert!(!s.hotkey_dirty());
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        s.revert();
+        assert!(!s.hotkey_dirty());
+        // Unused tiers do not hide it.
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        s.set_tiers_in_use(false);
+        assert!(s.is_dirty() && s.can_apply());
+    }
+
     #[test]
     fn load_errors_name_the_full_path() {
         let d = temp_root();
@@ -1280,10 +1401,13 @@ mod tests {
             "S",
             StyleEdit::Colour {
                 slot: ColourSlot::Text,
-                value: Some([1, 2, 3])
+                value: Some(crate::models::config::StyleColour::opaque(1, 2, 3))
             }
         ));
-        assert_eq!(s.style("S").unwrap().text, Some([1, 2, 3]));
+        assert_eq!(
+            s.style("S").unwrap().text,
+            Some(crate::models::config::StyleColour::opaque(1, 2, 3))
+        );
         assert!(s.edit_style("S", StyleEdit::Action(StyleAction::Hide)));
         assert!(s.badges("S").hide);
         assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Silent))));
@@ -1291,6 +1415,100 @@ mod tests {
         assert!(s.edit_style("S", StyleEdit::DropSound(Some(DropSound::Normal))));
         assert_eq!(s.style("S").unwrap().drop_sound(), Some(DropSound::Normal));
         assert!(!s.edit_style("nope", StyleEdit::DropSound(Some(DropSound::Silent))));
+    }
+
+    fn colours_of(s: &ConfigState) -> Vec<[Option<StyleColour>; 3]> {
+        s.style_names()
+            .iter()
+            .map(|n| {
+                let st = s.style(n).unwrap();
+                [st.text, st.border, st.background]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn three_value_live_file_loads_alpha_255_and_is_not_an_edit() {
+        let dir = temp_root();
+        // A 3-value file that already has ids: nothing but the colour width differs from 4-value.
+        let four =
+            crate::loader::render_styles(crate::models::config::StyleSet::shipped_defaults());
+        let three = four.replace(",255]", "]");
+        assert_ne!(three, four);
+        fs::write(dir.path().join("styles.json"), &three).unwrap();
+        let s = ConfigState::load(dir.path()).unwrap();
+        assert_eq!(s.style("S").unwrap().text.unwrap().alpha(), 255);
+        assert_eq!(s.dirty_count(), 0);
+        assert!(!s.styles_dirty());
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed());
+        assert_eq!(w.styles_new, three.as_bytes());
+    }
+
+    #[test]
+    fn an_alpha_edit_is_dirty_written_four_value_and_reverts() {
+        let dir = temp_root();
+        let four =
+            crate::loader::render_styles(crate::models::config::StyleSet::shipped_defaults());
+        fs::write(dir.path().join("styles.json"), four.replace(",255]", "]")).unwrap();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        assert!(s.edit_style(
+            "S",
+            StyleEdit::Colour {
+                slot: ColourSlot::Text,
+                value: Some(StyleColour::new(255, 121, 198, 128)),
+            }
+        ));
+        assert_eq!(s.dirty_count(), 1);
+        let w = s.prepare_write().unwrap();
+        assert!(w.styles_changed());
+        let text = String::from_utf8(w.styles_new).unwrap();
+        assert!(text.contains("[255,121,198,128]"), "{text}");
+        // Every colour array is 4-value.
+        assert!(!text.contains("[255,121,198]"));
+        s.revert();
+        assert_eq!(s.dirty_count(), 0);
+        assert_eq!(s.style("S").unwrap().text.unwrap().alpha(), 255);
+    }
+
+    #[test]
+    fn reset_restores_alpha_and_defaults_check_sees_alpha() {
+        let dir = temp_root();
+        let defaults =
+            crate::loader::render_styles(crate::models::config::StyleSet::shipped_defaults());
+        fs::write(dir.path().join("styles.json"), &defaults).unwrap();
+        let mut s = ConfigState::load(dir.path()).unwrap();
+        assert!(s.styles_at_defaults());
+        assert!(s.edit_style(
+            "S",
+            StyleEdit::Colour {
+                slot: ColourSlot::Background,
+                value: Some(StyleColour::new(248, 248, 242, 100)),
+            }
+        ));
+        assert!(!s.styles_at_defaults());
+        s.reset_styles();
+        assert!(s.styles_at_defaults());
+        assert_eq!(s.style("S").unwrap().background.unwrap().alpha(), 255);
+    }
+
+    #[test]
+    fn strictness_leaves_colours_untouched() {
+        let (_d, mut s) = loaded();
+        assert!(s.edit_style(
+            "S",
+            StyleEdit::Colour {
+                slot: ColourSlot::Text,
+                value: Some(StyleColour::new(255, 121, 198, 90)),
+            }
+        ));
+        let before = colours_of(&s);
+        for level in crate::overlay::strictness::Strictness::ALL {
+            if level != crate::overlay::strictness::Strictness::Custom {
+                s.set_strictness(level);
+                assert_eq!(colours_of(&s), before, "{level:?}");
+            }
+        }
     }
 
     #[test]
@@ -1527,20 +1745,19 @@ mod tests {
     }
 
     #[test]
-    fn reorder_is_dirty_and_reverts() {
+    fn reorder_to_is_dirty_and_reverts() {
         let (_dir, mut s, customs) = reorder_root();
         let before = s.style_names();
+        assert!(customs.len() >= 2);
+        assert!(!s.move_style_to(&customs[0], 0));
         assert!(!s.is_dirty());
-        let last = customs.last().unwrap();
-        assert!(s.move_style(last, true));
-        assert!(s.dirty_count() >= 1);
+        assert!(s.move_style_to(&customs[0], customs.len()));
         assert!(s.is_dirty());
-        assert!(s.can_apply());
         assert_ne!(s.style_names(), before);
+        assert!(!s.move_style_to("S", 0));
         s.revert();
         assert_eq!(s.style_names(), before);
         assert_eq!(s.dirty_count(), 0);
-        assert!(!s.move_style("S", true));
     }
 
     #[test]
@@ -1549,7 +1766,7 @@ mod tests {
         let path = dir.path().join("styles.json");
         let old = fs::read_to_string(&path).unwrap();
         let last = customs.last().unwrap().clone();
-        assert!(s.move_style(&last, true));
+        assert!(s.move_style_to(&last, 0));
         let expect = s.style_names();
 
         let w = s.prepare_write().unwrap();
@@ -1903,7 +2120,7 @@ mod tests {
         s.edit_style("S", StyleEdit::Font(Some(12)));
         s.edit_style("kite", StyleEdit::Font(Some(30)));
         s.set_strictness(Strictness::DivFarmer);
-        s.move_style("kite", false);
+        s.move_style_to("kite", 99);
         assert!(!s.styles_at_defaults());
         let current_customs: Vec<String> = s
             .pending_styles()
@@ -2032,5 +2249,27 @@ mod tests {
         assert!(s.tiers_at_defaults());
         s.set_tier_text("S", "31");
         assert!(!s.tiers_at_defaults());
+    }
+
+    #[test]
+    fn add_detected_styles_appends_with_fresh_ids_and_skips_refused() {
+        let (_d, mut s) = loaded();
+        let before = s.style_names();
+        let added = s.add_detected_styles(vec![
+            ("Custom Style 1".into(), Style::blank_show()),
+            ("S".into(), Style::blank_show()),
+            ("Custom Style 2".into(), Style::blank_show()),
+        ]);
+        assert_eq!(added, vec!["Custom Style 1", "Custom Style 2"]);
+        let names = s.style_names();
+        assert_eq!(&names[..before.len()], &before[..]);
+        assert_eq!(
+            &names[names.len() - 2..],
+            &["Custom Style 1", "Custom Style 2"]
+        );
+        let a = s.style("Custom Style 1").unwrap().id.clone();
+        let b = s.style("Custom Style 2").unwrap().id.clone();
+        assert!(a.is_some() && a != b && !a.unwrap().starts_with("builtin:"));
+        assert!(s.styles_dirty());
     }
 }

@@ -1,291 +1,317 @@
-# Architecture Patterns: v0.7 Integration
+# Architecture Patterns: v0.7.2 Small UI Improvements
 
-**Domain:** Rust CLI + egui overlay (FerrisFilter), v0.7 "Initial Public Release and Strictness Selector"
-**Researched:** 2026-10-17
-**Mode:** Subsequent milestone, integration research against the existing code
-**Overall confidence:** HIGH on integration points (read from the code), MEDIUM on release/installer tooling (not verified against external docs here; flagged below)
+**Domain:** FerrisFilter (Rust, egui/eframe overlay + CLI) - integrating eight features into the shipped v0.7.1 architecture
+**Researched:** 2026-10-23
+**Overall confidence:** HIGH for integration points (read from the code), MEDIUM for egui drag/auto-scroll behaviour and global-hotkey rebind behaviour (not yet spiked)
 
-## Summary
+All paths are relative to `C:\Users\jonat\Repositories\poe2_myfilter`. Line numbers are from the tree at research time and will drift.
 
-Almost every v0.7 feature funnels through ONE seam that already exists: `InputPaths` (`src/compile.rs:73-165`) plus the app-root resolver (`src/paths.rs:98`). Today `InputPaths::relative_to(root)` fabricates seven file paths from a single directory. Per-user config needs two directories (config, cache) and embedded defaults, so the single-`root` assumption is the main thing to break. Do that first; the game-folder setting, league/price-source setting and updater all hang off the new "locations" layer. The Strictness Selector and the style rework are independent of that layer and touch only CONFIG state and `styles-default.json`/fixtures.
+## Headline Findings
 
-Key discovery: the overlay does not read only `styles`/`tiers`/`prices`. It also reads **`config.json`** (class catalog, `src/overlay/app.rs:308`, built from `paths.config`) and the sync reads **`mapping.json`** from `base_dir` (`src/sync/prices.rs:462`). A shipped exe must embed those too, not just the `-default.json` files. Missing from the milestone text.
+1. **No new crate is needed for any of the eight features.** Details at the end ("New dependency review"). Nothing here should be added to `Cargo.toml`.
+2. **The "style from action lines" parser already exists**: `rule_style_view()` in `src/overlay/body.rs` (about line 2646) turns a rule's action entries plus Show/Hide into a `StyleView` and reports which lines it cannot show exactly (`StyleBinding.inexact`), and `style_leftovers()` lists repeated-family and unsupported lines. Auto Detect should wrap these, not rewrite them. What is missing is `StyleView -> Style` (a small `to_style()`).
+3. **A single emitter already exists for style actions**: `emitter::style_action_lines()` (`src/emitter.rs` about line 221) feeds `generate`, the economy section (`generate_economy`) and the styled-rule rewrite (`styled::rewrite_block`). Style alpha is therefore a one-function emitter change plus a type change on `Style`; there are not three emitters to patch.
+4. **The Rules editor already has an alpha-capable colour path** (`StyleView.alpha = true`, `widgets::colour_slot_rgba`, `StyleIntent::Colour { value: Option<[u8;4]> }`). The CONFIG editor is the opaque one. Alpha for styles mostly means flipping CONFIG onto the Rules path, and then deleting the opaque path.
+5. **Drag reorder cannot be built from the existing `Move(id, Dir)` primitive.** `WorkingFilter::move_rule` (`src/overlay/rules.rs` about line 1699) is a one-step swap/hop, and its `moved across Continue` bookkeeping toggles per step. A drag needs a new "move run to insertion point" primitive in `src/filter/structure.rs` and a net-crossing computation.
+6. **All three network actions already take a `work` closure** (`EconomySync::start`, `LeagueList::start`, `UpdateJob::start`). Throttling is therefore a wrapper at three call sites in `src/overlay/app.rs`, not a rewrite of the workers.
+7. **Auto Detect is a cross-model edit** (ConfigState gets new styles, WorkingFilter gets tags) while Revert is per tab. This is the main design risk of the milestone (see Pitfall A below).
 
-## Current Facts (verified in code)
+## Recommended Architecture (delta view)
 
-| Fact | Where |
-|------|-------|
-| App root = `FERRISFILTER_HOME` (must exist) else walk up from exe to dir holding `styles-default.json`, else cwd, else error | `src/paths.rs:55-109` |
-| `InputPaths` has config, styles(+default), prices, tiers(+default), prices_fallback, tiers_fallback, all joined on one root; `styles_source()`/`tiers_source()` do live-else-default via `read_source` | `src/compile.rs:73-165, 168-200` |
-| Fallback pair is chosen in `load_priced_with` by `PriceSourcePolicy::{Auto, ForceFallback}`; `Auto` falls back when prices absent/empty | `src/compile.rs:186-195, 340-412` |
-| Game folder default hard-coded `%USERPROFILE%\OneDrive\Documentos\My Games\Path of Exile 2` in ONE function, re-exported by `dynamic::default_destination` | `src/install.rs:13-20`, `src/dynamic.rs:34` |
-| `default_destination()` consumers: CLI `apply` default `--filter` (`src/run.rs:~150-165`), `install` (`src/install.rs:36`), overlay game dir (`src/overlay/app.rs:~917, 3248`, `filter_target`), screenshot guard (`src/overlay/screenshot.rs:279`) | |
-| Settings = `ff-settings.json` under the app root; typed fields `filter`, `reload_after_apply`, `collapsed_sections`, plus `#[serde(flatten)] extra` (unknown keys preserved) | `src/settings.rs:24-39, 117` |
-| Overlay league is `sync::OVERLAY_LEAGUE` const; passed to `run_sync_prices(.., Some(OVERLAY_LEAGUE), base_dir)`; also fed to the Economy tab as `league:` | `src/sync/mod.rs:51-62`, `src/overlay/app.rs:2996` |
-| `fetch_index_state` already returns the full league list (name, url, hardcore, indexed) | `src/sync/league.rs:93`, `src/sync/models.rs` |
-| Sync runs on `EconomySync` worker (start/poll/settle, panic-safe, single writer) | `src/overlay/economy.rs:83-178`; started at `src/overlay/app.rs:3138-3147` |
-| Economy tab info reads `<root>/prices.json` (`EconomyInfo::read`) | `src/overlay/app.rs:847-882` |
-| `build.rs` bakes `FF_VERSION` (git describe) and repo URL into the exe; falls back to `CARGO_PKG_VERSION` | `build.rs`, `src/build_info.rs` |
-| Quit path: tray Quit -> `quit_dirty()` -> Unapplied-changes popup -> `QuitChoice` -> `quit_step`; `quit_after_apply` waits for the in-game reload worker | `src/overlay/app.rs:108-118, 1882-1910, 2699-2720`, `src/overlay/apply.rs` |
-| Screenshot guard requires `FERRISFILTER_HOME`, `USERPROFILE`, and the game dir derived from `USERPROFILE` all under temp | `src/overlay/screenshot.rs:225-285` |
-| HTTP client user agent is hard-coded `FerrisFilter/0.1 ...` | `src/sync/client.rs:28` |
-| No `.github/`, no installer dir; `repository` in Cargo.toml is `.../ferris-filter` (the user agent says `poe2_myfilter`; reconcile before building the update checker URL) | repo root |
-| Many tests resolve repo files via `CARGO_MANIFEST_DIR` + `-default.json` / `config.json` (`loader.rs:344`, `emitter.rs:698`, `models/config.rs:938,1516,2141`, `overlay/body.rs`, `classes.rs`) | |
-
-## Recommended Architecture
-
-### Layer 1 (new): `locations` module
-
-Replace "one root" with a small struct, resolved once at startup and passed where `root: PathBuf` is passed today.
+The overlay keeps its existing layering: framework-free models (`overlay/rules.rs`, `config_state.rs`, `leagues.rs`, `economy.rs`) -> views (`rule_list.rs`, `config_view.rs`, `body.rs`, `style_lines.rs`) -> skin widgets (`src/skin/`). New work follows the same split: pure logic in a framework-free module with unit tests, drawing in the view/skin layer.
 
 ```
-AppDirs {
-    config_dir: PathBuf,   // styles.json, tiers.json, ff-settings.json   (%APPDATA%\FerrisFilter | ~/.config/ferrisfilter)
-    cache_dir:  PathBuf,   // prices.json (+ downloaded installer under cache_dir/updates)  (%LOCALAPPDATA%\FerrisFilter | ~/.cache/ferrisfilter)
-    source: Home | Platform   // Home = FERRISFILTER_HOME override, both dirs = that one folder
-}
+                      +---------------------------+
+   Config tab view -> | ConfigAction (new:        |
+   (config_view.rs)   |  AutoDetect, MoveStyleTo, |
+                      |  SetHotkey, ResetHotkey)  |
+                      +-------------+-------------+
+                                    v
+ OverlayApp (app.rs) --- handle_config_actions / dispatch ---+
+   | config: ConfigState (pending styles/tiers)              |
+   | rules : WorkingFilter (doc, tags, moved flags)          |
+   | settings: Settings  (+ hotkey key)                      |
+   | throttle: RequestLog (NEW, persisted)                   |
+   | hotkey_manager (kept alive even if register failed)     |
+   +--> style_detect::plan(...)  (NEW, pure)                 |
+   +--> Document::move_run_to(...) (NEW, filter/structure.rs)+
+   +--> compile::load_economy_with(pending styles, tiers) -> pricer (tier labels, NEW) -> emitter
 ```
 
-- Resolution order: `FERRISFILTER_HOME` (existing rule: must be an existing directory, no silent fall-through) -> both dirs = that folder (exactly today's dev behaviour, so tests/screenshot mode/dev runs stay byte-compatible) -> else platform dirs. Create dirs lazily on first write only (current code "never creates a file" on read; keep that).
-- Use the `dirs` crate (or `directories`) for `config_dir()`/`cache_dir()`; for the game folder use the Windows Known Folder API via `dirs::document_dir()` (MEDIUM confidence: `dirs` uses `SHGetKnownFolderPath(FOLDERID_Documents)` on Windows, which handles OneDrive redirection and localized names; verify in the crate docs in the phase). `windows-sys` is already a dependency (Cargo.toml:49) and could call `SHGetKnownFolderPath` directly with the `Win32_UI_Shell` feature if the author prefers no new crate. Recommendation: `dirs` (tiny, well-known), cfg-free.
-- `paths::app_root()` becomes `paths::app_dirs() -> Result<AppDirs, RootError>`. The walk-up-from-exe + cwd + `styles-default.json` marker logic is DELETED for the shipped path (an installed exe has no repo around it). Keep a dev convenience only if wanted: it is replaced by `FERRISFILTER_HOME=<repo>` (the dev-warning in CLAUDE.md already recommends a temp home). Decision for roadmap: drop the walk-up entirely (simpler, removes the `is_root` marker concept and its ~15 tests in `paths.rs`); dev runs set `FERRISFILTER_HOME` or just use the per-user dir.
-- `RootError::NotFound` mostly disappears: platform dirs always resolve; failure = `dirs` returns `None` (rare), surfaced like today's `self.root: Err(String)` which already drives a status message and disables Sync/Apply (`app.rs:1183, 2159, 3138`).
+## New vs Modified, per Feature
 
-### Layer 2 (modified): `InputPaths` + embedded defaults
+### 1. Style colour alpha
 
-Do NOT keep `styles_default: Option<PathBuf>` pointing at a file. Introduce an embedded-default source:
+**Modify**
+- `src/models/config.rs`: `Style.text/border/background` change from `Option<[u8; 3]>` to `Option<Colour>`.
+  - Recommended `Colour { rgb: [u8;3], alpha: Option<u8> }` with a custom serde impl: accept a 3-array or a 4-array, serialise a 3-array when alpha is `None` and a 4-array otherwise. **Normalise alpha 255 to `None` on load** so equality (dirty checks, Auto Detect) is structural and files without alpha re-serialise byte-identically. A hand-written `[r,g,b,255]` would then re-serialise as 3 values on the next styles.json write; that loses no meaning and only happens when the overlay writes the file anyway. Document it.
+  - Alternative (sibling `textAlpha` fields) keeps `[u8;3]` consumers untouched but doubles the fields in every comparison; not recommended.
+  - Add `Style::same_look(&self, other)` that compares every field except `id` (used by Auto Detect; `PartialEq` includes `id`).
+- `src/emitter.rs` `style_action_lines()`: write `alpha.unwrap_or(255)` instead of the literal `255` (three lines). The fixed overrides (`background_override: Option<[u8;3]>` in `src/pricer.rs`/`src/sync/mapping.rs` and the bronze `175 96 37 240` in `emit_unique_sections`) stay as they are; they replace the style's background and are not styles.
+- `src/overlay/style_lines.rs`: `StyleView::from_style` carries real alpha and sets `alpha: true`; once both callers are on the alpha path, delete the `alpha` flag and the opaque branch (`widgets::colour_slot`, `SlotResult`) if nothing else uses it (3 sites in `src/overlay/widgets.rs`).
+- `src/overlay/config_state.rs`: `StyleEdit::Colour { value: Option<[u8;3]> }` becomes `Option<[u8;4]>` (or `Option<Colour>`); `edit_style` maps it onto `Colour`.
+- `src/overlay/config_view.rs`: `label_look`/`style_row` previews already take `StyleView`; verify the item-label preview composites alpha (it paints `from_rgba_unmultiplied` already in `style_lines::label_look`).
+- `src/loader.rs` / id assignment / inline-section comparison use `Style: PartialEq`; compile-fix only.
+- Tests: emitter unit tests that set `st.text = Some([1,2,3])` (lines ~1026-1095) need the new type; add alpha cases.
 
-```rust
-// new: src/defaults.rs
-pub const STYLES_DEFAULT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/styles-default.json"));
-pub const TIERS_DEFAULT:  &str = include_str!(".../tiers-default.json");
-pub const PRICES_FALLBACK:&str = include_str!(".../prices-fallback.json");
-pub const TIERS_FALLBACK: &str = include_str!(".../tiers-fallback.json");
-pub const CONFIG_DEFAULT: &str = include_str!(".../config.json");
-pub const MAPPING:        &str = include_str!(".../mapping.json");
-```
+**Do not touch:** `styles-default.json`, `tests/fixtures/seed-styles.json`, `seed-universal.filter`. Styles without alpha must keep emitting `... 255`; `artifact_guard` is the proof.
 
-- `read_source(live, default)` (`compile.rs:171`) returns a `PathBuf`; callers then `load_*(path_str)`. Change its result to an enum `Source { File(PathBuf), Embedded(&'static str) }` and give `loader` string-based entry points (`load_styles_str`, `load_tiers_str`, `load_prices_str`). `loader::load_styles(path)` etc. stay as thin wrappers so the ~30 `repo_file(...)`-based tests and `--styles`/`--tiers` explicit-path semantics ("no fallback") are untouched. The files remain the committed, tested source; `include_str!` just snapshots them at build time, so `styles-default.json` etc. stay the single source of truth and `artifact_guard` keeps reading the repo files (no behaviour change for tests).
-- `InputPaths` gets constructed two ways: `relative_to(dir)` (kept: CLI/tests/dev; defaults `Some(embedded)` or file as today) and `from_dirs(&AppDirs)` (config files in config_dir, `prices` in cache_dir). Since `relative_to` currently resolves defaults from the same dir, tests that stage `styles-default.json` into a temp dir (`compile.rs:591-650`, `app.rs:3602`, `apply_all.rs:439`) either keep working (file defaults retained when constructed via `relative_to`) or get simplified. Lowest risk: keep a `DefaultSource::{File, Embedded}` field in `InputPaths`; `relative_to` -> `File` (unchanged tests), `from_dirs` -> `Embedded`.
-- Fallback pair (`prices_fallback`, `tiers_fallback`): same treatment, they are always embedded in the shipped app (no live copy exists, they are never written). `load_priced_with` (`compile.rs:340-412`) reads them via the Source enum.
-- `config.json`: used by the overlay only for class groups (`app.rs:308`, `classes.rs`) and by `generate`. Shipped overlay: load embedded `CONFIG_DEFAULT` for the class catalog; `generate` keeps taking `--config` (default: cwd `config.json`, see CLI below). The load validates config styles against the style set (`loader::load_config(config_path, styles_path)`), so a string-based `load_config_str(config, styles_str)` is needed. Note: user rename of a custom style used by `config.json` already warns (CLAUDE.md caveat); with embedded config this only matters for `generate`.
-- `mapping.json`: `run_sync_prices` reads `base_dir/mapping.json` (`prices.rs:462`). Embed it (`MAPPING`) and add a `base_dir`-less path for the overlay/CLI sync; `sync metadata` (the developer command that rebuilds `mapping.json` from RePoE exports) keeps writing the repo file. **Pitfall:** tests like `tests/sync_prices.rs` pass a temp `base_dir` containing a mapping; keep an optional override parameter.
+**Docs to update when done:** CLAUDE.md `styles.json` row and the Config note currently state "styles store RGB and the filter always emits alpha 255, so the style colour picker has no alpha".
 
-### Layer 3: CLI path semantics (how generate/sync/install change)
+### 2. Auto Detect styles
 
-Current: `generate`, `sync`, `install` are cwd-relative on purpose ("Deliberate asymmetry", `paths.rs:16`, CLAUDE.md `apply` row); `apply` and the overlay use the app root. v0.5 audit listed this as tech debt (W1). v0.7 resolves it naturally:
+**New**
+- `src/overlay/style_detect.rs` (framework-free, no egui; same contract as `economy.rs`/`leagues.rs`):
+  - `style_of_rule(entries: &[BodyEntry], keyword: BlockKeyword) -> Option<Style>`: calls `body::rule_style_view`, returns `None` when `keyword == Minimal`, when `style_leftovers(..)` is non-empty (repeated family lines, unsupported actions such as `CustomAlertSoundOptional`, `...IfAlertSound`), or when `binding.inexact` is non-empty. Otherwise `StyleView::to_style()`.
+  - `plan(rules: &[Candidate], pending: &StyleSet) -> DetectPlan`:
+    - `Candidate { id: BlockId /* group leader */, look: Option<Style>, tagged: bool, disabled_ok }`.
+    - Match order: built-ins in set order, then customs in set order, each with `Style::same_look` against the **pending** values; first match wins -> `tag(id, name)`.
+    - Remaining distinct looks (deduped by `same_look`, in first-seen file order) -> `new_styles: Vec<(String, Style)>` named `Custom Style N` (N counts up, skipping names already present) and their rules tagged.
+    - Inexpressible rules -> counted as `left_custom`, untouched.
+  - A bare `Show` equals `unchanged` automatically when the pending `unchanged` is still blank; a bare `Hide` is distinct from `hidden` (font 21 + drop sound) and becomes a custom style. That falls out of exact equality; no special-casing.
+- `StyleView::to_style(&self) -> Option<Style>` in `src/overlay/style_lines.rs` (Show/Hide only; sound volume uses the shown volume, so a line with no volume reads as the game default 50/100, which matches what `style_action_lines` would write).
+- `ConfigState::add_styles(Vec<(String, Style)>)` in `src/overlay/config_state.rs`: loops `StyleSet::insert_new` (which assigns ids and appends after built-ins), as one batch.
+- `WorkingFilter::tag_rules(&[(BlockId, String)]) -> ActionOutcome` in `src/overlay/rules.rs`: one doc clone, `set_meta(id, "style", tag)` for every member of each group, commit once, bump `generation`. Use `set.tag_for(name)` for the canonical `<id> <name>` form. Do **not** go through `RowAction::ApplyStyle` per rule: that path calls `rewrite_block` immediately, which rewrites a 3-token colour to 4 tokens and reorders lines to canonical order. (Apply's `rewrite_styled_with` will do that canonicalisation later anyway for every tagged rule; see Pitfall B.)
+- A way to enumerate candidates without drawing: `WorkingFilter::rows()` already excludes economy rows (`economy_rows()` is separate) and counts a `# ff:group` once; `body_view(id)` returns the entries `rule_style_view` needs; `RuleRow.style` (`StyleState`) tells whether a rule is already tagged.
 
-| Command | Change | Rationale |
-|---------|--------|-----------|
-| `apply` | inputs from `AppDirs`; `--filter` default = `<settings game folder>/<settings filter name>` (read from `ff-settings.json` in config_dir), else OS Documents default | one configured game folder shared with the overlay; no more OneDrive hard-code |
-| `sync` | writes `prices.json` to `cache_dir` (not cwd); `mapping` embedded; `--league` unchanged. Add a one-line note when `FERRISFILTER_HOME` unset that output goes to the cache dir | this is the fix for the W1 asymmetry: sync output is read by apply, so they must agree |
-| `generate` | KEEP cwd-relative for `config.json` and `--output` (it is a developer/author command that compiles a repo config; its fixtures/`cli_generate.rs`/`artifact_guard` depend on cwd = repo). Styles/tiers/prices: continue to use `InputPaths::conventional()` (bare relative names, `styles.json` -> `styles-default.json` file fallback) when run from the repo. | zero risk to the byte-for-byte baseline; `generate` is not part of the end-user installer story |
-| `install` | `--dest` default from the settings/OS-Documents resolver | removes the second copy of the OneDrive path |
+**Modify**
+- `src/overlay/config_view.rs`: a **Auto Detect** button in the Styles section next to Reset to defaults / + Add style; `ConfigAction::AutoDetect`. Disabled (tooltip says why) when no filter is loaded, the filter has no untagged rules, or styles failed to load.
+- `src/overlay/app.rs` `handle_config_actions`: order matters:
+  1. build candidates from `self.rules` and the pending set from `self.config`;
+  2. `config.add_styles(new_styles)`;
+  3. sync the rules model to the new pending set (the existing `working.set_styles_over(config.pending_styles().clone(), config.applied_styles())` call that follows config edits, lines ~335/690) so the new names resolve;
+  4. `rules.tag_rules(tags)`;
+  5. status-line event message: `Auto Detect: N tagged, M new styles, K left Custom`.
+- The staged economy preview re-prices automatically when styles change (existing behaviour); nothing to add.
 
-Roadmap decision to surface: whether `generate` should also fall back to per-user dirs when no `config.json` is in cwd. Recommend NOT in v0.7 (keeps `cli_*` tests and byte-for-byte contract untouched); document that `generate` is a repo/dev command.
+**Data flow:** purely in-memory. Nothing is written until the one shared Apply, which already writes `styles.json` (CONFIG has edits) and the filter (rules edited) all-or-none. No Apply-pipeline change is needed.
 
-### Layer 4 (modified): game folder setting
+### 3. Drag-and-drop reordering (rules and custom styles)
 
-- Store: new typed field `Settings::game_folder: Option<String>` in `ff-settings.json` (`src/settings.rs:24`), serialised with `skip_serializing_if = "Option::is_none"` so existing files and the unknown-key-preserving flatten are untouched. A relative or non-existent value is validated like the filter name (`valid_filter_name` precedent, `settings.rs:309`): must be absolute and, at use time, an existing dir. Same fail-closed philosophy already used for `reload_after_apply` (invalid value => visible warning).
-- New resolver `game::folder(settings: &Settings) -> Option<PathBuf>`: setting if valid, else OS Documents + `My Games\Path of Exile 2` (via `dirs::document_dir`), else `None`. `install::default_dest` and `dynamic::default_destination` (`dynamic.rs:34`) are replaced by it; the `USERPROFILE` assumption and the 3 error strings "Cannot resolve the default PoE2 config folder (USERPROFILE is not set)" (`app.rs:917,3248`, `run.rs:159`, `install.rs:40`) change wording.
-- Overlay: `filter_target(game_dir, name)` (`app.rs:~905`) already takes `game_dir: Option<&Path>`, so the call-site change is confined to where the `game_dir` field is computed at startup and in RELOAD (`settings_with_filter`/RELOAD keep-settings, `app.rs:~935`). Changing the folder = same flow as switching filter: if rules are dirty, reuse the `Switch filter?` confirm (`switch_decision`, `app.rs:~890`); otherwise apply at once, save settings, re-list filters (`refresh_filters`), reload the working filter. The filter name should stay if it exists in the new folder, else fall back to default.
-- Picker UI: Config tab "Filter" section (`config_view.rs`, 2702 lines) gets a "Game folder" row: text of the path + a **Browse** button. Native folder dialog needs a crate (`rfd`, MEDIUM confidence it fits an eframe app; works without extra runtime on Windows). A dialog blocks the UI thread: run it on a short worker thread polled per frame (same pattern as `EconomySync`) or use `rfd::AsyncFileDialog`. Also offer a typed path field with validation so the feature degrades without a dialog.
-- Screenshot guard: `screenshot::guard_env` derives the game dir from `USERPROFILE` (`screenshot.rs:279`). With the Documents lookup via the Known Folder API, `USERPROFILE` no longer determines the game folder on Windows (the API ignores the env var), which would BREAK the guard's premise and could write staged filters into the real Documents folder. Fix: in screenshot mode the game folder must come from the settings in the temp `FERRISFILTER_HOME` (stage `game_folder` into the temp home's `ff-settings.json`, or an explicit `FERRISFILTER_GAME_DIR` env that the resolver honours first and the guard checks). Recommend adding `FERRISFILTER_GAME_DIR` as the first resolution step (also useful for tests and CI) and having the guard require it under temp. This is the highest-risk regression of the milestone; test it first.
-- `ff-settings.json` location moves with `AppDirs` (config_dir), so the guard's `FERRISFILTER_HOME`-under-temp check still covers settings, styles, tiers, prices (all collapse into the home folder under override).
+**New**
+- `src/filter/structure.rs`: `Document::move_run_to(run: &[BlockId], at: InsertAt) -> Result<(), EditError>` where `InsertAt` is `BeforeBlock(BlockId) | AfterBanner(section ordinal) | BeforeBanner(section ordinal) | EndOfUserSections` (the position just above the economy banner). It must be a line-level move because "dropped at the bottom of section A" and "dropped at the top of section B" are the same gap between two blocks but differ by whether the banner line comes before or after the rule. Reuse the region logic of `swap_runs` (a run travels with the blank lines after each block; ids follow blocks) and the refusal rules of `rule_step`/`move_neighbour` (never into or below the economy section; `# ff:group` run stays contiguous).
+  - Fallback if time is short: loop `rule_step` + `swap_runs`/`move_section`. It works (500 rules is cheap) but see Pitfall C for the Continue flag.
+- `src/overlay/rules.rs`: `RowAction::MoveTo { id: BlockId, at: DropTarget }`, handled in `dispatch` beside `Move`; it computes `moved` (the "moved across Continue" set) from the **set of rules the run passed over**: flagged when any passed-over rule or the moved rule has `Continue`, cleared otherwise. `coalesce_edits`/`action_target` get the new variant. Keep `Move`/`MoveSection` (section headers keep their arrows unless the author decides otherwise).
+- `src/overlay/drag_reorder.rs` (framework-free helper shared by both lists, with unit tests):
+  - `DragState { key: DragKey, grab: Vec2 }` (stored in `ListUi` and `ConfigUi`).
+  - `drop_slot(offsets: &[f32], y: f32, valid: impl Fn(usize) -> bool) -> Option<usize>`: nearest valid gap, built on `virtual_list::build_offsets_mixed` (which already gives every row top, including the variable-height expanded row).
+  - `autoscroll_step(pointer_y: f32, viewport: Range<f32>, dt: f32) -> f32`: speed ramps up inside an edge zone (about 48pt), 0 outside.
+  - Escape/outside-list cancellation helpers.
+- `src/skin/widgets.rs`: `ff_drag_handle(ui, skin, enabled) -> Response` (`Sense::drag`), drawing the three states.
+- `src/skin/textures.rs`: add `reorder_handle: [TextureHandle; 3]` to `Skin` via `tex!(ctx, "custom/icon_reoder_normal.png")` (hover, pressed likewise). The author's files are named `icon_reoder_*` (typo in the filename); either keep the names or rename the six files (png + ase) in one commit before wiring. Check the PNG sizes against the 24x24-ish handle slot (not measured here).
 
-### Layer 5 (modified): league + price source settings
+**Modify**
+- `src/overlay/rule_list.rs`: replace the two `ff_arrow` calls in the rule row (about line 1098) with the handle; in `show_list` (line ~458) keep the `reorder_enabled` flag (false while searching: handle drawn greyed with the existing "Clear the search to reorder" tooltip). Drag lifecycle inside `show_list`:
+  - on `drag_started`: collapse the expanded row (`list.expanded = None`) so offsets are uniform; record `DragState`.
+  - each frame while dragging: compute slot from the pointer and the cumulative offsets, paint the drop marker line, paint the shadow, apply wheel + edge autoscroll by passing the new `offset` to `ff_scroll_area_viewport` (it already accepts `offset: Option<f32>`; the viewport rect gives the current offset).
+  - on release over a valid slot: push `RowAction::MoveTo`; on Escape or release outside the list: cancel.
+  - economy rows and the locked header: no handle, never a valid slot; the slots at or below the economy header are invalid.
+- Shadow rendering: re-run the row's draw function into a `Ui` on a `Tooltip`-order layer with reduced opacity and throw-away action/frame sinks. There is precedent for this "read-only copy with throwaway state" in the economy rows, which run the editor body against a throwaway list state. (MEDIUM: `Ui::multiply_opacity`/layer painter behaviour should be confirmed in egui 0.36 with a spike.)
+- `src/overlay/config_view.rs` `style_row` (about line 1057): handle in the Order column for custom rows (built-ins keep the greyed placeholder); `ConfigAction::MoveStyle { name, up }` becomes `MoveStyleTo { name, index }`. Style rows are few and not virtualised, so slots come from the collected row rects, not offsets.
+- `src/models/config.rs` `StyleSet`: `move_custom_to(name, index)` next to `move_custom` (line ~913), clamped so a custom style never lands above a built-in; `ConfigState::move_style_to` mirrors `move_style` (line ~624) and is one pending edit, reverted by Config Revert.
 
-Two new settings in `ff-settings.json`: `league: Option<String>` (display name; slug derivable from the index list) and `price_source: Option<"live"|"fallback">` (absent = live). Both are Economy-tab choices, saved on change like `reload_after_apply` (`settings.rs:224 save`), not part of the all-or-none Apply (they gate sync and pricing, not the filter file) -- but the pricing change takes effect only on Apply, consistent with Sync.
+**Order of implementation inside the phase:** the pure pieces first (`drop_slot`, `autoscroll_step`, `move_run_to` + tests), then the Config table (small, not virtualised, proves the handle/shadow/marker), then the virtualised Rules list.
 
-Data flow changes:
+### 4. Section header redraw (Social-panel style)
 
-1. League list: new `sync::list_leagues_blocking() -> Result<Vec<League>>` wrapping `fetch_index_state` (`league.rs:93`) on a worker, same pattern as `EconomySync` (reuse or generalise `EconomySync` into a small `Worker<T>` helper; the start/poll/panic-safe scaffold at `economy.rs:83-178` is exactly what the update checker also needs, so extract it in this milestone rather than copy it three times). Cache the list in app state; refresh on entering the Economy tab (like `refresh_economy_info`, `app.rs:3163`) and on a "refresh" click. Fall back to the saved league string if offline.
-2. Replace `sync_economy_blocking(base_dir)` (`sync/mod.rs:55`) with `sync_economy_blocking(cache_dir, league: &str)`. Delete `OVERLAY_LEAGUE`; `resolve_league_with_override` (`league.rs:64`) already accepts name-or-slug, so the existing "pinned league fails loudly with the available list" behaviour carries over. Default when nothing is chosen: do NOT silently auto-pick via the flapping `indexed` flag (the documented reason for the pin). Require an explicit choice before Sync enables, or default to the first non-HC entry of the list with the name shown in the success line (as today). Recommend: preselect from the list, display it, and require one click confirmation the first time (saved afterwards).
-3. Price source = fallback: `economy_body_with(paths, policy, styles, tiers)` already takes `PriceSourcePolicy` (`dynamic.rs:254`), and `Auto` vs `ForceFallback` already exists (`compile.rs:189`). Only plumbing is needed: the overlay stores a `PriceSourcePolicy` derived from the setting and passes it at every call site that currently hardcodes `Auto` (grep `PriceSourcePolicy::Auto` in `overlay/apply*.rs`, `dynamic.rs:467-602` are tests). Note `ForceFallback` on `ForcedFallbackMissing` error text says `--early-game`; with embedded fallback it can no longer be missing, so that arm becomes unreachable in the shipped path.
-4. Sync disabled when price source = fallback: `EconomyTabInputs.sync_enabled` (`app.rs:3001`, `shell::economy_tab`) gets one more condition and a tooltip (`sync_disabled_tip`).
-5. Tier editor interaction: CLAUDE.md / audit W3 already states "CONFIG tier edits have no effect while fallback prices are in use". With fallback now a first-class user choice this stops being an edge case. Decide in the phase: when source = fallback the Tiers editor edits `tiers-fallback.json` semantics? The fallback tiers are exalt-denominated and embedded (read-only), so the cutoff editor cannot write them. Simplest honest behaviour: disable (grey with tooltip) the Tiers section while fallback is selected. Flag for the author.
-6. `EconomyInfo::read` (`app.rs:861`) reads `<root>/prices.json`; it must read `cache_dir/prices.json` and report "Price source: Fallback (chosen)" distinct from "Fallback (no live prices)". Add a `PriceSource` surface on the tab: v0.5 debt item "surface price_source" folds in for free.
-7. `sync` HTTP user agent should carry the real version (`client.rs:28` says `0.1`); trivial, do with the updater since it shares the client.
+**Modify**
+- `src/overlay/rule_list.rs` `draw_section_header` (line ~629): replace the flat `pal::PANEL` row and 1px lines by the game's bar (three-slice) and a separate toggle plate with two glyph states (up chevron above a dot = expanded, dot above a down chevron = collapsed). Keep: whole bar clickable, title left-aligned, `{n} rules`, rename pencil, arrows, remove x, economy padlock. The existing separate chevron hit-rect (`chev`) becomes the plate. If a 3px gap between bars is added, change only the heights fed to `virtual_list::build_offsets_mixed` (`SECTION_HEADER_HEIGHT`), nothing else in the virtual list.
+- `src/skin/textures.rs`: `section_bar: ThreeSlice`, `section_toggle: [TextureHandle; N]` (or plate + painted glyphs).
+- `assets/poe2/manifest.toml` + `tools/ff-art`: new `[[image]]` entries found with `ff-art list`. This step needs the author's PoE2 install (committed PNGs are used afterwards, so CI and other developers are unaffected). The backlog's stated fallback (paint plate and glyph with vectors in `src/skin/icons.rs`, where `FlagIcon::ChevronRight/ChevronDown` already exist) should be the plan B.
+- `FlagIcon::ChevronRight/ChevronDown` become unused after the redraw unless the Config tables use them; remove dead code in the Release Review.
+- The economy section shares this function (padlock, collapsed default), so test both.
 
-### Layer 6 (new): Strictness Selector (Config tab)
+### 5. Search field icons (clear X + magnifier)
 
-Pure derived state, no new persisted data.
+**New**
+- `src/skin/widgets.rs`: `ff_search_field(ui, id: Option<Id>, text: &mut String, hint: &str, width: f32) -> SearchResponse { response, cleared }`. Internally extract the body of `ff_text_field_ex` into a private function taking `left_inset`/`right_inset`; `ff_text_field_ex` calls it with the current 10/10 insets so every other field's layout (and its layout probes in tests) is unchanged. The search field uses a larger left inset for the lens and a right inset for the X disc; a click on the X clears the text and calls `request_focus()` (keeps focus), shown only while the field has text.
+- Art: cream magnifier and the cream disc with a dark X from the Social panel (`.planning/research/ui-refs/social-search-fields.png`), either as extracted textures (ff-art `[[image]]`) or vector-painted (`skin/icons.rs`). Same ff-art caveat as section headers; do both extractions in one session.
 
-- Definition: tiers S..F in `styles` map to visible/hidden by their `action`. The preset N = number of lowest tiers hidden: Flat Broke hides nothing; Scrounging hides F; Getting By hides E,F; Comfy D-F; Loaded C-F; Div Farmer B-F. (As written in PROJECT.md; "S-F" means styles S,A,B,C,D,E,F.)
-- Where: a pure function in `src/overlay/config_state.rs` (1525 lines, owns pending style set `ConfigState`):
-  - `fn strictness(styles: &StyleSet) -> Strictness` -> `Custom` unless the visibility pattern of [S,A,B,C,D,E,F] is exactly "all Show except a suffix of hidden tiers of length 0..=5" (Show/Hide only; `action` field).
-  - `fn set_strictness(&mut self, s: Strictness)` sets the `action` of the relevant built-ins to Show/Hide as ONE edit on the pending set (revertible, marks Config dirty, goes through the same undo/Revert path as the existing per-style visibility switch at `config_state.rs`). Selecting Custom is a no-op (it merely labels a state; it cannot be selected into unless pattern is non-matching; render it as non-interactive/selected when derived).
-  - Because it reads the PENDING set, the row updates live as the user flips the individual style switches in the table (and vice versa), exactly as the requirement states: "derived from the S-F styles' visibility; a hand edit shows Custom".
-- Edge: a built-in that is Show but is a `hidden` style does not count; only S..F matter. What to do with patterns like "hide only D" (non-suffix): Custom. What about "hide S"? Custom. Fully-hidden (all hidden) is also Custom (not in the list).
-- View: new `strictness_row` in `config_view.rs` above the style table (Styles section), one row of exclusive buttons using the existing skin segmented switch (`skin::editor` segmented switch) -- seven labels in a 660pt window needs measurement: likely two-line or smaller font; verify in screenshot mode early (cosmetic risk, not architectural).
-- Economy effect: the rewrite chain already maps style action -> `Show`/`Hide` for economy blocks and styled user rules at Apply (CLAUDE.md: "a preset-styled user rule shows pending style's Show/Hide"), so the selector needs no emitter change. Verify tier-keyed economy blocks use the tier style, not a tier name check.
-- Tests: pure-function table tests (all 7 patterns + a handful of non-matching), no UI needed.
+**Modify (the two existing call sites)**
+- `src/overlay/rule_list.rs` (about line 1465): today the RULES search draws its own text "Clear" inside the field and handles Escape. Replace the field and that block with `ff_search_field`; keep the Escape behaviour.
+- `src/overlay/body.rs` (about line 1315): the **+ condition** picker's search (no clear affordance today) uses the same widget; it requests focus on first frame, preserve that.
 
-### Layer 7 (modified): built-in style rework
+### 6. Customizable global hotkey
 
-- `styles-default.json` edited (author supplies details before planning). Built-ins "no longer use custom sound files": S and A currently use `CustomAlertSound "uwu.mp3" 300`; this swaps them to built-in `PlayAlertSound` ids. Consequences, all mechanical but wide:
-  - Fixture `tests/fixtures/seed-universal.filter` regenerated (deliberate generator-output change; `artifact_guard`, `generate_snapshot` insta snapshots in `tests/snapshots`, `parity-baseline-earlygame.filter` if it embeds styles). One consolidated re-baseline phase/plan (v0.3 precedent: "One consolidated fixture re-baseline at the last emitter-output phase").
-  - Many unit tests include `styles-default.json` and assert literal text; grep for `uwu` and for assertions over style colours in `body.rs`, `style_lines.rs`, `styled.rs`, `config_state.rs`, `emitter.rs`.
-  - `assets/uwu.mp3` and the CLAUDE.md note about copying it into the game folder become obsolete; the sound-file listing feature (`sound_files.rs`) is unaffected.
-  - Existing users who have a live `styles.json` from earlier versions keep their old styles (the live file wins over the embedded default). Document in CHANGELOG; there is no reset button. Not a blocker; a possible later "Reset to defaults" is out of scope.
-  - The Strictness Selector assumes S..F built-ins keep names/ids `builtin:S`.. (`builtin:<name>` ids are load-validated), so the rework must not rename them.
-- Ordering: rework must land BEFORE embedding is finalised? No: embedding reads the file at build, so order is independent, but doing the rework first avoids regenerating fixtures twice if the embedding refactor touches test constants. Recommended: rework early (cheap, isolated), with the single fixture re-baseline there.
+**Modify**
+- `src/overlay/hotkey.rs`: stop hardcoding. `register_toggle()` becomes `register(hotkey: HotKey) -> (GlobalHotKeyManager, HotkeyStatus)` returning the manager **even on a failed registration** (today it returns `None`), because a later rebind needs a live manager. Add `rebind(manager: &GlobalHotKeyManager, old: Option<HotKey>, new: HotKey) -> Result<HotkeyStatus, String>`: register the new combo first, unregister the old one only on success, so a conflict leaves the working binding in place. `release_toggle` takes the current `HotKey`. Keep `DEFAULT_HOTKEY = Ctrl+Shift+Z` as the fallback; the "hardcoded" unit test becomes a test of the default.
+- `src/settings.rs`: `Settings.hotkey: Option<String>` using `global_hotkey::hotkey::HotKey`'s `Display`/`FromStr` (both exist in global-hotkey 0.8: `into_string`, `impl FromStr`) as the stored text; `Settings::hotkey_binding() -> (HotKey, Option<String /*warning*/>)` returning the default plus a warning for a wrong type or unparseable value (same pattern as `price_source` and `league`). Persist with `save_keys(root, settings, &["hotkey"])` (add `save_hotkey`), so it never rewrites an unusable file. Update the "unusable file means reload off" paragraph in CLAUDE.md if relevant: an unusable `ff-settings.json` also means the default hotkey.
+- `src/overlay/mod.rs` `launch()`: it registers the hotkey and builds the tray before `OverlayApp::new`, and today the settings are loaded inside the app. Resolve the FerrisFilter folder and read the saved hotkey **before** registering (fall back to the default on any error). Registering the default and then rebinding in `OverlayApp::new` would briefly take `Ctrl+Shift+Z` from another program and is not recommended. The tray tooltip text (`FerrisFilter - {combo} to toggle`) uses the binding text.
+- `src/overlay/tray.rs` / `src/overlay/app.rs`: update the tray tooltip on rebind (confirm `tray-icon` `set_tooltip` is reachable through `TrayHandles`; MEDIUM).
+- `src/overlay/app.rs` (the poll at about line 3501): compare `event.id` with the **current** registered id (already read from `self.hotkey_status`, so updating the status on rebind is enough). Keep `win::foreground_is_game_or_overlay`.
+- `src/overlay/config_view.rs`: a "Show / hide hotkey" row (Filter section is the natural home; or a small "Overlay" section) with the current combo, a **Change** button that arms capture, and **Reset**. `ConfigAction::SetHotkey(HotKey)` / `ResetHotkey`. Saved at once, like the league and price-source picks (not a pending edit; does not mark anything unapplied).
+- Status line: a failed rebind keeps the old binding and says so; a failed startup registration keeps the existing tray tooltip/menu message.
 
-### Layer 8 (new): Check for updates (About tab)
+**New**
+- `src/overlay/hotkey_keys.rs`: capture helper and `egui::Key -> global_hotkey::hotkey::Code` table, plus `egui::Modifiers -> global_hotkey::hotkey::Modifiers`. Use `Event::Key { physical_key, pressed, modifiers, .. }` so the layout does not matter. Rules to decide: require at least one modifier (recommended, to avoid swallowing plain typing keys system-wide, the reason the original binding became Ctrl+Shift+Z), Escape cancels, modifier-only presses are ignored, and refuse a few reserved combos.
+- Capture state in `ConfigUi`. **While capture is armed, ignore global-hotkey events** (or unregister temporarily): pressing the current combo would otherwise hide the overlay in the middle of capturing it (Pitfall E).
+- Use `global_hotkey::hotkey::{Code, Modifiers}` (re-exported) - **do not** depend on `keyboard-types` directly.
 
-- New module `src/update.rs` (pure logic + a blocking network function) and a small state machine in the overlay, mirroring `EconomySync`:
-  - `UpdateCheck` states: `Idle | Checking | UpToDate | Available{version, installer_url, size} | Downloading | Ready{path} | Failed(msg)`.
-  - Worker thread (use the generalised worker helper extracted in Layer 5): GET `https://api.github.com/repos/<owner>/<repo>/releases/latest` (unauthenticated, 60 req/h per IP: fine for a manual button; set a `User-Agent` header, GitHub rejects requests without one; reuse `ReqwestClient`). Compare tag (`v0.7.0`) with `build_info` version via `semver`-style comparison: the baked `FF_VERSION` can carry a `-dev` suffix (`build.rs`); a dev build must compare by core version and never offer a "downgrade". Parse the asset named like `FerrisFilter-Setup-<ver>.exe` (decide the name in the CI phase and hard-code the match prefix; ignore the zip).
-  - Download to `cache_dir/updates/<file>` (not the system temp, so a failed cleanup does not leave junk across reboots; the task said "temp": cache_dir is the sanctioned per-user temp-like location and is covered by the home override for tests). Stream to `<file>.part`, rename on completion; verify size equals the API `size`. MEDIUM-confidence consideration: add a SHA-256 check by publishing a `.sha256` asset in CI and verifying it; unsigned installer + SmartScreen makes integrity checking worth the ~30 lines (author decision; `sha2` crate).
-  - Security: the updater downloads and executes code. Only follow the `browser_download_url` on `github.com`/`githubusercontent.com` hosts of the configured repo; refuse redirects off-host; never run without an explicit click ("offers to run it").
-  - Launch: `std::process::Command::new(installer).spawn()` detached (Windows: `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS` via `CommandExt::creation_flags`), then trigger quit. "Offers to run it" = a button **Install and quit** in the About tab after download.
-- Quit integration: reuse the tray-Quit machinery. Today `quit_dirty()` -> `Popup::Quit` -> `apply::quit_step` (`apply.rs`, `app.rs:1882-1910`). Add `QuitReason::Update(installer_path)` so the same popup (Apply & quit / Quit without applying / Cancel) gates it, and on the final "QuitNow" the app first spawns the installer then performs the existing shutdown order (give up hotkey, tray icon, single-instance name at once, per the CLAUDE.md relaunch note so the installer's relaunch/`[Run]` works). Spawn the installer AFTER releasing the single-instance name and before process exit, otherwise an installer that launches `ff.exe` at the end hits "already running". Also the installer must handle a running `ff.exe` (Inno Setup `CloseApplications` / mutex; see installer section) because the user can also run the installer by hand.
-- About tab (`about_view.rs`: `about_tab(ui, skin)` is currently stateless, 2 params): needs access to app state; change the signature to take `&mut UpdateUiState` and return an action enum (`CheckUpdates`, `InstallAndQuit`), following how `economy_tab` returns `economy_clicks` (`app.rs:2995-3014`). Keep the "not texty" UI guidance (memory: overlay UI not texty): one button + one status line (use the global status bar `ff_status` rather than adding text blocks on About).
-- Screenshot mode: never performs network; add `--update-state available|uptodate|failed` debug flag only if About screenshots are needed in the README (Release Review step 2 retakes screenshots), compiled out of release like the others.
-- Dev builds: `FF_VERSION` is `-dev` between tags; the checker should say "development build" rather than offering to downgrade.
+**Thread affinity:** `rebind` runs from the egui update loop, which is the main thread that created the manager and runs the Win32 message loop (the same constraint `hotkey.rs` and `tray.rs` already document). Do not move it to a worker. Lib tests must never register real hotkeys; follow the existing `#[cfg(test)]` twin pattern used for `fetch_leagues`/`resolve_root`.
 
-### Layer 9 (new): release CI and installer
+### 7. Tier price range in economy names
 
-Files (new, nothing exists today):
+**Modify**
+- `src/pricer.rs`: `PricedData` gains `tier_labels: BTreeMap<String, String>` (tier letter to the suffix, e.g. `"< 2 chaos"`, `">= 30 chaos"`), filled in `price_tiers()` from the `ValidatedTiers` it already receives (before normalisation: use each entry's own `unit`, `Unit::as_str()` is `chaos`/`exalt`). Rule: a tier covers `[its min, next higher tier's min)`, so show the upper bound `< next.min`; the top tier (S) shows `>= its.min`. If the next tier is in a different unit (not expected, validation is per unit group), omit the suffix rather than guess. Number format `fmt_amount(f64)`: shortest form, no trailing zeros (`0.5`, `2`, `12`). `PricedData::empty()` gets an empty map.
+- `src/emitter.rs`: `emit_currency_sections` and `emit_unique_sections` already take `tags: bool`; pass the label map and change the two `# ff:name` writes (lines ~554 and ~632) to `"{tier} tier {category} {label}"`. `generate` (tags = false) writes no `# ff:name`, so `seed-universal.filter` is byte-identical. The `# ff:style <id> <T>` line is unchanged.
+- Pending tiers flow through unchanged: `compile::load_economy_with(paths, policy, styles, live_tiers)` already re-prices with the overlay's pending tier edits, so the staged-economy preview renames itself when a cutoff changes. The fallback pair uses its own `tiers-fallback.json` units (exalt), also automatic.
+- Tests that pin the old names must change: `src/emitter.rs` (~1275, ~1278), `src/dynamic.rs` (~608), `src/overlay/app.rs` (~6809 `contains(" tier ")` is safe). Nothing outside tests parses `# ff:name` back (search matches substrings, the RULES row shows it), so the old names are not load-bearing.
+- Glyph decision: `>=` is safe in the filter file and in Fontin; `≥` needs a font-coverage check (the filter header already contains a non-ASCII em dash, so the file itself is fine, the overlay font is the question). Recommend `>=` unless a screenshot shows the glyph renders.
+- One-time effect: an existing economy section is regenerated on the next Apply, so the first Apply after upgrading shows a text change in the economy section; expected.
 
-| Path | Purpose |
-|------|---------|
-| `.github/workflows/release.yml` | on `push: tags: ['v*']`: checkout with `fetch-depth: 0` (build.rs runs `git describe --tags`, needs tags/history) -> toolchain from `rust-toolchain.toml` -> `cargo test` -> `cargo build --release` -> build installer -> zip -> extract CHANGELOG section -> `gh release create` |
-| `.github/workflows/ci.yml` (optional) | PR/push: fmt, clippy baseline, `cargo test` on windows-latest (only if wanted; milestone text asks only for the tag workflow) |
-| `installer/ferrisfilter.iss` (Inno Setup) or `installer/wix/` | Start menu shortcut for `ff.exe`; per-user install (`PrivilegesRequired=lowest`, `{autopf}` -> `{localappdata}\Programs\FerrisFilter`) so no UAC, which also makes self-update from the app painless; close running instance; optional "Run FerrisFilter" |
-| `scripts/changelog-section.ps1` (or inline) | Extract `## [X.Y.Z]` section from `CHANGELOG.md` for the release notes |
+### 8. Request throttling (and distinct CLI user agent)
 
-Recommendations:
-- Installer: Inno Setup, not WiX/MSI (MEDIUM confidence; widely used, single script, preinstalled on GitHub's windows runners via `choco install innosetup` or `iscc` already present; verify on the runner image in the phase). It supports `/SILENT /CLOSEAPPLICATIONS`, which the updater could pass later. WiX is heavier for "basic installer with a Start menu entry".
-- What ships in the installer: `ff.exe`, `ferrisfilter.exe`/`ff-cli.exe` (optional; the milestone says Start menu entry for `ff`), LICENSE, README. NOT config/styles/tiers (embedded). `assets/poe2/*` and fonts are `include_bytes!` already (CLAUDE.md `src/skin` row), so a single exe suffices; confirm no runtime asset reads remain (`grep -rn "assets/" src`).
-- Version: the three version sources agree if the tag `vX.Y.Z` equals `Cargo.toml` version; PROJECT.md already makes "version set in Release Review" and `/gsd-complete-milestone` checks tag == Cargo.toml version. CI should add a hard check step (`cargo metadata` version == tag minus `v`) and fail the release otherwise, and pass the version to Inno via `/DAppVersion=...`. In CI, the checkout's `git describe` will be exactly the tag so `FF_VERSION` is clean (no `-dev`).
-- Note the repository URL inconsistency (`Cargo.toml` `ferris-filter` vs the user agent `poe2_myfilter` vs memory/remote): `build.rs` prefers the `origin` remote; in CI `origin` is the Actions checkout URL (`https://github.com/<owner>/<repo>`), fine, but the update checker needs a stable constant `owner/repo` -- single const in `build_info.rs`, sourced from `CARGO_PKG_REPOSITORY`, and the author must confirm it is the final public repo name before the first tag.
-- Windows GUI subsystem is already set for release `ff` (CLAUDE.md `ff` row). No signing (out of scope): installer shows SmartScreen; document in README.
-- Draft-then-publish: create the release as draft, upload artifacts, publish last, so a failed build never leaves a published release with missing assets that the update checker would then see.
-- Workflow permissions: `contents: write` only on the release job.
+**New**
+- `src/overlay/throttle.rs` (framework-free):
+  ```rust
+  pub enum RequestKind { Sync(String /*league*/), Leagues, UpdateCheck }
+  pub struct RequestLog { /* BTreeMap<String key, u64 unix seconds> */ }
+  pub enum Decision { Go, FakeRefresh { age_secs: u64 } }
+  impl RequestLog {
+      pub fn decide(&self, kind: &RequestKind, now: u64) -> Decision; // window 3600 s
+      pub fn record_success(&mut self, kind: &RequestKind, now: u64);
+  }
+  ```
+  A failed request never calls `record_success`. A stored time in the future (clock moved back) counts as expired (`Go`), never as a lockout.
+- Persistence: recommended a separate state file in the FerrisFilter folder (for example `ff-state.json`) written with the same atomic temp-file persist pattern as `settings::save_keys`, holding the request times **and the cached results a fake refresh must replay** (the league list, the last update-check outcome). Reasons: `ff-settings.json` is a hand-editable preferences file with "unusable file means defaults and reload off" semantics; mixing machine-written cache into it complicates that contract. The author's backlog suggested `ff-settings.json`; that also works (new keys through `save_keys`) and is the smaller change, so this is a decision to put to the author. Either way resolve the path in `src/locations.rs` only, and keep `tests/isolation_guard.rs` happy (tests pin `FERRISFILTER_HOME`).
+- The "fake refresh" must run the **normal flow**, so it returns a synthetic worker result through the same channel:
+  - **Sync (per league):** `EconomySync::start(|| Ok(league))` immediately. Only fake when `prices.json` exists, parses and records the same league; otherwise `Go` (never claim a refresh the disk cannot back up). The success message and `refresh_economy_info()` then behave exactly as after a real sync.
+  - **League list:** `LeagueList::start(|| Ok(cached_list))`. A cached list must exist on disk for the common case "restart, open Economy tab (auto-fetch)" to be throttled; if no cache exists, `Go`.
+  - **Update check:** replay the cached outcome. Open question: a "newer version found" result involves a download in `%TEMP%` that is swept; recommended rule is to throttle only an "up to date" result and, when a newer release was found, re-verify the local download without network or `Go`.
 
-## Component Boundary Table
+**Modify**
+- `src/overlay/app.rs`: wrap the three call sites: `economy.start(...)` for Sync (~line 4069), the league-list start (uses `fetch_leagues`, ~line 383) including the first-visit auto fetch, and `start_update_check` (~line 2227). Add a `RequestLog` field to `OverlayApp`, record on a *successful real* result in `poll_economy`/league poll/`receive_update_message`. The status line should read the same as a real refresh (author's "looks the same" requirement); optionally tooltip the age.
+- `src/sync/client.rs`: split the user agent. Keep `USER_AGENT` for the overlay and add `CLI_USER_AGENT` (for example `FerrisFilter-CLI/<ver> (<repo>)`); `ReqwestClient::new()` takes the agent (or add `new_cli()`), used by `sync::cmd_sync` -> `run` for the CLI, while `sync_economy_blocking` / `fetch_leagues_blocking` / `ReqwestUpdateHttp` (src/update.rs ~841) use the overlay agent. Update `user_agent_names_the_public_repo` and add a CLI one.
+- The CLI (`ff-cli sync`, `sync metadata`) is **not** throttled and does not read the log.
+- Screenshot mode and tests never reach the network (existing rule); the new `RequestLog` must be injectable (pass `now` explicitly, never read the clock inside `decide`).
 
-| Component | Status | Responsibility | Communicates With |
-|-----------|--------|----------------|-------------------|
-| `src/locations.rs` (name TBD; replaces `paths.rs` resolver) | NEW/REPLACE | `AppDirs` (config_dir, cache_dir), `FERRISFILTER_HOME` override, game-folder resolution (setting -> Documents) | everything below |
-| `src/defaults.rs` | NEW | `include_str!` of styles/tiers defaults, fallback pair, config, mapping | `compile.rs`, `loader.rs`, `sync/prices.rs`, overlay classes |
-| `compile.rs` `InputPaths`/`read_source` | MODIFIED | add `Source::{File, Embedded}`, `from_dirs`, keep `relative_to` for CLI/tests | `loader.rs`, `dynamic.rs`, `run.rs`, overlay |
-| `loader.rs` | MODIFIED | add `*_str` loaders; path loaders delegate | `compile.rs` |
-| `settings.rs` | MODIFIED | add `game_folder`, `league`, `price_source` typed fields; keep flatten; same fail-closed validation | overlay `app.rs`, `run.rs` (apply default filter) |
-| `install.rs` / `dynamic::default_destination` | MODIFIED | delegate to game-folder resolver; message text | `run.rs`, overlay |
-| `run.rs` / `cli.rs` | MODIFIED | apply default `--filter`, sync -> cache_dir, install default; help strings with the OneDrive path updated | `locations`, `sync`, `dynamic` |
-| `sync/mod.rs`, `sync/prices.rs`, `sync/league.rs` | MODIFIED | delete `OVERLAY_LEAGUE`; `sync_economy_blocking(cache_dir, league)`; `list_leagues_blocking`; embedded mapping | overlay economy worker |
-| `overlay/economy.rs` | MODIFIED/GENERALISED | extract generic `Worker<T>` used by sync, league list, update check | `app.rs` |
-| `overlay/app.rs` (5656 lines) | MODIFIED | hold `AppDirs`+`Settings`; game folder state; league list; price source policy into Apply; update state; quit reason | all overlay modules |
-| `overlay/config_state.rs` | MODIFIED | `Strictness` derive + set on pending style set | `config_view.rs` |
-| `overlay/config_view.rs` | MODIFIED | Game folder row + Browse; Strictness row | `app.rs` |
-| `overlay/shell.rs` (`economy_tab`, `EconomyTabInputs`) | MODIFIED | league dropdown, price-source switch, sync disabled state | `app.rs` |
-| `overlay/about_view.rs` | MODIFIED | Check for updates button/status, Install and quit | `app.rs` |
-| `src/update.rs` | NEW | GitHub releases query, version compare, download, launch | `sync/client.rs`, `build_info.rs`, `app.rs` |
-| `overlay/screenshot.rs` | MODIFIED | guard must cover the new config/cache/game folder resolution | `locations` |
-| `styles-default.json`, fixtures, snapshots | MODIFIED | style rework + re-baseline | tests |
-| `.github/workflows/release.yml`, `installer/*.iss` | NEW | release pipeline | tags, CHANGELOG.md |
+## Component Boundaries
 
-## Data Flow (after v0.7)
+| Component | Responsibility | Communicates With |
+|-----------|---------------|-------------------|
+| `models::config::Style` / `Colour` (modified) | Style data incl. alpha, `same_look` | loader, emitter, config_state, style_lines |
+| `emitter::style_action_lines` (modified) | Single definition of a style's lines | generate, economy, styled rewrite |
+| `overlay::style_detect` (new, pure) | Rule -> `Style`, plan tags/new styles | body (`rule_style_view`), config_state, rules |
+| `overlay::rules::WorkingFilter` (modified) | `tag_rules`, `MoveTo` | filter::structure, style set |
+| `filter::structure::Document::move_run_to` (new) | Line-level run move | rules.rs |
+| `overlay::drag_reorder` (new, pure) | Slot/auto-scroll arithmetic | rule_list, config_view, virtual_list |
+| `skin::widgets` (`ff_drag_handle`, `ff_search_field`) (new) | Drawing only | views |
+| `overlay::hotkey` (modified) + `hotkey_keys` (new) | Register/rebind/capture mapping | app, settings, tray, config_view |
+| `overlay::throttle` (new, pure) | Decide Go / FakeRefresh, persist | app, settings/state file, workers |
+| `pricer::tier_labels` (new) | Range suffix per tier | emitter, compile |
+| `sync::client` (modified) | Per-surface user agent | sync, update |
 
-```
-startup:  FERRISFILTER_HOME? -> (home, home)  else (APPDATA\FerrisFilter, LOCALAPPDATA\FerrisFilter)
-          settings.json (config_dir) -> game_folder?, filter, league?, price_source?, reload_after_apply
-          game_dir = FERRISFILTER_GAME_DIR? > settings.game_folder > Documents\My Games\Path of Exile 2
+## Data Flow Changes
 
-Config pending set:  styles.json|embedded default + tiers.json|embedded default
-                     -> strictness(): derived from S..F actions   <-> style table switches
-
-Sync (Economy tab):  league list worker -> dropdown -> settings.league
-                     Sync button (disabled if price_source=fallback) -> worker -> cache_dir/prices.json
-
-Apply:   pending styles+tiers + (prices.json | embedded fallback pair per price_source)
-         -> economy_body_with(.., policy) -> game_dir/<filter>
-
-Update:  About "Check" -> worker -> GitHub latest -> compare -> download to cache_dir/updates
-         -> "Install and quit" -> Quit popup if dirty -> release single-instance/hotkey/tray -> spawn installer -> exit
-```
+- **Pending-edit models:** unchanged in shape. Config (styles, tiers) and Rules (doc) stay separate and are written by the one shared Apply, all-or-none. The only new cross-model edit is Auto Detect (styles added to Config, tags added to Rules). Drag reorder adds a Rules edit (`MoveTo`) and a Config edit (`MoveStyleTo`), each reverted by its own tab's Revert exactly like the arrows today.
+- **Apply pipeline (`src/overlay/apply_all.rs`):** no structural change. Alpha rides inside `Style` -> `style_action_lines`; tier names ride inside `generate_economy`; Auto Detect output is ordinary pending styles + tags. `rewrite_styled_with` still canonicalises every tagged rule at Apply.
+- **Settings persistence:** one new key (`hotkey`), saved at once through `save_keys`; throttle state in a new state file or new keys (decision). Unknown keys are preserved by `save_keys` in either case.
+- **Network:** three kinds gain a gate; CLI is unchanged apart from its user agent.
 
 ## Patterns to Follow
 
-### Pattern 1: Pure core + thin I/O wrapper (already the house style: `paths::resolve_from`)
-**What:** resolve dirs with a pure function taking env/dirs-lookups as parameters; tests inject temp dirs.
-**When:** `locations`, game-folder resolver, update version compare, strictness derive.
+### Pattern 1: Pure model + thin view
+New logic (`style_detect`, `drag_reorder`, `throttle`, `tier_labels`) goes into framework-free modules with unit tests; the views only draw and emit actions. This is how `leagues.rs`, `economy.rs` and `virtual_list.rs` are built and tested.
 
-### Pattern 2: One worker abstraction
-**What:** generalise `EconomySync` (start / poll / panic-safe settle). League list, sync, update check and download all use it. Avoid three near-identical copies (the Release Review phase exists precisely to strip such duplication).
+### Pattern 2: One action vocabulary, deferred mutation
+Rows push `RowAction`/`ConfigAction` values during drawing; `apply_action` mutates afterwards. Drag release pushes one `MoveTo`; it never mutates during the frame.
 
-### Pattern 3: Settings with fail-closed unknown values
-**What:** every new `ff-settings.json` key follows the `reload_after_apply` precedent; invalid value => documented, visible warning, safe behaviour (e.g. invalid `price_source` => fallback with warning? Choose conservative: treat as live but warn). Unknown keys preserved via flatten.
+### Pattern 3: `work` closure seam
+Workers take a closure (`EconomySync::start`, `LeagueList::start`, `UpdateJob::start`) and the production body is `#[cfg(not(test))]`. The throttle decides which closure to hand over (real or synthetic).
 
-### Pattern 4: Embedded default behind the same "live else default" rule
-**What:** `Source::Embedded` slots into `read_source` so every existing reader (`styles_source`, overlay file watcher `app.rs:1361`) keeps its semantics. The file watcher that reloads styles when `styles.json` OR `styles-default.json` changes (`app.rs:296-330, 1361`) must be adapted: with embedded defaults only the live file is watched; "no live file" is a stable state.
+### Pattern 4: Settings written key-by-key
+`settings::save_keys` writes only the changed key and never replaces a file it could not parse. Reuse it for the hotkey.
 
 ## Anti-Patterns to Avoid
 
-- **Dual-source drift:** hand-copying defaults into Rust constants instead of `include_str!` of the committed JSON. Keep the JSON as the single source (tests and `artifact_guard` read it).
-- **Writing to the profile in tests/screenshot mode:** every test touching `AppDirs` must set `FERRISFILTER_HOME`; add a debug assertion in the platform-dir branch of tests (`cfg(test)`) that panics if resolution falls to the real `%APPDATA%`.
-- **Auto-picking the league via `indexed`:** the documented flap; never reintroduce silently.
-- **Spawning the installer before releasing the instance mutex/hotkey/tray.**
-- **Changing `generate` output or cwd semantics** while moving everything else: it protects the byte-for-byte baseline.
+- **Per-step `Move` calls for a drag.** Quadratic cloning, wrong Continue flag, no banner-side control. Use `move_run_to`.
+- **Applying the style through `ApplyStyle` in Auto Detect.** Rewrites bytes at once and one rule at a time (many undo-visible edits); use the batch tag.
+- **Registering the default hotkey and then rebinding.** Steals a combo from another app at start-up.
+- **Reading the wall clock inside the throttle decision.** Makes tests flaky; pass `now`.
+- **Persisting alpha 255 as a 4-array.** Breaks byte-identical round trips for equal styles; normalise to `None`.
 
-## Pitfalls specific to integration (feeding PITFALLS.md)
+## Pitfalls Specific to This Integration
 
-1. Screenshot guard bypass via Known Folder API (see Layer 4): critical.
-2. `config.json` and `mapping.json` omitted from embedding: overlay class picker and sync break on a clean machine; invisible on the author's dev machine because the repo is the root. Add a test that runs core flows with an empty `FERRISFILTER_HOME`.
-3. "Works on my machine" because the author's real `%APPDATA%\FerrisFilter` won't exist until first write; verify first-run (no files at all) in the overlay: config tab loads from embedded defaults, first Apply creates `styles.json`/`tiers.json`, directories created with `create_dir_all`, atomic write (`safe_write.rs`) must create parent dirs.
-4. Migration: users of v0.6 (the author only) have a repo-root `styles.json`/`tiers.json`/`ff-settings.json`. Decide: one-time copy from `FERRISFILTER_HOME`/old root, or document manual move. Recommend nothing automatic (public release has no prior users); the author sets `FERRISFILTER_HOME` for dev.
-5. `build.rs` `git describe` needs tags in CI (`fetch-depth: 0`); a shallow checkout gives the `Cargo.toml` version with unclear `-dev`.
-6. Single-instance + installer: Inno `CloseApplications` needs the window title/restart manager to find `ff.exe`; an overlay hidden to the tray may not respond to close requests. Provide an installer-side `taskkill`-style `[UninstallRun]`/`PrepareToInstall` fallback or an exit message handled by the overlay (`instance.rs` already listens for second-launch messages; a `--quit` argument that tells the running instance to exit would be a clean hook; MEDIUM complexity, flag for phase research).
-7. Update check rate-limit/offline: show an error in the status line, never block the UI.
-8. Long text on About: the memory note says avoid walls of text in the overlay.
-9. Test count: ~1392 lib tests; many load `repo_file("styles-default.json")` via temp dirs and `relative_to`. Keep `relative_to` semantic stable to avoid mass edits.
+**A. Auto Detect and per-tab Revert (HIGH).** Revert is per tab: Rules Revert drops the tags but leaves the new `Custom Style N` in Config; Config Revert removes the styles while rules still carry tags to them, which then show `unknown style` (flagged, never blocking; Apply then drops the tag via `drop_unknown_style_tags`). This is consistent with the stated "Revert/Reload work as usual" but will surprise users. Options: (1) accept and say so in the status message, (2) have Config Revert of an Auto-Detect-created style also strip the tags it added (needs a small provenance record), (3) a single "Undo Auto Detect" snapshot. Decide before planning; (1) is cheapest.
+
+**B. Detection is semantic, Apply is canonicalising (MEDIUM).** Equality is on parsed values, but a tagged rule is rewritten at Apply to canonical order and 4-token colours, and the rewrite replaces whole action lines (trailing `# comments` on action lines go with them). A rule with a trailing comment on an action line should probably be treated as "stay Custom" or the loss accepted explicitly. Also a rule whose actions are exactly a style's but in another order is detected as a match and reordered on Apply.
+
+**C. `moved across Continue` for multi-gap moves (HIGH).** `move_rule` sets/clears `self.moved` per step. A dragged move must compute the flag from the whole set of rules passed over (and from the destination), not toggle per step. Also keep a `# ff:group` run contiguous and moving as one unit.
+
+**D. Drop slot vs banner ordering (HIGH).** Gaps adjacent to a section header have two meanings (end of the section above vs start of the one below). The drop marker must show which; `InsertAt` must carry it. The divider right below the economy section and the economy header itself are invalid targets.
+
+**E. Hotkey capture eats its own trigger (HIGH).** While capture is armed the current global combo still fires (the overlay is foreground, which the hotkey allows) and hides the window. Suppress toggles during capture.
+
+**F. Hotkey: manager must outlive a failed registration (MEDIUM).** Today a failed registration drops the manager, so a user who picked a free combo after a conflict at start-up could never rebind. Keep the manager always.
+
+**G. Throttle fake refresh can lie (MEDIUM).** Faking a sync when `prices.json` is missing, for another league, or newer than the log entry gives stale data with a success message. Gate on the file actually matching. Same for a league list with no cache.
+
+**H. Alpha in previews (LOW).** The CONFIG row preview and item-label preview now composite semi-transparent colours; check they draw over the background rather than replacing it.
+
+**I. Section-header height change (LOW).** Anything that hard-codes `SECTION_HEADER_HEIGHT` (probes in `rule_list.rs` tests, `scroll_offset_for` jump-to-rule) must use the same constant.
 
 ## Suggested Build Order
 
-Dependencies: locations/defaults (A) -> game folder (B) and league/price source (C) and updater (E); style rework (D) independent but must precede the final fixture baseline; strictness (F) depends only on the style set (and benefits from D); CI/installer (G) needs a working embedded-defaults exe and a version scheme; Release Review last.
+Dependencies: alpha before Auto Detect (equality includes alpha); art extraction before the widgets that need it; section header and search field before drag (same files, `rule_list.rs` and `Skin::load`; avoids merge conflicts and re-testing the same list twice); everything that edits `config_view.rs` (alpha editor, Auto Detect button, hotkey row, style-row handle) is serialised across phases rather than parallelised.
 
-1. **Phase A: Per-user locations and embedded defaults.** `AppDirs`, `defaults.rs`, `Source::Embedded`, `*_str` loaders, embed config/mapping, `InputPaths::from_dirs`, settings moved, CLI `apply`/`sync`/`install` reconciled, `paths.rs` walk-up retired, file-watcher adapted, first-run (empty home) test. Highest risk, touches the widest surface; do it first so everything else builds on the final layout. Keep screenshot guard green (add `FERRISFILTER_GAME_DIR` here, even though the picker comes later).
-2. **Phase B: Game folder setting + picker.** `Settings::game_folder`, resolver with Documents API, overlay wiring (switch popup reuse), Config UI row + Browse (`rfd` worker), CLI default `--filter`. Depends on A (settings location, guard).
-3. **Phase C: Built-in style rework and fixture re-baseline.** Independent; small. Place before F so the selector is verified against the final built-ins. Include the single fixture/snapshot regeneration and CHANGELOG-neutral notes (no changelog entries during the milestone, per the close-out rules).
-4. **Phase D: Strictness Selector.** Pure derive/set + Config row; needs C's final S..F styles; test table-driven.
-5. **Phase E: League picker and price source.** Extract generic worker; league list; remove `OVERLAY_LEAGUE`; settings; `ForceFallback` plumbing; sync disable; tier-editor behaviour under fallback; prices read from cache_dir. Depends on A (cache dir, embedded fallback pair) and settings plumbing from B.
-6. **Phase F: Release CI and installer.** `release.yml`, Inno script, changelog extraction, version check, zip. Can run in parallel with D/E logically (depends only on A for a self-contained exe), but sequence after E so the first tag ships the final binary; develop and dry-run on a pre-release tag (`v0.7.0-rc1`; build.rs `--match v*` handles it; the update checker must ignore prereleases or compare them correctly). Needs the installer asset naming decided before G.
-7. **Phase G: Check for updates.** Depends on F (asset naming, release feed, repo constant) and the worker helper from E. Quit integration. Because the feed only exists after the first real release, test against a fixture JSON plus the pre-release dry run.
-8. **Phase H: Release Review** (cleanup incl. duplication from the worker/embedded refactors, README screenshots, `Cargo.toml` -> 0.7.0, changelog draft, author review), as mandated by PROJECT.md.
+| # | Phase | Contents | Why here |
+|---|-------|----------|----------|
+| 1 | **Style alpha** | `Colour` type, `Style::same_look`, emitter, `StyleView`/CONFIG editor on the alpha path, remove opaque path | Foundation; unblocks Auto Detect; byte-identical guard is the acceptance test |
+| 2 | **Auto Detect styles** | `style_detect.rs`, `StyleView::to_style`, `ConfigState::add_styles`, `WorkingFilter::tag_rules`, Config button, status message | Needs alpha; highest semantic risk, so early; no new art |
+| 3 | **Economy tier-range names** | `pricer` labels, emitter name writes, test updates | Small, backend-only, independent; `generate` fixtures untouched |
+| 4 | **Request throttling + CLI user agent** | `throttle.rs`, state persistence, three call-site wrappers, `client.rs` split | Independent of UI work; touches `app.rs` call sites once |
+| 5 | **Customizable hotkey** | `hotkey.rs` rework, settings key, `launch()` ordering, capture row, tray tooltip | Independent; spike global-hotkey rebind first |
+| 6 | **Game-art widgets: search icons + section headers** | ff-art manifest entries (needs the author's game install), `ff_search_field`, `draw_section_header` redraw | Shared art session and shared `Skin` additions; precedes drag |
+| 7 | **Drag-and-drop reorder** | `move_run_to`, `RowAction::MoveTo`, `drag_reorder.rs`, `ff_drag_handle`, Config table then Rules list, remove rule/style arrows | Largest; builds on the redrawn rows and handle texture |
+| 8 | **Release Review** | Clean-up (opaque colour path, dead `FlagIcon`s), screenshots (add debug `--screenshot` flags for new states, for example hotkey capture armed, drag in progress), version 0.7.2, CHANGELOG draft, author review | Fixed by project convention |
 
-Alternative: swap F and G ordering is impossible (G needs F's feed); D and C could merge into one phase if the author prefers fewer phases.
+Phases 3, 4 and 5 are independent of each other and could be reordered or run in parallel by file ownership (3: `pricer`/`emitter`; 4: `app.rs` call sites + `sync`; 5: `hotkey`/`settings`/`mod.rs`), subject to the `config_view.rs` serialisation above (only 5 touches it).
 
-## Research Flags for Phases
-
-| Phase | Needs deeper research? | Why |
-|-------|------------------------|-----|
-| A | Moderate | `dirs` vs direct Win32 Known Folder; `safe_write` parent-dir creation; list of every `app_root()`/`relative_to` call site (`run.rs:181`, `app.rs:1183, 2159`, tests) |
-| B | Moderate | `rfd` in eframe/Windows (threading, window parenting with an always-on-top docked window: the dialog may open behind the overlay; verify z-order); screenshot guard redesign |
-| C | Low | Mechanical; author supplies the new styles |
-| D | Low | Pure logic; measure the 7-button row at 660pt |
-| E | Low-moderate | poe.ninja league list shape is already modelled; decide default league policy and tier editor under fallback |
-| F | Moderate-high | Inno Setup on GitHub runners, CHANGELOG extraction, tag-vs-Cargo version gate, `gh release` draft flow, pre-release naming (not verified against live docs in this pass) |
-| G | Moderate-high | GitHub API behaviour (rate limits, redirects, asset URLs), safe launch of the installer from a GUI-subsystem process, handing off the single-instance name, `ff.exe` file lock during upgrade |
+**Research flags for phases**
+- Phase 2: needs a design decision on Pitfall A (Revert coupling) before planning; otherwise standard.
+- Phase 5: short spike on `global-hotkey` 0.8 register-new-then-unregister-old behaviour and conflict errors, and on `tray-icon` tooltip update from the live tray handle.
+- Phase 6: `ff-art list` exploration for the Social panel art (the backlog gives a texture directory hint only); keep the vector-painted fallback.
+- Phase 7: spike egui 0.36 behaviour for wheel scrolling plus a forced scroll offset during a widget drag, and layer opacity for the shadow; everything else is standard.
+- Phases 1, 3, 4, 8: standard patterns, unlikely to need deeper research.
 
 ## Scalability Considerations
 
-Not user-scale sensitive. Relevant "scale" is update/economy refresh frequency: poe.ninja sync is manual; update check is manual (one request per click), well inside GitHub's unauthenticated limit.
+| Concern | ~50 rules | ~500 rules (NeverSink-sized) | Notes |
+|---------|-----------|------------------------------|-------|
+| Drag slot lookup | trivial | binary search on cumulative offsets (`partition_point`) | reuse `virtual_list` |
+| Auto Detect | trivial | one `body_view` + parse per untagged rule, run once on click | not per frame; cache nothing |
+| `move_run_to` | trivial | one line-vector rebuild per drop | same cost class as `swap_runs` |
+| Economy names | none | none | string formatting at Apply/preview only |
 
-## Confidence
+## New Dependency Review (flagged for the author)
 
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Seams in existing code (InputPaths, settings, sync, quit, guard) | HIGH | read directly; line numbers above |
-| Embedding set (config.json, mapping.json also needed) | HIGH | verified `app.rs:308`, `prices.rs:462` |
-| Strictness design | HIGH | pure derivation over existing model |
-| League/price-source plumbing | HIGH | policy enum and league list already exist |
-| Crate choices (`dirs`, `rfd`, `sha2`) | MEDIUM | from training knowledge, not re-verified this pass |
-| Inno Setup / Actions specifics | MEDIUM-LOW | not verified against current docs; flag for phase research |
-| Installer-vs-running-overlay handoff | MEDIUM | design follows `instance.rs` behaviour described in CLAUDE.md; not exercised |
+**None required.** Checked each feature for a possible crate and found the existing dependencies sufficient:
+
+| Feature | Possible temptation | Verdict |
+|---------|--------------------|---------|
+| Drag and drop | `egui_dnd` or similar | Not needed and a poor fit (virtualised list, custom shadow, section constraints); use egui pointer/drag responses and `drag_reorder.rs` |
+| Hotkey capture | `keyboard-types` (a dependency of `global-hotkey`) | Use the `Code`/`Modifiers` re-exported by `global_hotkey::hotkey`; hand-write the `egui::Key` table. Do not add `keyboard-types` as a direct dependency |
+| Throttle time | `chrono`/`time` | `std::time::SystemTime` seconds are enough; display-time conversion already exists via `Win32_System_Time` |
+| Alpha, Auto Detect, tier labels | none | pure std/serde |
+| Search icons, section art | image crates | `image` (png) is already a dependency; assets are committed PNGs through `tex!` |
+| Persisted state | new serializer | `serde_json` + `tempfile` are already used by `settings::save` |
+
+If the Phase 7 spike shows egui's built-in behaviour cannot do wheel + auto-scroll during a drag, the fix is still our own code (offset control through `ff_scroll_area_viewport`'s `offset` parameter), not a crate.
+
+## Open Decisions for the Author
+
+1. Alpha representation: 3/4-array `Colour` with 255 normalised away (recommended) versus sibling alpha fields.
+2. Auto Detect Revert coupling (Pitfall A) and how to treat rules whose action lines carry trailing comments (Pitfall B).
+3. Do section headers get a drag handle too (the backlog's open point), or keep the arrows (this research assumes they keep them).
+4. Throttle persistence: separate state file (recommended) versus keys in `ff-settings.json`; what an update-check fake refresh replays when a newer version was found.
+5. CLI user-agent string and whether the overlay agent changes at all.
+6. Hotkey rules: require a modifier (recommended); behaviour for combos another app already owns (keep old binding, report).
+7. Tier-range glyph `>=` versus `≥`.
+8. Filename typo `icon_reoder_*`: keep or rename before wiring.
 
 ## Sources
 
-- Repository code at the paths cited above (src/paths.rs, src/compile.rs, src/settings.rs, src/install.rs, src/dynamic.rs, src/run.rs, src/cli.rs, src/sync/*, src/overlay/{app,economy,screenshot,about_view,config_state,config_view,classes}.rs, build.rs, Cargo.toml), `.planning/PROJECT.md`, `CLAUDE.md`
-- External crate/tool claims (dirs, rfd, Inno Setup, GitHub Releases API) are from training knowledge and need verification in their phases.
+- Code read for this document (HIGH): `src/models/config.rs`, `src/emitter.rs`, `src/styled.rs`, `src/pricer.rs`, `src/compile.rs`, `src/settings.rs`, `src/overlay/{rules,body,style_lines,config_state,config_view,rule_list,virtual_list,hotkey,mod,app,leagues,economy,update_job}.rs`, `src/skin/{widgets,textures,icons}.rs`, `src/sync/{client,mod}.rs`, `src/update.rs`, `src/filter/structure.rs`.
+- Project documents (HIGH): `CLAUDE.md`, `.planning/PROJECT.md`, `.planning/ROADMAP.md` backlog items 999.19 to 999.27.
+- `global-hotkey` 0.8.0 source in the local cargo registry (HIGH for `HotKey::into_string`/`FromStr`/`Display` existence; rebind and conflict behaviour not yet verified, MEDIUM).
+- egui 0.36 drag/scroll/opacity behaviour: not verified against docs in this pass (LOW to MEDIUM; spike in Phase 7).

@@ -12,6 +12,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-24
+
+**Small UI Improvements** — alpha style colours, custom style
+detection, overlay hotkey configuration, drag-and-drop reordering,
+game art on section headers and search boxes.
+
+### Added
+
+- Alpha for style colours: the Config tab's colour picker has an Alpha
+  slider for Text, Border and Background, and the previews show a
+  translucent colour as it will look in game.
+- **Auto Detect**: turns the styling already in your rules into named
+  styles (`Custom Style 1`, ...) and tags the rules with them. Apply
+  saves it, Revert undoes it.
+- Config tab **Overlay** section: set your own show / hide hotkey
+  (default `Ctrl+Shift+Z`), active right after Apply.
+- Drag-and-drop reordering for rules and custom styles, by the handle
+  at the right of each row; the list scrolls when you drag near its
+  top or bottom.
+
+### Changed
+
+- Economy rule names state their tier's price range, such as `S tier
+  Currency >= 30 chaos` or `E tier Essences < 2 chaos`. The first
+  Apply updates their names.
+- Updated art for section headers and search boxes.
+
+### Removed
+
+- The up / down arrows on rules and custom styles, replaced by the
+  drag handle. Section headers keep theirs.
+- The "moved across Continue" flag on moved rules.
+
+### Fixed
+
+- The refresh buttons beside the Config tab's filter list and the
+  Economy tab's league list sat slightly off-centre.
+
 ## [0.7.1] - 2026-10-19
 
 ### Changed
@@ -73,6 +111,7 @@ strictness selector and a league picker, and can check for updates.
 - Hovering a minimap icon in the style editor (Config tab and Custom
   rules) showed its tooltip twice.
 
-[Unreleased]: https://github.com/Jonathas-Conceicao/ferris-filter/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/Jonathas-Conceicao/ferris-filter/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/Jonathas-Conceicao/ferris-filter/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Jonathas-Conceicao/ferris-filter/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Jonathas-Conceicao/ferris-filter/releases/tag/v0.7.0

@@ -52,7 +52,7 @@ pub fn sync_economy_blocking(base_dir: &std::path::Path, league: &str) -> miette
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| miette::miette!("Cannot create async runtime: {e}"))?;
     rt.block_on(async {
-        let client = ReqwestClient::new()?;
+        let client = ReqwestClient::new(client::USER_AGENT)?;
         prices::run_sync_prices(&client, false, false, Some(league), base_dir).await
     })
 }
@@ -64,7 +64,7 @@ pub fn fetch_leagues_blocking() -> miette::Result<Vec<models::EconomyLeague>> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| miette::miette!("Cannot create async runtime: {e}"))?;
     rt.block_on(async {
-        let client = ReqwestClient::new()?;
+        let client = ReqwestClient::new(client::USER_AGENT)?;
         league::list_leagues(&client).await
     })
 }
@@ -78,11 +78,11 @@ async fn run(
 ) -> miette::Result<String> {
     match sub {
         SyncSubcommand::Prices => {
-            let client = ReqwestClient::new()?;
+            let client = ReqwestClient::new(client::CLI_USER_AGENT)?;
             prices::run_sync_prices(&client, standard, hc, league.as_deref(), base_dir).await
         }
         SyncSubcommand::Metadata => {
-            let client = ReqwestClient::new()?;
+            let client = ReqwestClient::new(client::CLI_USER_AGENT)?;
             metadata::cmd_sync_metadata(&client).await?;
             Ok(String::new())
         }

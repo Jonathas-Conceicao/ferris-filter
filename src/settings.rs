@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::overlay::chord::Chord;
+
 /// File name of the settings file at the app root.
 pub const SETTINGS_FILE: &str = "ff-settings.json";
 /// The filter used when nothing (valid) is stored.
@@ -51,6 +53,16 @@ pub struct Settings {
     /// Display state only: it never marks a filter unapplied.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub collapsed_sections: BTreeMap<String, BTreeMap<String, bool>>,
+    /// The show / hide hotkey in FerrisFilter's own chord text (`Ctrl+Alt+K`), written only by
+    /// Apply; absent means `Ctrl+Shift+Z`. Always the saved value, never a pending or fallback
+    /// chord. Read by the overlay only, `ff-cli` ignores it. An unusable value is dropped at load
+    /// with a warning (see [`Settings::hotkey_invalid`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hotkey: Option<String>,
+    /// A `hotkey` value was present in the file but dropped as unusable at load (absent or valid:
+    /// `false`). Never serialized.
+    #[serde(skip)]
+    pub hotkey_invalid: bool,
     /// Unknown top-level keys survive a load/save round trip.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -159,6 +171,36 @@ impl Settings {
             _ => crate::compile::PriceSourcePolicy::Auto,
         }
     }
+
+    /// The saved show / hide chord, when the stored text is a usable chord.
+    pub fn saved_hotkey(&self) -> Option<Chord> {
+        self.hotkey.as_deref().and_then(usable_hotkey)
+    }
+}
+
+/// The warning for a `hotkey` value that cannot be used.
+const BAD_HOTKEY: &str = "`hotkey` is not a usable key combination, so Ctrl+Shift+Z is used";
+
+/// A load warning re-worded for a RELOAD, which never re-registers the hotkey:
+/// the `hotkey` sentence names the chord that really stays live (`live`, `None` when none is
+/// registered) instead of claiming Ctrl+Shift+Z is used. Other warnings pass through unchanged.
+pub fn reload_hotkey_warning(warning: String, live: Option<Chord>) -> String {
+    if !warning.contains(BAD_HOTKEY) {
+        return warning;
+    }
+    let replacement = match live {
+        Some(chord) => format!(
+            "`hotkey` is not a usable key combination; {} stays in use until the next launch",
+            chord.text()
+        ),
+        None => "`hotkey` is not a usable key combination".to_string(),
+    };
+    warning.replace(BAD_HOTKEY, &replacement)
+}
+
+/// The chord a stored `hotkey` text names, when it parses and may be registered.
+fn usable_hotkey(text: &str) -> Option<Chord> {
+    Chord::parse(text).ok().filter(Chord::is_bindable)
 }
 
 fn usable_folder(s: &str) -> bool {
@@ -306,6 +348,18 @@ fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
                             }
                         },
                     };
+                    // A value that is not a usable chord (wrong type included) must not ride
+                    // along in `extra`: drop it with a warning.
+                    let (hotkey, hotkey_invalid) = match extra.remove("hotkey") {
+                        Some(serde_json::Value::String(s)) if usable_hotkey(&s).is_some() => {
+                            (Some(s), false)
+                        }
+                        None => (None, false),
+                        Some(_) => {
+                            fallbacks.push(BAD_HOTKEY.to_string());
+                            (None, true)
+                        }
+                    };
                     if fallbacks.is_empty() {
                         fallbacks.push("using the defaults".to_string());
                     }
@@ -318,6 +372,8 @@ fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
                             league,
                             price_source,
                             collapsed_sections,
+                            hotkey,
+                            hotkey_invalid,
                             extra,
                         },
                         Some(format!(
@@ -347,6 +403,31 @@ fn load_parts(root: &Path) -> (Settings, Option<String>, bool) {
             "`game_folder` `{folder}` is not an absolute folder path"
         ));
     }
+    if let Some(text) = settings.hotkey.as_deref()
+        && usable_hotkey(text).is_none()
+    {
+        settings.hotkey = None;
+        settings.hotkey_invalid = true;
+    }
+    let (settings, warning, fell_back) = typed_warning(settings, bad_filter, bad_folder, warn);
+    if !settings.hotkey_invalid {
+        return (settings, warning, fell_back);
+    }
+    // The hotkey warning composes after the others, in the same `could not be fully used` form.
+    let warning = match warning {
+        None => format!("{SETTINGS_FILE} could not be fully used; {BAD_HOTKEY}."),
+        Some(w) => format!("{}; {BAD_HOTKEY}.", w.trim_end_matches('.')),
+    };
+    (settings, Some(warning), fell_back)
+}
+
+/// The warning of a typed load for the `filter` and `game_folder` problems found.
+fn typed_warning(
+    settings: Settings,
+    bad_filter: Option<String>,
+    bad_folder: Option<String>,
+    warn: impl Fn(String) -> Option<String>,
+) -> (Settings, Option<String>, bool) {
     match (bad_filter, bad_folder) {
         (None, None) => (settings, None, false),
         (Some(f), None) => (settings, warn(f), true),
@@ -438,13 +519,40 @@ fn save_keys(root: &Path, settings: &Settings, keys: &[&str]) -> io::Result<bool
             None => map.remove(*key),
         };
     }
-    let mut out = serde_json::to_string_pretty(&map).map_err(io::Error::other)?;
-    out.push('\n');
+    let out = render_object(&map).map_err(io::Error::other)?;
     let mut t = tempfile::NamedTempFile::new_in(root)?;
     t.write_all(out.as_bytes())?;
     t.as_file().sync_all()?;
     t.persist(path(root)).map_err(|e| e.error)?;
     Ok(true)
+}
+
+/// A settings object as the file holds it: pretty JSON plus a trailing newline.
+fn render_object(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String, serde_json::Error> {
+    let mut out = serde_json::to_string_pretty(map)?;
+    out.push('\n');
+    Ok(out)
+}
+
+/// The bytes `ff-settings.json` should hold with `hotkey` set to `chord_text`, every other key of
+/// `existing` kept as it is (unknown and wrongly typed keys included). `None` (no file) gives a
+/// file with only `hotkey`. Bytes that are not a JSON object give `Err(())`, so a damaged
+/// hand-edited file is never replaced. Writes nothing; Apply writes the result.
+// The caller only needs "usable or not"; it shows its own fixed refusal sentence.
+#[allow(clippy::result_unit_err)]
+pub fn render_hotkey(existing: Option<&[u8]>, chord_text: &str) -> Result<Vec<u8>, ()> {
+    let mut map = match existing {
+        None => serde_json::Map::new(),
+        Some(bytes) => serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(bytes)
+            .map_err(|_| ())?,
+    };
+    map.insert(
+        "hotkey".to_string(),
+        serde_json::Value::String(chord_text.to_string()),
+    );
+    render_object(&map).map(String::into_bytes).map_err(|_| ())
 }
 
 /// Why a file name was refused.
@@ -1233,5 +1341,215 @@ mod tests {
                 .0
                 .section_collapsed("dynamic.filter", "Gear", false)
         );
+    }
+
+    fn ctrl_alt_k() -> Chord {
+        Chord::parse("Ctrl+Alt+K").unwrap()
+    }
+
+    #[test]
+    fn hotkey_absent_is_none_and_round_trips() {
+        let t = tempfile::tempdir().unwrap();
+        let body = "{\n  \"filter\": \"a.filter\",\n  \"future\": 1\n}\n";
+        fs::write(path(t.path()), body).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert_eq!(s.hotkey, None);
+        assert!(!s.hotkey_invalid);
+        assert_eq!(s.saved_hotkey(), None);
+        save(t.path(), &s).unwrap();
+        assert_eq!(fs::read_to_string(path(t.path())).unwrap(), body);
+    }
+
+    #[test]
+    fn hotkey_valid_loads() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"hotkey":"Ctrl+Alt+K"}"#).unwrap();
+        let (s, w) = load(t.path());
+        assert_eq!(w, None);
+        assert!(!s.hotkey_invalid);
+        assert_eq!(s.saved_hotkey(), Some(ctrl_alt_k()));
+        assert_eq!(s.hotkey.as_deref(), Some("Ctrl+Alt+K"));
+    }
+
+    #[test]
+    fn hotkey_unusable_text_is_dropped_with_warning() {
+        for bad in [
+            "Z",
+            "Win+K",
+            "nonsense",
+            "Ctrl+Escape",
+            "",
+            "Ctrl+V",
+            "Alt+F4",
+        ] {
+            let t = tempfile::tempdir().unwrap();
+            let body = format!(
+                r#"{{"hotkey":"{bad}","filter":"a.filter","reload_after_apply":false,"future":1}}"#
+            );
+            fs::write(path(t.path()), &body).unwrap();
+            let (s, w) = load(t.path());
+            let w = w.unwrap_or_else(|| panic!("{bad:?}: no warning"));
+            assert!(
+                w.contains("`hotkey` is not a usable key combination, so Ctrl+Shift+Z is used"),
+                "{w}"
+            );
+            assert_eq!(s.hotkey, None);
+            assert!(s.hotkey_invalid, "{bad:?}");
+            assert_eq!(s.saved_hotkey(), None);
+            assert_eq!(s.filter_name(), "a.filter");
+            assert!(!s.reload_after_apply());
+            assert!(s.extra.contains_key("future"));
+            assert!(!s.extra.contains_key("hotkey"));
+            // Load never writes.
+            assert_eq!(fs::read(path(t.path())).unwrap(), body.as_bytes());
+        }
+    }
+
+    #[test]
+    fn a_reload_warning_names_the_chord_still_live() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"hotkey":"Z"}"#).unwrap();
+        let (_, w) = load(t.path());
+        let w = w.unwrap();
+        let reworded = reload_hotkey_warning(w.clone(), Some(ctrl_alt_k()));
+        assert!(
+            reworded.contains(
+                "`hotkey` is not a usable key combination; Ctrl+Alt+K stays in use until the next launch"
+            ),
+            "{reworded}"
+        );
+        assert!(!reworded.contains("Ctrl+Shift+Z is used"), "{reworded}");
+        let none = reload_hotkey_warning(w, None);
+        assert!(
+            none.contains("`hotkey` is not a usable key combination."),
+            "{none}"
+        );
+        assert!(!none.contains("Ctrl+Shift+Z"), "{none}");
+        // Another warning passes through untouched.
+        let other = "ff-settings.json could not be fully used; x.".to_string();
+        assert_eq!(reload_hotkey_warning(other.clone(), None), other);
+    }
+
+    #[test]
+    fn hotkey_wrong_type_is_salvaged() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"hotkey":42,"filter":"a.filter","future":1}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(
+            w.contains("`hotkey` is not a usable key combination, so Ctrl+Shift+Z is used"),
+            "{w}"
+        );
+        assert_eq!(s.hotkey, None);
+        assert!(s.hotkey_invalid);
+        assert_eq!(s.filter_name(), "a.filter");
+        assert!(!s.extra.contains_key("hotkey"));
+        assert!(s.extra.contains_key("future"));
+    }
+
+    #[test]
+    fn hotkey_salvage_keeps_a_valid_value_beside_a_bad_key() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(
+            path(t.path()),
+            r#"{"hotkey":"Ctrl+Alt+K","game_folder":42}"#,
+        )
+        .unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(w.contains("default game folder"), "{w}");
+        assert!(!w.contains("hotkey"), "{w}");
+        assert!(!s.hotkey_invalid);
+        assert_eq!(s.saved_hotkey(), Some(ctrl_alt_k()));
+    }
+
+    #[test]
+    fn hotkey_warning_composes_with_other_key_warnings() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"game_folder":"rel","hotkey":"Z"}"#).unwrap();
+        let (s, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(
+            w.contains("`game_folder` `rel` is not an absolute folder path"),
+            "{w}"
+        );
+        assert!(w.contains("default game folder"), "{w}");
+        assert!(
+            w.contains("`hotkey` is not a usable key combination, so Ctrl+Shift+Z is used"),
+            "{w}"
+        );
+        assert!(w.ends_with('.') && !w.ends_with(".."), "{w}");
+        assert_eq!(s.game_folder, None);
+        assert_eq!(s.hotkey, None);
+
+        // The salvage path composes the same way (wrongly typed league plus a bad hotkey).
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"league":1,"hotkey":"Z"}"#).unwrap();
+        let (_, w) = load(t.path());
+        let w = w.unwrap();
+        assert!(w.contains("`league` is not text"), "{w}");
+        assert!(
+            w.contains("`hotkey` is not a usable key combination"),
+            "{w}"
+        );
+    }
+
+    #[test]
+    fn hotkey_bad_value_alone_has_its_own_warning_and_keeps_the_filter() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"filter":"a.filter","hotkey":"Z"}"#).unwrap();
+        let loaded = load_detailed(t.path());
+        assert!(!loaded.filter_fell_back);
+        assert_eq!(loaded.settings.filter_name(), "a.filter");
+        assert_eq!(
+            loaded.warning.as_deref(),
+            Some(
+                "ff-settings.json could not be fully used; `hotkey` is not a usable key \
+                 combination, so Ctrl+Shift+Z is used."
+            )
+        );
+    }
+
+    #[test]
+    fn a_dropped_hotkey_is_removed_by_a_later_whole_save() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(path(t.path()), r#"{"hotkey":"Z","filter":"a.filter"}"#).unwrap();
+        let (s, _) = load(t.path());
+        save(t.path(), &s).unwrap();
+        let text = fs::read_to_string(path(t.path())).unwrap();
+        assert!(!text.contains("hotkey"), "{text}");
+    }
+
+    #[test]
+    fn render_hotkey_rules() {
+        assert_eq!(
+            render_hotkey(None, "Ctrl+Alt+K").unwrap(),
+            b"{\n  \"hotkey\": \"Ctrl+Alt+K\"\n}\n".to_vec()
+        );
+        let out =
+            render_hotkey(Some(br#"{"filter":"a.filter","future":1}"#), "Ctrl+Alt+K").unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["filter"], "a.filter");
+        assert_eq!(v["future"], 1);
+        assert_eq!(v["hotkey"], "Ctrl+Alt+K");
+        assert!(out.ends_with(b"}\n"));
+
+        // An existing hotkey is replaced, a wrongly typed other key kept as is.
+        let out = render_hotkey(
+            Some(br#"{"hotkey":"Ctrl+Shift+Z","reload_after_apply":"maybe"}"#),
+            "F5",
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["hotkey"], "F5");
+        assert_eq!(v["reload_after_apply"], "maybe");
+
+        assert_eq!(render_hotkey(Some(b"{not json"), "F5"), Err(()));
+        assert_eq!(render_hotkey(Some(b"[1]"), "F5"), Err(()));
     }
 }

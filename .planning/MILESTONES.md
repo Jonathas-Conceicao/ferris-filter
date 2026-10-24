@@ -1,5 +1,42 @@
 # Milestones
 
+## v0.7.2 — Small UI Improvements
+
+**Shipped:** 2026-10-24
+**Phases:** 43-50 (8) · **Plans:** 24 (+ the Release Review run inline) · **Commits:** 200 · **Tests:** 1921 lib + integration suites green
+**Timeline:** 2026-10-23 → 2026-10-24 · **Code:** ~92,100 lines Rust (+10,819/-1,442 in src/tests/tools)
+
+**Delivered:** overlay polish after the first public release: alpha style colours, Auto Detect
+for a filter's existing styling, a configurable show / hide hotkey, drag-and-drop reordering,
+game art on section headers and search fields, priced economy names and throttled requests.
+
+**Key accomplishments:**
+
+1. **Style alpha** — text, border and background colours carry alpha (picker slider, translucent
+   previews) through `generate`, the economy section and styled rules; 3-value `styles.json`
+   files still load, and the fixtures are byte-identical.
+2. **Auto Detect** — one click on CONFIG tags every untagged rule with the style it already
+   matches and turns the rest into `Custom Style N` styles, as ordinary pending edits.
+3. **Configurable hotkey** — a game-style keybind row on CONFIG captures the show / hide chord;
+   Apply registers it before writing and swaps it live; reserved and in-use chords are refused.
+4. **Drag-and-drop reorder** — rules and custom styles move by the author's drag handle (shadow,
+   marker, wheel and edge auto-scroll, Escape cancels), replacing the up / down arrows; section
+   headers keep theirs, padlocked when they cannot move.
+5. **Game-art widgets** — Social-panel section headers (toggle plate + stone bar), magnifier and
+   clear X in the search fields, art painted by its visible box (the refresh buttons are centred).
+6. **Economy names and throttling** — economy rules are named with their price range
+   (`S tier Currency >= 30 chaos`); the overlay asks poe.ninja and GitHub at most once an hour
+   per kind (`ff-state.json`), and the CLI sends its own user agent. Version 0.7.2.
+
+**Audit:** `tech_debt` — 38/38 requirements, 8/8 phases, 8/8 integration, 4/4 flows; debt accepted
+(see milestones/v0.7.2-MILESTONE-AUDIT.md). Phases 45-48 ran in parallel worktrees; the author
+verified every manual check of phases 44-49 (three skipped on purpose) through two feedback
+rounds.
+
+**Known deferred items at close:** 30 (see STATE.md Deferred Items) — the phase 44-49
+VERIFICATION files left `human_needed` (author-verified at close) plus the phase 14-41 UAT and
+verification leftovers carried from earlier milestones.
+
 ## v0.7 — Initial Public Release and Strictness Selector
 
 **Shipped:** 2026-10-18

@@ -151,7 +151,7 @@ pub fn signal_message(outcome: Wait) -> Option<String> {
             };
             Some(format!(
                 "FerrisFilter is already running, but this launch could not ask it to show its \
-                 window ({reason}). Use its tray icon or Ctrl+Shift+Z instead."
+                 window ({reason}). Use its tray icon or its show / hide hotkey instead."
             ))
         }
     }

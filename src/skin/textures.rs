@@ -101,6 +101,24 @@ pub struct Skin {
     /// Reload glyph (`uiimages/common/buttonreloadhover`): a round arrow, drawn mirrored and turned
     /// on `icon_button` (tinted at rest, as is when hovered).
     pub reload: TextureHandle,
+    /// Social-panel group plate shown while a group is expanded (`buttoncollapse*`: chevron up
+    /// over a dot). Normal, hover, pressed.
+    pub toggle_collapse: [TextureHandle; 3],
+    /// Social-panel group plate shown while a group is collapsed (`buttonexpand*`: dot over
+    /// chevron down). Normal, hover, pressed.
+    pub toggle_expand: [TextureHandle; 3],
+    /// Stone bar with bronze frame (`ingame/npcmenubar*`): left cap, stretched middle, right cap.
+    pub bar: ThreeSlice,
+    /// Round clear X of the search fields (`common/buttoncleartext*`). Normal, hover, pressed.
+    pub clear: [TextureHandle; 3],
+    /// Magnifier glyph (`common/buttonsearch*`), no plate. Normal (muted rest), hover.
+    pub search: [TextureHandle; 2],
+    /// The Options menu keybind button frame (`options menu/optionsbuttonborder`, trimmed 60x60):
+    /// gold line and ornate corner clusters, its white mask interior keyed out to transparent.
+    pub keybind_border: TextureHandle,
+    /// The Options menu keybind button plate (`options menu/optionsbutton`, trimmed 60x60):
+    /// greyscale, dark top, bright band and radial glow along the bottom; tinted at draw time.
+    pub keybind_plate: TextureHandle,
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -112,6 +130,9 @@ pub struct Skin {
     /// The item-filter minimap icons: one row per colour, one column per shape (see
     /// [`super::minimap`]).
     pub minimap_icons: TextureHandle,
+    /// The author-drawn reorder handle (`assets/custom/icon_reoder_{normal,hover,pressed}.png`):
+    /// 92x92 with the plate in the top-left 84x84. Index 0 normal, 1 hover, 2 pressed.
+    pub drag_handle: [TextureHandle; 3],
 }
 
 impl Skin {
@@ -164,6 +185,32 @@ impl Skin {
                 tex!(ctx, "poe2/common/icon_button_pressed.png"),
             ],
             reload: tex!(ctx, "poe2/common/reload.png"),
+            toggle_collapse: [
+                tex!(ctx, "poe2/common/toggle_collapse_normal.png"),
+                tex!(ctx, "poe2/common/toggle_collapse_hover.png"),
+                tex!(ctx, "poe2/common/toggle_collapse_pressed.png"),
+            ],
+            toggle_expand: [
+                tex!(ctx, "poe2/common/toggle_expand_normal.png"),
+                tex!(ctx, "poe2/common/toggle_expand_hover.png"),
+                tex!(ctx, "poe2/common/toggle_expand_pressed.png"),
+            ],
+            bar: three(
+                tex!(ctx, "poe2/common/bar_left.png"),
+                tex!(ctx, "poe2/common/bar_middle.png"),
+                tex!(ctx, "poe2/common/bar_right.png"),
+            ),
+            clear: [
+                tex!(ctx, "poe2/common/clear_normal.png"),
+                tex!(ctx, "poe2/common/clear_hover.png"),
+                tex!(ctx, "poe2/common/clear_pressed.png"),
+            ],
+            search: [
+                tex!(ctx, "poe2/common/search_normal.png"),
+                tex!(ctx, "poe2/common/search_hover.png"),
+            ],
+            keybind_border: tex!(ctx, "poe2/options/keybind_border.png"),
+            keybind_plate: tex!(ctx, "poe2/options/keybind_plate.png"),
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),
                 tex!(ctx, "poe2/common/combo_arrow_hover.png"),
@@ -188,6 +235,11 @@ impl Skin {
             ferris_bg: tex!(ctx, "ui/ferris-bg.png"),
             ferris_about: tex!(ctx, "ui/ferris-about.png"),
             minimap_icons: tex!(ctx, "poe2/minimap/icons.png"),
+            drag_handle: [
+                tex!(ctx, "custom/icon_reoder_normal.png"),
+                tex!(ctx, "custom/icon_reoder_hover.png"),
+                tex!(ctx, "custom/icon_reoder_pressed.png"),
+            ],
         }
     }
 }
@@ -210,6 +262,18 @@ mod tests {
         assert_eq!(skin.minimap_icons.size(), [12 * 64, 11 * 64]);
         assert_eq!(skin.ferris_about.size()[0], 336);
         assert!(skin.ferris_about.size()[1] > 0);
+        for t in skin.toggle_collapse.iter().chain(&skin.toggle_expand) {
+            assert_eq!(t.size(), [54, 64]);
+        }
+        assert_eq!(skin.bar.left.size(), [132, 75]);
+        assert_eq!(skin.bar.middle.size(), [111, 75]);
+        assert_eq!(skin.bar.right.size(), [151, 75]);
+        for t in &skin.clear {
+            assert_eq!(t.size(), [36, 36]);
+        }
+        for t in &skin.search {
+            assert_eq!(t.size(), [48, 49]);
+        }
     }
 
     #[test]
@@ -217,5 +281,32 @@ mod tests {
         assert_eq!(OPTIONS.mipmap_mode, Some(TextureFilter::Linear));
         assert_eq!(OPTIONS.magnification, TextureFilter::Linear);
         assert_eq!(OPTIONS.minification, TextureFilter::Linear);
+    }
+
+    #[test]
+    fn light_skin_has_three_drag_handle_textures() {
+        let ctx = Context::default();
+        let skin = load_light(&ctx);
+        assert_eq!(skin.drag_handle.len(), 3);
+    }
+
+    #[test]
+    fn embedded_drag_handle_art_is_92_square() {
+        for (name, bytes) in [
+            (
+                "normal",
+                &include_bytes!("../../assets/custom/icon_reoder_normal.png")[..],
+            ),
+            (
+                "hover",
+                &include_bytes!("../../assets/custom/icon_reoder_hover.png")[..],
+            ),
+            (
+                "pressed",
+                &include_bytes!("../../assets/custom/icon_reoder_pressed.png")[..],
+            ),
+        ] {
+            assert_eq!(decode_png(name, bytes).size, [92, 92], "{name}");
+        }
     }
 }

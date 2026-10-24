@@ -1,116 +1,124 @@
-# Research Summary — v0.7 Initial Public Release and Strictness Selector
+# Research Summary — v0.7.2 Small UI Improvements
 
-**Researched:** 2026-10-17 · **Inputs:** STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md ·
-**Overall confidence:** MEDIUM-HIGH
+**Synthesized from:** STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md (2026-10-23)
+**Overall confidence:** MEDIUM-HIGH (stack and integration points read from code and crate
+sources; egui drag behaviour and hotkey re-registration not yet spiked)
 
-## Executive Summary
+## Executive summary
 
-v0.7 turns a repo-bound tool into one a stranger can install. The editor, parser, skin and
-poe.ninja sync stay as they are. The work is one wide refactor (the single "app root" becomes
-per-user config and cache dirs with defaults embedded in the exe), small features on top of it
-(game folder picker, league and price source, strictness selector, update check), and new
-infrastructure (release CI, an Inno Setup installer, the Release Review phase).
+Eight small-to-medium features on a well-factored codebase, plus the Release Review. Existing
+seams carry most of the work: one shared style emitter (`emitter::style_action_lines`), a
+style-from-action-lines parser (`rule_style_view` / `style_leftovers` in `src/overlay/body.rs`),
+an alpha-capable colour picker (Rules path), closure-taking network workers, a virtual list with a
+cumulative offsets table, and key-by-key settings writes. New logic goes into pure, tested modules
+(`style_detect`, `drag_reorder`, `throttle`, tier labels); views stay thin.
 
-## Stack Additions
+**No new Rust dependencies are needed.** Do not add `egui_dnd`, `keyboard-types`, `chrono`,
+`rand`, `serde_with` or global-hotkey's `serde` feature. The egui `Key` → global-hotkey `Code`
+table is hand-written (~80 lines).
 
-- **Crates:** `dirs` 6.0 (config / cache / Documents; already in the lock), `semver` 1 (already in
-  the lock), `rfd` 0.17 (native folder dialog), `sha2` for installer verification.
-- **Reused:** reqwest 0.13 + rustls, serde_json, tempfile; the league list comes from the existing
-  `sync::league::INDEX_STATE_URL` (`economyLeagues`: name, slug, hardcore, indexed), live-checked.
-- **Installer:** Inno Setup 6, per-user (`PrivilegesRequired=lowest`), Start menu `[Icons]` entry,
-  fixed `AppId`, `CloseApplications`; preinstalled on the GitHub Windows runner (verify).
-- **CI:** hand-written workflow on version tags, `fetch-depth: 0` (`build.rs` runs `git describe`),
-  `--locked`, `gh release create --draft` then upload then publish.
-- **Rejected:** `self_update` (in-place exe swap fights an installer-managed install), WiX
-  (runner only has 3.x), NSIS, `cargo-dist`, `directories`, `confy`.
+The risks are byte identity and semantics, not UI: alpha must not change existing `styles.json`,
+`generate` output or `artifact_guard`; Auto Detect equality has many traps; drag in a virtualized
+list needs pointer-owned state and a new `move_run_to` (the arrow move is one step at a time);
+hotkey capture must not trigger the current chord.
+
+## Stack
+
+- **Alpha:** optional alpha, written only when not 255.
+- **Drag:** `Sense::drag()` on the handle only, drag state in list state, shadow on a Tooltip-order
+  `layer_painter`, drop slot by `partition_point` over the offsets, auto-scroll via
+  `scroll_with_delta` scaled by `stable_dt`. Not `dnd_drag_source` (virtualized list).
+- **Hotkey:** `HotKey` `FromStr`/`Display`; `Code`/`Modifiers` re-exported by global-hotkey; the id
+  is `(mods << 16) | key`, so it changes with the chord and the poll must use the current id;
+  register/unregister at runtime on the manager's thread; capture from `Event::Key { physical_key }`.
+- **Throttle:** unix seconds from `SystemTime`; a timestamp in the future counts as expired.
+- **User-Agent:** `USER_AGENT` (`src/sync/client.rs`, also used by `src/update.rs`) becomes a
+  parameter: one overlay value, one CLI value, both naming the public repo.
+- **Social-panel art:** `ff-art` manifest entries; vector painting as plan B.
+
+## Features (table stakes)
+
+- **Alpha:** Alpha slider in the style colour picker, byte-identical round trip, alpha through
+  every emitter, translucent previews.
+- **Auto Detect:** exact equality; built-ins, then existing customs, then new `Custom Style N`
+  (smallest free N, case-insensitive); idempotent; status-line summary.
+- **Drag:** handle only, greyed source, shadow, drop marker, wheel and edge auto-scroll, Escape
+  cancels; groups as one unit; never into or below the economy section; off while searching;
+  customs stay below built-ins.
+- **Headers / search:** bar + toggle plate at the existing 36pt; X only with text, keeps focus;
+  magnifier reserves left padding.
+- **Hotkey:** capture control, modifier required, register new then unregister old, reset to
+  default, bad saved value → default with a warning.
+- **Economy names:** range from the cutoffs (not item prices), unit shown.
+- **Throttle:** per kind and per league, recorded on success only, fake refresh looks identical and
+  does not advance Last sync.
+
+**Deferred candidates:** keyboard reordering, draggable section headers, drop onto a collapsed
+section, hotkey disable, throttle bypass, Auto Detect confirmation popup.
 
 ## Architecture
 
-- Replace `InputPaths` / `paths::app_root` (`src/compile.rs:73`, `src/paths.rs:98`) with
-  `AppDirs { config_dir, cache_dir }`; `FERRISFILTER_HOME` collapses both into one folder as today.
-- Embed every shipped data file with `include_str!` of the committed JSON (a `Source::Embedded` in
-  `read_source`, `compile.rs:171`): styles/tiers defaults, the fallback pair, **and `config.json`
-  (overlay class catalog, `app.rs:308`) and `mapping.json` (sync, `sync/prices.rs:462`)**, which the
-  milestone text missed. The embedded files are the same files `artifact_guard` reads.
-- `generate` stays cwd-relative (protects the byte-for-byte baseline); `apply`, `sync`, `install`
-  move to the per-user dirs and one shared game-folder resolver (closes v0.5 tech debt W1).
-- Strictness is a pure derive / set over the pending S-F style `action` values; no stored state, no
-  emitter change.
-- League / price source: delete `OVERLAY_LEAGUE`; league and cache dir become sync parameters;
-  `PriceSourcePolicy::{Auto, ForceFallback}` already exists; extract a generic worker from
-  `EconomySync` and reuse it for the updater.
-- Updater: About tab gains state and an action; "install and quit" goes through the existing quit
-  popup, and the installer is spawned only after the instance name, hotkey and tray are released.
+- **Alpha:** a colour type with alpha 255 normalised to absent; one emitter edit; CONFIG moves onto
+  the Rules alpha picker path.
+- **Auto Detect:** wraps `rule_style_view` / `style_leftovers` (needs `StyleView::to_style()`);
+  applies as one batch (add pending styles → re-sync the rules model's style set → tag rules), not
+  per-rule `ApplyStyle`, which rewrites bytes at once. Apply pipeline unchanged.
+- **Drag:** `Document::move_run_to` in `src/filter/structure.rs` with a banner-aware insertion
+  point, `RowAction::MoveTo` computing `moved across Continue` from every rule passed over, a pure
+  `drag_reorder.rs` shared by the rule list and the style table.
+- **Hotkey:** keep the manager alive after a failed registration; read the saved chord before the
+  first registration in `launch()`; tray tooltip from the live value.
+- **Economy names:** `tier_labels` from `pricer`, used only on the tagged (game-folder economy)
+  path; `generate` output and fixtures untouched.
+- **Throttle:** a pure `RequestLog` with injected `now`, wrapping three call sites in `app.rs`.
 
-## Watch Out For
+## Critical pitfalls
 
-1. **Test isolation:** the Windows known-folder API ignores `USERPROFILE`, which defeats the
-   env-var isolation the tests and `--screenshot` guard rely on. One injectable path provider plus a
-   `FERRISFILTER_GAME_DIR` override, with the guard extended to every new directory. Top data-loss
-   risk.
-2. **Version / tag mismatch:** tags are `v0.6`, Cargo is `0.6.0`, CHANGELOG headings `X.Y.0`. Move to
-   `vX.Y.0` tags from v0.7.0 and gate CI on tag == `v` + Cargo version.
-3. **Floating nightly** on a tag build: pin a dated nightly; spike whether the root crates build on
-   stable (only `ff-art` appears to need nightly).
-4. **Updater vs a tray-resident `ff.exe`:** never overwrite in place; installer + `AppMutex` /
-   close-applications; verify SHA-256; draft-first releases so `latest` is never incomplete.
-5. **Fixture churn:** do the style rework as one re-baseline; keep `builtin:S..F` ids.
-6. **Legal:** redistributing GGG art and the Fontin fonts in a public binary needs an explicit
-   decision before the first public tag (Fontin's terms unverified).
-7. Line endings on the Windows runner vs byte-exact fixtures (`.gitattributes` has
-   `* text=auto`); poe.ninja's `indexed` flag is not a reliable default league; a persisted league
-   that disappears at league end needs an explicit message; an empty sync must not look like success.
+1. **Alpha changes bytes** — normalise 255 to absent; round-trip test first; keep `artifact_guard`
+   green. The bronze unique background (`175 96 37 240`) stays outside styles.
+2. **Equality traps** — background default alpha is 240 vs 255 for text/border; volume defaults
+   (50 alert, 100 custom); cancel values are `"None"`, not null; `PlayAlertSound` ≠ Positional; a
+   bare `Hide` is not `hidden`; inexpressible lines leave the rule Custom. Table-driven tests.
+3. **Per-tab Revert** (author decision: kept) — Config Revert can leave rules tagged to a now-absent
+   style; they show `unknown style` (flagged, never blocking) and Apply drops the tag. Test the
+   {Revert Rules, Revert Config, Reload, Quit} × {before, after Auto Detect} matrix; the tab ` *`
+   and the Quit popup must count a tags-only change.
+4. **Virtualized drag** — list-level drag state ended from the pointer; slot from y vs offsets;
+   collapse the expanded row on drag start; cancel on Escape and focus loss; repaint every frame.
+5. **Hotkey** — pause the live hotkey while capturing; register new then unregister old, save only
+   on success; update the stored id; never register a real hotkey in tests.
+6. **Throttle** — record only after a successful write; fake a refresh only when matching data is
+   on disk; the CLI neither reads nor writes throttle state.
+7. **Economy names** — old names are pinned in tests (`emitter.rs`, `dynamic.rs`, `rules.rs`) and
+   `app.rs` checks `.contains(" tier ")`; the first Apply after upgrade shows a one-time economy
+   text diff (expected).
 
-## Suggested Phases (8)
+## Suggested phase order
 
-1. **Per-user locations and embedded defaults** (widest blast radius, first), incl. path provider,
-   screenshot guard, empty-home first-run test.
-2. **Game folder resolver and picker** (Documents default, Config row with Browse via `rfd`, reuse
-   the Switch filter popup, remove the hard-coded OneDrive path from CLI defaults and help).
-3. **Built-in style rework** + single fixture re-baseline (no custom sounds).
-4. **Strictness Selector** (seven-button row, one revertible edit, table-driven tests, 660pt layout
-   screenshot check).
-5. **League picker and price source** (worker extraction, settings, Sync / league / Tiers greyed under
-   Fallback, mismatch warning, empty sync = failure).
-6. **Release pipeline and installer** (`release.yml`, Inno script, zip, `SHA256SUMS.txt`, version
-   gates, pinned toolchain, exe version resource, rc-tag dry run, GGG/Fontin decision recorded).
-7. **Check for updates** (needs a published release to test against).
-8. **Release Review** (PROJECT.md → Milestone Close-out).
+1. Style alpha (foundation for Auto Detect)
+2. Auto Detect styles
+3. Economy tier-range names
+4. Request throttling + CLI user agent
+5. Customizable hotkey
+6. Game-art widgets: section headers, search X and magnifier (one art session; before drag)
+7. Drag-and-drop reorder (largest; builds on the redrawn rows and the handle art)
+8. Release Review
 
-Phases 2 and 3 are independent; 3 and 4 could merge.
+Phases 3-5 are independent. Phases touching `config_view.rs` (1, 2, 5, 7) stay sequential.
 
-## Disagreements and Recommendations
+## Research flags
 
-| Topic | Recommendation |
-|---|---|
-| Phase order | ARCHITECTURE's order (above); all files agree on first and last three |
-| Strictness "Custom" button | Display-only: no click effect, no stored snapshot (Revert undoes a staged level) |
-| Migrating the author's app-root files | No migration code; author sets `FERRISFILTER_HOME` or copies by hand; keep a real-file round-trip test, never delete originals |
-| Tag format | `vX.Y.0` from v0.7.0; update the complete-milestone check |
-| Toolchain | Pinned dated nightly; build the release on stable if the root crates allow |
-| Publish step | `gh release create --draft`, upload, publish; pin third-party actions by SHA |
-| Asset names | `FerrisFilter-<ver>-setup.exe`, `FerrisFilter-<ver>-windows-x64.zip`, `SHA256SUMS.txt` |
-| Update download location | random subdirectory of `cache_dir/updates` |
-| SHA-256 check | Do it: the only integrity signal for an unsigned download |
-| Tiers editor under Fallback | Greyed with a tooltip (embedded fallback tiers are read-only) |
-| Reload-after-Apply default | Keep on; name the keys sent in the tooltip / README; author decides |
-| `generate` and per-user dirs | Stays cwd-relative |
+- **Spike / research:** Phase 2 (bare Hide, default-alpha equality, trailing comments, Revert
+  matrix); Phase 5 (register-then-unregister, tray tooltip update, `physical_key` on non-QWERTY);
+  Phase 6 (`ff-art list` for the Social-panel art); Phase 7 (wheel + forced offset during a drag,
+  shadow opacity, source row leaving view).
+- **Standard patterns:** Phases 1, 3, 4, 8.
+- ARCHITECTURE.md line numbers will drift; re-grep before editing.
 
-## Research Flags
+## Decided by the author
 
-- **Needs phase research:** 2 (`rfd` parenting / threading under eframe, guard redesign), 5 (live
-  poe.ninja league spike, default-league rule), 6 (Inno on the runner, `AppMutex` with a tray-hidden
-  app, stable vs nightly, Fontin / GGG terms), 7 (GitHub API details, installer handoff).
-- **Standard patterns:** 1 (start with a grep inventory of `app_root()` / `relative_to` call
-  sites), 3, 4, 8.
-
-## Gaps
-
-- Style rework details (pending from the author).
-- Fontin / GGG redistribution decision (blocking before the first public tag).
-- Final public `owner/repo` name: `Cargo.toml` says `ferris-filter`, the HTTP user agent
-  `poe2_myfilter`. The repo must be public before the updater can be tested.
-- Smaller: `rfd` parent window / `Send`; `dirs` 6 vs 7; default-league rule (proposed: keep the
-  persisted pick, else the first non-HC temporary league with one confirming click); whether the
-  installer needs a `--quit` hook for a tray-hidden overlay; a CHANGELOG note that a live
-  `styles.json` survives the style rework.
+No new dependencies; per-tab Revert/Reload with Auto Detect as ordinary pending edits; exact
+equality on every parameter (bare `Show` = `unchanged`, built-in matches tagged as the built-in);
+inexpressible rules stay Custom; disabled included, groups once, tagged skipped; alpha before Auto
+Detect; throttle persists across restarts, CLI unthrottled with its own User-Agent; asset names in
+`assets/custom/` kept exactly; 999.16 and 999.15 stay in the backlog.

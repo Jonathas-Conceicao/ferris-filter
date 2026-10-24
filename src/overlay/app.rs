@@ -1404,6 +1404,7 @@ impl OverlayApp {
                 had_focus: false,
                 injected: Some(egui::pos2(f32::NAN, *gap as f32)),
                 last_gap: None,
+                drop_rect: None,
             });
         }
         if let Some(name) = &shot.expand_style {

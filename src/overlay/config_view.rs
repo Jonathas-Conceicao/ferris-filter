@@ -144,6 +144,9 @@ pub struct StyleDrag {
     pub injected: Option<egui::Pos2>,
     /// The gap a release would drop on right now (not a no-op), if any.
     pub last_gap: Option<usize>,
+    /// Where a release commits: the custom table (half a row beyond its first and last rows)
+    /// cut to the visible area, as of the last drawn frame. A release elsewhere cancels.
+    pub drop_rect: Option<egui::Rect>,
 }
 
 impl ConfigUi {
@@ -846,12 +849,14 @@ fn show_styles(
         {
             cfg.cancel_drag(&egui_ctx);
         } else if d.injected.is_none() && egui_ctx.dragged_id() != Some(d.handle) {
-            // The drag ended (or egui dropped it): commit only on a real release over the area.
+            // The drag ended (or egui dropped it): commit only on a real release over the
+            // custom table (not the Filter section or the built-in table above it).
             let released = egui_ctx.input(|i| i.pointer.primary_released())
                 && egui_ctx.drag_stopped_id() == Some(d.handle);
             let inside = egui_ctx
                 .input(|i| i.pointer.latest_pos())
-                .is_some_and(|p| area.contains(p));
+                .zip(d.drop_rect)
+                .is_some_and(|(p, r)| r.contains(p));
             let to = (released && inside)
                 .then_some(d.last_gap)
                 .flatten()
@@ -1026,10 +1031,20 @@ fn draw_style_drag(
     let top = drag_reorder::shadow_top(py, h, area.top(), area.bottom());
     let gap = Some(drag_reorder::style_gap_for_y(&bounds, top + h / 2.0))
         .filter(|&g| !drag_reorder::style_noop(src, g));
-    let inside = pointer.is_some_and(|p| area.contains(p));
+    // Only the custom table is a drop target (half a row of slack above its first row and below
+    // its last), cut to the visible area; the auto-scroll edges still use the whole area.
+    let first = cfg.row_rects.first().map_or(src_rect, |(_, r)| *r);
+    let last = cfg.row_rects.last().map_or(src_rect, |(_, r)| *r);
+    let table = egui::Rect::from_min_max(
+        egui::pos2(first.left(), first.top() - h / 2.0),
+        egui::pos2(first.right(), last.bottom() + h / 2.0),
+    )
+    .intersect(area);
+    let inside = pointer.is_some_and(|p| table.contains(p));
     let marker = gap.filter(|_| inside);
     if let Some(live) = cfg.drag.as_mut() {
         live.last_gap = marker;
+        live.drop_rect = Some(table);
     }
     let ppp = ui.ctx().pixels_per_point();
     let painter = ui.painter();
@@ -1284,6 +1299,7 @@ fn style_row(
                 had_focus: ui.ctx().input(|i| i.viewport().focused.unwrap_or(false)),
                 injected: None,
                 last_gap: None,
+                drop_rect: None,
             });
             cfg.expanded = None;
             cfg.delete_armed = None;
@@ -2982,12 +2998,22 @@ mod tests {
         let custom = style_groups(&rig.state).1;
         let last_name = custom.last().unwrap().clone();
         rig.start_drag(custom.len() - 1);
-        // Over the built-in block: gap 0, never a place above a built-in.
+        // Over the built-in block: outside the custom table, so no gap and a release cancels.
         let first_builtin = rig.base_rects("row-order")[0];
         rig.move_to(first_builtin.center().y);
-        assert_eq!(rig.cfg.drag.as_ref().unwrap().last_gap, Some(0));
+        assert_eq!(rig.cfg.drag.as_ref().unwrap().last_gap, None);
         rig.actions.clear();
         rig.button(egui::pos2(300.0, first_builtin.center().y), false);
+        assert!(moves(&rig.actions).is_empty(), "{:?}", rig.actions);
+        assert!(rig.cfg.drag.is_none());
+        // Just above the first custom row: gap 0, the top of the custom list, never a place
+        // above a built-in.
+        rig.start_drag(custom.len() - 1);
+        let first_custom = rig.cfg.row_rects[0].1;
+        rig.move_to(first_custom.top() + 2.0);
+        assert_eq!(rig.cfg.drag.as_ref().unwrap().last_gap, Some(0));
+        rig.actions.clear();
+        rig.button(egui::pos2(300.0, first_custom.top() + 2.0), false);
         assert_eq!(
             moves(&rig.actions),
             [&ConfigAction::MoveStyleTo {
@@ -3017,6 +3043,7 @@ mod tests {
             had_focus: false,
             injected: Some(egui::pos2(300.0, 250.0)),
             last_gap: None,
+            drop_rect: None,
         });
         let before = rig.offset;
         for _ in 0..6 {

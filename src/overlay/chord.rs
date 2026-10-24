@@ -12,6 +12,11 @@
 //!   itself will not trigger it.
 //! - On layouts with AltGr, AltGr is Ctrl+Alt, so a `Ctrl+Alt+<key>` chord also swallows the
 //!   character AltGr+<key> types, system-wide.
+//! - The capture refuses every paste chord (`Ctrl+V`, `Ctrl+Shift+V`, `Ctrl+Alt+V`,
+//!   `Shift+Insert`, `Shift+Alt+Insert`) with the reserved caption. egui reports one only while
+//!   the clipboard holds text, so with an empty clipboard (or an image or files on it) the press
+//!   is not seen at all and the button just keeps reading `Press a key…`. `Ctrl+Shift+V`,
+//!   `Ctrl+Alt+V` and `Shift+Alt+Insert` can still be written into `ff-settings.json` by hand.
 //! - Windows reserves F12 for debuggers; registering it may be refused by the OS, which the normal
 //!   refusal path reports.
 
@@ -75,7 +80,8 @@ pub const DEFAULT: Chord = Chord {
 /// break FerrisFilter itself or a Windows-wide shortcut:
 /// - `Ctrl+V`: the in-game reload after Apply pastes `/reloaditemfilter` with an injected Ctrl+V,
 ///   which a hotkey on that chord would swallow (and show the overlay instead).
-/// - `Ctrl+C`, `Ctrl+X`, `Ctrl+A`, `Ctrl+Z`: copy, cut, select all and undo in every program.
+/// - `Ctrl+C`, `Ctrl+X`, `Ctrl+A`, `Ctrl+Z`, `Shift+Insert`: copy, cut, select all, undo and
+///   paste in every program.
 /// - `Alt+F4`, `Alt+Tab`, `Shift+Alt+Tab`, `Alt+Space`: close, switch and window menu.
 /// - `Ctrl+Alt+Delete`: the Windows security screen.
 ///
@@ -88,6 +94,7 @@ pub const RESERVED: &[Chord] = &[
     reserved(true, false, false, ChordKey::Letter(b'X')),
     reserved(true, false, false, ChordKey::Letter(b'A')),
     reserved(true, false, false, ChordKey::Letter(b'Z')),
+    reserved(false, true, false, ChordKey::Insert),
     reserved(false, false, true, ChordKey::F(4)),
     reserved(false, false, true, ChordKey::Tab),
     reserved(false, true, true, ChordKey::Tab),
@@ -643,7 +650,8 @@ pub enum CaptureStep {
 }
 
 /// Runs one frame of the capture. Only fresh key presses and egui's Copy / Cut / Paste events
-/// count (those three chords never arrive as key events); releases, repeats and the modifier
+/// count (those three chords never arrive as key events; a Paste is always refused as reserved,
+/// see the module's Known limitations); releases, repeats and the modifier
 /// keys themselves are ignored. Escape, with or without modifiers, cancels. The first other press
 /// commits when it makes a bindable chord (a modifier, not [`RESERVED`]) without the Windows key,
 /// and is otherwise recorded as the rejection while the capture goes on.
@@ -691,13 +699,12 @@ pub fn capture_step(state: &mut CaptureState, input: &CaptureInput) -> CaptureSt
                 };
                 (Some(key), input.ctrl, input.shift, input.alt)
             }
+            // Every paste chord (Ctrl+V, Shift+Insert and their variants) is refused: egui reports
+            // one only while the clipboard holds text, so accepting them would make the capture
+            // depend on what was last copied.
             egui::Event::Paste(_) => {
-                let key = if input.ctrl {
-                    ChordKey::Letter(b'V')
-                } else {
-                    ChordKey::Insert
-                };
-                (Some(key), input.ctrl, input.shift, input.alt)
+                state.rejected = Some(RejectReason::Reserved);
+                continue;
             }
             _ => continue,
         };
@@ -882,6 +889,7 @@ mod tests {
             "Ctrl+X",
             "Ctrl+A",
             "Ctrl+Z",
+            "Shift+Insert",
             "Alt+F4",
             "Alt+Tab",
             "Shift+Alt+Tab",
@@ -1179,14 +1187,20 @@ mod tests {
         };
         assert_eq!(cut(true), c(true, true, ChordKey::Delete));
         assert_eq!(cut(false), c(true, true, ChordKey::Letter(b'X')));
-        assert_eq!(
-            commit(Event::Paste(String::new()), false, true, false),
-            c(false, true, ChordKey::Insert)
-        );
-        assert_eq!(
-            commit(Event::Paste(String::new()), true, true, false),
-            c(true, true, ChordKey::Letter(b'V'))
-        );
+        // Every paste chord is refused, whatever the modifiers.
+        for (ctrl, shift, alt) in [
+            (false, true, false),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let mut st = CaptureState::default();
+            let evs = [Event::Paste("x".into())];
+            assert_eq!(
+                capture_step(&mut st, &input(&evs, ctrl, shift, alt)),
+                CaptureStep::Continue
+            );
+            assert_eq!(st.rejected, Some(RejectReason::Reserved));
+        }
     }
 
     #[test]

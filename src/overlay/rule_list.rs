@@ -583,6 +583,10 @@ pub fn show_list(
             // Consumed so nothing else (a rename box, the search box) reacts to the same press.
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             list.cancel_drag(&ctx);
+        } else if !reorder_enabled && d.injected.is_none() {
+            // Reordering was switched off mid-drag (a search typed into a still-focused box):
+            // the filtered view's neighbours are not the file's, so never commit from it.
+            list.cancel_drag(&ctx);
         } else if src_index.is_none() {
             list.cancel_drag(&ctx);
         } else if d.injected.is_none()
@@ -3647,6 +3651,7 @@ Show
         scroll_y: f32,
         escape_seen_after: bool,
         focused: bool,
+        reorder: bool,
     }
 
     /// Centre x of a rule row's handle.
@@ -3671,6 +3676,7 @@ Show
                 scroll_y: 0.0,
                 escape_seen_after: false,
                 focused: true,
+                reorder: true,
             };
             rig.frame(vec![]);
             rig
@@ -3696,12 +3702,13 @@ Show
             };
             let mut out = ListFrame::default();
             let mut esc = false;
-            let (wf, entries, list) = (&self.wf, &self.entries, &mut self.list);
+            let (wf, entries, list, reorder) =
+                (&self.wf, &self.entries, &mut self.list, self.reorder);
             self.ctx
                 .run_ui(raw, |ui| {
                     let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, LIST_H));
                     let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-                    out = show_list(&mut child, wf, entries, list, true, None);
+                    out = show_list(&mut child, wf, entries, list, reorder, None);
                     esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 })
                 .drop_without_applying_deltas();
@@ -3845,6 +3852,20 @@ Show
         assert!(rig.list.drag.is_none());
         rig.release(Pos2::new(300.0, 300.0));
         assert!(rig.actions.is_empty());
+    }
+
+    #[test]
+    fn reorder_switched_off_mid_drag_cancels_it() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(300.0);
+        assert!(rig.list.drag.unwrap().last_slot.is_some());
+        // A search typed into a still-focused box turns reordering off while the handle is held.
+        rig.reorder = false;
+        rig.frame(vec![]);
+        assert!(rig.list.drag.is_none());
+        rig.release(Pos2::new(300.0, 300.0));
+        assert!(rig.actions.is_empty(), "{:?}", rig.actions);
     }
 
     #[test]

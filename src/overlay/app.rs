@@ -3917,26 +3917,26 @@ impl eframe::App for OverlayApp {
         // Poll the global hotkey (D-09). Accept only our own registered id
         // and only the Pressed state — without the state filter, a single
         // keypress toggles twice (once on press, once on release).
-        if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
-            if let Some(id) = self.hotkey.live_id() {
-                if event.id == id && event.state == global_hotkey::HotKeyState::Pressed {
-                    // While the CONFIG tab captures a chord, the live one is that chord, not a
-                    // toggle.
-                    //
-                    // Otherwise only while the user is actually in the game — or in the window
-                    // itself, so the same key can dismiss it once it has focus. The binding is
-                    // registered system-wide, which is what lets it reach a fullscreen game, but
-                    // a key that also fires in a browser or an editor is a key the user cannot
-                    // use for anything else (author, 2026-09-15).
-                    //
-                    // The event is still drained either way: leaving it queued would make the
-                    // next in-game press replay a stale one.
-                    if self.capture_live_hotkey() {
-                        ui.ctx().request_repaint();
-                    } else if win::foreground_is_game_or_overlay(self.window.as_ref()) {
-                        self.toggle_requested = true;
-                    }
-                }
+        if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv()
+            && let Some(id) = self.hotkey.live_id()
+            && event.id == id
+            && event.state == global_hotkey::HotKeyState::Pressed
+        {
+            // While the CONFIG tab captures a chord, the live one is that chord, not a
+            // toggle.
+            //
+            // Otherwise only while the user is actually in the game — or in the window
+            // itself, so the same key can dismiss it once it has focus. The binding is
+            // registered system-wide, which is what lets it reach a fullscreen game, but
+            // a key that also fires in a browser or an editor is a key the user cannot
+            // use for anything else (author, 2026-09-15).
+            //
+            // The event is still drained either way: leaving it queued would make the
+            // next in-game press replay a stale one.
+            if self.capture_live_hotkey() {
+                ui.ctx().request_repaint();
+            } else if win::foreground_is_game_or_overlay(self.window.as_ref()) {
+                self.toggle_requested = true;
             }
         }
 

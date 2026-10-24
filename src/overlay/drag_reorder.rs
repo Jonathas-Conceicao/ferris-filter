@@ -680,10 +680,12 @@ mod egui_behaviour {
                     });
             });
             for cs in &out.shapes {
-                if let egui::epaint::Shape::Rect(r) = &cs.shape {
-                    if r.fill.r() > 0 && r.fill.a() < 255 && r.fill.a() > 0 {
-                        alpha = Some(r.fill.a());
-                    }
+                if let egui::epaint::Shape::Rect(r) = &cs.shape
+                    && r.fill.r() > 0
+                    && r.fill.a() < 255
+                    && r.fill.a() > 0
+                {
+                    alpha = Some(r.fill.a());
                 }
             }
             out.drop_without_applying_deltas();

@@ -124,6 +124,9 @@ pub struct Skin {
     /// The item-filter minimap icons: one row per colour, one column per shape (see
     /// [`super::minimap`]).
     pub minimap_icons: TextureHandle,
+    /// The author-drawn reorder handle (`assets/custom/icon_reoder_{normal,hover,pressed}.png`):
+    /// 92x92 with the plate in the top-left 84x84. Index 0 normal, 1 hover, 2 pressed.
+    pub drag_handle: [TextureHandle; 3],
 }
 
 impl Skin {
@@ -224,6 +227,11 @@ impl Skin {
             ferris_bg: tex!(ctx, "ui/ferris-bg.png"),
             ferris_about: tex!(ctx, "ui/ferris-about.png"),
             minimap_icons: tex!(ctx, "poe2/minimap/icons.png"),
+            drag_handle: [
+                tex!(ctx, "custom/icon_reoder_normal.png"),
+                tex!(ctx, "custom/icon_reoder_hover.png"),
+                tex!(ctx, "custom/icon_reoder_pressed.png"),
+            ],
         }
     }
 }
@@ -265,5 +273,32 @@ mod tests {
         assert_eq!(OPTIONS.mipmap_mode, Some(TextureFilter::Linear));
         assert_eq!(OPTIONS.magnification, TextureFilter::Linear);
         assert_eq!(OPTIONS.minification, TextureFilter::Linear);
+    }
+
+    #[test]
+    fn light_skin_has_three_drag_handle_textures() {
+        let ctx = Context::default();
+        let skin = load_light(&ctx);
+        assert_eq!(skin.drag_handle.len(), 3);
+    }
+
+    #[test]
+    fn embedded_drag_handle_art_is_92_square() {
+        for (name, bytes) in [
+            (
+                "normal",
+                &include_bytes!("../../assets/custom/icon_reoder_normal.png")[..],
+            ),
+            (
+                "hover",
+                &include_bytes!("../../assets/custom/icon_reoder_hover.png")[..],
+            ),
+            (
+                "pressed",
+                &include_bytes!("../../assets/custom/icon_reoder_pressed.png")[..],
+            ),
+        ] {
+            assert_eq!(decode_png(name, bytes).size, [92, 92], "{name}");
+        }
     }
 }

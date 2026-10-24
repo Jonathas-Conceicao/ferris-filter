@@ -27,6 +27,7 @@ pub use divider::RuleStep;
 pub use edit::EditError;
 pub use lineedit::LinePatch;
 pub use lines::{Eol, Line};
+pub use structure::MoveDest;
 
 const BOM_BYTES: &[u8] = &[0xEF, 0xBB, 0xBF];
 

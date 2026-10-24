@@ -524,10 +524,135 @@ impl Document {
         self.commit_structural(new, ids, expected).map(|_| ())
     }
 
-    /// Move a run of consecutive blocks to `dest` in one edit (stub).
+    /// Move a run of consecutive blocks (one block or a `# ff:group` run) to `dest` in one edit.
+    /// The run travels with its leading comments and the blank lines after each block; every
+    /// other line keeps its bytes and the multiset of lines is preserved. Returns `Ok(false)`
+    /// (nothing changed) when the destination is where the run already sits. Destinations inside
+    /// or below the economy section are refused with `SectionLocked`.
     pub fn move_run_to(&mut self, run: &[BlockId], dest: MoveDest) -> Result<bool, EditError> {
-        let _ = (run, dest);
-        Err(EditError::NoNeighbour)
+        let infos = self.infos();
+        let first = run.first().ok_or(EditError::NoNeighbour)?;
+        let pa = infos
+            .iter()
+            .position(|i| i.id == *first)
+            .ok_or(EditError::UnknownBlock)?;
+        for (k, id) in run.iter().enumerate() {
+            if infos.get(pa + k).map(|i| i.id) != Some(*id) {
+                return Err(if infos.iter().any(|i| i.id == *id) {
+                    EditError::NoNeighbour
+                } else {
+                    EditError::UnknownBlock
+                });
+            }
+        }
+        let pl = pa + run.len() - 1;
+        let region = infos[pa].span.start..infos[pl].unit.end;
+        let banners = section::banner_starts(&self.lines);
+        if banners.iter().any(|&b| b >= region.start && b < region.end) {
+            return Err(EditError::NoNeighbour);
+        }
+        let sec = section::find(self).map_err(|e| EditError::EconomyDamaged(e.to_string()))?;
+        if sec.is_some_and(|s| infos[pa].header > s.begin && infos[pa].header < s.end) {
+            return Err(EditError::SectionLocked);
+        }
+        let n = self.lines.len();
+        let ins = match dest {
+            MoveDest::Before(id) => {
+                infos
+                    .iter()
+                    .find(|i| i.id == id)
+                    .ok_or(EditError::UnknownBlock)?
+                    .span
+                    .start
+            }
+            MoveDest::AfterBanner(k) => {
+                let b = section::banners(self);
+                let b = b.get(k).ok_or(EditError::UnknownSection)?;
+                if b.kind == section::BannerKind::Economy {
+                    return Err(EditError::SectionLocked);
+                }
+                let mut at = b.start + 3;
+                while self.lines.get(at).is_some_and(is_blank) {
+                    at += 1;
+                }
+                at
+            }
+            MoveDest::BeforeBanner(k) => *banners.get(k).ok_or(EditError::UnknownSection)?,
+            MoveDest::End => sec.map_or(n, |s| s.begin),
+        };
+        if sec.is_some_and(|s| ins > s.begin) {
+            return Err(EditError::SectionLocked);
+        }
+        if ins >= region.start && ins <= region.end {
+            return Ok(false);
+        }
+
+        let eol = self.last_eol();
+        let mut old = self.lines.clone();
+        let was_unterminated = old[n - 1].eol() == Eol::None;
+        if was_unterminated {
+            old[n - 1] = Line::new(old[n - 1].text().to_string(), eol);
+        }
+        let tail_blanks = |v: &[Line]| v.iter().rev().take_while(|l| is_blank(l)).count();
+        let tb_old = tail_blanks(&old);
+        let mut new: Vec<Line> = Vec::with_capacity(n);
+        let (new_start, region_len) = (
+            if ins >= region.end {
+                ins - (region.end - region.start)
+            } else {
+                ins
+            },
+            region.end - region.start,
+        );
+        if ins < region.start {
+            new.extend_from_slice(&old[..ins]);
+            new.extend_from_slice(&old[region.clone()]);
+            new.extend_from_slice(&old[ins..region.start]);
+            new.extend_from_slice(&old[region.end..]);
+        } else {
+            new.extend_from_slice(&old[..region.start]);
+            new.extend_from_slice(&old[region.end..ins]);
+            new.extend_from_slice(&old[region.clone()]);
+            new.extend_from_slice(&old[ins..]);
+        }
+        // The file's last unit usually has no blank line after it; keep the separators between
+        // units by moving surplus end-of-file blanks next to the moved run.
+        let tb_new = tail_blanks(&new);
+        if tb_new > tb_old {
+            let d = tb_new - tb_old;
+            let cut = new.len() - d;
+            let blanks: Vec<Line> = new.split_off(cut);
+            if region.end == n {
+                let at = new_start + region_len;
+                new.splice(at..at, blanks);
+            } else if ins == n {
+                new.splice(new_start..new_start, blanks);
+            } else {
+                new.extend(blanks);
+            }
+        }
+        if was_unterminated
+            && let Some(l) = new.last_mut()
+            && !l.text().is_empty()
+        {
+            *l = Line::new(l.text().to_string(), Eol::None);
+        }
+
+        let mut ids: Vec<Option<BlockId>> = infos.iter().map(|i| Some(i.id)).collect();
+        let mut expected: Vec<Vec<String>> = infos
+            .iter()
+            .map(|i| self.span_texts(i.span.clone()))
+            .collect();
+        let at = infos
+            .iter()
+            .enumerate()
+            .filter(|(k, i)| (*k < pa || *k > pl) && i.span.start < ins)
+            .count();
+        let moved_ids: Vec<Option<BlockId>> = ids.drain(pa..=pl).collect();
+        let moved_exp: Vec<Vec<String>> = expected.drain(pa..=pl).collect();
+        ids.splice(at..at, moved_ids);
+        expected.splice(at..at, moved_exp);
+        self.commit_structural(new, ids, expected).map(|_| true)
     }
 }
 

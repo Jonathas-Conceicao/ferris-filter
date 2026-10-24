@@ -1160,11 +1160,7 @@ fn draw_style_drag(
         live.drop_rect = Some(table);
     }
     let ppp = ui.ctx().pixels_per_point();
-    ui.painter().rect_filled(
-        src_rect,
-        0.0,
-        egui::Color32::from_rgba_unmultiplied(0x0A, 0x0A, 0x09, 140),
-    );
+    ui.painter().rect_filled(src_rect, 0.0, pal::DRAG_SOURCE);
     // The shadow never takes input. It sits on an opaque ground so the rows under it do not show
     // through its cells.
     let Some(name) = custom.get(src) else {

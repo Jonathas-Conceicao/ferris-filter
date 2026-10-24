@@ -5,6 +5,9 @@ use egui::Color32;
 
 /// Window ground behind everything (and behind the Ferris drawing).
 pub const GROUND: Color32 = Color32::from_rgb(0x0A, 0x0A, 0x09);
+/// The veil over a dragged row's source, in the RULES list and the CONFIG style table alike:
+/// the window ground at about half opacity, so the row stays readable but greyed.
+pub const DRAG_SOURCE: Color32 = Color32::from_rgba_unmultiplied_const(0x0A, 0x0A, 0x09, 140);
 /// The framed content area's ground (the gear-free middle of the Options page frame).
 pub const PANEL: Color32 = Color32::from_rgb(0x0F, 0x0E, 0x0D);
 

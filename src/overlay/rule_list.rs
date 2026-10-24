@@ -1549,8 +1549,7 @@ fn draw_row(
     }
     if dragging_this {
         // The source row stays in place, greyed, while its shadow follows the pointer.
-        ui.painter()
-            .rect_filled(rect, 0.0, pal::GROUND.gamma_multiply(0.55));
+        ui.painter().rect_filled(rect, 0.0, pal::DRAG_SOURCE);
     }
     if row_resp.clicked() {
         list.expanded = if is_expanded { None } else { Some(row.id) };

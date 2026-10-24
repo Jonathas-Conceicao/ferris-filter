@@ -1,7 +1,7 @@
 //! The show / hide hotkey (configurable, default `Ctrl+Shift+Z`): registration through the
 //! [`HotkeyRegistrar`] seam, the live [`HotkeyRuntime`] the overlay keeps (start-up fallback,
 //! register-new-before-unregister-old swap at Apply, release at Quit), and a status value a
-//! caller can surface without a console (D-09, D-10).
+//! caller can surface without a console.
 //!
 //! Thread affinity: `GlobalHotKeyManager::new()` creates a hidden window on the calling thread,
 //! and Windows refuses `RegisterHotKey` for a window created by another thread. Start-up

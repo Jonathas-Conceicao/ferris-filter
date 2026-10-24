@@ -111,7 +111,7 @@ pub struct ConfigState {
     /// The show / hide hotkey picked on the CONFIG tab and not yet applied; `None` = no edit.
     /// Not a baseline compare: the live chord belongs to the hotkey runtime. A reload of this
     /// state (a changed `styles.json` / `tiers.json`) carries the edit over through
-    /// [`ConfigState::reloaded`], since the chord lives in neither file (review WR-04). Apply
+    /// [`ConfigState::reloaded`], since the chord lives in neither file. Apply
     /// writes it into `ff-settings.json` (never styles/tiers), so it is not part of `styles_dirty`.
     hotkey_pending: Option<Chord>,
 }
@@ -512,7 +512,7 @@ impl ConfigState {
     }
 
     /// A fresh load of the config files from `root` that keeps the pending hotkey edit of
-    /// `previous` (review WR-04): the chord is saved in `ff-settings.json`, not in `styles.json`
+    /// `previous`: the chord is saved in `ff-settings.json`, not in `styles.json`
     /// or `tiers.json`, so re-reading those must not drop it.
     pub fn reloaded(root: &Path, previous: &Result<ConfigState, String>) -> Result<Self, String> {
         let pending = previous.as_ref().ok().and_then(ConfigState::hotkey_pending);

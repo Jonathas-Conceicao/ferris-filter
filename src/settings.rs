@@ -181,7 +181,7 @@ impl Settings {
 /// The warning for a `hotkey` value that cannot be used.
 const BAD_HOTKEY: &str = "`hotkey` is not a usable key combination, so Ctrl+Shift+Z is used";
 
-/// A load warning re-worded for a RELOAD, which never re-registers the hotkey (review WR-06):
+/// A load warning re-worded for a RELOAD, which never re-registers the hotkey:
 /// the `hotkey` sentence names the chord that really stays live (`live`, `None` when none is
 /// registered) instead of claiming Ctrl+Shift+Z is used. Other warnings pass through unchanged.
 pub fn reload_hotkey_warning(warning: String, live: Option<Chord>) -> String {

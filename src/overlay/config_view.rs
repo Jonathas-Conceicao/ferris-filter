@@ -1005,7 +1005,7 @@ fn show_styles(
             drag_reorder::AUTOSCROLL_MAX,
         );
         // egui's scroll area ignores the wheel during a drag, so forward it, and scroll at the
-        // edges (49-01 spike).
+        // edges.
         ui.scroll_with_delta_animation(
             vec2(0.0, wheel - auto * dt),
             egui::style::ScrollAnimation::none(),

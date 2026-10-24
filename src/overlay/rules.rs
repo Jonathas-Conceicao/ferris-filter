@@ -4056,7 +4056,7 @@ Show
         assert!(!wf.apply_action(RowAction::Move(after, Dir::Up)).changed);
     }
 
-    // -- Auto Detect batch model (Phase 44) --------------------------------------------------
+    // -- Auto Detect batch model -------------------------------------------------------------
 
     const DET_GROUP: &str = "# ff:group abc 1/3\nShow\n  Rarity Rare\n  BaseArmour > 0\n  BaseEvasion 0\n  BaseEnergyShield 0\n  SetFontSize 30\n\n# ff:group abc 2/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion > 0\n  BaseEnergyShield 0\n  SetFontSize 30\n\n# ff:group abc 3/3\nShow\n  Rarity Rare\n  BaseArmour 0\n  BaseEvasion 0\n  BaseEnergyShield > 0\n  SetFontSize 30\n";
 
@@ -4159,7 +4159,7 @@ Show
         assert_eq!(wf.tag_styles(&[]), 0);
     }
 
-    // -- MoveTo (Phase 49) ---------------------------------------------------------------------
+    // -- MoveTo --------------------------------------------------------------------------------
 
     fn abcd_continue() -> String {
         "Show\n  Class \"A\"\n\nShow\n  Class \"B\"\n  Continue\n\nShow\n  Class \"C\"\n\nShow\n  Class \"D\"\n"

@@ -262,11 +262,11 @@ mod tests {
     }
 }
 
-/// Spike tests (phase 49, plan 01): headless egui experiments that settle how the list scrolls
-/// while a handle is being dragged and how the drag shadow is drawn. Results are recorded in
-/// `49-01-SUMMARY.md`.
+/// Headless egui tests of the behaviour the drag code relies on: how the list scrolls while a
+/// handle is being dragged and how the drag shadow is drawn. They catch an egui upgrade that
+/// changes any of it.
 #[cfg(test)]
-mod spike {
+mod egui_behaviour {
     use egui::style::ScrollAnimation;
     use egui::{
         Area, Context, Event, Id, Key, Modifiers, MouseWheelUnit, Order, PointerButton, Pos2,
@@ -507,7 +507,7 @@ mod spike {
     }
 
     #[test]
-    fn s1a_wheel_is_ignored_by_scroll_area_during_a_drag() {
+    fn wheel_is_ignored_by_scroll_area_during_a_drag() {
         let (mut rig, s) = start_drag(BASE);
         assert!(s.dragged_id.is_some(), "the drag must be active");
         let mut last = s;
@@ -521,7 +521,7 @@ mod spike {
     }
 
     #[test]
-    fn s1b_forwarded_wheel_scrolls_during_a_drag() {
+    fn forwarded_wheel_scrolls_during_a_drag() {
         let o = Opts {
             forward_wheel: true,
             ..BASE
@@ -540,7 +540,7 @@ mod spike {
     }
 
     #[test]
-    fn s1c_edge_autoscroll_moves_about_speed_times_dt() {
+    fn edge_autoscroll_moves_about_speed_times_dt() {
         let o = Opts {
             autoscroll: true,
             ..BASE
@@ -567,7 +567,7 @@ mod spike {
     }
 
     #[test]
-    fn s2_drag_survives_virtualization_and_id_changes() {
+    fn drag_survives_virtualization_and_id_changes() {
         let o = Opts {
             autoscroll: true,
             ..BASE
@@ -606,7 +606,7 @@ mod spike {
     }
 
     #[test]
-    fn s3_tap_starts_no_drag_and_does_not_click_the_row() {
+    fn tap_starts_no_drag_and_does_not_click_the_row() {
         let mut rig = Rig::new();
         rig.frame(vec![], BASE);
         rig.frame(press(handle3()), BASE);
@@ -631,7 +631,7 @@ mod spike {
     }
 
     #[test]
-    fn s3_escape_aborts_the_drag_without_a_release() {
+    fn escape_aborts_the_drag_without_a_release() {
         let (mut rig, s) = start_drag(BASE);
         let captured = s.dragged_id.expect("dragging");
         let s = rig.frame(escape(), BASE);
@@ -692,7 +692,7 @@ mod spike {
     }
 
     #[test]
-    fn s4_shadow_area_does_not_steal_hits_and_is_about_60_percent() {
+    fn shadow_area_does_not_steal_hits_and_is_about_60_percent() {
         let (clicked, alpha) = shadow_probe();
         assert!(
             clicked,
@@ -706,7 +706,7 @@ mod spike {
     }
 
     #[test]
-    fn s5_plain_scroll_area_scrolls_with_forwarded_wheel() {
+    fn plain_scroll_area_scrolls_with_forwarded_wheel() {
         let o = Opts {
             virtualized: false,
             forward_wheel: true,

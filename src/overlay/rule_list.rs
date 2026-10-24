@@ -96,8 +96,8 @@ pub struct ListUi {
 
 /// A list-level drag of a rule row. `handle` is the egui id captured at `drag_started`: the row's
 /// id scope includes [`ListUi::epoch`], which changes when the expanded row collapses, so the
-/// handle's own id is not stable but the captured one is what egui keeps dragging (research
-/// Pitfall 2). `injected` is a pointer position set only by the debug screenshot mode (None
+/// handle's own id is not stable but the captured one is what egui keeps dragging.
+/// `injected` is a pointer position set only by the debug screenshot mode (None
 /// otherwise); when set the egui drag checks are skipped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DragState {
@@ -640,7 +640,7 @@ pub fn show_list(
                 drag_reorder::AUTOSCROLL_MAX,
             );
             // egui's scroll area ignores the wheel during a drag, so forward it, and scroll at
-            // the edges (49-01 spike).
+            // the edges.
             ui.scroll_with_delta_animation(
                 vec2(0.0, wheel - auto * dt),
                 egui::style::ScrollAnimation::none(),
@@ -1346,7 +1346,7 @@ fn draw_row(
     let handle = ff_drag_handle(&mut right, skin, reorder_enabled, dragging_this);
     if handle.drag_started() && reorder_enabled && list.drag.is_none() {
         // Every expanded row collapses at drag start (not only the dragged one): the row heights
-        // are then all ROW_H and no inner scroll area can take the scroll delta (Pitfall 8).
+        // are then all ROW_H and no inner scroll area can take the scroll delta.
         list.drag = Some(DragState {
             src: row.id,
             handle: handle.id,
@@ -3648,7 +3648,7 @@ Show
         assert!(matches!(entries[1], ListEntry::Rule(1)));
     }
 
-    // ---- drag and drop (phase 49) ----
+    // ---- drag and drop ----
 
     const LIST_H: f32 = 600.0;
 

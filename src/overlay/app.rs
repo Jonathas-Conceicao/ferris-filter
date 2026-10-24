@@ -544,7 +544,7 @@ impl AllResult {
     }
 
     /// The Apply saved a hotkey edit and nothing the filter depends on changed: no filter bytes,
-    /// no `styles.json`, no `tiers.json`. Such an Apply skips the in-game reload (review WR-03),
+    /// no `styles.json`, no `tiers.json`. Such an Apply skips the in-game reload,
     /// since the game would reload the very same filter.
     fn hotkey_only(&self) -> bool {
         self.hotkey_saved.is_some()
@@ -593,7 +593,7 @@ fn reload_changed_files(
         .iter()
         .any(|f| matches!(f, DiskFile::Styles | DiskFile::Tiers))
     {
-        // The pending hotkey edit is not in either file, so it survives (review WR-04).
+        // The pending hotkey edit is not in either file, so it survives.
         *config = ConfigState::reloaded(root, config);
     }
     if let Some(w) = working {
@@ -2243,8 +2243,8 @@ impl OverlayApp {
         }
         let prefix = apply::config_saved_prefix(styles_written, tiers_written);
         match applied_path {
-            // A hotkey edit alone changed nothing in the filter: no in-game reload (review
-            // WR-03), so nothing steals focus or types into chat.
+            // A hotkey edit alone changed nothing in the filter: no in-game reload, so
+            // nothing steals focus or types into chat.
             Some(_) if hotkey_only => {
                 self.apply_message = applied_message(extras.trim_start().to_string());
             }
@@ -2878,7 +2878,7 @@ impl OverlayApp {
     }
 
     /// With no live chord, nothing pending, and a registrar: picking the shown chord makes it
-    /// pending so Apply retries the registration (review iteration 3, WR-01). Reset stays live
+    /// pending so Apply retries the registration. Reset stays live
     /// for the same reason.
     fn hotkey_retry_possible(&self) -> bool {
         self.no_live_chord() && self.hotkey.can_register()
@@ -2887,7 +2887,7 @@ impl OverlayApp {
     /// The saved `hotkey` is not the chord the overlay uses: invalid, or valid but different
     /// from the registered chord (a start-up fallback). With nothing registered it is compared
     /// with the shown chord instead, so a saved chord that merely failed to register (taken by
-    /// another app, or no hotkey service) is not stale (review iteration 4, WR-01). Reset stays
+    /// another app, or no hotkey service) is not stale. Reset stays
     /// live while stale, so the default can be saved explicitly.
     fn saved_hotkey_stale(&self) -> bool {
         let target = self.hotkey.live().unwrap_or(self.hotkey.shown());
@@ -2902,13 +2902,13 @@ impl OverlayApp {
     /// applied chord). A real change is a CONFIG edit, so the last Apply message goes.
     ///
     /// With no live chord, picking the chord that is already pending drops the edit, whatever
-    /// the saved value (review iteration 4, WR-01): Apply refuses it while the chord cannot be
+    /// the saved value: Apply refuses it while the chord cannot be
     /// registered, and the Config Revert would also discard the style edits.
     ///
     /// With no live chord (and no stale saved value), picking the chord the button shows drops a
-    /// pending edit when there is one (review WR-07). With nothing pending it makes that chord
+    /// pending edit when there is one. With nothing pending it makes that chord
     /// pending so Apply retries the registration, when a registrar exists; with no hotkey
-    /// service it stays clear (review iteration 3, WR-01).
+    /// service it stays clear.
     fn pick_hotkey(&mut self, chord: Chord) {
         let base = self.hotkey_base();
         let nothing_live = self.hotkey.live().is_none();
@@ -3057,7 +3057,7 @@ impl OverlayApp {
         let default = super::chord::DEFAULT;
         // A stale saved chord keeps Reset live until the default is pending, so it can be saved.
         // With no chord registered (the default failed at start-up) Reset stays live while
-        // nothing is pending, so Apply can retry the registration (review iteration 3, WR-01).
+        // nothing is pending, so Apply can retry the registration.
         let reset_enabled = chord != default
             || (self.saved_hotkey_stale() && pending != Some(default))
             || (self.hotkey_retry_possible() && pending.is_none());
@@ -3083,7 +3083,7 @@ impl OverlayApp {
     /// The Phase 22 release order: give up what a new instance must own (the hotkey, then the
     /// tray icon) before the name it races for. If the name went first, a relaunch could win it
     /// while the show / hide hotkey was still registered here, fail to register it, and run with
-    /// no hotkey (review iteration 3, WR-01). The caller then sets `quit_requested` for the single
+    /// no hotkey. The caller then sets `quit_requested` for the single
     /// deferred viewport Close.
     fn begin_shutdown(&mut self) {
         self.hotkey.release();
@@ -7101,7 +7101,7 @@ Hide
         }
     }
 
-    // ---- Auto Detect (Phase 44-03) ----
+    // ---- Auto Detect ----
 
     const BAN: &str =
         "################################################################################";
@@ -8967,7 +8967,7 @@ Hide
         assert_eq!(s.open_tab, Some(ShellTab::Config));
     }
 
-    // ---- the show / hide hotkey (Phase 47-03) ----
+    // ---- the show / hide hotkey ----
 
     #[test]
     fn startup_hotkey_warning_joins_the_settings_warning() {
@@ -9020,8 +9020,8 @@ Hide
     fn the_header_close_tooltip_and_base_follow_the_live_chord() {
         let (mut app, _ctx, _home, _game) = folder_app(None, &[]);
         assert_eq!(app.hotkey.shown(), crate::overlay::chord::DEFAULT);
-        // An inert runtime has no live chord: capturing the shown chord again drops the edit
-        // (WR-07), and with no hotkey service it never becomes pending on its own.
+        // An inert runtime has no live chord: capturing the shown chord again drops the edit,
+        // and with no hotkey service it never becomes pending on its own.
         assert_eq!(app.hotkey_base(), None);
         app.pick_hotkey(CTRL_ALT_K);
         assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
@@ -9043,7 +9043,7 @@ Hide
         assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
     }
 
-    // ---- the hotkey swap inside the one Apply (Phase 47-03) ----
+    // ---- the hotkey swap inside the one Apply ----
 
     type HotkeyLog = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
 
@@ -9109,7 +9109,7 @@ Hide
         );
         assert_eq!(r.hotkey_saved, Some(CTRL_ALT_K));
         assert_eq!(rig.config.hotkey_pending(), None);
-        // Nothing the filter depends on changed: run_apply skips the in-game reload (WR-03).
+        // Nothing the filter depends on changed: run_apply skips the in-game reload.
         assert!(!r.filter_written);
         assert!(r.hotkey_only());
     }
@@ -9316,7 +9316,7 @@ Hide
         assert!(!app.quit_tier_edits_only);
     }
 
-    // ---- hotkey capture on the CONFIG tab (Phase 47-04) ----
+    // ---- hotkey capture on the CONFIG tab ----
 
     const CTRL_ALT: egui::Modifiers = egui::Modifiers {
         alt: true,
@@ -9715,7 +9715,7 @@ Hide
                 .unwrap()
                 .reset_enabled
         );
-        // Capturing the shown chord again drops that edit (WR-07) ...
+        // Capturing the shown chord again drops that edit ...
         app.pick_hotkey(default);
         assert_eq!(pending_hotkey(&app), None);
         // ... and a pending other chord is dropped the same way.

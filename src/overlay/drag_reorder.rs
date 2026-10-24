@@ -4,6 +4,242 @@
 //! plain arithmetic so every rule of the old arrows (economy boundary, banners, collapsed headers,
 //! built-ins first) is testable without a window.
 
+/// Distance from the viewport's top / bottom edge (pt) inside which a drag auto-scrolls.
+pub const EDGE_ZONE: f32 = 40.0;
+/// Auto-scroll speed at the very edge (pt/s); linear down to 0 at [`EDGE_ZONE`].
+pub const AUTOSCROLL_MAX: f32 = 900.0;
+/// Thickness of the gold drop marker line (pt).
+pub const MARKER_THICKNESS: f32 = 2.0;
+
+/// List-agnostic copy of what one visible rule-list entry is. `ordinal` is the section's banner
+/// ordinal (the one `RowAction::RenameSection` and friends use).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotEntry {
+    /// A user rule row (a whole `# ff:group` run is one entry).
+    Rule(usize),
+    /// A user section header.
+    UserHeader { ordinal: usize, collapsed: bool },
+    /// The locked economy section header.
+    EconomyHeader,
+    /// A read-only economy rule row.
+    EconomyRule,
+}
+
+/// Where a dropped rule lands, in document terms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotTarget {
+    /// Directly above rule entry `i`.
+    BeforeRule(usize),
+    /// First rule of the section whose banner has this ordinal.
+    AfterBanner(usize),
+    /// End of the section above the banner with this ordinal (the preamble for the first banner).
+    BeforeBanner(usize),
+    /// Just above the economy banner, else the end of the file.
+    End,
+}
+
+/// Nearest boundary of `offsets` (content-space row tops, `n + 1` of them) to `y` among the
+/// boundaries `valid` accepts. `None` when none is valid. Never panics on NaN.
+pub fn nearest_slot(offsets: &[f32], y: f32, valid: impl Fn(usize) -> bool) -> Option<usize> {
+    offsets
+        .iter()
+        .enumerate()
+        .filter(|(b, _)| valid(*b))
+        .min_by(|(_, a), (_, c)| (y - **a).abs().total_cmp(&(y - **c).abs()))
+        .map(|(b, _)| b)
+}
+
+/// Signed auto-scroll speed in pt/s (negative = up, positive = down): 0 farther than `zone` from
+/// both edges, linear up to `max` at the edge, clamped beyond it. In a viewport shorter than
+/// `2 * zone` the bands overlap and the nearer edge wins.
+pub fn autoscroll_speed(y: f32, top: f32, bottom: f32, zone: f32, max: f32) -> f32 {
+    if zone <= 0.0 {
+        return 0.0;
+    }
+    let up = ((top + zone - y) / zone).clamp(0.0, 1.0);
+    let down = ((y - (bottom - zone)) / zone).clamp(0.0, 1.0);
+    if up > 0.0 && down > 0.0 {
+        return if y - top <= bottom - y {
+            -up * max
+        } else {
+            down * max
+        };
+    }
+    (down - up) * max
+}
+
+/// Top of the drag shadow: centred on the pointer, clamped to `[top, bottom - h]` (`top` when the
+/// viewport is shorter than the row).
+pub fn shadow_top(pointer_y: f32, h: f32, top: f32, bottom: f32) -> f32 {
+    (pointer_y - h / 2.0).clamp(top, (bottom - h).max(top))
+}
+
+/// What dropping on boundary `b` (between `entries[b - 1]` and `entries[b]`, `0..=len`) means.
+/// The first matching rule wins:
+/// 1. the entry above is the economy header or an economy rule: `None` (in or below economy);
+/// 2. the entry above is a user header, collapsed or not: `AfterBanner` (a drop on a collapsed
+///    header makes the rule that section's first rule, and the section stays collapsed; this also
+///    claims the boundary above the next header, which is geometrically the same place);
+/// 3. the entry below is a rule: `BeforeRule`;
+/// 4. the entry below is a user header: `BeforeBanner`;
+/// 5. the entry below is the economy header or the list ends: `End`.
+pub fn slot_target(entries: &[SlotEntry], b: usize) -> Option<SlotTarget> {
+    if b > entries.len() {
+        return None;
+    }
+    if b > 0 {
+        match entries[b - 1] {
+            SlotEntry::EconomyHeader | SlotEntry::EconomyRule => return None,
+            SlotEntry::UserHeader { ordinal, .. } => return Some(SlotTarget::AfterBanner(ordinal)),
+            SlotEntry::Rule(_) => {}
+        }
+    }
+    match entries.get(b) {
+        Some(SlotEntry::Rule(i)) => Some(SlotTarget::BeforeRule(*i)),
+        Some(SlotEntry::UserHeader { ordinal, .. }) => Some(SlotTarget::BeforeBanner(*ordinal)),
+        Some(SlotEntry::EconomyHeader) | None => Some(SlotTarget::End),
+        Some(SlotEntry::EconomyRule) => None,
+    }
+}
+
+/// True when dropping the rule at entry index `src` on boundary `b` changes nothing: `b == src`
+/// (just above it) and `b == src + 1` (just below it), which also covers a `BeforeBanner` / `End`
+/// target directly after the last rule of its section. A non-rule `src` is always a no-op.
+pub fn is_noop(entries: &[SlotEntry], src: usize, b: usize) -> bool {
+    !matches!(entries.get(src), Some(SlotEntry::Rule(_))) || b == src || b == src + 1
+}
+
+/// Nearest gap `0..=n` among the custom style rows. `bounds` holds the custom rows' tops plus the
+/// last custom row's bottom (`n + 1` values); empty bounds give gap 0.
+pub fn style_gap_for_y(bounds: &[f32], y: f32) -> usize {
+    nearest_slot(bounds, y, |_| true).unwrap_or(0)
+}
+
+/// Dropping custom style `src` on gap `gap` changes nothing (the gap above or below it).
+pub fn style_noop(src: usize, gap: usize) -> bool {
+    gap == src || gap == src + 1
+}
+
+/// Final position (among the custom styles) of style `src` dropped on `gap`: the gaps below the
+/// source shift up by one once it is taken out.
+pub fn style_gap_to_index(src: usize, gap: usize) -> usize {
+    if gap > src { gap - 1 } else { gap }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use SlotEntry::*;
+
+    fn user(ordinal: usize, collapsed: bool) -> SlotEntry {
+        UserHeader { ordinal, collapsed }
+    }
+
+    #[test]
+    fn nearest_slot_picks_closest_valid_boundary() {
+        let o = [0., 52., 104., 156.];
+        assert_eq!(nearest_slot(&o, 60.0, |_| true), Some(1));
+        assert_eq!(nearest_slot(&o, 60.0, |b| b != 1), Some(2));
+        assert_eq!(nearest_slot(&o, 60.0, |_| false), None);
+        assert!(nearest_slot(&o, f32::NAN, |_| true).is_some());
+    }
+
+    #[test]
+    fn autoscroll_speed_ramps_and_clamps() {
+        let s = |y| autoscroll_speed(y, 0.0, 600.0, EDGE_ZONE, AUTOSCROLL_MAX);
+        assert_eq!(s(300.0), 0.0);
+        assert_eq!(s(40.0), 0.0);
+        assert_eq!(s(560.0), 0.0);
+        assert_eq!(s(0.0), -900.0);
+        assert_eq!(s(600.0), 900.0);
+        assert_eq!(s(580.0), 450.0);
+        assert_eq!(s(20.0), -450.0);
+        assert_eq!(s(-50.0), -900.0);
+        assert_eq!(s(700.0), 900.0);
+    }
+
+    #[test]
+    fn autoscroll_in_a_short_viewport_prefers_the_nearer_edge() {
+        let s = |y| autoscroll_speed(y, 0.0, 60.0, EDGE_ZONE, AUTOSCROLL_MAX);
+        assert!(s(10.0) < 0.0);
+        assert!(s(50.0) > 0.0);
+    }
+
+    #[test]
+    fn shadow_top_centres_and_clamps() {
+        assert_eq!(shadow_top(300.0, 52.0, 0.0, 600.0), 274.0);
+        assert_eq!(shadow_top(5.0, 52.0, 0.0, 600.0), 0.0);
+        assert_eq!(shadow_top(599.0, 52.0, 0.0, 600.0), 548.0);
+        assert_eq!(shadow_top(30.0, 52.0, 10.0, 40.0), 10.0);
+    }
+
+    #[test]
+    fn slot_target_follows_the_table() {
+        // 0 R0, 1 H0, 2 R1, 3 R2, 4 H1 (collapsed), 5 H2 (collapsed), 6 Econ, 7 E
+        let e = [
+            Rule(0),
+            user(0, false),
+            Rule(1),
+            Rule(2),
+            user(1, true),
+            user(2, true),
+            EconomyHeader,
+            EconomyRule,
+        ];
+        assert_eq!(slot_target(&e, 0), Some(SlotTarget::BeforeRule(0)));
+        assert_eq!(slot_target(&e, 1), Some(SlotTarget::BeforeBanner(0)));
+        assert_eq!(slot_target(&e, 2), Some(SlotTarget::AfterBanner(0)));
+        assert_eq!(slot_target(&e, 3), Some(SlotTarget::BeforeRule(2)));
+        assert_eq!(slot_target(&e, 4), Some(SlotTarget::BeforeBanner(1)));
+        assert_eq!(slot_target(&e, 99), None);
+    }
+
+    #[test]
+    fn collapsed_header_followed_by_header_yields_after_banner_of_the_collapsed_one() {
+        let e = [user(1, true), user(2, true), EconomyHeader];
+        assert_eq!(slot_target(&e, 1), Some(SlotTarget::AfterBanner(1)));
+        assert_eq!(slot_target(&e, 2), Some(SlotTarget::AfterBanner(2)));
+    }
+
+    #[test]
+    fn economy_boundary_is_never_a_slot_and_end_sits_above_it() {
+        let e = [Rule(0), EconomyHeader, EconomyRule, EconomyRule];
+        assert_eq!(slot_target(&e, 1), Some(SlotTarget::End));
+        assert_eq!(slot_target(&e, 2), None);
+        assert_eq!(slot_target(&e, 3), None);
+        assert_eq!(slot_target(&e, 4), None);
+        // No economy section: the end of the list is the end of the file.
+        let f = [Rule(0), Rule(1)];
+        assert_eq!(slot_target(&f, 2), Some(SlotTarget::End));
+        assert_eq!(slot_target(&[], 0), Some(SlotTarget::End));
+    }
+
+    #[test]
+    fn noop_covers_the_gaps_around_the_source() {
+        let e = [Rule(0), Rule(1), user(0, false), Rule(2), EconomyHeader];
+        assert!(is_noop(&e, 1, 1));
+        assert!(is_noop(&e, 1, 2)); // BeforeBanner right below the last rule of its section
+        assert!(!is_noop(&e, 1, 0));
+        assert!(!is_noop(&e, 1, 3));
+        assert!(is_noop(&e, 3, 4)); // End right below the last rule
+        assert!(is_noop(&e, 2, 0)); // a header is not a rule: nothing to move
+    }
+
+    #[test]
+    fn style_gaps() {
+        let bounds = [100.0, 150.0, 200.0, 250.0];
+        assert_eq!(style_gap_for_y(&bounds, 90.0), 0);
+        assert_eq!(style_gap_for_y(&bounds, 160.0), 1);
+        assert_eq!(style_gap_for_y(&bounds, 900.0), 3);
+        assert_eq!(style_gap_for_y(&[], 10.0), 0);
+        assert!(style_noop(1, 1) && style_noop(1, 2));
+        assert!(!style_noop(1, 0) && !style_noop(1, 3));
+        assert_eq!(style_gap_to_index(0, 3), 2);
+        assert_eq!(style_gap_to_index(2, 0), 0);
+        assert_eq!(style_gap_to_index(1, 1), 1);
+    }
+}
+
 /// Spike tests (phase 49, plan 01): headless egui experiments that settle how the list scrolls
 /// while a handle is being dragged and how the drag shadow is drawn. Results are recorded in
 /// `49-01-SUMMARY.md`.
@@ -67,7 +303,10 @@ mod spike {
         fn frame(&mut self, events: Vec<Event>, o: Opts) -> Seen {
             self.time += DT as f64;
             let raw = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(VIEW_W, VIEW_H + 100.0))),
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    vec2(VIEW_W, VIEW_H + 100.0),
+                )),
                 time: Some(self.time),
                 predicted_dt: DT,
                 events,
@@ -87,11 +326,7 @@ mod spike {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
                 let ui = &mut child;
                 let row = |ui: &mut egui::Ui, i: usize, rect: Rect, seen: &mut Seen| {
-                    let row_resp = ui.interact(
-                        rect,
-                        Id::new(("row", o.salt, i)),
-                        Sense::click(),
-                    );
+                    let row_resp = ui.interact(rect, Id::new(("row", o.salt, i)), Sense::click());
                     let handle = Rect::from_min_size(
                         pos2(rect.right() - 60.0, rect.top() + 12.0),
                         Vec2::splat(28.0),
@@ -113,10 +348,20 @@ mod spike {
                     if ui.ctx().dragged_id().is_none() {
                         return;
                     }
-                    let wheel = if o.forward_wheel { ui.input(|i| i.smooth_scroll_delta.y) } else { 0.0 };
+                    let wheel = if o.forward_wheel {
+                        ui.input(|i| i.smooth_scroll_delta.y)
+                    } else {
+                        0.0
+                    };
                     let auto = if o.autoscroll {
                         let y = ui.input(|i| i.pointer.latest_pos()).map_or(0.0, |p| p.y);
-                        auto_speed(y, top, bottom)
+                        super::autoscroll_speed(
+                            y,
+                            top,
+                            bottom,
+                            super::EDGE_ZONE,
+                            super::AUTOSCROLL_MAX,
+                        )
                     } else {
                         0.0
                     };
@@ -126,14 +371,13 @@ mod spike {
                     );
                 };
                 if o.virtualized {
-                    ScrollArea::vertical().auto_shrink([false, false]).show_viewport(
-                        ui,
-                        |ui, viewport| {
+                    ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show_viewport(ui, |ui, viewport| {
                             seen.offset = viewport.min.y;
                             let origin = ui.max_rect().min.y;
                             ui.set_height(ROWS as f32 * ROW_H);
-                            let offsets: Vec<f32> =
-                                (0..=ROWS).map(|i| i as f32 * ROW_H).collect();
+                            let offsets: Vec<f32> = (0..=ROWS).map(|i| i as f32 * ROW_H).collect();
                             let vis = crate::overlay::virtual_list::visible_range(
                                 &offsets,
                                 viewport.min.y,
@@ -148,33 +392,28 @@ mod spike {
                                 row(ui, i, rect, &mut seen);
                             }
                             forward(ui, 0.0, VIEW_H);
-                        },
-                    );
+                        });
                 } else {
-                    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        for i in 0..ROWS {
-                            let (rect, _) =
-                                ui.allocate_exact_size(vec2(VIEW_W - 20.0, ROW_H), Sense::hover());
-                            if i == 0 {
-                                seen.offset = -rect.top();
+                    ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for i in 0..ROWS {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    vec2(VIEW_W - 20.0, ROW_H),
+                                    Sense::hover(),
+                                );
+                                if i == 0 {
+                                    seen.offset = -rect.top();
+                                }
+                                row(ui, i, rect, &mut seen);
                             }
-                            row(ui, i, rect, &mut seen);
-                        }
-                        forward(ui, 0.0, VIEW_H);
-                    });
+                            forward(ui, 0.0, VIEW_H);
+                        });
                 }
             })
             .drop_without_applying_deltas();
             seen
         }
-    }
-
-    /// Inline auto-scroll speed (signed pt/s, positive = down) until `autoscroll_speed` lands.
-    fn auto_speed(y: f32, top: f32, bottom: f32) -> f32 {
-        let zone = 40.0;
-        let up = ((top + zone - y) / zone).clamp(0.0, 1.0);
-        let down = ((y - (bottom - zone)) / zone).clamp(0.0, 1.0);
-        (down - up) * 900.0
     }
 
     fn press(pos: Pos2) -> Vec<Event> {
@@ -217,7 +456,12 @@ mod spike {
         }]
     }
 
-    const BASE: Opts = Opts { virtualized: true, forward_wheel: false, autoscroll: false, salt: 0 };
+    const BASE: Opts = Opts {
+        virtualized: true,
+        forward_wheel: false,
+        autoscroll: false,
+        salt: 0,
+    };
 
     /// Row 3's handle centre on screen at scroll offset 0.
     fn handle3() -> Pos2 {
@@ -248,34 +492,50 @@ mod spike {
         for _ in 0..6 {
             last = rig.frame(wheel(-60.0), BASE);
         }
-        assert_eq!(last.offset, 0.0, "egui gates the wheel off while a widget is dragged");
+        assert_eq!(
+            last.offset, 0.0,
+            "egui gates the wheel off while a widget is dragged"
+        );
     }
 
     #[test]
     fn s1b_forwarded_wheel_scrolls_during_a_drag() {
-        let o = Opts { forward_wheel: true, ..BASE };
+        let o = Opts {
+            forward_wheel: true,
+            ..BASE
+        };
         let (mut rig, s) = start_drag(o);
         assert!(s.dragged_id.is_some());
         let mut last = s;
         for _ in 0..8 {
             last = rig.frame(wheel(-60.0), o);
         }
-        assert!(last.offset > 50.0, "forwarded wheel must scroll, offset {}", last.offset);
+        assert!(
+            last.offset > 50.0,
+            "forwarded wheel must scroll, offset {}",
+            last.offset
+        );
     }
 
     #[test]
     fn s1c_edge_autoscroll_moves_about_speed_times_dt() {
-        let o = Opts { autoscroll: true, ..BASE };
+        let o = Opts {
+            autoscroll: true,
+            ..BASE
+        };
         let (mut rig, s) = start_drag(o);
         assert!(s.dragged_id.is_some());
         let y = VIEW_H - 5.0;
-        let before = rig.frame(vec![Event::PointerMoved(pos2(300.0, y))], o).offset;
+        let before = rig
+            .frame(vec![Event::PointerMoved(pos2(300.0, y))], o)
+            .offset;
         let n = 20;
         let mut last = before;
         for _ in 0..n {
             last = rig.frame(vec![], o).offset;
         }
-        let speed = auto_speed(y, 0.0, VIEW_H);
+        let speed =
+            super::autoscroll_speed(y, 0.0, VIEW_H, super::EDGE_ZONE, super::AUTOSCROLL_MAX);
         let expected = speed * DT * n as f32;
         let got = last - before;
         assert!(
@@ -286,7 +546,10 @@ mod spike {
 
     #[test]
     fn s2_drag_survives_virtualization_and_id_changes() {
-        let o = Opts { autoscroll: true, ..BASE };
+        let o = Opts {
+            autoscroll: true,
+            ..BASE
+        };
         let (mut rig, s) = start_drag(o);
         let captured = s.handle3_id.expect("row 3 drawn");
         assert_eq!(s.dragged_id, Some(captured));
@@ -314,7 +577,10 @@ mod spike {
                 assert!(s.primary_released);
             }
         }
-        assert_eq!(stops, 1, "drag_stopped_id must report the captured id exactly once");
+        assert_eq!(
+            stops, 1,
+            "drag_stopped_id must report the captured id exactly once"
+        );
     }
 
     #[test]
@@ -332,8 +598,14 @@ mod spike {
             handle_clicked |= s.handle3_clicked;
         }
         assert!(!any_drag, "a tap must not start a drag");
-        assert!(!any_row_click, "a tap on the handle must not reach the row's click");
-        assert!(handle_clicked, "the handle owns the click (ignored by the list)");
+        assert!(
+            !any_row_click,
+            "a tap on the handle must not reach the row's click"
+        );
+        assert!(
+            handle_clicked,
+            "the handle owns the click (ignored by the list)"
+        );
     }
 
     #[test]
@@ -344,7 +616,10 @@ mod spike {
         assert_eq!(s.dragged_id, None);
         assert_eq!(s.drag_stopped_id, Some(captured));
         assert!(!s.primary_released);
-        assert!(!s.escape_after_consume, "consume_key hides Escape from later widgets");
+        assert!(
+            !s.escape_after_consume,
+            "consume_key hides Escape from later widgets"
+        );
     }
 
     /// S4: a disabled, 60% opaque Area on `Order::Tooltip` neither steals clicks nor paints
@@ -357,12 +632,7 @@ mod spike {
         let mut clicked = false;
         let mut alpha = None;
         let mut t = 0.0;
-        let frames: Vec<Vec<Event>> = vec![
-            vec![],
-            press(click_at),
-            release(click_at),
-            vec![],
-        ];
+        let frames: Vec<Vec<Event>> = vec![vec![], press(click_at), release(click_at), vec![]];
         for ev in frames {
             t += DT as f64;
             let raw = RawInput {
@@ -402,7 +672,10 @@ mod spike {
     #[test]
     fn s4_shadow_area_does_not_steal_hits_and_is_about_60_percent() {
         let (clicked, alpha) = shadow_probe();
-        assert!(clicked, "a click on the shadow region must reach the widget underneath");
+        assert!(
+            clicked,
+            "a click on the shadow region must reach the widget underneath"
+        );
         let a = alpha.expect("a translucent white fill was emitted");
         assert!(
             (i32::from(a) - 153).abs() <= 3,
@@ -412,7 +685,11 @@ mod spike {
 
     #[test]
     fn s5_plain_scroll_area_scrolls_with_forwarded_wheel() {
-        let o = Opts { virtualized: false, forward_wheel: true, ..BASE };
+        let o = Opts {
+            virtualized: false,
+            forward_wheel: true,
+            ..BASE
+        };
         let (mut rig, s) = start_drag(o);
         assert!(s.dragged_id.is_some());
         let r3_before = s.rows.iter().find(|(i, _)| *i == 3).unwrap().1.top();
@@ -420,7 +697,11 @@ mod spike {
         for _ in 0..8 {
             last = rig.frame(wheel(-60.0), o);
         }
-        assert!(last.offset > 50.0, "forwarding must scroll the plain area, {}", last.offset);
+        assert!(
+            last.offset > 50.0,
+            "forwarding must scroll the plain area, {}",
+            last.offset
+        );
         let r3_after = last.rows.iter().find(|(i, _)| *i == 3).unwrap().1.top();
         assert!(
             ((r3_before - r3_after) - last.offset).abs() < 1.0,

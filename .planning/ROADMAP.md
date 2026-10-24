@@ -229,7 +229,15 @@ Plans:
   3. Releasing on a valid slot moves the row as one pending edit (Apply writes it, Revert undoes it); releasing outside the list or pressing Escape cancels
   4. The arrow rules still hold: grouped rules move as one unit, a move across a Continue rule is flagged, dropping past a banner or on a collapsed section header puts the rule in that section, nothing lands in or below the economy section, dragging is off while searching, and custom styles never land above the built-ins
   5. The author's three PNG icons, their `.ase` sources and the three `.ase` palettes are committed under their own names
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 49-01-PLAN.md — Spike (wheel + edge auto-scroll during a drag, drag survival, tap/Escape, shadow) and the pure drag_reorder module
+- [ ] 49-02-PLAN.md — Commit the author's art, embed the handle textures, ff_drag_handle widget
+- [ ] 49-03-PLAN.md — Document::move_run_to (banner-aware) and RowAction::MoveTo with the arrows' rules
+- [ ] 49-04-PLAN.md — RULES list: handle replaces arrows, drag lifecycle, scroll, marker, shadow, drop/cancel
+- [ ] 49-05-PLAN.md — CONFIG style table: move_custom_to, MoveStyleTo, handle in the Order column, style drag
+- [ ] 49-06-PLAN.md — Debug --drag screenshot flags, CLAUDE.md / assets README, screenshots, deferred checks
 **UI hint**: yes
 
 ### Phase 50: Release Review

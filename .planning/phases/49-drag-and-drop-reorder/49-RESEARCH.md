@@ -431,17 +431,21 @@ Replace the two `ff_arrow` calls (rule_list.rs 1132-1148) by `let h = ff_drag_ha
 | A6 | Auto-collapsing *any* expanded row on drag start (not only the dragged row) is acceptable to the author | Open Questions | Author may expect other rows to stay open; low impact |
 | A7 | Mirroring the arrows' "set if crossing else remove" for the `moved` flag is the wanted semantics for a multi-gap move | WorkingFilter section | Author may want "flag if net order crosses any Continue rule from the original position"; trivial to change |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does a drop into a collapsed section reveal the rule?**
    - Known: the rule becomes the section's first rule and is hidden (section stays collapsed).
    - Unclear: whether the author wants the section to expand (or a status message). CONTEXT says no new message; arrows' hop did not expand.
    - Recommendation: do nothing extra (flag in the plan's judgement calls); the section header's `{n} rules` count updates, which is the feedback.
+   - RESOLVED: no expand on drop (plan 04).
 2. **Collapse every expanded row at drag start, or only the dragged one?**
    - Recommendation: every expanded row (robust slot maths, avoids Pitfall 8).
+   - RESOLVED: every expanded row collapses at drag start (plan 04).
 3. **Shadow when the source row is taller (expanded) at the moment of the press?**
    - Recommendation: it is collapsed at the start (we set `expanded = None`), so the shadow always uses `ROW_H`.
+   - RESOLVED: shadow uses `ROW_H` (plan 04).
 4. **`ORDER_TIP` / blank Order cell on built-in style rows**: keep a hover tip or leave blank? UI-SPEC says blank, no dead control.
+   - RESOLVED: blank cell, no tooltip (plan 05).
 
 ## Environment Availability
 

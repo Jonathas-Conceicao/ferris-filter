@@ -202,7 +202,7 @@ mod tests {
 
     /// An app on a temp home, optionally with a pre-written ff-state.json.
     fn app_with(log: Option<&RequestLog>) -> (OverlayApp, tempfile::TempDir, egui::Context) {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -213,8 +213,8 @@ mod tests {
         }
         let app = OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),

@@ -324,7 +324,11 @@ pub fn on_color(bg: Color32) -> Color32 {
 pub fn composite_over(c: Color32, ground: Color32) -> Color32 {
     let k = 255 - c.a() as u32;
     let ch = |top: u8, under: u8| (top as u32 + (under as u32 * k + 127) / 255).min(255) as u8;
-    Color32::from_rgb(ch(c.r(), ground.r()), ch(c.g(), ground.g()), ch(c.b(), ground.b()))
+    Color32::from_rgb(
+        ch(c.r(), ground.r()),
+        ch(c.g(), ground.g()),
+        ch(c.b(), ground.b()),
+    )
 }
 
 /// One of the Text / Border / Background cards: a box filled with the colour, its name on it
@@ -372,7 +376,11 @@ pub fn ff_colour_card_tip(
                 CornerRadius::same(1),
                 Color32::from_white_alpha(14),
             );
-            (label.to_owned(), on_color(composite_over(c, pal::INPUT_FILL)), false)
+            (
+                label.to_owned(),
+                on_color(composite_over(c, pal::INPUT_FILL)),
+                false,
+            )
         }
         None => {
             painter.rect_filled(rect, CornerRadius::same(1), pal::INPUT_FILL);
@@ -667,10 +675,7 @@ mod tests {
     #[test]
     fn translucent_card_caption_follows_the_composited_colour() {
         let faint = Color32::from_rgba_unmultiplied(255, 255, 255, 20);
-        assert_eq!(
-            on_color(composite_over(faint, pal::INPUT_FILL)),
-            pal::VALUE
-        );
+        assert_eq!(on_color(composite_over(faint, pal::INPUT_FILL)), pal::VALUE);
         assert_ne!(
             on_color(composite_over(Color32::WHITE, pal::INPUT_FILL)),
             pal::VALUE
@@ -985,7 +990,10 @@ mod tests {
         let levels = levels_of(false);
         hover_first_segment(|ui, skin| {
             ui.set_max_width(517.0);
-            ff_levels(ui, skin, 1, &levels).0.on_hover_text("Strictness").rect
+            ff_levels(ui, skin, 1, &levels)
+                .0
+                .on_hover_text("Strictness")
+                .rect
         });
     }
 }

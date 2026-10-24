@@ -19,6 +19,7 @@ use crate::models::config::{
     StyleNameError, StyleSet,
 };
 use crate::models::tiers::{TierEntry, TierValidationError, ValidatedTiers};
+use crate::overlay::chord::Chord;
 use crate::overlay::strictness::{Strictness, TIER_LETTERS, strictness_of};
 
 /// Display order of the tier rows. Presentation only: rows map to entries by tier name.
@@ -107,6 +108,12 @@ pub struct ConfigState {
     /// errors must not block Apply. Row errors stay recorded for `tier_rows()` so the inline text
     /// returns when the editor is enabled again. Not part of dirty counting, revert or reset.
     tiers_in_use: bool,
+    /// The show / hide hotkey picked on the CONFIG tab and not yet applied; `None` = no edit.
+    /// Not a baseline compare: the live chord belongs to the hotkey runtime. A reload of this
+    /// state (a changed `styles.json` / `tiers.json`) carries the edit over through
+    /// [`ConfigState::reloaded`], since the chord lives in neither file (review WR-04). Apply
+    /// writes it into `ff-settings.json` (never styles/tiers), so it is not part of `styles_dirty`.
+    hotkey_pending: Option<Chord>,
 }
 
 /// Read `path`, `None` when it does not exist. Errors read `<full path>: <reason>`.
@@ -182,6 +189,7 @@ impl ConfigState {
             tiers_live,
             ids_unpersisted,
             tiers_in_use: true,
+            hotkey_pending: None,
         };
         state.resync_buffers();
         Ok(state)
@@ -479,7 +487,38 @@ impl ConfigState {
         } else {
             0
         };
-        self.styles_dirty_count() + tiers
+        self.styles_dirty_count() + tiers + usize::from(self.hotkey_dirty())
+    }
+
+    /// The pending show / hide hotkey, if the CONFIG tab holds an unapplied chord edit.
+    pub fn hotkey_pending(&self) -> Option<Chord> {
+        self.hotkey_pending
+    }
+
+    /// Picks `chord` as the show / hide hotkey. `base` is the chord the pick is compared with
+    /// (normally the live one): picking it clears the edit, anything else is one pending edit.
+    pub fn set_hotkey(&mut self, chord: Chord, base: Option<Chord>) {
+        self.hotkey_pending = (Some(chord) != base).then_some(chord);
+    }
+
+    /// Whether a show / hide hotkey edit is pending.
+    pub fn hotkey_dirty(&self) -> bool {
+        self.hotkey_pending.is_some()
+    }
+
+    /// Drops the pending hotkey edit (Apply saved it).
+    pub fn clear_hotkey(&mut self) {
+        self.hotkey_pending = None;
+    }
+
+    /// A fresh load of the config files from `root` that keeps the pending hotkey edit of
+    /// `previous` (review WR-04): the chord is saved in `ff-settings.json`, not in `styles.json`
+    /// or `tiers.json`, so re-reading those must not drop it.
+    pub fn reloaded(root: &Path, previous: &Result<ConfigState, String>) -> Result<Self, String> {
+        let pending = previous.as_ref().ok().and_then(ConfigState::hotkey_pending);
+        let mut fresh = ConfigState::load(root)?;
+        fresh.hotkey_pending = pending;
+        Ok(fresh)
     }
 
     /// Pending cutoff edits that Apply does not write because the cutoffs are unused (Fallback
@@ -764,13 +803,17 @@ impl ConfigState {
     pub fn revert(&mut self) {
         self.styles = self.styles_applied.clone();
         self.tiers = self.tiers_applied.clone();
+        self.hotkey_pending = None;
         self.resync_buffers();
     }
 
-    /// Discard one tab's edits only: styles (CONFIG) or tier cutoffs (ECONOMY).
+    /// Discard one tab's edits only: styles and the hotkey (CONFIG) or tier cutoffs (ECONOMY).
     pub fn revert_scope(&mut self, scope: RevertScope) {
         match scope {
-            RevertScope::Styles => self.styles = self.styles_applied.clone(),
+            RevertScope::Styles => {
+                self.styles = self.styles_applied.clone();
+                self.hotkey_pending = None;
+            }
             RevertScope::Tiers => {
                 self.tiers = self.tiers_applied.clone();
                 self.resync_buffers();
@@ -791,7 +834,7 @@ impl ConfigState {
     /// Edit count of one scope.
     pub fn scope_dirty_count(&self, scope: RevertScope) -> usize {
         match scope {
-            RevertScope::Styles => self.styles_dirty_count(),
+            RevertScope::Styles => self.styles_dirty_count() + usize::from(self.hotkey_dirty()),
             RevertScope::Tiers => self.tiers_dirty_count(),
         }
     }
@@ -1048,6 +1091,72 @@ mod tests {
         s.revert_scope(RevertScope::Tiers);
         assert!(!s.tiers_dirty() && !s.has_tier_errors());
         assert!(s.styles_dirty());
+    }
+
+    const CTRL_ALT_K: Chord = Chord {
+        ctrl: true,
+        shift: false,
+        alt: true,
+        key: crate::overlay::chord::ChordKey::Letter(b'K'),
+    };
+
+    #[test]
+    fn a_pending_hotkey_is_one_config_edit_outside_the_styles() {
+        use crate::overlay::chord::DEFAULT;
+        let (_d, mut s) = loaded();
+        assert_eq!(s.hotkey_pending(), None);
+        let before = s.dirty_count();
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        assert_eq!(s.hotkey_pending(), Some(CTRL_ALT_K));
+        assert!(s.hotkey_dirty() && s.is_dirty() && s.can_apply());
+        assert_eq!(s.dirty_count(), before + 1);
+        assert_eq!(s.scope_dirty_count(RevertScope::Styles), 1);
+        assert_eq!(s.scope_dirty_count(RevertScope::Tiers), 0);
+        assert!(!s.styles_dirty());
+        let w = s.prepare_write().unwrap();
+        assert!(!w.styles_changed() && !w.tiers_changed());
+
+        // Capturing the applied chord clears the edit.
+        s.set_hotkey(DEFAULT, Some(DEFAULT));
+        assert_eq!(s.hotkey_pending(), None);
+        assert!(!s.is_dirty());
+        // With no base (nothing live, or a stale saved chord) even the default is an edit.
+        s.set_hotkey(DEFAULT, None);
+        assert_eq!(s.hotkey_pending(), Some(DEFAULT));
+    }
+
+    #[test]
+    fn a_reload_of_the_config_files_keeps_the_hotkey_edit() {
+        use crate::overlay::chord::DEFAULT;
+        let (d, mut s) = loaded();
+        assert!(s.edit_style("S", StyleEdit::Font(Some(41))));
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        let previous = Ok(s);
+        let fresh = ConfigState::reloaded(d.path(), &previous).unwrap();
+        // The style edit is gone with the re-read files, the chord edit stays.
+        assert!(!fresh.styles_dirty());
+        assert_eq!(fresh.hotkey_pending(), Some(CTRL_ALT_K));
+        // Nothing to keep from a failed load.
+        let fresh = ConfigState::reloaded(d.path(), &Err("broken".into())).unwrap();
+        assert_eq!(fresh.hotkey_pending(), None);
+    }
+
+    #[test]
+    fn hotkey_edit_reverts_with_the_config_scope_only() {
+        use crate::overlay::chord::DEFAULT;
+        let (_d, mut s) = loaded();
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        s.revert_scope(RevertScope::Tiers);
+        assert!(s.hotkey_dirty());
+        s.revert_scope(RevertScope::Styles);
+        assert!(!s.hotkey_dirty());
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        s.revert();
+        assert!(!s.hotkey_dirty());
+        // Unused tiers do not hide it.
+        s.set_hotkey(CTRL_ALT_K, Some(DEFAULT));
+        s.set_tiers_in_use(false);
+        assert!(s.is_dirty() && s.can_apply());
     }
 
     #[test]

@@ -10,6 +10,7 @@
 #   trim       drop the transparent right/bottom gutter the game's textures carry
 #   crop       [x, y, w, h] in the pixels of the image actually used (after trim)
 #   clear      [[x, y, w, h], ...] regions made transparent after cropping
+#   key_white  [seed_x, seed_y, threshold] flood-fill the near-white area at the seed to transparent
 #
 # Find more paths with `ff-art list <pattern>`, eyeball them with `ff-art dump` + `ff-art sheet`.
 
@@ -375,3 +376,16 @@ width = 336
 svg = "assets/ferris/rustacean-flat-happy.svg"
 out = "assets/ferris/ferris.ico"
 sizes = [16, 24, 32, 48, 64, 128, 256]
+
+# --- Options menu keybind button (Options -> Input): gold frame with a white mask interior
+# (keyed out to transparent) over a greyscale plate tinted at draw time.
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/optionsbuttonborder.dds"
+out = "options/keybind_border.png"
+trim = true
+key_white = [30, 30, 32]
+
+[[image]]
+path = "art/textures/interface/2d/2dart/uiimages/ingame/options menu/optionsbutton.dds"
+out = "options/keybind_plate.png"
+trim = true

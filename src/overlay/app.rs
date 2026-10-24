@@ -31,8 +31,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use global_hotkey::GlobalHotKeyManager;
-
 use crate::compile::{InputPaths, PriceSourcePolicy, Source};
 use crate::dynamic::{self, LoadedFilter};
 use crate::filter::{BlockId, LinePatch};
@@ -43,11 +41,12 @@ use crate::settings::{self, Settings};
 use super::apply::{self, ApplyOutcome, ApplyState, FilterState};
 use super::apply_all::{self, ApplyAllError, DiskFile, FilterInput};
 use super::chat;
+use super::chord::Chord;
 use super::classes::ClassCatalog;
 use super::config_state::{self, ConfigState, RevertScope};
 use super::config_view::{self, ConfigAction, ConfigUi, ConfigViewCtx};
 use super::economy;
-use super::hotkey::{self, HotkeyStatus};
+use super::hotkey::HotkeyRuntime;
 use super::instance;
 use super::leagues::ListState;
 use super::rule_list::{self, ListUi};
@@ -96,14 +95,19 @@ pub struct OverlayApp {
     /// removes the icon at once (`TrayHandles::release`) before it releases the instance name.
     tray: TrayHandles,
 
-    /// The global hotkey manager, held so the hotkey stays registered. Tray Quit takes it and
-    /// unregisters the hotkey (`hotkey::release_toggle`) before it releases the instance name,
-    /// so a relaunch can register `Ctrl+Shift+Z` itself.
-    hotkey_manager: Option<GlobalHotKeyManager>,
+    /// The live show / hide hotkey (default Ctrl+Shift+Z): the registrar, the registered chord
+    /// (whose id filters incoming `GlobalHotKeyEvent`s every frame) and the chord the UI shows.
+    /// Registered only at start-up and swapped only by Apply; tray Quit releases it before the
+    /// instance name, so a relaunch can register it itself.
+    hotkey: HotkeyRuntime,
 
-    /// Registration outcome for `Ctrl+Shift+Z`. Read every frame to filter incoming
-    /// `GlobalHotKeyEvent`s to the one combo this app registered.
-    hotkey_status: HotkeyStatus,
+    /// The CONFIG tab's Show / hide overlay button is capturing the next key combination. While
+    /// it is, every key event is drained at the top of the frame for it (no widget, popup or
+    /// shortcut sees one) and the live hotkey's own press is taken as that chord, not a toggle.
+    capture: Option<super::chord::CaptureState>,
+    /// The window was focused on the last frame that reported focus: only a focused -> unfocused
+    /// transition ends a capture (a window that starts unfocused, as screenshot mode does, never).
+    capture_was_focused: bool,
 
     /// The single-instance guard (INST-01); dropping it releases the instance name so the next
     /// `ff` launch becomes the running one. Polled once per frame for a show request from a
@@ -112,7 +116,7 @@ pub struct OverlayApp {
     /// signalling a process that is going away (review iteration 2, WR-01).
     instance: Option<instance::Guard>,
 
-    /// Set by the tray's left click, a `Ctrl+Shift+Z` press, or a tray "Show"
+    /// Set by the tray's left click, a show / hide hotkey press, or a tray "Show"
     /// while currently hidden. Consumed once per frame by [`visibility::advance`].
     toggle_requested: bool,
 
@@ -374,14 +378,14 @@ fn startup_game_dir(root: &Result<PathBuf, String>) -> Option<PathBuf> {
 /// The FerrisFilter folder: `FERRISFILTER_HOME`, else the per-user folder. Unit tests never
 /// resolve it (they build apps on a per-test temp home instead).
 #[cfg(not(test))]
-fn resolve_root() -> Result<PathBuf, String> {
+pub(crate) fn resolve_root() -> Result<PathBuf, String> {
     crate::locations::from_env()
         .map(|d| d.root)
         .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
-fn resolve_root() -> Result<PathBuf, String> {
+pub(crate) fn resolve_root() -> Result<PathBuf, String> {
     Err("unit tests never resolve the FerrisFilter folder".to_string())
 }
 
@@ -520,6 +524,10 @@ struct AllResult {
     tiers_written: bool,
     /// On a changed-on-disk refusal, every file found changed (recovered by RELOAD or OVERWRITE).
     changed: Vec<DiskFile>,
+    /// The show / hide hotkey this Apply saved and made live, if it carried a chord edit.
+    hotkey_saved: Option<Chord>,
+    /// The filter's bytes changed and were written (identical bytes are not rewritten).
+    filter_written: bool,
 }
 
 impl AllResult {
@@ -530,7 +538,19 @@ impl AllResult {
             styles_written: false,
             tiers_written: false,
             changed: Vec::new(),
+            hotkey_saved: None,
+            filter_written: false,
         }
+    }
+
+    /// The Apply saved a hotkey edit and nothing the filter depends on changed: no filter bytes,
+    /// no `styles.json`, no `tiers.json`. Such an Apply skips the in-game reload (review WR-03),
+    /// since the game would reload the very same filter.
+    fn hotkey_only(&self) -> bool {
+        self.hotkey_saved.is_some()
+            && !self.filter_written
+            && !self.styles_written
+            && !self.tiers_written
     }
 }
 
@@ -573,7 +593,8 @@ fn reload_changed_files(
         .iter()
         .any(|f| matches!(f, DiskFile::Styles | DiskFile::Tiers))
     {
-        *config = ConfigState::load(root);
+        // The pending hotkey edit is not in either file, so it survives (review WR-04).
+        *config = ConfigState::reloaded(root, config);
     }
     if let Some(w) = working {
         w.set_styles(load_styles_at(root));
@@ -627,15 +648,22 @@ fn bar_reload_target(tab: ShellTab, changed: &[DiskFile]) -> BarReload {
 /// `filter` is `None` when no filter is loaded, in which case only the config part is applied.
 ///
 /// Bytes identical to the file on disk are not rewritten, but still count as applied: pressing
-/// Apply always counts, so the in-game reload still runs. With `overwrite`, files that changed on
+/// Apply always counts, so the in-game reload still runs (except after a hotkey-only Apply, see
+/// [`AllResult::hotkey_only`]). With `overwrite`, files that changed on
 /// disk since they were loaded are written over (OVERWRITE after a changed-on-disk refusal); the
 /// baselines move only on success, so a failed overwrite leaves the refusal in place.
+///
+/// A pending show / hide hotkey is registered after every validation and before any write, while
+/// the old chord stays registered: a chord another app owns refuses the whole Apply (nothing
+/// written, the old binding kept). The old chord is given up only once every write succeeded; a
+/// failed write gives the new one back.
 fn apply_everything(
     root: &Path,
     mut config: Option<&mut ConfigState>,
     mut filter: Option<(&mut LoadedFilter, &mut WorkingFilter)>,
     policy: PriceSourcePolicy,
     overwrite: bool,
+    hotkey: &mut HotkeyRuntime,
 ) -> AllResult {
     let filter_path = filter.as_ref().map(|(l, _)| l.path().to_path_buf());
 
@@ -680,14 +708,37 @@ fn apply_everything(
         Err(err) => return refusal(err, filter_path.as_deref()),
     };
     let used_fallback = prepared.used_fallback();
+    // Validate -> register -> write: the new chord is registered beside the old one first.
+    let new_hotkey = prepared.hotkey();
+    if let Some(new) = new_hotkey
+        && let Err(message) = hotkey.begin_swap(new)
+    {
+        return AllResult::failed(message);
+    }
     let committed = match apply_all::commit(
         prepared,
         config.as_deref_mut(),
         filter.as_mut().map(|(l, _)| &mut **l),
     ) {
         Ok(c) => c,
-        Err(err) => return refusal(err, filter_path.as_deref()),
+        Err(err) => {
+            if let Some(new) = new_hotkey {
+                hotkey.abort_swap(new);
+            }
+            return refusal(err, filter_path.as_deref());
+        }
     };
+    // Every write succeeded: the old chord goes, the new one is live. Defensive: a registration
+    // is never left behind without its chord saved.
+    let mut hotkey_saved = None;
+    if let Some(new) = new_hotkey {
+        if committed.hotkey_saved == Some(new) {
+            hotkey.finish_swap(new);
+            hotkey_saved = Some(new);
+        } else {
+            hotkey.abort_swap(new);
+        }
+    }
 
     // The working document picks up what was written: the new text, then the applied styles.
     if let Some((loaded, working)) = filter.as_mut() {
@@ -729,6 +780,10 @@ fn apply_everything(
             extras.push_str(&format!(" Kept the original as {}.", backup.display()));
         }
     }
+    if let Some(new) = hotkey_saved {
+        extras.push_str(&format!(" Show / hide is now {}.", new.text()));
+    }
+    let filter_written = committed.filter.as_ref().is_some_and(|f| f.written);
     AllResult {
         outcome: AllOutcome::Applied {
             filter: committed.filter.map(|f| f.path),
@@ -737,6 +792,8 @@ fn apply_everything(
         styles_written: committed.styles_written,
         tiers_written: committed.tiers_written,
         changed: Vec::new(),
+        hotkey_saved,
+        filter_written,
     }
 }
 
@@ -1278,8 +1335,8 @@ impl OverlayApp {
     /// the main thread (thread affinity -- see `overlay::launch`).
     pub fn new(
         tray: TrayHandles,
-        hotkey_manager: Option<GlobalHotKeyManager>,
-        hotkey_status: HotkeyStatus,
+        hotkey: HotkeyRuntime,
+        hotkey_warning: Option<String>,
         instance: instance::Guard,
         skin: Skin,
         pending_install: std::sync::Arc<std::sync::Mutex<Option<crate::update::ReadyUpdate>>>,
@@ -1288,8 +1345,8 @@ impl OverlayApp {
         let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             tray,
-            hotkey_manager,
-            hotkey_status,
+            hotkey,
+            hotkey_warning,
             Some(instance),
             skin,
             root,
@@ -1304,19 +1361,52 @@ impl OverlayApp {
     #[cfg(debug_assertions)]
     pub(crate) fn new_screenshot(skin: Skin, shot: super::screenshot::ShotArgs) -> Self {
         let root = resolve_root();
+        // `--hotkey` is saved into the temp home's ff-settings.json before start-up (the guard
+        // already proved the home lives under Temp), so the normal load path reads it: an
+        // unusable value shows the start-up fallback and its warning, as a real launch would.
+        if let (Some(raw), Ok(dir)) = (&shot.hotkey, &root) {
+            let path = settings::path(dir);
+            let existing = std::fs::read(&path).ok();
+            match settings::render_hotkey(existing.as_deref(), raw) {
+                Ok(bytes) => {
+                    if let Err(e) =
+                        std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, bytes))
+                    {
+                        eprintln!("ff: --hotkey: could not write {}: {e}", path.display());
+                    }
+                }
+                Err(()) => eprintln!(
+                    "ff: --hotkey: {} is not a JSON object; left as it is",
+                    path.display()
+                ),
+            }
+        }
+        // The chord a real launch would show: the saved one, else the default. Never registered.
+        let shown = root
+            .as_ref()
+            .ok()
+            .and_then(|dir| settings::load(dir).0.saved_hotkey())
+            .unwrap_or(super::chord::DEFAULT);
         let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(shown, "screenshot mode"),
             None,
-            HotkeyStatus::Failed("screenshot mode".to_string()),
             None,
             skin,
             root,
             game_dir,
         );
-        app.tab = shot.tab;
+        app.tab = if shot.capture_hotkey {
+            ShellTab::Config
+        } else {
+            shot.tab
+        };
         app.visibility = Visibility::ShownFocused;
-        if shot.tab == ShellTab::Config {
+        if shot.capture_hotkey && app.config.is_ok() {
+            app.capture = Some(super::chord::CaptureState::default());
+        }
+        if app.tab == ShellTab::Config {
             app.refresh_filters();
         }
         app.open_shot_popup(shot.popup.as_deref());
@@ -1522,8 +1612,8 @@ impl OverlayApp {
 
     fn build(
         tray: TrayHandles,
-        hotkey_manager: Option<GlobalHotKeyManager>,
-        hotkey_status: HotkeyStatus,
+        hotkey: HotkeyRuntime,
+        hotkey_warning: Option<String>,
         instance: Option<instance::Guard>,
         skin: Skin,
         root: Result<PathBuf, String>,
@@ -1564,8 +1654,9 @@ impl OverlayApp {
                 .unwrap_or_default(),
             pending_real: throttle_glue::PendingReal::default(),
             tray,
-            hotkey_manager,
-            hotkey_status,
+            hotkey,
+            capture: None,
+            capture_was_focused: false,
             instance,
             #[cfg(debug_assertions)]
             shot: None,
@@ -1580,7 +1671,7 @@ impl OverlayApp {
             // (`with_active(false)` only suppresses activation, not
             // visibility) and has never been focused -- `ShownUnfocused` is
             // the state that matches that physical reality. Starting here
-            // (rather than `Hidden`) is what makes the very first `Ctrl+Shift+Z`
+            // (rather than `Hidden`) is what makes the very first show / hide hotkey
             // press after launch hide the window, matching the checkpoint
             // script's step 3.
             visibility: Visibility::ShownUnfocused,
@@ -1641,8 +1732,14 @@ impl OverlayApp {
         app.refresh_inputs();
         app.refresh_filters();
         app.refresh_economy_info();
-        if settings_warning.is_some() {
-            app.list_status = settings_warning;
+        // The hotkey's own start-up warning (saved chord in use, default used instead) joins the
+        // settings warning, which already carries an invalid saved `hotkey` value.
+        let warning = match (settings_warning, hotkey_warning) {
+            (Some(a), Some(b)) => Some(format!("{a} {b}")),
+            (a, b) => a.or(b),
+        };
+        if warning.is_some() {
+            app.list_status = warning;
         }
         app
     }
@@ -2110,13 +2207,17 @@ impl OverlayApp {
             filter_part,
             self.settings.price_policy(),
             overwrite,
+            &mut self.hotkey,
         );
+        let hotkey_only = result.hotkey_only();
         let AllResult {
             outcome,
             extras,
             styles_written,
             tiers_written,
             changed,
+            hotkey_saved,
+            filter_written: _,
         } = result;
         let applied_path = match outcome {
             AllOutcome::Failed(message) => {
@@ -2130,10 +2231,25 @@ impl OverlayApp {
             }
             AllOutcome::Applied { filter } => filter,
         };
+        if let Some(new) = hotkey_saved {
+            // In memory only (the file was written by the Apply), so a later whole-file settings
+            // save keeps the saved chord.
+            self.settings.hotkey = Some(new.text());
+            self.settings.hotkey_invalid = false;
+            self.tray.set_hotkey_state(
+                &self.hotkey.tooltip(),
+                self.hotkey.failure_line().as_deref(),
+            );
+        }
         let prefix = apply::config_saved_prefix(styles_written, tiers_written);
         match applied_path {
-            // Every successful filter Apply decides, identical bytes included; the setting is
-            // checked before any window search.
+            // A hotkey edit alone changed nothing in the filter: no in-game reload (review
+            // WR-03), so nothing steals focus or types into chat.
+            Some(_) if hotkey_only => {
+                self.apply_message = applied_message(extras.trim_start().to_string());
+            }
+            // Every other successful filter Apply decides, identical bytes included; the setting
+            // is checked before any window search.
             Some(path) => {
                 let decision = chat::decide(
                     &ApplyOutcome::Written(path.clone()),
@@ -2738,15 +2854,239 @@ impl OverlayApp {
         apply::combined_dirty(rules_dirty, style_pending, config_dirty)
     }
 
+    /// The chord a hotkey pick on the CONFIG tab is compared with (`ConfigState::set_hotkey`'s
+    /// base): normally the live chord. After a start-up fallback (the saved `hotkey` was invalid,
+    /// or valid but in use by another app) it is `None`, so picking or resetting to the live
+    /// default is still a pending edit and Apply writes it explicitly: the warning then stops on
+    /// the next launch instead of staying stuck.
+    ///
+    /// With no chord registered at all (the default owned elsewhere, or no hotkey service) the
+    /// base is `None` too; [`Self::pick_hotkey`] then treats a pick of the shown chord on its own
+    /// (see [`Self::no_live_chord`]).
+    pub(crate) fn hotkey_base(&self) -> Option<Chord> {
+        if self.saved_hotkey_stale() {
+            None
+        } else {
+            self.hotkey.live()
+        }
+    }
+
+    /// No chord is registered and the saved value is not stale: the shown chord is the default
+    /// (or the saved one) that failed at start-up, or there is no hotkey service.
+    fn no_live_chord(&self) -> bool {
+        self.hotkey.live().is_none() && !self.saved_hotkey_stale()
+    }
+
+    /// With no live chord, nothing pending, and a registrar: picking the shown chord makes it
+    /// pending so Apply retries the registration (review iteration 3, WR-01). Reset stays live
+    /// for the same reason.
+    fn hotkey_retry_possible(&self) -> bool {
+        self.no_live_chord() && self.hotkey.can_register()
+    }
+
+    /// The saved `hotkey` is not the chord the overlay uses: invalid, or valid but different
+    /// from the registered chord (a start-up fallback). With nothing registered it is compared
+    /// with the shown chord instead, so a saved chord that merely failed to register (taken by
+    /// another app, or no hotkey service) is not stale (review iteration 4, WR-01). Reset stays
+    /// live while stale, so the default can be saved explicitly.
+    fn saved_hotkey_stale(&self) -> bool {
+        let target = self.hotkey.live().unwrap_or(self.hotkey.shown());
+        self.settings.hotkey_invalid
+            || self
+                .settings
+                .saved_hotkey()
+                .is_some_and(|saved| saved != target)
+    }
+
+    /// Makes `chord` the pending show / hide hotkey, or clears the edit when it is the base (the
+    /// applied chord). A real change is a CONFIG edit, so the last Apply message goes.
+    ///
+    /// With no live chord, picking the chord that is already pending drops the edit, whatever
+    /// the saved value (review iteration 4, WR-01): Apply refuses it while the chord cannot be
+    /// registered, and the Config Revert would also discard the style edits.
+    ///
+    /// With no live chord (and no stale saved value), picking the chord the button shows drops a
+    /// pending edit when there is one (review WR-07). With nothing pending it makes that chord
+    /// pending so Apply retries the registration, when a registrar exists; with no hotkey
+    /// service it stays clear (review iteration 3, WR-01).
+    fn pick_hotkey(&mut self, chord: Chord) {
+        let base = self.hotkey_base();
+        let nothing_live = self.hotkey.live().is_none();
+        let no_live = self.no_live_chord();
+        let retry = self.hotkey_retry_possible();
+        let shown = self.hotkey.shown();
+        let Ok(config) = &mut self.config else {
+            return;
+        };
+        let before = config.hotkey_pending();
+        if nothing_live && before == Some(chord) {
+            config.clear_hotkey();
+        } else if no_live && chord == shown {
+            if before.is_none() && retry {
+                config.set_hotkey(chord, None);
+            } else {
+                config.clear_hotkey();
+            }
+        } else {
+            config.set_hotkey(chord, base);
+        }
+        if config.hotkey_pending() != before {
+            self.clear_events_on_edit();
+        }
+    }
+
+    /// The keybind button was clicked: capture the next key combination. Whatever widget held
+    /// keyboard focus gives it up, so no text field keeps a caret while the keys go elsewhere.
+    fn start_capture(&mut self, ctx: &egui::Context) {
+        if self.config.is_err() {
+            return;
+        }
+        self.capture = Some(super::chord::CaptureState::default());
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+    }
+
+    /// Runs the capture for this frame. Called first in `ui()`, before any widget, popup,
+    /// shortcut or the hotkey poll reads input: while capturing it takes every key, text,
+    /// clipboard and IME event out of the frame, so nothing else reacts to them. A press of the
+    /// pointer outside the keybind button, or the window losing focus, ends the capture first
+    /// (the press itself still reaches its widget, so the reset button still resets).
+    fn capture_frame(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused);
+        let lost_focus = self.capture_was_focused && focused == Some(false);
+        if let Some(f) = focused {
+            self.capture_was_focused = f;
+        }
+        if self.capture.is_none() {
+            return;
+        }
+        let button = self.config_ui.hotkey_button_rect;
+        let pressed_outside = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::PointerButton { pos, pressed: true, .. }
+                        if !button.is_some_and(|r| r.contains(*pos))
+                )
+            })
+        });
+        if lost_focus || pressed_outside {
+            self.capture = None;
+            return;
+        }
+        let events: Vec<egui::Event> = ctx.input_mut(|i| {
+            let (mine, rest): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut i.events).into_iter().partition(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Paste(_)
+                            | egui::Event::Ime(_)
+                    )
+                });
+            i.events = rest;
+            mine
+        });
+        let (held, super_down) = ctx.input(|i| {
+            (
+                i.modifiers,
+                i.keys_down.contains(&egui::Key::SuperLeft)
+                    || i.keys_down.contains(&egui::Key::SuperRight),
+            )
+        });
+        let input = super::chord::CaptureInput {
+            events: &events,
+            ctrl: held.ctrl,
+            shift: held.shift,
+            alt: held.alt,
+            windows_key: super_down || win::windows_key_held(),
+            insert_down: win::insert_held(),
+            delete_down: win::delete_held(),
+        };
+        let Some(state) = self.capture.as_mut() else {
+            return;
+        };
+        match super::chord::capture_step(state, &input) {
+            super::chord::CaptureStep::Continue => {}
+            super::chord::CaptureStep::Cancel => self.capture = None,
+            super::chord::CaptureStep::Commit(chord) => {
+                self.capture = None;
+                self.pick_hotkey(chord);
+            }
+        }
+    }
+
+    /// The live hotkey was pressed. While capturing it is not a toggle: its keys never reach the
+    /// window (the OS hands them to the hotkey), so the press is taken as capturing the applied
+    /// chord itself. Returns whether a capture took it.
+    fn capture_live_hotkey(&mut self) -> bool {
+        if self.capture.is_none() {
+            return false;
+        }
+        self.capture = None;
+        if let Some(live) = self.hotkey.live() {
+            self.pick_hotkey(live);
+        }
+        true
+    }
+
+    /// Ends a capture the frame interrupted: another tab, a hidden window, or a popup.
+    fn end_interrupted_capture(&mut self, quit_requested: bool) {
+        if self.capture.is_some()
+            && (self.tab != ShellTab::Config
+                || self.visibility == Visibility::Hidden
+                || shell::active_popup(self.popup_flags(quit_requested)).is_some())
+        {
+            self.capture = None;
+        }
+    }
+
+    /// What the CONFIG tab's Show / hide overlay row shows; `None` without a loaded CONFIG
+    /// state. `held` is the modifiers held right now (the live caption while capturing).
+    fn hotkey_row_view(&self, held: egui::Modifiers) -> Option<config_view::HotkeyRowView> {
+        use config_view::HotkeyCaption;
+        let config = self.config.as_ref().ok()?;
+        let pending = config.hotkey_pending();
+        let chord = pending.unwrap_or(self.hotkey.shown());
+        let default = super::chord::DEFAULT;
+        // A stale saved chord keeps Reset live until the default is pending, so it can be saved.
+        // With no chord registered (the default failed at start-up) Reset stays live while
+        // nothing is pending, so Apply can retry the registration (review iteration 3, WR-01).
+        let reset_enabled = chord != default
+            || (self.saved_hotkey_stale() && pending != Some(default))
+            || (self.hotkey_retry_possible() && pending.is_none());
+        let (caption, caption_kind) = match &self.capture {
+            None => (chord.text(), HotkeyCaption::Rest),
+            Some(state) => match state.rejected {
+                Some(reason) => (reason.caption().to_string(), HotkeyCaption::Rejected),
+                None => (
+                    super::chord::held_caption(held.ctrl, held.shift, held.alt),
+                    HotkeyCaption::Capturing,
+                ),
+            },
+        };
+        Some(config_view::HotkeyRowView {
+            caption,
+            caption_kind,
+            chord_text: chord.text(),
+            capturing: self.capture.is_some(),
+            reset_enabled,
+        })
+    }
+
     /// The Phase 22 release order: give up what a new instance must own (the hotkey, then the
     /// tray icon) before the name it races for. If the name went first, a relaunch could win it
-    /// while `Ctrl+Shift+Z` was still registered here, fail to register it, and run with no
-    /// hotkey (review iteration 3, WR-01). The caller then sets `quit_requested` for the single
+    /// while the show / hide hotkey was still registered here, fail to register it, and run with
+    /// no hotkey (review iteration 3, WR-01). The caller then sets `quit_requested` for the single
     /// deferred viewport Close.
     fn begin_shutdown(&mut self) {
-        if let Some(manager) = self.hotkey_manager.take() {
-            hotkey::release_toggle(manager);
-        }
+        self.hotkey.release();
         self.tray.release();
         // Release the instance name now, before this frame's show-request poll: from here on a
         // relaunch becomes the new first instance rather than waiting on (or being acked by) a
@@ -2996,14 +3336,15 @@ impl OverlayApp {
         }
         self.reset_filter_state();
         self.refresh_inputs();
-        if settings_warning.is_some() {
-            self.list_status = settings_warning;
+        if let Some(warning) = settings_warning {
+            // Reload never re-registers the hotkey, so the warning names the chord still live.
+            self.list_status = Some(settings::reload_hotkey_warning(warning, self.hotkey.live()));
         }
         self.refresh_filters();
         // Config edits survive a RULES reload unless the root moved or the load had failed.
         if self.root != old_root || self.config.is_err() {
             self.config = match &self.root {
-                Ok(root) => ConfigState::load(root),
+                Ok(root) => ConfigState::reloaded(root, &self.config),
                 Err(message) => Err(message.clone()),
             };
         }
@@ -3247,11 +3588,17 @@ impl OverlayApp {
                 ConfigAction::Overwrite => {
                     self.run_apply(ctx, true);
                 }
+                ConfigAction::StartHotkeyCapture => self.start_capture(ctx),
+                ConfigAction::CancelHotkeyCapture => self.capture = None,
+                ConfigAction::ResetHotkey => {
+                    self.capture = None;
+                    self.pick_hotkey(super::chord::DEFAULT);
+                }
                 ConfigAction::Reload => {
                     match config_reload_plan(self.config.is_err(), &self.changed_on_disk) {
                         ConfigReload::ConfigOnly => {
                             self.config = match &self.root {
-                                Ok(root) => ConfigState::load(root),
+                                Ok(root) => ConfigState::reloaded(root, &self.config),
                                 Err(message) => Err(message.clone()),
                             };
                             // A pending filter refusal stays for the RULES tab to resolve.
@@ -3367,6 +3714,7 @@ impl OverlayApp {
                 && self.config.is_ok()
                 && !footer.filter_damaged,
             skin: Some(skin),
+            hotkey: self.hotkey_row_view(ui.ctx().input(|i| i.modifiers)),
         };
         w::ff_scroll_area(ui, skin, "config", |ui| match &self.config {
             Ok(state) => {
@@ -3548,6 +3896,8 @@ pub(crate) fn bottom_bar(
 
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // A hotkey capture owns the frame's key events: taken before anything else reads input.
+        self.capture_frame(ui.ctx());
         // Cache the overlay's own HWND the first frame one is available
         // (RESEARCH Pattern 1). Retried every frame until it succeeds.
         if self.window.is_none() {
@@ -3579,17 +3929,22 @@ impl eframe::App for OverlayApp {
         // and only the Pressed state — without the state filter, a single
         // keypress toggles twice (once on press, once on release).
         if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
-            if let HotkeyStatus::Registered { id } = &self.hotkey_status {
-                if event.id == *id && event.state == global_hotkey::HotKeyState::Pressed {
-                    // Only while the user is actually in the game — or in the window itself, so
-                    // the same key can dismiss it once it has focus. The binding is registered
-                    // system-wide, which is what lets it reach a fullscreen game, but a key that
-                    // also fires in a browser or an editor is a key the user cannot use for
-                    // anything else (author, 2026-09-15).
+            if let Some(id) = self.hotkey.live_id() {
+                if event.id == id && event.state == global_hotkey::HotKeyState::Pressed {
+                    // While the CONFIG tab captures a chord, the live one is that chord, not a
+                    // toggle.
+                    //
+                    // Otherwise only while the user is actually in the game — or in the window
+                    // itself, so the same key can dismiss it once it has focus. The binding is
+                    // registered system-wide, which is what lets it reach a fullscreen game, but
+                    // a key that also fires in a browser or an editor is a key the user cannot
+                    // use for anything else (author, 2026-09-15).
                     //
                     // The event is still drained either way: leaving it queued would make the
                     // next in-game press replay a stale one.
-                    if win::foreground_is_game_or_overlay(self.window.as_ref()) {
+                    if self.capture_live_hotkey() {
+                        ui.ctx().request_repaint();
+                    } else if win::foreground_is_game_or_overlay(self.window.as_ref()) {
                         self.toggle_requested = true;
                     }
                 }
@@ -3825,7 +4180,12 @@ impl eframe::App for OverlayApp {
             .is_some_and(|w| w.style_rewrite_pending())
             || source_pending;
         let config_dirty = self.config.as_ref().is_ok_and(|c| c.is_dirty());
-        let styles_dirty = self.config.as_ref().is_ok_and(|c| c.styles_dirty());
+        // The Config tab's own edits: styles and the show / hide hotkey (the tab marker and the
+        // Config Revert). Economy re-pricing keeps looking at `ConfigState::styles_dirty` alone.
+        let styles_dirty = self
+            .config
+            .as_ref()
+            .is_ok_and(|c| c.styles_dirty() || c.hotkey_dirty());
         let tiers_dirty = self.config.as_ref().is_ok_and(|c| c.tiers_dirty());
         let rules_dirty = self.working.as_ref().is_some_and(|w| w.is_dirty());
         let economy_staged = self.working.as_ref().is_some_and(|w| w.economy_staged());
@@ -3894,7 +4254,7 @@ impl eframe::App for OverlayApp {
         // (that is tray -> Quit alone).
         let header = Rect::from_min_size(win_rect.min, vec2(win_rect.width(), header_h));
         let close = w::ff_header(ui, &skin, header, shell::header_art(&skin), "FerrisFilter")
-            .on_hover_text("Hide (Ctrl+Shift+Z)");
+            .on_hover_text(format!("Hide ({})", self.hotkey.shown().text()));
         if let Ok(loaded) = &self.filter {
             // The loaded filter's full path, where the old status block used to print it.
             ui.interact(
@@ -4241,6 +4601,7 @@ impl eframe::App for OverlayApp {
         // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
         self.overwrite_live = self.overwrite_decision();
         self.refresh_quit_tier_edits_only();
+        self.end_interrupted_capture(quit_requested);
         if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
             let spec = self.popup_spec_for(popup);
             let buttons: Vec<crate::skin::popup::PopupButton> = spec
@@ -4725,6 +5086,10 @@ mod tests {
             Some((loaded, working)),
             PriceSourcePolicy::Auto,
             overwrite,
+            &mut crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         );
         let outcome = match r.outcome {
             AllOutcome::Applied { filter: Some(path) } => ApplyOutcome::Written(path),
@@ -4779,6 +5144,7 @@ mod tests {
         loaded: LoadedFilter,
         working: WorkingFilter,
         config: ConfigState,
+        hotkey: crate::overlay::hotkey::HotkeyRuntime,
     }
 
     fn rig(filter_text: &str) -> Rig {
@@ -4798,6 +5164,10 @@ mod tests {
             loaded,
             working,
             config,
+            hotkey: crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         }
     }
 
@@ -4809,6 +5179,7 @@ mod tests {
                 Some((&mut self.loaded, &mut self.working)),
                 PriceSourcePolicy::Auto,
                 overwrite,
+                &mut self.hotkey,
             )
         }
 
@@ -5269,6 +5640,7 @@ mod tests {
                 loaded,
                 mut working,
                 mut config,
+                ..
             } = rig(RULES);
             working.apply_action(RowAction::AddRule);
             assert!(config.edit_style("S", StyleEdit::Font(Some(41))));
@@ -5354,6 +5726,10 @@ mod tests {
             None,
             PriceSourcePolicy::Auto,
             false,
+            &mut crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         );
         assert_eq!(r.outcome, AllOutcome::Applied { filter: None });
         assert!(r.styles_written && !r.tiers_written);
@@ -5996,7 +6372,7 @@ Hide
     /// An app on temp-free in-memory state: built only to drive `dispatch_popup`, which touches
     /// nothing on disk for the choices tested here.
     fn popup_app(filter_text: &str) -> (super::OverlayApp, egui::Context) {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -6004,8 +6380,8 @@ Hide
         let home = tempfile::tempdir().unwrap();
         let mut app = super::OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),
@@ -6132,6 +6508,7 @@ Hide
             loaded,
             working,
             config,
+            ..
         } = rig(S_RULE);
         app.root = Ok(root.path().to_path_buf());
         app.config = Ok(config);
@@ -6173,6 +6550,7 @@ Hide
             loaded,
             working,
             config,
+            ..
         } = rig(S_RULE);
         app.root = Ok(root.path().to_path_buf());
         app.config = Ok(config);
@@ -6928,6 +7306,10 @@ Hide
             Some((&mut loaded, d.app.working.as_mut().unwrap())),
             PriceSourcePolicy::Auto,
             false,
+            &mut crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         );
         assert!(
             matches!(r.outcome, AllOutcome::Applied { .. }),
@@ -6948,6 +7330,10 @@ Hide
             Some((&mut loaded, d2.app.working.as_mut().unwrap())),
             PriceSourcePolicy::Auto,
             false,
+            &mut crate::overlay::hotkey::HotkeyRuntime::inert(
+                crate::overlay::chord::DEFAULT,
+                "test",
+            ),
         );
         // A refused second Apply would also leave the bytes alone: check it was applied.
         assert!(
@@ -7163,7 +7549,10 @@ Hide
                 .unwrap()
                 .economy_rows()
                 .iter()
-                .any(|r| r.name.as_deref().is_some_and(|n| n.ends_with("< 100000000 chaos")))
+                .any(|r| r
+                    .name
+                    .as_deref()
+                    .is_some_and(|n| n.ends_with("< 100000000 chaos")))
         );
         // An expanded preview row is collapsed by a re-price (its id would point elsewhere).
         let id = app.working.as_ref().unwrap().economy_rows()[0].id;
@@ -7801,7 +8190,7 @@ Hide
         tempfile::TempDir,
         tempfile::TempDir,
     ) {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -7816,8 +8205,8 @@ Hide
         }
         let app = super::OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),
@@ -7870,7 +8259,7 @@ Hide
 
     #[test]
     fn missing_game_folder_is_known_right_after_build() {
-        use crate::overlay::hotkey::HotkeyStatus;
+        use crate::overlay::hotkey::HotkeyRuntime;
         use crate::overlay::tray::TrayHandles;
         let ctx = egui::Context::default();
         crate::skin::fonts::install(&ctx);
@@ -7878,8 +8267,8 @@ Hide
         let home = tempfile::tempdir().unwrap();
         let app = super::OverlayApp::build(
             TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
             None,
-            HotkeyStatus::Failed("test".to_string()),
             None,
             skin,
             Ok(home.path().to_path_buf()),
@@ -8576,5 +8965,907 @@ Hide
             indicator: ("i", w::StatusKind::Info),
         });
         assert_eq!(s.open_tab, Some(ShellTab::Config));
+    }
+
+    // ---- the show / hide hotkey (Phase 47-03) ----
+
+    #[test]
+    fn startup_hotkey_warning_joins_the_settings_warning() {
+        use crate::overlay::hotkey::HotkeyRuntime;
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("ff-settings.json"),
+            r#"{"hotkey":"Shift+Nope","game_folder":"relative\\dir"}"#,
+        )
+        .unwrap();
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            HotkeyRuntime::inert(crate::overlay::chord::DEFAULT, "test"),
+            Some("HOTKEY-WARNING".to_string()),
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("game")),
+        );
+        let status = app.list_status.clone().unwrap();
+        assert!(status.contains("game_folder"), "{status}");
+        assert!(status.contains("`hotkey`"), "{status}");
+        assert!(status.ends_with(" HOTKEY-WARNING"), "{status}");
+        assert!(app.settings.hotkey_invalid);
+        // Fell back: even the default is a pending edit, so Apply can write it.
+        assert_eq!(app.hotkey_base(), None);
+    }
+
+    #[test]
+    fn a_relative_game_folder_never_discards_a_valid_saved_chord() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("ff-settings.json"),
+            r#"{"hotkey":"Ctrl+Alt+K","game_folder":"relative\\dir"}"#,
+        )
+        .unwrap();
+        let (s, warning) = crate::settings::load(home.path());
+        assert!(warning.unwrap().contains("game_folder"));
+        assert_eq!(
+            s.saved_hotkey().map(|c| c.text()).as_deref(),
+            Some("Ctrl+Alt+K")
+        );
+    }
+
+    #[test]
+    fn the_header_close_tooltip_and_base_follow_the_live_chord() {
+        let (mut app, _ctx, _home, _game) = folder_app(None, &[]);
+        assert_eq!(app.hotkey.shown(), crate::overlay::chord::DEFAULT);
+        // An inert runtime has no live chord: capturing the shown chord again drops the edit
+        // (WR-07), and with no hotkey service it never becomes pending on its own.
+        assert_eq!(app.hotkey_base(), None);
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(crate::overlay::chord::DEFAULT);
+        assert_eq!(pending_hotkey(&app), None);
+        app.pick_hotkey(crate::overlay::chord::DEFAULT);
+        assert_eq!(pending_hotkey(&app), None);
+        assert!(
+            !app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        let log = std::rc::Rc::default();
+        let reg = crate::overlay::hotkey::FakeRegistrar {
+            taken: Default::default(),
+            log,
+        };
+        app.hotkey = crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), None).0;
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+    }
+
+    // ---- the hotkey swap inside the one Apply (Phase 47-03) ----
+
+    type HotkeyLog = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+
+    const CTRL_ALT_K: crate::overlay::chord::Chord = crate::overlay::chord::Chord {
+        ctrl: true,
+        shift: false,
+        alt: true,
+        key: crate::overlay::chord::ChordKey::Letter(b'K'),
+    };
+
+    /// A runtime over a fake registrar (never the OS), started from `saved`, with its start-up
+    /// calls cleared from the log.
+    fn fake_runtime(
+        taken: &[crate::overlay::chord::Chord],
+        saved: Option<crate::overlay::chord::Chord>,
+    ) -> (
+        crate::overlay::hotkey::HotkeyRuntime,
+        Option<String>,
+        HotkeyLog,
+    ) {
+        let log: HotkeyLog = std::rc::Rc::default();
+        let reg = crate::overlay::hotkey::FakeRegistrar {
+            taken: taken.iter().copied().collect(),
+            log: log.clone(),
+        };
+        let (rt, warning) =
+            crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), saved);
+        log.borrow_mut().clear();
+        (rt, warning, log)
+    }
+
+    fn saved_hotkey_in(root: &std::path::Path) -> Option<String> {
+        let text = std::fs::read_to_string(root.join("ff-settings.json")).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["hotkey"].as_str().map(str::to_string)
+    }
+
+    #[test]
+    fn apply_registers_the_new_chord_then_gives_up_the_old_one() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let r = rig.apply(false);
+        assert!(
+            matches!(r.outcome, AllOutcome::Applied { .. }),
+            "{:?}",
+            r.outcome
+        );
+        assert_eq!(
+            *log.borrow(),
+            ["register Ctrl+Alt+K", "unregister Ctrl+Shift+Z"]
+        );
+        assert_eq!(rig.hotkey.live(), Some(CTRL_ALT_K));
+        assert_eq!(
+            saved_hotkey_in(rig.root.path()).as_deref(),
+            Some("Ctrl+Alt+K")
+        );
+        assert!(
+            r.extras.ends_with(" Show / hide is now Ctrl+Alt+K."),
+            "{}",
+            r.extras
+        );
+        assert_eq!(r.hotkey_saved, Some(CTRL_ALT_K));
+        assert_eq!(rig.config.hotkey_pending(), None);
+        // Nothing the filter depends on changed: run_apply skips the in-game reload (WR-03).
+        assert!(!r.filter_written);
+        assert!(r.hotkey_only());
+    }
+
+    #[test]
+    fn a_hotkey_apply_with_a_style_edit_still_reloads_in_game() {
+        {
+            let mut rig = rig(RULES);
+            let (rt, _, _log) = fake_runtime(&[], None);
+            rig.hotkey = rt;
+            assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+            rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+            let r = rig.apply(false);
+            assert!(matches!(r.outcome, AllOutcome::Applied { .. }));
+            assert_eq!(r.hotkey_saved, Some(CTRL_ALT_K));
+            assert!(r.styles_written);
+            assert!(!r.hotkey_only());
+        }
+        // A rule edit beside the chord changes the filter bytes: not hotkey-only either.
+        let mut rig = rig(RULES);
+        let (rt, _, _log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        rig.working.apply_action(RowAction::AddRule);
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let r = rig.apply(false);
+        assert!(r.filter_written);
+        assert!(!r.hotkey_only());
+    }
+
+    #[test]
+    fn a_chord_in_use_refuses_the_whole_apply() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[CTRL_ALT_K], None);
+        rig.hotkey = rt;
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        rig.working.apply_action(RowAction::AddRule);
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let styles = rig.read("styles.json");
+        let filter = std::fs::read(&rig.path).unwrap();
+        let r = rig.apply(false);
+        assert_eq!(
+            r.outcome,
+            AllOutcome::Failed(
+                "Ctrl+Alt+K is in use by another app. Ctrl+Shift+Z still works; nothing was applied."
+                    .to_string()
+            )
+        );
+        assert_eq!(*log.borrow(), ["register Ctrl+Alt+K"]);
+        assert_eq!(rig.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        assert!(!rig.root.path().join("ff-settings.json").exists());
+        assert_eq!(rig.read("styles.json"), styles);
+        assert_eq!(std::fs::read(&rig.path).unwrap(), filter);
+        assert_eq!(rig.config.hotkey_pending(), Some(CTRL_ALT_K));
+        assert!(rig.config.styles_dirty());
+    }
+
+    #[test]
+    fn a_failed_write_gives_the_new_chord_back() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        rig.config.set_hotkey(CTRL_ALT_K, rig.hotkey.live());
+        let styles_path = rig.root.path().join("styles.json");
+        let mut perms = std::fs::metadata(&styles_path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&styles_path, perms.clone()).unwrap();
+        let r = rig.apply(false);
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(&styles_path, perms).unwrap();
+        assert!(
+            matches!(r.outcome, AllOutcome::Failed(_)),
+            "{:?}",
+            r.outcome
+        );
+        assert_eq!(
+            *log.borrow(),
+            ["register Ctrl+Alt+K", "unregister Ctrl+Alt+K"]
+        );
+        assert_eq!(rig.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        assert!(!rig.root.path().join("ff-settings.json").exists());
+        assert_eq!(rig.config.hotkey_pending(), Some(CTRL_ALT_K));
+    }
+
+    #[test]
+    fn an_apply_without_a_chord_edit_never_touches_the_registrar() {
+        let mut rig = rig(RULES);
+        let (rt, _, log) = fake_runtime(&[], None);
+        rig.hotkey = rt;
+        assert!(rig.config.edit_style("S", StyleEdit::Font(Some(41))));
+        let r = rig.apply(false);
+        assert!(matches!(r.outcome, AllOutcome::Applied { .. }));
+        assert!(log.borrow().is_empty());
+        assert!(!r.extras.contains("Show / hide"), "{}", r.extras);
+        assert_eq!(r.hotkey_saved, None);
+        assert!(!rig.root.path().join("ff-settings.json").exists());
+    }
+
+    /// An app on a temp home holding `settings`, with `runtime` as its hotkey and no filter
+    /// (the game folder does not exist), so its Apply is config-only and never reloads in game.
+    fn hotkey_app(
+        settings: &str,
+        runtime: crate::overlay::hotkey::HotkeyRuntime,
+        warning: Option<String>,
+    ) -> (super::OverlayApp, egui::Context, tempfile::TempDir) {
+        use crate::overlay::tray::TrayHandles;
+        let ctx = egui::Context::default();
+        crate::skin::fonts::install(&ctx);
+        let skin = crate::skin::install(&ctx);
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("ff-settings.json"), settings).unwrap();
+        let app = super::OverlayApp::build(
+            TrayHandles::inert(),
+            runtime,
+            warning,
+            None,
+            skin,
+            Ok(home.path().to_path_buf()),
+            Some(home.path().join("absent-game")),
+        );
+        (app, ctx, home)
+    }
+
+    #[test]
+    fn a_stale_saved_chord_can_be_reset_to_the_default_and_saved() {
+        // Saved chord in use at start-up: the default runs, and saving it is a real edit.
+        let (rt, warning, log) = fake_runtime(&[CTRL_ALT_K], Some(CTRL_ALT_K));
+        assert!(warning.is_some());
+        let (mut app, ctx, home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, warning);
+        assert_eq!(app.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        assert_eq!(app.hotkey_base(), None);
+        let base = app.hotkey_base();
+        let config = app.config.as_mut().unwrap();
+        config.set_hotkey(crate::overlay::chord::DEFAULT, base);
+        assert!(config.hotkey_dirty());
+        assert!(app.run_apply(&ctx, false));
+        assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+        assert_eq!(app.settings.hotkey.as_deref(), Some("Ctrl+Shift+Z"));
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+        let (text, _) = app.apply_message.clone().unwrap();
+        assert!(
+            text.ends_with(" Show / hide is now Ctrl+Shift+Z."),
+            "{text}"
+        );
+
+        // An invalid saved value: the same way out.
+        let (rt, warning, log) = fake_runtime(&[], None);
+        let (mut app, ctx, home) = hotkey_app(r#"{"hotkey":"Nope"}"#, rt, warning);
+        assert!(app.settings.hotkey_invalid);
+        assert_eq!(app.hotkey_base(), None);
+        let base = app.hotkey_base();
+        app.config
+            .as_mut()
+            .unwrap()
+            .set_hotkey(crate::overlay::chord::DEFAULT, base);
+        assert!(app.run_apply(&ctx, false));
+        assert!(log.borrow().is_empty());
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+        assert!(!app.settings.hotkey_invalid);
+        assert_eq!(app.hotkey_base(), Some(crate::overlay::chord::DEFAULT));
+    }
+
+    #[test]
+    fn a_successful_app_apply_keeps_the_saved_chord_in_memory() {
+        let (rt, _, log) = fake_runtime(&[], None);
+        let (mut app, ctx, home) = hotkey_app("{}", rt, None);
+        let base = app.hotkey_base();
+        app.config.as_mut().unwrap().set_hotkey(CTRL_ALT_K, base);
+        assert!(app.run_apply(&ctx, false));
+        assert_eq!(
+            *log.borrow(),
+            ["register Ctrl+Alt+K", "unregister Ctrl+Shift+Z"]
+        );
+        assert_eq!(app.settings.hotkey.as_deref(), Some("Ctrl+Alt+K"));
+        assert_eq!(saved_hotkey_in(home.path()).as_deref(), Some("Ctrl+Alt+K"));
+        assert_eq!(app.hotkey.shown(), CTRL_ALT_K);
+    }
+
+    #[test]
+    fn a_hotkey_edit_counts_as_config_work_for_quit_and_revert() {
+        let (rt, _, _log) = fake_runtime(&[], None);
+        let (mut app, _ctx, _home) = hotkey_app("{}", rt, None);
+        let base = app.hotkey_base();
+        app.config.as_mut().unwrap().set_hotkey(CTRL_ALT_K, base);
+        assert!(app.applicable_dirty());
+        assert!(app.quit_dirty());
+        let c = app.config.as_ref().unwrap();
+        assert_eq!(c.scope_dirty_count(RevertScope::Styles), 1);
+        assert!(!c.styles_dirty());
+        // Under Fallback with unused tier edits, a hotkey edit is still work Apply writes.
+        app.settings.price_source = Some("fallback".to_string());
+        app.config.as_mut().unwrap().set_tier_text("S", "31");
+        app.sync_tiers_in_use();
+        app.quit_confirm = true;
+        app.refresh_quit_tier_edits_only();
+        assert!(!app.quit_tier_edits_only);
+    }
+
+    // ---- hotkey capture on the CONFIG tab (Phase 47-04) ----
+
+    const CTRL_ALT: egui::Modifiers = egui::Modifiers {
+        alt: true,
+        ctrl: true,
+        shift: false,
+        mac_cmd: false,
+        command: true,
+    };
+    const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
+        alt: false,
+        ctrl: true,
+        shift: true,
+        mac_cmd: false,
+        command: true,
+    };
+
+    fn key_press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn capture_input(
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+        focused: Option<bool>,
+    ) -> egui::RawInput {
+        // egui keeps the held modifiers from `ModifiersChanged` events.
+        let mut all = vec![egui::Event::ModifiersChanged(modifiers)];
+        all.extend(events);
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(660.0, 1000.0),
+            )),
+            events: all,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .focused = focused;
+        input
+    }
+
+    /// One frame that only runs the top-of-frame capture step.
+    fn capture_frame_with(
+        app: &mut super::OverlayApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+        focused: Option<bool>,
+    ) {
+        ctx.run_ui(capture_input(events, modifiers, focused), |ui| {
+            app.capture_frame(ui.ctx());
+        })
+        .drop_without_applying_deltas();
+    }
+
+    fn capturing_app() -> (super::OverlayApp, egui::Context) {
+        let (mut app, ctx) = popup_app(RULES);
+        assert!(app.config.is_ok());
+        app.tab = ShellTab::Config;
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(app.capture.is_some());
+        (app, ctx)
+    }
+
+    fn pending_hotkey(app: &super::OverlayApp) -> Option<crate::overlay::chord::Chord> {
+        app.config.as_ref().unwrap().hotkey_pending()
+    }
+
+    #[test]
+    fn a_captured_chord_becomes_the_pending_hotkey() {
+        let (mut app, ctx) = capturing_app();
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![key_press(egui::Key::K, CTRL_ALT)],
+            CTRL_ALT,
+            Some(true),
+        );
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        let c = app.config.as_ref().unwrap();
+        assert!(c.hotkey_dirty() && c.is_dirty());
+        assert_eq!(c.scope_dirty_count(RevertScope::Styles), 1);
+    }
+
+    #[test]
+    fn capture_keys_never_reach_a_focused_text_field() {
+        let (mut app, ctx) = popup_app(RULES);
+        let mut text = String::from("abc");
+        let field = egui::Id::new("probe-field");
+        // Frame 1: the field takes focus.
+        ctx.run_ui(
+            capture_input(vec![], Default::default(), Some(true)),
+            |ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut text).id(field));
+                r.request_focus();
+            },
+        )
+        .drop_without_applying_deltas();
+        // The capture starts without surrendering focus, the worst case for draining.
+        app.tab = ShellTab::Config;
+        app.capture = Some(Default::default());
+        ctx.run_ui(
+            capture_input(
+                vec![
+                    key_press(egui::Key::K, CTRL_ALT),
+                    egui::Event::Text("k".into()),
+                    key_press(egui::Key::Backspace, Default::default()),
+                ],
+                CTRL_ALT,
+                Some(true),
+            ),
+            |ui| {
+                app.capture_frame(ui.ctx());
+                ui.add(egui::TextEdit::singleline(&mut text).id(field));
+            },
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(text, "abc");
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+    }
+
+    #[test]
+    fn starting_a_capture_takes_focus_from_a_text_field() {
+        let (mut app, ctx) = popup_app(RULES);
+        let field = egui::Id::new("probe-field");
+        ctx.memory_mut(|m| m.request_focus(field));
+        assert!(ctx.memory(|m| m.has_focus(field)));
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(!ctx.memory(|m| m.has_focus(field)));
+    }
+
+    #[test]
+    fn escape_cancels_the_capture_and_no_one_else_sees_it() {
+        let (mut app, ctx) = capturing_app();
+        let mut escape_seen = true;
+        ctx.run_ui(
+            capture_input(
+                vec![key_press(egui::Key::Escape, Default::default())],
+                Default::default(),
+                Some(true),
+            ),
+            |ui| {
+                app.capture_frame(ui.ctx());
+                escape_seen = ui.ctx().input(|i| i.key_pressed(egui::Key::Escape));
+            },
+        )
+        .drop_without_applying_deltas();
+        assert!(app.capture.is_none());
+        assert!(!escape_seen, "a popup's Escape handler must not run");
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn a_refused_press_keeps_capturing_with_its_caption() {
+        let (mut app, ctx) = capturing_app();
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![key_press(egui::Key::Z, Default::default())],
+            Default::default(),
+            Some(true),
+        );
+        assert!(app.capture.is_some());
+        assert_eq!(pending_hotkey(&app), None);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Add Ctrl, Shift or Alt");
+        assert_eq!(
+            view.caption_kind,
+            crate::overlay::config_view::HotkeyCaption::Rejected
+        );
+        assert!(view.capturing);
+    }
+
+    #[test]
+    fn the_capture_caption_follows_the_held_modifiers() {
+        let (app, _ctx) = capturing_app();
+        let view = app.hotkey_row_view(CTRL_SHIFT).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+…");
+        assert_eq!(
+            view.caption_kind,
+            crate::overlay::config_view::HotkeyCaption::Capturing
+        );
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Press a key…");
+        assert_eq!(view.chord_text, "Ctrl+Shift+Z");
+    }
+
+    #[test]
+    fn every_interruption_cancels_the_capture_without_an_edit() {
+        // The second click on the button.
+        let (mut app, ctx) = capturing_app();
+        app.handle_config_actions(&ctx, vec![ConfigAction::CancelHotkeyCapture]);
+        assert!(app.capture.is_none());
+        // A tab switch.
+        let (mut app, _ctx) = capturing_app();
+        app.tab = ShellTab::Rules;
+        app.end_interrupted_capture(false);
+        assert!(app.capture.is_none());
+        // Hiding the window.
+        let (mut app, _ctx) = capturing_app();
+        app.visibility = super::Visibility::Hidden;
+        app.end_interrupted_capture(false);
+        assert!(app.capture.is_none());
+        // A popup opening.
+        let (mut app, _ctx) = capturing_app();
+        app.config_ui.reset_armed = Some(RevertScope::Styles);
+        app.end_interrupted_capture(false);
+        assert!(app.capture.is_none());
+        // Losing focus after having it.
+        let (mut app, ctx) = capturing_app();
+        capture_frame_with(&mut app, &ctx, vec![], Default::default(), Some(true));
+        assert!(app.capture.is_some());
+        capture_frame_with(&mut app, &ctx, vec![], Default::default(), Some(false));
+        assert!(app.capture.is_none());
+        // A press outside the button (one inside keeps it).
+        let (mut app, ctx) = capturing_app();
+        app.config_ui.hotkey_button_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(100.0, 100.0),
+            egui::vec2(208.0, 30.0),
+        ));
+        let press = |p: egui::Pos2| egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![press(egui::pos2(150.0, 110.0))],
+            Default::default(),
+            Some(true),
+        );
+        assert!(app.capture.is_some());
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![press(egui::pos2(20.0, 20.0))],
+            Default::default(),
+            Some(true),
+        );
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn a_window_that_never_had_focus_keeps_capturing() {
+        let (mut app, ctx) = capturing_app();
+        for _ in 0..3 {
+            capture_frame_with(&mut app, &ctx, vec![], Default::default(), Some(false));
+        }
+        assert!(app.capture.is_some());
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Press a key…");
+    }
+
+    #[test]
+    fn capturing_the_applied_chord_clears_a_pending_one() {
+        let (rt, _, _log) = fake_runtime(&[], None);
+        let (mut app, ctx, _home) = hotkey_app("{}", rt, None);
+        assert_eq!(app.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.tab = ShellTab::Config;
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![key_press(egui::Key::Z, CTRL_SHIFT)],
+            CTRL_SHIFT,
+            Some(true),
+        );
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), None);
+        // The live hotkey's own press while capturing is that chord, not a toggle.
+        app.pick_hotkey(CTRL_ALT_K);
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(app.capture_live_hotkey());
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), None);
+        assert!(!app.toggle_requested);
+        // Without a capture the press is not taken.
+        assert!(!app.capture_live_hotkey());
+    }
+
+    #[test]
+    fn reset_makes_the_default_pending_or_clears_the_edit() {
+        let (rt, _, _log) = fake_runtime(&[], Some(CTRL_ALT_K));
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, None);
+        assert_eq!(app.hotkey.live(), Some(CTRL_ALT_K));
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Alt+K");
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(crate::overlay::chord::DEFAULT));
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+Z");
+        assert!(!view.reset_enabled);
+
+        let (rt, _, _log) = fake_runtime(&[], None);
+        let (mut app, ctx, _home) = hotkey_app("{}", rt, None);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+Z");
+        assert!(!view.reset_enabled, "already the default");
+        app.pick_hotkey(CTRL_ALT_K);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Alt+K");
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn a_stale_saved_chord_keeps_reset_live_until_the_default_is_pending() {
+        // Saved Ctrl+Alt+K was in use at start-up: the default runs.
+        let (rt, warning, _log) = fake_runtime(&[CTRL_ALT_K], Some(CTRL_ALT_K));
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, warning);
+        assert_eq!(app.hotkey_base(), None);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+Z");
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(crate::overlay::chord::DEFAULT));
+        assert!(
+            !app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+    }
+
+    /// A fake registrar (never the OS) whose taken set the test keeps a handle to, so "the other
+    /// app let go" can be played out on the runtime the app already holds.
+    struct SharedTakenRegistrar {
+        taken: std::rc::Rc<
+            std::cell::RefCell<std::collections::HashSet<crate::overlay::chord::Chord>>,
+        >,
+        inner: crate::overlay::hotkey::FakeRegistrar,
+    }
+
+    impl crate::overlay::hotkey::HotkeyRegistrar for SharedTakenRegistrar {
+        fn register(
+            &mut self,
+            chord: crate::overlay::chord::Chord,
+        ) -> Result<(), crate::overlay::hotkey::RegisterError> {
+            self.inner.taken = self.taken.borrow().clone();
+            self.inner.register(chord)
+        }
+
+        fn unregister(&mut self, chord: crate::overlay::chord::Chord) {
+            self.inner.unregister(chord);
+        }
+    }
+
+    #[test]
+    fn a_default_that_failed_at_start_up_can_be_retried_by_capture_or_reset() {
+        let default = crate::overlay::chord::DEFAULT;
+        // No saved key; Ctrl+Shift+Z is held by another app at start-up.
+        let taken = std::rc::Rc::new(std::cell::RefCell::new(
+            [default]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+        ));
+        let log: HotkeyLog = std::rc::Rc::default();
+        let reg = SharedTakenRegistrar {
+            taken: taken.clone(),
+            inner: crate::overlay::hotkey::FakeRegistrar {
+                taken: Default::default(),
+                log: log.clone(),
+            },
+        };
+        let (rt, warning) =
+            crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), None);
+        assert_eq!(*log.borrow(), ["register Ctrl+Shift+Z"]);
+        log.borrow_mut().clear();
+        let (mut app, ctx, home) = hotkey_app("{}", rt, warning);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), default);
+        assert_eq!(app.hotkey_base(), None);
+        // Nothing pending: Reset is live so the registration can be retried.
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        assert!(
+            !app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        // Capturing the shown chord again drops that edit (WR-07) ...
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // ... and a pending other chord is dropped the same way.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // With nothing pending, capturing the shown chord makes it pending again.
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), Some(default));
+
+        assert!(log.borrow().is_empty(), "picking never registers");
+
+        // The other app let go: Apply registers the default.
+        taken.borrow_mut().clear();
+        assert!(app.run_apply(&ctx, false));
+        assert_eq!(*log.borrow(), ["register Ctrl+Shift+Z"]);
+        assert_eq!(app.hotkey.live(), Some(default));
+        assert_eq!(app.hotkey.failure_line(), None);
+        assert_eq!(pending_hotkey(&app), None);
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+        assert_eq!(app.hotkey_base(), Some(default));
+    }
+
+    #[test]
+    fn a_saved_default_that_fails_again_can_be_dropped_or_retried() {
+        let default = crate::overlay::chord::DEFAULT;
+        // Saved "Ctrl+Shift+Z" (written by an earlier retry), held by another app at start-up.
+        let taken = std::rc::Rc::new(std::cell::RefCell::new(
+            [default]
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+        ));
+        let log: HotkeyLog = std::rc::Rc::default();
+        let reg = SharedTakenRegistrar {
+            taken: taken.clone(),
+            inner: crate::overlay::hotkey::FakeRegistrar {
+                taken: Default::default(),
+                log: log.clone(),
+            },
+        };
+        let (rt, warning) =
+            crate::overlay::hotkey::HotkeyRuntime::startup(Some(Box::new(reg)), Some(default));
+        log.borrow_mut().clear();
+        let (mut app, ctx, home) = hotkey_app(r#"{"hotkey":"Ctrl+Shift+Z"}"#, rt, warning);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), default);
+        assert!(
+            !app.saved_hotkey_stale(),
+            "it failed to register, it is not stale"
+        );
+        // Capture the default: pending; capture it again: dropped.
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // A pending other chord is dropped by capturing it again, too.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+        // Reset is live with nothing pending and stages the retry.
+        assert!(
+            app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        assert!(log.borrow().is_empty(), "picking never registers");
+
+        // The other app let go: Apply registers the default.
+        taken.borrow_mut().clear();
+        assert!(app.run_apply(&ctx, false));
+        assert_eq!(*log.borrow(), ["register Ctrl+Shift+Z"]);
+        assert_eq!(app.hotkey.live(), Some(default));
+        assert_eq!(pending_hotkey(&app), None);
+        assert_eq!(
+            saved_hotkey_in(home.path()).as_deref(),
+            Some("Ctrl+Shift+Z")
+        );
+    }
+
+    #[test]
+    fn a_saved_chord_and_the_default_both_taken_never_trap_the_edit() {
+        let default = crate::overlay::chord::DEFAULT;
+        let (rt, warning, log) = fake_runtime(&[CTRL_ALT_K, default], Some(CTRL_ALT_K));
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, warning);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), default);
+        assert!(
+            app.saved_hotkey_stale(),
+            "the saved chord is not the shown one"
+        );
+        // Reset stages the default; capturing it again drops the edit.
+        assert!(
+            app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // Any other chord: capturing it again drops it.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+        assert!(log.borrow().is_empty());
+    }
+
+    #[test]
+    fn no_hotkey_service_with_a_saved_chord_never_traps_the_edit() {
+        let default = crate::overlay::chord::DEFAULT;
+        let rt = crate::overlay::hotkey::HotkeyRuntime::inert(CTRL_ALT_K, "no service");
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, None);
+        assert_eq!(app.hotkey.live(), None);
+        assert_eq!(app.hotkey.shown(), CTRL_ALT_K);
+        assert!(!app.saved_hotkey_stale());
+        // Reset gives a pending default ...
+        assert!(
+            app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        // ... which capturing the default again drops ...
+        app.pick_hotkey(default);
+        assert_eq!(pending_hotkey(&app), None);
+        // ... as does capturing the shown Ctrl+Alt+K.
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(default));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+        // With no registrar, capturing the shown chord never makes it pending.
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn no_config_state_means_no_hotkey_row() {
+        let (mut app, ctx) = popup_app(RULES);
+        app.config = Err("broken".into());
+        assert!(app.hotkey_row_view(Default::default()).is_none());
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(app.capture.is_none());
     }
 }

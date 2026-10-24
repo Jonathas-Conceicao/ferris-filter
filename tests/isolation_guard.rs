@@ -187,7 +187,12 @@ fn code_only(text: &str) -> String {
 /// clients with the CLI agent (never the overlay's).
 #[test]
 fn cli_path_has_no_throttle_and_uses_cli_agent() {
-    for f in ["src/run.rs", "src/cli.rs", "src/main.rs", "src/bin/ff-cli.rs"] {
+    for f in [
+        "src/run.rs",
+        "src/cli.rs",
+        "src/main.rs",
+        "src/bin/ff-cli.rs",
+    ] {
         let text = code_only(&fs::read_to_string(Path::new(ROOT).join(f)).unwrap());
         for n in ["throttle", "ff-state"] {
             assert!(!text.contains(n), "{f} references {n}");
@@ -201,7 +206,12 @@ fn cli_path_has_no_throttle_and_uses_cli_agent() {
     let cmd = &sync[start..end];
     let run = &sync[sync.find("async fn run(").expect("run")..];
     for (name, body) in [("cmd_sync", cmd), ("run", run)] {
-        for n in ["throttle", "ff-state", "new(client::USER_AGENT)", "new(USER_AGENT)"] {
+        for n in [
+            "throttle",
+            "ff-state",
+            "new(client::USER_AGENT)",
+            "new(USER_AGENT)",
+        ] {
             assert!(!body.contains(n), "{name} contains {n}");
         }
     }

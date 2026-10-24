@@ -107,8 +107,20 @@ pub fn generate_as(
     emit_header(&mut out, identity);
     emit_rules(&mut out, config)?;
     let ranges = &priced.tier_ranges;
-    emit_currency_sections(&mut out, &config.styles, &priced.category_blocks, false, ranges)?;
-    emit_unique_sections(&mut out, &config.styles, &priced.unique_blocks, false, ranges)?;
+    emit_currency_sections(
+        &mut out,
+        &config.styles,
+        &priced.category_blocks,
+        false,
+        ranges,
+    )?;
+    emit_unique_sections(
+        &mut out,
+        &config.styles,
+        &priced.unique_blocks,
+        false,
+        ranges,
+    )?;
     debug_assert!(
         out.ends_with('\n'),
         "generate() output must end with exactly one newline"

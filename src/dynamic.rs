@@ -605,7 +605,11 @@ mod tests {
 
         // Tier blocks carry their built-in style tag.
         assert!(on_disk.0.contains("# ff:style builtin:S S\n"));
-        assert!(on_disk.0.contains("# ff:name S tier Currency >= 30 chaos\n"));
+        assert!(
+            on_disk
+                .0
+                .contains("# ff:name S tier Currency >= 30 chaos\n")
+        );
         // Pending tier edits rename the rows too.
         assert!(
             moved

@@ -39,6 +39,11 @@ pub struct TrayHandles {
     // documents that this is intentional RAII, not an oversight.
     #[allow(dead_code)]
     tray_icon: Option<TrayIcon>,
+    /// A clone of the tray's menu (muda menus are shared handles), so the hotkey failure line
+    /// can be added, updated or removed after an Apply. `None` without a live tray.
+    menu: Option<Menu>,
+    /// The disabled hotkey failure line, while one is shown.
+    status_item: Option<MenuItem>,
     show_id: MenuId,
     quit_id: MenuId,
 }
@@ -78,12 +83,14 @@ pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tr
         .expect("appending a freshly-created MenuItem to a freshly-created Menu cannot fail");
     menu.append(&quit_item)
         .expect("appending a freshly-created MenuItem to a freshly-created Menu cannot fail");
-    if let Some(status_line) = status_line {
+    let status_item = status_line.map(|status_line| {
         // `enabled: false` — informational only, not a clickable command.
         let status_item = MenuItem::new(status_line, false, None);
         menu.append(&status_item)
             .expect("appending a freshly-created MenuItem to a freshly-created Menu cannot fail");
-    }
+        status_item
+    });
+    let menu_handle = menu.clone();
 
     let tray_icon = TrayIconBuilder::new()
         .with_icon(load_icon())
@@ -96,6 +103,8 @@ pub fn build(tooltip: &str, status_line: Option<&str>) -> Result<TrayHandles, tr
 
     Ok(TrayHandles {
         tray_icon: Some(tray_icon),
+        menu: Some(menu_handle),
+        status_item,
         show_id,
         quit_id,
     })
@@ -107,6 +116,8 @@ impl TrayHandles {
     pub(crate) fn inert() -> Self {
         Self {
             tray_icon: None,
+            menu: None,
+            status_item: None,
             show_id: MenuId::new("screenshot-show"),
             quit_id: MenuId::new("screenshot-quit"),
         }
@@ -120,6 +131,28 @@ impl TrayHandles {
     /// thread that built the tray, the same as `build`.
     pub fn release(&mut self) {
         self.tray_icon = None;
+    }
+
+    /// Follows the live show / hide hotkey after an Apply: the tooltip, and the disabled failure
+    /// line (`Some` adds or updates it, `None` removes it). Main thread only (module docs).
+    pub fn set_hotkey_state(&mut self, tooltip: &str, failure: Option<&str>) {
+        if let Some(icon) = &self.tray_icon {
+            let _ = icon.set_tooltip(Some(tooltip));
+        }
+        match (failure, &self.status_item, &self.menu) {
+            (Some(text), Some(item), _) => item.set_text(text),
+            (Some(text), None, Some(menu)) => {
+                let item = MenuItem::new(text, false, None);
+                if menu.append(&item).is_ok() {
+                    self.status_item = Some(item);
+                }
+            }
+            (None, Some(item), Some(menu)) => {
+                let _ = menu.remove(item);
+                self.status_item = None;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -145,6 +178,8 @@ mod tests {
         fn for_test(show_id: MenuId, quit_id: MenuId) -> Self {
             Self {
                 tray_icon: None,
+                menu: None,
+                status_item: None,
                 show_id,
                 quit_id,
             }
@@ -167,5 +202,13 @@ mod tests {
             command_for_menu(&MenuId::new("something-else"), &handles),
             None
         );
+    }
+
+    #[test]
+    fn set_hotkey_state_without_a_live_tray_does_nothing() {
+        let mut handles = TrayHandles::for_test(MenuId::new("show"), MenuId::new("quit"));
+        handles.set_hotkey_state("FerrisFilter — Ctrl+Alt+K to toggle", None);
+        handles.set_hotkey_state("x", Some("FerrisFilter — F5 unavailable: in use"));
+        assert!(handles.status_item.is_none());
     }
 }

@@ -113,6 +113,12 @@ pub struct Skin {
     pub clear: [TextureHandle; 3],
     /// Magnifier glyph (`common/buttonsearch*`), no plate. Normal (muted rest), hover.
     pub search: [TextureHandle; 2],
+    /// The Options menu keybind button frame (`options menu/optionsbuttonborder`, trimmed 60x60):
+    /// gold line and ornate corner clusters, its white mask interior keyed out to transparent.
+    pub keybind_border: TextureHandle,
+    /// The Options menu keybind button plate (`options menu/optionsbutton`, trimmed 60x60):
+    /// greyscale, dark top, bright band and radial glow along the bottom; tinted at draw time.
+    pub keybind_plate: TextureHandle,
     /// Gold dropdown triangle: normal, hover.
     pub combo_arrow: [TextureHandle; 2],
     /// Generic button: normal, hover, pressed.
@@ -203,6 +209,8 @@ impl Skin {
                 tex!(ctx, "poe2/common/search_normal.png"),
                 tex!(ctx, "poe2/common/search_hover.png"),
             ],
+            keybind_border: tex!(ctx, "poe2/options/keybind_border.png"),
+            keybind_plate: tex!(ctx, "poe2/options/keybind_plate.png"),
             combo_arrow: [
                 tex!(ctx, "poe2/common/combo_arrow.png"),
                 tex!(ctx, "poe2/common/combo_arrow_hover.png"),

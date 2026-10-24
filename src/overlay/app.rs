@@ -1383,6 +1383,29 @@ impl OverlayApp {
                 app.list.section_focus = true;
             }
         }
+        // Injected drags: the pointer is a NaN-x marker that the list / table resolves to the
+        // boundary (rules) or gap (styles) on its first drawn frame; never committed.
+        if let Some((n, slot)) = shot.drag {
+            let id = app.working.as_ref().and_then(|w| nth_row_id(w.rows(), n));
+            if let Some(src) = id {
+                app.list.drag = Some(crate::overlay::rule_list::DragState {
+                    src,
+                    handle: egui::Id::NULL,
+                    had_focus: false,
+                    injected: Some(egui::pos2(f32::NAN, slot as f32)),
+                    last_slot: None,
+                });
+            }
+        }
+        if let Some((name, gap)) = &shot.drag_style {
+            app.config_ui.drag = Some(crate::overlay::config_view::StyleDrag {
+                name: name.clone(),
+                handle: egui::Id::NULL,
+                had_focus: false,
+                injected: Some(egui::pos2(f32::NAN, *gap as f32)),
+                last_gap: None,
+            });
+        }
         if let Some(name) = &shot.expand_style {
             app.config_ui.expanded = Some(name.clone());
             app.config_ui.scroll_to = Some(name.clone());

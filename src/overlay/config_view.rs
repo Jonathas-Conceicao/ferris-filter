@@ -869,7 +869,10 @@ fn show_styles(
         let pointer = d
             .injected
             .or_else(|| egui_ctx.input(|i| i.pointer.latest_pos()));
-        let py = pointer.map_or(area.center().y, |p| p.y);
+        // A screenshot-injected pointer (NaN x) is resolved after the rows are drawn.
+        let py = pointer
+            .filter(|p| !p.x.is_nan())
+            .map_or(area.center().y, |p| p.y);
         let (wheel, dt) = egui_ctx.input(|i| (i.smooth_scroll_delta.y, i.stable_dt.min(0.1)));
         let auto = drag_reorder::autoscroll_speed(
             py,
@@ -1003,17 +1006,24 @@ fn draw_style_drag(
         return;
     };
     let h = crate::skin::widgets::ROW_HEIGHT;
-    let pointer = d
-        .injected
-        .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
-    let py = pointer.map_or(area.center().y, |p| p.y);
-    let top = drag_reorder::shadow_top(py, h, area.top(), area.bottom());
     // Custom rows' tops plus the last row's bottom. The nearest gap is chosen first; when it is
     // the source's own neighbourhood the drop is a no-op: no gap and no marker.
     let mut bounds: Vec<f32> = cfg.row_rects.iter().map(|(_, r)| r.top()).collect();
     if let Some((_, r)) = cfg.row_rects.last() {
         bounds.push(r.bottom());
     }
+    // Debug screenshot mode injects `Pos2 { x: NaN, y: gap }`: the pointer then sits on that gap.
+    let injected = d.injected.map(|p| {
+        if p.x.is_nan() {
+            let y = bounds.get(p.y as usize).copied().unwrap_or(area.center().y);
+            egui::pos2(area.center().x, y)
+        } else {
+            p
+        }
+    });
+    let pointer = injected.or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
+    let py = pointer.map_or(area.center().y, |p| p.y);
+    let top = drag_reorder::shadow_top(py, h, area.top(), area.bottom());
     let gap = Some(drag_reorder::style_gap_for_y(&bounds, top + h / 2.0))
         .filter(|&g| !drag_reorder::style_noop(src, g));
     let inside = pointer.is_some_and(|p| area.contains(p));

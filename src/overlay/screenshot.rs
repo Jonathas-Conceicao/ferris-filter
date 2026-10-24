@@ -89,6 +89,11 @@ pub(crate) struct ShotArgs {
     pub rename_section: Option<usize>,
     /// Expand this style in the CONFIG tab's Styles tables.
     pub expand_style: Option<String>,
+    /// Inject a rule drag on the n-th user rule (1-based) with the pointer on boundary `slot` of
+    /// the list entries; painted only, never committed.
+    pub drag: Option<(usize, usize)>,
+    /// Inject a style drag on this custom style with the pointer on gap `gap` of the custom rows.
+    pub drag_style: Option<(String, usize)>,
     /// Open the colour picker with this tag (one of [`PICKERS`]).
     pub picker: Option<String>,
     /// Open this dropdown (one of [`DROPDOWNS`]).
@@ -125,6 +130,8 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
     let mut search = None;
     let mut rename_section = None;
     let mut expand_style = None;
+    let mut drag = None;
+    let mut drag_style = None;
     let mut picker = None;
     let mut dropdown = None;
     let mut tier_text = None;
@@ -188,6 +195,26 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
                 };
             }
             "--expand-style" => expand_style = Some(value("--expand-style")?),
+            "--drag" => {
+                let v = value("--drag")?;
+                let bad = || format!("--drag needs <row>:<slot> (row >= 1), got `{v}`");
+                let (r, s) = v.split_once(':').ok_or_else(bad)?;
+                let r = r.parse::<usize>().map_err(|_| bad())?;
+                let s = s.parse::<usize>().map_err(|_| bad())?;
+                if r < 1 {
+                    return Err(bad());
+                }
+                drag = Some((r, s));
+            }
+            "--drag-style" => {
+                let v = value("--drag-style")?;
+                let bad = || format!("--drag-style needs <name>:<gap>, got `{v}`");
+                let (n, g) = v.rsplit_once(':').ok_or_else(bad)?;
+                if n.is_empty() {
+                    return Err(bad());
+                }
+                drag_style = Some((n.to_string(), g.parse::<usize>().map_err(|_| bad())?));
+            }
             "--picker" => {
                 let p = value("--picker")?;
                 if !PICKERS.contains(&p.as_str()) {
@@ -280,6 +307,8 @@ pub(crate) fn parse(args: impl Iterator<Item = String>) -> Result<Option<ShotArg
         search,
         rename_section,
         expand_style,
+        drag,
+        drag_style,
         picker,
         dropdown,
         tier_text,
@@ -476,6 +505,32 @@ mod tests {
         assert_eq!(a.rename_section, Some(2));
         assert_eq!(a.expand_style.as_deref(), Some("S"));
         assert_eq!(a.picker.as_deref(), Some("text"));
+        assert_eq!(a.drag, None);
+        let d = p(&[
+            "--screenshot",
+            "o.png",
+            "--drag",
+            "3:6",
+            "--drag-style",
+            "mine:0",
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(d.drag, Some((3, 6)));
+        assert_eq!(d.drag_style, Some(("mine".to_string(), 0)));
+        for bad in [
+            &["--drag"][..],
+            &["--drag", "x:1"],
+            &["--drag", "3"],
+            &["--drag", "0:1"],
+            &["--drag-style", ":1"],
+            &["--drag-style", "a:b"],
+            &["--drag-style", "a"],
+        ] {
+            let mut v = vec!["--screenshot", "o.png"];
+            v.extend_from_slice(bad);
+            assert!(p(&v).is_err(), "{bad:?}");
+        }
         assert_eq!(a.dropdown, None);
         for name in DROPDOWNS {
             let d = p(&["--screenshot", "o.png", "--dropdown", name])

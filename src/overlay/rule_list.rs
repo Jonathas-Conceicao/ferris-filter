@@ -558,6 +558,18 @@ pub fn show_list(
     let ctx = ui.ctx().clone();
     let list_rect = ui.available_rect_before_wrap();
     let slot_entries = slot_entries_of(working, entries);
+    // Debug screenshot mode injects `Pos2 { x: NaN, y: boundary }`: the pointer then sits on that
+    // boundary of the list at its current scroll offset.
+    if let Some(d) = list.drag.as_mut()
+        && let Some(p) = d.injected
+        && p.x.is_nan()
+    {
+        let y = offsets.get(p.y as usize).copied().unwrap_or(0.0);
+        d.injected = Some(egui::pos2(
+            list_rect.center().x,
+            list_rect.top() + y - offset.unwrap_or(0.0),
+        ));
+    }
     let src_index = list.drag.and_then(|d| {
         entries.iter().position(|e| match e {
             ListEntry::Rule(i) => rows.get(*i).is_some_and(|r| r.id == d.src),

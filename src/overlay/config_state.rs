@@ -670,12 +670,6 @@ impl ConfigState {
         self.dirty_count() > 0
     }
 
-    /// Move a custom style up or down among the customs. False (no change) for built-ins,
-    /// unknown names and the ends of the custom group.
-    pub fn move_style(&mut self, name: &str, up: bool) -> bool {
-        self.styles.move_custom(name, up)
-    }
-
     /// Move a custom style to a gap (0..=n) among the customs. False (no change) for built-ins,
     /// unknown names and no-op gaps.
     pub fn move_style_to(&mut self, name: &str, to: usize) -> bool {
@@ -1751,23 +1745,6 @@ mod tests {
     }
 
     #[test]
-    fn reorder_is_dirty_and_reverts() {
-        let (_dir, mut s, customs) = reorder_root();
-        let before = s.style_names();
-        assert!(!s.is_dirty());
-        let last = customs.last().unwrap();
-        assert!(s.move_style(last, true));
-        assert!(s.dirty_count() >= 1);
-        assert!(s.is_dirty());
-        assert!(s.can_apply());
-        assert_ne!(s.style_names(), before);
-        s.revert();
-        assert_eq!(s.style_names(), before);
-        assert_eq!(s.dirty_count(), 0);
-        assert!(!s.move_style("S", true));
-    }
-
-    #[test]
     fn reorder_to_is_dirty_and_reverts() {
         let (_dir, mut s, customs) = reorder_root();
         let before = s.style_names();
@@ -1789,7 +1766,7 @@ mod tests {
         let path = dir.path().join("styles.json");
         let old = fs::read_to_string(&path).unwrap();
         let last = customs.last().unwrap().clone();
-        assert!(s.move_style(&last, true));
+        assert!(s.move_style_to(&last, 0));
         let expect = s.style_names();
 
         let w = s.prepare_write().unwrap();
@@ -2143,7 +2120,7 @@ mod tests {
         s.edit_style("S", StyleEdit::Font(Some(12)));
         s.edit_style("kite", StyleEdit::Font(Some(30)));
         s.set_strictness(Strictness::DivFarmer);
-        s.move_style("kite", false);
+        s.move_style_to("kite", 99);
         assert!(!s.styles_at_defaults());
         let current_customs: Vec<String> = s
             .pending_styles()

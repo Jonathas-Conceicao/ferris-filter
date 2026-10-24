@@ -968,35 +968,6 @@ impl StyleSet {
         self.0.shift_remove(name)
     }
 
-    /// Move a custom style one step up or down among the custom styles only. It swaps places with
-    /// the nearest custom neighbour in that direction, so built-ins never change position.
-    /// False (no change) for a built-in, an unknown name, or a custom already at that end.
-    pub fn move_custom(&mut self, name: &str, up: bool) -> bool {
-        if Self::is_builtin(name) {
-            return false;
-        }
-        let Some(from) = self.0.get_index_of(name) else {
-            return false;
-        };
-        let is_custom = |i: usize| {
-            self.0
-                .get_index(i)
-                .is_some_and(|(n, _)| !Self::is_builtin(n))
-        };
-        let to = if up {
-            (0..from).rev().find(|&i| is_custom(i))
-        } else {
-            (from + 1..self.0.len()).find(|&i| is_custom(i))
-        };
-        match to {
-            Some(to) => {
-                self.0.swap_indices(from, to);
-                true
-            }
-            None => false,
-        }
-    }
-
     /// Move a custom style to a gap among the custom styles only: `gap` 0 is above the first
     /// custom, `n` below the last (clamped). Only the custom index slots are rewritten, so
     /// built-ins never move and a custom never lands above them. False (no change) for a
@@ -1503,51 +1474,7 @@ mod tests {
     }
 
     #[test]
-    fn move_custom_skips_builtins_and_stops_at_ends() {
-        let mut set = StyleSet::committed_for_tests();
-        set.insert_new("Gold", Style::blank_show()).unwrap();
-        set.insert_new("Silver", Style::blank_show()).unwrap();
-        let order = |s: &StyleSet| s.names().map(String::from).collect::<Vec<_>>();
-        let builtin_slots = |s: &StyleSet| {
-            s.names()
-                .enumerate()
-                .filter(|(_, n)| StyleSet::is_builtin(n))
-                .map(|(i, n)| (i, n.to_string()))
-                .collect::<Vec<_>>()
-        };
-        let slots = builtin_slots(&set);
-        let before = order(&set);
-
-        // Last custom up swaps with the previous custom, whatever sits between them.
-        assert!(set.move_custom("Silver", true));
-        let after = order(&set);
-        let gi = after.iter().position(|n| n == "Gold").unwrap();
-        let si = after.iter().position(|n| n == "Silver").unwrap();
-        assert!(si < gi);
-        assert_eq!(builtin_slots(&set), slots);
-
-        // Moving it back restores the original order.
-        assert!(set.move_custom("Silver", false));
-        assert_eq!(order(&set), before);
-
-        // Ends and refusals.
-        let first_custom = before
-            .iter()
-            .find(|n| !StyleSet::is_builtin(n))
-            .unwrap()
-            .clone();
-        assert!(!set.move_custom(&first_custom, true));
-        assert!(!set.move_custom("Silver", false));
-        for b in StyleSet::REQUIRED {
-            assert!(!set.move_custom(b, true));
-            assert!(!set.move_custom(b, false));
-        }
-        assert!(!set.move_custom("nope", true));
-        assert_eq!(order(&set), before);
-    }
-
-    #[test]
-    fn move_custom_to_matches_swaps_and_keeps_builtins() {
+    fn move_custom_to_moves_among_customs_and_keeps_builtins() {
         let mk = || {
             let mut set = StyleSet::committed_for_tests();
             let old: Vec<String> = set
@@ -1584,10 +1511,6 @@ mod tests {
         let mut s = mk();
         assert!(s.move_custom_to("z", 0));
         assert_eq!(customs(&s), ["z", "x", "y"]);
-        // Equivalent to repeated swaps.
-        let mut t = mk();
-        assert!(t.move_custom("z", true) && t.move_custom("z", true));
-        assert_eq!(s.names().collect::<Vec<_>>(), t.names().collect::<Vec<_>>());
         // Clamped gap, refusals.
         let mut s = mk();
         assert!(s.move_custom_to("x", 99));

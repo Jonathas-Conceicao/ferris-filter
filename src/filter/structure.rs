@@ -353,49 +353,6 @@ impl Document {
         Ok(out[pos + 1])
     }
 
-    /// The block this one would swap with when moved, or `None` when there is none, when either is
-    /// an economy block, or when an economy marker lies between the two.
-    pub fn move_neighbour(&self, id: BlockId, up: bool) -> Result<Option<BlockId>, EditError> {
-        let infos = self.infos();
-        let pos = infos
-            .iter()
-            .position(|i| i.id == id)
-            .ok_or(EditError::UnknownBlock)?;
-        let sec = section::find(self).map_err(|e| EditError::EconomyDamaged(e.to_string()))?;
-        let np = if up {
-            pos.checked_sub(1)
-        } else {
-            (pos + 1 < infos.len()).then_some(pos + 1)
-        };
-        let Some(np) = np else {
-            return Ok(None);
-        };
-        let in_economy = |h: usize| sec.is_some_and(|s| h > s.begin && h < s.end);
-        if in_economy(infos[pos].header) || in_economy(infos[np].header) {
-            return Ok(None);
-        }
-        let (a, b) = if np < pos {
-            (&infos[np], &infos[pos])
-        } else {
-            (&infos[pos], &infos[np])
-        };
-        let banners = section::banner_starts(&self.lines);
-        if (a.span.end..b.span.start).any(|i| banners.iter().any(|&s| i >= s && i < s + 3)) {
-            return Ok(None);
-        }
-        Ok(Some(infos[np].id))
-    }
-
-    /// Swap the block with its neighbour in place. Ids follow the blocks.
-    pub fn move_block(&mut self, id: BlockId, up: bool) -> Result<(), EditError> {
-        let nb = self.move_neighbour(id, up)?.ok_or(EditError::NoNeighbour)?;
-        if up {
-            self.swap_runs(&[nb], &[id])
-        } else {
-            self.swap_runs(&[id], &[nb])
-        }
-    }
-
     /// Remove the blocks `old` (which must be the blocks directly after `anchor`, in order) and
     /// insert one block per entry of `spans` (span texts, no terminators) after `anchor`, each
     /// preceded by one blank line. The new blocks reuse the ids of `old` by position (fresh ids
@@ -465,63 +422,6 @@ impl Document {
         expected.splice(range, spans);
         let out = self.commit_structural(new, ids, expected)?;
         Ok(out[pos + 1..pos + 1 + n_new].to_vec())
-    }
-
-    /// Swap two adjacent runs of consecutive blocks: `a` directly followed by `b` (each in file
-    /// order) becomes `b` then `a`. A run moves with the blank lines after each of its blocks;
-    /// stray lines between the runs stay where they are. Ids follow the blocks. The caller checks
-    /// that the swap is allowed (see [`Document::move_neighbour`]).
-    pub fn swap_runs(&mut self, a: &[BlockId], b: &[BlockId]) -> Result<(), EditError> {
-        let infos = self.infos();
-        let (Some(a0), false) = (a.first(), b.is_empty()) else {
-            return Err(EditError::NoNeighbour);
-        };
-        let pa = infos
-            .iter()
-            .position(|i| i.id == *a0)
-            .ok_or(EditError::UnknownBlock)?;
-        let pb = pa + a.len();
-        let consecutive = a
-            .iter()
-            .chain(b)
-            .enumerate()
-            .all(|(k, id)| infos.get(pa + k).map(|i| i.id) == Some(*id));
-        if !consecutive {
-            return Err(EditError::NoNeighbour);
-        }
-        let (pa_last, pb_last) = (pb - 1, pb + b.len() - 1);
-        let a_region = infos[pa].span.start..infos[pa_last].unit.end;
-        let strays = infos[pa_last].unit.end..infos[pb].span.start;
-        let b_region = infos[pb].span.start..infos[pb_last].unit.end;
-
-        let eol = self.last_eol();
-        let mut old = self.lines.clone();
-        let last = old.len() - 1;
-        let was_unterminated = old[last].eol() == Eol::None;
-        if was_unterminated {
-            old[last] = Line::new(old[last].text().to_string(), eol);
-        }
-        let mut new = old[..a_region.start].to_vec();
-        new.extend_from_slice(&old[b_region.clone()]);
-        new.extend_from_slice(&old[strays]);
-        new.extend_from_slice(&old[a_region.clone()]);
-        new.extend_from_slice(&old[b_region.end..]);
-        if was_unterminated {
-            if let Some(l) = new.last_mut() {
-                if !l.text().is_empty() {
-                    *l = Line::new(l.text().to_string(), Eol::None);
-                }
-            }
-        }
-
-        let mut ids: Vec<Option<BlockId>> = infos.iter().map(|i| Some(i.id)).collect();
-        ids[pa..=pb_last].rotate_left(a.len());
-        let mut expected: Vec<Vec<String>> = infos
-            .iter()
-            .map(|i| self.span_texts(i.span.clone()))
-            .collect();
-        expected[pa..=pb_last].rotate_left(a.len());
-        self.commit_structural(new, ids, expected).map(|_| ())
     }
 
     /// Move a run of consecutive blocks (one block or a `# ff:group` run) to `dest` in one edit.
@@ -1018,101 +918,13 @@ Show
     }
 
     #[test]
-    fn move_swaps_units_and_ids_follow() {
-        let src = "#ff:name a\nShow\n  Rarity Rare\n\n#ff:name b\nHide\n  Class \"Bows\"\n\n";
-        let mut d = p(src);
-        let all = ids(&d);
-        d.move_block(all[0], false).unwrap();
-        assert_eq!(
-            s(&d),
-            "#ff:name b\nHide\n  Class \"Bows\"\n\n#ff:name a\nShow\n  Rarity Rare\n\n"
-        );
-        assert_eq!(ids(&d), vec![all[1], all[0]]);
-        assert_eq!(d.meta_get(all[0], "name"), Some("a"));
-        assert_eq!(d.meta_get(all[1], "name"), Some("b"));
-        d.move_block(all[0], true).unwrap();
-        assert_eq!(s(&d), src);
-        assert_eq!(ids(&d), all);
-    }
-
-    #[test]
-    fn move_leaves_stray_lines_in_place() {
-        let src = "Show # A\n\n# stray\n\nHide # B\n";
-        let mut d = p(src);
-        let all = ids(&d);
-        d.move_block(all[1], true).unwrap();
-        assert_eq!(
-            s(&d),
-            "Hide # B\n# stray\n\nShow # A\n\n"
-                .replace("Hide # B\n# stray\n\nShow # A\n\n", &s(&d))
-        );
-        d.move_block(all[1], false).unwrap();
-        assert_eq!(s(&d), src);
-    }
-
-    #[test]
-    fn move_never_crosses_economy() {
-        let src = format!("Show # R1\n\n{BEGIN}\n\nHide # E\n\n{END}\nShow # R2\n");
-        let mut d = p(&src);
-        let all = ids(&d);
-        assert_eq!(d.move_neighbour(all[0], false).unwrap(), None);
-        assert_eq!(d.move_neighbour(all[1], true).unwrap(), None);
-        assert_eq!(d.move_neighbour(all[1], false).unwrap(), None);
-        assert_eq!(d.move_neighbour(all[2], true).unwrap(), None);
-        for (i, up) in [(0, false), (1, true), (1, false), (2, true)] {
-            assert!(matches!(
-                d.move_block(all[i], up),
-                Err(EditError::NoNeighbour)
-            ));
-        }
-        assert_eq!(s(&d), src);
-        // Rules on one side still swap.
-        let src = format!("Show # R1\n\nShow # R2\n\n{BEGIN}\n\n{END}\n");
-        let mut d = p(&src);
-        let all = ids(&d);
-        d.move_block(all[1], true).unwrap();
-        assert_eq!(
-            s(&d),
-            format!("Show # R2\n\nShow # R1\n\n{BEGIN}\n\n{END}\n")
-        );
-        assert!(section::find(&d).unwrap().is_some());
-    }
-
-    #[test]
-    fn move_unterminated_final_block() {
-        let src = "Show # A\nHide # B";
-        let mut d = p(src);
-        let all = ids(&d);
-        d.move_block(all[1], true).unwrap();
-        assert_eq!(s(&d), "Hide # B\nShow # A");
-        d.move_block(all[1], false).unwrap();
-        assert_eq!(s(&d), src);
-        // A trailing blank line cannot be unterminated: it takes the document terminator.
-        let src = "Show # A\n\nHide # B";
-        let mut d = p(src);
-        let all = ids(&d);
-        d.move_block(all[1], true).unwrap();
-        assert_eq!(s(&d), "Hide # B\nShow # A\n\n");
-        // The "no final newline" fact is not recoverable from a blank last line, so the
-        // inverse move ends terminated.
-        d.move_block(all[1], false).unwrap();
-        assert_eq!(
-            s(&d),
-            format!(
-                "{src}
-"
-            )
-        );
-    }
-
-    #[test]
     fn crlf_is_preserved() {
         let src = "Show # A\r\n\r\nHide # B\r\n";
         let mut d = p(src);
         d.insert_rule_at_top(v(&["Minimal"])).unwrap();
         let all = ids(&d);
         d.duplicate_block(all[1]).unwrap();
-        d.move_block(all[1], false).unwrap();
+        d.move_run_to(&[all[1]], MoveDest::End).unwrap();
         d.remove_block(all[0]).unwrap();
         let out = s(&d);
         assert_eq!(out.matches('\n').count(), out.matches("\r\n").count());
@@ -1123,25 +935,9 @@ Show
         let src = "Show # A\n\nHide # B\n";
         let mut d = p(src);
         let all = ids(&d);
-        assert!(matches!(
-            d.move_block(all[0], true),
-            Err(EditError::NoNeighbour)
-        ));
-        assert!(matches!(
-            d.move_block(all[1], false),
-            Err(EditError::NoNeighbour)
-        ));
         let bogus = BlockId(9999);
         assert!(matches!(
-            d.move_block(bogus, true),
-            Err(EditError::UnknownBlock)
-        ));
-        assert!(matches!(
             d.duplicate_block(bogus),
-            Err(EditError::UnknownBlock)
-        ));
-        assert!(matches!(
-            d.move_neighbour(bogus, true),
             Err(EditError::UnknownBlock)
         ));
         assert_eq!(s(&d), src);
@@ -1275,25 +1071,6 @@ Hide
 #	Rarity Rare
 "
         );
-    }
-
-    #[test]
-    fn swap_runs_moves_a_run_as_a_unit() {
-        let src = "Show # A\n\nShow # B1\n\nShow # B2\n\n# stray\n\nShow # C\n";
-        let mut d = p(src);
-        let i = ids(&d);
-        d.swap_runs(&[i[0]], &[i[1], i[2]]).unwrap();
-        assert_eq!(
-            s(&d),
-            "Show # B1\n\nShow # B2\n\nShow # A\n\n# stray\n\nShow # C\n"
-        );
-        assert_eq!(ids(&d), vec![i[1], i[2], i[0], i[3]]);
-        // Its own inverse.
-        d.swap_runs(&[i[1], i[2]], &[i[0]]).unwrap();
-        assert_eq!(s(&d), src);
-        // Runs must be adjacent and in order.
-        assert!(d.swap_runs(&[i[0]], &[i[2]]).is_err());
-        assert!(d.swap_runs(&[i[1]], &[i[0]]).is_err());
     }
 
     #[test]

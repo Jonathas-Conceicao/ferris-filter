@@ -25,11 +25,9 @@ const BAR_H: f32 = 16.0;
 const TILE: f32 = 24.0;
 const TILE_GAP: f32 = 4.0;
 
-/// What a picker slot supports.
+/// What a picker slot supports. Every slot has the alpha slider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PickerMode {
-    /// Show the alpha slider (rule and style colour slots).
-    pub alpha: bool,
     /// Show the None tile (a style slot can be empty; a rule colour line is removed instead).
     pub allow_none: bool,
 }
@@ -495,23 +493,21 @@ pub fn ff_colour_picker(
     }
 
     // Alpha.
-    if mode.alpha {
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let (rect, _) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::hover());
-            paint_checker_preview(ui.painter(), rect, [rgb[0], rgb[1], rgb[2], alpha]);
-            let mut a = f64::from(alpha);
-            let r = ff_slider(ui, skin, &mut a, 0.0..=255.0, 1.0, "Alpha", |v| {
-                format!("{v:.0}")
-            });
-            probe("alpha", r.rect);
-            if r.changed() {
-                alpha = a.round().clamp(0.0, 255.0) as u8;
-                changed = true;
-            }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::hover());
+        paint_checker_preview(ui.painter(), rect, [rgb[0], rgb[1], rgb[2], alpha]);
+        let mut a = f64::from(alpha);
+        let r = ff_slider(ui, skin, &mut a, 0.0..=255.0, 1.0, "Alpha", |v| {
+            format!("{v:.0}")
         });
-    }
+        probe("alpha", r.rect);
+        if r.changed() {
+            alpha = a.round().clamp(0.0, 255.0) as u8;
+            changed = true;
+        }
+    });
 
     // Quick picks and, where the slot can be empty, the None tile: one row. The tiles shrink
     // just enough (24 -> 23pt) for the tenth tile to fit the content width.
@@ -668,10 +664,7 @@ pub fn colour_popup(
             } else if res.changed || ((res.done || res.picked) && current.is_none()) {
                 // An explicit choice (Use colour, a quick pick) on an empty slot commits the
                 // working colour even when it is still the seed.
-                let mut now = st.hsva.to_srgba_unmultiplied();
-                if !mode.alpha {
-                    now[3] = 255;
-                }
+                let now = st.hsva.to_srgba_unmultiplied();
                 if Some(now) != current {
                     out = Some(PickerEdit::Set(now));
                 }
@@ -756,10 +749,7 @@ mod tests {
 
     use egui::{Context, Event, Modifiers, PointerButton, RawInput};
 
-    const OPEN: PickerMode = PickerMode {
-        alpha: true,
-        allow_none: true,
-    };
+    const OPEN: PickerMode = PickerMode { allow_none: true };
 
     fn input(events: Vec<Event>) -> RawInput {
         RawInput {
@@ -917,14 +907,11 @@ mod tests {
     }
 
     #[test]
-    fn alpha_and_none_follow_the_mode() {
+    fn none_follows_the_mode_and_alpha_is_always_shown() {
         let ctx = setup();
-        let mode = PickerMode {
-            alpha: false,
-            allow_none: false,
-        };
+        let mode = PickerMode { allow_none: false };
         let probes = open(&ctx, Some([1, 2, 3, 255]), mode);
-        assert!(rect_of(&probes, "alpha").is_none());
+        assert!(rect_of(&probes, "alpha").is_some());
         assert!(rect_of(&probes, "none").is_none());
         assert!(rect_of(&probes, "square").is_some());
         let ctx = setup();

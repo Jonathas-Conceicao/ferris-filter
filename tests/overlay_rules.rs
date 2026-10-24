@@ -4,8 +4,8 @@
 
 use std::time::{Duration, Instant};
 
-use ferrisfilter::filter::BlockKeyword;
-use ferrisfilter::overlay::rules::{Dir, RowAction, WorkingFilter};
+use ferrisfilter::filter::{BlockKeyword, MoveDest};
+use ferrisfilter::overlay::rules::{RowAction, WorkingFilter};
 
 fn fixture() -> String {
     let bytes = std::fs::read(concat!(
@@ -68,7 +68,14 @@ fn fixture_edits_stay_fast_and_revert_restores_bytes() {
         let id = r.id;
         let action = match i % 6 {
             0 => RowAction::SetEnabled(id, !r.enabled),
-            1 => RowAction::Move(id, if i % 2 == 0 { Dir::Up } else { Dir::Down }),
+            1 => RowAction::MoveTo {
+                id,
+                dest: if i % 2 == 0 {
+                    MoveDest::Before(rows[0].id)
+                } else {
+                    MoveDest::End
+                },
+            },
             2 => RowAction::SetKeyword(id, BlockKeyword::Hide),
             3 => RowAction::SetContinue(id, !r.has_continue),
             4 => {

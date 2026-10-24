@@ -938,7 +938,7 @@ fn apply_row_actions_folding(
             RowAction::RemoveSection(_) | RowAction::MoveSection(..)
         );
         let is_duplicate = matches!(action, RowAction::Duplicate(_));
-        let is_move = matches!(action, RowAction::Move(..) | RowAction::MoveTo { .. });
+        let is_move = matches!(action, RowAction::MoveTo { .. });
         let deleted = match &action {
             RowAction::Delete(id) => Some(*id),
             _ => None,
@@ -3408,7 +3408,6 @@ impl OverlayApp {
                     | ConfigAction::EditStyle { .. }
                     | ConfigAction::DeleteStyle(_)
                     | ConfigAction::RenameStyle { .. }
-                    | ConfigAction::MoveStyle { .. }
                     | ConfigAction::MoveStyleTo { .. }
                     | ConfigAction::TierText { .. }
                     | ConfigAction::Revert
@@ -3507,16 +3506,6 @@ impl OverlayApp {
                                 }
                             }
                             Err(err) => self.config_message = Some((err.to_string(), true)),
-                        }
-                    }
-                }
-                ConfigAction::MoveStyle { name, up } => {
-                    if let Ok(state) = &mut self.config
-                        && state.move_style(&name, up)
-                    {
-                        self.config_message = None;
-                        if self.apply_state == ApplyState::Applied {
-                            self.apply_state = ApplyState::Unapplied;
                         }
                     }
                 }
@@ -5369,7 +5358,7 @@ mod tests {
         let mut rig = rig(S_RULE);
         rig.config.add_style("Fresh").unwrap();
         super::sync_working_styles(&rig.config, &mut rig.working);
-        assert!(rig.config.move_style("Fresh", true));
+        assert!(rig.config.move_style_to("Fresh", 0));
         assert!(super::sync_working_styles(&rig.config, &mut rig.working));
         assert_eq!(rig.working.style_names(), rig.config.style_names());
         assert!(!super::sync_working_styles(&rig.config, &mut rig.working));

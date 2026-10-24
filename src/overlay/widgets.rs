@@ -337,10 +337,7 @@ fn colour_chip(
 /// translucent colour never rewrites its line. Encoding the edit with the form the line had when
 /// the picker opened makes Escape restore a 3-token line byte for byte.
 pub fn colour_swatch(ui: &mut egui::Ui, rgba: [u8; 4], had_alpha: bool) -> Option<([u8; 4], bool)> {
-    let mode = PickerMode {
-        alpha: true,
-        allow_none: false,
-    };
+    let mode = PickerMode { allow_none: false };
     colour_chip(ui, rgba, had_alpha, &rgba_caption(rgba), mode)
 }
 
@@ -386,10 +383,7 @@ pub fn colour_slot_rgba(
         // rather than rewriting it to 3 tokens on the next change.
         ui.data_mut(|d| d.insert_temp(form_id, had_alpha || current.is_none()));
     }
-    let mode = PickerMode {
-        alpha: true,
-        allow_none: true,
-    };
+    let mode = PickerMode { allow_none: true };
     let out = colour_popup(ui, &card, tag, current, seed, mode);
     let opened_had_alpha = ui
         .data(|d| d.get_temp::<bool>(form_id))

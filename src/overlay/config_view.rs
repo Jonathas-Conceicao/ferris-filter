@@ -72,11 +72,6 @@ pub enum ConfigAction {
         from: String,
         to: String,
     },
-    /// Move a custom style one place up or down among the customs.
-    MoveStyle {
-        name: String,
-        up: bool,
-    },
     /// One drop from the Order-column handle; `to` is the gap 0..=n among the custom styles.
     MoveStyleTo {
         name: String,

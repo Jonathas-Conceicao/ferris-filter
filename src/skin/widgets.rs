@@ -1504,12 +1504,8 @@ pub fn ff_x_button(ui: &mut Ui, label: &str) -> Response {
     resp.on_hover_text(label)
 }
 
-/// A single-line search / text field in the recessed input box style.
-pub fn ff_text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
-    ff_text_field_ex(ui, None, text, hint, width, regular(15.0))
-}
-
-/// [`ff_text_field`] with an explicit TextEdit id, so callers can focus it by id.
+/// A single-line text field in the recessed input box style, with an explicit TextEdit id so
+/// callers can focus it by id.
 pub fn ff_text_field_id(
     ui: &mut Ui,
     id: egui::Id,
@@ -2067,7 +2063,7 @@ mod tests {
         ctx.run_ui(RawInput::default(), |ui| {
             ui.horizontal(|ui| {
                 let mut text = String::new();
-                field = ff_text_field(ui, &mut text, "hint", 200.0).rect;
+                field = ff_text_field_ex(ui, None, &mut text, "hint", 200.0, regular(15.0)).rect;
                 button = ff_button(ui, &skin, "Add", 40.0).rect;
             });
         })

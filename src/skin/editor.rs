@@ -332,25 +332,10 @@ pub fn composite_over(c: Color32, ground: Color32) -> Color32 {
 }
 
 /// One of the Text / Border / Background cards: a box filled with the colour, its name on it
-/// ("Text", or "Text (none)" on the dark "none" ground). `width` of 0 fills the width.
-pub fn ff_colour_card(ui: &mut Ui, label: &str, color: Option<Color32>, width: f32) -> Response {
-    ff_colour_card_ex(ui, label, color, width, false)
-}
-
-/// [`ff_colour_card`] that draws the 2pt `pal::HEADING` ring (as a selected swatch does) while its
-/// colour picker is `open`.
-pub fn ff_colour_card_ex(
-    ui: &mut Ui,
-    label: &str,
-    color: Option<Color32>,
-    width: f32,
-    open: bool,
-) -> Response {
-    ff_colour_card_tip(ui, label, color, width, open, None)
-}
-
-/// [`ff_colour_card_ex`] with an optional tooltip (the `R G B A` of a translucent colour). A
-/// translucent colour is painted over the card ground, not the panel behind it.
+/// ("Text", or "Text (none)" on the dark "none" ground). `width` of 0 fills the width. It draws
+/// the 2pt `pal::HEADING` ring (as a selected swatch does) while its colour picker is `open`, and
+/// shows the optional `tip` on hover (the `R G B A` of a translucent colour). A translucent colour
+/// is painted over the card ground, not the panel behind it.
 pub fn ff_colour_card_tip(
     ui: &mut Ui,
     label: &str,
@@ -699,7 +684,14 @@ mod tests {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         let full = ctx.run_ui(egui::RawInput::default(), |ui| {
-            ff_colour_card_ex(ui, "Text", Some(Color32::from_rgb(1, 2, 3)), 110.0, open);
+            ff_colour_card_tip(
+                ui,
+                "Text",
+                Some(Color32::from_rgb(1, 2, 3)),
+                110.0,
+                open,
+                None,
+            );
         });
         let mut out = Vec::new();
         fn walk(s: &egui::Shape, out: &mut Vec<(f32, Color32)>) {

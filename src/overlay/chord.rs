@@ -10,6 +10,11 @@
 //! - Numpad digits arrive from egui as the main-row digits (egui exposes no key location), so a
 //!   chord captured on the numpad is saved and registered as the main-row digit; the numpad key
 //!   itself will not trigger it.
+//! - Punctuation keys are named after their US position (egui's physical key) and registered as
+//!   the fixed US `VK_OEM_*` code for that name. Windows assigns `VK_OEM_*` per layout, so on a
+//!   non-US layout the registered key can differ from the one pressed (German QWERTZ: pressing
+//!   `Ö` shows `Ctrl+;` and registers `VK_OEM_1`, which is the `Ü` key). Letters, digits, F-keys
+//!   and navigation keys are not affected.
 //! - On layouts with AltGr, AltGr is Ctrl+Alt, so a `Ctrl+Alt+<key>` chord also swallows the
 //!   character AltGr+<key> types, system-wide.
 //! - The capture refuses every paste chord (`Ctrl+V`, `Ctrl+Shift+V`, `Ctrl+Alt+V`,

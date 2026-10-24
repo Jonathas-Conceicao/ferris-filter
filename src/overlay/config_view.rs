@@ -1047,33 +1047,26 @@ fn draw_style_drag(
         live.drop_rect = Some(table);
     }
     let ppp = ui.ctx().pixels_per_point();
-    let painter = ui.painter();
-    painter.rect_filled(
+    ui.painter().rect_filled(
         src_rect,
         0.0,
         egui::Color32::from_rgba_unmultiplied(0x0A, 0x0A, 0x09, 140),
     );
-    if let Some(g) = marker
-        && let Some(&y) = bounds.get(g)
-    {
-        let t = drag_reorder::MARKER_THICKNESS;
-        let line = egui::Rect::from_min_size(
-            egui::pos2(src_rect.left(), y - t / 2.0),
-            vec2(src_rect.width(), t),
-        );
-        painter.rect_filled(crate::skin::slice::snap_rect(line, ppp), 0.0, pal::GOLD);
-    }
-    // The shadow never takes input.
+    // The shadow never takes input. It sits on an opaque ground so the rows under it do not show
+    // through its cells.
     let Some(name) = custom.get(src) else {
         return;
     };
-    egui::Area::new(egui::Id::new(("ff-drag-shadow", "styles")))
+    let shadow_id = egui::Id::new(("ff-drag-shadow", "styles"));
+    egui::Area::new(shadow_id)
         .order(egui::Order::Tooltip)
         .fixed_pos(egui::pos2(src_rect.left(), top))
         .interactable(false)
         .constrain(false)
         .show(ui.ctx(), |ui| {
             ui.set_width(src_rect.width());
+            let ground = egui::Rect::from_min_size(ui.min_rect().min, vec2(src_rect.width(), h));
+            ui.painter().rect_filled(ground, 0.0, pal::PANEL);
             ui.disable();
             ui.set_opacity(0.6);
             let mut throwaway = ConfigUi::default();
@@ -1089,6 +1082,22 @@ fn draw_style_drag(
                 &mut discarded,
             );
         });
+    // The gold line goes on the shadow's own layer, after the shadow, at full opacity: the
+    // shadow is centred on the pointer and the gap is the one nearest its centre, so the line
+    // always falls inside the shadow and would otherwise be painted under it.
+    if let Some(g) = marker
+        && let Some(&y) = bounds.get(g)
+    {
+        let t = drag_reorder::MARKER_THICKNESS;
+        let line = egui::Rect::from_min_size(
+            egui::pos2(src_rect.left(), y - t / 2.0),
+            vec2(src_rect.width(), t),
+        );
+        ui.ctx()
+            .layer_painter(egui::LayerId::new(egui::Order::Tooltip, shadow_id))
+            .with_clip_rect(ui.clip_rect())
+            .rect_filled(crate::skin::slice::snap_rect(line, ppp), 0.0, pal::GOLD);
+    }
 }
 
 /// The Name cell of a custom row: an inline text field committing on Enter or focus-out.
@@ -2771,6 +2780,8 @@ mod tests {
         height: f32,
         base: Vec<(&'static str, egui::Rect)>,
         escape_after: bool,
+        /// The last frame's paint list, in paint order.
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     impl StyleRig {
@@ -2792,6 +2803,7 @@ mod tests {
                 height,
                 base: vec![],
                 escape_after: false,
+                shapes: vec![],
             };
             rig.frame(vec![]);
             rig
@@ -2826,15 +2838,15 @@ mod tests {
             let mut offset = 0.0;
             let mut esc = false;
             drain_probes();
-            self.ctx
-                .run_ui(raw, |ui| {
-                    let o = egui::ScrollArea::vertical().show(ui, |ui| {
-                        show_styles(ui, state, cfg, &vctx, &mut out);
-                    });
-                    offset = o.state.offset.y;
-                    esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                })
-                .drop_without_applying_deltas();
+            let mut full = self.ctx.run_ui(raw, |ui| {
+                let o = egui::ScrollArea::vertical().show(ui, |ui| {
+                    show_styles(ui, state, cfg, &vctx, &mut out);
+                });
+                offset = o.state.offset.y;
+                esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            });
+            self.shapes = std::mem::take(&mut full.shapes);
+            full.drop_without_applying_deltas();
             self.escape_after = esc;
             let probes = drain_probes();
             if self.base.is_empty() {
@@ -2921,6 +2933,19 @@ mod tests {
             }]
         );
         assert!(rig.cfg.drag.is_none());
+    }
+
+    #[test]
+    fn style_drop_marker_is_painted_above_the_shadow() {
+        let mut rig = StyleRig::new(1400.0);
+        rig.start_drag(0);
+        let last = rig.cfg.row_rects.last().unwrap().1;
+        rig.move_to(last.bottom() - 2.0);
+        assert!(rig.cfg.drag.as_ref().unwrap().last_gap.is_some());
+        // The gap below the last custom row; the shadow centred on the pointer covers it.
+        let last = rig.cfg.row_rects.last().unwrap().1;
+        let p = egui::pos2(last.center().x, last.bottom());
+        assert_eq!(drag_reorder::top_fill_at(&rig.shapes, p), Some(pal::GOLD));
     }
 
     #[test]

@@ -616,6 +616,8 @@ pub fn show_list(
     }
     let dragging = list.drag;
     let mut content_w = list_rect.width();
+    // The gold drop line (screen rect, clip rect), painted above the shadow after it is shown.
+    let mut marker_line: Option<(egui::Rect, egui::Rect)> = None;
     ff_scroll_area_viewport(ui, &skin, "ff-rule-list", offset, |ui, viewport| {
         ui.set_height(total);
         frame.scroll_y = viewport.min.y;
@@ -733,15 +735,16 @@ pub fn show_list(
             let t = drag_reorder::MARKER_THICKNESS;
             let top = (y - t / 2.0).max(origin.y);
             let line = egui::Rect::from_min_size(egui::pos2(origin.x, top), vec2(width, t));
-            ui.painter().rect_filled(
+            marker_line = Some((
                 slice::snap_rect(line, ui.ctx().pixels_per_point()),
-                0.0,
-                pal::GOLD,
-            );
+                ui.clip_rect(),
+            ));
         }
     });
     // The shadow: a translucent copy of the dragged row under the pointer, aligned to the list's
-    // left edge. It never takes input.
+    // left edge, on an opaque ground so the rows under it do not show through its text. It
+    // never takes input.
+    let shadow_id = egui::Id::new(("ff-drag-shadow", "rules"));
     if let (Some(d), Some(src)) = (list.drag, src_index)
         && let ListEntry::Rule(i) = entries[src]
         && let Some(row) = rows.get(i)
@@ -749,13 +752,15 @@ pub fn show_list(
         let pointer = d.injected.or_else(|| ctx.input(|i| i.pointer.latest_pos()));
         let py = pointer.map_or(list_rect.center().y, |p| p.y);
         let top = drag_reorder::shadow_top(py, ROW_H, list_rect.top(), list_rect.bottom());
-        egui::Area::new(egui::Id::new(("ff-drag-shadow", "rules")))
+        egui::Area::new(shadow_id)
             .order(egui::Order::Tooltip)
             .fixed_pos(egui::pos2(list_rect.left(), top))
             .interactable(false)
             .constrain(false)
             .show(&ctx, |ui| {
                 ui.set_width(content_w);
+                let ground = egui::Rect::from_min_size(ui.min_rect().min, vec2(content_w, ROW_H));
+                ui.painter().rect_filled(ground, 0.0, pal::PANEL);
                 ui.disable();
                 ui.set_opacity(0.6);
                 let mut throwaway = ListUi::default();
@@ -772,6 +777,14 @@ pub fn show_list(
                     &mut discarded,
                 );
             });
+    }
+    // The drop line goes on the shadow's own layer, after the shadow, at full opacity: the
+    // shadow is centred on the pointer and the slot is the boundary nearest its centre, so the
+    // line always falls inside the shadow and would otherwise be painted under it.
+    if let Some((line, clip)) = marker_line {
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, shadow_id))
+            .with_clip_rect(clip)
+            .rect_filled(line, 0.0, pal::GOLD);
     }
     frame
 }
@@ -3652,6 +3665,8 @@ Show
         escape_seen_after: bool,
         focused: bool,
         reorder: bool,
+        /// The last frame's paint list, in paint order.
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     /// Centre x of a rule row's handle.
@@ -3677,6 +3692,7 @@ Show
                 escape_seen_after: false,
                 focused: true,
                 reorder: true,
+                shapes: vec![],
             };
             rig.frame(vec![]);
             rig
@@ -3704,14 +3720,14 @@ Show
             let mut esc = false;
             let (wf, entries, list, reorder) =
                 (&self.wf, &self.entries, &mut self.list, self.reorder);
-            self.ctx
-                .run_ui(raw, |ui| {
-                    let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, LIST_H));
-                    let mut child = ui.new_child(UiBuilder::new().max_rect(area));
-                    out = show_list(&mut child, wf, entries, list, reorder, None);
-                    esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                })
-                .drop_without_applying_deltas();
+            let mut full = self.ctx.run_ui(raw, |ui| {
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(535.0, LIST_H));
+                let mut child = ui.new_child(UiBuilder::new().max_rect(area));
+                out = show_list(&mut child, wf, entries, list, reorder, None);
+                esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            });
+            self.shapes = std::mem::take(&mut full.shapes);
+            full.drop_without_applying_deltas();
             self.escape_seen_after = esc;
             self.scroll_y = out.scroll_y;
             self.actions.extend(out.actions);
@@ -3852,6 +3868,22 @@ Show
         assert!(rig.list.drag.is_none());
         rig.release(Pos2::new(300.0, 300.0));
         assert!(rig.actions.is_empty());
+    }
+
+    #[test]
+    fn drop_marker_is_painted_above_the_shadow() {
+        let mut rig = DragRig::new(filter_of(10));
+        rig.start_drag(2);
+        rig.move_to(6.0 * ROW_H + 10.0);
+        let slot = rig.list.drag.unwrap().last_slot.expect("a slot");
+        // No headers and no scroll: boundary `slot` is at y = slot * ROW_H. The shadow is
+        // centred on the pointer, so it covers the line; the line must still be on top.
+        let p = Pos2::new(200.0, slot as f32 * ROW_H);
+        assert_eq!(
+            drag_reorder::top_fill_at(&rig.shapes, p),
+            Some(pal::GOLD),
+            "gold line on top at boundary {slot}"
+        );
     }
 
     #[test]

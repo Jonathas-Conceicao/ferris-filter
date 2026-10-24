@@ -119,6 +119,35 @@ pub fn style_gap_for_y(bounds: &[f32], y: f32) -> usize {
 // must not depend on the overlay; the style table uses it through this re-export.
 pub use crate::models::config::{style_gap_to_index, style_noop};
 
+/// Test support: the fill of the topmost (last painted) shape covering `p`, when that shape is a
+/// filled rectangle; `None` when nothing covers `p` or the top shape is something else.
+#[cfg(test)]
+pub(crate) fn top_fill_at(
+    shapes: &[egui::epaint::ClippedShape],
+    p: egui::Pos2,
+) -> Option<egui::Color32> {
+    fn flat<'a>(s: &'a egui::Shape, out: &mut Vec<&'a egui::Shape>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| flat(s, out)),
+            s => out.push(s),
+        }
+    }
+    let mut top = None;
+    for c in shapes.iter().filter(|c| c.clip_rect.contains(p)) {
+        let mut v = Vec::new();
+        flat(&c.shape, &mut v);
+        for s in v {
+            if !matches!(s, egui::Shape::Noop) && s.visual_bounding_rect().contains(p) {
+                top = Some(s);
+            }
+        }
+    }
+    match top {
+        Some(egui::Shape::Rect(r)) => Some(r.fill),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

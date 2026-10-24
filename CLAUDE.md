@@ -94,7 +94,8 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > `PlayAlertSound` / `PlayAlertSoundPositional` / `CustomAlertSound` / `CustomAlertSoundOptional`;
 > `DisableDropSound` / `EnableDropSound`), and an edit rewrites only that line in place, removes it
 > (an earlier line of the family then shows through, as in game), or adds one line when the family
-> has none: a family never gets a second line. A 3-value colour stays 3-value while alpha is 255; a
+> has none: a family never gets a second line. A 3-value colour line shows and stays 3-value at its
+> in-game alpha (240 for `SetBackgroundColor`, 255 for text and border), and any other alpha writes 4 values; a
 > colour added to an empty slot is written with 4 values; a sound kind switch keeps a trailing
 > `# comment`. `MinimapIcon -1`, `PlayEffect None` and `PlayAlertSound None` are shown exactly as the
 > `/` tile, `PlayAlertSoundPositional` with Positional ticked, `DisableDropSound` / `EnableDropSound`
@@ -120,7 +121,7 @@ Path of Exile 2 loot filter (`generate`) and fetches item prices from poe.ninja 
 > a class picker whose groups come from `config.json`, quoted lists, the skinned colour picker with
 > an Alpha slider (on the style lines it opens from the Text / Border / Background cards, which have
 > a None tile that removes the line; a leftover colour row is a chip whose `R G B A` text is its
-> tooltip, without None; a 3-token colour line stays 3-token while alpha is 255), and minimap / beam / sound controls. An edit rewrites only the edited value's
+> tooltip, without None; a 3-token colour line reads and stays 3-token at the same in-game alpha, 240 for a background, 255 otherwise), and minimap / beam / sound controls. An edit rewrites only the edited value's
 > lines. A list condition added with **+ condition** is an unwritten row until its first entry.
 > Quoted lists (BaseType, mod names) are a vertical list, one entry per line with its own remove, a
 > type + Enter / **+ ADD** field that splits a pasted quoted list, in a scroll area of about 7 rows.

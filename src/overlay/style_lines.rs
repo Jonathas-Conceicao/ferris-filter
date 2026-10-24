@@ -92,9 +92,9 @@ impl StyleView {
         }
     }
 
-    /// The inverse of [`StyleView::from_style`], on in-game values: a 3-value background is the
-    /// game's default alpha 240 (text and border default to 255), and the view already holds the
-    /// default sound volume. `None` for a `Minimal` header or a custom sound file name that
+    /// The inverse of [`StyleView::from_style`], on in-game values: the view already holds a
+    /// 3-value colour line's in-game alpha (240 for a background, 255 for text and border) and
+    /// the default sound volume. `None` for a `Minimal` header or a custom sound file name that
     /// `StyleSet::validate` would refuse (a quote or a control character).
     pub fn to_style(&self) -> Option<Style> {
         let mut s = Style::blank_show();
@@ -105,13 +105,7 @@ impl StyleView {
         };
         s.text = self.text.map(|c| StyleColour::from_array(c.rgba));
         s.border = self.border.map(|c| StyleColour::from_array(c.rgba));
-        s.background = self.background.map(|c| {
-            let mut a = c.rgba;
-            if !c.had_alpha {
-                a[3] = 240;
-            }
-            StyleColour::from_array(a)
-        });
+        s.background = self.background.map(|c| StyleColour::from_array(c.rgba));
         s.font = match self.font {
             Some(f) => Some(u8::try_from(f).ok()?),
             None => None,
@@ -1081,10 +1075,11 @@ mod tests {
     }
 
     #[test]
-    fn to_style_background_alpha_defaults_to_240() {
+    fn to_style_background_keeps_the_view_alpha() {
+        // A rule's 3-value background reaches the view already at its in-game alpha 240.
         let mut v = StyleView::from_style(&Style::blank_show());
         v.background = Some(Rgba {
-            rgba: [40, 42, 54, 255],
+            rgba: [40, 42, 54, 240],
             had_alpha: false,
         });
         assert_eq!(

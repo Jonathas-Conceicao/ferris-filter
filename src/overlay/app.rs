@@ -3716,6 +3716,7 @@ impl eframe::App for OverlayApp {
                     visibility::Effect::Conceal => {
                         // A drag never outlives the window being shown.
                         self.list.cancel_drag(ui.ctx());
+                        self.config_ui.cancel_drag(ui.ctx());
                         win::conceal(window)
                     }
                 }

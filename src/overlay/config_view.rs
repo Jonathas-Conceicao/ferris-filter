@@ -20,6 +20,7 @@ use super::body;
 use super::config_state::{
     ConfigState, RevertScope, StyleEdit, config_warning, delete_confirm_text,
 };
+use super::drag_reorder;
 use super::style_lines::{self, StyleIntent, StyleView, Vis, probe};
 use super::widgets;
 use crate::skin::editor as ed;
@@ -30,7 +31,6 @@ use crate::skin::palette as pal;
 /// Width of the Browse button.
 const BROWSE_WIDTH: f32 = 120.0;
 const SWITCH_TIP: &str = "On: shown. Off: hidden (Alt reveals).";
-const ORDER_TIP: &str = "Built-in styles keep their order";
 const RENAME_TIP: &str = "Built-in names are fixed. Rename a custom style in its table row.";
 const INVALID_RED: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x55, 0x55);
 const UNIT_TIP: &str = "Set in tiers.json; not editable here.";
@@ -126,6 +126,34 @@ pub struct ConfigUi {
     pub focus_draft: bool,
     /// In-progress rename text per custom style id, kept only while it differs from the name.
     pub rename_drafts: HashMap<String, String>,
+    /// The custom-style drag in progress, if any.
+    pub drag: Option<StyleDrag>,
+    /// This frame's custom rows (name, screen rect), refilled by `show_styles`.
+    pub row_rects: Vec<(String, egui::Rect)>,
+}
+
+/// A drag of a custom style row. `handle` is the egui id captured at `drag_started` (the row's
+/// id scope changes when the expanded editor collapses). `injected` is a pointer position set
+/// only by tests and the debug screenshot mode; when set the egui drag checks are skipped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleDrag {
+    pub name: String,
+    pub handle: egui::Id,
+    /// The window had focus when the drag started (losing it afterwards cancels the drag).
+    pub had_focus: bool,
+    pub injected: Option<egui::Pos2>,
+    /// The gap a release would drop on right now (not a no-op), if any.
+    pub last_gap: Option<usize>,
+}
+
+impl ConfigUi {
+    /// Drop a drag in progress (window concealed, focus lost): nothing is changed. Also tells
+    /// egui to stop dragging the handle.
+    pub fn cancel_drag(&mut self, ctx: &egui::Context) {
+        if self.drag.take().is_some() {
+            ctx.stop_dragging();
+        }
+    }
 }
 
 impl ConfigUi {
@@ -166,6 +194,7 @@ impl ConfigUi {
     /// stale text instead of the real name (WR-05).
     pub fn reset_for_new_styles(&mut self) {
         self.disarm_all();
+        self.drag = None;
         self.rename_drafts.clear();
         // Open pickers sit under ids salted with the epoch, the remembered None-values under
         // the memo epoch.
@@ -796,6 +825,67 @@ fn show_styles(
         return;
     }
     let skin = crate::skin::of(ui.ctx());
+    cfg.row_rects.clear();
+    let area = ui.clip_rect();
+    let egui_ctx = ui.ctx().clone();
+    let src = cfg
+        .drag
+        .as_ref()
+        .and_then(|d| custom.iter().position(|n| *n == d.name));
+    // Finish or cancel a drag begun on an earlier frame, before any row is drawn.
+    if let Some(d) = cfg.drag.clone() {
+        let escape = egui_ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if escape {
+            // Consumed so nothing else (a rename box) reacts to the same press.
+            egui_ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            cfg.cancel_drag(&egui_ctx);
+        } else if src.is_none()
+            || (d.injected.is_none()
+                && d.had_focus
+                && !egui_ctx.input(|i| i.viewport().focused.unwrap_or(false)))
+        {
+            cfg.cancel_drag(&egui_ctx);
+        } else if d.injected.is_none() && egui_ctx.dragged_id() != Some(d.handle) {
+            // The drag ended (or egui dropped it): commit only on a real release over the area.
+            let released = egui_ctx.input(|i| i.pointer.primary_released())
+                && egui_ctx.drag_stopped_id() == Some(d.handle);
+            let inside = egui_ctx
+                .input(|i| i.pointer.latest_pos())
+                .is_some_and(|p| area.contains(p));
+            let to = (released && inside)
+                .then_some(d.last_gap)
+                .flatten()
+                .zip(src)
+                .filter(|&(g, s)| !drag_reorder::style_noop(s, g))
+                .map(|(g, _)| g);
+            cfg.drag = None;
+            if let Some(to) = to {
+                actions.push(ConfigAction::MoveStyleTo { name: d.name, to });
+            }
+        }
+    }
+    let dragging = cfg.drag.clone().zip(src);
+    if let Some((d, _)) = &dragging {
+        let pointer = d
+            .injected
+            .or_else(|| egui_ctx.input(|i| i.pointer.latest_pos()));
+        let py = pointer.map_or(area.center().y, |p| p.y);
+        let (wheel, dt) = egui_ctx.input(|i| (i.smooth_scroll_delta.y, i.stable_dt.min(0.1)));
+        let auto = drag_reorder::autoscroll_speed(
+            py,
+            area.top(),
+            area.bottom(),
+            drag_reorder::EDGE_ZONE,
+            drag_reorder::AUTOSCROLL_MAX,
+        );
+        // egui's scroll area ignores the wheel during a drag, so forward it, and scroll at the
+        // edges (49-01 spike).
+        ui.scroll_with_delta_animation(
+            vec2(0.0, wheel - auto * dt),
+            egui::style::ScrollAnimation::none(),
+        );
+        egui_ctx.request_repaint();
+    }
     {
         let enabled = !state.styles_at_defaults();
         let mut right = ui.new_child(
@@ -840,7 +930,7 @@ fn show_styles(
         probe("builtin-heading", heading.rect);
         styles_table_header(ui);
         for (i, name) in builtin.iter().enumerate() {
-            style_row(ui, state, cfg, ctx, i, name, None, actions);
+            style_row(ui, state, cfg, ctx, i, name, false, actions);
         }
         ui.add_space(4.0);
         ui.separator();
@@ -888,19 +978,92 @@ fn show_styles(
     if let Some(draft) = cfg.style_draft.clone() {
         style_draft_row(ui, state, cfg, draft, actions);
     }
-    let last = custom.len().saturating_sub(1);
     for (i, name) in custom.iter().enumerate() {
-        style_row(
-            ui,
-            state,
-            cfg,
-            ctx,
-            i,
-            name,
-            Some((i > 0, i < last)),
-            actions,
-        );
+        style_row(ui, state, cfg, ctx, i, name, true, actions);
     }
+    if let Some((d, src)) = dragging {
+        draw_style_drag(ui, state, cfg, ctx, &custom, &d, src, area);
+    }
+}
+
+/// The live part of a custom-style drag, after the rows are drawn: the nearest gap, the gold
+/// marker, the washed source row and the translucent shadow under the pointer.
+#[allow(clippy::too_many_arguments)]
+fn draw_style_drag(
+    ui: &mut egui::Ui,
+    state: &ConfigState,
+    cfg: &mut ConfigUi,
+    ctx: &ConfigViewCtx,
+    custom: &[String],
+    d: &StyleDrag,
+    src: usize,
+    area: egui::Rect,
+) {
+    let Some(src_rect) = cfg.row_rects.get(src).map(|(_, r)| *r) else {
+        return;
+    };
+    let h = crate::skin::widgets::ROW_HEIGHT;
+    let pointer = d
+        .injected
+        .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
+    let py = pointer.map_or(area.center().y, |p| p.y);
+    let top = drag_reorder::shadow_top(py, h, area.top(), area.bottom());
+    // Custom rows' tops plus the last row's bottom. The nearest gap is chosen first; when it is
+    // the source's own neighbourhood the drop is a no-op: no gap and no marker.
+    let mut bounds: Vec<f32> = cfg.row_rects.iter().map(|(_, r)| r.top()).collect();
+    if let Some((_, r)) = cfg.row_rects.last() {
+        bounds.push(r.bottom());
+    }
+    let gap = Some(drag_reorder::style_gap_for_y(&bounds, top + h / 2.0))
+        .filter(|&g| !drag_reorder::style_noop(src, g));
+    let inside = pointer.is_some_and(|p| area.contains(p));
+    let marker = gap.filter(|_| inside);
+    if let Some(live) = cfg.drag.as_mut() {
+        live.last_gap = marker;
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let painter = ui.painter();
+    painter.rect_filled(
+        src_rect,
+        0.0,
+        egui::Color32::from_rgba_unmultiplied(0x0A, 0x0A, 0x09, 140),
+    );
+    if let Some(g) = marker
+        && let Some(&y) = bounds.get(g)
+    {
+        let t = drag_reorder::MARKER_THICKNESS;
+        let line = egui::Rect::from_min_size(
+            egui::pos2(src_rect.left(), y - t / 2.0),
+            vec2(src_rect.width(), t),
+        );
+        painter.rect_filled(crate::skin::slice::snap_rect(line, ppp), 0.0, pal::GOLD);
+    }
+    // The shadow never takes input.
+    let Some(name) = custom.get(src) else {
+        return;
+    };
+    egui::Area::new(egui::Id::new(("ff-drag-shadow", "styles")))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(egui::pos2(src_rect.left(), top))
+        .interactable(false)
+        .constrain(false)
+        .show(ui.ctx(), |ui| {
+            ui.set_width(src_rect.width());
+            ui.disable();
+            ui.set_opacity(0.6);
+            let mut throwaway = ConfigUi::default();
+            let mut discarded = Vec::new();
+            style_row(
+                ui,
+                state,
+                &mut throwaway,
+                ctx,
+                src,
+                name,
+                true,
+                &mut discarded,
+            );
+        });
 }
 
 /// The Name cell of a custom row: an inline text field committing on Enter or focus-out.
@@ -967,8 +1130,7 @@ pub fn style_groups(state: &ConfigState) -> (Vec<String>, Vec<String>) {
         .partition(|n| state.badges(n).builtin)
 }
 
-/// One styles-table row. `reorder` is `Some((can_move_up, can_move_down))` for custom styles and
-/// `None` for built-ins.
+/// One styles-table row; `custom` rows carry the drag handle, built-ins an empty Order cell.
 #[allow(clippy::too_many_arguments)]
 fn style_row(
     ui: &mut egui::Ui,
@@ -977,7 +1139,7 @@ fn style_row(
     ctx: &ConfigViewCtx,
     i: usize,
     name: &str,
-    reorder: Option<(bool, bool)>,
+    custom: bool,
     actions: &mut Vec<ConfigAction>,
 ) {
     let Some(style) = state.style(name) else {
@@ -996,12 +1158,8 @@ fn style_row(
         crate::skin::widgets::row_background(ui, i, rect);
 
         // The row's click target covers the name (built-in) or icon (custom: the Name cell is a
-        // text field) through the preview column, so it never overlaps the switch or the arrows.
-        let first = if reorder.is_some() {
-            cols.icon
-        } else {
-            cols.name
-        };
+        // text field) through the preview column, so it never overlaps the switch or the handle.
+        let first = if custom { cols.icon } else { cols.name };
         let click_rect = egui::Rect::from_min_max(
             egui::pos2(rect.left() + first.x, rect.top()),
             egui::pos2(
@@ -1038,7 +1196,7 @@ fn style_row(
 
         let name_cell = cols.name.rect(rect);
         cell_at(ui, "name", name_cell, left_to_right, |ui| {
-            if reorder.is_some() {
+            if custom {
                 rename_field(ui, state, cfg, ctx, name, name_cell.width(), actions);
             } else {
                 // Left-aligned at the text inset of the custom rows' name fields, so the Name
@@ -1079,39 +1237,52 @@ fn style_row(
         probe("row-preview", preview);
 
         let order = cols.order.rect(rect);
-        cell_at(
+        let dragging_this = cfg.drag.as_ref().is_some_and(|d| d.name == name);
+        let started = cell_at(
             ui,
             "order",
             order,
             Layout::right_to_left(Align::Center),
             |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                // Built-ins draw both arrows greyed, at the same x as the custom rows' working
-                // ones, so the column reads as one.
-                let (can_up, can_down) = reorder.unwrap_or((false, false));
-                let down = crate::skin::widgets::ff_arrow(ui, &skin, false, can_down);
-                let up = crate::skin::widgets::ff_arrow(ui, &skin, true, can_up);
-                probe("row-up", up.rect);
-                probe("row-down", down.rect);
-                let (down_clicked, up_clicked) = (down.clicked(), up.clicked());
-                if reorder.is_none() {
-                    down.on_hover_text(ORDER_TIP);
-                    up.on_hover_text(ORDER_TIP);
-                }
-                if down_clicked {
-                    actions.push(ConfigAction::MoveStyle {
-                        name: name.to_string(),
-                        up: false,
-                    });
-                }
-                if up_clicked {
-                    actions.push(ConfigAction::MoveStyle {
-                        name: name.to_string(),
-                        up: true,
-                    });
+                if custom {
+                    let handle =
+                        crate::skin::widgets::ff_drag_handle(ui, &skin, true, dragging_this);
+                    probe("row-handle", handle.rect);
+                    // A tap on the handle is consumed by it and does nothing.
+                    handle.drag_started().then_some(handle.id)
+                } else {
+                    // Built-ins: an empty cell of the handle's width so the column lines up.
+                    ui.allocate_exact_size(
+                        vec2(
+                            crate::skin::widgets::DRAG_HANDLE_SIZE,
+                            crate::skin::widgets::DRAG_HANDLE_SIZE,
+                        ),
+                        egui::Sense::hover(),
+                    );
+                    None
                 }
             },
         );
+        if let Some(handle) = started
+            && cfg.drag.is_none()
+        {
+            // Every expanded editor collapses at drag start, so all rows are one height and no
+            // inner scroll area can take the scroll delta.
+            cfg.drag = Some(StyleDrag {
+                name: name.to_string(),
+                handle,
+                had_focus: ui.ctx().input(|i| i.viewport().focused.unwrap_or(false)),
+                injected: None,
+                last_gap: None,
+            });
+            cfg.expanded = None;
+            cfg.delete_armed = None;
+            cfg.epoch = cfg.epoch.wrapping_add(1);
+            ui.ctx().request_repaint();
+        }
+        if custom {
+            cfg.row_rects.push((name.to_string(), rect));
+        }
         probe("row-order", order);
 
         if cfg.scroll_to.as_deref() == Some(name) {
@@ -2228,16 +2399,19 @@ mod tests {
         assert!(h("name").right() <= h("icon").left());
         assert!(h("icon").right() <= h("preview").left());
         assert!(h("preview").right() <= h("order").left());
-        // Every row's arrows sit inside the Order cell, Up then Down, Down at its right edge.
-        let (orders, ups, downs) = (of("row-order"), of("row-up"), of("row-down"));
-        for ((u, d), k) in ups.iter().zip(&downs).zip(0..) {
-            let o = orders[k];
-            assert!(u.center().x < d.center().x);
+        // Custom rows carry the handle at the Order cell's right edge; built-ins have none.
+        let (orders, handles) = (of("row-order"), of("row-handle"));
+        assert_eq!(
+            handles.len(),
+            total - n_builtin,
+            "one handle per custom row"
+        );
+        for (h, o) in handles.iter().zip(&orders[n_builtin..]) {
+            assert!(o.contains(h.center()), "{h:?} {o:?}");
             assert!(
-                o.contains(u.center()) && o.contains(d.center()),
-                "{u:?} {d:?} {o:?}"
+                (h.center().x + 14.0 - o.right()).abs() <= 1.0,
+                "{h:?} {o:?}"
             );
-            assert!((d.center().x + 8.0 - o.right()).abs() <= 1.0, "{d:?} {o:?}");
         }
     }
 
@@ -2554,72 +2728,296 @@ mod tests {
     fn moves(actions: &[ConfigAction]) -> Vec<&ConfigAction> {
         actions
             .iter()
-            .filter(|a| matches!(a, ConfigAction::MoveStyle { .. }))
+            .filter(|a| matches!(a, ConfigAction::MoveStyleTo { .. }))
             .collect()
     }
 
-    #[test]
-    fn custom_arrows_reorder_and_builtin_arrows_are_disabled() {
-        let (_d, mut state) = loaded();
-        for n in ["k1", "k2", "k3"] {
-            state.add_style(n).unwrap();
-        }
-        let (builtin, custom) = style_groups(&state);
-        assert_eq!(custom.last().map(String::as_str), Some("k3"));
-        let mut cfg = ConfigUi::default();
-        let ups = render_probes(&state, &mut cfg, "row-up");
-        let downs = render_probes(&state, &mut cfg, "row-down");
-        let n = builtin.len();
-        assert_eq!(ups.len(), n + custom.len(), "every row draws both arrows");
-        assert_eq!(downs.len(), n + custom.len());
+    /// A persistent egui context running `show_styles` inside a scroll area, for drags.
+    struct StyleRig {
+        _dir: tempfile::TempDir,
+        ctx: egui::Context,
+        time: f64,
+        state: ConfigState,
+        cfg: ConfigUi,
+        actions: Vec<ConfigAction>,
+        offset: f32,
+        focused: bool,
+        height: f32,
+        base: Vec<(&'static str, egui::Rect)>,
+        escape_after: bool,
+    }
 
-        // Built-in arrows are disabled: a click emits nothing, and they sit at the same x as the
-        // custom rows' working arrows.
-        for target in [ups[0].center(), downs[0].center(), downs[n - 1].center()] {
+    impl StyleRig {
+        fn new(height: f32) -> Self {
+            let (dir, mut state) = loaded();
+            for n in ["k1", "k2", "k3"] {
+                state.add_style(n).unwrap();
+            }
             let (ctx, _) = headless();
-            let mut cfg = ConfigUi::default();
-            let clicked = click_styles(&ctx, &state, &mut cfg, target);
-            assert!(moves(&clicked).is_empty(), "built-in arrow at {target:?}");
+            let mut rig = StyleRig {
+                _dir: dir,
+                ctx,
+                time: 0.0,
+                state,
+                cfg: ConfigUi::default(),
+                actions: vec![],
+                offset: 0.0,
+                focused: true,
+                height,
+                base: vec![],
+                escape_after: false,
+            };
+            rig.frame(vec![]);
+            rig
         }
-        assert!((ups[0].center().x - ups[n].center().x).abs() <= 0.5);
-        assert!((downs[0].center().x - downs[n].center().x).abs() <= 0.5);
 
-        // The custom ends are disabled too.
-        let (ctx, _) = headless();
-        let mut cfg = ConfigUi::default();
-        let first_up = click_styles(&ctx, &state, &mut cfg, ups[n].center());
-        assert!(
-            moves(&first_up).is_empty(),
-            "the first custom Up is disabled"
-        );
-        let (ctx, _) = headless();
-        let mut cfg = ConfigUi::default();
-        let last_down = click_styles(&ctx, &state, &mut cfg, downs[downs.len() - 1].center());
-        assert!(moves(&last_down).is_empty(), "the last Down is disabled");
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            self.time += 1.0 / 60.0;
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(460.0, self.height),
+                )),
+                time: Some(self.time),
+                predicted_dt: 1.0 / 60.0,
+                events,
+                viewports: [(
+                    egui::ViewportId::ROOT,
+                    egui::ViewportInfo {
+                        focused: Some(self.focused),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            };
+            let users = HashMap::new();
+            let refs = BTreeSet::new();
+            let vctx = view_ctx(None, &users, &refs);
+            let mut out = Vec::new();
+            let (state, cfg) = (&self.state, &mut self.cfg);
+            let mut offset = 0.0;
+            let mut esc = false;
+            drain_probes();
+            self.ctx
+                .run_ui(raw, |ui| {
+                    let o = egui::ScrollArea::vertical().show(ui, |ui| {
+                        show_styles(ui, state, cfg, &vctx, &mut out);
+                    });
+                    offset = o.state.offset.y;
+                    esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                })
+                .drop_without_applying_deltas();
+            self.escape_after = esc;
+            let probes = drain_probes();
+            if self.base.is_empty() {
+                self.base = probes;
+            }
+            self.offset = offset;
+            self.actions.extend(out);
+        }
 
-        // k3's Up reorders.
-        let (ctx, _) = headless();
-        let mut cfg = ConfigUi::default();
-        let clicked = click_styles(&ctx, &state, &mut cfg, ups[ups.len() - 1].center());
+        fn base_rects(&self, tag: &str) -> Vec<egui::Rect> {
+            self.base
+                .iter()
+                .filter(|(t, _)| *t == tag)
+                .map(|(_, r)| *r)
+                .collect()
+        }
+
+        fn hover(&mut self, p: egui::Pos2) {
+            self.frame(vec![egui::Event::PointerMoved(p)]);
+        }
+
+        fn button(&mut self, p: egui::Pos2, pressed: bool) {
+            self.frame(vec![egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+
+        /// Press on custom row `n`'s handle and move 15pt.
+        fn start_drag(&mut self, n: usize) -> egui::Pos2 {
+            let p = self.base_rects("row-handle")[n].center();
+            self.hover(p);
+            self.button(p, true);
+            for step in 1..=3 {
+                self.hover(p + vec2(0.0, 5.0 * step as f32));
+            }
+            assert!(self.cfg.drag.is_some(), "drag did not start");
+            p
+        }
+
+        fn move_to(&mut self, y: f32) -> egui::Pos2 {
+            let p = egui::pos2(300.0, y);
+            self.hover(p);
+            self.hover(p);
+            p
+        }
+
+        fn escape(&mut self) {
+            self.frame(vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]);
+        }
+    }
+
+    #[test]
+    fn custom_handle_drags_and_builtin_rows_have_none() {
+        let mut rig = StyleRig::new(1400.0);
+        let n_builtin = style_groups(&rig.state).0.len();
+        let n_custom = style_groups(&rig.state).1.len();
         assert_eq!(
-            moves(&clicked),
-            [&ConfigAction::MoveStyle {
-                name: "k3".to_string(),
-                up: true
+            rig.base_rects("row-handle").len(),
+            n_custom,
+            "custom rows only"
+        );
+        assert_eq!(rig.base_rects("row-order").len(), n_builtin + n_custom);
+        let first = style_groups(&rig.state).1[0].clone();
+        // Dragging k1 below the last custom row emits one MoveStyleTo to the gap n.
+        rig.start_drag(0);
+        let last = *rig.base_rects("row-order").last().unwrap();
+        let p = rig.move_to(last.bottom() - 2.0);
+        rig.actions.clear();
+        rig.button(p, false);
+        assert_eq!(
+            moves(&rig.actions),
+            [&ConfigAction::MoveStyleTo {
+                name: first,
+                to: n_custom
             }]
         );
-        assert!(state.move_style("k3", true));
-        let (builtin_after, custom_after) = style_groups(&state);
-        assert_eq!(builtin_after, builtin, "built-ins are unchanged");
-        let tail: Vec<_> = custom_after
-            .iter()
-            .rev()
-            .take(3)
-            .rev()
-            .map(String::as_str)
-            .collect();
-        assert_eq!(tail, ["k1", "k3", "k2"]);
-        assert!(!state.move_style("S", true), "built-ins never move");
+        assert!(rig.cfg.drag.is_none());
+    }
+
+    #[test]
+    fn a_tap_on_the_handle_does_not_expand_or_emit() {
+        let mut rig = StyleRig::new(1400.0);
+        let p = rig.base_rects("row-handle")[1].center();
+        rig.hover(p);
+        rig.button(p, true);
+        rig.button(p, false);
+        rig.frame(vec![]);
+        assert!(rig.cfg.drag.is_none());
+        assert_eq!(rig.cfg.expanded, None);
+        assert!(rig.actions.is_empty(), "{:?}", rig.actions);
+    }
+
+    #[test]
+    fn drag_start_collapses_the_expanded_editor() {
+        let mut rig = StyleRig::new(1400.0);
+        rig.cfg.expand("k3");
+        rig.frame(vec![]);
+        // k3's editor opens below its row, so the first handle has not moved.
+        let p = rig.base_rects("row-handle")[0].center();
+        rig.hover(p);
+        rig.button(p, true);
+        for step in 1..=3 {
+            rig.hover(p + vec2(0.0, 5.0 * step as f32));
+        }
+        assert!(rig.cfg.drag.is_some());
+        assert_eq!(rig.cfg.expanded, None);
+    }
+
+    #[test]
+    fn style_drag_cancels_and_noops_emit_nothing() {
+        // Release at the source's own gaps.
+        let mut rig = StyleRig::new(1400.0);
+        rig.start_drag(1);
+        let own = rig.base_rects("row-order")[style_groups(&rig.state).0.len() + 1];
+        let p = rig.move_to(own.center().y);
+        assert_eq!(rig.cfg.drag.as_ref().unwrap().last_gap, None);
+        rig.button(p, false);
+        assert!(moves(&rig.actions).is_empty());
+        assert!(rig.cfg.drag.is_none());
+
+        // Escape cancels (and is consumed).
+        let mut rig = StyleRig::new(1400.0);
+        rig.start_drag(0);
+        let last = *rig.base_rects("row-order").last().unwrap();
+        let p = rig.move_to(last.bottom() - 2.0);
+        rig.escape();
+        assert!(rig.cfg.drag.is_none());
+        assert!(!rig.escape_after, "Escape is consumed");
+        rig.button(p, false);
+        assert!(moves(&rig.actions).is_empty());
+
+        // Released outside the area.
+        let mut rig = StyleRig::new(1400.0);
+        rig.start_drag(0);
+        let last = *rig.base_rects("row-order").last().unwrap();
+        rig.move_to(last.bottom() - 2.0);
+        rig.button(egui::pos2(300.0, 5000.0), false);
+        assert!(moves(&rig.actions).is_empty());
+        assert!(rig.cfg.drag.is_none());
+
+        // Focus loss cancels.
+        let mut rig = StyleRig::new(1400.0);
+        rig.start_drag(0);
+        rig.focused = false;
+        rig.frame(vec![]);
+        assert!(rig.cfg.drag.is_none());
+    }
+
+    #[test]
+    fn gaps_exist_only_among_custom_rows() {
+        let mut rig = StyleRig::new(1400.0);
+        let custom = style_groups(&rig.state).1;
+        let last_name = custom.last().unwrap().clone();
+        rig.start_drag(custom.len() - 1);
+        // Over the built-in block: gap 0, never a place above a built-in.
+        let first_builtin = rig.base_rects("row-order")[0];
+        rig.move_to(first_builtin.center().y);
+        assert_eq!(rig.cfg.drag.as_ref().unwrap().last_gap, Some(0));
+        rig.actions.clear();
+        rig.button(egui::pos2(300.0, first_builtin.center().y), false);
+        assert_eq!(
+            moves(&rig.actions),
+            [&ConfigAction::MoveStyleTo {
+                name: last_name.clone(),
+                to: 0
+            }]
+        );
+        // The model leaves every built-in where it is.
+        let slots = |s: &ConfigState| {
+            s.style_names()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, n)| s.badges(n).builtin)
+                .collect::<Vec<_>>()
+        };
+        let before = slots(&rig.state);
+        assert!(rig.state.move_style_to(&last_name, 0));
+        assert_eq!(slots(&rig.state), before, "built-in positions never change");
+    }
+
+    #[test]
+    fn wheel_scrolls_the_config_area_during_a_style_drag() {
+        let mut rig = StyleRig::new(500.0);
+        rig.cfg.drag = Some(StyleDrag {
+            name: "k1".to_string(),
+            handle: egui::Id::new("h"),
+            had_focus: false,
+            injected: Some(egui::pos2(300.0, 250.0)),
+            last_gap: None,
+        });
+        let before = rig.offset;
+        for _ in 0..6 {
+            rig.frame(vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -30.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            }]);
+        }
+        assert!(rig.offset > before + 20.0, "{} -> {}", before, rig.offset);
     }
 
     // ---- style editor (Phase 33 Plan 04) ----

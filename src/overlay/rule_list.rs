@@ -838,6 +838,25 @@ fn start_rename(list: &mut ListUi, sec: &SectionRow) {
     list.section_focus = true;
 }
 
+/// Tooltips of the padlock that stands in for a section header arrow that cannot move.
+const LOCKED_UP_TIP: &str = "No rule above to move past";
+const LOCKED_DOWN_TIP: &str = "No rule below to move past";
+const LOCKED_SEARCH_TIP: &str = "Clear the search to reorder";
+
+/// The padlock in a section header arrow's 16pt slot, hover-only, with the economy header's
+/// art and tint, so the cluster keeps its layout whether an arrow is live or locked.
+fn header_arrow_lock(ui: &mut egui::Ui, up: bool, tip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+    let label = if up {
+        "Move up (locked)"
+    } else {
+        "Move down (locked)"
+    };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    paint_flag_icon(ui.painter(), rect, FlagIcon::Padlock, pal::MUTED);
+    resp.on_hover_text(tip)
+}
+
 /// Left inset of the toggle plate and its gap to the bar.
 const HEADER_PLATE_INSET: f32 = 4.0;
 /// Toggle plate size (the art's 54:64 aspect).
@@ -945,31 +964,29 @@ fn draw_section_header(
             frame.actions.push(RowAction::RemoveSection(sec.ordinal));
             list.editing_section = None;
         }
-        let can_down = reorder_enabled && sec.can_move_down;
-        let can_up = reorder_enabled && sec.can_move_up;
-        let down = ff_arrow(&mut right, skin, false, can_down);
-        let up = ff_arrow(&mut right, skin, true, can_up);
-        if !reorder_enabled {
-            down.on_hover_text("Clear the search to reorder");
-            up.on_hover_text("Clear the search to reorder");
-        } else {
-            if can_down {
-                if down.clicked() {
-                    frame
-                        .actions
-                        .push(RowAction::MoveSection(sec.ordinal, Dir::Down));
+        // A live arrow moves the divider; one that cannot is a padlock in the arrow's slot,
+        // since a dimmed arrow is lost over the bar's ornate right cap.
+        for (dir, can, live_tip, locked_tip) in [
+            (
+                Dir::Down,
+                sec.can_move_down,
+                "Move section down",
+                LOCKED_DOWN_TIP,
+            ),
+            (Dir::Up, sec.can_move_up, "Move section up", LOCKED_UP_TIP),
+        ] {
+            let up = dir == Dir::Up;
+            if !reorder_enabled {
+                header_arrow_lock(&mut right, up, LOCKED_SEARCH_TIP);
+            } else if !can {
+                header_arrow_lock(&mut right, up, locked_tip);
+            } else {
+                let arrow = ff_arrow(&mut right, skin, up, true);
+                if arrow.clicked() {
+                    frame.actions.push(RowAction::MoveSection(sec.ordinal, dir));
                     list.editing_section = None;
                 }
-                down.on_hover_text("Move section down");
-            }
-            if can_up {
-                if up.clicked() {
-                    frame
-                        .actions
-                        .push(RowAction::MoveSection(sec.ordinal, Dir::Up));
-                    list.editing_section = None;
-                }
-                up.on_hover_text("Move section up");
+                arrow.on_hover_text(live_tip);
             }
         }
         if icon_button(&mut right, FlagIcon::Rename, "rename", "Rename section").clicked() {
@@ -3338,6 +3355,34 @@ Show
                 .any(|a| matches!(a, RowAction::MoveSection(..)))
         );
         assert!(actions.contains(&RowAction::RemoveSection(sec.ordinal)));
+    }
+
+    /// A divider with no rule left below it shows a padlock in place of its down arrow: a click
+    /// there moves nothing, while its live up arrow still moves it.
+    #[test]
+    fn a_locked_header_arrow_is_a_padlock_that_does_nothing() {
+        let text = format!("{}{}", sectioned_text(), banner("Empty"));
+        let wf = WorkingFilter::from_text(&text);
+        let sec = wf.sections().last().unwrap().clone();
+        assert_eq!(sec.name, "Empty");
+        assert!(sec.can_move_up && !sec.can_move_down);
+        // Rows: r1 0..52, Leveling 52..88, r2 ..140, Gear ..176, r3 ..228, Empty 228..264.
+        let (actions, _, _) = sweep_header(&text, 246.0, true, &|_| false);
+        assert!(actions.contains(&RowAction::MoveSection(sec.ordinal, Dir::Up)));
+        assert!(!actions.contains(&RowAction::MoveSection(sec.ordinal, Dir::Down)));
+        // The padlock takes the arrow's slot, so the cluster keeps its layout.
+        let ctx = headless_ctx();
+        let mut sizes = Vec::new();
+        ctx.run_ui(RawInput::default(), |ui| {
+            sizes.push(
+                ff_arrow(ui, &crate::skin::of(ui.ctx()), true, false)
+                    .rect
+                    .size(),
+            );
+            sizes.push(header_arrow_lock(ui, true, LOCKED_UP_TIP).rect.size());
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(sizes[0], sizes[1]);
     }
 
     fn rename_frames(keys: Vec<Vec<Event>>) -> (Vec<RowAction>, ListUi) {

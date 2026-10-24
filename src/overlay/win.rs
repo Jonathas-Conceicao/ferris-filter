@@ -115,8 +115,8 @@ mod imp {
     use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-        MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_INSERT, VK_LWIN, VK_MENU,
-        VK_RWIN, VK_SHIFT,
+        MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VK_CONTROL, VK_DELETE, VK_INSERT, VK_LWIN,
+        VK_MENU, VK_RWIN, VK_SHIFT,
     };
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -478,6 +478,12 @@ mod imp {
         key_down(VK_INSERT)
     }
 
+    /// Whether Delete is held right now: tells Ctrl+Shift+Delete apart from Ctrl+Shift+X, which
+    /// egui both turns into a Cut event.
+    pub fn delete_held() -> bool {
+        key_down(VK_DELETE)
+    }
+
     fn key_input(vk: u16, up: bool) -> INPUT {
         // SAFETY: `MapVirtualKeyW` takes two plain values and returns a scan code (0 if none).
         let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
@@ -803,6 +809,11 @@ mod imp {
         false
     }
 
+    /// No key query off Windows.
+    pub fn delete_held() -> bool {
+        false
+    }
+
     /// Key injection is not supported off Windows.
     pub fn send_tap(_vk: u16) -> Result<(), String> {
         Err("not supported on this platform".into())
@@ -846,7 +857,7 @@ mod imp {
 
 pub use imp::{
     ClipboardOwner, GameWindow, Monitor, OverlayWindow, clear_clipboard, clipboard_owner,
-    clipboard_sequence, conceal, dock_left, find_game_window, focus_game,
+    clipboard_sequence, conceal, delete_held, dock_left, find_game_window, focus_game,
     foreground_is_game_or_overlay, from_frame, game_is_foreground, insert_held, modifiers_held,
     monitor_scale, monitor_work_area_px, read_clipboard_text, reveal, send_chord, send_tap,
     shell_execute_open, target_monitor, utc_offset_minutes, windows_key_held, work_area,

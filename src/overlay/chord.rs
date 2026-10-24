@@ -629,6 +629,9 @@ pub struct CaptureInput<'a> {
     /// Insert is held: tells Ctrl+Insert apart from Ctrl+C, both of which egui turns into
     /// `Event::Copy`.
     pub insert_down: bool,
+    /// Delete is held: tells Ctrl+Shift+Delete apart from Ctrl+Shift+X, both of which egui turns
+    /// into `Event::Cut` (Shift+Delete is a Cut even with Ctrl held).
+    pub delete_down: bool,
 }
 
 /// What the capture does after a frame.
@@ -681,10 +684,10 @@ pub fn capture_step(state: &mut CaptureState, input: &CaptureInput) -> CaptureSt
                 (Some(key), input.ctrl, input.shift, input.alt)
             }
             egui::Event::Cut => {
-                let key = if input.ctrl {
-                    ChordKey::Letter(b'X')
-                } else {
+                let key = if input.delete_down || !input.ctrl {
                     ChordKey::Delete
+                } else {
+                    ChordKey::Letter(b'X')
                 };
                 (Some(key), input.ctrl, input.shift, input.alt)
             }
@@ -776,6 +779,7 @@ mod tests {
             alt,
             windows_key: false,
             insert_down: false,
+            delete_down: false,
         }
     }
 
@@ -1165,6 +1169,16 @@ mod tests {
             commit(Event::Cut, false, true, false),
             c(false, true, ChordKey::Delete)
         );
+        // Ctrl+Shift+Delete is also a Cut: the Delete probe keeps it from reading as Ctrl+Shift+X.
+        let cut = |delete: bool| {
+            let mut st = CaptureState::default();
+            let evs = [Event::Cut];
+            let mut inp = input(&evs, true, true, false);
+            inp.delete_down = delete;
+            capture_step(&mut st, &inp)
+        };
+        assert_eq!(cut(true), c(true, true, ChordKey::Delete));
+        assert_eq!(cut(false), c(true, true, ChordKey::Letter(b'X')));
         assert_eq!(
             commit(Event::Paste(String::new()), false, true, false),
             c(false, true, ChordKey::Insert)

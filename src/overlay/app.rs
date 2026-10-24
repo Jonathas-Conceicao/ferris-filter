@@ -2903,6 +2903,7 @@ impl OverlayApp {
             alt: held.alt,
             windows_key: super_down || win::windows_key_held(),
             insert_down: win::insert_held(),
+            delete_down: win::delete_held(),
         };
         let Some(state) = self.capture.as_mut() else {
             return;

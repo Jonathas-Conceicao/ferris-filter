@@ -113,6 +113,13 @@ pub enum Dir {
 pub enum RowAction {
     SetEnabled(BlockId, bool),
     Move(BlockId, Dir),
+    /// One drop from the drag handle: move a rule (its whole `# ff:group`) to any user-side
+    /// destination in one edit. The arrows' rules apply (group as a unit, economy refused,
+    /// `moved across Continue` flag).
+    MoveTo {
+        id: BlockId,
+        dest: crate::filter::MoveDest,
+    },
     Delete(BlockId),
     Duplicate(BlockId),
     SetKeyword(BlockId, BlockKeyword),
@@ -172,6 +179,7 @@ fn action_target(action: &RowAction) -> Option<BlockId> {
     match action {
         RowAction::SetEnabled(id, _)
         | RowAction::Move(id, _)
+        | RowAction::MoveTo { id, .. }
         | RowAction::Delete(id)
         | RowAction::Duplicate(id)
         | RowAction::SetKeyword(id, _)
@@ -1621,6 +1629,7 @@ impl WorkingFilter {
             | RowAction::RemoveSection(_)
             | RowAction::MoveSection(..) => return self.section_action(action),
             RowAction::Move(id, dir) => return self.move_rule(id, dir),
+            RowAction::MoveTo { id, dest } => return self.move_rule_to(id, dest),
             RowAction::SetDefenceSelection { id, mask } => return self.set_selection(id, mask),
             _ => {}
         }
@@ -1784,6 +1793,63 @@ impl WorkingFilter {
         done_or(r, Some(id))
     }
 
+    /// Move a rule (its whole group) to `dest` in one edit, as one drop. The Continue flag follows
+    /// `move_rule`: `moved across Continue` is set iff the run or any rule it passes over (in
+    /// file order, rules hidden in collapsed sections included; banners do not count) has
+    /// `Continue`, and otherwise cleared, also when it was set by an earlier move.
+    fn move_rule_to(&mut self, id: BlockId, dest: crate::filter::MoveDest) -> ActionOutcome {
+        use crate::filter::{MoveDest, section};
+        let run = self.groups.members(id);
+        let spans: Vec<(BlockId, usize, usize, bool)> = self
+            .doc
+            .blocks()
+            .map(|b| (b.id(), b.span().start, b.span().end, b.has_continue()))
+            .collect();
+        let line = |i: BlockId| spans.iter().find(|s| s.0 == i);
+        let (Some(first), Some(last)) = (
+            run.first().and_then(|i| line(*i)),
+            run.last().and_then(|i| line(*i)),
+        ) else {
+            return refused(NOT_EDITABLE_STATUS.to_string());
+        };
+        let (run_start, run_end) = (first.1, last.2);
+        let banners = section::banners(&self.doc);
+        let target = match dest {
+            MoveDest::Before(b) => line(b).map(|s| s.1),
+            MoveDest::AfterBanner(k) => banners.get(k).map(|b| b.start + 3),
+            MoveDest::BeforeBanner(k) => banners.get(k).map(|b| b.start),
+            MoveDest::End => Some(
+                banners
+                    .iter()
+                    .find(|b| b.kind == section::BannerKind::Economy)
+                    .map_or(usize::MAX, |b| b.start),
+            ),
+        };
+        let passes = |s: &&(BlockId, usize, usize, bool)| {
+            let Some(t) = target else { return false };
+            !run.contains(&s.0)
+                && if t >= run_end {
+                    s.1 >= run_end && s.1 < t
+                } else {
+                    s.1 >= t && s.1 < run_start
+                }
+        };
+        let crossing = run.iter().any(|m| line(*m).is_some_and(|s| s.3))
+            || spans.iter().filter(passes).any(|s| s.3);
+        match self.doc.move_run_to(&run, dest) {
+            Ok(true) => {
+                if crossing {
+                    self.moved.insert(id);
+                } else {
+                    self.moved.remove(&id);
+                }
+                done_or(Ok(()), Some(id))
+            }
+            Ok(false) => ActionOutcome::default(),
+            Err(e) => refused(section_refusal(&e)),
+        }
+    }
+
     /// Set the Simple Defences selection of a rule (a bit set over [`group::COMBOS`]): the rule is
     /// rewritten as the minimum number of blocks matching exactly that selection.
     fn set_selection(&mut self, id: BlockId, mask: u8) -> ActionOutcome {
@@ -1854,6 +1920,7 @@ impl WorkingFilter {
             }
             // Handled before a single block is chosen (see `dispatch`).
             RowAction::Move(..)
+            | RowAction::MoveTo { .. }
             | RowAction::SetDefenceSelection { .. }
             | RowAction::AddSection
             | RowAction::AddSectionAbove(_)
@@ -4090,5 +4157,130 @@ Show
             "{t}"
         );
         assert_eq!(wf.tag_styles(&[]), 0);
+    }
+
+    // -- MoveTo (Phase 49) ---------------------------------------------------------------------
+
+    fn abcd_continue() -> String {
+        "Show\n  Class \"A\"\n\nShow\n  Class \"B\"\n  Continue\n\nShow\n  Class \"C\"\n\nShow\n  Class \"D\"\n"
+            .to_string()
+    }
+
+    #[test]
+    fn move_to_moves_a_group_as_one_unit() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let before_groups = wf.rows()[2].group_size;
+        assert_eq!(before_groups, 2);
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[2],
+            dest: MoveDest::End,
+        });
+        assert!(out.changed, "{:?}", out.status);
+        assert_eq!(out.focus, Some(ids[2]));
+        let order: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        assert_eq!(order, vec![ids[0], ids[1], ids[3], ids[2]]);
+        assert_eq!(wf.rows()[3].group_size, 2, "still one rule");
+        assert_eq!(wf.rows()[3].section, Some(1));
+    }
+
+    #[test]
+    fn move_to_refuses_followers_and_economy_ids() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let before = wf.text();
+        let follower = wf.groups.members(ids[2])[1];
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: follower,
+            dest: MoveDest::End,
+        });
+        assert!(!out.changed && out.status.is_some());
+        let eid = wf.economy_rows()[0].id;
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: eid,
+            dest: MoveDest::Before(ids[0]),
+        });
+        assert!(!out.changed && out.status.is_some());
+        // A destination inside the economy section is refused too.
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[0],
+            dest: MoveDest::Before(eid),
+        });
+        assert!(!out.changed && out.status.is_some());
+        assert_eq!(wf.text(), before);
+    }
+
+    #[test]
+    fn move_to_sets_and_clears_the_continue_flag_like_the_arrows() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&abcd_continue());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        // A passes B (Continue): flagged.
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[0],
+            dest: MoveDest::Before(ids[3]),
+        });
+        assert!(out.changed);
+        assert!(wf.row(ids[0]).unwrap().moved_across_continue);
+        // Now B, C, A, D. A passes only C: the earlier flag is cleared.
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[0],
+            dest: MoveDest::Before(ids[2]),
+        });
+        assert!(out.changed);
+        assert!(!wf.row(ids[0]).unwrap().moved_across_continue);
+        // Moving the Continue rule itself is crossing.
+        wf.apply_action(RowAction::MoveTo {
+            id: ids[1],
+            dest: MoveDest::End,
+        });
+        assert!(wf.row(ids[1]).unwrap().moved_across_continue);
+    }
+
+    #[test]
+    fn move_to_a_collapsed_section_keeps_it_collapsed() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&sectioned());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[3],
+            dest: MoveDest::AfterBanner(0),
+        });
+        assert!(out.changed, "{:?}", out.status);
+        assert_eq!(wf.rows()[1].id, ids[3]);
+        assert_eq!(wf.rows()[1].section, Some(0));
+        let entries = wf.entries("", |s| s.name == "Leveling");
+        assert_eq!(entries[0], ListEntry::Rule(0));
+        assert!(matches!(
+            entries[1],
+            ListEntry::Header {
+                section: 0,
+                collapsed: true,
+                ..
+            }
+        ));
+        assert!(!entries.contains(&ListEntry::Rule(1)), "the rule is hidden");
+    }
+
+    #[test]
+    fn move_to_a_no_op_destination_changes_nothing() {
+        use crate::filter::MoveDest;
+        let mut wf = WorkingFilter::from_text(&abcd_continue());
+        let ids: Vec<BlockId> = wf.rows().iter().map(|r| r.id).collect();
+        let before = wf.text();
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[1],
+            dest: MoveDest::Before(ids[2]),
+        });
+        assert_eq!(out, ActionOutcome::default());
+        let out = wf.apply_action(RowAction::MoveTo {
+            id: ids[3],
+            dest: MoveDest::End,
+        });
+        assert!(!out.changed && out.status.is_none());
+        assert_eq!(wf.text(), before);
+        assert!(!wf.is_dirty());
     }
 }

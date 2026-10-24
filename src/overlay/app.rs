@@ -93,6 +93,14 @@ pub struct OverlayApp {
     /// instance name, so a relaunch can register it itself.
     hotkey: HotkeyRuntime,
 
+    /// The CONFIG tab's Show / hide overlay button is capturing the next key combination. While
+    /// it is, every key event is drained at the top of the frame for it (no widget, popup or
+    /// shortcut sees one) and the live hotkey's own press is taken as that chord, not a toggle.
+    capture: Option<super::chord::CaptureState>,
+    /// The window was focused on the last frame that reported focus: only a focused -> unfocused
+    /// transition ends a capture (a window that starts unfocused, as screenshot mode does, never).
+    capture_was_focused: bool,
+
     /// The single-instance guard (INST-01); dropping it releases the instance name so the next
     /// `ff` launch becomes the running one. Polled once per frame for a show request from a
     /// second launch. Held until tray Quit, which drops it at once (`None`), not when eframe
@@ -1328,19 +1336,52 @@ impl OverlayApp {
     #[cfg(debug_assertions)]
     pub(crate) fn new_screenshot(skin: Skin, shot: super::screenshot::ShotArgs) -> Self {
         let root = resolve_root();
+        // `--hotkey` is saved into the temp home's ff-settings.json before start-up (the guard
+        // already proved the home lives under Temp), so the normal load path reads it: an
+        // unusable value shows the start-up fallback and its warning, as a real launch would.
+        if let (Some(raw), Ok(dir)) = (&shot.hotkey, &root) {
+            let path = settings::path(dir);
+            let existing = std::fs::read(&path).ok();
+            match settings::render_hotkey(existing.as_deref(), raw) {
+                Ok(bytes) => {
+                    if let Err(e) =
+                        std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, bytes))
+                    {
+                        eprintln!("ff: --hotkey: could not write {}: {e}", path.display());
+                    }
+                }
+                Err(()) => eprintln!(
+                    "ff: --hotkey: {} is not a JSON object; left as it is",
+                    path.display()
+                ),
+            }
+        }
+        // The chord a real launch would show: the saved one, else the default. Never registered.
+        let shown = root
+            .as_ref()
+            .ok()
+            .and_then(|dir| settings::load(dir).0.saved_hotkey())
+            .unwrap_or(super::chord::DEFAULT);
         let game_dir = startup_game_dir(&root);
         let mut app = Self::build(
             TrayHandles::inert(),
-            HotkeyRuntime::inert(super::chord::DEFAULT, "screenshot mode"),
+            HotkeyRuntime::inert(shown, "screenshot mode"),
             None,
             None,
             skin,
             root,
             game_dir,
         );
-        app.tab = shot.tab;
+        app.tab = if shot.capture_hotkey {
+            ShellTab::Config
+        } else {
+            shot.tab
+        };
         app.visibility = Visibility::ShownFocused;
-        if shot.tab == ShellTab::Config {
+        if shot.capture_hotkey && app.config.is_ok() {
+            app.capture = Some(super::chord::CaptureState::default());
+        }
+        if app.tab == ShellTab::Config {
             app.refresh_filters();
         }
         app.open_shot_popup(shot.popup.as_deref());
@@ -1560,6 +1601,8 @@ impl OverlayApp {
             economy_info: EconomyInfo::default(),
             tray,
             hotkey,
+            capture: None,
+            capture_was_focused: false,
             instance,
             #[cfg(debug_assertions)]
             shot: None,
@@ -2755,16 +2798,178 @@ impl OverlayApp {
     /// or valid but in use by another app) it is `None`, so picking or resetting to the live
     /// default is still a pending edit and Apply writes it explicitly: the warning then stops on
     /// the next launch instead of staying stuck.
-    // The Config tab's hotkey row (capture and Reset) is its caller; until it lands only tests use it.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn hotkey_base(&self) -> Option<Chord> {
+        if self.saved_hotkey_stale() {
+            None
+        } else {
+            self.hotkey.live()
+        }
+    }
+
+    /// The saved `hotkey` is not the chord that runs: invalid, or valid but not registered (a
+    /// start-up fallback). Reset stays live then, so the default can be saved explicitly.
+    fn saved_hotkey_stale(&self) -> bool {
         let live = self.hotkey.live();
-        let stale = self.settings.hotkey_invalid
+        self.settings.hotkey_invalid
             || self
                 .settings
                 .saved_hotkey()
-                .is_some_and(|saved| Some(saved) != live);
-        if stale { None } else { live }
+                .is_some_and(|saved| Some(saved) != live)
+    }
+
+    /// Makes `chord` the pending show / hide hotkey, or clears the edit when it is the base (the
+    /// applied chord). A real change is a CONFIG edit, so the last Apply message goes.
+    fn pick_hotkey(&mut self, chord: Chord) {
+        let base = self.hotkey_base();
+        let Ok(config) = &mut self.config else {
+            return;
+        };
+        let before = config.hotkey_pending();
+        config.set_hotkey(chord, base);
+        if config.hotkey_pending() != before {
+            self.clear_events_on_edit();
+        }
+    }
+
+    /// The keybind button was clicked: capture the next key combination. Whatever widget held
+    /// keyboard focus gives it up, so no text field keeps a caret while the keys go elsewhere.
+    fn start_capture(&mut self, ctx: &egui::Context) {
+        if self.config.is_err() {
+            return;
+        }
+        self.capture = Some(super::chord::CaptureState::default());
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+    }
+
+    /// Runs the capture for this frame. Called first in `ui()`, before any widget, popup,
+    /// shortcut or the hotkey poll reads input: while capturing it takes every key, text,
+    /// clipboard and IME event out of the frame, so nothing else reacts to them. A press of the
+    /// pointer outside the keybind button, or the window losing focus, ends the capture first
+    /// (the press itself still reaches its widget, so the reset button still resets).
+    fn capture_frame(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused);
+        let lost_focus = self.capture_was_focused && focused == Some(false);
+        if let Some(f) = focused {
+            self.capture_was_focused = f;
+        }
+        if self.capture.is_none() {
+            return;
+        }
+        let button = self.config_ui.hotkey_button_rect;
+        let pressed_outside = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::PointerButton { pos, pressed: true, .. }
+                        if !button.is_some_and(|r| r.contains(*pos))
+                )
+            })
+        });
+        if lost_focus || pressed_outside {
+            self.capture = None;
+            return;
+        }
+        let events: Vec<egui::Event> = ctx.input_mut(|i| {
+            let (mine, rest): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut i.events).into_iter().partition(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Paste(_)
+                            | egui::Event::Ime(_)
+                    )
+                });
+            i.events = rest;
+            mine
+        });
+        let (held, super_down) = ctx.input(|i| {
+            (
+                i.modifiers,
+                i.keys_down.contains(&egui::Key::SuperLeft)
+                    || i.keys_down.contains(&egui::Key::SuperRight),
+            )
+        });
+        let input = super::chord::CaptureInput {
+            events: &events,
+            ctrl: held.ctrl,
+            shift: held.shift,
+            alt: held.alt,
+            windows_key: super_down || win::windows_key_held(),
+            insert_down: win::insert_held(),
+        };
+        let Some(state) = self.capture.as_mut() else {
+            return;
+        };
+        match super::chord::capture_step(state, &input) {
+            super::chord::CaptureStep::Continue => {}
+            super::chord::CaptureStep::Cancel => self.capture = None,
+            super::chord::CaptureStep::Commit(chord) => {
+                self.capture = None;
+                self.pick_hotkey(chord);
+            }
+        }
+    }
+
+    /// The live hotkey was pressed. While capturing it is not a toggle: its keys never reach the
+    /// window (the OS hands them to the hotkey), so the press is taken as capturing the applied
+    /// chord itself. Returns whether a capture took it.
+    fn capture_live_hotkey(&mut self) -> bool {
+        if self.capture.is_none() {
+            return false;
+        }
+        self.capture = None;
+        if let Some(live) = self.hotkey.live() {
+            self.pick_hotkey(live);
+        }
+        true
+    }
+
+    /// Ends a capture the frame interrupted: another tab, a hidden window, or a popup.
+    fn end_interrupted_capture(&mut self, quit_requested: bool) {
+        if self.capture.is_some()
+            && (self.tab != ShellTab::Config
+                || self.visibility == Visibility::Hidden
+                || shell::active_popup(self.popup_flags(quit_requested)).is_some())
+        {
+            self.capture = None;
+        }
+    }
+
+    /// What the CONFIG tab's Show / hide overlay row shows; `None` without a loaded CONFIG
+    /// state. `held` is the modifiers held right now (the live caption while capturing).
+    fn hotkey_row_view(&self, held: egui::Modifiers) -> Option<config_view::HotkeyRowView> {
+        use config_view::HotkeyCaption;
+        let config = self.config.as_ref().ok()?;
+        let pending = config.hotkey_pending();
+        let chord = pending.unwrap_or(self.hotkey.shown());
+        let default = super::chord::DEFAULT;
+        // A stale saved chord keeps Reset live until the default is pending, so it can be saved.
+        let reset_enabled =
+            chord != default || (self.saved_hotkey_stale() && pending != Some(default));
+        let (caption, caption_kind) = match &self.capture {
+            None => (chord.text(), HotkeyCaption::Rest),
+            Some(state) => match state.rejected {
+                Some(reason) => (reason.caption().to_string(), HotkeyCaption::Rejected),
+                None => (
+                    super::chord::held_caption(held.ctrl, held.shift, held.alt),
+                    HotkeyCaption::Capturing,
+                ),
+            },
+        };
+        Some(config_view::HotkeyRowView {
+            caption,
+            caption_kind,
+            chord_text: chord.text(),
+            capturing: self.capture.is_some(),
+            reset_enabled,
+        })
     }
 
     /// The Phase 22 release order: give up what a new instance must own (the hotkey, then the
@@ -3234,9 +3439,12 @@ impl OverlayApp {
                 ConfigAction::Overwrite => {
                     self.run_apply(ctx, true);
                 }
-                ConfigAction::StartHotkeyCapture
-                | ConfigAction::CancelHotkeyCapture
-                | ConfigAction::ResetHotkey => {}
+                ConfigAction::StartHotkeyCapture => self.start_capture(ctx),
+                ConfigAction::CancelHotkeyCapture => self.capture = None,
+                ConfigAction::ResetHotkey => {
+                    self.capture = None;
+                    self.pick_hotkey(super::chord::DEFAULT);
+                }
                 ConfigAction::Reload => {
                     match config_reload_plan(self.config.is_err(), &self.changed_on_disk) {
                         ConfigReload::ConfigOnly => {
@@ -3354,7 +3562,7 @@ impl OverlayApp {
             indicator: apply::indicator(self.apply_state),
             reload_after_apply: self.settings.reload_after_apply(),
             skin: Some(skin),
-            hotkey: None,
+            hotkey: self.hotkey_row_view(ui.ctx().input(|i| i.modifiers)),
         };
         w::ff_scroll_area(ui, skin, "config", |ui| match &self.config {
             Ok(state) => {
@@ -3536,6 +3744,8 @@ pub(crate) fn bottom_bar(
 
 impl eframe::App for OverlayApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // A hotkey capture owns the frame's key events: taken before anything else reads input.
+        self.capture_frame(ui.ctx());
         // Cache the overlay's own HWND the first frame one is available
         // (RESEARCH Pattern 1). Retried every frame until it succeeds.
         if self.window.is_none() {
@@ -3569,15 +3779,20 @@ impl eframe::App for OverlayApp {
         if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
             if let Some(id) = self.hotkey.live_id() {
                 if event.id == id && event.state == global_hotkey::HotKeyState::Pressed {
-                    // Only while the user is actually in the game — or in the window itself, so
-                    // the same key can dismiss it once it has focus. The binding is registered
-                    // system-wide, which is what lets it reach a fullscreen game, but a key that
-                    // also fires in a browser or an editor is a key the user cannot use for
-                    // anything else (author, 2026-09-15).
+                    // While the CONFIG tab captures a chord, the live one is that chord, not a
+                    // toggle.
+                    //
+                    // Otherwise only while the user is actually in the game — or in the window
+                    // itself, so the same key can dismiss it once it has focus. The binding is
+                    // registered system-wide, which is what lets it reach a fullscreen game, but
+                    // a key that also fires in a browser or an editor is a key the user cannot
+                    // use for anything else (author, 2026-09-15).
                     //
                     // The event is still drained either way: leaving it queued would make the
                     // next in-game press replay a stale one.
-                    if win::foreground_is_game_or_overlay(self.window.as_ref()) {
+                    if self.capture_live_hotkey() {
+                        ui.ctx().request_repaint();
+                    } else if win::foreground_is_game_or_overlay(self.window.as_ref()) {
                         self.toggle_requested = true;
                     }
                 }
@@ -4230,6 +4445,7 @@ impl eframe::App for OverlayApp {
         // A refused Apply this frame opens the popup now: decide its Overwrite from that state.
         self.overwrite_live = self.overwrite_decision();
         self.refresh_quit_tier_edits_only();
+        self.end_interrupted_capture(quit_requested);
         if let Some(popup) = shell::active_popup(self.popup_flags(quit_requested)) {
             let spec = self.popup_spec_for(popup);
             let buttons: Vec<crate::skin::popup::PopupButton> = spec
@@ -8643,5 +8859,355 @@ Hide
         app.quit_confirm = true;
         app.refresh_quit_tier_edits_only();
         assert!(!app.quit_tier_edits_only);
+    }
+
+    // ---- hotkey capture on the CONFIG tab (Phase 47-04) ----
+
+    const CTRL_ALT: egui::Modifiers = egui::Modifiers {
+        alt: true,
+        ctrl: true,
+        shift: false,
+        mac_cmd: false,
+        command: true,
+    };
+    const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
+        alt: false,
+        ctrl: true,
+        shift: true,
+        mac_cmd: false,
+        command: true,
+    };
+
+    fn key_press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn capture_input(
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+        focused: Option<bool>,
+    ) -> egui::RawInput {
+        // egui keeps the held modifiers from `ModifiersChanged` events.
+        let mut all = vec![egui::Event::ModifiersChanged(modifiers)];
+        all.extend(events);
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(660.0, 1000.0),
+            )),
+            events: all,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .focused = focused;
+        input
+    }
+
+    /// One frame that only runs the top-of-frame capture step.
+    fn capture_frame_with(
+        app: &mut super::OverlayApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+        focused: Option<bool>,
+    ) {
+        ctx.run_ui(capture_input(events, modifiers, focused), |ui| {
+            app.capture_frame(ui.ctx());
+        })
+        .drop_without_applying_deltas();
+    }
+
+    fn capturing_app() -> (super::OverlayApp, egui::Context) {
+        let (mut app, ctx) = popup_app(RULES);
+        assert!(app.config.is_ok());
+        app.tab = ShellTab::Config;
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(app.capture.is_some());
+        (app, ctx)
+    }
+
+    fn pending_hotkey(app: &super::OverlayApp) -> Option<crate::overlay::chord::Chord> {
+        app.config.as_ref().unwrap().hotkey_pending()
+    }
+
+    #[test]
+    fn a_captured_chord_becomes_the_pending_hotkey() {
+        let (mut app, ctx) = capturing_app();
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![key_press(egui::Key::K, CTRL_ALT)],
+            CTRL_ALT,
+            Some(true),
+        );
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        let c = app.config.as_ref().unwrap();
+        assert!(c.hotkey_dirty() && c.is_dirty());
+        assert_eq!(c.scope_dirty_count(RevertScope::Styles), 1);
+    }
+
+    #[test]
+    fn capture_keys_never_reach_a_focused_text_field() {
+        let (mut app, ctx) = popup_app(RULES);
+        let mut text = String::from("abc");
+        let field = egui::Id::new("probe-field");
+        // Frame 1: the field takes focus.
+        ctx.run_ui(
+            capture_input(vec![], Default::default(), Some(true)),
+            |ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut text).id(field));
+                r.request_focus();
+            },
+        )
+        .drop_without_applying_deltas();
+        // The capture starts without surrendering focus, the worst case for draining.
+        app.tab = ShellTab::Config;
+        app.capture = Some(Default::default());
+        ctx.run_ui(
+            capture_input(
+                vec![
+                    key_press(egui::Key::K, CTRL_ALT),
+                    egui::Event::Text("k".into()),
+                    key_press(egui::Key::Backspace, Default::default()),
+                ],
+                CTRL_ALT,
+                Some(true),
+            ),
+            |ui| {
+                app.capture_frame(ui.ctx());
+                ui.add(egui::TextEdit::singleline(&mut text).id(field));
+            },
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(text, "abc");
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+    }
+
+    #[test]
+    fn starting_a_capture_takes_focus_from_a_text_field() {
+        let (mut app, ctx) = popup_app(RULES);
+        let field = egui::Id::new("probe-field");
+        ctx.memory_mut(|m| m.request_focus(field));
+        assert!(ctx.memory(|m| m.has_focus(field)));
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(!ctx.memory(|m| m.has_focus(field)));
+    }
+
+    #[test]
+    fn escape_cancels_the_capture_and_no_one_else_sees_it() {
+        let (mut app, ctx) = capturing_app();
+        let mut escape_seen = true;
+        ctx.run_ui(
+            capture_input(
+                vec![key_press(egui::Key::Escape, Default::default())],
+                Default::default(),
+                Some(true),
+            ),
+            |ui| {
+                app.capture_frame(ui.ctx());
+                escape_seen = ui.ctx().input(|i| i.key_pressed(egui::Key::Escape));
+            },
+        )
+        .drop_without_applying_deltas();
+        assert!(app.capture.is_none());
+        assert!(!escape_seen, "a popup's Escape handler must not run");
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn a_refused_press_keeps_capturing_with_its_caption() {
+        let (mut app, ctx) = capturing_app();
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![key_press(egui::Key::Z, Default::default())],
+            Default::default(),
+            Some(true),
+        );
+        assert!(app.capture.is_some());
+        assert_eq!(pending_hotkey(&app), None);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Add Ctrl, Shift or Alt");
+        assert_eq!(
+            view.caption_kind,
+            crate::overlay::config_view::HotkeyCaption::Rejected
+        );
+        assert!(view.capturing);
+    }
+
+    #[test]
+    fn the_capture_caption_follows_the_held_modifiers() {
+        let (app, _ctx) = capturing_app();
+        let view = app.hotkey_row_view(CTRL_SHIFT).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+…");
+        assert_eq!(
+            view.caption_kind,
+            crate::overlay::config_view::HotkeyCaption::Capturing
+        );
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Press a key…");
+        assert_eq!(view.chord_text, "Ctrl+Shift+Z");
+    }
+
+    #[test]
+    fn every_interruption_cancels_the_capture_without_an_edit() {
+        // The second click on the button.
+        let (mut app, ctx) = capturing_app();
+        app.handle_config_actions(&ctx, vec![ConfigAction::CancelHotkeyCapture]);
+        assert!(app.capture.is_none());
+        // A tab switch.
+        let (mut app, _ctx) = capturing_app();
+        app.tab = ShellTab::Rules;
+        app.end_interrupted_capture(false);
+        assert!(app.capture.is_none());
+        // Hiding the window.
+        let (mut app, _ctx) = capturing_app();
+        app.visibility = super::Visibility::Hidden;
+        app.end_interrupted_capture(false);
+        assert!(app.capture.is_none());
+        // A popup opening.
+        let (mut app, _ctx) = capturing_app();
+        app.config_ui.reset_armed = Some(RevertScope::Styles);
+        app.end_interrupted_capture(false);
+        assert!(app.capture.is_none());
+        // Losing focus after having it.
+        let (mut app, ctx) = capturing_app();
+        capture_frame_with(&mut app, &ctx, vec![], Default::default(), Some(true));
+        assert!(app.capture.is_some());
+        capture_frame_with(&mut app, &ctx, vec![], Default::default(), Some(false));
+        assert!(app.capture.is_none());
+        // A press outside the button (one inside keeps it).
+        let (mut app, ctx) = capturing_app();
+        app.config_ui.hotkey_button_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(100.0, 100.0),
+            egui::vec2(208.0, 30.0),
+        ));
+        let press = |p: egui::Pos2| egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![press(egui::pos2(150.0, 110.0))],
+            Default::default(),
+            Some(true),
+        );
+        assert!(app.capture.is_some());
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![press(egui::pos2(20.0, 20.0))],
+            Default::default(),
+            Some(true),
+        );
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn a_window_that_never_had_focus_keeps_capturing() {
+        let (mut app, ctx) = capturing_app();
+        for _ in 0..3 {
+            capture_frame_with(&mut app, &ctx, vec![], Default::default(), Some(false));
+        }
+        assert!(app.capture.is_some());
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Press a key…");
+    }
+
+    #[test]
+    fn capturing_the_applied_chord_clears_a_pending_one() {
+        let (rt, _, _log) = fake_runtime(&[], None);
+        let (mut app, ctx, _home) = hotkey_app("{}", rt, None);
+        assert_eq!(app.hotkey.live(), Some(crate::overlay::chord::DEFAULT));
+        app.pick_hotkey(CTRL_ALT_K);
+        assert_eq!(pending_hotkey(&app), Some(CTRL_ALT_K));
+        app.tab = ShellTab::Config;
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        capture_frame_with(
+            &mut app,
+            &ctx,
+            vec![key_press(egui::Key::Z, CTRL_SHIFT)],
+            CTRL_SHIFT,
+            Some(true),
+        );
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), None);
+        // The live hotkey's own press while capturing is that chord, not a toggle.
+        app.pick_hotkey(CTRL_ALT_K);
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(app.capture_live_hotkey());
+        assert!(app.capture.is_none());
+        assert_eq!(pending_hotkey(&app), None);
+        assert!(!app.toggle_requested);
+        // Without a capture the press is not taken.
+        assert!(!app.capture_live_hotkey());
+    }
+
+    #[test]
+    fn reset_makes_the_default_pending_or_clears_the_edit() {
+        let (rt, _, _log) = fake_runtime(&[], Some(CTRL_ALT_K));
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, None);
+        assert_eq!(app.hotkey.live(), Some(CTRL_ALT_K));
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Alt+K");
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(crate::overlay::chord::DEFAULT));
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+Z");
+        assert!(!view.reset_enabled);
+
+        let (rt, _, _log) = fake_runtime(&[], None);
+        let (mut app, ctx, _home) = hotkey_app("{}", rt, None);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+Z");
+        assert!(!view.reset_enabled, "already the default");
+        app.pick_hotkey(CTRL_ALT_K);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Alt+K");
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), None);
+    }
+
+    #[test]
+    fn a_stale_saved_chord_keeps_reset_live_until_the_default_is_pending() {
+        // Saved Ctrl+Alt+K was in use at start-up: the default runs.
+        let (rt, warning, _log) = fake_runtime(&[CTRL_ALT_K], Some(CTRL_ALT_K));
+        let (mut app, ctx, _home) = hotkey_app(r#"{"hotkey":"Ctrl+Alt+K"}"#, rt, warning);
+        assert_eq!(app.hotkey_base(), None);
+        let view = app.hotkey_row_view(Default::default()).unwrap();
+        assert_eq!(view.caption, "Ctrl+Shift+Z");
+        assert!(view.reset_enabled);
+        app.handle_config_actions(&ctx, vec![ConfigAction::ResetHotkey]);
+        assert_eq!(pending_hotkey(&app), Some(crate::overlay::chord::DEFAULT));
+        assert!(
+            !app.hotkey_row_view(Default::default())
+                .unwrap()
+                .reset_enabled
+        );
+    }
+
+    #[test]
+    fn no_config_state_means_no_hotkey_row() {
+        let (mut app, ctx) = popup_app(RULES);
+        app.config = Err("broken".into());
+        assert!(app.hotkey_row_view(Default::default()).is_none());
+        app.handle_config_actions(&ctx, vec![ConfigAction::StartHotkeyCapture]);
+        assert!(app.capture.is_none());
     }
 }

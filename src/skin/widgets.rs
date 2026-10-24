@@ -1284,6 +1284,73 @@ pub fn ff_reload_button(ui: &mut Ui, skin: &Skin, label: &str, enabled: bool) ->
     resp
 }
 
+/// The opaque plate of the 92x92 reorder handle art, as `[x0, y0, x1, y1)` texels (the same
+/// transparent right/bottom gutter as the icon button art).
+pub const DRAG_HANDLE_OPAQUE: [u32; 4] = [0, 0, 84, 84];
+/// Side of the painted handle plate, in points.
+pub const DRAG_HANDLE_SIZE: f32 = 28.0;
+/// Side of the handle's grab target, centred on the plate, in points.
+pub const DRAG_HANDLE_HIT: f32 = 32.0;
+
+/// The reorder handle: the author's art ([`Skin::drag_handle`]) with its visible plate filling a
+/// [`DRAG_HANDLE_SIZE`] square. Enabled it senses click and drag on a [`DRAG_HANDLE_HIT`] target
+/// (click_and_drag, not drag only: a tap is then consumed here instead of falling through to the
+/// row behind and toggling it; a drag starts after egui's movement threshold). The returned
+/// response is the grab target's. Callers ignore `clicked()`. Disabled it senses hover only, is
+/// dimmed and explains itself in a tooltip. `dragging` is true for the handle whose drag is in
+/// progress (pressed art, grabbing cursor). No keyboard handling.
+pub fn ff_drag_handle(ui: &mut Ui, skin: &Skin, enabled: bool, dragging: bool) -> Response {
+    let enabled = enabled && ui.is_enabled();
+    let auto_id = ui.next_auto_id();
+    let (rect, hover) = ui.allocate_exact_size(Vec2::splat(DRAG_HANDLE_SIZE), Sense::hover());
+    let resp = if enabled {
+        ui.interact(
+            rect.expand((DRAG_HANDLE_HIT - DRAG_HANDLE_SIZE) / 2.0),
+            auto_id.with("hit"),
+            Sense::click_and_drag(),
+        )
+    } else {
+        hover
+    };
+    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, "Reorder"));
+    let any_drag = dragging || ui.ctx().dragged_id().is_some();
+    let state = if !enabled {
+        0
+    } else if dragging || resp.is_pointer_button_down_on() {
+        2
+    } else if resp.hovered() && !any_drag {
+        1
+    } else {
+        0
+    };
+    let tint = if enabled {
+        Color32::WHITE
+    } else {
+        Color32::from_white_alpha(90)
+    };
+    slice::paint_visible(
+        ui.painter(),
+        &skin.drag_handle[state],
+        DRAG_HANDLE_OPAQUE,
+        rect,
+        tint,
+    );
+    if enabled {
+        if dragging {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if resp.hovered() && !any_drag {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if any_drag {
+            resp
+        } else {
+            resp.on_hover_text("Drag to reorder")
+        }
+    } else {
+        resp.on_hover_text("Clear the search to reorder")
+    }
+}
+
 /// Padding of [`ff_arrow`]'s click target around its 16pt art. Vertically 3, not 4, so in a
 /// collapsed rule row (arrows at y 18..34) the target stays clear of the summary line's centre
 /// (y 38), where a click expands the row.
@@ -1982,7 +2049,10 @@ mod tests {
             ff_search_field(ui, &skin, id, &mut text, "hint", 300.0);
         })
         .drop_without_applying_deltas();
-        assert!(ctx.memory(|m| m.has_focus(id)), "edit not focused before click");
+        assert!(
+            ctx.memory(|m| m.has_focus(id)),
+            "edit not focused before click"
+        );
         let x = search_layout(Rect::from_min_size(
             field.min - vec2(SEARCH_TEXT_INSET, 3.0),
             vec2(300.0, 30.0),
@@ -2371,6 +2441,109 @@ mod tests {
         assert!(update.nodes.iter().any(|(_, n)| {
             (n.label() == Some("Refresh") || n.value() == Some("Refresh")) && n.is_disabled()
         }));
+        out.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn drag_handle_plate_is_28_square_and_paints_the_visible_box() {
+        let (ctx, skin) = setup();
+        let mut rect = Rect::NOTHING;
+        let out = ctx.run_ui(RawInput::default(), |ui| {
+            rect = ff_drag_handle(ui, &skin, true, false).rect;
+        });
+        assert_eq!(
+            rect.size(),
+            Vec2::splat(32.0),
+            "response is the 32pt hit rect"
+        );
+        let plate = rect.shrink((DRAG_HANDLE_HIT - DRAG_HANDLE_SIZE) / 2.0);
+        assert_eq!(plate.size(), Vec2::splat(DRAG_HANDLE_SIZE));
+        let want = slice::box_uv(skin.drag_handle[0].size(), DRAG_HANDLE_OPAQUE);
+        let found = out.shapes.iter().any(|s| {
+            matches!(&s.shape, Shape::Mesh(m) if m.texture_id == skin.drag_handle[0].id()
+                && m.vertices.iter().any(|v| (v.uv - want.min).length() < 1e-4)
+                && m.vertices.iter().any(|v| (v.uv - want.max).length() < 1e-4))
+        });
+        assert!(found, "plate painted with box_uv of [0,0,84,84]");
+        out.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn drag_handle_hit_rect_is_32_centred_on_the_plate() {
+        let (ctx, skin) = setup();
+        let mut hit = Rect::NOTHING;
+        let mut plate_pos = Vec2::ZERO;
+        ctx.run_ui(RawInput::default(), |ui| {
+            plate_pos = ui.cursor().min.to_vec2();
+            hit = ff_drag_handle(ui, &skin, true, false).rect;
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(hit.size(), Vec2::splat(DRAG_HANDLE_HIT));
+        assert_eq!(
+            hit.center().to_vec2(),
+            plate_pos + Vec2::splat(DRAG_HANDLE_SIZE / 2.0)
+        );
+    }
+
+    #[test]
+    fn disabled_drag_handle_senses_hover_only() {
+        let (ctx, skin) = setup();
+        let mut sense = Sense::click_and_drag();
+        ctx.run_ui(RawInput::default(), |ui| {
+            sense = ff_drag_handle(ui, &skin, false, false).sense;
+        })
+        .drop_without_applying_deltas();
+        assert!(!sense.senses_click() && !sense.senses_drag(), "{sense:?}");
+        let (ctx, skin) = setup();
+        let mut sense = Sense::hover();
+        ctx.run_ui(RawInput::default(), |ui| {
+            sense = ff_drag_handle(ui, &skin, true, false).sense;
+        })
+        .drop_without_applying_deltas();
+        assert!(sense.senses_click() && sense.senses_drag(), "{sense:?}");
+    }
+
+    #[test]
+    fn drag_handle_tap_does_not_click_the_row_behind() {
+        let (ctx, skin) = setup();
+        let mut handle = Rect::NOTHING;
+        ctx.run_ui(RawInput::default(), |ui| {
+            let row = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 60.0));
+            ui.interact(row, egui::Id::new("row"), Sense::click());
+            handle = ff_drag_handle(ui, &skin, true, false).rect;
+        })
+        .drop_without_applying_deltas();
+        let mut row_clicked = false;
+        let mut handle_clicked = false;
+        ctx.run_ui(click_at(handle.center()), |ui| {
+            let row = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 60.0));
+            let row_resp = ui.interact(row, egui::Id::new("row"), Sense::click());
+            handle_clicked = ff_drag_handle(ui, &skin, true, false).clicked();
+            row_clicked = row_resp.clicked();
+        })
+        .drop_without_applying_deltas();
+        assert!(handle_clicked, "the handle takes the tap");
+        assert!(!row_clicked, "the row behind is not clicked");
+    }
+
+    #[test]
+    fn drag_handle_is_labelled_reorder() {
+        let (ctx, skin) = setup();
+        ctx.enable_accesskit();
+        let out = ctx.run_ui(RawInput::default(), |ui| {
+            ff_drag_handle(ui, &skin, true, false);
+        });
+        let update = out
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("update");
+        assert!(
+            update
+                .nodes
+                .iter()
+                .any(|(_, n)| { n.label() == Some("Reorder") || n.value() == Some("Reorder") })
+        );
         out.drop_without_applying_deltas();
     }
 

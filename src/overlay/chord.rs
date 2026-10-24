@@ -71,6 +71,39 @@ pub const DEFAULT: Chord = Chord {
     key: ChordKey::Letter(b'Z'),
 };
 
+/// Chords the capture and `ff-settings.json` refuse, because binding them system-wide would
+/// break FerrisFilter itself or a Windows-wide shortcut:
+/// - `Ctrl+V`: the in-game reload after Apply pastes `/reloaditemfilter` with an injected Ctrl+V,
+///   which a hotkey on that chord would swallow (and show the overlay instead).
+/// - `Ctrl+C`, `Ctrl+X`, `Ctrl+A`, `Ctrl+Z`: copy, cut, select all and undo in every program.
+/// - `Alt+F4`, `Alt+Tab`, `Shift+Alt+Tab`, `Alt+Space`: close, switch and window menu.
+/// - `Ctrl+Alt+Delete`: the Windows security screen.
+///
+/// Escape (`Ctrl+Esc`, `Alt+Esc`, `Ctrl+Shift+Esc`) and the Windows key are refused outright by
+/// [`Chord::parse`] and the capture, so they need no entry here. Only the exact chord is
+/// reserved: `Ctrl+Shift+C` is free.
+pub const RESERVED: &[Chord] = &[
+    reserved(true, false, false, ChordKey::Letter(b'V')),
+    reserved(true, false, false, ChordKey::Letter(b'C')),
+    reserved(true, false, false, ChordKey::Letter(b'X')),
+    reserved(true, false, false, ChordKey::Letter(b'A')),
+    reserved(true, false, false, ChordKey::Letter(b'Z')),
+    reserved(false, false, true, ChordKey::F(4)),
+    reserved(false, false, true, ChordKey::Tab),
+    reserved(false, true, true, ChordKey::Tab),
+    reserved(false, false, true, ChordKey::Space),
+    reserved(true, false, true, ChordKey::Delete),
+];
+
+const fn reserved(ctrl: bool, shift: bool, alt: bool, key: ChordKey) -> Chord {
+    Chord {
+        ctrl,
+        shift,
+        alt,
+        key,
+    }
+}
+
 /// Longest text [`Chord::parse`] looks at; anything longer is refused outright.
 const MAX_TEXT_LEN: usize = 64;
 
@@ -340,10 +373,22 @@ impl Chord {
         Ok(chord)
     }
 
-    /// Whether the chord may be registered: any of Ctrl / Shift / Alt, or a bare F1-F24.
-    pub fn is_bindable(&self) -> bool {
+    /// Whether the chord has the modifier the rule asks for: any of Ctrl / Shift / Alt, or a bare
+    /// F1-F24. Says nothing about [`RESERVED`]; see [`Chord::is_bindable`].
+    pub fn has_modifier(&self) -> bool {
         self.key.is_valid()
             && (self.ctrl || self.shift || self.alt || matches!(self.key, ChordKey::F(_)))
+    }
+
+    /// Whether the chord is one of the [`RESERVED`] chords FerrisFilter refuses.
+    pub fn is_reserved(&self) -> bool {
+        RESERVED.contains(self)
+    }
+
+    /// Whether the chord may be registered: it [has a modifier](Chord::has_modifier) and is not
+    /// [reserved](Chord::is_reserved).
+    pub fn is_bindable(&self) -> bool {
+        self.has_modifier() && !self.is_reserved()
     }
 
     /// The `global-hotkey` modifiers (never SUPER).
@@ -548,6 +593,8 @@ pub enum RejectReason {
     NoModifier,
     WindowsKey,
     Unsupported,
+    /// One of the [`RESERVED`] chords.
+    Reserved,
 }
 
 impl RejectReason {
@@ -557,6 +604,7 @@ impl RejectReason {
             RejectReason::NoModifier => "Add Ctrl, Shift or Alt",
             RejectReason::WindowsKey => "Windows key not allowed",
             RejectReason::Unsupported => "Key not supported",
+            RejectReason::Reserved => "Used by Windows or FerrisFilter",
         }
     }
 }
@@ -594,8 +642,8 @@ pub enum CaptureStep {
 /// Runs one frame of the capture. Only fresh key presses and egui's Copy / Cut / Paste events
 /// count (those three chords never arrive as key events); releases, repeats and the modifier
 /// keys themselves are ignored. Escape, with or without modifiers, cancels. The first other press
-/// commits when it makes a bindable chord without the Windows key, and is otherwise recorded as
-/// the rejection while the capture goes on.
+/// commits when it makes a bindable chord (a modifier, not [`RESERVED`]) without the Windows key,
+/// and is otherwise recorded as the rejection while the capture goes on.
 pub fn capture_step(state: &mut CaptureState, input: &CaptureInput) -> CaptureStep {
     let held = (input.ctrl, input.shift, input.alt);
     if held != state.last_held {
@@ -664,8 +712,12 @@ pub fn capture_step(state: &mut CaptureState, input: &CaptureInput) -> CaptureSt
             alt,
             key,
         };
-        if !chord.is_bindable() {
+        if !chord.has_modifier() {
             state.rejected = Some(RejectReason::NoModifier);
+            continue;
+        }
+        if chord.is_reserved() {
+            state.rejected = Some(RejectReason::Reserved);
             continue;
         }
         state.rejected = None;
@@ -819,6 +871,53 @@ mod tests {
     }
 
     #[test]
+    fn reserved_chords_are_refused() {
+        for text in [
+            "Ctrl+V",
+            "Ctrl+C",
+            "Ctrl+X",
+            "Ctrl+A",
+            "Ctrl+Z",
+            "Alt+F4",
+            "Alt+Tab",
+            "Shift+Alt+Tab",
+            "Alt+Space",
+            "Ctrl+Alt+Delete",
+        ] {
+            let c = Chord::parse(text).unwrap();
+            assert!(c.has_modifier(), "{text}");
+            assert!(c.is_reserved(), "{text}");
+            assert!(!c.is_bindable(), "{text}");
+        }
+        assert!(!DEFAULT.is_reserved());
+        // Only the exact chord is reserved: an extra modifier frees it.
+        assert!(Chord::parse("Ctrl+Shift+C").unwrap().is_bindable());
+        assert!(Chord::parse("Ctrl+Alt+F4").unwrap().is_bindable());
+        for c in RESERVED {
+            assert_eq!(Chord::parse(&c.text()), Ok(*c));
+        }
+    }
+
+    #[test]
+    fn capture_rejects_reserved_chords() {
+        let mut st = CaptureState::default();
+        let ev = [press(Key::V, Some(Key::V), mods(true, false, false))];
+        assert_eq!(
+            capture_step(&mut st, &input(&ev, true, false, false)),
+            CaptureStep::Continue
+        );
+        assert_eq!(st.rejected, Some(RejectReason::Reserved));
+
+        let mut st = CaptureState::default();
+        let ev = [press(Key::F4, Some(Key::F4), mods(false, false, true))];
+        assert_eq!(
+            capture_step(&mut st, &input(&ev, false, false, true)),
+            CaptureStep::Continue
+        );
+        assert_eq!(st.rejected, Some(RejectReason::Reserved));
+    }
+
+    #[test]
     fn code_modifiers_and_id() {
         assert_eq!(DEFAULT.code(), Code::KeyZ);
         assert_eq!(DEFAULT.modifiers(), Modifiers::CONTROL | Modifiers::SHIFT);
@@ -953,10 +1052,10 @@ mod tests {
     #[test]
     fn capture_commits_and_rejects() {
         let mut st = CaptureState::default();
-        let ev = [press(Key::Z, Some(Key::Z), mods(true, false, false))];
+        let ev = [press(Key::K, Some(Key::K), mods(true, false, false))];
         assert_eq!(
             capture_step(&mut st, &input(&ev, true, false, false)),
-            CaptureStep::Commit(chord(true, false, false, ChordKey::Letter(b'Z')))
+            CaptureStep::Commit(chord(true, false, false, ChordKey::Letter(b'K')))
         );
 
         let mut st = CaptureState::default();
@@ -1035,9 +1134,24 @@ mod tests {
             capture_step(&mut st, &inp)
         };
         let c = |ctrl, shift, key| CaptureStep::Commit(chord(ctrl, shift, false, key));
+        // Ctrl+C, Ctrl+X and Ctrl+V resolve to their chords, which are reserved.
+        let reserved = |ev: Event| {
+            let mut st = CaptureState::default();
+            let evs = [ev];
+            let step = capture_step(&mut st, &input(&evs, true, false, false));
+            (step, st.rejected)
+        };
         assert_eq!(
-            commit(Event::Copy, true, false, false),
-            c(true, false, ChordKey::Letter(b'C'))
+            reserved(Event::Copy),
+            (CaptureStep::Continue, Some(RejectReason::Reserved))
+        );
+        assert_eq!(
+            reserved(Event::Cut),
+            (CaptureStep::Continue, Some(RejectReason::Reserved))
+        );
+        assert_eq!(
+            reserved(Event::Paste("x".into())),
+            (CaptureStep::Continue, Some(RejectReason::Reserved))
         );
         assert_eq!(
             commit(Event::Copy, true, false, true),
@@ -1048,16 +1162,8 @@ mod tests {
             c(true, true, ChordKey::Letter(b'C'))
         );
         assert_eq!(
-            commit(Event::Cut, true, false, false),
-            c(true, false, ChordKey::Letter(b'X'))
-        );
-        assert_eq!(
             commit(Event::Cut, false, true, false),
             c(false, true, ChordKey::Delete)
-        );
-        assert_eq!(
-            commit(Event::Paste("x".into()), true, false, false),
-            c(true, false, ChordKey::Letter(b'V'))
         );
         assert_eq!(
             commit(Event::Paste(String::new()), false, true, false),
@@ -1084,5 +1190,9 @@ mod tests {
             "Windows key not allowed"
         );
         assert_eq!(RejectReason::Unsupported.caption(), "Key not supported");
+        assert_eq!(
+            RejectReason::Reserved.caption(),
+            "Used by Windows or FerrisFilter"
+        );
     }
 }

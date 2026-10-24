@@ -1357,7 +1357,15 @@ mod tests {
 
     #[test]
     fn hotkey_unusable_text_is_dropped_with_warning() {
-        for bad in ["Z", "Win+K", "nonsense", "Ctrl+Escape", ""] {
+        for bad in [
+            "Z",
+            "Win+K",
+            "nonsense",
+            "Ctrl+Escape",
+            "",
+            "Ctrl+V",
+            "Alt+F4",
+        ] {
             let t = tempfile::tempdir().unwrap();
             let body = format!(
                 r#"{{"hotkey":"{bad}","filter":"a.filter","reload_after_apply":false,"future":1}}"#

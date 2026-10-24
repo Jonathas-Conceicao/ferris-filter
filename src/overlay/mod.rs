@@ -16,6 +16,7 @@ pub mod classes;
 pub mod conditions;
 pub mod config_state;
 pub mod config_view;
+pub mod drag_reorder;
 pub mod economy;
 pub(crate) mod folder_dialog;
 pub mod grammar;

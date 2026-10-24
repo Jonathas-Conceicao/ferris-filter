@@ -123,3 +123,31 @@ Steps 1-4 done on the milestone branch (not pushed, merged or tagged); step 5 (y
 7. Also removed as dead after this milestone: the chevron flag icons, `ff_text_field`, the `ff_colour_card` / `ff_colour_card_ex` wrappers (the card is `ff_colour_card_tip`) and the always-true `PickerMode::alpha` switch. The headless egui drag experiments in `drag_reorder.rs` were kept as a guard on the egui behaviour the drag code relies on (module renamed from `spike`).
 8. Review / planning ids added this milestone (WR-xx, D-xx, "Phase 4x", "49-01 spike", "research Pitfall") were stripped from code comments; the pre-existing `WR-02` in CLAUDE.md's Sections note went too. Older ids from earlier milestones remain in code (out of this milestone's scope).
 9. Clippy: 126 warnings on the floating nightly (129 before), none on lines this milestone added; two collapsible `if`s in milestone code were fixed. `cargo fmt --check` is clean. Full `cargo test --locked` green before and after.
+
+## Round 1 feedback:
+
+Applied after the author's first look at the v0.7.2 build (commits on the milestone branch, nothing pushed).
+
+Judgement calls:
+
+- A. The colour value now carries the alpha a 3-token line means for its keyword (`grammar::bare_alpha`: 240 for `SetBackgroundColor`, 255 otherwise). Decoding, the 3-token round trip check, the Custom style editor, the colour action chips and Auto Detect all use it, so a bare background reads 240 everywhere and an edit back to 240 restores the 3-token bytes. `StyleView::to_style` no longer patches the background alpha itself (the view already holds 240). No CHANGELOG entry was added: the 0.7.2 draft has no line about rule colour alpha, so nothing there became wrong; add a Fixed line if you count it as a user-visible fix over 0.7.1.
+- B. A locked header arrow is the economy padlock (same painter, `MUTED` tint) in the arrow's 16pt slot. Tooltips: `No rule above to move past`, `No rule below to move past` (also when only the economy section is left below), and `Clear the search to reorder` while a search is active, so every header shows two padlocks during a search.
+- C. One constant `pal::DRAG_SOURCE` (the window ground at alpha 140, the CONFIG table's old tint) for both lists.
+- D. No popup for the hotkey Reset to defaults: it is one pending chord that Revert undoes, unlike the Styles / Tiers resets, which replace many values. The button shares a helper with the Styles heading (same 150pt `ff_button_ex`, right edge 8pt inside the heading, `Already at the defaults.` when greyed, `Reset to Ctrl+Shift+Z` when live). The keybind button now spans the whole control column, its right edge where the round button's was (under the Filter refresh button). The Overlay row is about 6pt shorter (it no longer holds the 36pt round button), so everything below it moves up a little.
+- E. The redrawn handle PNGs still have their visible plate at `[0, 0, 84, 84)` in all three states; `DRAG_HANDLE_OPAQUE` and its test are unchanged.
+- F. Re-taken and committed: `rules.png`, `rule-style.png`, `rule-editing.png`, `economy-rule.png`, `config-style.png` (handle art; config-style is also framed about 7pt differently because the Overlay row is shorter). `economy.png` differed only in its Last sync text (`Just now` vs `10 min ago`), so it was kept. None of the six README frames has a section header with a locked arrow (Leveling and Endgame can move both ways there).
+
+Review renders (not committed, temp game-folder path visible):
+
+- `C:\Users\jonat\AppData\Local\Temp\ff51\shots\config-top.png` (Config tab top: the Overlay heading with Reset to defaults greyed, the wide keybind button)
+- `C:\Users\jonat\AppData\Local\Temp\ff51\shots\rules-padlock.png` (sample filter with a `Top` section banner above rule 1: its up arrow is a padlock, its down arrow live)
+- `C:\Users\jonat\AppData\Local\Temp\ff51\shots\rules-search-padlock.png` (search active: both Endgame arrows are padlocks)
+
+Manual checks:
+
+1. Open `config-top.png`: the Overlay heading's Reset to defaults looks and lines up like the Styles one, and the keybind button ends under the Filter refresh button.
+2. In the app, capture another chord (Config `*`), then click the Overlay heading's Reset to defaults: the button reads `Ctrl+Shift+Z` at once with no popup and Reset to defaults greys; Config Revert then discards the reset like any other edit.
+3. Open `rules-padlock.png` and `rules-search-padlock.png`: the padlocks read clearly over the stone bar's right cap; hover one in the app for its tooltip.
+4. On a RULES Custom rule with a bare `SetBackgroundColor R G B` line, open the Background card: the Alpha slider reads 240. Move it to 255 and Apply: the line gets a fourth value `255`; move it back to 240 before applying and the line stays 3 values.
+5. Drag a rule on RULES and a custom style on CONFIG: the greyed source rows look the same.
+- Checks: `cargo test --locked` green (lib 1923), `cargo fmt --check` clean, clippy 126 warnings as before (none new).

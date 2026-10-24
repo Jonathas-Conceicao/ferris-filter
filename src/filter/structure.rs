@@ -523,6 +523,26 @@ impl Document {
         expected[pa..=pb_last].rotate_left(a.len());
         self.commit_structural(new, ids, expected).map(|_| ())
     }
+
+    /// Move a run of consecutive blocks to `dest` in one edit (stub).
+    pub fn move_run_to(&mut self, run: &[BlockId], dest: MoveDest) -> Result<bool, EditError> {
+        let _ = (run, dest);
+        Err(EditError::NoNeighbour)
+    }
+}
+
+/// Where a dragged rule run lands. Banner ordinals are those of `section::banners` (the same
+/// ordinals divider.rs and `RowAction::RenameSection` use).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveDest {
+    /// Directly above this block (above its leading comments).
+    Before(BlockId),
+    /// At the top of the section opened by the banner with this ordinal.
+    AfterBanner(usize),
+    /// At the end of the section above the banner with this ordinal.
+    BeforeBanner(usize),
+    /// Just above the economy banner, or the end of the file without one.
+    End,
 }
 
 #[cfg(test)]
@@ -1184,5 +1204,255 @@ Hide
         d.replace_blocks_after(i[0], &[], vec![v(&["Show # N"])])
             .unwrap();
         assert_eq!(s(&d), "Show # A\r\n  Rarity Rare\r\n\r\nShow # N");
+    }
+
+    // ---- move_run_to ----
+
+    fn bn(name: &str) -> String {
+        format!(
+            "{}\n# ff:section {name}\n{}\n",
+            section::RULE_LINE,
+            section::RULE_LINE
+        )
+    }
+    fn four() -> &'static str {
+        "Show # A\n\nShow # B\n\nShow # C\n\nShow # D\n"
+    }
+    fn sorted_lines(t: &str) -> Vec<String> {
+        let mut v: Vec<String> = t.lines().map(str::to_string).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn move_run_to_moves_down_and_up() {
+        let mut d = p(four());
+        let i = ids(&d);
+        assert!(d.move_run_to(&[i[0]], MoveDest::Before(i[3])).unwrap());
+        assert_eq!(s(&d), "Show # B\n\nShow # C\n\nShow # A\n\nShow # D\n");
+        assert_eq!(ids(&d), vec![i[1], i[2], i[0], i[3]]);
+        let mut d = p(four());
+        let i = ids(&d);
+        assert!(d.move_run_to(&[i[3]], MoveDest::Before(i[0])).unwrap());
+        assert_eq!(s(&d), "Show # D\n\nShow # A\n\nShow # B\n\nShow # C\n");
+        assert_eq!(ids(&d), vec![i[3], i[0], i[1], i[2]]);
+    }
+
+    #[test]
+    fn move_run_to_moves_groups_as_one_region() {
+        let mut d = p(four());
+        let i = ids(&d);
+        d.move_run_to(&[i[0], i[1]], MoveDest::Before(i[3]))
+            .unwrap();
+        assert_eq!(s(&d), "Show # C\n\nShow # A\n\nShow # B\n\nShow # D\n");
+        let mut d = p(four());
+        let i = ids(&d);
+        d.move_run_to(&[i[1], i[2]], MoveDest::Before(i[0]))
+            .unwrap();
+        assert_eq!(s(&d), "Show # B\n\nShow # C\n\nShow # A\n\nShow # D\n");
+        let mut d = p(four());
+        let i = ids(&d);
+        d.move_run_to(&[i[0], i[1], i[2]], MoveDest::End).unwrap();
+        assert_eq!(s(&d), "Show # D\n\nShow # A\n\nShow # B\n\nShow # C\n");
+        assert_eq!(ids(&d), vec![i[3], i[0], i[1], i[2]]);
+    }
+
+    #[test]
+    fn move_run_to_carries_leading_comments() {
+        let mut d = p("# note A\nShow # A\n\n# note B\nShow # B\n\nShow # C\n");
+        let i = ids(&d);
+        d.move_run_to(&[i[0]], MoveDest::End).unwrap();
+        assert_eq!(
+            s(&d),
+            "# note B\nShow # B\n\nShow # C\n\n# note A\nShow # A\n"
+        );
+    }
+
+    fn banner_doc() -> String {
+        format!(
+            "Show # A\n\n{}\nShow # B\n\nShow # C\n\n{}\nShow # D\n",
+            bn("One"),
+            bn("Two")
+        )
+    }
+
+    #[test]
+    fn move_run_to_after_banner_puts_the_rule_first_in_the_section() {
+        let src = banner_doc();
+        let mut d = p(&src);
+        let i = ids(&d);
+        d.move_run_to(&[i[0]], MoveDest::AfterBanner(0)).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "{}\nShow # A\n\nShow # B\n\nShow # C\n\n{}\nShow # D\n",
+                bn("One"),
+                bn("Two")
+            )
+        );
+        let mut d = p(&src);
+        d.move_run_to(&[i[1]], MoveDest::AfterBanner(1)).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "Show # A\n\n{}\nShow # C\n\n{}\nShow # B\n\nShow # D\n",
+                bn("One"),
+                bn("Two")
+            )
+        );
+    }
+
+    #[test]
+    fn move_run_to_before_banner_ends_the_section_above() {
+        let src = banner_doc();
+        let mut d = p(&src);
+        let i = ids(&d);
+        d.move_run_to(&[i[3]], MoveDest::BeforeBanner(1)).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "Show # A\n\n{}\nShow # B\n\nShow # C\n\nShow # D\n\n{}",
+                bn("One"),
+                bn("Two")
+            )
+        );
+        // The first banner: the end of the preamble.
+        let mut d = p(&src);
+        d.move_run_to(&[i[1]], MoveDest::BeforeBanner(0)).unwrap();
+        assert_eq!(
+            s(&d),
+            format!(
+                "Show # A\n\nShow # B\n\n{}\nShow # C\n\n{}\nShow # D\n",
+                bn("One"),
+                bn("Two")
+            )
+        );
+    }
+
+    #[test]
+    fn move_run_to_end_lands_above_the_economy_banner() {
+        let src = format!("Show # A\n\nShow # B\n\n{BEGIN}\n\nShow # E\n");
+        let mut d = p(&src);
+        let i = ids(&d);
+        d.move_run_to(&[i[0]], MoveDest::End).unwrap();
+        assert_eq!(
+            s(&d),
+            format!("Show # B\n\nShow # A\n\n{BEGIN}\n\nShow # E\n")
+        );
+        assert_eq!(ids(&d), vec![i[1], i[0], i[2]]);
+    }
+
+    #[test]
+    fn move_run_to_end_without_economy_is_the_end_of_file() {
+        let mut d = p("Show # A\n\nShow # B\n\nShow # C\n");
+        let i = ids(&d);
+        d.move_run_to(&[i[0]], MoveDest::End).unwrap();
+        assert_eq!(s(&d), "Show # B\n\nShow # C\n\nShow # A\n");
+    }
+
+    #[test]
+    fn move_run_to_keeps_a_missing_final_newline() {
+        let mut d = p("Show # A\n\nShow # B\n\nShow # C\n\nShow # D");
+        let i = ids(&d);
+        d.move_run_to(&[i[3]], MoveDest::Before(i[0])).unwrap();
+        assert_eq!(s(&d), "Show # D\n\nShow # A\n\nShow # B\n\nShow # C");
+        let mut d = p("Show # A\n\nShow # B\n\nShow # C\n\nShow # D");
+        let i = ids(&d);
+        d.move_run_to(&[i[0]], MoveDest::End).unwrap();
+        assert_eq!(s(&d), "Show # B\n\nShow # C\n\nShow # D\n\nShow # A");
+    }
+
+    #[test]
+    fn move_run_to_keeps_crlf_on_every_line() {
+        let mut d = p("Show # A\r\n\r\nShow # B\r\n\r\nShow # C\r\n");
+        let i = ids(&d);
+        d.move_run_to(&[i[0]], MoveDest::Before(i[2])).unwrap();
+        assert_eq!(s(&d), "Show # B\r\n\r\nShow # A\r\n\r\nShow # C\r\n");
+        let mut d = p("Show # A\r\n\r\nShow # B\r\n\r\nShow # C\r\n");
+        let i = ids(&d);
+        d.move_run_to(&[i[2]], MoveDest::Before(i[0])).unwrap();
+        assert_eq!(s(&d), "Show # C\r\n\r\nShow # A\r\n\r\nShow # B\r\n");
+    }
+
+    #[test]
+    fn move_run_to_reports_no_op_destinations() {
+        let src = banner_doc();
+        let mut d = p(&src);
+        let i = ids(&d);
+        assert!(!d.move_run_to(&[i[0]], MoveDest::Before(i[0])).unwrap());
+        assert!(!d.move_run_to(&[i[2]], MoveDest::BeforeBanner(1)).unwrap());
+        assert!(!d.move_run_to(&[i[1]], MoveDest::AfterBanner(0)).unwrap());
+        assert!(!d.move_run_to(&[i[3]], MoveDest::End).unwrap());
+        assert_eq!(s(&d), src);
+        let mut d = p(four());
+        let i = ids(&d);
+        assert!(!d.move_run_to(&[i[0]], MoveDest::Before(i[1])).unwrap());
+        assert!(!d.move_run_to(&[i[3]], MoveDest::End).unwrap());
+        assert_eq!(s(&d), four());
+    }
+
+    #[test]
+    fn move_run_to_refuses_the_economy_section() {
+        let src = format!("Show # A\n\n{BEGIN}\n\nShow # E\n");
+        let mut d = p(&src);
+        let i = ids(&d);
+        assert!(matches!(
+            d.move_run_to(&[i[0]], MoveDest::AfterBanner(0)),
+            Err(EditError::SectionLocked)
+        ));
+        assert!(matches!(
+            d.move_run_to(&[i[0]], MoveDest::Before(i[1])),
+            Err(EditError::SectionLocked)
+        ));
+        assert!(matches!(
+            d.move_run_to(&[i[1]], MoveDest::Before(i[0])),
+            Err(EditError::SectionLocked)
+        ));
+        assert_eq!(s(&d), src);
+    }
+
+    #[test]
+    fn move_run_to_refuses_unknown_ids_and_broken_runs() {
+        let mut d = p(four());
+        let i = ids(&d);
+        assert!(matches!(
+            d.move_run_to(&[BlockId(9999)], MoveDest::End),
+            Err(EditError::UnknownBlock)
+        ));
+        assert!(matches!(
+            d.move_run_to(&[i[0]], MoveDest::Before(BlockId(9999))),
+            Err(EditError::UnknownBlock)
+        ));
+        assert!(d.move_run_to(&[i[0], i[2]], MoveDest::End).is_err());
+        assert!(d.move_run_to(&[], MoveDest::End).is_err());
+        assert_eq!(s(&d), four());
+    }
+
+    #[test]
+    fn move_run_to_preserves_the_line_multiset() {
+        let src = banner_doc();
+        let n = ids(&p(&src)).len();
+        for k in 0..n {
+            for dk in 0..6 {
+                let mut d = p(&src);
+                let i = ids(&d);
+                let dest = [
+                    MoveDest::Before(i[2]),
+                    MoveDest::AfterBanner(0),
+                    MoveDest::AfterBanner(1),
+                    MoveDest::BeforeBanner(0),
+                    MoveDest::BeforeBanner(1),
+                    MoveDest::End,
+                ][dk];
+                if d.move_run_to(&[i[k]], dest).is_ok() {
+                    assert_eq!(sorted_lines(&s(&d)), sorted_lines(&src), "{k} {dk}");
+                    let mut after = ids(&d);
+                    after.sort_by_key(|b| b.0);
+                    let mut before = i.clone();
+                    before.sort_by_key(|b| b.0);
+                    assert_eq!(after, before);
+                }
+            }
+        }
     }
 }
